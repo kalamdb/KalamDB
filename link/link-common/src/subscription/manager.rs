@@ -12,6 +12,7 @@ use crate::{
     error::Result,
     models::ChangeEvent,
     seq_id::SeqId,
+    seq_tracking,
     subscription::{buffer_event, event_progress},
     timeouts::KalamLinkTimeouts,
 };
@@ -83,11 +84,14 @@ impl SubscriptionManager {
         }
     }
 
-    async fn report_shared_progress(&self, event: &ChangeEvent) {
-        let Some(shared_control) = self.shared_control.as_ref() else {
+    async fn report_shared_progress(&mut self, event: &ChangeEvent) {
+        let Some(progress) = event_progress(event) else {
             return;
         };
-        let Some(progress) = event_progress(event) else {
+
+        seq_tracking::advance_seq(&mut self.resume_from, progress.seq_id);
+
+        let Some(shared_control) = self.shared_control.as_ref() else {
             return;
         };
 
@@ -251,6 +255,40 @@ mod tests {
     fn test_drop_without_runtime_does_not_panic() {
         let sub = make_test_sub();
         drop(sub);
+    }
+
+    #[tokio::test]
+    async fn test_consumed_initial_batch_advances_local_replay_filter() {
+        let mut sub = make_test_sub();
+        let event = ChangeEvent::InitialDataBatch {
+            subscription_id: "unit-test-id".to_string(),
+            rows: vec![{
+                let mut row = std::collections::HashMap::new();
+                row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
+                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row
+            }],
+            batch_control: crate::models::BatchControl {
+                batch_num: 0,
+                has_more: true,
+                status: crate::models::BatchStatus::Loading,
+                last_seq_id: Some(SeqId::from_i64(10)),
+            },
+        };
+
+        sub.report_shared_progress(&event).await;
+        sub.apply_buffering(ChangeEvent::Insert {
+            subscription_id: "unit-test-id".to_string(),
+            rows: vec![{
+                let mut row = std::collections::HashMap::new();
+                row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
+                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row
+            }],
+        });
+
+        assert!(sub.event_queue.is_empty());
+        assert!(sub.buffered_changes.is_empty());
     }
 
     #[tokio::test]

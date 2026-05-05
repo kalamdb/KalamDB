@@ -15,6 +15,7 @@ npm i @kalamdb/client @kalamdb/orm drizzle-orm
 ```ts
 import { Auth, createClient } from '@kalamdb/client';
 import { kalamDriver } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
 import { messages } from './schema';
 
 const client = createClient({
@@ -22,7 +23,7 @@ const client = createClient({
   authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
 });
 
-const db = kalamDriver(client);
+const db = drizzle(kalamDriver(client));
 const rows = await db.select().from(messages).limit(20);
 ```
 
@@ -48,6 +49,17 @@ export const docs = kTable.shared('app.docs', {
 ```
 
 `file()`, `bytes()`, and `embedding()` are KalamDB-specific Drizzle custom columns. `file()` maps values to `FileRef | null`, `bytes()` maps to `Uint8Array | null`, and `embedding()` maps to `number[] | null`.
+
+Use the table-kind helpers when the table kind matters to live views or agents:
+
+```ts
+kTable.shared('app.docs', columns);
+kTable.user('app.messages', columns);
+kTable.stream('app.events', columns);
+kTable.system('system.users', columns);
+```
+
+Pass `{ systemColumns: true }` when your app needs typed `_seq`/`_deleted` fields for ordering, resume checks, or diagnostics. Streams only receive `_seq`; shared and user tables receive `_seq` and `_deleted`.
 
 ## Generate `schema.ts`
 
@@ -106,3 +118,25 @@ await stop();
 ```
 
 `liveTable()` and `subscribeTable()` reuse the same `@kalamdb/client` connection and normalize timestamp/date/time fields according to the Drizzle table definition.
+
+## Execute as a user
+
+Agents and service workers can compile a Drizzle builder and run it through KalamDB's `EXECUTE AS USER` path:
+
+```ts
+import { executeAsUser } from '@kalamdb/orm';
+
+await executeAsUser(
+  client,
+  db.insert(messages).values({
+    room: 'main',
+    role: 'assistant',
+    author: 'KalamDB Copilot',
+    sender_username: 'alice',
+    content: 'Done.',
+  }),
+  'alice',
+);
+```
+
+Only pass a user id that your service account is authorized to impersonate.

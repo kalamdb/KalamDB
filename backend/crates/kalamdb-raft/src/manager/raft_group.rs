@@ -136,6 +136,30 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         self.storage.get_last_applied()
     }
 
+    /// Reconcile in-memory state-machine progress with persisted last_applied.
+    pub fn reconcile_state_machine_progress(&self) -> Option<(u64, u64)> {
+        self.storage.reconcile_state_machine_progress()
+    }
+
+    fn local_apply_timeout(
+        &self,
+        applied_index: u64,
+        committed_index: u64,
+        snapshot_index: u64,
+        timeout: Duration,
+    ) -> RaftError {
+        RaftError::ReplicationTimeout {
+            group: self.group_id.to_string(),
+            committed_log_id: committed_index.max(snapshot_index).to_string(),
+            detail: format!(
+                "local apply barrier did not reach the required read point: applied={}, \
+                 committed={}, snapshot={}",
+                applied_index, committed_index, snapshot_index
+            ),
+            timeout_ms: timeout.as_millis() as u64,
+        }
+    }
+
     /// Wait until this node has applied every log entry already known locally.
     pub async fn wait_for_local_apply_barrier(&self, timeout: Duration) -> Result<u64, RaftError> {
         let metrics =
@@ -158,22 +182,24 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
 
                 let elapsed = start.elapsed();
                 if elapsed >= timeout {
-                    return Err(RaftError::ReplicationTimeout {
-                        group: self.group_id.to_string(),
-                        committed_log_id: target_index.to_string(),
-                        timeout_ms: timeout.as_millis() as u64,
-                    });
+                    return Err(self.local_apply_timeout(
+                        applied_index,
+                        committed_index,
+                        snapshot_index,
+                        timeout,
+                    ));
                 }
 
                 match tokio::time::timeout(timeout - elapsed, applied_rx.changed()).await {
                     Ok(Ok(())) => {},
                     Ok(Err(_)) => break,
                     Err(_) => {
-                        return Err(RaftError::ReplicationTimeout {
-                            group: self.group_id.to_string(),
-                            committed_log_id: target_index.to_string(),
-                            timeout_ms: timeout.as_millis() as u64,
-                        });
+                        return Err(self.local_apply_timeout(
+                            applied_index,
+                            committed_index,
+                            snapshot_index,
+                            timeout,
+                        ));
                     },
                 }
             }
@@ -188,11 +214,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             }
 
             if start.elapsed() > timeout {
-                return Err(RaftError::ReplicationTimeout {
-                    group: self.group_id.to_string(),
-                    committed_log_id: target_index.to_string(),
-                    timeout_ms: timeout.as_millis() as u64,
-                });
+                return Err(self.local_apply_timeout(
+                    applied_index,
+                    committed_index,
+                    snapshot_index,
+                    timeout,
+                ));
             }
 
             tokio::time::sleep(poll_interval).await;
@@ -372,6 +399,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                 return Err(RaftError::ReplicationTimeout {
                     group: self.group_id.to_string(),
                     committed_log_id: "catchup".to_string(),
+                    detail: format!("learner {} did not catch up to the leader", node_id),
                     timeout_ms: timeout.as_millis() as u64,
                 });
             }

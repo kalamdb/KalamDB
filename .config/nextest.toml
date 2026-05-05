@@ -8,6 +8,7 @@ test-threads = 15
 # other, while still allowing unrelated tests to use the remaining default
 # concurrency budget.
 stateful-heavy = { max-threads = 1 }
+proxied-reconnect = { max-threads = 2 }
 
 [[profile.default.overrides]]
 filter = 'test(test_scenario_08_subscription_reconnect)'
@@ -85,7 +86,7 @@ test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
 filter = 'test(test_large_initial_snapshot_survives_repeated_outages)'
-test-group = "stateful-heavy"
+test-group = "proxied-reconnect"
 
 [[profile.default.overrides]]
 filter = 'test(test_latency_spike_during_initial_snapshot_recovers)'
@@ -97,7 +98,7 @@ test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
 filter = 'test(test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows)'
-test-group = "stateful-heavy"
+test-group = "proxied-reconnect"
 
 [[profile.default.overrides]]
 filter = 'test(test_proxy_three_subscriptions_resume_after_server_bounce)'

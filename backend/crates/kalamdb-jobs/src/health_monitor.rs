@@ -22,7 +22,7 @@ impl HealthMonitor {
         let active_subscriptions = app_context.connection_registry().subscription_count();
         let ws_sessions = get_websocket_session_count();
 
-        if active_connections > 0 || active_subscriptions > 0 || ws_sessions > 0 {
+        if active_subscriptions > 0 {
             return;
         }
 
@@ -39,7 +39,9 @@ impl HealthMonitor {
             }
         }
 
-        app_context.connection_registry().trim_idle_capacity();
+        if active_connections == 0 && ws_sessions == 0 {
+            app_context.connection_registry().trim_idle_capacity();
+        }
         kalamdb_observability::force_allocator_collection(true);
         record_activity_now();
 
@@ -48,6 +50,13 @@ impl HealthMonitor {
                 "Idle trim cleared {} SQL plans after {:?} idle",
                 cleared_plan_cache,
                 idle_for,
+            );
+        } else if active_connections > 0 || ws_sessions > 0 {
+            log::debug!(
+                "Idle trim forced allocator collection after {:?} idle with {} connections and {} ws sessions",
+                idle_for,
+                active_connections,
+                ws_sessions,
             );
         } else {
             log::debug!("Idle trim forced allocator collection after {:?} idle", idle_for);

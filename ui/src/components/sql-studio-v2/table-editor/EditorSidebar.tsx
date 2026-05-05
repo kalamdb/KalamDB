@@ -236,7 +236,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
         </div>
         {namespaces.length > 0 ? (
           <Select value={activeNamespace} onValueChange={handleNamespaceChange}>
-            <SelectTrigger className="h-8 text-xs">
+            <SelectTrigger className="h-8 w-full text-xs">
               <SelectValue placeholder="Select namespace" />
             </SelectTrigger>
             <SelectContent>

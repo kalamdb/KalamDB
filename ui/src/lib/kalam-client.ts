@@ -303,7 +303,6 @@ export async function executeQuery(sql: string): Promise<QueryResponse> {
     } else {
       const first = response.results?.[0];
       const resultCount = response.results?.length ?? 0;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rowCount = first?.row_count ?? (first as any)?.named_rows?.length ?? first?.rows?.length ?? 0;
       const columnCount = first?.schema?.length ?? 0;
       debugLog(

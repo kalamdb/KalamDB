@@ -94,10 +94,9 @@ impl SystemColumnsService {
     /// # Errors
     /// Returns `SystemError::InvalidOperation` if clock moves backwards
     pub fn generate_seq_ids(&self, count: usize) -> Result<Vec<SeqId>, SystemError> {
-        let ids = self.snowflake_gen.next_ids(count).map_err(|e| {
+        self.snowflake_gen.next_ids_mapped(count, SeqId::new).map_err(|e| {
             SystemError::InvalidOperation(format!("Batch SeqId generation failed: {}", e))
-        })?;
-        Ok(ids.into_iter().map(SeqId::new).collect())
+        })
     }
 
     /// Add system columns to a table definition

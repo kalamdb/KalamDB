@@ -287,7 +287,9 @@ impl InitialDataFetcher {
             .execute_for_batches(&sql, user_id, role, ReadContext::Internal)
             .await?;
 
-        let mut rows_with_seq = materialize_initial_rows(batches, has_commit_seq, limit + 1).await?;
+        let mut rows_with_seq =
+            materialize_initial_rows(batches, has_commit_seq, limit + 1).await?;
+        sort_initial_rows(&mut rows_with_seq, has_commit_seq, &options);
 
         // Determine has_more and slice to limit
         let total_fetched = rows_with_seq.len();
@@ -563,10 +565,7 @@ fn materialize_initial_rows_sync(
         })?;
         let commit_seq_array = if has_commit_seq {
             let commit_idx = schema.index_of(SystemColumnNames::COMMIT_SEQ).map_err(|_| {
-                LiveError::Other(format!(
-                    "Result missing {} column",
-                    SystemColumnNames::COMMIT_SEQ
-                ))
+                LiveError::Other(format!("Result missing {} column", SystemColumnNames::COMMIT_SEQ))
             })?;
             Some(batch.column(commit_idx))
         } else {
@@ -605,6 +604,28 @@ fn materialize_initial_rows_sync(
     }
 
     Ok(rows_with_seq)
+}
+
+fn sort_initial_rows(
+    rows_with_seq: &mut [(SeqId, Option<u64>, Row)],
+    has_commit_seq: bool,
+    options: &InitialDataOptions,
+) {
+    if has_commit_seq && options.since_commit_seq.is_some() {
+        if options.fetch_last {
+            rows_with_seq.sort_unstable_by(|left, right| {
+                right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0))
+            });
+        } else {
+            rows_with_seq.sort_unstable_by(|left, right| {
+                left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0))
+            });
+        }
+    } else if options.fetch_last {
+        rows_with_seq.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+    } else {
+        rows_with_seq.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    }
 }
 
 #[cfg(test)]
@@ -782,6 +803,61 @@ mod tests {
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 200);
         assert!(options.include_deleted);
+    }
+
+    fn test_row(id: &str) -> Row {
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Utf8(Some(id.to_string())));
+        Row::new(values)
+    }
+
+    #[test]
+    fn sort_initial_rows_orders_seq_before_truncation() {
+        let options = InitialDataOptions::batch(Some(SeqId::from(8)), Some(SeqId::from(30)), 3);
+        let mut rows = vec![
+            (SeqId::from(10), None, test_row("seed-10")),
+            (SeqId::from(11), None, test_row("seed-11")),
+            (SeqId::from(12), None, test_row("seed-12")),
+            (SeqId::from(9), None, test_row("seed-9")),
+        ];
+
+        sort_initial_rows(&mut rows, false, &options);
+        rows.truncate(options.limit);
+
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|(_, _, row)| match row.values.get("id") {
+                Some(ScalarValue::Utf8(Some(id))) => id.as_str(),
+                _ => "",
+            })
+            .collect();
+
+        assert_eq!(ids, vec!["seed-9", "seed-10", "seed-11"]);
+    }
+
+    #[test]
+    fn sort_initial_rows_orders_commit_seq_window() {
+        let options = InitialDataOptions::batch(Some(SeqId::from(8)), Some(SeqId::from(30)), 3)
+            .with_commit_range(Some(4), Some(9));
+        let mut rows = vec![
+            (SeqId::from(12), Some(6), test_row("c6-s12")),
+            (SeqId::from(10), Some(5), test_row("c5-s10")),
+            (SeqId::from(11), Some(5), test_row("c5-s11")),
+            (SeqId::from(9), Some(5), test_row("c5-s9")),
+        ];
+
+        sort_initial_rows(&mut rows, true, &options);
+        rows.truncate(options.limit);
+
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|(_, _, row)| match row.values.get("id") {
+                Some(ScalarValue::Utf8(Some(id))) => id.as_str(),
+                _ => "",
+            })
+            .collect();
+
+        assert_eq!(ids, vec!["c5-s9", "c5-s10", "c5-s11"]);
     }
 
     #[tokio::test]
@@ -996,9 +1072,7 @@ mod tests {
         )
         .expect("record batch");
 
-        let rows = materialize_initial_rows(vec![batch], true, 3)
-            .await
-            .expect("materialized rows");
+        let rows = materialize_initial_rows(vec![batch], true, 3).await.expect("materialized rows");
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, SeqId::from(100));
@@ -1010,7 +1084,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_initial_data_preserves_executor_row_order() {
+    async fn fetch_initial_data_returns_rows_in_seq_order() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
@@ -1061,7 +1135,7 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(ids, vec![2, 1]);
+        assert_eq!(ids, vec![1, 2]);
     }
 
     #[tokio::test]

@@ -191,7 +191,7 @@ jobs:
           chmod +x ./kalamdb-server
           echo "SDK test source: release-binary"
 
-      - name: Run TypeScript SDK tests
+      - name: Run TypeScript client, consumer, and ORM npm package tests
         id: run_typescript_tests
         continue-on-error: true
         shell: bash
@@ -206,6 +206,19 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/test-typescript-sdk-release.sh
+
+      - name: Verify TypeScript npm package test coverage
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="ts-sdk-test-output.txt"
+          for package in client consumer orm; do
+            if ! grep -q "Running @kalamdb/${package} tests" "$output"; then
+              echo "Missing @kalamdb/${package} npm package test run in ${output}" >&2
+              exit 1
+            fi
+          done
 
       - name: Parse TypeScript SDK test counts
         if: always()

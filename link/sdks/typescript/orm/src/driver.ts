@@ -1,5 +1,6 @@
 import type { RemoteCallback } from 'drizzle-orm/pg-proxy';
 import type { KalamDBClient } from '@kalamdb/client';
+import { stripQuotedIdentifiers } from './query-normalize.js';
 
 type QueryClient = Pick<KalamDBClient, 'query'>;
 type ColumnNormalizer = (value: unknown) => unknown;
@@ -148,7 +149,7 @@ export function stripDefaults(sql: string, params: unknown[]): { sql: string; pa
 
 export function kalamDriver(client: QueryClient): RemoteCallback {
   return async (sql, params, method) => {
-    let cleanSql = sql.replace(/"/g, '');
+    let cleanSql = stripQuotedIdentifiers(sql);
     const stripped = stripDefaults(cleanSql, params);
     cleanSql = stripped.sql;
 

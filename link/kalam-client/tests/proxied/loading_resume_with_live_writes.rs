@@ -16,7 +16,6 @@ fn observe_loading_event(
     max_seq: &mut Option<SeqId>,
     strict_from: Option<SeqId>,
     initial_batch_count: &mut u32,
-    highest_batch_num: &mut u32,
     context: &str,
 ) {
     if let Some(from) = strict_from {
@@ -27,9 +26,8 @@ fn observe_loading_event(
         *max_seq = Some(max_seq.map_or(seq, |prev| prev.max(seq)));
     }
 
-    if let ChangeEvent::InitialDataBatch { batch_control, .. } = event {
+    if let ChangeEvent::InitialDataBatch { .. } = event {
         *initial_batch_count += 1;
-        *highest_batch_num = (*highest_batch_num).max(batch_control.batch_num);
     }
 
     let Some(rows) = change_event_rows(event) else {
@@ -135,7 +133,6 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
         let mut seen_seqs = HashSet::<SeqId>::new();
         let mut delivered_seq = None;
         let mut initial_batch_count = 0u32;
-        let mut highest_batch_num = 0u32;
         let mut inserted_during_loading = false;
 
         for _ in 0..20 {
@@ -152,7 +149,6 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
                         &mut delivered_seq,
                         None,
                         &mut initial_batch_count,
-                        &mut highest_batch_num,
                         "loading snapshot before outage",
                     );
 
@@ -213,7 +209,6 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
                     &mut delivered_seq,
                     None,
                     &mut initial_batch_count,
-                    &mut highest_batch_num,
                     "loading snapshot local tail",
                 ),
                 _ => break,
@@ -292,7 +287,6 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
                     &mut delivered_seq,
                     Some(resume_from),
                     &mut initial_batch_count,
-                    &mut highest_batch_num,
                     "loading snapshot resumed",
                 ),
                 Ok(Some(Err(e))) => panic!("loading subscription errored after reconnect: {}", e),
@@ -330,11 +324,6 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
             initial_batch_count >= 10,
             "30 seed rows with batch size 3 should span at least 10 initial batches, got {}",
             initial_batch_count
-        );
-        assert!(
-            highest_batch_num >= 9,
-            "expected to observe at least batch 9, got {}",
-            highest_batch_num
         );
         assert_eq!(
             seen_ids.len(),

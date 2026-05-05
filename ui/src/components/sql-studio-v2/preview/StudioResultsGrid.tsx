@@ -581,10 +581,10 @@ export function StudioResultsGrid({
           onValueChange={(value) => onResultViewChange(value as SqlStudioResultView)}
           className="h-full shrink-0"
         >
-          <TabsList className="h-full gap-5 rounded-none bg-transparent p-0">
+          <TabsList variant="line" className="h-full gap-5 border-b-0">
             <TabsTrigger
               value="results"
-              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground =active]:bg-transparent =active]:text-foreground"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 pb-3 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground"
             >
               <span>Results</span>
               {hasUnseenResults && (
@@ -593,7 +593,7 @@ export function StudioResultsGrid({
             </TabsTrigger>
             <TabsTrigger
               value="log"
-              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground =active]:bg-transparent =active]:text-foreground"
+              className="relative h-full rounded-none border-b-2 border-transparent px-0 pt-0 pb-3 text-xs font-medium text-muted-foreground shadow-none data-[state=active]:border-sky-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground"
             >
               <span>Log ({logCount})</span>
               {hasUnseenLogs && (

@@ -88,5 +88,7 @@ jobs:
       - name: Run integration tests
         working-directory: link/sdks/typescript/orm
         env:
+          KALAMDB_TEST_URL: http://localhost:8088
+          KALAMDB_TEST_USER: admin
           KALAMDB_TEST_PASSWORD: testpass123
         run: node --test tests/driver.test.mjs tests/generate.test.mjs tests/cli.test.mjs tests/live.test.mjs
