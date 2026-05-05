@@ -48,7 +48,7 @@
     "@kalamdb/client": "file:../client",
     "@kalamdb/consumer": "file:../consumer",
     "@types/node": "^25.5.2",
-    "drizzle-orm": "^0.41.0",
+    "drizzle-orm": "^0.45.2",
     "typescript": "^5.8.0"
   },
   "keywords": [
