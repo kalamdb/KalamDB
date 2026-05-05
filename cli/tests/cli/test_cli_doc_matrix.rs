@@ -161,50 +161,30 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             item: "--consume-timeout",
             tests: &["test_cli_consume_flags_work_end_to_end"],
         },
-        // Init agent flags
+        // Schema watch flags
         Coverage {
-            item: "--init-agent",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
+            item: "--watch-schema",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         Coverage {
-            item: "--init-agent-non-interactive",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
+            item: "--namespace",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         Coverage {
-            item: "--agent-name",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
+            item: "--table",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         Coverage {
-            item: "--agent-output",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
+            item: "--run",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         Coverage {
-            item: "--agent-table",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
+            item: "--run-on-start",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         Coverage {
-            item: "--agent-topic",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
-        },
-        Coverage {
-            item: "--agent-group",
-            tests: &["test_cli_init_agent_non_interactive_generates_project"],
-        },
-        Coverage {
-            item: "--agent-id-column",
-            tests: &["test_cli_parse_missing_documented_agent_flags_without_server"],
-        },
-        Coverage {
-            item: "--agent-input-column",
-            tests: &["test_cli_parse_missing_documented_agent_flags_without_server"],
-        },
-        Coverage {
-            item: "--agent-output-column",
-            tests: &["test_cli_parse_missing_documented_agent_flags_without_server"],
-        },
-        Coverage {
-            item: "--agent-system-prompt",
-            tests: &["test_cli_parse_missing_documented_agent_flags_without_server"],
+            item: "--interval",
+            tests: &["test_cli_parse_missing_documented_watch_schema_flags_without_server"],
         },
         // Timeout/runtime flags
         Coverage {
@@ -544,36 +524,30 @@ fn test_cli_parse_missing_documented_flags_without_server() {
 }
 
 #[test]
-fn test_cli_parse_missing_documented_agent_flags_without_server() {
+fn test_cli_parse_missing_documented_watch_schema_flags_without_server() {
     let cli = cli_args::Cli::try_parse_from([
         "kalam",
-        "--init-agent",
-        "--init-agent-non-interactive",
-        "--agent-name",
-        "doc-agent",
-        "--agent-table",
-        "blog.blogs",
-        "--agent-topic",
-        "blog.summarizer",
-        "--agent-group",
-        "blog-summarizer-agent",
-        "--agent-id-column",
-        "blog_id",
-        "--agent-input-column",
-        "content",
-        "--agent-output-column",
-        "summary",
-        "--agent-system-prompt",
-        "You are a summarizer.",
+        "--watch-schema",
+        "--namespace",
+        "chat",
+        "--namespace",
+        "billing",
+        "--table",
+        "chat.messages",
+        "--run",
+        "npm run schema:gen",
+        "--run-on-start",
+        "--interval",
+        "2s",
     ])
     .expect("args should parse");
 
-    assert!(cli.init_agent);
-    assert!(cli.init_agent_non_interactive);
-    assert_eq!(cli.agent_id_column.as_deref(), Some("blog_id"));
-    assert_eq!(cli.agent_input_column.as_deref(), Some("content"));
-    assert_eq!(cli.agent_output_column.as_deref(), Some("summary"));
-    assert_eq!(cli.agent_system_prompt.as_deref(), Some("You are a summarizer."));
+    assert!(cli.watch_schema);
+    assert_eq!(cli.watch_namespace, vec!["chat".to_string(), "billing".to_string()]);
+    assert_eq!(cli.watch_table, vec!["chat.messages".to_string()]);
+    assert_eq!(cli.watch_run.as_deref(), Some("npm run schema:gen"));
+    assert!(cli.watch_run_on_start);
+    assert_eq!(cli.watch_interval, Duration::from_secs(2));
 }
 
 #[test]

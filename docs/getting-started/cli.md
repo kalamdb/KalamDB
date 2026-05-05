@@ -79,6 +79,16 @@ kalam -c "SELECT * FROM system.tables LIMIT 5;"
 kalam -f setup.sql
 ```
 
+### Watch schema generation
+
+```bash
+# Run your schema generator once, then rerun it whenever app namespace metadata changes
+kalam --watch-schema --namespace app --run "npm run schema:gen" --run-on-start
+
+# Watch one specific table with a tighter poll interval
+kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 2s
+```
+
 ### Important flags
 
 - `--url`, `-u` – server URL
@@ -110,6 +120,12 @@ kalam -f setup.sql
 - `--initial-data-timeout` – max seconds to wait for initial data batch
 - `--list-subscriptions` – list active subscriptions
 - `--unsubscribe <subscription_id>` – unsubscribe by id
+- `--watch-schema` – poll `system.tables` and run a local command on schema changes
+- `--namespace` – repeat to scope schema watch to one or more namespaces
+- `--table` – repeat to scope schema watch to one or more `namespace.table` targets
+- `--run` – shell command executed after schema changes are detected
+- `--run-on-start` – execute the watch command once before polling
+- `--interval` – schema watch poll interval, default `5s`
 
 ### Interactive `\` commands
 

@@ -126,16 +126,6 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             KalamDbError::SerializationError(format!("Failed to create RecordBatch: {}", e))
         })?;
 
-        if let Some(group_id) = group_id.as_ref() {
-            if let Some(last_msg) = messages.last() {
-                topic_publisher
-                    .ack_offset(&topic_id, group_id, partition_id, last_msg.offset)
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Failed to commit offset: {}", e))
-                    })?;
-            }
-        }
-
         let row_count = batch.num_rows();
         Ok(ExecutionResult::Rows {
             batches: vec![batch],

@@ -1,7 +1,44 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
 use kalam_cli::OutputFormat;
+
+fn parse_watch_interval(value: &str) -> Result<Duration, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("interval must not be empty".into());
+    }
+
+    let (amount, unit) = if let Some(amount) = trimmed.strip_suffix("ms") {
+        (amount, "ms")
+    } else if let Some(amount) = trimmed.strip_suffix('s') {
+        (amount, "s")
+    } else if let Some(amount) = trimmed.strip_suffix('m') {
+        (amount, "m")
+    } else if let Some(amount) = trimmed.strip_suffix('h') {
+        (amount, "h")
+    } else {
+        (trimmed, "s")
+    };
+
+    let numeric = amount
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| format!("invalid interval '{trimmed}'"))?;
+
+    if numeric == 0 {
+        return Err("interval must be greater than zero".into());
+    }
+
+    match unit {
+        "ms" => Ok(Duration::from_millis(numeric)),
+        "s" => Ok(Duration::from_secs(numeric)),
+        "m" => Ok(Duration::from_secs(numeric.saturating_mul(60))),
+        "h" => Ok(Duration::from_secs(numeric.saturating_mul(60 * 60))),
+        _ => Err(format!("unsupported interval unit in '{trimmed}'")),
+    }
+}
+
 
 // Build information - Create a static version string at compile time
 
@@ -169,50 +206,48 @@ pub struct Cli {
     #[arg(long = "relaxed-timeouts")]
     pub relaxed_timeouts: bool,
 
-    // Agent project scaffolding
-    /// Generate a new TypeScript agent project scaffold
-    #[arg(long = "init-agent")]
-    pub init_agent: bool,
+    /// Watch schema metadata and run a command when `system.tables` changes
+    #[arg(
+        long = "watch-schema",
+        conflicts_with_all = [
+            "file",
+            "command",
+            "show_credentials",
+            "update_credentials",
+            "delete_credentials",
+            "list_instances",
+            "subscribe",
+            "list_subscriptions",
+            "unsubscribe",
+            "consume"
+        ]
+    )]
+    pub watch_schema: bool,
 
-    /// Disable interactive prompts for --init-agent and use defaults/flags
-    #[arg(long = "init-agent-non-interactive", requires = "init_agent")]
-    pub init_agent_non_interactive: bool,
+    /// Namespace to watch for schema changes; repeat to watch multiple namespaces
+    #[arg(long = "namespace", requires = "watch_schema")]
+    pub watch_namespace: Vec<String>,
 
-    /// Project name for --init-agent (directory name)
-    #[arg(long = "agent-name", requires = "init_agent")]
-    pub agent_name: Option<String>,
+    /// Table to watch for schema changes; repeat to watch multiple tables
+    #[arg(long = "table", requires = "watch_schema")]
+    pub watch_table: Vec<String>,
 
-    /// Output directory for --init-agent (default: current directory)
-    #[arg(long = "agent-output", requires = "init_agent")]
-    pub agent_output: Option<PathBuf>,
+    /// Shell command to run after schema changes are detected
+    #[arg(long = "run", requires = "watch_schema")]
+    pub watch_run: Option<String>,
 
-    /// Table id (namespace.table) for --init-agent
-    #[arg(long = "agent-table", requires = "init_agent")]
-    pub agent_table: Option<String>,
+    /// Run the command once immediately before polling for schema changes
+    #[arg(long = "run-on-start", requires = "watch_schema")]
+    pub watch_run_on_start: bool,
 
-    /// Topic id for --init-agent
-    #[arg(long = "agent-topic", requires = "init_agent")]
-    pub agent_topic: Option<String>,
-
-    /// Consumer group id for --init-agent
-    #[arg(long = "agent-group", requires = "init_agent")]
-    pub agent_group: Option<String>,
-
-    /// Primary key column name in the target table
-    #[arg(long = "agent-id-column", requires = "init_agent")]
-    pub agent_id_column: Option<String>,
-
-    /// Input text column name to summarize
-    #[arg(long = "agent-input-column", requires = "init_agent")]
-    pub agent_input_column: Option<String>,
-
-    /// Output text column name for generated summary
-    #[arg(long = "agent-output-column", requires = "init_agent")]
-    pub agent_output_column: Option<String>,
-
-    /// Default system prompt for LLM summarization
-    #[arg(long = "agent-system-prompt", requires = "init_agent")]
-    pub agent_system_prompt: Option<String>,
+    /// Poll interval for schema watch mode (examples: 5s, 500ms, 1m)
+    #[arg(
+        long = "interval",
+        requires = "watch_schema",
+        value_parser = parse_watch_interval,
+        default_value = "5s"
+    )]
+    pub watch_interval: Duration,
 
     /// Unsubscribe from a subscription
     #[arg(long = "unsubscribe")]
@@ -246,4 +281,32 @@ pub struct Cli {
     /// Timeout in seconds for consume mode (exit if idle)
     #[arg(long = "consume-timeout")]
     pub consume_timeout: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_watch_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn parse_watch_interval_defaults_to_seconds() {
+        assert_eq!(parse_watch_interval("5").unwrap(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn parse_watch_interval_supports_suffixes() {
+        assert_eq!(parse_watch_interval("250ms").unwrap(), Duration::from_millis(250));
+        assert_eq!(parse_watch_interval("2s").unwrap(), Duration::from_secs(2));
+        assert_eq!(parse_watch_interval("3m").unwrap(), Duration::from_secs(180));
+    }
+
+    #[test]
+    fn parse_watch_interval_rejects_zero() {
+        assert!(parse_watch_interval("0s").is_err());
+    }
+
+    #[test]
+    fn parse_watch_interval_handles_default_five_seconds_literal() {
+        assert_eq!(parse_watch_interval("5s").unwrap(), Duration::from_secs(5));
+    }
 }

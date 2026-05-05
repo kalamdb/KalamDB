@@ -12,7 +12,7 @@ Use each package directory as the source of truth for its build, test, and publi
 
 - Browser/admin UI: install `@kalamdb/client @kalamdb/orm drizzle-orm`.
 - Topic workers/agents: install `@kalamdb/client @kalamdb/consumer`.
-- Apps that share Drizzle schema between UI and workers can generate `schema.ts` with `kalamdb-orm` and import it from both sides.
+- Apps that share Drizzle schema between UI and workers can generate `schema.ts` with `kalamdb-orm`, then keep it fresh in local dev with `kalam --watch-schema --run "npm run schema:gen" --run-on-start`.
 - `BIGINT` values are JSON-safe strings by default because KalamDB preserves Int64 precision on the wire.
 - Exact KalamDB types are represented in the SDK: `BOOLEAN`, `INT`, `BIGINT`, `DOUBLE`, `FLOAT`, `TEXT`, `TIMESTAMP`, `DATE`, `DATETIME`, `TIME`, `JSON`, `BYTES`, `EMBEDDING(n)`, `UUID`, `DECIMAL(p,s)`, `SMALLINT`, and `FILE`.
 

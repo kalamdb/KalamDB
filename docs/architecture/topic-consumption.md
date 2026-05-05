@@ -46,6 +46,12 @@ Ack commits are persisted in `system.topic_offsets` and are monotonic: a lower
 or equal ack never regresses the committed offset. Acking also clears pending
 claims covered by the acknowledged offset.
 
+HTTP and SQL consume calls do not durably advance `system.topic_offsets` by
+themselves. SDK auto-commit is implemented by sending ACK after the caller marks
+records processed, and SQL callers must issue `ACK` explicitly after processing
+the returned rows. This keeps topic delivery at-least-once for agent workers:
+a crash after consume but before ACK leaves the claimed range recoverable.
+
 If a consumer claims messages and does not ack before
 `topics.visibility_timeout_secs`, the next fetch expires that stale claim and
 resets the group cursor to the earliest expired offset for redelivery.

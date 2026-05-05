@@ -44,85 +44,52 @@ fn test_cli_help_command() {
         .success()
         .stdout(predicate::str::contains("Interactive SQL terminal"))
         .stdout(predicate::str::contains("--url"))
+        .stdout(predicate::str::contains("--watch-schema"))
         .stdout(predicate::str::contains("--json"))
         .stdout(predicate::str::contains("--file"));
 }
 
 #[test]
-fn test_cli_init_agent_non_interactive_generates_project() {
-    let temp_dir = TempDir::new().expect("temp dir");
-    let output_root = temp_dir.path().join("generated");
-    fs::create_dir_all(&output_root).expect("create output dir");
-
+fn test_cli_watch_schema_requires_run() {
     let mut cmd = create_cli_command();
-    cmd.arg("--init-agent")
-        .arg("--init-agent-non-interactive")
-        .arg("--agent-name")
-        .arg("demo-agent")
-        .arg("--agent-output")
-        .arg(output_root.to_str().expect("utf8 path"))
-        .arg("--agent-table")
-        .arg("blog.blogs")
-        .arg("--agent-topic")
-        .arg("blog.summarizer")
-        .arg("--agent-group")
-        .arg("blog-summarizer-agent");
+    cmd.arg("--watch-schema").arg("--namespace").arg("chat");
 
     let output = cmd.output().expect("run cli");
+
     assert!(
-        output.status.success(),
-        "init-agent should succeed\nstdout: {}\nstderr: {}",
+        !output.status.success(),
+        "watch-schema should fail without --run\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let project_dir = output_root.join("demo-agent");
-    assert!(project_dir.exists(), "project directory should exist");
-    assert!(project_dir.join("package.json").exists(), "package.json should exist");
-    assert!(project_dir.join("setup.sh").exists(), "setup.sh should exist");
-    assert!(project_dir.join("setup.sql").exists(), "setup.sql should exist");
-    assert!(project_dir.join("src/agent.ts").exists(), "src/agent.ts should exist");
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        project_dir.join("src/langchain-openai.d.ts").exists(),
-        "langchain declaration shim should exist"
+        stderr.contains("--run is required with --watch-schema"),
+        "stderr should explain missing --run, got: {}",
+        stderr
     );
-    assert!(project_dir.join("scripts/ensure-sdk.sh").exists(), "ensure-sdk.sh should exist");
-
-    let package_json = fs::read_to_string(project_dir.join("package.json")).expect("read package");
-    assert!(
-        package_json.contains("\"@kalamdb/client\": \"file:"),
-        "generated package should depend on local sdk"
-    );
-
-    let agent_ts = fs::read_to_string(project_dir.join("src/agent.ts")).expect("read agent ts");
-    assert!(agent_ts.contains("runAgent"), "generated agent should use sdk runAgent runtime");
 }
 
 #[test]
-fn test_cli_init_agent_rejects_invalid_table_id() {
-    let temp_dir = TempDir::new().expect("temp dir");
-
+fn test_cli_watch_schema_rejects_invalid_table_selector() {
     let mut cmd = create_cli_command();
-    cmd.arg("--init-agent")
-        .arg("--init-agent-non-interactive")
-        .arg("--agent-name")
-        .arg("bad-agent")
-        .arg("--agent-output")
-        .arg(temp_dir.path().to_str().expect("utf8 path"))
-        .arg("--agent-table")
-        .arg("invalid_table")
-        .arg("--agent-topic")
-        .arg("blog.summarizer")
-        .arg("--agent-group")
-        .arg("blog-summarizer-agent");
+    cmd.arg("--watch-schema")
+        .arg("--run")
+        .arg("npm run schema:gen")
+        .arg("--table")
+        .arg("invalid_table");
 
     let output = cmd.output().expect("run cli");
-    assert!(!output.status.success(), "init-agent should fail with invalid table id");
+    assert!(
+        !output.status.success(),
+        "watch-schema should fail with invalid table selector"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("agent-table must be namespace.table"),
-        "stderr should explain invalid table id, got: {}",
+        stderr.contains("--table must be namespace.table"),
+        "stderr should explain invalid table selector, got: {}",
         stderr
     );
 }

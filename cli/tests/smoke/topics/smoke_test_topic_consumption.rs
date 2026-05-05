@@ -351,6 +351,39 @@ fn parse_binary_row_field_as_json(
     parse_payload(&bytes)
 }
 
+fn parse_u64_row_field(row: &HashMap<String, serde_json::Value>, key: &str) -> u64 {
+    let raw = row.get(key).unwrap_or_else(|| panic!("row should contain {}", key));
+    let untyped = common::extract_typed_value(raw);
+    if let Some(value) = untyped.as_u64() {
+        return value;
+    }
+    if let Some(value) = untyped.as_i64().and_then(|value| u64::try_from(value).ok()) {
+        return value;
+    }
+    if let Some(value) = untyped.as_str().and_then(|value| value.parse::<u64>().ok()) {
+        return value;
+    }
+    panic!("{} should be an unsigned integer, got {}", key, untyped);
+}
+
+async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, serde_json::Value>> {
+    let response = common::execute_sql_via_http_as_root(&format!(
+        "SELECT topic_id, group_id, partition_id, last_acked_offset FROM system.topic_offsets \
+         WHERE topic_id = '{}' AND group_id = '{}'",
+        topic, group_id
+    ))
+    .await
+    .expect("topic offset query should return a response");
+
+    assert!(
+        response_is_success(&response),
+        "topic offset query should succeed: {}",
+        response
+    );
+
+    common::get_rows_as_hashmaps(&response).unwrap_or_default()
+}
+
 #[tokio::test]
 #[ntest::timeout(120000)]
 async fn test_topic_consume_insert_events() {
@@ -417,6 +450,61 @@ async fn test_topic_consume_insert_events() {
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
     execute_sql(&format!("DROP TABLE {}.{}", namespace, table)).await;
     execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+#[tokio::test]
+#[ntest::timeout(120000)]
+async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
+    let namespace = common::generate_unique_namespace("smoke_topic_sql_ack");
+    let table = common::generate_unique_table("events");
+    let full_table = format!("{}.{}", namespace, table);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("sql_ack_topic"));
+    let group_id = format!("sql-ack-group-{}", common::random_string(10));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, body TEXT)", full_table)).await;
+    create_topic_with_sources(&topic, &full_table, &["INSERT"]).await;
+
+    for id in 0..2 {
+        execute_sql(&format!(
+            "INSERT INTO {} (id, body) VALUES ({}, 'body_{}')",
+            full_table, id, id
+        ))
+        .await;
+    }
+
+    let consume_sql = format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group_id);
+    let consume_response = poll_sql_consume_until(&consume_sql, 2, Duration::from_secs(20)).await;
+    let consumed_rows = common::get_rows_as_hashmaps(&consume_response)
+        .expect("SQL CONSUME should return rows");
+    assert_eq!(consumed_rows.len(), 2, "SQL CONSUME should deliver both messages");
+
+    let last_offset = consumed_rows
+        .iter()
+        .map(|row| parse_u64_row_field(row, "offset"))
+        .max()
+        .expect("consume response should include offsets");
+    assert_eq!(last_offset, 1);
+
+    let offsets_before_ack = topic_offset_rows(&topic, &group_id).await;
+    assert!(
+        offsets_before_ack.is_empty(),
+        "CONSUME must not durably commit offsets before explicit ACK"
+    );
+
+    execute_sql(&format!(
+        "ACK {} GROUP '{}' PARTITION 0 UPTO OFFSET {}",
+        topic, group_id, last_offset
+    ))
+    .await;
+
+    let offsets_after_ack = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(offsets_after_ack.len(), 1, "ACK should create one committed offset row");
+    assert_eq!(parse_u64_row_field(&offsets_after_ack[0], "last_acked_offset"), last_offset);
+
+    let _ = common::execute_sql_via_http_as_root(&format!("DROP TOPIC {}", topic)).await;
+    let _ = common::execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace))
+        .await;
 }
 
 #[tokio::test]
@@ -622,13 +710,9 @@ async fn test_topic_consume_mixed_operations() {
     let inserts = records.iter().filter(|r| r.op == TopicOp::Insert).count();
     let updates = records.iter().filter(|r| r.op == TopicOp::Update).count();
     let deletes = records.iter().filter(|r| r.op == TopicOp::Delete).count();
-    if updates > 0 || deletes > 0 {
-        assert_eq!(inserts, 2);
-        assert_eq!(updates, 1);
-        assert_eq!(deletes, 1);
-    } else {
-        assert!(records.len() >= 2);
-    }
+    assert_eq!(inserts, 2, "Should receive both INSERT events");
+    assert_eq!(updates, 1, "Should receive the UPDATE event");
+    assert_eq!(deletes, 1, "Should receive the DELETE event");
 
     for record in &records {
         consumer.mark_processed(record);
