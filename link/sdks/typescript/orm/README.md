@@ -83,6 +83,33 @@ Generator options:
 
 The generator introspects `SHOW TABLES`, uses `DESCRIBE` when column metadata is incomplete, preserves primary keys and non-null columns, and emits imports only for builders used by the generated schema. Generated schemas include `${tableName}Config`, `$inferSelect`, and `$inferInsert` exports next to each table, so browser apps and agents can import `schema.generated.ts` directly without a wrapper file.
 
+## Watch `schema.ts` in local development
+
+Add a generator script to your app:
+
+```json
+{
+  "scripts": {
+    "schema:gen": "kalamdb-orm --url http://localhost:8080 --user admin --password AdminPass123! --namespace app --out src/db/schema.ts"
+  }
+}
+```
+
+Then let the Kalam CLI rerun that script whenever `system.tables` changes:
+
+```bash
+# Watch one namespace
+kalam --watch-schema --namespace app --run "npm run schema:gen" --run-on-start
+
+# Watch several namespaces
+kalam --watch-schema --namespace chat --namespace billing --run "npm run schema:gen"
+
+# Watch one table only
+kalam --watch-schema --table app.messages --run "npm run schema:gen"
+```
+
+`--watch-schema` polls every 5 seconds by default. Override that with `--interval 2s`, `--interval 500ms`, or another supported duration when you need faster feedback.
+
 ## KalamDB datatype mapping
 
 | KalamDB type | Generated Drizzle helper | Wire/read note |

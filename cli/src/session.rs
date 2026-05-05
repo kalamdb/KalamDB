@@ -460,7 +460,7 @@ impl CLISession {
     }
 
     /// Execute a SQL query and return the raw response.
-    pub(super) async fn execute_query_response(
+    pub async fn execute_query_response(
         &mut self,
         sql: &str,
     ) -> Result<kalam_client::QueryResponse> {

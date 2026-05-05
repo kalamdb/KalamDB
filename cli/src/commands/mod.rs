@@ -1,3 +1,3 @@
 pub mod credentials;
-pub mod init;
 pub mod subscriptions;
+pub mod watch_schema;

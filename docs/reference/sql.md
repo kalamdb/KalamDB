@@ -411,6 +411,11 @@ CONSUME FROM app.new_messages GROUP 'worker-1' FROM EARLIEST LIMIT 100;
 CONSUME FROM app.new_messages GROUP 'worker-1' FROM 250;
 ```
 
+`CONSUME FROM ... GROUP ...` reserves a delivery range for the group but does
+not commit progress. After processing the returned rows, commit progress with
+`ACK`. If the caller does not ACK before the configured topic visibility
+timeout, the unacked range can be delivered again to the same group.
+
 ### ACK
 
 ```sql

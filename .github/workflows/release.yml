@@ -1938,7 +1938,7 @@ jobs:
 
           KALAMDB_READY=false
           for i in {1..90}; do
-            if docker exec "$KALAMDB_CONTAINER_ID" /usr/local/bin/busybox wget -q -O /dev/null http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            if docker exec "$KALAMDB_CONTAINER_ID" /bin/busybox wget -q -O /dev/null http://127.0.0.1:8080/health >/dev/null 2>&1; then
               KALAMDB_READY=true
               break
             fi

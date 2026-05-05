@@ -27,8 +27,8 @@ mod connect;
 use args::Cli;
 use commands::{
     credentials::{handle_credentials, login_and_store_credentials},
-    init::handle_init_agent,
     subscriptions::handle_subscriptions,
+    watch_schema::handle_watch_schema,
 };
 use connect::create_session;
 
@@ -44,11 +44,6 @@ async fn main() {
 async fn run() -> Result<()> {
     // Parse command-line arguments
     let mut cli = Cli::parse();
-
-    // Handle project scaffolding command before any network/session setup.
-    if handle_init_agent(&cli)? {
-        return Ok(());
-    }
 
     // If the password is explicitly set to an empty string, only prompt in interactive mode.
     // In non-interactive modes (--command/--file), an empty password may be valid (e.g. default
@@ -80,6 +75,11 @@ async fn run() -> Result<()> {
 
     // Handle credential login/update (async - requires network)
     if login_and_store_credentials(&cli, &mut credential_store).await? {
+        return Ok(());
+    }
+
+    // Handle schema watch mode.
+    if handle_watch_schema(&cli, &mut credential_store).await? {
         return Ok(());
     }
 
