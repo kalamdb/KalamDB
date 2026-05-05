@@ -7,6 +7,8 @@
 //! 1. Run `npm run build` in the `ui/` directory
 //! 2. Rebuild the server with `cargo build`
 
+use std::borrow::Cow;
+
 use actix_web::{web, HttpRequest, HttpResponse};
 use log::debug;
 use rust_embed::Embed;
@@ -21,6 +23,13 @@ use super::UiRuntimeConfig;
 #[exclude = "*.map"]
 #[exclude = "kalam_client_bg.wasm"]
 struct UiAssets;
+
+fn embedded_asset_body(data: Cow<'static, [u8]>) -> web::Bytes {
+    match data {
+        Cow::Borrowed(bytes) => web::Bytes::from_static(bytes),
+        Cow::Owned(bytes) => web::Bytes::from(bytes),
+    }
+}
 
 /// Serve embedded UI assets
 ///
@@ -43,7 +52,7 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
 
         debug!("[embedded_ui] Found file: {} (mime: {})", path, mime_type);
 
-        return HttpResponse::Ok().content_type(mime_type).body(content.data.into_owned());
+        return HttpResponse::Ok().content_type(mime_type).body(embedded_asset_body(content.data));
     }
 
     debug!("[embedded_ui] File not found: {}, falling back to index.html", path);
@@ -53,7 +62,7 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
     if let Some(index) = UiAssets::get("index.html") {
         return HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
-            .body(index.data.into_owned());
+            .body(embedded_asset_body(index.data));
     }
 
     // No UI built - show helpful message

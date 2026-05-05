@@ -1,13 +1,14 @@
 use std::{
     hint::black_box,
-    sync::{atomic::{AtomicU64, Ordering}, Arc},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use criterion::{
-    criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use kalamdb_commons::ids::SnowflakeGenerator;
 use parking_lot::Mutex;
 
@@ -160,13 +161,17 @@ fn bench_batch_generation(c: &mut Criterion) {
     for batch_size in [32_usize, 256, 1024] {
         group.throughput(Throughput::Elements(batch_size as u64));
 
-        group.bench_with_input(BenchmarkId::new("optimized", batch_size), &batch_size, |b, &size| {
-            b.iter_batched(
-                || SnowflakeGenerator::new(1),
-                |generator| black_box(generator.next_ids(size).expect("optimized next_ids")),
-                BatchSize::SmallInput,
-            );
-        });
+        group.bench_with_input(
+            BenchmarkId::new("optimized", batch_size),
+            &batch_size,
+            |b, &size| {
+                b.iter_batched(
+                    || SnowflakeGenerator::new(1),
+                    |generator| black_box(generator.next_ids(size).expect("optimized next_ids")),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
 
         group.bench_with_input(BenchmarkId::new("legacy", batch_size), &batch_size, |b, &size| {
             b.iter_batched(
@@ -180,71 +185,121 @@ fn bench_batch_generation(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_mapped_batch_generation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("snowflake_mapped_batch_generation");
+
+    for batch_size in [256_usize, 1024] {
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("optimized_mapped", batch_size),
+            &batch_size,
+            |b, &size| {
+                b.iter_batched(
+                    || SnowflakeGenerator::new(1),
+                    |generator| {
+                        black_box(
+                            generator
+                                .next_ids_mapped(size, |id| id.wrapping_mul(31))
+                                .expect("optimized next_ids_mapped"),
+                        )
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("legacy_then_map", batch_size),
+            &batch_size,
+            |b, &size| {
+                b.iter_batched(
+                    || LegacySnowflakeGenerator::new(1),
+                    |generator| {
+                        let ids = generator.next_ids(size).expect("legacy next_ids");
+                        black_box(ids.into_iter().map(|id| id.wrapping_mul(31)).collect::<Vec<_>>())
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn bench_concurrent_single_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("snowflake_concurrent_single_generation");
     let thread_count = 8;
     let ids_per_thread = 1_000;
     group.throughput(Throughput::Elements((thread_count * ids_per_thread) as u64));
 
-    group.bench_function(BenchmarkId::new("optimized", format!("{}x{}", thread_count, ids_per_thread)), |b| {
-        b.iter(|| {
-            let generator = Arc::new(SnowflakeGenerator::new(1));
-            let duplicates = Arc::new(AtomicU64::new(0));
-            thread::scope(|scope| {
-                let mut handles = Vec::with_capacity(thread_count);
-                for _ in 0..thread_count {
-                    let generator = Arc::clone(&generator);
-                    let duplicates = Arc::clone(&duplicates);
-                    handles.push(scope.spawn(move || {
-                        let mut prev = None;
-                        for _ in 0..ids_per_thread {
-                            let next = generator.next_id().expect("optimized concurrent next_id");
-                            if let Some(prev) = prev {
-                                if next <= prev {
-                                    duplicates.fetch_add(1, Ordering::Relaxed);
+    group.bench_function(
+        BenchmarkId::new("optimized", format!("{}x{}", thread_count, ids_per_thread)),
+        |b| {
+            b.iter(|| {
+                let generator = Arc::new(SnowflakeGenerator::new(1));
+                let duplicates = Arc::new(AtomicU64::new(0));
+                thread::scope(|scope| {
+                    let mut handles = Vec::with_capacity(thread_count);
+                    for _ in 0..thread_count {
+                        let generator = Arc::clone(&generator);
+                        let duplicates = Arc::clone(&duplicates);
+                        handles.push(scope.spawn(move || {
+                            let mut prev = None;
+                            for _ in 0..ids_per_thread {
+                                let next =
+                                    generator.next_id().expect("optimized concurrent next_id");
+                                if let Some(prev) = prev {
+                                    if next <= prev {
+                                        duplicates.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
+                                prev = Some(next);
                             }
-                            prev = Some(next);
-                        }
-                    }));
-                }
-                for handle in handles {
-                    handle.join().expect("optimized thread join");
-                }
+                        }));
+                    }
+                    for handle in handles {
+                        handle.join().expect("optimized thread join");
+                    }
+                });
+                assert_eq!(duplicates.load(Ordering::Relaxed), 0);
             });
-            assert_eq!(duplicates.load(Ordering::Relaxed), 0);
-        });
-    });
+        },
+    );
 
-    group.bench_function(BenchmarkId::new("legacy", format!("{}x{}", thread_count, ids_per_thread)), |b| {
-        b.iter(|| {
-            let generator = Arc::new(LegacySnowflakeGenerator::new(1));
-            let duplicates = Arc::new(AtomicU64::new(0));
-            thread::scope(|scope| {
-                let mut handles = Vec::with_capacity(thread_count);
-                for _ in 0..thread_count {
-                    let generator = Arc::clone(&generator);
-                    let duplicates = Arc::clone(&duplicates);
-                    handles.push(scope.spawn(move || {
-                        let mut prev = None;
-                        for _ in 0..ids_per_thread {
-                            let next = generator.next_id().expect("legacy concurrent next_id");
-                            if let Some(prev) = prev {
-                                if next <= prev {
-                                    duplicates.fetch_add(1, Ordering::Relaxed);
+    group.bench_function(
+        BenchmarkId::new("legacy", format!("{}x{}", thread_count, ids_per_thread)),
+        |b| {
+            b.iter(|| {
+                let generator = Arc::new(LegacySnowflakeGenerator::new(1));
+                let duplicates = Arc::new(AtomicU64::new(0));
+                thread::scope(|scope| {
+                    let mut handles = Vec::with_capacity(thread_count);
+                    for _ in 0..thread_count {
+                        let generator = Arc::clone(&generator);
+                        let duplicates = Arc::clone(&duplicates);
+                        handles.push(scope.spawn(move || {
+                            let mut prev = None;
+                            for _ in 0..ids_per_thread {
+                                let next = generator.next_id().expect("legacy concurrent next_id");
+                                if let Some(prev) = prev {
+                                    if next <= prev {
+                                        duplicates.fetch_add(1, Ordering::Relaxed);
+                                    }
                                 }
+                                prev = Some(next);
                             }
-                            prev = Some(next);
-                        }
-                    }));
-                }
-                for handle in handles {
-                    handle.join().expect("legacy thread join");
-                }
+                        }));
+                    }
+                    for handle in handles {
+                        handle.join().expect("legacy thread join");
+                    }
+                });
+                assert_eq!(duplicates.load(Ordering::Relaxed), 0);
             });
-            assert_eq!(duplicates.load(Ordering::Relaxed), 0);
-        });
-    });
+        },
+    );
 
     group.finish();
 }
@@ -252,6 +307,6 @@ fn bench_concurrent_single_generation(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(20).warm_up_time(Duration::from_millis(500));
-    targets = bench_single_generation, bench_batch_generation, bench_concurrent_single_generation
+    targets = bench_single_generation, bench_batch_generation, bench_mapped_batch_generation, bench_concurrent_single_generation
 );
 criterion_main!(benches);

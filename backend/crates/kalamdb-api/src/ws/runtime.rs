@@ -113,14 +113,12 @@ pub(super) async fn run_websocket(
                 msg = msg_stream.next() => {
                     match msg {
                         Some(Ok(Message::Ping(bytes))) => {
-                            record_activity_now();
                             connection_state.update_heartbeat();
                             if session.pong(&bytes).await.is_err() {
                                 break;
                             }
                         }
                         Some(Ok(Message::Pong(_))) => {
-                            record_activity_now();
                             connection_state.update_heartbeat();
                         }
                         Some(Ok(Message::Text(text))) => {

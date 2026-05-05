@@ -157,7 +157,8 @@ impl KalamLinkClient {
         };
         // Lock released here ↑
 
-        // Phase 2: Wait for the server Ready ack without the lock held.
+        // Phase 2: Wait for the server ack without the lock held. Initial
+        // snapshot batches continue through the returned subscription stream.
         if let Some((event_rx, result_rx, shared_control)) = pending {
             let (generation, resume_from) = result_rx.await.map_err(|_| {
                 KalamLinkError::WebSocketError(

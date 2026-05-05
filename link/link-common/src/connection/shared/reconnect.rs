@@ -257,6 +257,8 @@ async fn handle_startup_timeouts(
             cache_entry_seq(seq_id_cache, id.as_str(), &entry);
             if let Some(result_tx) = entry.pending_result_tx.take() {
                 let _ = result_tx.send(Err(KalamLinkError::TimeoutError(message)));
+            } else {
+                let _ = entry.event_tx.try_send(Err(KalamLinkError::TimeoutError(message)));
             }
         }
     }

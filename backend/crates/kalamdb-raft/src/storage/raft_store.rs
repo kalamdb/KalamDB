@@ -381,6 +381,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     /// before the restart.
     pub async fn restore_state_machine_from_snapshot(&self) -> Result<(), crate::RaftError> {
         let start = std::time::Instant::now();
+        let persisted_last_applied = *self.last_applied.read();
+        let persisted_committed = *self.committed.read();
         let snapshot_data = {
             let guard = self.current_snapshot.read();
             guard.as_ref().map(|s| Arc::clone(&s.data))
@@ -408,20 +410,37 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             let restore_ms = restore_start.elapsed().as_secs_f64() * 1000.0;
 
             log::info!(
-                "KalamRaftStorage[{}]: Restored state machine from snapshot \
-                 (last_applied_index={}, last_applied_term={}) - deserialize: {:.2}ms, restore: \
-                 {:.2}ms, total: {:.2}ms",
+                "KalamRaftStorage[{}]: Restart recovery loaded the in-memory state-machine \
+                 tracker from snapshot (snapshot_applied={}/{}, persisted_last_applied={}, \
+                 persisted_committed={}, deserialize={:.2}ms, restore={:.2}ms, total={:.2}ms)",
                 self.group_id,
                 sm_data.state_applied_index,
                 sm_data.state_applied_term,
+                persisted_last_applied
+                    .map(|id| id.index.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                persisted_committed
+                    .map(|id| id.index.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
                 deserialize_ms,
                 restore_ms,
                 start.elapsed().as_secs_f64() * 1000.0
             );
         } else {
             log::debug!(
-                "KalamRaftStorage[{}]: No snapshot to restore state machine from",
+                "KalamRaftStorage[{}]: No persisted snapshot for in-memory state-machine \
+                 restore; restart will rely on persisted last_applied/log state",
                 self.group_id
+            );
+        }
+
+        if let Some((from_index, to_index)) = self.reconcile_state_machine_progress() {
+            log::info!(
+                "KalamRaftStorage[{}]: Restart recovery advanced the in-memory apply watermark \
+                 from {} to {} using persisted last_applied metadata",
+                self.group_id,
+                from_index,
+                to_index
             );
         }
 
@@ -431,6 +450,21 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     /// Check if there's a snapshot that can be restored
     pub fn has_snapshot(&self) -> bool {
         self.current_snapshot.read().is_some()
+    }
+
+    /// Reconcile the in-memory state machine watermark with persisted progress.
+    pub fn reconcile_state_machine_progress(&self) -> Option<(u64, u64)> {
+        let last_applied = (*self.last_applied.read())?;
+        let current_index = self.state_machine.last_applied_index();
+
+        if last_applied.index <= current_index {
+            return None;
+        }
+
+        self.state_machine
+            .mark_applied_index(last_applied.index, last_applied.leader_id.term);
+
+        Some((current_index, last_applied.index))
     }
 
     /// Get the last applied log ID from storage
@@ -542,6 +576,28 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                 Vec::new()
             },
         }
+    }
+
+    fn persist_last_applied_log_id(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
+        if let Some(store) = &self.persistent_store {
+            store
+                .save_last_applied(Some(RaftLogId {
+                    term: log_id.leader_id.term,
+                    index: log_id.index,
+                }))
+                .map_err(|e| StorageIOError::write(&e))?;
+        }
+
+        Ok(())
+    }
+
+    fn commit_last_applied_log_id(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
+        {
+            let mut last = self.last_applied.write();
+            *last = Some(log_id);
+        }
+
+        self.persist_last_applied_log_id(log_id)
     }
 }
 
@@ -889,15 +945,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
             let index = log_id.index;
             let term = log_id.leader_id.term;
 
-            // Update last applied
-            {
-                let mut last = self.last_applied.write();
-                *last = Some(log_id);
-            }
-
             match &entry.payload {
                 EntryPayload::Blank => {
                     self.state_machine.mark_applied_index(index, term);
+                    self.commit_last_applied_log_id(log_id)?;
                     results.push(Vec::new());
                 },
                 EntryPayload::Normal(data) => {
@@ -908,19 +959,29 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
                     match sm.apply(index, term, data).await {
                         Ok(apply_result) => match apply_result {
                             crate::state_machine::ApplyResult::Ok(response_data) => {
+                                self.commit_last_applied_log_id(log_id)?;
                                 results.push(response_data);
                             },
                             crate::state_machine::ApplyResult::NoOp => {
+                                self.commit_last_applied_log_id(log_id)?;
                                 results.push(Vec::new());
                             },
                             crate::state_machine::ApplyResult::Error(e) => {
-                                log::error!("State machine apply error at index {}: {}", index, e);
-                                results.push(Vec::new());
+                                let message =
+                                    format!("state machine apply error at index {}: {}", index, e);
+                                log::error!("{}", message);
+                                return Err(
+                                    StorageIOError::write(&std::io::Error::other(message)).into()
+                                );
                             },
                         },
                         Err(e) => {
-                            log::error!("State machine apply failed at index {}: {:?}", index, e);
-                            results.push(Vec::new());
+                            let message =
+                                format!("state machine apply failed at index {}: {:?}", index, e);
+                            log::error!("{}", message);
+                            return Err(
+                                StorageIOError::write(&std::io::Error::other(message)).into()
+                            );
                         },
                     }
                 },
@@ -937,22 +998,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
                         }
                     }
                     self.state_machine.mark_applied_index(index, term);
+                    self.commit_last_applied_log_id(log_id)?;
                     results.push(Vec::new());
                 },
-            }
-        }
-
-        // Persist last_applied after processing all entries in this batch
-        // This is CRITICAL for crash recovery - without this, logs will be replayed on restart
-        if let Some(last_log_id) = entries.last().map(|e| e.log_id) {
-            if let Some(store) = &self.persistent_store {
-                let raft_log_id = RaftLogId {
-                    term: last_log_id.leader_id.term,
-                    index: last_log_id.index,
-                };
-                if let Err(e) = store.save_last_applied(Some(raft_log_id)) {
-                    log::error!("Failed to persist last_applied: {:?}", e);
-                }
             }
         }
 
@@ -1266,6 +1314,84 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ProgressOnlyStateMachine {
+        apply_calls: Arc<AtomicUsize>,
+        last_applied_index: AtomicU64,
+        last_applied_term: AtomicU64,
+    }
+
+    impl ProgressOnlyStateMachine {
+        fn new(apply_calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                apply_calls,
+                last_applied_index: AtomicU64::new(0),
+                last_applied_term: AtomicU64::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl KalamStateMachine for ProgressOnlyStateMachine {
+        fn group_id(&self) -> GroupId {
+            GroupId::Meta
+        }
+
+        async fn apply(
+            &self,
+            index: u64,
+            term: u64,
+            _command: &[u8],
+        ) -> Result<ApplyResult, RaftError> {
+            if index <= self.last_applied_index.load(Ordering::Acquire) {
+                return Ok(ApplyResult::NoOp);
+            }
+
+            self.apply_calls.fetch_add(1, Ordering::Relaxed);
+            self.last_applied_index.store(index, Ordering::Release);
+            self.last_applied_term.store(term, Ordering::Release);
+
+            Ok(ApplyResult::ok())
+        }
+
+        fn last_applied_index(&self) -> u64 {
+            self.last_applied_index.load(Ordering::Acquire)
+        }
+
+        fn last_applied_term(&self) -> u64 {
+            self.last_applied_term.load(Ordering::Acquire)
+        }
+
+        fn mark_applied_index(&self, index: u64, term: u64) {
+            let last_applied = self.last_applied_index.load(Ordering::Acquire);
+            if index <= last_applied {
+                return;
+            }
+
+            self.last_applied_index.store(index, Ordering::Release);
+            self.last_applied_term.store(term, Ordering::Release);
+        }
+
+        async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
+            Ok(StateMachineSnapshot::new(
+                self.group_id(),
+                self.last_applied_index(),
+                self.last_applied_term(),
+                Vec::new(),
+            ))
+        }
+
+        async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
+            self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
+            self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
+            Ok(())
+        }
+
+        fn approximate_size(&self) -> usize {
+            0
+        }
+    }
+
     #[tokio::test]
     async fn test_snapshot_build_and_install_restores_state() {
         let state = std::sync::Arc::new(AtomicU64::new(0));
@@ -1331,6 +1457,26 @@ mod tests {
 
         let (last_applied, _) = restored_storage.last_applied_state().await.unwrap();
         assert_eq!(last_applied, snapshot_meta.last_log_id);
+    }
+
+    #[tokio::test]
+    async fn test_apply_failure_does_not_advance_last_applied() {
+        let state = Arc::new(AtomicU64::new(0));
+        let sm = TestStateMachine::new(state);
+        let storage = Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
+        let mut storage = storage;
+
+        let entries = vec![Entry {
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+            payload: EntryPayload::Normal(vec![1, 2, 3]),
+        }];
+
+        let result = storage.apply_to_state_machine(&entries).await;
+        assert!(result.is_err());
+
+        let (last_applied, _) = storage.last_applied_state().await.unwrap();
+        assert!(last_applied.is_none());
+        assert_eq!(storage.state_machine().last_applied_index(), 0);
     }
 
     // ========================================================================
@@ -1731,6 +1877,104 @@ mod tests {
             let snap = snapshot.unwrap();
             assert_eq!(snap.meta.snapshot_id, snapshot_id);
         }
+    }
+
+    #[tokio::test]
+    async fn test_restore_state_machine_reconciles_progress_beyond_snapshot() {
+        let backend = create_test_backend();
+        let apply_calls = Arc::new(AtomicUsize::new(0));
+
+        {
+            let sm = ProgressOnlyStateMachine::new(apply_calls.clone());
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            let storage = Arc::new(storage);
+
+            let first_entries = vec![
+                Entry {
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 1),
+                    payload: EntryPayload::Normal(Vec::new()),
+                },
+                Entry {
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                    payload: EntryPayload::Normal(Vec::new()),
+                },
+            ];
+            let mut storage_clone = storage.clone();
+            storage_clone.apply_to_state_machine(&first_entries).await.unwrap();
+
+            let mut builder = storage_clone.get_snapshot_builder().await;
+            builder.build_snapshot().await.unwrap();
+
+            let tail_entries = vec![
+                Entry {
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
+                    payload: EntryPayload::Normal(Vec::new()),
+                },
+                Entry {
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 4),
+                    payload: EntryPayload::Normal(Vec::new()),
+                },
+            ];
+            storage_clone.apply_to_state_machine(&tail_entries).await.unwrap();
+        }
+
+        apply_calls.store(0, Ordering::Release);
+
+        let restored_sm = ProgressOnlyStateMachine::new(apply_calls.clone());
+        let storage = KalamRaftStorage::new_persistent(
+            GroupId::Meta,
+            restored_sm,
+            backend,
+            test_snapshots_dir(),
+        )
+        .unwrap();
+
+        storage.restore_state_machine_from_snapshot().await.unwrap();
+
+        assert_eq!(storage.state_machine().last_applied_index(), 4);
+        assert_eq!(apply_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_state_machine_progress_without_snapshot() {
+        let backend = create_test_backend();
+
+        {
+            let sm = ProgressOnlyStateMachine::new(Arc::new(AtomicUsize::new(0)));
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            let mut storage = Arc::new(storage);
+
+            let entries = vec![Entry {
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
+                payload: EntryPayload::Normal(Vec::new()),
+            }];
+            storage.apply_to_state_machine(&entries).await.unwrap();
+        }
+
+        let restored_sm = ProgressOnlyStateMachine::new(Arc::new(AtomicUsize::new(0)));
+        let storage = KalamRaftStorage::new_persistent(
+            GroupId::Meta,
+            restored_sm,
+            backend,
+            test_snapshots_dir(),
+        )
+        .unwrap();
+
+        assert_eq!(storage.state_machine().last_applied_index(), 0);
+        assert_eq!(storage.reconcile_state_machine_progress(), Some((0, 2)));
+        assert_eq!(storage.state_machine().last_applied_index(), 2);
     }
 
     #[tokio::test]

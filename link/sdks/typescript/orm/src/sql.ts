@@ -2,6 +2,7 @@ import type { KalamDBClient, QueryResponse, UserId } from '@kalamdb/client';
 import type { SQLWrapper } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { stripDefaults } from './driver.js';
+import { stripQuotedIdentifiers } from './query-normalize.js';
 
 type ExecuteAsUserClient = Pick<KalamDBClient, 'executeAsUser'>;
 
@@ -27,7 +28,7 @@ function hasToSQL(value: SqlSource): value is QueryBuilderLike {
 }
 
 function normalizeSql(sql: string): string {
-  return sql.replace(/"/g, '');
+  return stripQuotedIdentifiers(sql);
 }
 
 function normalizeCompiledQuery(compiled: CompiledQuery): CompiledQuery {

@@ -42,7 +42,7 @@ pub(crate) fn subscription_start_ready(event: &ChangeEvent) -> bool {
 #[cfg(any(feature = "tokio-runtime", test))]
 pub(crate) fn event_progress(event: &ChangeEvent) -> Option<EventProgress> {
     match event {
-        ChangeEvent::InitialDataBatch { rows, .. } if subscription_start_ready(event) => {
+        ChangeEvent::InitialDataBatch { rows, .. } => {
             let batch = batch_envelope(event);
             let seq_id = seq_tracking::extract_max_seq(rows)
                 .or_else(|| batch.and_then(|batch| batch.last_seq_id))?;
@@ -261,6 +261,25 @@ mod tests {
             event_progress(&event),
             Some(EventProgress {
                 seq_id: SeqId::from_i64(11),
+                advance_resume: false,
+            })
+        );
+    }
+
+    #[test]
+    fn progress_marks_loading_initial_batch_without_advancing_resume() {
+        let mut control = batch_control(BatchStatus::LoadingBatch);
+        control.last_seq_id = Some(SeqId::from_i64(21));
+        let event = ChangeEvent::InitialDataBatch {
+            subscription_id: "sub-1".to_string(),
+            rows: Vec::new(),
+            batch_control: control,
+        };
+
+        assert_eq!(
+            event_progress(&event),
+            Some(EventProgress {
+                seq_id: SeqId::from_i64(21),
                 advance_resume: false,
             })
         );

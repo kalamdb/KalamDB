@@ -1,8 +1,8 @@
 import { createClient, Auth } from '@kalamdb/client';
 
-export const URL = process.env.KALAMDB_TEST_URL || 'http://localhost:8088';
+export const URL = process.env.KALAMDB_TEST_URL || 'http://localhost:8080';
 export const USER = process.env.KALAMDB_TEST_USER || 'admin';
-export const PASS = process.env.KALAMDB_TEST_PASSWORD;
+export const PASS = process.env.KALAMDB_TEST_PASSWORD || 'kalamdb123';
 
 export function requirePassword() {
   if (!PASS) {

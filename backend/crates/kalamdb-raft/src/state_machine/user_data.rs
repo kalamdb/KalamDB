@@ -513,8 +513,8 @@ impl KalamStateMachine for UserDataStateMachine {
         self.publish_last_applied(snapshot.last_applied_index);
 
         log::info!(
-            "UserDataStateMachine[{}]: Restored from snapshot at index {}, term {}, {} pending \
-             commands",
+            "UserDataStateMachine[{}]: Loaded in-memory user-shard tracker from snapshot \
+             (applied={}, term={}, pending_meta_waiters={})",
             self.shard,
             snapshot.last_applied_index,
             snapshot.last_applied_term,

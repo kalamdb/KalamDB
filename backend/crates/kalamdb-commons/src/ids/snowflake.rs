@@ -34,8 +34,8 @@ impl SnowflakeGenerator {
     pub const DEFAULT_EPOCH: u64 = 1704067200000;
 
     const TIMESTAMP_SHIFT: u32 = 22;
+    const SEQUENCE_BITS: u32 = 12;
 
-        const SEQUENCE_BITS: u32 = 12;
     /// Maximum worker ID
     pub const MAX_WORKER_ID: u16 = 1023;
 
@@ -159,15 +159,28 @@ impl SnowflakeGenerator {
     /// Vector of unique, time-ordered Snowflake IDs
     #[inline]
     pub fn next_ids(&self, count: usize) -> Result<Vec<i64>, String> {
+        self.next_ids_mapped(count, |id| id)
+    }
+
+    /// Generate multiple Snowflake IDs and map them into the caller's target type.
+    ///
+    /// This keeps the same single-lock batch reservation as `next_ids()` while
+    /// avoiding an intermediate `Vec<i64>` for wrappers such as `SeqId`.
+    #[inline]
+    pub fn next_ids_mapped<T, F>(&self, count: usize, mut map: F) -> Result<Vec<T>, String>
+    where
+        F: FnMut(i64) -> T,
+    {
         if count == 0 {
             return Ok(Vec::new());
         }
 
         let mut state = self.state.lock();
         let mut ids = Vec::with_capacity(count);
+        let mut generated = 0usize;
 
-        while ids.len() < count {
-            let remaining = count - ids.len();
+        while generated < count {
+            let remaining = count - generated;
 
             let mut timestamp = self.reconcile_timestamp(state.last_timestamp)?;
             let (start_sequence, chunk_len) = if timestamp == state.last_timestamp {
@@ -190,7 +203,8 @@ impl SnowflakeGenerator {
             };
 
             state.last_timestamp = timestamp;
-            self.append_chunk_ids(&mut ids, timestamp, start_sequence, chunk_len);
+            self.append_chunk_ids(&mut ids, timestamp, start_sequence, chunk_len, &mut map);
+            generated += chunk_len;
         }
 
         Ok(ids)
@@ -220,15 +234,21 @@ impl SnowflakeGenerator {
         (((timestamp - self.epoch) << Self::TIMESTAMP_SHIFT) | self.worker_bits | sequence) as i64
     }
 
-    fn append_chunk_ids(
+    #[inline]
+    fn append_chunk_ids<T, F>(
         &self,
-        ids: &mut Vec<i64>,
+        ids: &mut Vec<T>,
         timestamp: u64,
         start_sequence: u64,
         chunk_len: usize,
-    ) {
-        for offset in 0..chunk_len {
-            ids.push(self.compose_id(timestamp, start_sequence + offset as u64));
+        map: &mut F,
+    ) where
+        F: FnMut(i64) -> T,
+    {
+        let mut id = self.compose_id(timestamp, start_sequence);
+        for _ in 0..chunk_len {
+            ids.push(map(id));
+            id += 1;
         }
     }
 }
@@ -244,6 +264,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use crate::ids::SeqId;
 
     #[test]
     fn test_snowflake_generation() {
@@ -437,6 +458,15 @@ mod tests {
         let gen = SnowflakeGenerator::new(1);
         let ids = gen.next_ids(0).unwrap();
         assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_batch_generation_mapped() {
+        let gen = SnowflakeGenerator::new(1);
+        let ids = gen.next_ids_mapped(16, SeqId::new).unwrap();
+
+        assert_eq!(ids.len(), 16);
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

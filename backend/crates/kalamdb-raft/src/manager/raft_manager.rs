@@ -1446,7 +1446,7 @@ impl RaftManager {
         );
     }
 
-    /// Restore all state machines from their persisted snapshots
+    /// Restore all state machines from their persisted snapshots and progress metadata.
     ///
     /// This should be called AFTER all appliers are set. It restores the state machines'
     /// internal state from persisted snapshots to ensure idempotency checks work correctly
@@ -1457,11 +1457,15 @@ impl RaftManager {
     pub async fn restore_state_machines_from_snapshots(&self) -> Result<(), RaftError> {
         let start = std::time::Instant::now();
         let mut restored_count = 0;
+        let mut reconciled_count = 0;
 
         // Restore meta state machine
         if self.meta.has_snapshot() {
             self.meta.restore_state_machine_from_snapshot().await?;
             restored_count += 1;
+        }
+        if self.meta.reconcile_state_machine_progress().is_some() {
+            reconciled_count += 1;
         }
 
         // Restore user data state machines
@@ -1469,6 +1473,9 @@ impl RaftManager {
             if shard.has_snapshot() {
                 shard.restore_state_machine_from_snapshot().await?;
                 restored_count += 1;
+            }
+            if shard.reconcile_state_machine_progress().is_some() {
+                reconciled_count += 1;
             }
         }
 
@@ -1478,12 +1485,17 @@ impl RaftManager {
                 shard.restore_state_machine_from_snapshot().await?;
                 restored_count += 1;
             }
+            if shard.reconcile_state_machine_progress().is_some() {
+                reconciled_count += 1;
+            }
         }
 
-        if restored_count > 0 {
+        if restored_count > 0 || reconciled_count > 0 {
             log::info!(
-                "RaftManager: Restored {} state machines from snapshots in {:.2}ms",
+                "RaftManager: Restart recovery loaded {} in-memory state-machine snapshot(s) and \
+                 advanced {} apply watermark(s) from persisted last_applied in {:.2}ms",
                 restored_count,
+                reconciled_count,
                 start.elapsed().as_secs_f64() * 1000.0
             );
         }
