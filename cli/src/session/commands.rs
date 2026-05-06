@@ -6,7 +6,7 @@ use kalam_client::SubscriptionConfig;
 use super::{CLISession, OutputFormat};
 use crate::{
     error::{CLIError, Result},
-    parser::Command,
+    parser::{Command, FlushTarget},
 };
 
 impl CLISession {
@@ -25,9 +25,22 @@ impl CLISession {
             Command::Help => {
                 self.show_help();
             },
-            Command::Flush => {
-                println!("Storage flushing all tables in current namespace...");
-                match self.execute("STORAGE FLUSH ALL").await {
+            Command::Flush(target) => {
+                let flush_sql = self.build_flush_query(&target)?;
+
+                match &target {
+                    FlushTarget::All => println!(
+                        "Storage flushing all tables in namespace '{}'...",
+                        self.effective_namespace()
+                    ),
+                    FlushTarget::Table(table) => println!(
+                        "Storage flushing table '{}' in namespace context '{}'...",
+                        table,
+                        self.effective_namespace()
+                    ),
+                }
+
+                match self.execute(&flush_sql).await {
                     Ok(_) => println!("Storage flush completed successfully"),
                     Err(e) => eprintln!("Storage flush failed: {}", e),
                 }
@@ -105,7 +118,6 @@ impl CLISession {
                 },
             },
             Command::Subscribe(query) => {
-                let (clean_sql, options) = Self::extract_subscribe_options(&query);
                 let sub_id = format!(
                     "sub_{}",
                     std::time::SystemTime::now()
@@ -113,12 +125,8 @@ impl CLISession {
                         .unwrap()
                         .as_nanos()
                 );
-                let mut config = SubscriptionConfig::new(sub_id, clean_sql);
-                config.options = options;
+                let config = self.build_subscription_config(&query, sub_id)?;
                 self.run_subscription(config).await?;
-            },
-            Command::Unsubscribe => {
-                println!("No active subscription to cancel");
             },
             Command::RefreshTables => {
                 println!("Table names refreshed");
@@ -201,10 +209,153 @@ impl CLISession {
         }
 
         Ok(format!(
-            "EXECUTE AS USER '{}' ({})",
+            "EXECUTE AS '{}' ({})",
             Self::escape_sql_literal(&normalized_user),
             inner_sql,
         ))
+    }
+
+    fn build_flush_query(&self, target: &FlushTarget) -> Result<String> {
+        match target {
+            FlushTarget::All => Ok("STORAGE FLUSH ALL".to_string()),
+            FlushTarget::Table(table) => {
+                Self::build_flush_table_query(table, Some(self.effective_namespace()))
+            },
+        }
+    }
+
+    pub(super) fn build_subscription_config(
+        &self,
+        query: &str,
+        subscription_id: String,
+    ) -> Result<SubscriptionConfig> {
+        let (clean_sql, options) = Self::extract_subscribe_options(query);
+        let qualified_sql = Self::qualify_subscription_sql(&clean_sql, self.effective_namespace())?;
+        let mut config = SubscriptionConfig::new(subscription_id, qualified_sql);
+        config.options = options;
+        Ok(config)
+    }
+
+    fn qualify_subscription_sql(sql: &str, default_namespace: &str) -> Result<String> {
+        let trimmed = sql.trim().trim_end_matches(';').trim();
+        if trimmed.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\live requires a SELECT query".to_string(),
+            ));
+        }
+
+        let Some(from_idx) = Self::find_subscription_from_clause(trimmed) else {
+            return Ok(trimmed.to_string());
+        };
+
+        let relation_start = trimmed[from_idx..]
+            .char_indices()
+            .find_map(|(offset, ch)| (!ch.is_whitespace()).then_some(from_idx + offset));
+        let Some(relation_start) = relation_start else {
+            return Ok(trimmed.to_string());
+        };
+
+        let relation_end = Self::find_subscription_relation_end(trimmed, relation_start);
+        let relation = trimmed[relation_start..relation_end].trim();
+
+        let parts = Self::split_identifier_parts(relation).map_err(|_| {
+            CLIError::ParseError(
+                "\\live expects SELECT ... FROM <table> or <namespace.table>".to_string(),
+            )
+        })?;
+
+        if parts.len() != 1 {
+            return Ok(trimmed.to_string());
+        }
+
+        let qualified_relation = format!("{}.{}", Self::quote_identifier(default_namespace), relation);
+
+        Ok(format!(
+            "{}{}{}",
+            &trimmed[..relation_start],
+            qualified_relation,
+            &trimmed[relation_end..]
+        ))
+    }
+
+    fn find_subscription_from_clause(sql: &str) -> Option<usize> {
+        let mut in_single_quotes = false;
+        let mut in_double_quotes = false;
+
+        for (index, ch) in sql.char_indices() {
+            match ch {
+                '\'' if !in_double_quotes => in_single_quotes = !in_single_quotes,
+                '"' if !in_single_quotes => in_double_quotes = !in_double_quotes,
+                _ => {},
+            }
+
+            if in_single_quotes || in_double_quotes {
+                continue;
+            }
+
+            let end = index + 4;
+            if end > sql.len() || !sql[index..end].eq_ignore_ascii_case("from") {
+                continue;
+            }
+
+            let prev = sql[..index].chars().last();
+            let next = sql[end..].chars().next();
+            let prev_is_ident = prev.is_some_and(Self::is_subscription_identifier_char);
+            let next_is_ident = next.is_some_and(Self::is_subscription_identifier_char);
+
+            if !prev_is_ident && !next_is_ident {
+                return Some(end);
+            }
+        }
+
+        None
+    }
+
+    fn find_subscription_relation_end(sql: &str, start: usize) -> usize {
+        let mut in_double_quotes = false;
+
+        for (offset, ch) in sql[start..].char_indices() {
+            match ch {
+                '"' => in_double_quotes = !in_double_quotes,
+                _ if !in_double_quotes && ch.is_whitespace() => return start + offset,
+                _ => {},
+            }
+        }
+
+        sql.len()
+    }
+
+    fn is_subscription_identifier_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_'
+    }
+
+    fn build_flush_table_query(target: &str, default_namespace: Option<&str>) -> Result<String> {
+        let trimmed = target.trim().trim_end_matches(';').trim();
+        if trimmed.is_empty() {
+            return Err(CLIError::ParseError(
+                "\\flush table requires a table name".to_string(),
+            ));
+        }
+
+        let parts = Self::split_identifier_parts(trimmed)?;
+        match parts.as_slice() {
+            [table_name] => {
+                let namespace = default_namespace.unwrap_or("default");
+                Ok(format!(
+                    "STORAGE FLUSH TABLE {}.{}",
+                    Self::quote_identifier(namespace),
+                    Self::quote_identifier(table_name),
+                ))
+            },
+            [namespace, table_name] => Ok(format!(
+                "STORAGE FLUSH TABLE {}.{}",
+                Self::quote_identifier(namespace),
+                Self::quote_identifier(table_name),
+            )),
+            _ => Err(CLIError::ParseError(
+                "\\flush table expects <table> or <namespace.table>".to_string(),
+            )),
+        }
     }
 
     fn normalize_execute_as_user(user: &str) -> Result<String> {
@@ -302,6 +453,10 @@ impl CLISession {
         value.replace('\'', "''")
     }
 
+    fn quote_identifier(value: &str) -> String {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    }
+
     fn print_help_section(title: &str) {
         println!("{}", title.yellow().bold());
     }
@@ -334,12 +489,18 @@ impl CLISession {
             ("\\health", "Run public health probes"),
             ("\\dt, \\tables", "List tables"),
             ("\\d, \\describe <table>", "Describe a table"),
-            ("\\as <user> <SQL>", "Wrap a statement as EXECUTE AS USER"),
+            (
+                "\\as <user_id> <SQL>",
+                "Wrap a statement as EXECUTE AS '<user_id>'",
+            ),
             ("\\format <table|json|csv>", "Change output format"),
             ("\\refresh-tables, \\refresh", "Refresh autocomplete caches"),
             ("\\stats, \\metrics", "Show system stats"),
             ("\\sessions", "Show active sessions"),
-            ("\\flush", "Run STORAGE FLUSH ALL"),
+            (
+                "\\flush [all|table <table>]",
+                "Run STORAGE FLUSH using the current namespace",
+            ),
             ("\\cluster <subcommand>", "Cluster operations"),
             ("\\consume <topic>", "Consume topic messages"),
         ] {
@@ -349,15 +510,24 @@ impl CLISession {
 
         Self::print_help_section("Live Queries");
         for (command, description) in [
-            ("\\subscribe <SELECT ...>", "Start a live query"),
-            ("\\watch <SELECT ...>", "Alias of \\subscribe"),
-            ("\\live <SELECT ...>", "Short alias of \\subscribe"),
-            ("\\unsubscribe, \\unwatch", "Stop the active live query"),
+            ("\\live <SELECT ...>", "Start a live query"),
+            ("\\subscribe <SELECT ...>", "Alias of \\live"),
         ] {
             Self::print_help_row(command, description);
         }
         Self::print_help_example("\\live SELECT * FROM chat.messages;");
         println!("  {}", "system.* tables are not subscribable.".dimmed());
+        println!();
+
+        Self::print_help_section("Backup and Export SQL");
+        println!("  Run these as normal SQL statements:");
+        Self::print_help_example("BACKUP DATABASE TO '/tmp/kalamdb-backup.tar.gz';");
+        Self::print_help_example("EXPORT USER DATA;");
+        Self::print_help_example("SHOW EXPORT;");
+        println!(
+            "  {}",
+            "SHOW EXPORT returns a download_url for the finished user export.".dimmed()
+        );
         println!();
 
         Self::print_help_section("Cluster Commands");
@@ -408,9 +578,11 @@ impl CLISession {
         println!();
 
         Self::print_help_section("Examples");
+        Self::print_help_example("USE NAMESPACE chat;");
         Self::print_help_example("SELECT * FROM system.tables LIMIT 5;");
+        Self::print_help_example("\\flush table messages");
         Self::print_help_example("\\describe chat.messages;");
-        Self::print_help_example("\\as alice SELECT * FROM user.orders LIMIT 5;");
+        Self::print_help_example("\\as user_123 SELECT * FROM user.orders LIMIT 5;");
         Self::print_help_example("\\cluster list");
         println!();
     }
@@ -652,12 +824,43 @@ mod tests {
     fn test_build_execute_as_query_wraps_statement() {
         let query = CLISession::build_execute_as_query("alice", "SELECT * FROM user.orders;  ")
             .unwrap();
-        assert_eq!(query, "EXECUTE AS USER 'alice' (SELECT * FROM user.orders)");
+        assert_eq!(query, "EXECUTE AS 'alice' (SELECT * FROM user.orders)");
     }
 
     #[test]
     fn test_build_execute_as_query_escapes_user_literal() {
         let query = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap();
-        assert_eq!(query, "EXECUTE AS USER 'o''brien' (SELECT 1)");
+        assert_eq!(query, "EXECUTE AS 'o''brien' (SELECT 1)");
+    }
+
+    #[test]
+    fn test_build_flush_table_query_uses_current_namespace_for_unqualified_table() {
+        let query = CLISession::build_flush_table_query("messages", Some("chat")).unwrap();
+        assert_eq!(query, "STORAGE FLUSH TABLE \"chat\".\"messages\"");
+    }
+
+    #[test]
+    fn test_build_flush_table_query_preserves_explicit_namespace() {
+        let query = CLISession::build_flush_table_query("billing.invoices", Some("chat"))
+            .unwrap();
+        assert_eq!(query, "STORAGE FLUSH TABLE \"billing\".\"invoices\"");
+    }
+
+    #[test]
+    fn test_qualify_subscription_sql_uses_current_namespace() {
+        let query =
+            CLISession::qualify_subscription_sql("SELECT * FROM messages WHERE id = 1", "chat")
+                .unwrap();
+
+        assert_eq!(query, "SELECT * FROM \"chat\".messages WHERE id = 1");
+    }
+
+    #[test]
+    fn test_qualify_subscription_sql_preserves_explicit_namespace() {
+        let query =
+            CLISession::qualify_subscription_sql("SELECT ID FROM billing.messages", "chat")
+                .unwrap();
+
+        assert_eq!(query, "SELECT ID FROM billing.messages");
     }
 }

@@ -137,9 +137,17 @@ impl LiveRowsMaterializer {
     }
 }
 
+fn row_value_by_column<'a>(row: &'a RowData, column: &str) -> Option<&'a KalamCellValue> {
+    row.get(column).or_else(|| {
+        row.iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(column))
+            .map(|(_, value)| value)
+    })
+}
+
 fn rows_match_on_key_columns(left: &RowData, right: &RowData, key_columns: &[String]) -> bool {
     for column in key_columns {
-        match (left.get(column), right.get(column)) {
+        match (row_value_by_column(left, column), row_value_by_column(right, column)) {
             (Some(KalamCellValue(left_value)), Some(KalamCellValue(right_value)))
                 if left_value == right_value => {},
             _ => return false,
@@ -323,6 +331,40 @@ mod tests {
 
         match deleted {
             LiveRowsEvent::Rows { rows, .. } => assert!(rows.is_empty()),
+            other => panic!("unexpected event: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn matches_key_columns_case_insensitively() {
+        fn row_with_key(column_name: &str, id: &str, value: &str) -> RowData {
+            let mut row = RowData::new();
+            row.insert(column_name.to_string(), KalamCellValue::text(id));
+            row.insert("value".to_string(), KalamCellValue::text(value));
+            row
+        }
+
+        let mut materializer = LiveRowsMaterializer::new(LiveRowsConfig::default());
+
+        let _ = materializer.apply(ChangeEvent::InitialDataBatch {
+            subscription_id: "sub-4".to_string(),
+            rows: vec![row_with_key("ID", "1", "one")],
+            batch_control: batch_control(BatchStatus::Ready),
+        });
+
+        let updated = materializer
+            .apply(ChangeEvent::Update {
+                subscription_id: "sub-4".to_string(),
+                rows: vec![row_with_key("id", "1", "updated")],
+                old_rows: vec![row_with_key("ID", "1", "one")],
+            })
+            .expect("update should emit");
+
+        match updated {
+            LiveRowsEvent::Rows { rows, .. } => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].get("value").and_then(KalamCellValue::as_text), Some("updated"));
+            },
             other => panic!("unexpected event: {:?}", other),
         }
     }

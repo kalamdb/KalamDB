@@ -19,7 +19,7 @@ async fn test_user_sql_commands_over_http() {
                 let admin_auth = server.bearer_auth_header("root")?;
 
                 // CREATE USER with password
-                let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123!' ROLE developer EMAIL 'alice@example.com'";
+                let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123!' ROLE developer EMAIL 'alice@example.com' STORAGE_MODE region STORAGE_ID 'local'";
                 let result = server.execute_sql_with_auth(sql, &admin_auth).await?;
                 assert_eq!(
                     result.status,
@@ -42,6 +42,8 @@ async fn test_user_sql_commands_over_http() {
                     row.get("email").unwrap().as_str().unwrap(),
                     "alice@example.com"
                 );
+                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "region");
+                assert_eq!(row.get("storage_id").unwrap().as_str().unwrap(), "local");
 
                 // CREATE USER with OAuth
                 let sql = r#"CREATE USER 'bob' WITH OAUTH '{"provider": "google", "subject": "12345"}' ROLE viewer EMAIL 'bob@example.com'"#;
@@ -114,6 +116,33 @@ async fn test_user_sql_commands_over_http() {
                 let role = rows[0].get("role").unwrap().as_str().unwrap();
                 assert_eq!(role, "dba");
 
+                // ALTER USER SET STORAGE_MODE / STORAGE_ID
+                let create_sql = "CREATE USER 'storage_test' WITH PASSWORD 'Password123!S' ROLE user STORAGE_MODE table";
+                server.execute_sql_with_auth(create_sql, &admin_auth).await?;
+
+                let alter_sql = "ALTER USER 'storage_test' SET STORAGE_MODE region";
+                let result = server.execute_sql_with_auth(alter_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Success);
+
+                let alter_sql = "ALTER USER 'storage_test' SET STORAGE_ID 'local'";
+                let result = server.execute_sql_with_auth(alter_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Success);
+
+                let query = "SELECT storage_mode, storage_id FROM system.users WHERE user_id = 'storage_test'";
+                let result = server.execute_sql_with_auth(query, &admin_auth).await?;
+                let rows = result.rows_as_maps();
+                let row = &rows[0];
+                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "region");
+                assert_eq!(row.get("storage_id").unwrap().as_str().unwrap(), "local");
+
+                let alter_sql = "ALTER USER 'storage_test' SET STORAGE_ID NULL";
+                let result = server.execute_sql_with_auth(alter_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Success);
+
+                let result = server.execute_sql_with_auth(query, &admin_auth).await?;
+                let rows = result.rows_as_maps();
+                assert!(rows[0].get("storage_id").unwrap().is_null());
+
                 // DROP USER soft delete
                 let create_sql = "CREATE USER 'frank' WITH PASSWORD 'Password123!F' ROLE user";
                 server.execute_sql_with_auth(create_sql, &admin_auth).await?;
@@ -157,6 +186,13 @@ async fn test_user_sql_commands_over_http() {
                 // Not found
                 let alter_sql = "ALTER USER 'nonexistent_user' SET ROLE dba";
                 let result = server.execute_sql_with_auth(alter_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Error);
+
+                // Invalid storage reference
+                let invalid_storage_sql = "CREATE USER 'bad_storage' WITH PASSWORD 'Password123!H' ROLE user STORAGE_ID 'missing_storage'";
+                let result = server
+                    .execute_sql_with_auth(invalid_storage_sql, &admin_auth)
+                    .await?;
                 assert_eq!(result.status, ResponseStatus::Error);
 
                 // DROP USER IF EXISTS

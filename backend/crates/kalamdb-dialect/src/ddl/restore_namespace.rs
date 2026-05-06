@@ -3,13 +3,14 @@
 //! Parses SQL statements like:
 //! - RESTORE DATABASE FROM '/backups/kalamdb_backup.tar.gz'
 //!
-//! Restores the entire database from a compressed archive.
+//! Restores the entire database from either a backup directory or a `.tar.gz`
+//! / `.tgz` archive.
 
 use crate::ddl::DdlResult;
 
 /// RESTORE DATABASE statement
 ///
-/// Restores the entire database from a compressed archive backup.
+/// Restores the entire database from a backup path on the server filesystem.
 /// The restore replaces:
 /// - RocksDB data directory
 /// - Parquet storage files
@@ -17,7 +18,7 @@ use crate::ddl::DdlResult;
 /// - server.toml configuration
 #[derive(Debug, Clone, PartialEq)]
 pub struct RestoreDatabaseStatement {
-    /// Backup source path (should be a .tar.gz file)
+    /// Backup source path on the server filesystem.
     pub backup_path: String,
 }
 
@@ -105,6 +106,14 @@ mod tests {
             RestoreDatabaseStatement::parse("restore database from '/backups/kalamdb.tar.gz'")
                 .unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
+    }
+
+    #[test]
+    fn test_parse_restore_database_directory_path() {
+        let stmt =
+            RestoreDatabaseStatement::parse("RESTORE DATABASE FROM '/backups/kalamdb-nightly'")
+                .unwrap();
+        assert_eq!(stmt.backup_path, "/backups/kalamdb-nightly");
     }
 
     #[test]

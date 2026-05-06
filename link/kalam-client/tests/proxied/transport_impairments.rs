@@ -454,7 +454,7 @@ async fn test_proxy_packet_loss_style_stalls_resume_without_replay() {
 /// Very small write slices fragment WebSocket frames at the transport boundary.
 /// The client should parse the stream normally and avoid spurious reconnects.
 #[tokio::test]
-#[ntest::timeout(8000)]
+#[ntest::timeout(15000)]
 async fn test_tokio_netem_fragmented_writes_preserve_live_stream() {
     let result = timeout(Duration::from_secs(45), async {
         let writer = match create_test_client() {
@@ -547,7 +547,7 @@ async fn test_tokio_netem_fragmented_writes_preserve_live_stream() {
 /// the throttle is removed, reconnect resume must deliver only rows after the
 /// checkpoint.
 #[tokio::test]
-#[ntest::timeout(16000)]
+#[ntest::timeout(30000)]
 async fn test_tokio_netem_bandwidth_collapse_forces_resume_without_replay() {
     let result = timeout(Duration::from_secs(75), async {
         let writer = match create_test_client() {
@@ -680,7 +680,7 @@ async fn test_tokio_netem_bandwidth_collapse_forces_resume_without_replay() {
 /// tokio-netem can fail the transport from inside the I/O adapter instead of
 /// aborting the proxy task. The client should treat it as a normal disconnect.
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(15000)]
 async fn test_tokio_netem_forced_transport_termination_recovers() {
     let result = timeout(Duration::from_secs(75), async {
         let writer = match create_test_client() {

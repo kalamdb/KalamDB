@@ -396,7 +396,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleCancel(); }}>
-      <DialogContent className="flex h-[85vh] max-h-[90vh] max-w-5xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-[85vh] max-h-[90vh] sm:max-w-5xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-6 pb-4 pt-6">
           <DialogTitle className="text-lg">
             {options?.title ?? 'SQL Preview'}

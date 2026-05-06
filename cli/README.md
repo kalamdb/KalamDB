@@ -139,7 +139,6 @@ EXECUTION:
     -f, --file <FILE>               Execute SQL from file and exit
     -c, --command <SQL>             Execute SQL command and exit
     --subscribe <SQL>               Subscribe to a table or live query
-    --unsubscribe <ID>              Unsubscribe from a subscription (non-interactive)
     --list-subscriptions            List active subscriptions (non-interactive)
 
 OUTPUT:
@@ -206,13 +205,12 @@ Special commands starting with backslash (`\`):
 | `\format <table\|json\|csv>` | Set output format |
 | `\dt` / `\tables` | List tables |
 | `\d <table>` / `\describe <table>` | Describe a table (`<table>` or `<namespace.table>`) |
-| `\as <user> <SQL>` | Wrap one statement as `EXECUTE AS USER` |
+| `\as <user_id> <SQL>` | Wrap one statement as `EXECUTE AS '<user_id>'` |
 | `\stats` / `\metrics` | Show system stats |
 | `\health` | Check server health |
 | `\flush` | Execute STORAGE FLUSH ALL |
 | `\refresh-tables` / `\refresh` | Refresh autocomplete cache |
-| `\subscribe <SQL>` / `\watch <SQL>` / `\live <SQL>` | Start live query |
-| `\unsubscribe` / `\unwatch` | Cancel live query |
+| `\live <SQL>` / `\subscribe <SQL>` | Start live query (`\subscribe` is an alias) |
 | `\show-credentials` / `\credentials` | Show stored credentials |
 | `\update-credentials <u> <p>` | Update stored credentials |
 | `\delete-credentials` | Delete stored credentials |
@@ -226,7 +224,9 @@ Tips:
 - Use **Tab** for auto-completion of SQL keywords, namespaces, tables, and columns.
 - Use **↑/↓** to navigate command history.
 - Use `\format json` or `\format csv` to switch output formats.
-- Use `\subscribe <SQL>` for live updates.
+- Use `\live <SQL>` for live updates.
+- Run `BACKUP DATABASE TO '/tmp/kalamdb-backup.tar.gz';` as SQL for server-side backups.
+- Run `EXPORT USER DATA;` followed by `SHOW EXPORT;` to fetch your export download URL.
 
 ### Output Formats
 

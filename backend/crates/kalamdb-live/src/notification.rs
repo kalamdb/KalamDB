@@ -111,6 +111,16 @@ fn extract_commit_seq(change_notification: &ChangeNotification) -> Option<u64> {
         })
 }
 
+fn projection_includes_column(projections: &Option<Arc<Vec<String>>>, column: &str) -> bool {
+    match projections {
+        None => true,
+        Some(proj) => {
+            column == SystemColumnNames::SEQ
+                || proj.iter().any(|candidate| candidate.eq_ignore_ascii_case(column))
+        },
+    }
+}
+
 /// Convert a Row to a projected RowData map (`HashMap<String, KalamCellValue>`).
 /// Includes `_seq` always. When `projections` is `None`, includes all columns.
 fn project_row(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Result<RowData, LiveError> {
@@ -119,11 +129,7 @@ fn project_row(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Result<RowD
         if col == SystemColumnNames::COMMIT_SEQ {
             continue;
         }
-        let include = match projections {
-            None => true,
-            Some(proj) => col == SystemColumnNames::SEQ || proj.iter().any(|p| p == col),
-        };
-        if include {
+        if projection_includes_column(projections, col) {
             let cell = scalar_value_to_json(sv)
                 .map_err(|e| LiveError::SerializationError(e.to_string()))?;
             map.insert(col.clone(), cell);
@@ -163,14 +169,13 @@ fn project_update_delta(
         }
     }
 
-    let owned_keys;
-    let col_names: Box<dyn Iterator<Item = &str>> = match projections {
-        None => {
-            owned_keys = new_row.values.keys().collect::<Vec<_>>();
-            Box::new(owned_keys.iter().map(|s| s.as_str()))
-        },
-        Some(cols) => Box::new(cols.iter().map(String::as_str)),
-    };
+    let owned_keys = new_row
+        .values
+        .keys()
+        .filter(|column| projection_includes_column(projections, column))
+        .cloned()
+        .collect::<Vec<_>>();
+    let col_names = owned_keys.iter().map(String::as_str);
 
     for col in col_names {
         if col.starts_with('_') || pk_columns.iter().any(|pk| pk == col) {
@@ -962,6 +967,50 @@ mod tests {
         assert!(wire.payload.rows.is_some());
         let json: serde_json::Value = serde_json::from_slice(&wire.to_json()).unwrap();
         let rows = json["rows"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].get("id").is_some());
+        assert!(rows[0].get("body").is_none());
+        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_notify_async_projection_matches_case_insensitively() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+        let service = NotificationService::new(Arc::clone(&registry));
+
+        let user_id = UserId::new("user-proj-upper");
+        let table_id = make_table_id("default", "events");
+        let conn_id = ConnectionId::new("c-user-upper");
+        let live_id =
+            LiveQueryId::new(user_id.clone(), conn_id.clone(), "sub_upper".to_string());
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.mark_initial_complete();
+
+        registry.index_subscription(
+            &user_id,
+            &conn_id,
+            live_id,
+            table_id.clone(),
+            make_shared_handle("sub_upper", tx, flow, None, Some(vec!["ID"])),
+        );
+
+        let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
+        service.notify_async(Some(user_id), table_id, change);
+
+        let delivered = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("projected subscriber gets message within timeout")
+            .expect("projected subscriber gets message");
+        let json: serde_json::Value = serde_json::from_slice(&delivered.to_json()).unwrap();
+        let rows = json["rows"].as_array().expect("rows array");
+
         assert_eq!(rows.len(), 1);
         assert!(rows[0].get("id").is_some());
         assert!(rows[0].get("body").is_none());

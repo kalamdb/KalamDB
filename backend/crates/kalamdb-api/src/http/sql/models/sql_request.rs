@@ -42,8 +42,10 @@ pub struct QueryRequest {
     pub params: Option<Vec<JsonValue>>,
 
     /// Optional namespace ID for unqualified table names.
-    /// When set, queries like `SELECT * FROM users` resolve to `namespace_id.users`.
-    /// Set via `USE namespace` command in CLI clients.
+    /// When set, this request resolves queries like `SELECT * FROM users` to
+    /// `namespace_id.users`.
+    /// Interactive clients can populate this after a successful `USE namespace`
+    /// command; the value is request-scoped on the backend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace_id: Option<NamespaceId>,
 }

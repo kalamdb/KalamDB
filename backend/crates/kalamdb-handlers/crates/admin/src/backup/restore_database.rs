@@ -24,6 +24,15 @@ impl RestoreDatabaseHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
+
+    fn is_archive_path(path: &std::path::Path) -> bool {
+        let value = path
+            .to_string_lossy()
+            .trim()
+            .trim_end_matches(['/', '\\'])
+            .to_ascii_lowercase();
+        value.ends_with(".tar.gz") || value.ends_with(".tgz")
+    }
 }
 
 impl TypedStatementHandler<RestoreDatabaseStatement> for RestoreDatabaseHandler {
@@ -33,17 +42,19 @@ impl TypedStatementHandler<RestoreDatabaseStatement> for RestoreDatabaseHandler 
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Verify backup directory exists before creating job
+        // Verify backup source exists before creating job
         let backup_path = std::path::Path::new(&statement.backup_path);
         if !backup_path.exists() {
             return Err(KalamDbError::NotFound(format!(
-                "Backup directory '{}' not found",
+                "Backup path '{}' not found",
                 statement.backup_path
             )));
         }
-        if !backup_path.is_dir() {
+        if !backup_path.is_dir()
+            && !(backup_path.is_file() && Self::is_archive_path(backup_path))
+        {
             return Err(KalamDbError::InvalidOperation(format!(
-                "'{}' is not a directory. RESTORE DATABASE expects a backup directory, not a file.",
+                "'{}' must be a backup directory or a .tar.gz/.tgz backup archive.",
                 statement.backup_path
             )));
         }

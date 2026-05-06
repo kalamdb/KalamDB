@@ -21,9 +21,16 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
         tests: &'a [&'a str],
     }
 
-    // This is the canonical docs inventory from KalamSite/content/getting-started/cli.mdx.
+    // This is the canonical docs inventory from ../KalamSite/content/server/getting-started/cli.mdx.
     let matrix = vec![
         // Connection/auth flags
+        Coverage {
+            item: "-u",
+            tests: &[
+                "short_connection_and_execution_flags_parse",
+                "test_cli_help_command",
+            ],
+        },
         Coverage {
             item: "--url",
             tests: &[
@@ -32,9 +39,23 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             ],
         },
         Coverage {
+            item: "-H",
+            tests: &[
+                "short_host_port_and_file_flags_parse",
+                "test_cli_host_and_port_work_against_running_server",
+            ],
+        },
+        Coverage {
             item: "--host",
             tests: &[
                 "test_cli_parse_missing_documented_flags_without_server",
+                "test_cli_host_and_port_work_against_running_server",
+            ],
+        },
+        Coverage {
+            item: "-p",
+            tests: &[
+                "short_host_port_and_file_flags_parse",
                 "test_cli_host_and_port_work_against_running_server",
             ],
         },
@@ -63,8 +84,22 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
         },
         // Query/output flags
         Coverage {
+            item: "-c",
+            tests: &[
+                "short_connection_and_execution_flags_parse",
+                "test_cli_color_output",
+            ],
+        },
+        Coverage {
             item: "--command",
             tests: &["test_cli_color_output"],
+        },
+        Coverage {
+            item: "-f",
+            tests: &[
+                "short_host_port_and_file_flags_parse",
+                "test_cli_batch_file_execution",
+            ],
         },
         Coverage {
             item: "--file",
@@ -130,10 +165,6 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
         },
         Coverage {
             item: "--list-subscriptions",
-            tests: &["test_cli_subscription_commands"],
-        },
-        Coverage {
-            item: "--unsubscribe",
             tests: &["test_cli_subscription_commands"],
         },
         // Consume flags
@@ -216,8 +247,23 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_load_config_file"],
         },
         Coverage {
+            item: "-v",
+            tests: &[
+                "short_connection_and_execution_flags_parse",
+                "test_cli_verbose_output",
+            ],
+        },
+        Coverage {
             item: "--verbose",
             tests: &["test_cli_verbose_output"],
+        },
+        Coverage {
+            item: "-h",
+            tests: &["test_cli_short_help_command"],
+        },
+        Coverage {
+            item: "-V",
+            tests: &["test_cli_short_version_command"],
         },
         Coverage {
             item: "--version",
@@ -370,23 +416,11 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_subscribe_flags_work_end_to_end"],
         },
         Coverage {
-            item: "\\watch",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
-        },
-        Coverage {
             item: "\\live",
             tests: &[
                 "test_parse_live_alias",
                 "test_cli_meta_commands_doc_smoke_non_interactive",
             ],
-        },
-        Coverage {
-            item: "\\unsubscribe",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
-        },
-        Coverage {
-            item: "\\unwatch",
-            tests: &["test_cli_meta_commands_doc_smoke_non_interactive"],
         },
         Coverage {
             item: "\\consume",
@@ -462,6 +496,7 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
         include_str!("test_cli_auth.rs"),
         include_str!("test_cli_auth_admin.rs"),
         include_str!("test_cli_doc_matrix.rs"),
+        include_str!("../../src/args.rs"),
         include_str!("../users/test_admin.rs"),
         include_str!("../tables/test_user_tables.rs"),
         include_str!("../subscription/test_subscribe.rs"),
@@ -825,6 +860,27 @@ fn test_cli_version_command() {
 }
 
 #[test]
+fn test_cli_short_help_command() {
+    let mut cmd = create_cli_command();
+    cmd.arg("-h");
+
+    cmd.assert()
+        .success()
+        .stdout(predicates::str::contains("Interactive SQL terminal"))
+        .stdout(predicates::str::contains("--watch-schema"));
+}
+
+#[test]
+fn test_cli_short_version_command() {
+    let mut cmd = create_cli_command();
+    cmd.arg("-V");
+    let output = cmd.output().expect("run -V");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "-V should succeed");
+    assert!(stdout.contains("Commit:"), "short version output should include commit metadata");
+}
+
+#[test]
 fn test_cli_meta_commands_doc_smoke_non_interactive() {
     // Interactive meta-commands are parsed in REPL mode, not by `--command`.
     // Validate parser support directly against the documented command inventory.
@@ -849,15 +905,12 @@ fn test_cli_meta_commands_doc_smoke_non_interactive() {
         "\\refresh-tables",
         "\\refresh",
         "\\subscribe",
-        "\\watch",
         "\\live",
         "\\consume",
         "\\show-credentials",
         "\\credentials",
         "\\update-credentials",
         "\\delete-credentials",
-        "\\unsubscribe",
-        "\\unwatch",
         "\\flush",
         "\\cluster",
     ];

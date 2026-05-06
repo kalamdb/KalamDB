@@ -79,5 +79,6 @@ describe("StudioExecutionLog", () => {
     fireEvent.click(timelineButtons[0]);
 
     expect(within(details as HTMLElement).getByText(/select id, name from default.events/i)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

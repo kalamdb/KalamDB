@@ -25,11 +25,13 @@ impl LiveRowsConfig {
                     continue;
                 }
 
-                if normalized.iter().any(|existing| existing == trimmed) {
+                let normalized_column = trimmed.to_ascii_lowercase();
+
+                if normalized.iter().any(|existing| existing == &normalized_column) {
                     continue;
                 }
 
-                normalized.push(trimmed.to_owned());
+                normalized.push(normalized_column);
             }
         }
 

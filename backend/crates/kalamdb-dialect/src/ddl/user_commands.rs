@@ -7,7 +7,8 @@
 //!
 //! Uses sqlparser-rs tokenizer for consistent identifier and string handling.
 
-use kalamdb_commons::{AuthType, Role};
+use kalamdb_commons::{AuthType, Role, StorageId};
+use kalamdb_system::providers::storages::models::StorageMode;
 use serde::{Deserialize, Serialize};
 use sqlparser::{
     dialect::GenericDialect,
@@ -54,6 +55,13 @@ fn parse_role(role_str: &str) -> Result<Role, UserCommandError> {
     }
 }
 
+fn parse_storage_mode(storage_mode_str: &str) -> Result<StorageMode, UserCommandError> {
+    StorageMode::from_str_opt(storage_mode_str).ok_or_else(|| UserCommandError {
+        message: format!("Invalid storage mode '{}'", storage_mode_str),
+        hint: Some("Valid storage modes: table, region".to_string()),
+    })
+}
+
 /// Extract identifier or string value from a token
 fn extract_identifier(token: &Token) -> Option<String> {
     match token {
@@ -94,6 +102,7 @@ fn filter_tokens(tokens: Vec<Token>) -> Vec<Token> {
 /// CREATE USER username WITH PASSWORD 'password' ROLE role_name [EMAIL 'email'];
 /// CREATE USER username WITH OAUTH ROLE role_name [EMAIL 'email'];
 /// CREATE USER username WITH INTERNAL ROLE role_name;
+/// CREATE USER username WITH PASSWORD 'password' ROLE role_name [EMAIL 'email'] [STORAGE_MODE table|region] [STORAGE_ID 'storage'];
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreateUserStatement {
@@ -102,6 +111,8 @@ pub struct CreateUserStatement {
     pub role: Role,
     pub email: Option<String>,
     pub password: Option<String>,
+    pub storage_mode: StorageMode,
+    pub storage_id: Option<StorageId>,
 }
 
 impl CreateUserStatement {
@@ -197,18 +208,54 @@ impl CreateUserStatement {
         })?;
         let role = parse_role(&role_str)?;
 
-        // Optional EMAIL
-        let email = if is_keyword(iter.peek().unwrap_or(&&Token::EOF), "EMAIL") {
-            iter.next(); // consume EMAIL
-            Some(extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
-                UserCommandError {
-                    message: "Expected email address after EMAIL".to_string(),
-                    hint: Some("Email must be quoted: EMAIL 'user@example.com'".to_string()),
+        let mut email = None;
+        let mut storage_mode = StorageMode::Table;
+        let mut storage_id = None;
+
+        while let Some(token) = iter.peek() {
+            if is_keyword(token, "EMAIL") {
+                if email.is_some() {
+                    return Err(UserCommandError {
+                        message: "EMAIL specified more than once".to_string(),
+                        hint: Some("Use a single EMAIL clause".to_string()),
+                    });
                 }
-            })?)
-        } else {
-            None
-        };
+                iter.next();
+                email = Some(extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(
+                    || UserCommandError {
+                        message: "Expected email address after EMAIL".to_string(),
+                        hint: Some("Email must be quoted: EMAIL 'user@example.com'".to_string()),
+                    },
+                )?);
+                continue;
+            }
+
+            if is_keyword(token, "STORAGE_MODE") {
+                iter.next();
+                let value = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                    UserCommandError {
+                        message: "Expected storage mode after STORAGE_MODE".to_string(),
+                        hint: Some("Valid storage modes: table, region".to_string()),
+                    }
+                })?;
+                storage_mode = parse_storage_mode(&value)?;
+                continue;
+            }
+
+            if is_keyword(token, "STORAGE_ID") {
+                iter.next();
+                let value = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                    UserCommandError {
+                        message: "Expected storage ID after STORAGE_ID".to_string(),
+                        hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
+                    }
+                })?;
+                storage_id = Some(StorageId::from(value));
+                continue;
+            }
+
+            break;
+        }
 
         Ok(CreateUserStatement {
             username,
@@ -216,6 +263,8 @@ impl CreateUserStatement {
             role,
             email,
             password,
+            storage_mode,
+            storage_id,
         })
     }
 }
@@ -231,6 +280,9 @@ impl CreateUserStatement {
 /// ALTER USER username SET PASSWORD 'new_password';
 /// ALTER USER username SET ROLE new_role;
 /// ALTER USER username SET EMAIL 'new_email@example.com';
+/// ALTER USER username SET STORAGE_MODE table|region;
+/// ALTER USER username SET STORAGE_ID 'storage_id';
+/// ALTER USER username SET STORAGE_ID NULL;
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlterUserStatement {
@@ -244,6 +296,8 @@ pub enum UserModification {
     SetPassword(String),
     SetRole(Role),
     SetEmail(String),
+    SetStorageMode(StorageMode),
+    SetStorageId(Option<StorageId>),
 }
 
 impl UserModification {
@@ -254,6 +308,13 @@ impl UserModification {
             UserModification::SetPassword(_) => "SetPassword([REDACTED])".to_string(),
             UserModification::SetRole(role) => format!("SetRole({:?})", role),
             UserModification::SetEmail(email) => format!("SetEmail({})", email),
+            UserModification::SetStorageMode(storage_mode) => {
+                format!("SetStorageMode({})", storage_mode)
+            },
+            UserModification::SetStorageId(Some(storage_id)) => {
+                format!("SetStorageId({})", storage_id)
+            },
+            UserModification::SetStorageId(None) => "SetStorageId(NULL)".to_string(),
         }
     }
 }
@@ -271,13 +332,19 @@ impl AlterUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "ALTER") {
             return Err(UserCommandError {
                 message: "Expected ALTER".to_string(),
-                hint: Some("Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL ...".to_string()),
+                hint: Some(
+                    "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID ..."
+                        .to_string(),
+                ),
             });
         }
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "USER") {
             return Err(UserCommandError {
                 message: "Expected USER after ALTER".to_string(),
-                hint: Some("Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL ...".to_string()),
+                hint: Some(
+                    "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID ..."
+                        .to_string(),
+                ),
             });
         }
 
@@ -293,11 +360,14 @@ impl AlterUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "SET") {
             return Err(UserCommandError {
                 message: "Expected SET after username".to_string(),
-                hint: Some("Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL ...".to_string()),
+                hint: Some(
+                    "Syntax: ALTER USER username SET PASSWORD|ROLE|EMAIL|STORAGE_MODE|STORAGE_ID ..."
+                        .to_string(),
+                ),
             });
         }
 
-        // Modification type: PASSWORD, ROLE, or EMAIL
+        // Modification type: PASSWORD, ROLE, EMAIL, STORAGE_MODE, or STORAGE_ID
         let mod_token = iter.next().unwrap_or(&Token::EOF);
         let modification = if is_keyword(mod_token, "PASSWORD") {
             let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
@@ -330,11 +400,34 @@ impl AlterUserStatement {
                     }
                 })?;
             UserModification::SetEmail(email)
+        } else if is_keyword(mod_token, "STORAGE_MODE") {
+            let storage_mode =
+                extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                    UserCommandError {
+                        message: "Expected storage mode after SET STORAGE_MODE".to_string(),
+                        hint: Some("Valid storage modes: table, region".to_string()),
+                    }
+                })?;
+            UserModification::SetStorageMode(parse_storage_mode(&storage_mode)?)
+        } else if is_keyword(mod_token, "STORAGE_ID") {
+            let token = iter.next().unwrap_or(&Token::EOF);
+            if is_keyword(token, "NULL") {
+                UserModification::SetStorageId(None)
+            } else {
+                let storage_id = extract_identifier(token).ok_or_else(|| UserCommandError {
+                    message: "Expected storage ID or NULL after SET STORAGE_ID".to_string(),
+                    hint: Some(
+                        "Use SET STORAGE_ID 'local' or SET STORAGE_ID NULL".to_string(),
+                    ),
+                })?;
+                UserModification::SetStorageId(Some(StorageId::from(storage_id)))
+            }
         } else {
             return Err(UserCommandError {
-                message: "Expected PASSWORD, ROLE, or EMAIL after SET".to_string(),
+                message: "Expected PASSWORD, ROLE, EMAIL, STORAGE_MODE, or STORAGE_ID after SET"
+                    .to_string(),
                 hint: Some(
-                    "Valid modifications: SET PASSWORD 'pass', SET ROLE admin, SET EMAIL 'x@y.com'"
+                    "Valid modifications: SET PASSWORD 'pass', SET ROLE admin, SET EMAIL 'x@y.com', SET STORAGE_MODE region, SET STORAGE_ID 'local'"
                         .to_string(),
                 ),
             });
@@ -435,6 +528,16 @@ mod tests {
         assert_eq!(stmt.password, Some("secure123".to_string()));
         assert_eq!(stmt.role, Role::Service);
         assert_eq!(stmt.email, Some("alice@example.com".to_string()));
+        assert_eq!(stmt.storage_mode, StorageMode::Table);
+        assert_eq!(stmt.storage_id, None);
+    }
+
+    #[test]
+    fn test_create_user_with_storage_options() {
+        let sql = "CREATE USER 'alice' WITH PASSWORD 'secure123' ROLE user STORAGE_MODE region STORAGE_ID 's3_eu'";
+        let stmt = CreateUserStatement::parse(sql).unwrap();
+        assert_eq!(stmt.storage_mode, StorageMode::Region);
+        assert_eq!(stmt.storage_id, Some(StorageId::from("s3_eu")));
     }
 
     #[test]
@@ -543,11 +646,49 @@ mod tests {
     }
 
     #[test]
+    fn test_alter_user_set_storage_mode() {
+        let sql = "ALTER USER bob SET STORAGE_MODE region";
+        let stmt = AlterUserStatement::parse(sql).unwrap();
+        assert_eq!(stmt.username, "bob");
+        if let UserModification::SetStorageMode(storage_mode) = stmt.modification {
+            assert_eq!(storage_mode, StorageMode::Region);
+        } else {
+            panic!("Expected SetStorageMode");
+        }
+    }
+
+    #[test]
+    fn test_alter_user_set_storage_id() {
+        let sql = "ALTER USER bob SET STORAGE_ID 's3_eu'";
+        let stmt = AlterUserStatement::parse(sql).unwrap();
+        assert_eq!(stmt.username, "bob");
+        if let UserModification::SetStorageId(storage_id) = stmt.modification {
+            assert_eq!(storage_id, Some(StorageId::from("s3_eu")));
+        } else {
+            panic!("Expected SetStorageId");
+        }
+    }
+
+    #[test]
+    fn test_alter_user_set_storage_id_null() {
+        let sql = "ALTER USER bob SET STORAGE_ID NULL";
+        let stmt = AlterUserStatement::parse(sql).unwrap();
+        assert_eq!(stmt.username, "bob");
+        if let UserModification::SetStorageId(storage_id) = stmt.modification {
+            assert_eq!(storage_id, None);
+        } else {
+            panic!("Expected SetStorageId");
+        }
+    }
+
+    #[test]
     fn test_alter_user_invalid_modification() {
         let sql = "ALTER USER alice SET UNKNOWN 'value'";
         let result = AlterUserStatement::parse(sql);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("PASSWORD, ROLE, or EMAIL"));
+        assert!(result
+            .unwrap_err()
+            .contains("PASSWORD, ROLE, EMAIL, STORAGE_MODE, or STORAGE_ID"));
     }
 
     // DROP USER tests
@@ -621,5 +762,21 @@ mod tests {
         let display = modification.display_for_audit();
 
         assert_eq!(display, "SetEmail(alice@example.com)");
+    }
+
+    #[test]
+    fn test_user_modification_display_for_audit_storage_mode() {
+        let modification = UserModification::SetStorageMode(StorageMode::Region);
+        let display = modification.display_for_audit();
+
+        assert_eq!(display, "SetStorageMode(region)");
+    }
+
+    #[test]
+    fn test_user_modification_display_for_audit_storage_id() {
+        let modification = UserModification::SetStorageId(Some(StorageId::from("s3_eu")));
+        let display = modification.display_for_audit();
+
+        assert_eq!(display, "SetStorageId(s3_eu)");
     }
 }

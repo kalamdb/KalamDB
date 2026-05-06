@@ -74,6 +74,7 @@ impl CLISession {
         println!("{}", "Connection:".yellow().bold());
         print_info_row("Server URL", self.server_url.green());
         print_info_row("User ID", self.username.green());
+        print_info_row("Namespace", self.effective_namespace().green());
         print_info_row(
             "Connected",
             if self.connected {

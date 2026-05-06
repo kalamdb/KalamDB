@@ -56,6 +56,27 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             )));
         }
 
+        let storage_id = if let Some(storage_id) = statement.storage_id.clone() {
+            let app_ctx = self.app_context.clone();
+            let storage_lookup_id = storage_id.clone();
+            let storage = tokio::task::spawn_blocking(move || {
+                app_ctx.system_tables().storages().get_storage_by_id(&storage_lookup_id)
+            })
+            .await
+            .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+
+            if storage.is_none() {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' does not exist",
+                    storage_id.as_str()
+                )));
+            }
+
+            Some(storage_id)
+        } else {
+            None
+        };
+
         // Hash password if auth_type = Password, or extract auth_data for OAuth
         let (password_hash, auth_data) = match statement.auth_type {
             AuthType::Password => {
@@ -123,8 +144,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             email: statement.email.clone(),
             auth_type: statement.auth_type,
             auth_data,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
+            storage_mode: statement.storage_mode,
+            storage_id,
             failed_login_attempts: 0,
             locked_until: None,
             last_login_at: None,
@@ -148,7 +169,16 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             "CREATE",
             "USER",
             &statement.username,
-            Some(format!("Role: {:?}", statement.role)),
+            Some(format!(
+                "Role: {:?}, storage_mode: {}, storage_id: {}",
+                statement.role,
+                statement.storage_mode,
+                statement
+                    .storage_id
+                    .as_ref()
+                    .map(|storage_id| storage_id.as_str())
+                    .unwrap_or("NULL")
+            )),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

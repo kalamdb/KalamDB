@@ -98,6 +98,32 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 }
                 updated.email = Some(new_email.clone());
             },
+            UserModification::SetStorageMode(new_storage_mode) => {
+                updated.storage_mode = new_storage_mode;
+            },
+            UserModification::SetStorageId(ref new_storage_id) => {
+                if let Some(storage_id) = new_storage_id {
+                    let app_ctx = self.app_context.clone();
+                    let storage_lookup_id = storage_id.clone();
+                    let storage = tokio::task::spawn_blocking(move || {
+                        app_ctx
+                            .system_tables()
+                            .storages()
+                            .get_storage_by_id(&storage_lookup_id)
+                    })
+                    .await
+                    .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+
+                    if storage.is_none() {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "Storage '{}' does not exist",
+                            storage_id.as_str()
+                        )));
+                    }
+                }
+
+                updated.storage_id = new_storage_id.clone();
+            },
         }
 
         updated.updated_at = chrono::Utc::now().timestamp_millis();

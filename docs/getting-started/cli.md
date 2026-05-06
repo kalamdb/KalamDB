@@ -119,7 +119,6 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `--subscription-timeout` – subscription idle timeout in seconds (0 = no timeout)
 - `--initial-data-timeout` – max seconds to wait for initial data batch
 - `--list-subscriptions` – list active subscriptions
-- `--unsubscribe <subscription_id>` – unsubscribe by id
 - `--watch-schema` – poll `system.tables` and run a local command on schema changes
 - `--namespace` – repeat to scope schema watch to one or more namespaces
 - `--table` – repeat to scope schema watch to one or more `namespace.table` targets
@@ -139,13 +138,12 @@ In interactive mode, meta-commands start with `\`:
 | `\history`, `\h`                | Open command history                      |
 | `\dt`, `\tables`               | List tables (`system.tables`)             |
 | `\d <table>`, `\describe <table>` | Describe table                         |
-| `\as <user> <SQL>`              | Wrap one statement as `EXECUTE AS USER`   |
+| `\as <user_id> <SQL>`           | Wrap one statement as `EXECUTE AS '<user_id>'` |
 | `\stats`, `\metrics`          | Show `system.stats`                       |
 | `\health`                       | Server healthcheck                        |
 | `\flush`                        | Run `STORAGE FLUSH ALL`                   |
 | `\format table|json|csv`        | Change output format                      |
-| `\subscribe <SQL>`, `\watch <SQL>`, `\live <SQL>` | Start live subscription |
-| `\unsubscribe`, `\unwatch`      | No-op (prints “No active subscription to cancel”) |
+| `\live <SQL>`, `\subscribe <SQL>` | Start live subscription (`\subscribe` is an alias) |
 | `\cluster ...`                  | Cluster commands (see below)              |
 | `\refresh-tables`, `\refresh` | Refresh autocomplete metadata             |
 | `\sessions`                     | Show active sessions                      |
@@ -153,6 +151,14 @@ In interactive mode, meta-commands start with `\`:
 | `\show-credentials`, `\credentials` | Show stored credentials               |
 | `\update-credentials <u> <p>`  | Update stored credentials                 |
 | `\delete-credentials`          | Delete stored credentials                 |
+
+Backup/export SQL examples you can run directly from the CLI:
+
+```sql
+BACKUP DATABASE TO '/tmp/kalamdb-backup.tar.gz';
+EXPORT USER DATA;
+SHOW EXPORT;
+```
 
 ### Cluster meta-commands
 

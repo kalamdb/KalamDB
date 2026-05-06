@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { getErrorMessage } from '@/lib/errors';
 import type { User } from '@/services/userService';
 import { Loader2, AlertTriangle } from 'lucide-react';
 
@@ -34,7 +35,7 @@ export function DeleteUserDialog({
       await onConfirm();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete user');
+      setError(getErrorMessage(err, 'Failed to delete user'));
     } finally {
       setIsDeleting(false);
     }

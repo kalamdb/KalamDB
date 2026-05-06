@@ -41,6 +41,8 @@ uuid = { workspace = true }
 
 # ZIP archive creation
 zip = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 
 # Concurrent
 parking_lot = { workspace = true }

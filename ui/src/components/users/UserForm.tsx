@@ -3,6 +3,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { useCreateUserMutation, useGetStoragesQuery, useUpdateUserMutation } from "@/store/apiSlice";
 import type { User } from "@/services/userService";
 import { formatTimestamp } from "@/lib/formatters";
+import { getErrorMessage } from "@/lib/errors";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -189,7 +190,6 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
         if (normalizedStorageId !== (user.storage_id ?? null)) {
           updateInput.storage_id = normalizedStorageId;
         }
-
         await updateUserMutation({ username: user.user_id, input: updateInput }).unwrap();
       } else {
         await createUserMutation({
@@ -207,7 +207,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
       onSuccess();
       onOpenChange(false);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Failed to save user");
+      setError(getErrorMessage(submitError, "Failed to save user"));
     } finally {
       setIsSubmitting(false);
     }
