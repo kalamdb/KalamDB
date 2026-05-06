@@ -39,6 +39,10 @@ ALTER NAMESPACE <namespace_name>
 
 ### USE / SET NAMESPACE
 
+Changes the default namespace for the current request or multi-statement batch.
+In the interactive CLI, a successful `USE` also updates the CLI's local
+namespace so later requests automatically send `namespace_id`.
+
 ```sql
 USE <namespace_name>;
 USE NAMESPACE <namespace_name>;
@@ -193,14 +197,14 @@ FROM [<namespace>.]<table_name>
 [LIMIT <n>];
 ```
 
-## Execute As User
+## Execute As
 
-`EXECUTE AS USER` syntax is wrapper-only. It switches USER-table or
+`EXECUTE AS` syntax is wrapper-only. It switches USER-table or
 STREAM-table execution to a target user ID only when the authenticated actor
 role is allowed to target that ID's cached role class.
 
 ```sql
-EXECUTE AS USER '<username>' (
+EXECUTE AS '<user_id>' (
   <single_statement>
 );
 ```
@@ -208,7 +212,7 @@ EXECUTE AS USER '<username>' (
 Examples:
 
 ```sql
-EXECUTE AS USER 'alice' (
+EXECUTE AS 'user_123' (
   SELECT * FROM app.messages WHERE conversation_id = 42
 );
 ```
@@ -216,11 +220,11 @@ EXECUTE AS USER 'alice' (
 Rules:
 
 1. The wrapper must contain exactly one SQL statement.
-2. Username must be single-quoted.
+2. The target user ID must be single-quoted.
 3. System users may target system, dba, service, and user accounts.
 4. DBA users may target dba, service, and user accounts.
 5. Service users may target service and user accounts.
-6. Regular users may only use self-targeted `EXECUTE AS USER` as a no-op identity boundary.
+6. Regular users may only use self-targeted `EXECUTE AS '<user_id>'` as a no-op identity boundary.
 7. The wrapper is valid for USER and STREAM tables; shared tables use their table policy directly.
 8. Target role checks are hot-path cached: service, DBA, and system user IDs are tracked in memory from `system.users`; soft-deleted privileged IDs stay classified by their persisted role, and target IDs not present in that privileged cache are treated as regular users.
 9. Legacy inline `... AS USER 'name'` syntax is not supported.
@@ -233,7 +237,9 @@ Rules:
 CREATE USER '<username>'
   WITH <PASSWORD '<password>' | OAUTH | INTERNAL>
   ROLE <user|service|dba|system>
-  [EMAIL '<email>'];
+  [EMAIL '<email>']
+  [STORAGE_MODE <table|region>]
+  [STORAGE_ID '<storage_id>'];
 ```
 
 ### ALTER USER
@@ -242,6 +248,9 @@ CREATE USER '<username>'
 ALTER USER '<username>' SET PASSWORD '<new_password>';
 ALTER USER '<username>' SET ROLE <user|service|dba|system>;
 ALTER USER '<username>' SET EMAIL '<new_email>';
+ALTER USER '<username>' SET STORAGE_MODE <table|region>;
+ALTER USER '<username>' SET STORAGE_ID '<storage_id>';
+ALTER USER '<username>' SET STORAGE_ID NULL;
 ```
 
 ### DROP USER
@@ -444,26 +453,43 @@ CLUSTER CLEAR;
 
 ## Backup / Restore Commands
 
+### EXPORT USER DATA
+
+```sql
+EXPORT USER DATA;
+```
+
+### SHOW EXPORT
+
+```sql
+SHOW EXPORT;
+```
+
+`SHOW EXPORT` returns a `download_url` URI path such as
+`/v1/exports/<user_id>/<export_id>`. Prefix it with your KalamDB server base URL
+when downloading the finished ZIP over HTTP.
+
 ### BACKUP DATABASE
 
 ```sql
-BACKUP DATABASE <namespace> TO '<backup_path>';
-BACKUP DATABASE IF EXISTS <namespace> TO '<backup_path>';
+BACKUP DATABASE TO '<backup_path>';
 ```
+
+`<backup_path>` is a path on the server filesystem. If it ends with `.tar.gz`
+or `.tgz`, KalamDB writes a single archive file there. Otherwise it writes the
+backup directory layout directly under that path. `BACKUP DATABASE` requires a
+DBA or System role.
 
 ### RESTORE DATABASE
 
 ```sql
-RESTORE DATABASE <namespace> FROM '<backup_path>';
-RESTORE DATABASE IF NOT EXISTS <namespace> FROM '<backup_path>';
+RESTORE DATABASE FROM '<backup_path>';
 ```
 
-### SHOW BACKUP
-
-```sql
-SHOW BACKUP FOR DATABASE <namespace>;
-SHOW BACKUPS FOR DATABASE <namespace>;
-```
+`<backup_path>` is a path on the server filesystem and may point to either a
+backup directory or a `.tar.gz` / `.tgz` archive created by `BACKUP DATABASE`.
+The restore job stages the files, and a server restart is required to activate
+the restored data. `RESTORE DATABASE` requires a DBA or System role.
 
 ## Built-in Functions (Common)
 

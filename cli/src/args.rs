@@ -218,7 +218,6 @@ pub struct Cli {
             "list_instances",
             "subscribe",
             "list_subscriptions",
-            "unsubscribe",
             "consume"
         ]
     )]
@@ -248,10 +247,6 @@ pub struct Cli {
         default_value = "5s"
     )]
     pub watch_interval: Duration,
-
-    /// Unsubscribe from a subscription
-    #[arg(long = "unsubscribe")]
-    pub unsubscribe: Option<String>,
 
     /// List active subscriptions
     #[arg(long = "list-subscriptions")]
@@ -285,8 +280,10 @@ pub struct Cli {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_watch_interval;
-    use std::time::Duration;
+    use clap::Parser;
+
+    use super::{parse_watch_interval, Cli};
+    use std::{path::Path, time::Duration};
 
     #[test]
     fn parse_watch_interval_defaults_to_seconds() {
@@ -308,5 +305,40 @@ mod tests {
     #[test]
     fn parse_watch_interval_handles_default_five_seconds_literal() {
         assert_eq!(parse_watch_interval("5s").unwrap(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn short_connection_and_execution_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "kalam",
+            "-u",
+            "http://127.0.0.1:8080",
+            "-c",
+            "SELECT 1",
+            "-v",
+        ])
+        .expect("short flags should parse");
+
+        assert_eq!(cli.url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(cli.command.as_deref(), Some("SELECT 1"));
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn short_host_port_and_file_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "kalam",
+            "-H",
+            "127.0.0.1",
+            "-p",
+            "8080",
+            "-f",
+            "./queries.sql",
+        ])
+        .expect("short flags should parse");
+
+        assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(cli.port, 8080);
+        assert_eq!(cli.file.as_deref(), Some(Path::new("./queries.sql")));
     }
 }

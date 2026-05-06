@@ -519,6 +519,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_batch_statements_falls_back_for_short_execute_as() {
+        let sql = "EXECUTE AS alice (SELECT 1); SELECT 2;";
+        let statements = parse_batch_statements(sql).unwrap();
+        assert_eq!(statements.len(), 2);
+        assert_eq!(statements[0], "EXECUTE AS alice (SELECT 1)");
+        assert_eq!(statements[1], "SELECT 2");
+    }
+
+    #[test]
     fn parse_batch_statements_preserves_file_placeholder_statement() {
         let sql = "INSERT INTO uploads SELECT * FROM FILE('orders.csv');";
         let statements = parse_batch_statements(sql).unwrap();
@@ -553,12 +562,12 @@ mod tests {
 
     #[test]
     fn parse_execution_batch_reports_statement_index() {
-        let err = parse_execution_batch("SELECT 1; EXECUTE AS USER '' (SELECT 2)").unwrap_err();
+        let err = parse_execution_batch("SELECT 1; EXECUTE AS '' (SELECT 2)").unwrap_err();
         assert_eq!(
             err,
             ExecutionBatchParseError::Statement {
                 statement_index: 2,
-                message: "EXECUTE AS USER username cannot be empty".to_string(),
+                message: "EXECUTE AS username cannot be empty".to_string(),
             }
         );
     }
@@ -566,7 +575,7 @@ mod tests {
     #[test]
     fn prepare_execution_batch_preserves_execute_as_username() {
         let prepared =
-            prepare_execution_batch("SELECT 1; EXECUTE AS USER alice (SELECT 2)", |statement| {
+            prepare_execution_batch("SELECT 1; EXECUTE AS alice (SELECT 2)", |statement| {
                 Ok::<_, String>(statement.sql.clone())
             })
             .unwrap();

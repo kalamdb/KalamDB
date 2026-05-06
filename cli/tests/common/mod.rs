@@ -4,6 +4,7 @@ extern crate kalam_cli;
 use std::os::unix::io::AsRawFd;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    fs,
     fs::OpenOptions,
     io::{BufRead, BufReader},
     net::TcpListener,
@@ -11,7 +12,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{mpsc as std_mpsc, Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 #[cfg(unix)]
@@ -88,21 +89,18 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
-static SHARED_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    SHARED_HTTP_CLIENT
-        .get_or_init(|| {
-            Client::builder()
-                .pool_max_idle_per_host(512)
-                .pool_idle_timeout(Duration::from_secs(90))
-                .tcp_nodelay(true)
-                .build()
-                .expect("failed to build shared test HTTP client")
-        })
-        .clone()
+    // Tests use separate tokio runtimes, so reusing one global reqwest client can leave pooled
+    // dispatch tasks bound to a runtime that has already shut down.
+    Client::builder()
+        .pool_max_idle_per_host(512)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_nodelay(true)
+        .build()
+        .expect("failed to build test HTTP client")
 }
 
 #[derive(Clone, Debug)]
@@ -1194,9 +1192,8 @@ fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
         return Ok(PathBuf::from(path));
     }
 
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop();
-    path.push("target");
+    let repo_root = workspace_root();
+    let mut path = repo_root.join("target");
     path.push("debug");
     path.push(if cfg!(windows) {
         "kalamdb-server.exe"
@@ -1204,16 +1201,91 @@ fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
         "kalamdb-server"
     });
 
-    if path.exists() {
-        Ok(path)
-    } else {
-        Err(format!(
+    if !path.exists() || is_server_binary_stale(&repo_root, &path)? {
+        build_kalamdb_server_binary(&repo_root)?;
+    }
+
+    if !path.exists() {
+        return Err(format!(
             "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server \
              --bin kalamdb-server`.",
             path.display()
         )
-        .into())
+        .into());
     }
+
+    Ok(path)
+}
+
+fn workspace_root() -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path
+}
+
+fn build_kalamdb_server_binary(repo_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("-p")
+        .arg("kalamdb-server")
+        .arg("--bin")
+        .arg("kalamdb-server")
+        .current_dir(repo_root)
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to build kalamdb-server binary for fresh test server".into())
+    }
+}
+
+fn is_server_binary_stale(
+    repo_root: &Path,
+    binary_path: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if !binary_path.exists() {
+        return Ok(true);
+    }
+
+    let binary_mtime = fs::metadata(binary_path)?.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let source_roots = [
+        repo_root.join("Cargo.toml"),
+        repo_root.join("Cargo.lock"),
+        repo_root.join("backend/Cargo.toml"),
+        repo_root.join("backend/build.rs"),
+        repo_root.join("backend/src"),
+        repo_root.join("backend/crates"),
+    ];
+
+    for source_root in source_roots {
+        if !source_root.exists() {
+            continue;
+        }
+
+        if latest_modified_time(&source_root)? > binary_mtime {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn latest_modified_time(path: &Path) -> Result<SystemTime, Box<dyn std::error::Error>> {
+    let metadata = fs::metadata(path)?;
+    let mut latest = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let child_latest = latest_modified_time(&entry.path())?;
+            if child_latest > latest {
+                latest = child_latest;
+            }
+        }
+    }
+
+    Ok(latest)
 }
 
 async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error::Error>> {
@@ -2368,6 +2440,7 @@ fn is_redacted_cluster_sql_error(sql: &str, message: &str) -> bool {
         || lower_sql.starts_with("insert ")
         || lower_sql.starts_with("update ")
         || lower_sql.starts_with("delete ")
+        || lower_sql.starts_with("execute as ")
         || lower_sql.starts_with("execute as user ")
 }
 

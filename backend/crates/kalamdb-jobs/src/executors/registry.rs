@@ -471,8 +471,10 @@ mod tests {
     use kalamdb_core::test_helpers::test_app_context_simple;
     use kalamdb_system::JobStatus;
     use serde::{Deserialize, Serialize};
+    use tempfile::tempdir;
 
     use super::*;
+    use crate::executors::backup::BackupExecutor;
     use crate::executors::JobParams;
 
     #[derive(Clone, Serialize, Deserialize)]
@@ -595,6 +597,23 @@ mod tests {
             JobDecision::Completed { .. } => {},
             _ => panic!("Expected Completed decision"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_registry_execute_backup_archive_path() {
+        let app_ctx = test_app_context_simple();
+        let temp_dir = tempdir().expect("temp dir");
+        let archive_path = temp_dir.path().join("registry-backup.tar.gz");
+
+        let registry = JobRegistry::new();
+        registry.register(Arc::new(BackupExecutor::new()));
+
+        let params = format!(r#"{{"backup_path":"{}"}}"#, archive_path.display());
+        let job = make_test_job(JobType::Backup, &params);
+        let result = registry.execute(app_ctx, &job).await.expect("registry execute backup");
+
+        assert!(matches!(result, JobDecision::Completed { .. }));
+        assert!(archive_path.is_file(), "expected archive file at {}", archive_path.display());
     }
 
     #[tokio::test]

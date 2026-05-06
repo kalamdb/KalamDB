@@ -12,26 +12,16 @@ fn print_list_subscriptions() {
     println!("  • No persistent subscription registry is currently implemented");
 }
 
-fn print_unsubscribe_message() {
-    println!("To unsubscribe from an active subscription, use Ctrl+C in the terminal");
-    println!("where the subscription is running, or kill the process.");
-}
-
 pub async fn handle_subscriptions(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
 ) -> Result<bool> {
-    if !(cli.list_subscriptions || cli.subscribe.is_some() || cli.unsubscribe.is_some()) {
+    if !(cli.list_subscriptions || cli.subscribe.is_some()) {
         return Ok(false);
     }
 
     if cli.list_subscriptions {
         print_list_subscriptions();
-        return Ok(true);
-    }
-
-    if cli.unsubscribe.is_some() {
-        print_unsubscribe_message();
         return Ok(true);
     }
 

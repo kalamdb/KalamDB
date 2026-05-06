@@ -1,57 +1,60 @@
-//! EXECUTE AS USER parsing utilities
+//! EXECUTE AS parsing utilities
 //!
-//! Provides a single shared implementation for parsing `EXECUTE AS USER` SQL
-//! wrappers.  Both the API execution handler and the cluster forwarding logic
-//! delegate to these functions so there is **one** canonical parser.
+//! Provides a single shared implementation for parsing `EXECUTE AS` SQL
+//! wrappers. Both the API execution handler and the cluster forwarding logic
+//! delegate to these functions so there is one canonical parser.
 //!
 //! Grammar:
 //! ```text
-//! EXECUTE AS USER <username> ( <inner_sql> )
+//! EXECUTE AS <user_id> ( <inner_sql> )
+//! EXECUTE AS USER <user_id> ( <inner_sql> )  // legacy compatibility
 //! ```
-//! `<username>` may be single-quoted (`'alice'`) or bare (`alice`).
+//! `<user_id>` may be single-quoted (`'alice'`) or bare (`alice`).
 //! The inner SQL must be exactly one statement.
 
 use crate::split_statements;
 
-/// Prefix used for case-insensitive matching.
-const EXECUTE_AS_PREFIX: &str = "EXECUTE AS USER";
-/// Byte length of the prefix — used for fast slice comparisons.
-const EXECUTE_AS_PREFIX_LEN: usize = EXECUTE_AS_PREFIX.len(); // 15
+/// Prefixes used for case-insensitive matching.
+const EXECUTE_AS_PREFIXES: [&str; 2] = ["EXECUTE AS USER", "EXECUTE AS"];
 
-/// Result of parsing an `EXECUTE AS USER` envelope.
+/// Result of parsing an `EXECUTE AS` envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecuteAsEnvelope {
-    /// The user identifier that follows `EXECUTE AS USER`.
+    /// The user identifier that follows `EXECUTE AS` or legacy `EXECUTE AS USER`.
     pub username: String,
     /// The inner SQL statement (parentheses stripped).
     pub inner_sql: String,
 }
 
-/// Check whether `sql` starts with `EXECUTE AS USER` (case-insensitive).
+#[inline]
+fn match_execute_as_prefix(sql: &str) -> Option<usize> {
+    let trimmed = sql.trim();
+    EXECUTE_AS_PREFIXES.iter().find_map(|prefix| {
+        let prefix_len = prefix.len();
+        (trimmed.len() >= prefix_len
+            && trimmed.as_bytes()[..prefix_len].eq_ignore_ascii_case(prefix.as_bytes()))
+        .then_some(prefix_len)
+    })
+}
+
+/// Check whether `sql` starts with canonical `EXECUTE AS` or legacy `EXECUTE AS USER`
+/// (case-insensitive).
 ///
 /// This is a very cheap check that avoids any allocation.
 #[inline]
 pub fn is_execute_as(sql: &str) -> bool {
-    let trimmed = sql.trim();
-    trimmed.len() >= EXECUTE_AS_PREFIX_LEN
-        && trimmed.as_bytes()[..EXECUTE_AS_PREFIX_LEN]
-            .eq_ignore_ascii_case(EXECUTE_AS_PREFIX.as_bytes())
+    match_execute_as_prefix(sql).is_some()
 }
 
-/// Extract just the inner SQL from an `EXECUTE AS USER '...' (...)` wrapper.
+/// Extract just the inner SQL from an `EXECUTE AS '...' (...)` wrapper.
 ///
-/// Returns `Some(inner_sql)` if the SQL matches the EXECUTE AS USER pattern,
+/// Returns `Some(inner_sql)` if the SQL matches an EXECUTE AS pattern,
 /// `None` otherwise.  This is intentionally lightweight — it only needs to
 /// strip the wrapper so callers (e.g. statement classifier) can inspect the
 /// actual SQL statement without allocating a full parsed result.
 pub fn extract_inner_sql(sql: &str) -> Option<String> {
     let trimmed = sql.trim();
-    if trimmed.len() < EXECUTE_AS_PREFIX_LEN
-        || !trimmed.as_bytes()[..EXECUTE_AS_PREFIX_LEN]
-            .eq_ignore_ascii_case(EXECUTE_AS_PREFIX.as_bytes())
-    {
-        return None;
-    }
+    match_execute_as_prefix(trimmed)?;
 
     let open_paren = trimmed.find('(')?;
     let close_paren = find_matching_close_paren(trimmed, open_paren)?;
@@ -92,7 +95,7 @@ fn parse_single_quoted(input: &str) -> Result<(String, &str), String> {
         return Ok((value, &input[idx + 1..]));
     }
 
-    Err("EXECUTE AS USER username quote was not closed".to_string())
+    Err("EXECUTE AS username quote was not closed".to_string())
 }
 
 fn find_matching_close_paren(input: &str, open_idx: usize) -> Option<usize> {
@@ -148,14 +151,16 @@ fn find_matching_close_paren(input: &str, open_idx: usize) -> Option<usize> {
     None
 }
 
-/// Fully parse an `EXECUTE AS USER` envelope, extracting the username and the
+/// Fully parse an `EXECUTE AS` envelope, extracting the username and the
 /// parenthesised inner SQL.
 ///
-/// The username may be quoted (`'alice'`) or bare (`alice`).
+/// Supports both canonical `EXECUTE AS <user_id> (...)` and
+/// legacy `EXECUTE AS USER <user_id> (...)`.
+/// The user id may be quoted (`'alice'`) or bare (`alice`).
 /// Bare usernames extend up to the first whitespace or `(` character.
 ///
 /// Returns:
-/// - `Ok(Some(envelope))` when the statement is an EXECUTE AS USER wrapper
+/// - `Ok(Some(envelope))` when the statement is an EXECUTE AS wrapper
 /// - `Ok(None)` when the statement is a normal SQL statement (no wrapper)
 /// - `Err(msg)` on syntax errors inside the wrapper
 pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, String> {
@@ -164,58 +169,54 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
         return Err("Empty SQL statement".to_string());
     }
 
-    // Fast prefix check without allocating an uppercased copy.
-    if trimmed.len() < EXECUTE_AS_PREFIX_LEN
-        || !trimmed.as_bytes()[..EXECUTE_AS_PREFIX_LEN]
-            .eq_ignore_ascii_case(EXECUTE_AS_PREFIX.as_bytes())
-    {
+    let Some(prefix_len) = match_execute_as_prefix(trimmed) else {
         return Ok(None);
-    }
+    };
 
-    let after_prefix = trimmed[EXECUTE_AS_PREFIX_LEN..].trim_start();
+    let after_prefix = trimmed[prefix_len..].trim_start();
 
     // --- Username extraction (quoted or bare) ---
     let (username, rest): (String, &str) = if after_prefix.starts_with('\'') {
         let (parsed_username, rest) = parse_single_quoted(after_prefix)?;
         let uname = parsed_username.trim();
         if uname.is_empty() {
-            return Err("EXECUTE AS USER username cannot be empty".to_string());
+            return Err("EXECUTE AS username cannot be empty".to_string());
         }
         (uname.to_string(), rest.trim_start())
     } else {
-        // Bare: EXECUTE AS USER alice (...)
+        // Bare: EXECUTE AS alice (...) or EXECUTE AS USER alice (...)
         // Username extends until whitespace or '('.
         let end = after_prefix
             .find(|c: char| c.is_whitespace() || c == '(')
             .unwrap_or(after_prefix.len());
         let uname = after_prefix[..end].trim();
         if uname.is_empty() {
-            return Err("EXECUTE AS USER username cannot be empty".to_string());
+            return Err("EXECUTE AS username cannot be empty".to_string());
         }
         (uname.to_string(), after_prefix[end..].trim_start())
     };
 
     // --- Parenthesised SQL body ---
     if !rest.starts_with('(') {
-        return Err("EXECUTE AS USER must wrap SQL in parentheses".to_string());
+        return Err("EXECUTE AS must wrap SQL in parentheses".to_string());
     }
 
     let close_idx = find_matching_close_paren(rest, 0)
-        .ok_or_else(|| "EXECUTE AS USER missing closing ')'".to_string())?;
+        .ok_or_else(|| "EXECUTE AS missing closing ')'".to_string())?;
     let inner_sql = rest[1..close_idx].trim();
     if inner_sql.is_empty() {
-        return Err("EXECUTE AS USER requires a non-empty inner SQL statement".to_string());
+        return Err("EXECUTE AS requires a non-empty inner SQL statement".to_string());
     }
 
     let trailing = rest[close_idx + 1..].trim();
     if !trailing.is_empty() {
-        return Err("EXECUTE AS USER must contain exactly one wrapped SQL statement".to_string());
+        return Err("EXECUTE AS must contain exactly one wrapped SQL statement".to_string());
     }
 
     let inner_statements = split_statements(inner_sql)
-        .map_err(|e| format!("Failed to parse inner SQL for EXECUTE AS USER: {}", e))?;
+        .map_err(|e| format!("Failed to parse inner SQL for EXECUTE AS: {}", e))?;
     if inner_statements.len() != 1 {
-        return Err("EXECUTE AS USER can only wrap a single SQL statement".to_string());
+        return Err("EXECUTE AS can only wrap a single SQL statement".to_string());
     }
 
     Ok(Some(ExecuteAsEnvelope {
@@ -235,7 +236,9 @@ mod tests {
     #[test]
     fn is_execute_as_positive() {
         assert!(is_execute_as("EXECUTE AS USER 'alice' (SELECT 1)"));
+        assert!(is_execute_as("EXECUTE AS 'alice' (SELECT 1)"));
         assert!(is_execute_as("execute as user bob (SELECT 1)"));
+        assert!(is_execute_as("execute as bob (SELECT 1)"));
         assert!(is_execute_as("  EXECUTE AS USER 'x' (SELECT 1)  "));
     }
 
@@ -253,6 +256,12 @@ mod tests {
     #[test]
     fn extract_inner_sql_basic() {
         let inner = extract_inner_sql("EXECUTE AS USER 'alice' (SELECT * FROM t)");
+        assert_eq!(inner.as_deref(), Some("SELECT * FROM t"));
+    }
+
+    #[test]
+    fn extract_inner_sql_short_alias() {
+        let inner = extract_inner_sql("EXECUTE AS 'alice' (SELECT * FROM t)");
         assert_eq!(inner.as_deref(), Some("SELECT * FROM t"));
     }
 
@@ -313,6 +322,27 @@ mod tests {
     #[test]
     fn parse_bare_case_insensitive() {
         let result = parse_execute_as("execute as user bob (INSERT INTO default.t VALUES (1))")
+            .expect("should parse")
+            .expect("should be an envelope");
+
+        assert_eq!(result.username, "bob");
+        assert_eq!(result.inner_sql, "INSERT INTO default.t VALUES (1)");
+    }
+
+    #[test]
+    fn parse_short_alias_quoted_username() {
+        let result =
+            parse_execute_as("EXECUTE AS 'alice' (SELECT * FROM default.todos WHERE id = 1);")
+                .expect("should parse")
+                .expect("should be an envelope");
+
+        assert_eq!(result.username, "alice");
+        assert_eq!(result.inner_sql, "SELECT * FROM default.todos WHERE id = 1");
+    }
+
+    #[test]
+    fn parse_short_alias_bare_username() {
+        let result = parse_execute_as("execute as bob (INSERT INTO default.t VALUES (1))")
             .expect("should parse")
             .expect("should be an envelope");
 

@@ -273,6 +273,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_execute_as_short_alias_quoted_username() {
+        let parsed = parse_execute_statement(
+            "EXECUTE AS 'alice' (SELECT * FROM default.todos WHERE id = 1);",
+        )
+        .expect("short alias with quoted username should parse");
+
+        assert_eq!(parsed.execute_as_username, Some("alice".to_string()));
+        assert_eq!(parsed.sql, "SELECT * FROM default.todos WHERE id = 1");
+    }
+
+    #[test]
+    fn parse_execute_as_short_alias_bare_username() {
+        let parsed = parse_execute_statement("execute as bob (INSERT INTO default.t VALUES (1))")
+            .expect("short alias with bare username should parse");
+
+        assert_eq!(parsed.execute_as_username, Some("bob".to_string()));
+        assert_eq!(parsed.sql, "INSERT INTO default.t VALUES (1)");
+    }
+
+    #[test]
     fn parse_execute_as_user_bare_no_space_before_paren() {
         let parsed = parse_execute_statement("EXECUTE AS USER alice(SELECT 1)")
             .expect("bare username immediately followed by '(' should parse");

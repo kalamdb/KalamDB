@@ -279,6 +279,28 @@ fn row_offsets(response: &QueryResponse) -> Vec<i64> {
         .collect()
 }
 
+fn last_row_offset(response: &QueryResponse) -> u64 {
+    row_offsets(response)
+        .into_iter()
+        .max()
+        .expect("Expected consume response to contain at least one offset row") as u64
+}
+
+async fn ack_topic_offset(server: &TestServer, topic: &str, group: &str, upto_offset: u64) {
+    let response = server
+        .execute_sql(&format!("ACK {} GROUP '{}' UPTO OFFSET {}", topic, group, upto_offset))
+        .await;
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "ACK should succeed for topic='{}' group='{}' upto_offset={}: {:?}",
+        topic,
+        group,
+        upto_offset,
+        response.error
+    );
+}
+
 async fn assert_topic_offset_state(
     server: &TestServer,
     topic: &str,
@@ -866,9 +888,13 @@ async fn test_sql_group_consume_resumes_from_committed_offsets_after_cache_clear
         1,
         "Initial consume should return the first message"
     );
+    assert_topic_offset_state(&server, &topic, &group, None).await;
+
+    ack_topic_offset(&server, &topic, &group, last_row_offset(&first_consume)).await;
+
     let first_updated_at = assert_topic_offset_state(&server, &topic, &group, Some(0))
         .await
-        .expect("Expected first grouped consume to auto-ack offset 0");
+        .expect("Expected explicit ACK to persist offset 0");
 
     server.app_context.topic_publisher().clear_cache();
 
@@ -881,11 +907,19 @@ async fn test_sql_group_consume_resumes_from_committed_offsets_after_cache_clear
         1,
         "After clearing in-memory claims, SQL consume should resume from the committed offset"
     );
+    let second_last_offset = last_row_offset(&second_consume);
+    assert_eq!(second_last_offset, 1);
+    let before_second_ack = assert_topic_offset_state(&server, &topic, &group, Some(0))
+        .await
+        .expect("Expected committed offset to remain unchanged before explicit ACK");
+
+    ack_topic_offset(&server, &topic, &group, second_last_offset).await;
+
     let second_updated_at = assert_topic_offset_state(&server, &topic, &group, Some(1))
         .await
-        .expect("Expected second grouped consume to advance auto-ack to offset 1");
+        .expect("Expected explicit ACK to advance committed offset to 1");
     assert!(
-        second_updated_at >= first_updated_at,
+        second_updated_at >= before_second_ack && second_updated_at >= first_updated_at,
         "Offset update timestamp should move forward or stay equal across rapid commits"
     );
 
@@ -968,6 +1002,9 @@ async fn test_sql_group_offsets_are_isolated_per_group() {
             "New group '{}' should start from the beginning when consuming FROM EARLIEST",
             group
         );
+
+        assert_topic_offset_state(&server, &topic, group, None).await;
+        ack_topic_offset(&server, &topic, group, last_row_offset(&response)).await;
         assert_topic_offset_state(&server, &topic, group, Some(*expected_last_acked)).await;
     }
 
@@ -1008,6 +1045,9 @@ async fn test_sql_group_offsets_are_isolated_per_group() {
             "Group '{}' should resume from its own committed cursor after cache clear",
             group
         );
+
+        assert_topic_offset_state(&server, &topic, group, Some(*expected_last_acked)).await;
+        ack_topic_offset(&server, &topic, group, last_row_offset(&resumed)).await;
         assert_topic_offset_state(&server, &topic, group, Some(*expected_last_acked + 1)).await;
     }
 
@@ -1083,6 +1123,9 @@ async fn test_sql_group_from_latest_tails_new_messages_and_then_persists_offset(
     )
     .await;
     assert_eq!(row_offsets(&tail_consume), vec![5, 6]);
+
+    assert_topic_offset_state(&server, &topic, &group, None).await;
+    ack_topic_offset(&server, &topic, &group, last_row_offset(&tail_consume)).await;
     assert_topic_offset_state(&server, &topic, &group, Some(6)).await;
 
     server.app_context.topic_publisher().clear_cache();
@@ -1132,6 +1175,9 @@ async fn test_sql_group_from_offset_starts_at_requested_offset_and_persists_resu
     )
     .await;
     assert_eq!(row_offsets(&offset_consume), vec![3, 4]);
+
+    assert_topic_offset_state(&server, &topic, &group, None).await;
+    ack_topic_offset(&server, &topic, &group, last_row_offset(&offset_consume)).await;
     assert_topic_offset_state(&server, &topic, &group, Some(4)).await;
 
     server.app_context.topic_publisher().clear_cache();
@@ -1143,6 +1189,9 @@ async fn test_sql_group_from_offset_starts_at_requested_offset_and_persists_resu
     )
     .await;
     assert_eq!(row_offsets(&resumed), vec![5]);
+
+    assert_topic_offset_state(&server, &topic, &group, Some(4)).await;
+    ack_topic_offset(&server, &topic, &group, last_row_offset(&resumed)).await;
     assert_topic_offset_state(&server, &topic, &group, Some(5)).await;
 }
 

@@ -46,6 +46,12 @@ export function buildCreateUserSql(input: CreateUserInput): string {
   if (input.email?.trim()) {
     sql += ` EMAIL '${escapeSqlLiteral(input.email.trim())}'`;
   }
+  if (input.storage_mode) {
+    sql += ` STORAGE_MODE '${escapeSqlLiteral(input.storage_mode)}'`;
+  }
+  if (input.storage_id?.trim()) {
+    sql += ` STORAGE_ID '${escapeSqlLiteral(input.storage_id.trim())}'`;
+  }
   return sql;
 }
 
@@ -61,35 +67,22 @@ export function buildUpdateUserEmailSql(username: string, email: string): string
   return `ALTER USER '${escapeSqlLiteral(username)}' SET EMAIL '${escapeSqlLiteral(email)}'`;
 }
 
-export function buildUpdateUserStorageSql(
+export function buildUpdateUserStorageModeSql(
   username: string,
-  storageMode: "table" | "region" | null | undefined,
-  storageId: string | null | undefined,
-): string | null {
-  const setClauses: string[] = [];
+  storageMode: "table" | "region",
+): string {
+  return `ALTER USER '${escapeSqlLiteral(username)}' SET STORAGE_MODE '${escapeSqlLiteral(storageMode)}'`;
+}
 
-  if (storageMode !== undefined) {
-    setClauses.push(
-      storageMode === null
-        ? "storage_mode = NULL"
-        : `storage_mode = '${escapeSqlLiteral(storageMode)}'`,
-    );
+export function buildUpdateUserStorageIdSql(
+  username: string,
+  storageId: string | null,
+): string {
+  if (storageId === null) {
+    return `ALTER USER '${escapeSqlLiteral(username)}' SET STORAGE_ID NULL`;
   }
 
-  if (storageId !== undefined) {
-    const normalizedStorageId = storageId?.trim() ?? "";
-    setClauses.push(
-      normalizedStorageId.length === 0
-        ? "storage_id = NULL"
-        : `storage_id = '${escapeSqlLiteral(normalizedStorageId)}'`,
-    );
-  }
-
-  if (setClauses.length === 0) {
-    return null;
-  }
-
-  return `UPDATE system.users SET ${setClauses.join(", ")} WHERE user_id = '${escapeSqlLiteral(username)}'`;
+  return `ALTER USER '${escapeSqlLiteral(username)}' SET STORAGE_ID '${escapeSqlLiteral(storageId.trim())}'`;
 }
 
 export function buildDeleteUserSql(username: string): string {

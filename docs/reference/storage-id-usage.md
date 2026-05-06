@@ -117,19 +117,26 @@ Important rules:
 - `STORAGE_ID` is still the fallback storage for the table.
 - User preference fields exist in `system.users` (`storage_mode`, `storage_id`).
 
-## 5) Changing storage per user (current status)
+## 5) Changing storage per user
 
-Today, SQL DML against `system.*` tables is blocked, and `ALTER USER` currently supports only:
-- `SET PASSWORD`
-- `SET ROLE`
-- `SET EMAIL`
+Use `CREATE USER` or `ALTER USER` to set per-user storage preferences without writing directly to `system.users`:
 
-That means there is currently no public SQL command to change a user's `storage_mode` / `storage_id` directly.
+```sql
+CREATE USER 'alice'
+    WITH PASSWORD 'SecurePass123!'
+    ROLE user
+    STORAGE_MODE region
+    STORAGE_ID 's3_eu';
 
-Current developer workflow:
-- Decide table-level routing with `STORAGE_ID` (+ optional `USE_USER_STORAGE`).
-- For user-level storage overrides, use internal/admin backend flows that update user records, not direct SQL updates.
-- Track progress and limitations in [docs/development/user-table-storage.md](../development/user-table-storage.md).
+ALTER USER 'alice' SET STORAGE_MODE table;
+ALTER USER 'alice' SET STORAGE_ID 'local';
+ALTER USER 'alice' SET STORAGE_ID NULL;
+```
+
+Notes:
+- `STORAGE_MODE` accepts `table` or `region`.
+- `STORAGE_ID` must reference an existing row in `system.storages`.
+- `SET STORAGE_ID NULL` clears the stored preference while preserving the current `storage_mode`.
 
 ## 6) Common failures
 

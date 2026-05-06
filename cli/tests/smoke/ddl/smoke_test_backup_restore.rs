@@ -1,9 +1,11 @@
 //! Smoke tests for BACKUP DATABASE / RESTORE DATABASE SQL commands.
 //!
 //! ## What is tested
-//! - `BACKUP DATABASE TO '<path>'` creates a job that completes and writes the expected backup
-//!   directory layout (`rocksdb/`, `storage/`, `snapshots/`, `streams/`).
-//! - `RESTORE DATABASE FROM '<path>'` creates a restore job that reaches a terminal state.
+//! - `BACKUP DATABASE TO '<path>'` creates a job that completes and writes either the expected
+//!   backup directory layout (`rocksdb/`, `storage/`, `snapshots/`, `streams/`) or a `.tar.gz`
+//!   archive containing that layout.
+//! - `RESTORE DATABASE FROM '<path>'` accepts either a backup directory or a `.tar.gz` archive
+//!   and creates a restore job that reaches a terminal state.
 //! - Non-DBA users receive an authorization error when attempting either command.
 //! - `RESTORE DATABASE FROM '<non-existent-path>'` returns a clear error immediately (no job
 //!   created).
@@ -49,9 +51,16 @@ fn tmp_backup_path(suffix: &str) -> PathBuf {
     std::env::temp_dir().join(unique)
 }
 
+/// Return a fresh `.tar.gz` archive path suitable for archive backup tests.
+fn tmp_backup_archive_path(suffix: &str) -> PathBuf {
+    let unique = generate_unique_namespace(suffix);
+    std::env::temp_dir().join(format!("{}.tar.gz", unique))
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
-/// BACKUP DATABASE creates a completed job and writes the expected directory layout.
+/// BACKUP DATABASE creates a completed job and writes the expected directory layout
+/// when the target path is a directory.
 #[ntest::timeout(300_000)]
 #[test]
 fn smoke_backup_database_job_completes() {
@@ -95,6 +104,45 @@ fn smoke_backup_database_job_completes() {
 
     // Cleanup — best-effort
     let _ = std::fs::remove_dir_all(&backup_path);
+}
+
+/// BACKUP DATABASE writes a `.tar.gz` archive when the target path ends with
+/// `.tar.gz`.
+#[ntest::timeout(300_000)]
+#[test]
+fn smoke_backup_database_archive_job_completes() {
+    if !require_server_running() {
+        return;
+    }
+
+    let backup_path = tmp_backup_archive_path("kdb_bkp_archive");
+
+    let output = execute_sql_as_root_via_client(&format!(
+        "BACKUP DATABASE TO '{}'",
+        backup_path.display()
+    ))
+    .expect("BACKUP DATABASE archive should succeed");
+
+    let job_id =
+        parse_job_id(&output).unwrap_or_else(|| panic!("Could not parse job id from: {}", output));
+
+    let status = wait_for_job_finished(&job_id, BACKUP_JOB_TIMEOUT)
+        .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
+
+    assert_eq!(status, "completed", "Backup archive job did not complete: {}", job_id);
+    assert!(backup_path.is_file(), "Backup archive was not created: {}", backup_path.display());
+
+    let bytes = std::fs::read(&backup_path).expect("read backup archive");
+    assert!(bytes.len() >= 2, "Backup archive should not be empty");
+    assert_eq!(
+        &bytes[..2],
+        &[0x1f, 0x8b],
+        "Backup archive should start with gzip magic bytes"
+    );
+
+    println!("✅  Backup archive verified at {}", backup_path.display());
+
+    let _ = std::fs::remove_file(&backup_path);
 }
 
 /// RESTORE DATABASE FROM a valid backup path creates a restore job that completes.
@@ -153,6 +201,51 @@ fn smoke_restore_from_backup_job_completes() {
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&backup_path);
+}
+
+/// RESTORE DATABASE FROM accepts a `.tar.gz` archive path and creates a restore
+/// job that reaches a terminal state.
+#[ntest::timeout(360_000)]
+#[test]
+fn smoke_restore_from_backup_archive_job_completes() {
+    if !require_server_running() {
+        return;
+    }
+
+    let backup_path = tmp_backup_archive_path("kdb_restore_archive");
+
+    let bkp_out = execute_sql_as_root_via_client(&format!(
+        "BACKUP DATABASE TO '{}'",
+        backup_path.display()
+    ))
+    .expect("BACKUP DATABASE archive should succeed");
+
+    let bkp_job_id = parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
+    let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
+        .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
+    assert_eq!(bkp_status, "completed", "Backup archive must complete before restore test");
+    assert!(backup_path.is_file(), "Backup archive was not created: {}", backup_path.display());
+
+    let restore_out = execute_sql_as_root_via_client(&format!(
+        "RESTORE DATABASE FROM '{}'",
+        backup_path.display()
+    ))
+    .expect("RESTORE DATABASE archive should succeed");
+
+    let restore_job_id = parse_job_id(&restore_out)
+        .unwrap_or_else(|| panic!("Could not parse restore job id from: {}", restore_out));
+
+    let status = wait_for_job_finished(&restore_job_id, RESTORE_JOB_TIMEOUT)
+        .unwrap_or_else(|e| panic!("Restore archive job wait failed: {}", e));
+
+    assert!(
+        status == "completed" || status == "failed",
+        "Restore archive job should be in terminal state; got: {}",
+        status
+    );
+    println!("✅  Restore archive job finished with status '{}'", status);
+
+    let _ = std::fs::remove_file(&backup_path);
 }
 
 /// A regular `user`-role user is forbidden from running BACKUP DATABASE.

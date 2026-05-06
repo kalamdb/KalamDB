@@ -3,13 +3,6 @@ import type { LucideIcon } from "lucide-react";
 import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { QueryLogEntry } from "../../shared/types";
@@ -225,11 +218,9 @@ function describeFlow(kind: LogEntryKind): string {
 export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const previousLastLogIdRef = useRef<string | null>(null);
-  const [detailModalId, setDetailModalId] = useState<string | null>(null);
 
   const handleSelectLog = (id: string) => {
     setSelectedLogId(id);
-    setDetailModalId(id);
   };
 
   const decoratedLogs = useMemo(
@@ -392,35 +383,6 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
             <CodeBlock value={selectedEntry.payload} jsonPreferred maxHeightClassName="h-full max-h-full" />
           </div>
       </section>
-
-      {(() => {
-        const modalEntry = detailModalId
-          ? decoratedLogs.find((item) => item.entry.id === detailModalId)
-          : null;
-        return (
-          <Dialog open={!!modalEntry} onOpenChange={(o) => !o && setDetailModalId(null)}>
-            <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 font-mono text-sm">
-                  {modalEntry?.label} • {modalEntry?.title}
-                </DialogTitle>
-                <DialogDescription>
-                  Full payload for the selected event.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="min-h-0 flex-1 overflow-hidden">
-                {modalEntry && (
-                  <CodeBlock
-                    value={modalEntry.payload}
-                    jsonPreferred
-                    maxHeightClassName="h-full max-h-full"
-                  />
-                )}
-              </div>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
     </div>
   );
 }

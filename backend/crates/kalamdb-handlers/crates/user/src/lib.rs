@@ -24,6 +24,8 @@ pub fn register_user_handlers(
             role: kalamdb_commons::Role::User,
             email: None,
             password: None,
+            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id: None,
         }),
         user::CreateUserHandler::new(app_context.clone(), enforce_password_complexity),
         SqlStatementKind::CreateUser,

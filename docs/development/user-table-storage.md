@@ -41,16 +41,14 @@ Each user row exposes two columns that drive routing:
 Example: pin `alice` to the EU bucket, leave `bob` on the default table storage.
 
 ```sql
-UPDATE system.users
-SET storage_mode = 'region', storage_id = 's3_eu'
-WHERE username = 'alice';
+ALTER USER 'alice' SET STORAGE_MODE region;
+ALTER USER 'alice' SET STORAGE_ID 's3_eu';
 
-UPDATE system.users
-SET storage_mode = 'table', storage_id = NULL
-WHERE username = 'bob';
+ALTER USER 'bob' SET STORAGE_MODE table;
+ALTER USER 'bob' SET STORAGE_ID NULL;
 ```
 
-Only `dba`/`system` roles should run these updates. A future `ALTER USER` syntax will provide first-class setters, but direct SQL works today.
+Only `dba`/`system` roles can run these statements.
 
 ## 3. Create user tables that honor per-user storage
 

@@ -47,12 +47,9 @@ impl ShowExportHandler {
         created_at_millis.saturating_mul(1_000)
     }
 
-    /// Build a download URL for a completed export
-    fn build_download_url(&self, user_id: &str, export_id: &str) -> String {
-        let config = self.app_context.config();
-        let host = &config.server.host;
-        let port = config.server.port;
-        format!("http://{}:{}/v1/exports/{}/{}", host, port, user_id, export_id)
+    /// Build a download URI for a completed export.
+    fn build_download_url(user_id: &str, export_id: &str) -> String {
+        format!("/v1/exports/{}/{}", user_id, export_id)
     }
 
     /// Extract export_id from job parameters JSON
@@ -124,7 +121,7 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
             // Build download URL only for completed jobs
             let url = if job.status == kalamdb_system::JobStatus::Completed {
                 Self::extract_export_id(job)
-                    .map(|eid| self.build_download_url(&user_id, &eid))
+                    .map(|eid| Self::build_download_url(&user_id, &eid))
                     .unwrap_or_default()
             } else {
                 String::new()
@@ -180,5 +177,12 @@ mod tests {
     #[test]
     fn show_export_created_at_converts_millis_to_micros() {
         assert_eq!(ShowExportHandler::created_at_micros(1_741_900_245_123), 1_741_900_245_123_000);
+    }
+
+    #[test]
+    fn show_export_download_url_is_relative_uri() {
+        let url = ShowExportHandler::build_download_url("alice", "export-123");
+
+        assert_eq!(url, "/v1/exports/alice/export-123");
     }
 }

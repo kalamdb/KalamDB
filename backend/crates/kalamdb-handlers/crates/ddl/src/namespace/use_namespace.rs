@@ -1,10 +1,13 @@
 //! USE NAMESPACE handler
 //!
-//! This handler sets the default schema for unqualified table names using
-//! DataFusion's native configuration system.
+//! This handler sets the default schema for unqualified table names for the
+//! current request or multi-statement batch using DataFusion's native
+//! configuration system.
 //!
 //! After executing `USE namespace1`, queries like `SELECT * FROM users`
 //! will resolve to `kalam.namespace1.users`.
+//! Interactive clients such as the CLI persist the chosen namespace on the
+//! client and send it back on later requests via `namespace_id`.
 
 use std::sync::Arc;
 
@@ -21,7 +24,8 @@ use kalamdb_sql::ddl::UseNamespaceStatement;
 /// Handler for USE NAMESPACE / USE / SET NAMESPACE statements
 ///
 /// Uses DataFusion's native `datafusion.catalog.default_schema` configuration
-/// to change the default schema for the current session.
+/// to change the default schema for the current request or multi-statement
+/// batch. This is not a long-lived backend connection session.
 pub struct UseNamespaceHandler {
     app_context: Arc<AppContext>,
 }

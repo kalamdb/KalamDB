@@ -13,15 +13,24 @@
 //! ```
 // TODO: Remove this since we have most of the tests covered by the integration tests
 #![allow(unused_imports)]
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use assert_cmd::Command;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::common::*;
+
+fn admin_cli_test_mutex() -> &'static TokioMutex<()> {
+    static LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| TokioMutex::new(()))
+}
 
 /// Test that root user can create namespaces
 #[tokio::test]
 async fn test_root_can_create_namespace() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running at {}. Skipping test.", server_url());
         return;
@@ -96,6 +105,8 @@ async fn test_root_can_create_namespace() {
 /// Test that root user can create and drop tables
 #[tokio::test]
 async fn test_root_can_create_drop_tables() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -139,6 +150,8 @@ async fn test_root_can_create_drop_tables() {
 /// Test CREATE NAMESPACE via CLI with root authentication
 #[tokio::test]
 async fn test_cli_create_namespace_as_root() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -181,6 +194,8 @@ async fn test_cli_create_namespace_as_root() {
 /// Test that non-admin users cannot create namespaces
 #[tokio::test]
 async fn test_regular_user_cannot_create_namespace() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -219,6 +234,8 @@ async fn test_regular_user_cannot_create_namespace() {
 /// Test CLI with explicit username/password
 #[tokio::test]
 async fn test_cli_with_explicit_credentials() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -238,6 +255,8 @@ async fn test_cli_with_explicit_credentials() {
 /// Test admin operations via CLI
 #[tokio::test]
 async fn test_cli_admin_operations() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -305,6 +324,8 @@ async fn test_cli_admin_operations() {
 /// Test SHOW NAMESPACES command
 #[tokio::test]
 async fn test_cli_show_namespaces() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -324,6 +345,8 @@ async fn test_cli_show_namespaces() {
 /// Test STORAGE FLUSH TABLE command via CLI
 #[tokio::test]
 async fn test_cli_flush_table() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -536,6 +559,8 @@ async fn test_cli_flush_table() {
 /// Test STORAGE FLUSH ALL command via CLI
 #[tokio::test]
 async fn test_cli_flush_all_tables() {
+    let _guard = admin_cli_test_mutex().lock().await;
+
     if !is_server_running_with_auth().await {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;

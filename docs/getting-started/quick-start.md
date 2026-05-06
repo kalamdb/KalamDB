@@ -77,10 +77,10 @@ JSON
 
 ## 7. Next steps
 
-### Optional: `EXECUTE AS USER`
+### Optional: `EXECUTE AS`
 
 Use wrapper syntax only. Ordinary USER-table and STREAM-table access stays
-scoped to the authenticated user; explicit `EXECUTE AS USER` follows the role
+scoped to the authenticated user; explicit `EXECUTE AS` follows the role
 hierarchy: system can target any role, DBA can target DBA/service/user,
 service can target service/user, and regular users can only target themselves.
 
@@ -88,7 +88,7 @@ service can target service/user, and regular users can only target themselves.
 curl -u root: -X POST http://127.0.0.1:8080/v1/api/sql \
   -H 'Content-Type: application/json' \
   -d @- <<'JSON'
-{"sql":"EXECUTE AS USER 'root' (SELECT * FROM app.messages LIMIT 1);"}
+{"sql":"EXECUTE AS 'user_123' (SELECT * FROM app.messages LIMIT 1);"}
 JSON
 ```
 

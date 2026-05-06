@@ -6,6 +6,12 @@
 
 use crate::error::{CLIError, Result};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlushTarget {
+    All,
+    Table(String),
+}
+
 /// Parsed command
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -21,7 +27,7 @@ pub enum Command {
     /// Meta-commands (backslash commands)
     Quit,
     Help,
-    Flush,
+    Flush(FlushTarget),
     ClusterSnapshot,
     ClusterPurge {
         upto: u64,
@@ -45,7 +51,6 @@ pub enum Command {
     Describe(String),
     SetFormat(String),
     Subscribe(String),
-    Unsubscribe,
     RefreshTables,
     ShowCredentials,
     UpdateCredentials {
@@ -93,10 +98,7 @@ pub(crate) const META_COMMAND_COMPLETIONS: &[&str] = &[
     "\\refresh-tables",
     "\\refresh",
     "\\subscribe",
-    "\\watch",
     "\\live",
-    "\\unsubscribe",
-    "\\unwatch",
     "\\show-credentials",
     "\\credentials",
     "\\update-credentials",
@@ -150,7 +152,7 @@ impl CommandParser {
             "\\help" | "\\?" => Ok(Command::Help),
             "\\sessions" => Ok(Command::Sessions),
             "\\stats" | "\\metrics" => Ok(Command::Stats),
-            "\\flush" => Ok(Command::Flush),
+            "\\flush" => Self::parse_flush_command(args),
             "\\cluster" => {
                 if args.is_empty() {
                     Err(CLIError::ParseError(
@@ -279,7 +281,6 @@ impl CommandParser {
                     Ok(Command::Subscribe(args.join(" ")))
                 }
             },
-            "\\unsubscribe" | "\\unwatch" => Ok(Command::Unsubscribe),
             "\\refresh-tables" | "\\refresh" => Ok(Command::RefreshTables),
             "\\show-credentials" | "\\credentials" => Ok(Command::ShowCredentials),
             "\\update-credentials" => {
@@ -409,6 +410,27 @@ impl CommandParser {
             sql: sql.to_string(),
         })
     }
+
+    fn parse_flush_command(args: &[&str]) -> Result<Command> {
+        match args {
+            [] => Ok(Command::Flush(FlushTarget::All)),
+            [subcommand] if subcommand.eq_ignore_ascii_case("all") => {
+                Ok(Command::Flush(FlushTarget::All))
+            },
+            [subcommand, table @ ..] if subcommand.eq_ignore_ascii_case("table") => {
+                if table.is_empty() {
+                    Err(CLIError::ParseError(
+                        "\\flush table requires a table name".into(),
+                    ))
+                } else {
+                    Ok(Command::Flush(FlushTarget::Table(table.join(" "))))
+                }
+            },
+            _ => Err(CLIError::ParseError(
+                "\\flush supports: \\flush, \\flush all, or \\flush table <table>".into(),
+            )),
+        }
+    }
 }
 
 impl Default for CommandParser {
@@ -440,6 +462,24 @@ mod tests {
         let parser = CommandParser::new();
         assert_eq!(parser.parse("\\help").unwrap(), Command::Help);
         assert_eq!(parser.parse("\\?").unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn test_parse_flush_shortcuts() {
+        let parser = CommandParser::new();
+
+        assert_eq!(parser.parse("\\flush").unwrap(), Command::Flush(FlushTarget::All));
+        assert_eq!(parser.parse("\\flush all").unwrap(), Command::Flush(FlushTarget::All));
+        assert_eq!(
+            parser.parse("\\flush table messages").unwrap(),
+            Command::Flush(FlushTarget::Table("messages".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_flush_table_requires_target() {
+        let parser = CommandParser::new();
+        assert!(parser.parse("\\flush table").is_err());
     }
 
     #[test]
@@ -521,6 +561,115 @@ mod tests {
     fn test_parse_cluster_rebalance() {
         let parser = CommandParser::new();
         assert_eq!(parser.parse("\\cluster rebalance").unwrap(), Command::ClusterRebalance);
+    }
+
+    #[test]
+    fn test_parse_meta_command_aliases() {
+        let parser = CommandParser::new();
+
+        assert_eq!(parser.parse("\\health").unwrap(), Command::Health);
+        assert_eq!(parser.parse("\\dt").unwrap(), Command::ListTables);
+        assert_eq!(parser.parse("\\tables").unwrap(), Command::ListTables);
+        assert_eq!(parser.parse("\\info").unwrap(), Command::Info);
+        assert_eq!(parser.parse("\\session").unwrap(), Command::Info);
+        assert_eq!(parser.parse("\\show-credentials").unwrap(), Command::ShowCredentials);
+        assert_eq!(parser.parse("\\credentials").unwrap(), Command::ShowCredentials);
+        assert_eq!(parser.parse("\\delete-credentials").unwrap(), Command::DeleteCredentials);
+        assert_eq!(parser.parse("\\refresh-tables").unwrap(), Command::RefreshTables);
+        assert_eq!(parser.parse("\\refresh").unwrap(), Command::RefreshTables);
+    }
+
+    #[test]
+    fn test_parse_format_subscribe_and_credential_update_commands() {
+        let parser = CommandParser::new();
+
+        assert_eq!(
+            parser.parse("\\format json").unwrap(),
+            Command::SetFormat("json".to_string())
+        );
+        assert_eq!(
+            parser.parse("\\subscribe SELECT * FROM app.messages").unwrap(),
+            Command::Subscribe("SELECT * FROM app.messages".to_string())
+        );
+        assert_eq!(
+            parser.parse("\\watch SELECT * FROM app.messages").unwrap(),
+            Command::Subscribe("SELECT * FROM app.messages".to_string())
+        );
+        assert_eq!(
+            parser.parse("\\update-credentials admin kalamdb123").unwrap(),
+            Command::UpdateCredentials {
+                username: "admin".to_string(),
+                password: "kalamdb123".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_consume_command_with_all_options() {
+        let parser = CommandParser::new();
+
+        assert_eq!(
+            parser
+                .parse("\\consume app.events --group workers --from earliest --limit 5 --timeout 12")
+                .unwrap(),
+            Command::Consume {
+                topic: "app.events".to_string(),
+                group: Some("workers".to_string()),
+                from: Some("earliest".to_string()),
+                limit: Some(5),
+                timeout: Some(12),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_consume_command_rejects_invalid_arguments() {
+        let parser = CommandParser::new();
+
+        assert!(parser.parse("\\consume").is_err());
+        assert!(parser.parse("\\consume app.events --limit nope").is_err());
+        assert!(parser.parse("\\consume app.events --timeout nope").is_err());
+        assert!(parser.parse("\\consume app.events --bogus 1").is_err());
+    }
+
+    #[test]
+    fn test_parse_cluster_command_aliases() {
+        let parser = CommandParser::new();
+
+        assert_eq!(parser.parse("\\cluster snapshot").unwrap(), Command::ClusterSnapshot);
+        assert_eq!(
+            parser.parse("\\cluster purge --upto 42").unwrap(),
+            Command::ClusterPurge { upto: 42 }
+        );
+        assert_eq!(
+            parser.parse("\\cluster purge 42").unwrap(),
+            Command::ClusterPurge { upto: 42 }
+        );
+        assert_eq!(
+            parser.parse("\\cluster trigger-election").unwrap(),
+            Command::ClusterTriggerElection
+        );
+        assert_eq!(
+            parser.parse("\\cluster trigger election").unwrap(),
+            Command::ClusterTriggerElection
+        );
+        assert_eq!(
+            parser.parse("\\cluster transfer-leader 7").unwrap(),
+            Command::ClusterTransferLeader { node_id: 7 }
+        );
+        assert_eq!(
+            parser.parse("\\cluster transfer leader 7").unwrap(),
+            Command::ClusterTransferLeader { node_id: 7 }
+        );
+        assert_eq!(parser.parse("\\cluster stepdown").unwrap(), Command::ClusterStepdown);
+        assert_eq!(parser.parse("\\cluster step-down").unwrap(), Command::ClusterStepdown);
+        assert_eq!(parser.parse("\\cluster clear").unwrap(), Command::ClusterClear);
+        assert_eq!(parser.parse("\\cluster list").unwrap(), Command::ClusterList);
+        assert_eq!(parser.parse("\\cluster ls").unwrap(), Command::ClusterList);
+        assert_eq!(
+            parser.parse("\\cluster list groups").unwrap(),
+            Command::ClusterListGroups
+        );
     }
 
     #[test]

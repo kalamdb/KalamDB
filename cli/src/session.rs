@@ -180,6 +180,9 @@ pub struct CLISession {
     /// Session is connected
     connected: bool,
 
+    /// Current namespace for unqualified SQL statements
+    current_namespace: Option<String>,
+
     /// Active subscription paused state
     subscription_paused: bool,
 
@@ -370,6 +373,7 @@ impl CLISession {
             format,
             color,
             connected,
+            current_namespace: None,
             subscription_paused: false,
             loading_threshold_ms: loading_threshold_ms.unwrap_or(200),
             animations,
@@ -510,9 +514,13 @@ impl CLISession {
             None
         };
 
+        let request_namespace = self.request_namespace();
+
         // Execute the query
         let result = if upload_parts.is_empty() {
-            self.client.execute_query(&sql_to_send, None, None, None).await
+            self.client
+                .execute_query(&sql_to_send, None, None, request_namespace)
+                .await
         } else {
             let mut parts_for_send = Vec::with_capacity(upload_parts.len());
             for part in upload_parts.iter_mut() {
@@ -530,7 +538,7 @@ impl CLISession {
                     &sql_to_send,
                     Some(parts_for_send),
                     None,
-                    None,
+                    request_namespace,
                     upload_progress,
                 )
                 .await
@@ -550,11 +558,16 @@ impl CLISession {
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
         let elapsed = start.elapsed();
+        let namespace_switch = Self::parse_namespace_switch(sql);
 
         let result = self.execute_query_response(sql).await;
 
         match result {
             Ok(response) => {
+                if let Some(namespace) = namespace_switch {
+                    self.current_namespace = Some(namespace);
+                }
+
                 if let Some((config, server_message)) =
                     Self::extract_subscription_config(&response)?
                 {
@@ -653,6 +666,99 @@ impl CLISession {
         }
 
         Ok((modified_sql, uploads))
+    }
+
+    fn parse_namespace_switch(sql: &str) -> Option<String> {
+        let trimmed = sql.trim().trim_end_matches(';').trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(remainder) = Self::strip_ascii_prefix(trimmed, "USE NAMESPACE") {
+            return Self::parse_namespace_identifier(remainder);
+        }
+
+        if let Some(remainder) = Self::strip_ascii_prefix(trimmed, "SET NAMESPACE") {
+            return Self::parse_namespace_identifier(remainder);
+        }
+
+        let remainder = Self::strip_ascii_prefix(trimmed, "USE")?;
+        let remainder = remainder.trim();
+        if remainder.eq_ignore_ascii_case("NAMESPACE") {
+            return None;
+        }
+
+        Self::parse_namespace_identifier(remainder)
+    }
+
+    fn strip_ascii_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+        let prefix_len = prefix.len();
+        if value.len() < prefix_len || !value[..prefix_len].eq_ignore_ascii_case(prefix) {
+            return None;
+        }
+
+        Some(&value[prefix_len..])
+    }
+
+    fn parse_namespace_identifier(input: &str) -> Option<String> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let first = trimmed.chars().next()?;
+        if matches!(first, '\'' | '"' | '`') {
+            return Self::parse_quoted_namespace_identifier(trimmed, first);
+        }
+
+        let end = trimmed
+            .char_indices()
+            .find_map(|(index, ch)| (ch.is_whitespace() || ch == ';').then_some(index))
+            .unwrap_or(trimmed.len());
+
+        let namespace = &trimmed[..end];
+        if namespace.is_empty() || namespace.contains('.') {
+            return None;
+        }
+
+        if !trimmed[end..].trim().is_empty() {
+            return None;
+        }
+
+        Some(namespace.to_string())
+    }
+
+    fn parse_quoted_namespace_identifier(input: &str, quote: char) -> Option<String> {
+        let mut namespace = String::new();
+        let mut chars = input.char_indices().peekable();
+        let (_, opening_quote) = chars.next()?;
+        if opening_quote != quote {
+            return None;
+        }
+
+        while let Some((index, ch)) = chars.next() {
+            if ch == quote {
+                if chars.peek().map(|(_, next)| *next == quote).unwrap_or(false) {
+                    namespace.push(quote);
+                    chars.next();
+                    continue;
+                }
+
+                if namespace.is_empty() || namespace.contains('.') {
+                    return None;
+                }
+
+                if !input[index + ch.len_utf8()..].trim().is_empty() {
+                    return None;
+                }
+
+                return Some(namespace);
+            }
+
+            namespace.push(ch);
+        }
+
+        None
     }
 
     fn is_file_call_at(sql: &str, idx: usize) -> bool {
@@ -900,6 +1006,18 @@ impl CLISession {
         }
     }
 
+    fn request_namespace(&self) -> Option<&str> {
+        self.current_namespace.as_deref()
+    }
+
+    fn effective_namespace(&self) -> &str {
+        self.request_namespace().unwrap_or("default")
+    }
+
+    fn current_namespace_label(&self) -> String {
+        format!("ns:{}", self.effective_namespace())
+    }
+
     fn primary_prompt(&self) -> String {
         // On Windows, rustyline has critical issues with ANSI color codes in prompts
         // The terminal cannot properly calculate display width, causing cursor misalignment
@@ -954,6 +1072,12 @@ impl CLISession {
             format!("{}@{}", self.username, self.server_host)
         };
 
+        let namespace = if use_colors_in_prompt {
+            self.current_namespace_label().magenta().to_string()
+        } else {
+            self.current_namespace_label()
+        };
+
         let arrow = if use_colors_in_prompt {
             if use_unicode {
                 "❯".bright_blue().bold().to_string()
@@ -964,7 +1088,7 @@ impl CLISession {
             ">".to_string()
         };
 
-        let parts = [status, brand_with_profile, identity];
+        let parts = [status, brand_with_profile, identity, namespace];
         let body = parts.join(" ");
         format!("{} {} ", body, arrow)
     }
@@ -2767,22 +2891,8 @@ impl CLISession {
                 .unwrap()
                 .as_nanos()
         );
-        let config = SubscriptionConfig::new(sub_id, query);
+        let config = self.build_subscription_config(query, sub_id)?;
         self.run_subscription_with_timeout(config, timeout).await
-    }
-
-    /// Unsubscribe from active subscription via command line
-    ///
-    /// Since subscriptions run in a blocking loop, this method sends a signal
-    /// to cancel the active subscription. In practice, this would need to be
-    /// called from a different thread/context than the running subscription.
-    pub async fn unsubscribe(&mut self, _subscription_id: &str) -> Result<()> {
-        // For command-line usage, we can't easily interrupt a running subscription
-        // from the same process. This would require a more complex signaling mechanism.
-        // For now, inform the user how to cancel subscriptions.
-        println!("To unsubscribe from an active subscription, use Ctrl+C in the terminal");
-        println!("where the subscription is running, or kill the process.");
-        Ok(())
     }
 
     /// List active subscriptions via command line
@@ -3080,6 +3190,7 @@ mod tests {
     #[derive(Debug)]
     struct TestServerState {
         sql_authorization_headers: Vec<String>,
+        sql_request_bodies: Vec<String>,
         refresh_authorization_headers: Vec<String>,
         health_authorization_headers: Vec<String>,
         cluster_health_authorization_headers: Vec<String>,
@@ -3091,6 +3202,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 sql_authorization_headers: Vec::new(),
+                sql_request_bodies: Vec::new(),
                 refresh_authorization_headers: Vec::new(),
                 health_authorization_headers: Vec::new(),
                 cluster_health_authorization_headers: Vec::new(),
@@ -3230,7 +3342,9 @@ mod tests {
             },
             "/v1/api/sql" => {
                 if let Some(header) = authorization.clone() {
-                    state.lock().await.sql_authorization_headers.push(header.clone());
+                    let mut guard = state.lock().await;
+                    guard.sql_authorization_headers.push(header.clone());
+                    guard.sql_request_bodies.push(request.body.clone());
                     match header.as_str() {
                         "Bearer expired-token" => (
                             "HTTP/1.1 401 Unauthorized",
@@ -3311,6 +3425,7 @@ mod tests {
     struct TestHttpRequest {
         path: String,
         headers: HashMap<String, String>,
+        body: String,
     }
 
     async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<TestHttpRequest> {
@@ -3360,7 +3475,13 @@ mod tests {
             }
         }
 
-        Ok(TestHttpRequest { path, headers })
+        let body = String::from_utf8_lossy(&buffer[header_end..]).to_string();
+
+        Ok(TestHttpRequest {
+            path,
+            headers,
+            body,
+        })
     }
 
     fn create_temp_store() -> (FileCredentialStore, TempDir) {
@@ -3408,6 +3529,71 @@ mod tests {
             CLISession::parse_describe_target("\"chat\".\"message logs\"").unwrap();
         assert_eq!(namespace.as_deref(), Some("chat"));
         assert_eq!(table_name, "message logs");
+    }
+
+    #[test]
+    fn test_parse_namespace_switch_statements() {
+        assert_eq!(
+            CLISession::parse_namespace_switch("USE NAMESPACE chat;"),
+            Some("chat".to_string())
+        );
+        assert_eq!(
+            CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""),
+            Some("team chat".to_string())
+        );
+        assert_eq!(
+            CLISession::parse_namespace_switch("USE billing"),
+            Some("billing".to_string())
+        );
+        assert_eq!(
+            CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    #[timeout(5000)]
+    async fn test_execute_input_applies_current_namespace_to_followup_queries() {
+        let server = TestServer::spawn().await;
+
+        let mut session = CLISession::with_auth_and_instance(
+            server.base_url.clone(),
+            AuthProvider::jwt_token("fresh-token".to_string()),
+            OutputFormat::Json,
+            false,
+            None,
+            None,
+            Some("admin".to_string()),
+            None,
+            false,
+            None,
+            None,
+            None,
+            CLIConfiguration::default(),
+            crate::config::default_config_path(),
+            false,
+        )
+        .await
+        .expect("session should initialize");
+
+        session
+            .execute_input("USE NAMESPACE chat;")
+            .await
+            .expect("use namespace should succeed");
+        session
+            .execute_input("SELECT * FROM messages;")
+            .await
+            .expect("follow-up query should succeed");
+
+        assert_eq!(session.current_namespace.as_deref(), Some("chat"));
+
+        let state = server.state.lock().await;
+        assert_eq!(state.sql_request_bodies.len(), 2);
+        assert!(
+            state.sql_request_bodies[1].contains("\"namespace_id\":\"chat\""),
+            "expected namespace_id form field in request body: {}",
+            state.sql_request_bodies[1]
+        );
     }
 
     #[tokio::test]

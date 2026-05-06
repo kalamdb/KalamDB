@@ -3,21 +3,26 @@
 //! Parses SQL statements like:
 //! - BACKUP DATABASE TO '/backups/kalamdb_backup.tar.gz'
 //!
-//! Backs up the entire database (data directory + server.toml).
+//! Backs up the entire database to either a server-side directory or a
+//! `.tar.gz` / `.tgz` archive.
 
 use crate::ddl::DdlResult;
 
 /// BACKUP DATABASE statement
 ///
-/// Backs up the entire database to a compressed archive.
+/// Backs up the entire database.
 /// The backup includes:
 /// - RocksDB data directory
 /// - Parquet storage files
 /// - Raft snapshots
 /// - server.toml configuration
+///
+/// If the target path ends with `.tar.gz` or `.tgz`, the backup is written as a
+/// single archive file. Otherwise KalamDB writes the backup layout into the
+/// target directory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackupDatabaseStatement {
-    /// Backup destination path (should end in .tar.gz)
+    /// Backup destination path on the server filesystem.
     pub backup_path: String,
 }
 
@@ -123,6 +128,14 @@ mod tests {
         let stmt =
             BackupDatabaseStatement::parse("backup database to '/backups/kalamdb.tar.gz'").unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb.tar.gz");
+    }
+
+    #[test]
+    fn test_parse_backup_database_directory_path() {
+        let stmt =
+            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb-nightly'")
+                .unwrap();
+        assert_eq!(stmt.backup_path, "/backups/kalamdb-nightly");
     }
 
     #[test]

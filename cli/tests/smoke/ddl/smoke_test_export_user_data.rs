@@ -39,10 +39,12 @@ fn parse_job_id(output: &str) -> Option<String> {
     }
 }
 
-/// Translate a download URL from SHOW EXPORT into one reachable by the test
-/// client.  The server may advertise `0.0.0.0` or a bind address that is not
-/// directly routable; we replace the scheme+host+port with the one we already
-/// know works (`server_url()`).
+/// Resolve a SHOW EXPORT download path or URL into one reachable by the test
+/// client.
+///
+/// SHOW EXPORT now returns a relative URI path like `/v1/exports/...`, but the
+/// helper still accepts legacy absolute URLs so the smoke test remains useful
+/// against older servers.
 fn normalize_download_url(raw_url: &str) -> String {
     if let Some(path_start) = raw_url.find("/v1/") {
         format!("{}{}", server_url().trim_end_matches('/'), &raw_url[path_start..])
@@ -175,7 +177,7 @@ fn smoke_export_user_data_job_completes() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
-/// SHOW EXPORT returns the completed job status and a non-empty download URL.
+/// SHOW EXPORT returns the completed job status and a relative download URI.
 #[ntest::timeout(240_000)]
 #[test]
 fn smoke_show_export_returns_completed_status_and_download_url() {
@@ -276,8 +278,13 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
         "download_url should be non-empty for completed export"
     );
     assert!(
-        download_url.contains("/v1/exports/"),
-        "download_url should contain '/v1/exports/'; got '{}'",
+        download_url.starts_with("/v1/exports/"),
+        "download_url should start with '/v1/exports/'; got '{}'",
+        download_url
+    );
+    assert!(
+        !download_url.starts_with("http://") && !download_url.starts_with("https://"),
+        "download_url should be a relative URI path, not an absolute URL; got '{}'",
         download_url
     );
 
@@ -369,7 +376,7 @@ fn smoke_export_download_zip_is_valid() {
 
     assert!(!download_url.is_empty(), "download_url must be non-empty");
 
-    // Normalize URL (replace server advertised host:port with test reachable URL)
+    // Resolve the relative URI path into a concrete URL for the test client.
     let normalized = normalize_download_url(&download_url);
     println!("⬇️  Downloading export from: {}", normalized);
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Cloud, Database, HardDrive, Loader2 } from "lucide-react";
 import { useCreateStorageMutation, useUpdateStorageMutation } from "@/store/apiSlice";
 import type { Storage } from "@/services/storageService";
+import { getErrorMessage } from "@/lib/errors";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -202,7 +203,7 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
       onSuccess();
       onOpenChange(false);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Failed to save storage");
+      setError(getErrorMessage(submitError, "Failed to save storage"));
     } finally {
       setIsSubmitting(false);
     }

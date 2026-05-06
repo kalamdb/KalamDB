@@ -9,7 +9,8 @@ import {
   buildUpdateUserEmailSql,
   buildUpdateUserPasswordSql,
   buildUpdateUserRoleSql,
-  buildUpdateUserStorageSql,
+  buildUpdateUserStorageIdSql,
+  buildUpdateUserStorageModeSql,
   type CreateUserInput,
   type UpdateUserInput,
 } from "@/services/sql/queries/userQueries";
@@ -44,10 +45,6 @@ export async function fetchUsers(): Promise<User[]> {
 
 export async function createUser(input: CreateUserInput): Promise<void> {
   await executeSql(buildCreateUserSql(input));
-  const storageSql = buildUpdateUserStorageSql(input.username, input.storage_mode, input.storage_id);
-  if (storageSql) {
-    await executeSql(storageSql);
-  }
 }
 
 export async function updateUser(username: string, input: UpdateUserInput): Promise<void> {
@@ -60,9 +57,11 @@ export async function updateUser(username: string, input: UpdateUserInput): Prom
   if (input.email !== undefined) {
     await executeSql(buildUpdateUserEmailSql(username, input.email));
   }
-  const storageSql = buildUpdateUserStorageSql(username, input.storage_mode, input.storage_id);
-  if (storageSql) {
-    await executeSql(storageSql);
+  if (input.storage_mode !== undefined && input.storage_mode !== null) {
+    await executeSql(buildUpdateUserStorageModeSql(username, input.storage_mode));
+  }
+  if (input.storage_id !== undefined) {
+    await executeSql(buildUpdateUserStorageIdSql(username, input.storage_id));
   }
 }
 

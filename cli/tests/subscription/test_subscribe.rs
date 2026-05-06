@@ -200,23 +200,6 @@ fn test_cli_subscription_commands() {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "list-subscriptions command should succeed");
 
-    // Test --unsubscribe command (should provide helpful message)
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(server_url())
-        .arg("--user")
-        .arg(default_username())
-        .arg("--password")
-        .arg(root_password())
-        .arg("--unsubscribe")
-        .arg("test-subscription-id");
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.contains("Ctrl+C"),
-        "unsubscribe command should provide helpful feedback"
-    );
 }
 
 /// T042: Test live query with WHERE filter
@@ -301,15 +284,6 @@ fn test_cli_subscription_pause_resume() {
     // Note: Testing pause/resume requires interactive input simulation
     // This functionality is manually tested via the CLI
     // Ctrl+S pauses output, Ctrl+Q resumes
-}
-
-/// T044: Test unsubscribe command support
-#[test]
-#[ignore] // \unsubscribe is an interactive meta-command that cannot be tested via CLI args
-fn test_cli_unsubscribe() {
-    // Note: \unsubscribe is an interactive meta-command used within a REPL session
-    // It cannot be tested via command-line arguments
-    // Manual testing: Start subscription, then type \unsubscribe in REPL
 }
 
 /// Test CLI subscription with initial data

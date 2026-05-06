@@ -107,7 +107,9 @@ Fields:
 
 - `sql` (required string)
 - `params` (optional array)
-- `namespace_id` (optional string)
+- `namespace_id` (optional string): request-scoped default namespace for
+  unqualified table names. Interactive clients can send this on follow-up
+  requests after a successful `USE namespace`.
 
 ### Multipart body (FILE datatype path)
 
@@ -115,7 +117,7 @@ Expected form parts:
 
 - `sql` (required)
 - `params` (optional; JSON array string)
-- `namespace_id` (optional)
+- `namespace_id` (optional request-scoped default namespace)
 - `file:<placeholder>` one or more file parts
 
 Placeholder mapping:

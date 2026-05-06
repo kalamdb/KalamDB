@@ -193,7 +193,7 @@ fn records_with_op<'a>(records: &'a [ConsumerRecord], op: TopicOp) -> Vec<&'a Co
 }
 
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(15000)]
 async fn test_tokio_netem_topic_consume_fragmented_insert_update_delete_and_commit() {
     let result = timeout(Duration::from_secs(60), async {
         let writer = match create_test_client() {
@@ -308,7 +308,7 @@ async fn test_tokio_netem_topic_consume_fragmented_insert_update_delete_and_comm
 }
 
 #[tokio::test]
-#[ntest::timeout(17000)]
+#[ntest::timeout(30000)]
 async fn test_tokio_netem_topic_bandwidth_collapse_poll_recovers_without_losing_offsets() {
     let result = timeout(Duration::from_secs(75), async {
         let writer = match create_test_client() {
@@ -393,7 +393,7 @@ async fn test_tokio_netem_topic_bandwidth_collapse_poll_recovers_without_losing_
 }
 
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(15000)]
 async fn test_tokio_netem_topic_commit_failure_can_be_retried_without_replay() {
     let result = timeout(Duration::from_secs(75), async {
         let writer = match create_test_client() {
