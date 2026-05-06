@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockExecuteSql = vi.fn();
-const mockSubscribeTable = vi.fn();
+const mockSubscribe = vi.fn();
 const mockDb = {
   select: vi.fn(),
   insert: vi.fn(),
@@ -10,7 +10,7 @@ const mockDb = {
 
 vi.mock("@/lib/kalam-client", () => ({
   executeSql: (...args: unknown[]) => mockExecuteSql(...args),
-  getClient: vi.fn(() => ({ id: "client" })),
+  subscribe: (...args: unknown[]) => mockSubscribe(...args),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -21,7 +21,6 @@ vi.mock("@kalamdb/orm", async () => {
   const { pgTable } = await import("drizzle-orm/pg-core");
   return {
     kTable: pgTable,
-    subscribeTable: (...args: unknown[]) => mockSubscribeTable(...args),
   };
 });
 
@@ -29,7 +28,7 @@ describe("sqlStudioWorkspaceSyncService", () => {
   beforeEach(() => {
     vi.resetModules();
     mockExecuteSql.mockReset();
-    mockSubscribeTable.mockReset();
+    mockSubscribe.mockReset();
     mockDb.select.mockReset();
     mockDb.insert.mockReset();
     mockDb.update.mockReset();
@@ -82,7 +81,7 @@ describe("sqlStudioWorkspaceSyncService", () => {
     mockSelectOnce([{ id: "sql-studio-workspace", payload: workspace }]);
     mockSelectOnce([]);
     mockDb.insert.mockReturnValue({ values: insertValues });
-    mockSubscribeTable.mockResolvedValue(async () => {});
+    mockSubscribe.mockResolvedValue(async () => {});
 
     const { subscribeToSyncedSqlStudioWorkspaceState } = await import("@/services/sqlStudioWorkspaceSyncService");
     const onChange = vi.fn();
@@ -90,11 +89,10 @@ describe("sqlStudioWorkspaceSyncService", () => {
     await subscribeToSyncedSqlStudioWorkspaceState("admin", onChange);
 
     expect(onChange).toHaveBeenCalledWith(workspace);
-    expect(mockSubscribeTable).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "client" }),
-      expect.any(Object),
+    expect(mockSubscribe).toHaveBeenCalledWith(
+      "SELECT * FROM dba.favorites WHERE id = 'sql-studio-state:admin:workspace'",
       expect.any(Function),
-      expect.objectContaining({ where: expect.any(Object) }),
+      { last_rows: 0, batch_size: 1, auto_fetch_batches: false },
     );
     expect(mockExecuteSql).toHaveBeenCalledWith(
       "CREATE TABLE IF NOT EXISTS dba.favorites (id TEXT PRIMARY KEY, payload JSON) WITH (TYPE='USER')",

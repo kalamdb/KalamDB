@@ -39,6 +39,7 @@ import type {
   QueryResponse,
   SubscriptionCallback,
   SubscriptionErrorEvent,
+  SubscriptionHandle,
   SubscriptionOptions,
   Unsubscribe,
   UploadProgress,
@@ -1184,6 +1185,18 @@ export class KalamDBClient {
     callback: SubscriptionCallback,
     options?: SubscriptionOptions,
   ): Promise<Unsubscribe> {
+    const handle = await this.subscribeWithSqlHandle(sql, callback, options);
+    return handle.unsubscribe;
+  }
+
+  /**
+   * Subscribe to a SQL query and receive a handle for explicit batch control.
+   */
+  async subscribeWithSqlHandle(
+    sql: string,
+    callback: SubscriptionCallback,
+    options?: SubscriptionOptions,
+  ): Promise<SubscriptionHandle> {
     this.log(LogLevel.Debug, 'subscription', `Subscribing to: ${sql.substring(0, 120)}`);
     const optionsJson = this.stringifyOptions(normalizeSubscriptionOptions(options));
     const subscriptionId = await this.startTrackedSubscription(
@@ -1195,9 +1208,28 @@ export class KalamDBClient {
       ),
     );
 
-    return async () => {
-      await this.unsubscribe(subscriptionId);
+    return {
+      id: subscriptionId,
+      unsubscribe: async () => {
+        await this.unsubscribe(subscriptionId);
+      },
+      requestNextBatch: async () => {
+        await this.requestNextBatch(subscriptionId);
+      },
     };
+  }
+
+  /** Request the next initial-data batch for an active subscription. */
+  async requestNextBatch(subscriptionId: string): Promise<void> {
+    await this.ensureConnected();
+    const wasmClient = this.wasmClient;
+    if (!wasmClient) {
+      throw new Error('WASM client not initialized');
+    }
+
+    await this.serializeWasmCall(() => Promise.resolve(
+      (wasmClient as unknown as { requestNextBatch: (id: string) => void }).requestNextBatch(subscriptionId),
+    ));
   }
 
   /**

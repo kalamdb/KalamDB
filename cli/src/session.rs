@@ -24,8 +24,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, AuthRefreshCallback, ClusterHealthResponse, ClusterNodeHealth, ConnectionOptions,
-    KalamLinkClient, KalamLinkError, KalamLinkTimeouts, SubscriptionConfig, SubscriptionOptions,
-    TimestampFormatter, UploadProgress, UploadProgressCallback,
+    KalamLinkClient, KalamLinkError, KalamLinkTimeouts, SeqId, SubscriptionConfig,
+    SubscriptionOptions, TimestampFormatter, UploadProgress, UploadProgressCallback,
 };
 use rustyline::{
     completion::Completer, error::ReadlineError, highlight::Highlighter, hint::Hinter,
@@ -1703,8 +1703,8 @@ impl CLISession {
 
     /// Extract OPTIONS clause from SUBSCRIBE SQL query.
     ///
-    /// Parses `OPTIONS (last_rows=N)` from the SQL and returns cleaned SQL + options.
-    /// If no OPTIONS found, returns original SQL with default options (last_rows=100).
+    /// Parses CLI-managed options from `OPTIONS (...)` and returns cleaned SQL + options.
+    /// If no OPTIONS found, returns original SQL with default subscription options.
     ///
     /// # Examples
     /// ```
@@ -1728,48 +1728,63 @@ impl CLISession {
         let clean_sql = sql[..idx].trim().to_string();
         let options_str = sql[idx + " OPTIONS".len()..].trim(); // " OPTIONS".len() == 8
 
-        // Parse OPTIONS (last_rows=N)
+        // Parse CLI-managed options from OPTIONS (...)
         let options = Self::parse_subscribe_options(options_str);
 
         (clean_sql, options)
     }
 
-    /// Parse OPTIONS clause value: (last_rows=N)
+    /// Parse OPTIONS clause value: (last_rows=N, batch_size=N, from=N)
     fn parse_subscribe_options(options_str: &str) -> Option<SubscriptionOptions> {
         let options_str = options_str.trim();
 
-        // Expected format: (last_rows=N) or ( last_rows = N )
+        // Expected format: (last_rows=N, batch_size=N, from=N)
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             eprintln!("Warning: Invalid OPTIONS format, using defaults");
             return Some(SubscriptionOptions::default());
         }
 
         let inner = options_str[1..options_str.len() - 1].trim();
+        let mut options = SubscriptionOptions::new();
 
-        // Parse last_rows=N
-        if let Some(equals_idx) = inner.find('=') {
-            let key = inner[..equals_idx].trim();
-            let value = inner[equals_idx + 1..].trim();
+        for pair in inner.split(',') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
 
-            if key.to_lowercase() == "last_rows" {
+            let Some((key, value)) = pair.split_once('=') else {
+                eprintln!("Warning: Invalid option '{}', expected key=value", pair);
+                continue;
+            };
+
+            let key = key.trim().to_ascii_lowercase();
+            let value = value.trim().trim_matches(['\'', '"']);
+
+            if key == "last_rows" {
                 if let Ok(last_rows) = value.parse::<u32>() {
-                    return Some(SubscriptionOptions::new().with_last_rows(last_rows));
+                    options = options.with_last_rows(last_rows);
                 } else {
                     eprintln!("Warning: Invalid last_rows value '{}', using default", value);
                 }
-            } else if key.to_lowercase() == "batch_size" {
+            } else if key == "batch_size" {
                 if let Ok(batch_size) = value.parse::<usize>() {
-                    return Some(SubscriptionOptions::new().with_batch_size(batch_size));
+                    options = options.with_batch_size(batch_size);
                 } else {
                     eprintln!("Warning: Invalid batch_size value '{}', using default", value);
+                }
+            } else if key == "from" || key == "from_seq_id" {
+                if let Ok(seq_id) = value.parse::<i64>() {
+                    options = options.with_from(SeqId::from(seq_id));
+                } else {
+                    eprintln!("Warning: Invalid from value '{}', using default", value);
                 }
             } else {
                 eprintln!("Warning: Unknown option '{}', ignoring", key);
             }
         }
 
-        // Default if parsing failed
-        Some(SubscriptionOptions::default())
+        Some(options)
     }
 
     /// Run a WebSocket subscription
@@ -2286,9 +2301,9 @@ impl CLISession {
                     );
                 }
 
-                // Display rows in the same format as snapshots
+                // Keep startup rows compact so each payload stays on a single CLI line.
                 for row in rows {
-                    let formatted = serde_json::to_string_pretty(&row).unwrap_or_default();
+                    let formatted = Self::format_row(row);
                     if self.color {
                         println!("  \x1b[90m{}\x1b[0m", formatted);
                     } else {
@@ -3516,7 +3531,55 @@ mod tests {
         let (sql, options) =
             CLISession::extract_subscribe_options("SELECT * FROM table OPTIONS (last_rows=50);");
         assert_eq!(sql, "SELECT * FROM table");
-        assert!(options.is_some());
+        let options = options.expect("options should parse");
+        assert_eq!(options.last_rows, Some(50));
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_with_combined_options() {
+        let (sql, options) = CLISession::extract_subscribe_options(
+            "SELECT * FROM table OPTIONS (last_rows=20, batch_size=5, from=42);",
+        );
+
+        assert_eq!(sql, "SELECT * FROM table");
+        let options = options.expect("options should parse");
+        assert_eq!(options.last_rows, Some(20));
+        assert_eq!(options.batch_size, Some(5));
+        assert_eq!(options.from, Some(SeqId::from(42)));
+    }
+
+    #[test]
+    fn test_extract_subscribe_options_accepts_from_seq_id_alias() {
+        let (sql, options) = CLISession::extract_subscribe_options(
+            "SELECT * FROM table OPTIONS (batch_size=10, from_seq_id=99);",
+        );
+
+        assert_eq!(sql, "SELECT * FROM table");
+        let options = options.expect("options should parse");
+        assert_eq!(options.batch_size, Some(10));
+        assert_eq!(options.from, Some(SeqId::from(99)));
+    }
+
+    #[test]
+    fn test_format_row_returns_compact_json_without_newlines() {
+        let mut row = kalam_client::RowData::new();
+        row.insert(
+            "message".to_string(),
+            kalam_client::KalamCellValue::text("hello"),
+        );
+        row.insert(
+            "count".to_string(),
+            kalam_client::KalamCellValue::int(5),
+        );
+
+        let formatted = CLISession::format_row(&row);
+
+        assert!(!formatted.contains('\n'));
+        assert!(!formatted.contains("  "));
+        assert!(formatted.starts_with('{'));
+        assert!(formatted.ends_with('}'));
+        assert!(formatted.contains("\"message\":\"hello\""));
+        assert!(formatted.contains("\"count\":5"));
     }
 
     #[test]

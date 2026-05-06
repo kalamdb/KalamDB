@@ -2,7 +2,6 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
-import type { PluginOption } from "vite";
 
 function normalizeOrigin(url: string): string {
   return url.replace(/\/+$/, "");
@@ -37,21 +36,6 @@ const cleanupPlugin = () => ({
   }
 });
 
-const runtimeConfigScriptPlugin = (): PluginOption => ({
-  name: "runtime-config-script",
-  transformIndexHtml() {
-    return [
-      {
-        tag: "script",
-        attrs: {
-          src: "%BASE_URL%runtime-config.js",
-        },
-        injectTo: "body",
-      },
-    ];
-  },
-});
-
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, "");
@@ -59,7 +43,7 @@ export default defineConfig(({ mode }) => {
   const backendWebSocketOrigin = toWebSocketOrigin(backendOrigin);
 
   return {
-    plugins: [react(), cleanupPlugin(), runtimeConfigScriptPlugin()],
+    plugins: [react(), cleanupPlugin()],
     // Base path for production build (embedded in server at /ui/)
     base: "/ui/",
     resolve: {

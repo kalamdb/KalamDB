@@ -23,3 +23,9 @@ CREATE TABLE IF NOT EXISTS chat_demo.agent_events (
     message TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10);
+
+-- Insert some initial messages into the chat
+INSERT INTO chat_demo.messages (role, author, sender_username, content)
+VALUES 
+  ('user', 'user_1', 'john_doe', 'Hello everyone!'),
+  ('assistant', 'ai_bot', 'assistant', 'Hi John 👋 How can I help?');

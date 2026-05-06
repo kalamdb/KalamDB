@@ -87,15 +87,6 @@ impl SqlImpersonationService {
             .role_for_impersonation_target(&target_user_id);
 
         if can_impersonate_target_user(actor_user_id, actor_role, &target_user_id, target_role) {
-            self.audit_impersonation_event(
-                actor_user_id,
-                actor_role,
-                target_user_id.as_str(),
-                Some(&target_user_id),
-                true,
-                None,
-            )
-            .await;
             return Ok(target_user_id);
         }
 

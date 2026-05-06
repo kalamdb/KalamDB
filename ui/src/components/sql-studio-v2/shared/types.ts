@@ -2,6 +2,7 @@ export interface LiveSubscriptionOptions {
   batch_size?: number;
   last_rows?: number;
   from?: string;
+  auto_fetch_batches?: boolean;
 }
 
 export interface StudioColumn {

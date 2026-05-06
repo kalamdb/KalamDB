@@ -365,6 +365,41 @@ async fn test_allowed_execute_as_can_select_update_and_delete_target_rows() {
 
 #[actix_web::test]
 #[ntest::timeout(45000)]
+async fn test_allowed_execute_as_dml_is_not_audited() {
+    let server = TestServer::new_shared().await;
+    let ns = unique_name("as_user_dml_no_audit");
+    create_user_table(&server, &ns, "profiles").await;
+
+    let actor = insert_user(&server, &unique_name("no_audit_actor"), Role::Dba).await;
+    let target = insert_user(&server, &unique_name("no_audit_target"), Role::User).await;
+
+    let insert_sql = format!(
+        "EXECUTE AS USER '{}' (INSERT INTO {}.profiles (id, value) VALUES ('p1', 'delegated'))",
+        target.as_str(),
+        ns
+    );
+    let insert_resp = server.execute_sql_as_user(&insert_sql, actor.as_str()).await;
+    assert_success(&insert_resp, "allowed cross-user insert without audit");
+
+    let logs = server
+        .app_context
+        .system_tables()
+        .audit_logs()
+        .scan_all()
+        .expect("Failed to read audit log");
+    assert!(
+        !logs.iter().any(|entry| {
+            entry.action == "EXECUTE_AS_USER"
+                && entry.target == format!("user:{}", target.as_str())
+                && entry.actor_user_id == actor
+                && entry.subject_user_id.as_ref() == Some(&target)
+        }),
+        "successful execute as DML should not create an audit entry"
+    );
+}
+
+#[actix_web::test]
+#[ntest::timeout(45000)]
 async fn test_execute_as_stream_table_uses_target_user_scope() {
     let server = TestServer::new_shared().await;
     let ns = unique_name("as_user_stream_scope");

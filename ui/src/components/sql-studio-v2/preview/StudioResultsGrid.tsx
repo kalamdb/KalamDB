@@ -44,11 +44,14 @@ interface StudioResultsGridProps {
   result: QueryResultData | null;
   isRunning: boolean;
   isLiveMode: boolean;
+  liveBatch?: { hasMore: boolean; batchNum?: number; status?: string };
+  liveAutoFetchBatches?: boolean;
   activeSql: string;
   selectedTable: StudioTable | null;
   currentUsername: string;
   resultView: SqlStudioResultView;
   onResultViewChange: (view: SqlStudioResultView) => void;
+  onFetchNextBatch?: () => void;
   onRefreshAfterCommit: () => void;
 }
 
@@ -145,11 +148,14 @@ export function StudioResultsGrid({
   result,
   isRunning,
   isLiveMode,
+  liveBatch,
+  liveAutoFetchBatches = false,
   activeSql,
   selectedTable,
   currentUsername,
   resultView,
   onResultViewChange,
+  onFetchNextBatch,
   onRefreshAfterCommit,
 }: StudioResultsGridProps) {
   const [sortState, setSortState] = useState<SortState>(null);
@@ -572,6 +578,13 @@ export function StudioResultsGrid({
   const deleteCount = deletions.size;
   const logCount = result?.logs.length ?? 0;
   const showResultsTable = hasTabularResults && resultView === "results";
+  const canFetchNextLiveBatch = Boolean(
+    isLiveMode
+    && resultView === "results"
+    && liveBatch?.hasMore
+    && !liveAutoFetchBatches
+    && onFetchNextBatch,
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
@@ -621,6 +634,17 @@ export function StudioResultsGrid({
               <span className="rounded bg-border px-1.5 py-0.5 text-[10px] text-foreground">
                 {sortState.columnName} ({sortState.direction})
               </span>
+            )}
+            {canFetchNextLiveBatch && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-7 gap-1.5"
+                onClick={onFetchNextBatch}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+                Fetch next batch
+              </Button>
             )}
             <Button
               size="sm"
@@ -720,14 +744,15 @@ export function StudioResultsGrid({
               <table className="min-w-max border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr>
-                  <th className="w-10 border-r border-border bg-background px-2 py-2 text-left">
-                    {isLiveMode ? (
-                      <div className="flex items-center justify-center">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Change
-                        </span>
-                      </div>
-                    ) : canMutateRows ? (
+                  {isLiveMode ? (
+                    <th className="w-[148px] border-r border-border bg-muted/40 px-2 py-2 text-left">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Live
+                      </span>
+                    </th>
+                  ) : (
+                    <th className="w-10 border-r border-border bg-background px-2 py-2 text-left">
+                      {canMutateRows ? (
                       <div className="flex items-center justify-center">
                         <input
                           type="checkbox"
@@ -746,10 +771,11 @@ export function StudioResultsGrid({
                           className="h-3.5 w-3.5 rounded border-border bg-transparent disabled:opacity-40"
                         />
                       </div>
-                    ) : (
-                      <div className="h-3.5 w-3.5" />
-                    )}
-                  </th>
+                      ) : (
+                        <div className="h-3.5 w-3.5" />
+                      )}
+                    </th>
+                  )}
                   {schema.map((field) => {
                     const isSorted = sortState?.columnName === field.name;
                     return (
@@ -808,6 +834,12 @@ export function StudioResultsGrid({
                   const liveChangedAt = isLiveMode
                     ? (row[LIVE_META.CHANGED_AT] as string | undefined)
                     : undefined;
+                  const liveBatchNum = isLiveMode
+                    ? (row[LIVE_META.BATCH_NUM] as string | number | undefined)
+                    : undefined;
+                  const liveChangeLabel = liveChangeType === "initial" && liveBatchNum
+                    ? `initial #${liveBatchNum}`
+                    : liveChangeType;
                   const liveChangedCols = isLiveMode && liveChangeType === "update"
                     ? new Set((row[LIVE_META.CHANGED_COLS] as string | undefined)?.split(",").filter(Boolean) ?? [])
                     : null;
@@ -835,31 +867,32 @@ export function StudioResultsGrid({
                         isLiveUpdate && "bg-amber-500/5",
                       )}
                     >
-                      <td className="border-r border-border px-2 py-1">
-                        {isLiveMode ? (
-                          <div className="flex flex-col items-center justify-center gap-0.5 min-w-[60px]">
-                            {liveChangeType && (
-                              <>
-                                <span
-                                  className={cn(
-                                    "rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
-                                    liveChangeType === "initial" && "bg-background0/20 text-foreground ",
-                                    liveChangeType === "insert" && "bg-sky-500/20 text-sky-700 ",
-                                    liveChangeType === "update" && "bg-amber-500/20 text-amber-700 ",
-                                    liveChangeType === "delete" && "bg-red-500/20 text-red-700 ",
-                                  )}
-                                >
-                                  {liveChangeType}
-                                </span>
-                                {liveChangedAt && (
-                                  <span className="text-[9px] text-muted-foreground">
-                                    {new Date(liveChangedAt).toLocaleTimeString()}
-                                  </span>
+                      {isLiveMode ? (
+                        <td className="border-r border-border bg-muted/25 px-2 py-1 align-middle">
+                          <div className="flex min-h-[32px] min-w-[132px] items-center gap-2 whitespace-nowrap">
+                            {liveChangedAt && (
+                              <span className="shrink-0 text-[9px] text-muted-foreground">
+                                {new Date(liveChangedAt).toLocaleTimeString()}
+                              </span>
+                            )}
+                            {liveChangeLabel && (
+                              <span
+                                className={cn(
+                                  "inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                                  liveChangeType === "initial" && "bg-sky-500/12 text-sky-700",
+                                  liveChangeType === "insert" && "bg-sky-500/20 text-sky-700",
+                                  liveChangeType === "update" && "bg-amber-500/20 text-amber-700",
+                                  liveChangeType === "delete" && "bg-red-500/20 text-red-700",
                                 )}
-                              </>
+                              >
+                                {liveChangeLabel}
+                              </span>
                             )}
                           </div>
-                        ) : canMutateRows ? (
+                        </td>
+                      ) : (
+                        <td className="border-r border-border px-2 py-1">
+                          {canMutateRows ? (
                           <div className="flex items-center justify-center">
                             <input
                               type="checkbox"
@@ -878,10 +911,11 @@ export function StudioResultsGrid({
                               className="h-3.5 w-3.5 rounded border-border bg-transparent disabled:opacity-40"
                             />
                           </div>
-                        ) : (
-                          <div className="h-3.5 w-3.5" />
-                        )}
-                      </td>
+                          ) : (
+                            <div className="h-3.5 w-3.5" />
+                          )}
+                        </td>
+                      )}
 
                       {schema.map((field) => {
                         const value = getCellEditedValue(rowIndex, field.name) ?? row[field.name];

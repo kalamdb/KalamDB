@@ -65,7 +65,12 @@ pub(super) async fn route_event(
     };
     let event_time_ms = now_ms();
 
-    let auto_request_next_batch = matches!(event, ChangeEvent::InitialDataBatch { .. });
+    let auto_request_next_batch = matches!(event, ChangeEvent::InitialDataBatch { .. })
+        && matched_key
+            .as_ref()
+            .and_then(|key| subs.get(key.as_str(&incoming_sub_id)))
+            .and_then(|entry| entry.options.auto_fetch_batches)
+            .unwrap_or(true);
     let mut next_batch_last_seq = None;
     let mut should_request_next_batch = false;
 

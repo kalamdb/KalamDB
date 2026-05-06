@@ -530,6 +530,21 @@ export function StudioEditorPanel({
               className="h-7 w-28 border-border bg-background text-xs"
             />
           </div>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground" htmlFor="opt-auto-fetch-batches">
+            <input
+              id="opt-auto-fetch-batches"
+              type="checkbox"
+              checked={subscriptionOptions?.auto_fetch_batches ?? false}
+              onChange={(event) => {
+                onSubscriptionOptionsChange({
+                  ...subscriptionOptions,
+                  auto_fetch_batches: event.target.checked,
+                });
+              }}
+              className="h-3.5 w-3.5 rounded border-border accent-primary"
+            />
+            auto fetch batches
+          </label>
           <Button
             variant="ghost"
             size="sm"

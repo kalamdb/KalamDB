@@ -39,6 +39,8 @@ const LIVE_META = {
   CHANGED_AT: "_live_changed_at",
   /** Comma-separated list of columns that changed (for update highlighting) */
   CHANGED_COLS: "_live_changed_cols",
+  /** Initial snapshot batch number, 1-based for display */
+  BATCH_NUM: "_live_batch_num",
 } as const;
 
 /** How long (ms) a change highlight persists before fading. */
@@ -87,6 +89,7 @@ function mergeLiveRowsIntoResult(
   incomingRows: Record<string, unknown>[],
   changeType: string,
   incomingSchema?: QueryResultSchemaField[],
+  batchNum?: number,
 ): QueryResultData {
   const now = new Date().toISOString();
   const existingRows = previous?.rows ?? [];
@@ -129,6 +132,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "delete",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: "",
+          [LIVE_META.BATCH_NUM]: "",
         };
       } else {
         // Row not in table yet — add it as deleted
@@ -137,6 +141,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "delete",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: "",
+          [LIVE_META.BATCH_NUM]: "",
         });
       }
     } else if (changeType === "update") {
@@ -153,6 +158,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "update",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: changedCols.join(","),
+          [LIVE_META.BATCH_NUM]: "",
         };
       } else {
         // PK not found — treat as insert
@@ -161,6 +167,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "update",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: "",
+          [LIVE_META.BATCH_NUM]: "",
         });
       }
     } else if (changeType === "insert") {
@@ -171,6 +178,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "insert",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: "",
+          [LIVE_META.BATCH_NUM]: "",
         };
       } else {
         rows.push({
@@ -178,6 +186,7 @@ function mergeLiveRowsIntoResult(
           [LIVE_META.CHANGE_TYPE]: "insert",
           [LIVE_META.CHANGED_AT]: now,
           [LIVE_META.CHANGED_COLS]: "",
+          [LIVE_META.BATCH_NUM]: "",
         });
         if (key !== null) pkIndex.set(key, rows.length - 1);
       }
@@ -186,8 +195,9 @@ function mergeLiveRowsIntoResult(
       rows.push({
         ...incoming,
         [LIVE_META.CHANGE_TYPE]: changeType,
-        [LIVE_META.CHANGED_AT]: "",
+        [LIVE_META.CHANGED_AT]: now,
         [LIVE_META.CHANGED_COLS]: "",
+        [LIVE_META.BATCH_NUM]: changeType === "initial" ? batchNum ?? "" : "",
       });
       if (key !== null) pkIndex.set(key, rows.length - 1);
     }
@@ -222,7 +232,7 @@ function buildFallbackSchema(
 function ensureLiveMetaCols(
   schema: QueryResultSchemaField[],
 ): QueryResultSchemaField[] {
-  const metaCols = [LIVE_META.CHANGE_TYPE, LIVE_META.CHANGED_AT, LIVE_META.CHANGED_COLS];
+  const metaCols = [LIVE_META.CHANGE_TYPE, LIVE_META.CHANGED_AT, LIVE_META.CHANGED_COLS, LIVE_META.BATCH_NUM];
   const missing = metaCols.filter((c) => !schema.some((f) => f.name === c));
   if (missing.length === 0) return schema;
 
@@ -385,6 +395,7 @@ const sqlStudioWorkspaceSlice = createSlice({
         rows: Record<string, unknown>[];
         changeType: string;
         schema?: QueryResultSchemaField[];
+        batchNum?: number;
       }>,
     ) {
       const {
@@ -392,12 +403,14 @@ const sqlStudioWorkspaceSlice = createSlice({
         rows,
         changeType,
         schema,
+        batchNum,
       } = action.payload;
       state.tabResults[tabId] = mergeLiveRowsIntoResult(
         state.tabResults[tabId] ?? null,
         rows,
         changeType,
         schema,
+        batchNum,
       );
     },
     appendWorkspaceResultLog(
