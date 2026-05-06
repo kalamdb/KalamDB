@@ -199,6 +199,7 @@ pub(crate) async fn resubscribe_all(
     ws_ref: Rc<RefCell<Option<WebSocket>>>,
     subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
     negotiated_ser: SerializationType,
+    on_send_cb: Option<Rc<RefCell<Option<js_sys::Function>>>>,
 ) {
     let states: Vec<(String, SubscriptionState)> = {
         let mut subs = subscription_state.borrow_mut();
@@ -239,6 +240,16 @@ pub(crate) async fn resubscribe_all(
                     "KalamClient: Failed to re-subscribe to {}: {:?}",
                     subscription_id, _e
                 ));
+            } else if let Some(on_send) = on_send_cb.as_ref() {
+                if let (Some(cb), Ok(json)) = (
+                    on_send.borrow().as_ref().cloned(),
+                    serde_json::to_string(&subscribe_msg),
+                ) {
+                    let _ = cb.call1(
+                        &wasm_bindgen::JsValue::NULL,
+                        &wasm_bindgen::JsValue::from_str(&json),
+                    );
+                }
             }
         }
     }

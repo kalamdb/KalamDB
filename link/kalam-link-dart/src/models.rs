@@ -481,6 +481,7 @@ impl DartSubscriptionConfig {
                 batch_size: self.batch_size.map(|v| v as usize),
                 last_rows: self.last_rows.map(|v| v as u32),
                 from: self.from.map(kalam_client::SeqId::new),
+                auto_fetch_batches: None,
             }),
             ws_url: None,
         }

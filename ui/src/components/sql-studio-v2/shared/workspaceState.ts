@@ -6,6 +6,7 @@ interface PersistedSubscriptionOptions {
   batch_size?: number;
   last_rows?: number;
   from?: string;
+  auto_fetch_batches?: boolean;
 }
 
 export interface SqlStudioPersistedQueryTab {
@@ -89,6 +90,9 @@ function normalizeSubscriptionOptions(value: unknown): PersistedSubscriptionOpti
   }
   if (typeof record.from === "number" || typeof record.from === "string") {
     result.from = String(record.from);
+  }
+  if (typeof record.auto_fetch_batches === "boolean") {
+    result.auto_fetch_batches = record.auto_fetch_batches;
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

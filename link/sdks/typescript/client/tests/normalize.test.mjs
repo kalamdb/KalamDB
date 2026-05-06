@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { normalizeQueryResponse, sortColumns, SYSTEM_TABLES_ORDER } from '../dist/src/helpers/query_helpers.js';
+import { normalizeSubscriptionOptions } from '../dist/src/helpers/subscription_helpers.js';
 
 // Helper: build a minimal QueryResponse using the current schema format
 function makeResp(columnNames, rows) {
@@ -74,6 +75,18 @@ function getColumns(resp) {
   // unknowns at the end (relative order preserved: x before y)
   const tail = sorted.slice(-2);
   assert.deepEqual(tail, ['x', 'y']);
+}
+
+// Subscription options include SDK-only batch control and accept camel-case alias.
+{
+  assert.deepEqual(
+    normalizeSubscriptionOptions({ batch_size: 5, auto_fetch_batches: false }),
+    { batch_size: 5, auto_fetch_batches: false },
+  );
+  assert.deepEqual(
+    normalizeSubscriptionOptions({ autoFetchBatches: true }),
+    { auto_fetch_batches: true },
+  );
 }
 
 console.log('normalize.test.mjs passed');

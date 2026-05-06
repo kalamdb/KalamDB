@@ -25,9 +25,12 @@ use super::{
     },
     wasm_debug_log,
 };
-use crate::models::{
-    ClientMessage, ConnectionOptions, SerializationType, ServerMessage, SubscriptionOptions,
-    SubscriptionRequest,
+use crate::{
+    models::{
+        ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
+        SubscriptionOptions, SubscriptionRequest,
+    },
+    seq_id::SeqId,
 };
 
 #[derive(Serialize)]
@@ -165,7 +168,12 @@ impl KalamClient {
                 "KalamClient: Sending subscribe request - id: {}, sql: {}",
                 subscription_id, sql
             ));
-            if let Err(error) = send_ws_message(ws, &subscribe_msg, self.negotiated_ser.get()) {
+            if let Err(error) = send_ws_message_traced(
+                ws,
+                &subscribe_msg,
+                self.negotiated_ser.get(),
+                &self.on_send_cb,
+            ) {
                 self.subscription_state.borrow_mut().remove(&subscription_id);
                 return Err(error);
             }
@@ -200,6 +208,44 @@ impl KalamClient {
             negotiated_ser: Rc::new(Cell::new(SerializationType::Json)),
         }
     }
+}
+
+fn emit_ws_send(on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>, msg: &ClientMessage) {
+    let Some(cb) = on_send_cb.borrow().as_ref().cloned() else {
+        return;
+    };
+    if let Ok(json) = serde_json::to_string(msg) {
+        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    }
+}
+
+fn send_ws_message_traced(
+    ws: &WebSocket,
+    msg: &ClientMessage,
+    serialization: SerializationType,
+    on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>,
+) -> Result<(), JsValue> {
+    send_ws_message(ws, msg, serialization)?;
+    emit_ws_send(on_send_cb, msg);
+    Ok(())
+}
+
+fn next_batch_message(subscription_id: &str, last_seq_id: Option<SeqId>) -> ClientMessage {
+    ClientMessage::NextBatch {
+        subscription_id: subscription_id.to_string(),
+        last_seq_id,
+    }
+}
+
+fn send_next_batch_traced(
+    ws: &WebSocket,
+    subscription_id: &str,
+    last_seq_id: Option<SeqId>,
+    serialization: SerializationType,
+    on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>,
+) -> Result<(), JsValue> {
+    let msg = next_batch_message(subscription_id, last_seq_id);
+    send_ws_message_traced(ws, &msg, serialization, on_send_cb)
 }
 
 fn reject_pending_subscriptions(
@@ -242,10 +288,11 @@ struct SubscriptionDispatch {
     payload: Option<String>,
     resolve_subscribe: Option<js_sys::Function>,
     reject_subscribe: Option<(js_sys::Function, String)>,
+    next_batch: Option<(String, Option<SeqId>)>,
 }
 
 impl SubscriptionDispatch {
-    fn invoke(self) {
+    fn invoke(self) -> Option<(String, Option<SeqId>)> {
         if let Some(cb) = self.callback {
             if let Some(payload) = self.payload {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
@@ -257,6 +304,7 @@ impl SubscriptionDispatch {
         if let Some((reject, reason)) = self.reject_subscribe {
             let _ = reject.call1(&JsValue::NULL, &JsValue::from_str(&reason));
         }
+        self.next_batch
     }
 }
 
@@ -357,6 +405,7 @@ fn dispatch_subscription_server_message(
     let mut payload = None;
     let mut resolve_subscribe = None;
     let mut reject_subscribe = None;
+    let mut next_batch = None;
     let mut remove_state = false;
 
     {
@@ -366,6 +415,11 @@ fn dispatch_subscription_server_message(
             if let Some(filtered_event) = filter_subscription_event(&state.options, event) {
                 track_subscription_checkpoint(&mut state.last_seq_id, &filtered_event);
                 payload = callback_payload(&mut state.callback_mode, &filtered_event);
+                if let ChangeEvent::InitialDataBatch { batch_control, .. } = filtered_event {
+                    if batch_control.has_more && state.options.auto_fetch_batches.unwrap_or(false) {
+                        next_batch = Some((client_id.to_string(), state.last_seq_id));
+                    }
+                }
             }
 
             match event {
@@ -403,6 +457,7 @@ fn dispatch_subscription_server_message(
         payload,
         resolve_subscribe,
         reject_subscribe,
+        next_batch,
     })
 }
 
@@ -461,6 +516,7 @@ fn schedule_auto_reconnect(
     on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
 ) {
     let (delay, disable_compression) = {
@@ -524,6 +580,7 @@ fn schedule_auto_reconnect(
         let reconnect_on_disconnect = Rc::clone(&on_disconnect_cb);
         let reconnect_on_error = Rc::clone(&on_error_cb);
         let reconnect_on_receive = Rc::clone(&on_receive_cb);
+        let reconnect_on_send = Rc::clone(&on_send_cb);
         let reconnect_negotiated_ser = Rc::clone(&negotiated_ser);
         let next_url = url.clone();
         let next_auth = auth.clone();
@@ -538,6 +595,7 @@ fn schedule_auto_reconnect(
         let next_on_disconnect = Rc::clone(&on_disconnect_cb);
         let next_on_error = Rc::clone(&on_error_cb);
         let next_on_receive = Rc::clone(&on_receive_cb);
+        let next_on_send = Rc::clone(&on_send_cb);
         let next_negotiated_ser = Rc::clone(&negotiated_ser);
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -563,6 +621,7 @@ fn schedule_auto_reconnect(
                         &ws,
                         Rc::clone(&reconnect_subscription_state),
                         Rc::clone(&reconnect_on_receive),
+                        Rc::clone(&reconnect_on_send),
                         Rc::clone(&reconnect_negotiated_ser),
                     );
                     if let Some(cb) = reconnect_on_connect.borrow().as_ref() {
@@ -585,12 +644,14 @@ fn schedule_auto_reconnect(
                         Rc::clone(&next_on_disconnect),
                         Rc::clone(&next_on_error),
                         Rc::clone(&next_on_receive),
+                        Rc::clone(&next_on_send),
                         Rc::clone(&next_negotiated_ser),
                     );
                     resubscribe_all(
                         Rc::clone(&reconnect_ws_ref),
                         Rc::clone(&reconnect_subscription_state),
                         reconnect_negotiated_ser.get(),
+                        Some(Rc::clone(&reconnect_on_send)),
                     )
                     .await;
                     reconnect::restart_ping_timer(
@@ -618,6 +679,7 @@ fn schedule_auto_reconnect(
                         next_on_disconnect,
                         next_on_error,
                         next_on_receive,
+                        next_on_send,
                         next_negotiated_ser,
                     );
                 },
@@ -695,8 +757,10 @@ fn install_runtime_message_handler(
     ws: &WebSocket,
     subscriptions: Rc<RefCell<HashMap<String, SubscriptionState>>>,
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
 ) {
+    let ws_for_next_batch = ws.clone();
     let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
         let event: Option<ServerMessage> = (|| {
             let data = e.data();
@@ -720,7 +784,15 @@ fn install_runtime_message_handler(
 
         if let Some(event) = event {
             if let Some(dispatch) = dispatch_subscription_server_message(&subscriptions, &event) {
-                dispatch.invoke();
+                if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
+                    let _ = send_next_batch_traced(
+                        &ws_for_next_batch,
+                        &subscription_id,
+                        last_seq_id,
+                        negotiated_ser.get(),
+                        &on_send_cb,
+                    );
+                }
             }
         }
     }) as Box<dyn FnMut(MessageEvent)>);
@@ -1242,9 +1314,11 @@ impl KalamClient {
         let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
         let auth_handled_clone = Rc::clone(&auth_handled);
         let on_receive_for_msg = Rc::clone(&self.on_receive_cb);
+        let on_send_for_msg = Rc::clone(&self.on_send_cb);
         let on_connect_for_msg = Rc::clone(&self.on_connect_cb);
         let on_error_for_msg = Rc::clone(&self.on_error_cb);
         let negotiated_ser_for_msg = Rc::clone(&self.negotiated_ser);
+        let ws_for_next_batch = ws.clone();
 
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
             // Try to parse the message as a ServerMessage.
@@ -1331,7 +1405,15 @@ impl KalamClient {
             }
 
             if let Some(dispatch) = dispatch_subscription_server_message(&subscriptions, &event) {
-                dispatch.invoke();
+                if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
+                    let _ = send_next_batch_traced(
+                        &ws_for_next_batch,
+                        &subscription_id,
+                        last_seq_id,
+                        negotiated_ser_for_msg.get(),
+                        &on_send_for_msg,
+                    );
+                }
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
@@ -1357,6 +1439,7 @@ impl KalamClient {
                 Rc::clone(&self.ws),
                 Rc::clone(&self.subscription_state),
                 self.negotiated_ser.get(),
+                Some(Rc::clone(&self.on_send_cb)),
             )
             .await;
         }
@@ -1421,10 +1504,42 @@ impl KalamClient {
     pub fn send_ping(&self) -> Result<(), JsValue> {
         if let Some(ws) = self.ws.borrow().as_ref() {
             if ws.ready_state() == WebSocket::OPEN {
-                send_ws_message(ws, &ClientMessage::Ping, self.negotiated_ser.get())?;
+                send_ws_message_traced(
+                    ws,
+                    &ClientMessage::Ping,
+                    self.negotiated_ser.get(),
+                    &self.on_send_cb,
+                )?;
             }
         }
         Ok(())
+    }
+
+    /// Request the next initial-data batch for a subscription.
+    #[wasm_bindgen(js_name = requestNextBatch)]
+    pub fn request_next_batch(&self, subscription_id: String) -> Result<(), JsValue> {
+        let last_seq_id = self
+            .subscription_state
+            .borrow()
+            .get(&subscription_id)
+            .map(|state| state.last_seq_id)
+            .ok_or_else(|| JsValue::from_str("Unknown subscription id"))?;
+
+        let Some(ws) = self.ws.borrow().as_ref().cloned() else {
+            return Err(JsValue::from_str("WebSocket connection is unavailable"));
+        };
+
+        if ws.ready_state() != WebSocket::OPEN {
+            return Err(JsValue::from_str("WebSocket connection is not open"));
+        }
+
+        send_next_batch_traced(
+            &ws,
+            &subscription_id,
+            last_seq_id,
+            self.negotiated_ser.get(),
+            &self.on_send_cb,
+        )
     }
 
     /// Start the internal keepalive ping interval (idempotent).
@@ -1714,7 +1829,12 @@ impl KalamClient {
             let unsubscribe_msg = ClientMessage::Unsubscribe {
                 subscription_id: subscription_id.clone(),
             };
-            send_ws_message(ws, &unsubscribe_msg, self.negotiated_ser.get())?;
+            send_ws_message_traced(
+                ws,
+                &unsubscribe_msg,
+                self.negotiated_ser.get(),
+                &self.on_send_cb,
+            )?;
         }
 
         wasm_debug_log!(&format!("KalamClient: Unsubscribed from: {}", subscription_id));
@@ -2045,6 +2165,7 @@ impl KalamClient {
             Rc::clone(&self.on_disconnect_cb),
             Rc::clone(&self.on_error_cb),
             Rc::clone(&self.on_receive_cb),
+            Rc::clone(&self.on_send_cb),
             Rc::clone(&self.negotiated_ser),
         );
     }
@@ -2066,6 +2187,7 @@ fn install_auto_reconnect_listener(
     on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
 ) {
     let source_ws = ws.clone();
@@ -2091,6 +2213,7 @@ fn install_auto_reconnect_listener(
             Rc::clone(&on_disconnect_cb),
             Rc::clone(&on_error_cb),
             Rc::clone(&on_receive_cb),
+            Rc::clone(&on_send_cb),
             Rc::clone(&negotiated_ser),
         );
     }) as Box<dyn FnMut(CloseEvent)>);

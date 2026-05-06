@@ -3,8 +3,7 @@ import type {
   SqlStudioPersistedQueryTab,
   SqlStudioPersistedSavedQuery,
 } from "@/components/sql-studio-v2/shared/workspaceState";
-import { subscribeTable, type TableSubscriptionEvent } from "@kalamdb/orm";
-import { executeSql, getClient, type Unsubscribe } from "@/lib/kalam-client";
+import { executeSql, subscribe, type Unsubscribe } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
 import type { DbaFavoriteRow } from "@/lib/models";
 import { dba_favorites } from "@/lib/schema";
@@ -35,7 +34,7 @@ function normalizeSubscriptionOptions(value: unknown) {
   }
 
   const record = value as Record<string, unknown>;
-  const result: Record<string, string | number> = {};
+  const result: Record<string, string | number | boolean> = {};
 
   if (typeof record.batch_size === "number" && Number.isFinite(record.batch_size)) {
     result.batch_size = record.batch_size;
@@ -45,6 +44,9 @@ function normalizeSubscriptionOptions(value: unknown) {
   }
   if (typeof record.from === "string" || typeof record.from === "number") {
     result.from = String(record.from);
+  }
+  if (typeof record.auto_fetch_batches === "boolean") {
+    result.auto_fetch_batches = record.auto_fetch_batches;
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
@@ -163,6 +165,10 @@ function buildWorkspaceRowId(username?: string | null): string {
   }
 
   return `sql-studio-state:${normalizedUsername}:${SQL_STUDIO_WORKSPACE_STATE_KEY}`;
+}
+
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
 }
 
 async function ensureWorkspaceTable(): Promise<void> {
@@ -315,18 +321,27 @@ export async function subscribeToSyncedSqlStudioWorkspaceState(
   onChange(initialWorkspace);
 
   const rowId = buildWorkspaceRowId(username);
-  const client = getClient();
-  if (!client) {
-    throw new Error("KalamDB client not initialized");
-  }
+  const sql = `SELECT * FROM ${SQL_STUDIO_WORKSPACE_TABLE} WHERE id = '${escapeSqlString(rowId)}'`;
 
-  return subscribeTable(
-    client,
-    dba_favorites,
-    (event: TableSubscriptionEvent<typeof dba_favorites>) => {
-      onChange(parseWorkspaceRow(event.rows?.[0] ?? null));
+  return subscribe(
+    sql,
+    (event) => {
+      if (event.type === "initial_data_batch") {
+        if (event.rows.length > 0) {
+          onChange(parseWorkspaceRow(event.rows[0]));
+        }
+        return;
+      }
+
+      if (event.type === "change") {
+        if (event.change_type === "delete") {
+          onChange(null);
+          return;
+        }
+        onChange(parseWorkspaceRow(event.rows?.[0] ?? null));
+      }
     },
-    { where: eq(dba_favorites.id, rowId) },
+    { last_rows: 0, batch_size: 1, auto_fetch_batches: false },
   );
 }
 

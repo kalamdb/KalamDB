@@ -203,6 +203,10 @@ export interface SubscriptionOptions {
   last_rows?: number;
   /** Resume from a specific sequence ID. */
   from?: WireSeqId;
+  /** Request every initial-data batch automatically when the server has more rows. */
+  auto_fetch_batches?: boolean;
+  /** Camel-case alias accepted by the WASM layer. Prefer auto_fetch_batches. */
+  autoFetchBatches?: boolean;
 }
 
 /* ================================================================== */
@@ -370,6 +374,18 @@ export interface LiveRowsOptions<T> {
  * Function to unsubscribe from a subscription (Firebase/Supabase style)
  */
 export type Unsubscribe = () => Promise<void>;
+
+/**
+ * Handle for a live subscription with explicit batch control.
+ */
+export interface SubscriptionHandle {
+  /** Server/client subscription id used in WebSocket messages. */
+  id: string;
+  /** Unsubscribe from this subscription. */
+  unsubscribe: Unsubscribe;
+  /** Fetch the next initial-data batch for this subscription. */
+  requestNextBatch: () => Promise<void>;
+}
 
 /* ================================================================== */
 /*  Connection Lifecycle Event Handlers                               */

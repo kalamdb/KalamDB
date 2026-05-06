@@ -22,7 +22,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useAuth } from "@/lib/auth";
 import {
-  subscribe,
+  subscribeWithHandle,
   setClientLogListener,
   setClientSendListener,
   setClientReceiveListener,
@@ -110,6 +110,13 @@ import {
 
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 750;
 
+interface LiveBatchState {
+  hasMore: boolean;
+  batchNum?: number;
+  status?: string;
+  subscriptionId?: string;
+}
+
 function normalizeLiveRows(rows: unknown[]): Record<string, unknown>[] {
   return rows.map((row) => {
     if (row instanceof Map) {
@@ -134,10 +141,34 @@ function extractWsMessageType(raw: string): string {
 function extractWsSubscriptionId(raw: string): string | null {
   try {
     const parsed = JSON.parse(raw);
-    return typeof parsed?.subscription_id === "string" ? parsed.subscription_id : null;
+    if (typeof parsed?.subscription_id === "string") {
+      return parsed.subscription_id;
+    }
+    return typeof parsed?.subscription?.id === "string" ? parsed.subscription.id : null;
   } catch {
     return null;
   }
+}
+
+function extractWsSubscriptionSql(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.subscription?.sql === "string") {
+      return parsed.subscription.sql;
+    }
+    return typeof parsed?.sql === "string" ? parsed.sql : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripTrailingOptionsClause(sql: string): string {
+  const cleanSql = sql.replace(/\s+OPTIONS\s*\([^)]+\)\s*;?\s*$/i, "").trim();
+  return cleanSql.endsWith(";") ? cleanSql.slice(0, -1).trim() : cleanSql;
+}
+
+function displayBatchNum(batchNum: number | undefined): number | undefined {
+  return Number.isFinite(batchNum) ? Number(batchNum) + 1 : undefined;
 }
 
 function isWsErrorFrame(messageType: string): boolean {
@@ -237,7 +268,9 @@ export default function SqlStudio() {
   const { openSqlPreview } = useSqlPreview();
   const [isUiHydrated, setIsUiHydrated] = useState(false);
   const [isRemoteWorkspaceHydrated, setIsRemoteWorkspaceHydrated] = useState(false);
+  const [liveBatchByTab, setLiveBatchByTab] = useState<Record<string, LiveBatchState>>({});
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
+  const liveRequestNextBatchRef = useRef<Record<string, () => Promise<void>>>({});
   const liveGenRef = useRef<Record<string, number>>({});
   const liveSubscriptionIdRef = useRef<Record<string, string>>({});
   const consumedPrefillKeyRef = useRef<string | null>(null);
@@ -255,6 +288,7 @@ export default function SqlStudio() {
     [tabs, activeTabId],
   );
   const activeResult = activeTab ? (tabResults[activeTab.id] ?? null) : null;
+  const activeLiveBatch = activeTab ? liveBatchByTab[activeTab.id] : undefined;
   const selectedTable = useMemo(() => {
     if (!selectedTableKey) {
       return null;
@@ -459,8 +493,17 @@ export default function SqlStudio() {
     if (unsubscribe) {
       void unsubscribe();
       delete liveUnsubscribeRef.current[tabId];
+      delete liveRequestNextBatchRef.current[tabId];
       delete liveSubscriptionIdRef.current[tabId];
     }
+    setLiveBatchByTab((previous) => {
+      if (!(tabId in previous)) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[tabId];
+      return next;
+    });
   }, []);
 
   const clearWsListeners = useCallback(() => {
@@ -576,8 +619,31 @@ export default function SqlStudio() {
     updateTab(tabId, { liveStatus: "idle" });
   }, [cleanupLiveSubscription, clearWsListeners, dispatch, updateTab]);
 
+  const fetchNextLiveBatch = useCallback(async (tabId: string) => {
+    const requestNextBatch = liveRequestNextBatchRef.current[tabId];
+    if (!requestNextBatch) {
+      return;
+    }
+
+    try {
+      await requestNextBatch();
+    } catch (error) {
+      dispatch(appendWorkspaceResultLog({
+        tabId,
+        entry: createLogEntry(
+          error instanceof Error ? error.message : "Failed to fetch next live batch",
+          "error",
+          user?.username,
+          error,
+        ),
+        statusOverride: "error",
+      }));
+    }
+  }, [dispatch, user?.username]);
+
   const startLiveQuery = useCallback(async (tab: QueryTab, sqlOverride?: string) => {
     const sqlToRun = stripAutoSelectLimitForLiveSql(sqlOverride ?? tab.sql);
+    const tracedSubscribeSql = stripTrailingOptionsClause(sqlToRun);
 
     if (!sqlToRun.trim()) {
       return;
@@ -607,6 +673,15 @@ export default function SqlStudio() {
     setClientSendListener((message: string) => {
       if (liveGenRef.current[tab.id] !== gen) return;
       const messageType = extractWsMessageType(message);
+      const messageSql = extractWsSubscriptionSql(message);
+      if (
+        messageType === "subscribe"
+        && messageSql
+        && stripTrailingOptionsClause(messageSql) !== tracedSubscribeSql
+      ) return;
+      const msgSubId = extractWsSubscriptionId(message);
+      const tabSubId = liveSubscriptionIdRef.current[tab.id];
+      if (msgSubId !== null && tabSubId !== undefined && msgSubId !== tabSubId) return;
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
@@ -674,7 +749,7 @@ export default function SqlStudio() {
     let hasConnected = false;
 
     try {
-      const unsubscribe = await subscribe(sqlToRun, (msg: ServerMessage) => {
+      const handle = await subscribeWithHandle(sqlToRun, (msg: ServerMessage) => {
         if (liveGenRef.current[tab.id] !== gen) return;
 
         switch (msg.type) {
@@ -699,6 +774,15 @@ export default function SqlStudio() {
             // Record this tab's subscription ID so the receive listener can
             // filter out frames from other concurrent subscriptions.
             liveSubscriptionIdRef.current[tab.id] = msg.subscription_id;
+            setLiveBatchByTab((previous) => ({
+              ...previous,
+              [tab.id]: {
+                hasMore: msg.batch_control.has_more,
+                batchNum: displayBatchNum(msg.batch_control.batch_num),
+                status: msg.batch_control.status,
+                subscriptionId: msg.subscription_id,
+              },
+            }));
             if (msg.schema.length > 0) {
               dispatch(setWorkspaceLiveSchema({
                 tabId: tab.id,
@@ -714,12 +798,22 @@ export default function SqlStudio() {
             if (!hasConnected) {
               hasConnected = true;
             }
+            setLiveBatchByTab((previous) => ({
+              ...previous,
+              [tab.id]: {
+                hasMore: msg.batch_control.has_more,
+                batchNum: displayBatchNum(msg.batch_control.batch_num),
+                status: msg.batch_control.status,
+                subscriptionId: msg.subscription_id,
+              },
+            }));
             const rows = normalizeLiveRows(msg.rows);
             dispatch(appendWorkspaceLiveRows({
               tabId: tab.id,
               rows,
               changeType: "initial",
               schema: undefined,
+              batchNum: displayBatchNum(msg.batch_control.batch_num),
             }));
             updateTab(tab.id, { liveStatus: "connected", resultView: "results" });
             dispatch(setWorkspaceRunning(false));
@@ -772,11 +866,13 @@ export default function SqlStudio() {
 
       // If cancelled while awaiting subscribe, unsubscribe immediately
       if (liveGenRef.current[tab.id] !== gen) {
-        void unsubscribe();
+        void handle.unsubscribe();
         return;
       }
 
-      liveUnsubscribeRef.current[tab.id] = unsubscribe;
+      liveUnsubscribeRef.current[tab.id] = handle.unsubscribe;
+      liveRequestNextBatchRef.current[tab.id] = handle.requestNextBatch;
+      liveSubscriptionIdRef.current[tab.id] = handle.id;
     } catch (error) {
       if (liveGenRef.current[tab.id] !== gen) return;
 
@@ -1203,11 +1299,14 @@ export default function SqlStudio() {
                     result={activeResult}
                     isRunning={isRunning}
                     isLiveMode={activeTab.isLive}
+                    liveBatch={activeLiveBatch}
+                    liveAutoFetchBatches={activeTab.subscriptionOptions?.auto_fetch_batches ?? false}
                     activeSql={activeTab.sql}
                     selectedTable={selectedTable}
                     currentUsername={user?.username ?? "admin"}
                     resultView={activeTab.resultView}
                     onResultViewChange={(view) => updateActiveTab({ resultView: view })}
+                    onFetchNextBatch={() => fetchNextLiveBatch(activeTab.id)}
                     onRefreshAfterCommit={() => executeQueryForTab(activeTab.id, activeTab.sql, activeTab.title)}
                   />
                 </ResizablePanel>

@@ -10,12 +10,12 @@ import type {
 
 export function normalizeSubscriptionOptions(
   options?: SubscriptionOptions,
-): { batch_size?: number; last_rows?: number; from?: string } | undefined {
+): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   if (!options) {
     return undefined;
   }
 
-  const normalized: { batch_size?: number; last_rows?: number; from?: string } = {};
+  const normalized: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
 
   if (options.batch_size !== undefined) {
     normalized.batch_size = options.batch_size;
@@ -27,6 +27,11 @@ export function normalizeSubscriptionOptions(
 
   if (options.from !== undefined) {
     normalized.from = options.from instanceof SeqId ? options.from.toString() : SeqId.from(options.from).toString();
+  }
+
+  const autoFetchBatches = options.auto_fetch_batches ?? options.autoFetchBatches;
+  if (autoFetchBatches !== undefined) {
+    normalized.auto_fetch_batches = autoFetchBatches;
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;

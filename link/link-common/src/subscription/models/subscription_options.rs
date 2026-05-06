@@ -39,6 +39,11 @@ pub struct SubscriptionOptions {
     /// Typically set automatically during reconnection to resume from last received event.
     #[serde(skip_serializing_if = "Option::is_none", alias = "from_seq_id")]
     pub from: Option<SeqId>,
+
+    /// Client-side control for automatically requesting subsequent initial data batches.
+    /// Skipped on the wire because the backend only needs batch_size/last_rows/from.
+    #[serde(default, skip_serializing, alias = "autoFetchBatches")]
+    pub auto_fetch_batches: Option<bool>,
 }
 
 impl SubscriptionOptions {
@@ -70,6 +75,12 @@ impl SubscriptionOptions {
     /// Deprecated alias retained for backward compatibility.
     pub fn with_from_seq_id(self, seq_id: SeqId) -> Self {
         self.with_from(seq_id)
+    }
+
+    /// Control whether the client should automatically request subsequent initial data batches.
+    pub fn with_auto_fetch_batches(mut self, enabled: bool) -> Self {
+        self.auto_fetch_batches = Some(enabled);
+        self
     }
 
     /// Check if this has a resume seq_id set.

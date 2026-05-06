@@ -27,6 +27,7 @@ import {
   type QueryResponse,
   type RowData,
   type ServerMessage,
+  type SubscriptionHandle,
   type SubscriptionOptions,
   type Unsubscribe,
 } from '@kalamdb/client';
@@ -424,8 +425,10 @@ function parseOptionsFromSql(sql: string): { sql: string; options: SubscriptionO
           options.last_rows = parseInt(value, 10);
         } else if (keyLower === 'batch_size') {
           options.batch_size = parseInt(value, 10);
-        } else if (keyLower === 'from') {
+        } else if (keyLower === 'from' || keyLower === 'from_seq_id') {
           options.from = value;
+        } else if (keyLower === 'auto_fetch_batches' || keyLower === 'auto_fetch_next_batch') {
+          options.auto_fetch_batches = value.toLowerCase() === 'true' || value === '1';
         }
       }
     }
@@ -459,6 +462,7 @@ function normalizeSubscriptionTarget(
       last_rows: parsedOptions.last_rows ?? options?.last_rows,
       batch_size: parsedOptions.batch_size ?? options?.batch_size,
       from: parsedOptions.from ?? options?.from,
+      auto_fetch_batches: parsedOptions.auto_fetch_batches ?? options?.auto_fetch_batches,
     },
     isSqlQuery: isSqlQueryTarget(cleanSql),
   };
@@ -478,22 +482,36 @@ export async function subscribe(
   callback: (event: ServerMessage) => void,
   options?: SubscriptionOptions
 ): Promise<Unsubscribe> {
+  const handle = await subscribeWithHandle(tableOrQuery, callback, options);
+  return handle.unsubscribe;
+}
+
+export async function subscribeWithHandle(
+  tableOrQuery: string,
+  callback: (event: ServerMessage) => void,
+  options?: SubscriptionOptions,
+): Promise<SubscriptionHandle> {
   const liveClient = await ensureSubscriptionClient();
   const { cleanSql, subscribeOptions, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery, options);
   
   debugLog('[kalam-client] Subscribing to:', cleanSql, 'with options:', subscribeOptions);
 
   try {
-    const unsubscribe = isSqlQuery
-      ? await liveClient.subscribeWithSql(cleanSql, callback, subscribeOptions)
-      : await liveClient.subscribe(cleanSql, callback, subscribeOptions);
+    const handle = isSqlQuery
+      ? await liveClient.subscribeWithSqlHandle(cleanSql, callback, subscribeOptions)
+      : await liveClient.subscribeWithSqlHandle(`SELECT * FROM ${cleanSql}`, callback, subscribeOptions);
 
     debugLog('[kalam-client] Subscription registered successfully');
-    return unsubscribe;
+    return handle;
   } catch (err) {
     console.error('[kalam-client] Subscription setup failed:', err);
     throw err;
   }
+}
+
+export async function requestNextBatch(subscriptionId: string): Promise<void> {
+  const liveClient = await ensureSubscriptionClient();
+  await liveClient.requestNextBatch(subscriptionId);
 }
 
 /**

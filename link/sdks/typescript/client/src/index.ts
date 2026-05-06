@@ -87,6 +87,7 @@ export type {
   ServerMessage,
   SubscriptionCallback,
   SubscriptionErrorEvent,
+  SubscriptionHandle,
   SubscriptionInfo,
   SubscriptionOptions,
   TimestampFormat,

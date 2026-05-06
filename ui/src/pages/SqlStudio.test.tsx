@@ -23,6 +23,7 @@ const mockSetClientErrorListener = vi.fn();
 const mockSetClientReceiveListener = vi.fn();
 const mockSetClientSendListener = vi.fn();
 const mockUnsubscribe = vi.fn();
+const mockRequestNextBatch = vi.fn();
 const mockRemoteUnsubscribe = vi.fn();
 const mockSaveSyncedSqlStudioWorkspaceState = vi.fn();
 const mockLoadSyncedSqlStudioWorkspaceState = vi.fn();
@@ -54,6 +55,7 @@ vi.mock("@/services/sqlStudioService", async () => {
 
 vi.mock("@/lib/kalam-client", () => ({
   subscribe: (...args: unknown[]) => mockSubscribe(...args),
+  subscribeWithHandle: (...args: unknown[]) => mockSubscribe(...args),
   setClientDisconnectListener: (...args: unknown[]) => mockSetClientDisconnectListener(...args),
   setClientErrorListener: (...args: unknown[]) => mockSetClientErrorListener(...args),
   setClientLogListener: (...args: unknown[]) => mockSetClientLogListener(...args),
@@ -280,6 +282,7 @@ describe("SqlStudio page", () => {
     mockSetClientReceiveListener.mockReset();
     mockSetClientSendListener.mockReset();
     mockUnsubscribe.mockReset();
+    mockRequestNextBatch.mockReset();
     mockRemoteUnsubscribe.mockReset();
     mockLoadSyncedSqlStudioWorkspaceState.mockReset();
     mockSaveSyncedSqlStudioWorkspaceState.mockReset();
@@ -326,7 +329,11 @@ describe("SqlStudio page", () => {
 
     mockSubscribe.mockImplementation(async (_sql: string, callback: (message: Record<string, unknown>) => void) => {
       liveCallback = callback;
-      return mockUnsubscribe;
+      return {
+        id: "sub-test",
+        unsubscribe: mockUnsubscribe,
+        requestNextBatch: mockRequestNextBatch,
+      };
     });
     mockLoadSyncedSqlStudioWorkspaceState.mockResolvedValue(null);
     mockSaveSyncedSqlStudioWorkspaceState.mockResolvedValue(undefined);
@@ -626,7 +633,7 @@ describe("SqlStudio page", () => {
   });
 
   it("starts a live subscription from the SQL Studio page and renders incoming change rows", async () => {
-    await renderSqlStudio();
+    const { store } = await renderSqlStudio();
 
     fireEvent.change(getSqlEditor(), {
       target: { value: "SELECT id, name FROM default.events" },
@@ -646,6 +653,9 @@ describe("SqlStudio page", () => {
     await act(async () => {
       liveCallback?.({
         type: "subscription_ack",
+        subscription_id: "sub-test",
+        total_rows: 0,
+        batch_control: { batch_num: 0, has_more: false, status: "ready" },
         schema: [
           { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
           { name: "name", data_type: "Text", index: 1 },
@@ -658,9 +668,16 @@ describe("SqlStudio page", () => {
       });
     });
 
+    const activeTabTitle = store.getState().sqlStudioWorkspace.tabs[0]?.title;
+
     expect(await screen.findByText("stream row")).toBeTruthy();
     expect(screen.getByText("insert")).toBeTruthy();
     expect(screen.getByRole("button", { name: /stop/i })).toBeTruthy();
+    if (activeTabTitle) {
+      const liveTabButton = screen.getByRole("button", { name: new RegExp(activeTabTitle, "i") });
+      expect(within(liveTabButton).getByLabelText("Live query connected")).toBeTruthy();
+      expect(within(liveTabButton).getByText(activeTabTitle)).toBeTruthy();
+    }
   });
 
   it("removes the browser-added limit when live mode is enabled", async () => {
@@ -723,9 +740,9 @@ describe("SqlStudio page", () => {
   });
 
   it("shows connecting state and lets the user cancel a stalled live subscription", async () => {
-    let resolveSubscribe: ((value: () => Promise<void>) => void) | null = null;
+    let resolveSubscribe: ((value: { id: string; unsubscribe: () => Promise<void>; requestNextBatch: () => Promise<void> }) => void) | null = null;
     mockSubscribe.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveSubscribe = resolve as (value: () => Promise<void>) => void;
+      resolveSubscribe = resolve as (value: { id: string; unsubscribe: () => Promise<void>; requestNextBatch: () => Promise<void> }) => void;
     }));
 
     await renderSqlStudio();
@@ -746,7 +763,7 @@ describe("SqlStudio page", () => {
     });
 
     await act(async () => {
-      resolveSubscribe?.(mockUnsubscribe);
+      resolveSubscribe?.({ id: "sub-test", unsubscribe: mockUnsubscribe, requestNextBatch: mockRequestNextBatch });
     });
 
     expect(mockUnsubscribe).toHaveBeenCalled();
@@ -769,6 +786,9 @@ describe("SqlStudio page", () => {
     await act(async () => {
       liveCallback?.({
         type: "subscription_ack",
+        subscription_id: "sub-test",
+        total_rows: 0,
+        batch_control: { batch_num: 0, has_more: true, status: "loading" },
         schema: [
           { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
           { name: "name", data_type: "Text", index: 1 },
@@ -777,6 +797,8 @@ describe("SqlStudio page", () => {
       });
       liveCallback?.({
         type: "initial_data_batch",
+        subscription_id: "sub-test",
+        batch_control: { batch_num: 0, has_more: true, status: "loading" },
         rows: [
           { id: 1, name: "oldest", _seq: "10" },
           { id: 2, name: "newest", _seq: "30" },
@@ -791,6 +813,15 @@ describe("SqlStudio page", () => {
 
     expect(newestCell.compareDocumentPosition(middleCell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(middleCell.compareDocumentPosition(oldestCell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "Live" })).not.toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Time" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Change" })).toBeNull();
+    expect(screen.getAllByText("initial #1")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: /fetch next batch/i }));
+    await waitFor(() => {
+      expect(mockRequestNextBatch).toHaveBeenCalled();
+    });
   });
 
   it("appends raw websocket send and receive traces to the log", async () => {
@@ -809,8 +840,8 @@ describe("SqlStudio page", () => {
     });
 
     await act(async () => {
-      clientSendCallback?.('{"type":"subscribe","sql":"SELECT id, name FROM default.events"}');
-      clientReceiveCallback?.('{"type":"subscription_ack","subscription_id":"sub-1"}');
+      clientSendCallback?.('{"type":"subscribe","subscription":{"id":"sub-test","sql":"SELECT id, name FROM default.events"}}');
+      clientReceiveCallback?.('{"type":"subscription_ack","subscription_id":"sub-test"}');
     });
 
     await waitFor(() => {
@@ -841,6 +872,9 @@ describe("SqlStudio page", () => {
     await act(async () => {
       liveCallback?.({
         type: "subscription_ack",
+        subscription_id: "sub-test",
+        total_rows: 0,
+        batch_control: { batch_num: 0, has_more: false, status: "ready" },
         schema: [
           { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
           { name: "name", data_type: "Text", index: 1 },
@@ -877,6 +911,9 @@ describe("SqlStudio page", () => {
     await act(async () => {
       liveCallback?.({
         type: "subscription_ack",
+        subscription_id: "sub-test",
+        total_rows: 0,
+        batch_control: { batch_num: 0, has_more: false, status: "ready" },
         schema: [
           { name: "id", data_type: "BigInt", index: 0, flags: ["pk"] },
           { name: "name", data_type: "Text", index: 1 },
