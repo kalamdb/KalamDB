@@ -61,7 +61,7 @@ async fn test_latency_spike_during_initial_snapshot_recovers() {
         proxy.set_latency(Duration::from_millis(200));
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("latency-snapshot-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

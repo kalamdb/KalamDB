@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/orm",
   "type": "module",
-  "version": "0.4.3-rc.5",
+  "version": "0.5.0-beta.1",
   "description": "Drizzle ORM driver and schema generator for KalamDB",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -37,7 +37,8 @@
     "clean": "node -e \"const fs=require('fs');try{fs.rmSync('dist',{recursive:true,force:true})}catch{}\"",
     "build": "npm run clean && tsc",
     "build:orm": "npm run build",
-    "test": "npm run build && node --test tests/ktable.test.mjs tests/generate-unit.test.mjs tests/driver.test.mjs tests/filtering.test.mjs tests/agent-consumer.test.mjs tests/temporal-normalize.test.mjs tests/file-column.test.mjs tests/strip-defaults.test.mjs tests/sql-normalize.test.mjs tests/generate.test.mjs tests/live.test.mjs tests/cli.test.mjs",
+    "pretest": "node -e \"const fs=require('fs');const required=['node_modules/drizzle-orm','node_modules/@kalamdb/client'];if(required.every((entry)=>fs.existsSync(entry)))process.exit(0);process.exit(1)\" || npm install",
+    "test": "npm run build && node --test tests/ktable.test.mjs tests/generate-unit.test.mjs tests/driver.test.mjs tests/filtering.test.mjs tests/agent-consumer.test.mjs tests/temporal-normalize.test.mjs tests/file-column.test.mjs tests/strip-defaults.test.mjs tests/sql-normalize.test.mjs tests/live-descriptor.test.mjs tests/live-typed-query.test.mjs tests/generate.test.mjs tests/live.test.mjs tests/cli.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

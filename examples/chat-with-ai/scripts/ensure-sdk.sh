@@ -8,13 +8,23 @@ TYPESCRIPT_SDK_DIR="$(cd "$PROJECT_DIR/../../link/sdks/typescript" && pwd)"
 CLIENT_DIR="$TYPESCRIPT_SDK_DIR/client"
 CONSUMER_DIR="$TYPESCRIPT_SDK_DIR/consumer"
 ORM_DIR="$TYPESCRIPT_SDK_DIR/orm"
+CLIENT_CORE_DIR="$(cd "$PROJECT_DIR/../../link/kalam-client" && pwd)"
 CLIENT_ENTRY="$CLIENT_DIR/dist/src/index.js"
 CLIENT_WASM="$CLIENT_DIR/dist/wasm/kalam_client_bg.wasm"
 CONSUMER_ENTRY="$CONSUMER_DIR/dist/src/index.js"
 CONSUMER_WASM="$CONSUMER_DIR/dist/wasm/kalam_consumer_bg.wasm"
 ORM_ENTRY="$ORM_DIR/dist/index.js"
 
+client_needs_build=false
 orm_needs_build=false
+
+if [ ! -f "$CLIENT_ENTRY" ] || [ ! -f "$CLIENT_WASM" ]; then
+    client_needs_build=true
+elif find "$CLIENT_DIR/src" "$CLIENT_CORE_DIR/src" -type f \( -name '*.ts' -o -name '*.rs' \) -newer "$CLIENT_ENTRY" | grep -q .; then
+    client_needs_build=true
+elif find "$CLIENT_DIR/src" "$CLIENT_CORE_DIR/src" -type f \( -name '*.ts' -o -name '*.rs' \) -newer "$CLIENT_WASM" | grep -q .; then
+    client_needs_build=true
+fi
 
 if [ ! -f "$ORM_ENTRY" ]; then
     orm_needs_build=true
@@ -22,8 +32,8 @@ elif find "$ORM_DIR/src" -type f -newer "$ORM_ENTRY" | grep -q .; then
     orm_needs_build=true
 fi
 
-if [ ! -f "$CLIENT_ENTRY" ] || [ ! -f "$CLIENT_WASM" ]; then
-    echo "@kalamdb/client is not compiled. Building now..."
+if [ "$client_needs_build" = true ]; then
+    echo "@kalamdb/client needs a rebuild. Building now..."
     echo ""
     cd "$CLIENT_DIR"
     bash build.sh

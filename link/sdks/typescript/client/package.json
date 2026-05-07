@@ -1,8 +1,8 @@
 {
   "name": "@kalamdb/client",
   "type": "module",
-  "version": "0.4.3-rc.4",
-  "description": "WebAssembly-compatible KalamDB client library with TypeScript support",
+  "version": "0.5.0-beta.1",
+  "description": "KalamDB client library for TypeScript, providing a WebSocket-based interface for interacting with KalamDB servers, supporting live queries, authentication, and real-time updates.",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
   "repository": {
@@ -42,7 +42,7 @@
     "build:copy-wasm": "node ../scripts/copy-wasm.mjs .",
     "build": "npm run clean && npm run build:wasm && npm run build:prepare-wasm-dts && npm run build:ts && npm run build:copy-wasm",
     "test:types": "tsc -p tsconfig.test.json",
-    "test": "npm run build && npm run test:types && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
+    "test": "npm run build && npm run test:types && NO_SERVER=true node --test tests/basic.test.mjs tests/normalize.test.mjs tests/auth-provider-retry.test.mjs tests/cell-value.test.mjs tests/live-controller.test.mjs tests/live-query-typed.test.mjs tests/live-sql-descriptor.test.mjs tests/single-socket-subscriptions.test.mjs tests/readme-examples.test.mjs tests/sdk-runtime-coverage.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

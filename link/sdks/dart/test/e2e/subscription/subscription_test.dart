@@ -2,7 +2,7 @@
 ///
 /// Mirrors: tests/e2e/subscription/subscription.test.mjs (TypeScript)
 ///
-/// NOTE: `dartSubscriptionClose` in the native bridge may hang waiting for the
+/// NOTE: `dartLiveEventsClose` in the native bridge may hang waiting for the
 /// server's WebSocket close acknowledgement.  All subscription cancellations
 /// use [_safeCancel] to apply a bounded timeout so tests don't block.
 library;
@@ -16,7 +16,7 @@ import '../helpers.dart';
 
 /// Cancel a stream subscription with a safety timeout.
 ///
-/// The Rust-side `dartSubscriptionClose` can hang when the server doesn't ack
+/// The Rust-side `dartLiveEventsClose` can hang when the server doesn't ack
 /// the WebSocket close frame quickly.  Wrapping in a timeout prevents the test
 /// from blocking forever.
 Future<void> _safeCancel(StreamSubscription<dynamic> sub) async {
@@ -108,7 +108,7 @@ void main() {
     test(
       'subscribe returns a Stream<ChangeEvent>',
       () async {
-        final stream = client.subscribe('SELECT id, body FROM $tbl');
+        final stream = client.liveEvents('SELECT id, body FROM $tbl');
         expect(stream, isA<Stream<ChangeEvent>>());
 
         // Listen briefly then cancel.
@@ -126,7 +126,7 @@ void main() {
       'subscribe receives AckEvent',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe('SELECT id, body FROM $tbl');
+        final stream = client.liveEvents('SELECT id, body FROM $tbl');
         final sub = stream.listen(events.add);
 
         // Wait for ack.
@@ -141,6 +141,43 @@ void main() {
       timeout: const Timeout(Duration(seconds: 30)),
     );
 
+    test(
+      'liveEvents aliases the low-level SQL change stream',
+      () async {
+        final rowId =
+            (DateTime.now().millisecondsSinceEpoch % 1000000) * 100 + 650;
+        final insertEvent = Completer<InsertEvent>();
+        final stream = client.liveEvents(
+          'SELECT id, body FROM $tbl WHERE id = $rowId',
+        );
+        final sub = stream.listen((event) {
+          if (event case InsertEvent()) {
+            for (final row in event.rows) {
+              if (row['id']?.asInt() == rowId && !insertEvent.isCompleted) {
+                insertEvent.complete(event);
+              }
+            }
+          }
+        });
+
+        final writer = await connectJwtClient();
+        try {
+          await sleep(const Duration(seconds: 2));
+          await writer.query(
+            "INSERT INTO $tbl (id, body) VALUES ($rowId, 'alias')",
+          );
+
+          final event =
+              await insertEvent.future.timeout(const Duration(seconds: 20));
+          expect(event.rows.first['body']?.asString(), 'alias');
+        } finally {
+          await _safeCancel(sub);
+          await writer.dispose();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
     // ─────────────────────────────────────────────────────────────────
     // Insert triggers InsertEvent on subscriber
     // ─────────────────────────────────────────────────────────────────
@@ -148,7 +185,7 @@ void main() {
       'insert triggers InsertEvent on subscriber',
       () async {
         final insertEvent = Completer<InsertEvent>();
-        final stream = client.subscribe('SELECT id, body FROM $tbl');
+        final stream = client.liveEvents('SELECT id, body FROM $tbl');
         final sub = stream.listen((event) {
           if (event case InsertEvent()) {
             for (final row in event.rows) {
@@ -193,7 +230,7 @@ void main() {
       'subscribe with WHERE clause filters events',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl WHERE id = 600',
         );
         final sub = stream.listen(events.add);
@@ -227,7 +264,7 @@ void main() {
       () async {
         final customId = 'custom_${uniqueName('id')}';
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT id, body FROM $tbl',
           subscriptionId: customId,
         );
@@ -253,7 +290,7 @@ void main() {
       'subscribe with batchSize parameter',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT id, body FROM $tbl',
           batchSize: 10,
           lastRows: 5,
@@ -277,7 +314,7 @@ void main() {
     test(
       'invalid subscription emits a startup error',
       () async {
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM nonexistent.dart_missing_subscription_table',
         );
 
@@ -299,12 +336,12 @@ void main() {
     );
 
     test(
-      'liveQueryRowsWithSql emits materialized row snapshots',
+      'live emits materialized row snapshots',
       () async {
         final rowId =
             (DateTime.now().millisecondsSinceEpoch % 1000000) * 100 + 700;
         final snapshots = <List<Map<String, KalamCellValue>>>[];
-        final stream = client.liveQueryRowsWithSql<Map<String, KalamCellValue>>(
+        final stream = client.live<Map<String, KalamCellValue>>(
           'SELECT id, body FROM $tbl WHERE id = $rowId',
           limit: 2,
         );
@@ -334,7 +371,46 @@ void main() {
     );
 
     test(
-      'liveQueryRowsWithSql uses lastRows for rewind and limit for ongoing cap',
+      'live emits onCheckpoint for applied snapshots',
+      () async {
+        final rowId =
+            (DateTime.now().millisecondsSinceEpoch % 1000000) * 100 + 750;
+        final sql = 'SELECT id, body FROM $tbl WHERE id = $rowId';
+        final checkpoints = <LiveCheckpoint>[];
+        final stream = client.live<Map<String, KalamCellValue>>(
+          sql,
+          limit: 1,
+          onCheckpoint: checkpoints.add,
+        );
+        final sub = stream.listen((_) {});
+
+        final writer = await connectJwtClient();
+        try {
+          await sleep(const Duration(seconds: 2));
+          await writer.query(
+            "INSERT INTO $tbl (id, body) VALUES ($rowId, 'checkpoint')",
+          );
+
+          await _waitForCondition(
+            () => checkpoints.isNotEmpty,
+            reason: 'Timed out waiting for live onCheckpoint callback',
+          );
+
+          final checkpoint = checkpoints.last;
+          expect(checkpoint.subscriptionId, isNotEmpty);
+          final subs = await client.getSubscriptions();
+          final info = subs.firstWhere((sub) => sub.query == sql);
+          expect(info.lastSeqId?.toString(), checkpoint.lastSeqId.toString());
+        } finally {
+          await _safeCancel(sub);
+          await writer.dispose();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'live uses lastRows for rewind and limit for ongoing cap',
       () async {
         final baseId =
             (DateTime.now().millisecondsSinceEpoch % 1000000) * 100 + 800;
@@ -353,7 +429,7 @@ void main() {
           }
 
           final stream =
-              client.liveQueryRowsWithSql<Map<String, KalamCellValue>>(
+              client.live<Map<String, KalamCellValue>>(
             'SELECT id, body FROM $tbl WHERE id >= $baseId',
             lastRows: 3,
             limit: 2,
@@ -432,7 +508,7 @@ void main() {
 
         try {
           for (var index = 0; index < subscriberClients.length; index++) {
-            final stream = subscriberClients[index].subscribe(
+            final stream = subscriberClients[index].liveEvents(
               'SELECT id, body FROM $tbl WHERE id >= $baseId',
               lastRows: 0,
               subscriptionId: subscriptionIds[index],
@@ -513,7 +589,7 @@ void main() {
 
         try {
           for (final id in targetIds) {
-            final stream = client.subscribe(
+            final stream = client.liveEvents(
               'SELECT id, body FROM $tbl WHERE id = $id',
               lastRows: 0,
             );
@@ -570,7 +646,7 @@ void main() {
         final rowId =
             (DateTime.now().millisecondsSinceEpoch % 1000000) * 100 + 900;
         var eventCount = 0;
-        final stream = client.subscribe('SELECT id, body FROM $tbl');
+        final stream = client.liveEvents('SELECT id, body FROM $tbl');
         final sub = stream.listen((_) => eventCount++);
 
         await sleep(const Duration(seconds: 2));

@@ -1823,7 +1823,7 @@ impl CLISession {
             eprintln!("Press Ctrl+C (or 'q') to unsubscribe and return to CLI\n");
         }
 
-        let mut subscription = self.client.subscribe_with_config(config).await?;
+        let mut subscription = self.client.live_events_with_config(config).await?;
 
         if self.animations {
             eprintln!("Subscription established (ID: {})", subscription.subscription_id());
@@ -1985,7 +1985,7 @@ impl CLISession {
             eprintln!();
         }
 
-        let mut subscription = self.client.subscribe_with_config(config).await?;
+        let mut subscription = self.client.live_events_with_config(config).await?;
 
         if self.animations {
             eprintln!("Subscription established (ID: {})", subscription.subscription_id());

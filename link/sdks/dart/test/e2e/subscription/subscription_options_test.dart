@@ -58,7 +58,7 @@ void main() {
       'subscribe with batchSize receives ack',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl',
           batchSize: 5,
         );
@@ -82,7 +82,7 @@ void main() {
       'subscribe with lastRows limits initial data',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl',
           lastRows: 5,
         );
@@ -106,7 +106,7 @@ void main() {
       'subscribe with from receives ack',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl',
           from: SeqId.zero(), // start from beginning
         );
@@ -129,7 +129,7 @@ void main() {
       'subscribe with all options combined',
       () async {
         final events = <ChangeEvent>[];
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl',
           batchSize: 10,
           lastRows: 5,
@@ -171,7 +171,7 @@ void main() {
           );
 
           final firstEvents = <ChangeEvent>[];
-          final firstStream = client.subscribe(
+          final firstStream = client.liveEvents(
             'SELECT id, value FROM $tbl WHERE id >= $preId',
             lastRows: 1,
             subscriptionId: checkpointSubId,
@@ -215,7 +215,7 @@ void main() {
           }
 
           final secondEvents = <ChangeEvent>[];
-          final secondStream = client.subscribe(
+          final secondStream = client.liveEvents(
             'SELECT id, value FROM $tbl WHERE id >= $preId',
             from: checkpoint,
             lastRows: 0,
@@ -307,7 +307,7 @@ void main() {
           );
 
           final baselineEvents = <ChangeEvent>[];
-          final baselineStream = client.subscribe(
+          final baselineStream = client.liveEvents(
             'SELECT id, value FROM $tbl WHERE id >= $baselineA',
             lastRows: 2,
             subscriptionId: checkpointSubId,
@@ -350,7 +350,7 @@ void main() {
           }
 
           final resumedEvents = <ChangeEvent>[];
-          final resumedStream = client.subscribe(
+          final resumedStream = client.liveEvents(
             'SELECT id, value FROM $tbl WHERE id >= $baselineA',
             from: checkpoint,
             lastRows: 0,
@@ -455,7 +455,7 @@ void main() {
     test(
       'getSubscriptions returns active subscriptions',
       () async {
-        final stream = client.subscribe('SELECT * FROM $tbl');
+        final stream = client.liveEvents('SELECT * FROM $tbl');
         final sub = stream.listen((_) {});
 
         await sleep(const Duration(seconds: 2));
@@ -480,7 +480,7 @@ void main() {
       'getSubscriptions after cancel reflects removal',
       () async {
         final subId = uniqueName('cancel_sub');
-        final stream = client.subscribe(
+        final stream = client.liveEvents(
           'SELECT * FROM $tbl',
           subscriptionId: subId,
         );
@@ -530,7 +530,7 @@ void main() {
     test(
       'SubscriptionInfo has all expected fields',
       () async {
-        final stream = client.subscribe('SELECT id, value FROM $tbl');
+        final stream = client.liveEvents('SELECT id, value FROM $tbl');
         final sub = stream.listen((_) {});
 
         await sleep(const Duration(seconds: 2));

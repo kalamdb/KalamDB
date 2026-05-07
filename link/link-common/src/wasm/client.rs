@@ -84,8 +84,8 @@ struct BorrowedQueryRequest<'a> {
 /// client.setAutoReconnect(true);
 /// client.setReconnectDelay(1000, 30000);
 ///
-/// // WebSocket connects automatically on first subscribe (wsLazyConnect=true by default)
-/// const subId = await client.subscribeWithSql(
+/// // WebSocket connects automatically on first live call (wsLazyConnect=true by default)
+/// const subId = await client.liveEvents(
 ///   "SELECT * FROM chat.messages",
 ///   JSON.stringify({
 ///     batch_size: 100,
@@ -1081,10 +1081,10 @@ impl KalamClient {
     /// Control lazy WebSocket connections.
     ///
     /// When `true` (the default), the WebSocket connection is deferred until
-    /// the first `subscribe()` / `subscribeWithSql()` call. The SDK manages
+    /// the first `live()`, `liveTable()`, or `liveEvents()` call. The SDK manages
     /// the connection lifecycle automatically.
     ///
-    /// When `false`, the caller should call `connect()` before subscribing.
+    /// When `false`, the caller should call `connect()` before opening live streams.
     ///
     /// Default: `true`.
     ///
@@ -1093,7 +1093,7 @@ impl KalamClient {
     /// // Eager connection (override the default lazy behaviour)
     /// client.setWsLazyConnect(false);
     /// await client.connect();
-    /// const subId = await client.subscribeWithSql('SELECT * FROM messages', null, cb);
+    /// const subId = await client.liveEvents('SELECT * FROM messages', null, cb);
     /// ```
     #[wasm_bindgen(js_name = setWsLazyConnect)]
     pub fn set_ws_lazy_connect(&self, lazy: bool) {
@@ -1721,9 +1721,11 @@ impl KalamClient {
     ///
     /// # Returns
     /// Subscription ID for later unsubscribe
-    pub async fn subscribe(
+    #[wasm_bindgen(js_name = liveTable)]
+    pub async fn live_table(
         &self,
         table_name: String,
+        options: Option<String>,
         callback: js_sys::Function,
     ) -> Result<String, JsValue> {
         // Security: Validate table name to prevent SQL injection
@@ -1732,10 +1734,10 @@ impl KalamClient {
         // Default: SELECT * FROM table with default options
         // Security: Quote table name properly (handles namespace.table format)
         let sql = format!("SELECT * FROM {}", quote_table_name(&table_name));
-        self.subscribe_with_sql(sql, None, callback).await
+        self.live(sql, options, callback).await
     }
 
-    /// Subscribe to a SQL query with optional subscription options
+    /// Subscribe to a SQL query and receive low-level live events.
     ///
     /// # Arguments
     /// * `sql` - SQL SELECT query to subscribe to
@@ -1752,14 +1754,14 @@ impl KalamClient {
     /// # Example (JavaScript)
     /// ```js
     /// // Subscribe with options
-    /// const subId = await client.subscribeWithSql(
+    /// const subId = await client.liveEvents(
     ///   "SELECT * FROM chat.messages WHERE conversation_id = 1",
     ///   JSON.stringify({ batch_size: 50, from: 42 }),
     ///   (event) => console.log('Change:', event)
     /// );
     /// ```
-    #[wasm_bindgen(js_name = subscribeWithSql)]
-    pub async fn subscribe_with_sql(
+    #[wasm_bindgen(js_name = liveEvents)]
+    pub async fn live_events(
         &self,
         sql: String,
         options: Option<String>,
@@ -1786,8 +1788,8 @@ impl KalamClient {
     /// The callback receives JSON strings with one of these shapes:
     /// - `{ type: "rows", subscription_id, rows }`
     /// - `{ type: "error", subscription_id, code, message }`
-    #[wasm_bindgen(js_name = liveQueryRowsWithSql)]
-    pub async fn live_query_rows_with_sql(
+    #[wasm_bindgen(js_name = live)]
+    pub async fn live(
         &self,
         sql: String,
         options: Option<String>,

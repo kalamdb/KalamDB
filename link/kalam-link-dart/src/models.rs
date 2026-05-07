@@ -342,6 +342,7 @@ pub enum DartLiveRowsEvent {
     Rows {
         subscription_id: String,
         rows_json: Vec<String>,
+        last_seq_id: Option<i64>,
     },
     Error {
         subscription_id: String,
@@ -443,9 +444,11 @@ impl From<LiveRowsEvent> for DartLiveRowsEvent {
             LiveRowsEvent::Rows {
                 subscription_id,
                 rows,
+                last_seq_id,
             } => Self::Rows {
                 subscription_id,
                 rows_json: json_vec(rows),
+                last_seq_id: last_seq_id.map(|seq| seq.as_i64()),
             },
             LiveRowsEvent::Error {
                 subscription_id,

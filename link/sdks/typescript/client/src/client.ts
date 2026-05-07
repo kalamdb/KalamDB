@@ -13,11 +13,12 @@ import { buildAuthHeader } from './auth.js';
 import { resolveAuthProviderWithRetry } from './helpers/auth_provider_retry.js';
 import {
   defaultRowKey,
+  lastSeqIdFromSubscriptionEvent,
   type NormalizedSubscriptionEvent,
-  normalizeLiveRowsOptions,
+  normalizeLiveEventsOptions,
+  normalizeLiveOptions,
   normalizeLiveRowsWasmEvent,
   normalizeSubscriptionEvent,
-  normalizeSubscriptionOptions,
   readSubscriptionInfos,
   removeMaterializedRows,
   trackSubscriptionMetadata,
@@ -26,8 +27,11 @@ import {
 
 import type {
   ClientOptions,
-  LiveRowsCallback,
-  LiveRowsOptions,
+  LiveCallback,
+  LiveCheckpoint,
+  LiveEventsCallback,
+  LiveEventsOptions,
+  LiveOptions,
   LogEntry,
   LogListener,
   LoginResponse,
@@ -37,10 +41,7 @@ import type {
   OnReceiveCallback,
   OnSendCallback,
   QueryResponse,
-  SubscriptionCallback,
   SubscriptionErrorEvent,
-  SubscriptionHandle,
-  SubscriptionOptions,
   Unsubscribe,
   UploadProgress,
   UserId,
@@ -50,19 +51,21 @@ import type {
 
 import { LogLevel } from './types.js';
 import { SeqId } from './seq_id.js';
+import { LiveQueryController } from './live/controller.js';
+import type { LiveQueryControllerOptions } from './live/controller.js';
+import type { LiveQueryDescriptor } from './live/descriptor.js';
 
 import { wrapRowMap } from './cell_value.js';
 import type { RowData } from './cell_value.js';
 
 import {
   FileRefContext,
-  KalamChange,
   KalamRow,
   wrapRows,
 } from './file_ref.js';
 
 // Re-export so consumers of client.ts don't need a separate file_ref import.
-export { KalamChange, KalamRow, wrapRows };
+export { KalamRow, wrapRows };
 export type { FileRefContext };
 
 type DynamicImport = (specifier: string) => Promise<Record<string, unknown>>;
@@ -131,7 +134,7 @@ function getNodeProcess(): NodeProcessShim | undefined {
  * const users = await client.query('SELECT * FROM users WHERE active = true');
  * console.log(users.results[0].rows);
  *
- * const unsubscribe = await client.subscribe('messages', (event) => {
+ * const unsubscribe = await client.liveEvents('SELECT * FROM messages', (event) => {
  *   if (event.type === 'change') console.log('New:', event.rows);
  * });
  *
@@ -357,7 +360,7 @@ export class KalamDBClient {
    *
    * This is managed internally — you do not need to call it.
    * When `wsLazyConnect` is `true` (default), the SDK connects
-   * automatically on the first `subscribe()` / `subscribeWithSql()` call.
+  * automatically on the first `live()`, `liveTable()`, or `liveEvents()` call.
    * When `wsLazyConnect` is `false`, the SDK connects during
    * `initialize()`.
    *
@@ -374,9 +377,6 @@ export class KalamDBClient {
       try {
         this.log(LogLevel.Info, 'connection', `Connecting to ${this.url}...`);
         await this.initialize();
-        const wasmClient = this.wasmClient;
-        if (!wasmClient) throw new Error('WASM client not initialized');
-        wasmClient.setAutoReconnect(this.autoReconnectEnabled);
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
         if (this.auth?.type === 'basic') {
@@ -384,6 +384,10 @@ export class KalamDBClient {
           await this.login();
           this.log(LogLevel.Debug, 'auth', 'Auto-login successful');
         }
+
+        const wasmClient = this.wasmClient;
+        if (!wasmClient) throw new Error('WASM client not initialized');
+        wasmClient.setAutoReconnect(this.autoReconnectEnabled);
 
         // Always forward the effective ping interval so the TS and WASM
         // defaults cannot silently drift apart.
@@ -1040,52 +1044,6 @@ export class KalamDBClient {
     return wrapRows<T>(rows, ctx);
   }
 
-  /**
-   * Subscribe to a table and receive change events with rows pre-wrapped as `KalamRow<T>`.
-   *
-   * The callback receives a `KalamChange<T>` where both `rows` (new values) and
-   * `oldValues` (pre-change values for updates/deletes) are `KalamRow<T>` instances.
-   * Call `.file(column)` on any row to get a `BoundFileRef` with no-arg URL methods.
-   *
-   * @param tableName - Qualified table name, e.g. `"default.users"` or `"users"`.
-   *                    Used both as the subscription target and as the file URL context.
-   * @param callback  - Invoked for every change event
-   * @param options   - Optional subscription options (batch_size, resume, etc.)
-   * @returns An unsubscribe function
-   *
-   * @example
-   * ```typescript
-   * interface User { id: string; name: string; avatar: string }
-   *
-   * const unsub = await client.subscribeRows<User>('default.users', (change) => {
-   *   if (change.type === 'insert' || change.type === 'update') {
-   *     change.rows.forEach(row => {
-   *       console.log('User:', row.data.name);
-   *       const avatar = row.file('avatar');
-   *       if (avatar) {
-   *         img.src = avatar.downloadUrl();           // full URL
-   *         console.log(avatar.relativeUrl());         // /api/v1/files/default/users/…
-   *         console.log(avatar.name, avatar.formatSize(), avatar.isImage());
-   *       }
-   *     });
-   *   }
-   * });
-   *
-   * // Unsubscribe when done
-   * await unsub();
-   * ```
-   */
-  async subscribeRows<T extends Record<string, unknown> = Record<string, unknown>>(
-    tableName: string,
-    callback: (change: KalamChange<T>) => void,
-    options?: SubscriptionOptions,
-  ): Promise<Unsubscribe> {
-    const ctx = this.tableContext(tableName);
-    return this.subscribe(tableName, (event) => {
-      callback(new KalamChange<T>(event, ctx));
-    }, options);
-  }
-
   /* ---------------------------------------------------------------- */
   /*  Authentication                                                  */
   /* ---------------------------------------------------------------- */
@@ -1107,8 +1065,7 @@ export class KalamDBClient {
     }
     const response = await this.performDirectBasicLogin(auth.user, auth.password);
 
-    this.wasmClient = WasmClient.withJwt(this.url, response.access_token);
-    this.attachWasmClientState();
+    await this.replaceWasmClient(WasmClient.withJwt(this.url, response.access_token));
 
     // Update TypeScript client's auth state to match
     this.auth = { type: 'jwt', token: response.access_token };
@@ -1144,78 +1101,30 @@ export class KalamDBClient {
   }
 
   /* ---------------------------------------------------------------- */
-  /*  Subscriptions                                                   */
+  /*  Live Streams                                                    */
   /* ---------------------------------------------------------------- */
 
   /**
-   * Subscribe to real-time changes on a table.
-   *
-   * @returns An unsubscribe function
-   *
-   * @example
-   * ```typescript
-   * const unsub = await client.subscribe('messages', (event) => {
-   *   if (event.type === 'change') console.log(event.rows);
-   * });
-   * await unsub();
-   * ```
+  * Open a SQL query and receive every low-level live event.
    */
-  async subscribe(
-    tableName: string,
-    callback: SubscriptionCallback,
-    options?: SubscriptionOptions,
-  ): Promise<Unsubscribe> {
-    return this.subscribeWithSql(`SELECT * FROM ${tableName}`, callback, options);
-  }
-
-  /**
-   * Subscribe to a SQL query with real-time updates.
-   *
-   * @example
-   * ```typescript
-   * const unsub = await client.subscribeWithSql(
-   *   'SELECT * FROM chat.messages WHERE conversation_id = 1',
-   *   (event) => { ... },
-   *   { batch_size: 50 },
-   * );
-   * ```
-   */
-  async subscribeWithSql(
+  async liveEvents(
     sql: string,
-    callback: SubscriptionCallback,
-    options?: SubscriptionOptions,
+    callback: LiveEventsCallback,
+    options: LiveEventsOptions = {},
   ): Promise<Unsubscribe> {
-    const handle = await this.subscribeWithSqlHandle(sql, callback, options);
-    return handle.unsubscribe;
-  }
-
-  /**
-   * Subscribe to a SQL query and receive a handle for explicit batch control.
-   */
-  async subscribeWithSqlHandle(
-    sql: string,
-    callback: SubscriptionCallback,
-    options?: SubscriptionOptions,
-  ): Promise<SubscriptionHandle> {
-    this.log(LogLevel.Debug, 'subscription', `Subscribing to: ${sql.substring(0, 120)}`);
-    const optionsJson = this.stringifyOptions(normalizeSubscriptionOptions(options));
+    this.log(LogLevel.Debug, 'subscription', `Opening live events: ${sql.substring(0, 120)}`);
+    const optionsJson = this.stringifyOptions(normalizeLiveEventsOptions(options));
     const subscriptionId = await this.startTrackedSubscription(
       sql,
-      (wasmClient) => wasmClient.subscribeWithSql(
+      (wasmClient) => wasmClient.liveEvents(
         sql,
         optionsJson,
-        this.createRawSubscriptionCallback(callback) as unknown as Function,
+        this.createLiveEventsCallback(callback, options.onError, options.onCheckpoint) as unknown as Function,
       ),
     );
 
-    return {
-      id: subscriptionId,
-      unsubscribe: async () => {
-        await this.unsubscribe(subscriptionId);
-      },
-      requestNextBatch: async () => {
-        await this.requestNextBatch(subscriptionId);
-      },
+    return async () => {
+      await this.unsubscribe(subscriptionId);
     };
   }
 
@@ -1233,29 +1142,29 @@ export class KalamDBClient {
   }
 
   /**
-   * Subscribe to a SQL query and receive the SDK-maintained current row set.
+  * Open a SQL query and receive the SDK-maintained current row set.
    *
    * The SDK applies `initial_data_batch`, `insert`, `update`, and `delete`
    * events internally so application code only handles the latest row array.
    */
   async live<T = RowData>(
     sql: string,
-    callback: LiveRowsCallback<T>,
-    options: LiveRowsOptions<T> = {},
+    callback: LiveCallback<T>,
+    options: LiveOptions<T> = {},
   ): Promise<Unsubscribe> {
-    if (options.getKey) {
+    if (typeof options.getKey === 'function') {
       return this.liveFallback(sql, callback, options);
     }
 
     const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
-    const normalizedOptions = normalizeLiveRowsOptions(options);
+    const normalizedOptions = normalizeLiveOptions(options);
     const optionsJson = this.stringifyOptions(normalizedOptions);
     const subscriptionId = await this.startTrackedSubscription(
       sql,
-      (wasmClient) => wasmClient.liveQueryRowsWithSql(
+      (wasmClient) => wasmClient.live(
         sql,
         optionsJson,
-        this.createLiveRowsCallback(callback, mapRow, options.onError) as unknown as Function,
+        this.createLiveRowsCallback(callback, mapRow, options.onError, options.onCheckpoint) as unknown as Function,
       ),
     );
 
@@ -1266,19 +1175,25 @@ export class KalamDBClient {
 
   private async liveFallback<T = RowData>(
     sql: string,
-    callback: LiveRowsCallback<T>,
-    options: LiveRowsOptions<T> = {},
+    callback: LiveCallback<T>,
+    options: LiveOptions<T> = {},
   ): Promise<Unsubscribe> {
     const mapRow = options.mapRow ?? ((row: RowData) => row as unknown as T);
-    const getKey = options.getKey ?? ((row: T) => defaultRowKey(row));
+    const getKey = typeof options.getKey === 'function'
+      ? options.getKey
+      : ((row: T) => defaultRowKey(row));
     let rows: T[] = [];
 
-    return this.subscribeWithSql(
+    return this.liveEvents(
       sql,
       (event) => {
         const normalizedEvent = event as NormalizedSubscriptionEvent;
 
         if (normalizedEvent.type === 'subscription_ack') {
+          if (normalizedEvent.total_rows === 0 || normalizedEvent.batch_control.status === 'ready') {
+            callback([...rows]);
+            this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
+          }
           return;
         }
 
@@ -1288,8 +1203,9 @@ export class KalamDBClient {
         }
 
         if (normalizedEvent.type === 'initial_data_batch') {
-          rows = (normalizedEvent.rows ?? []).map(mapRow);
+          rows = upsertLimited([], (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
           callback([...rows]);
+          this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
           return;
         }
 
@@ -1300,25 +1216,34 @@ export class KalamDBClient {
         if (normalizedEvent.change_type === 'delete') {
           rows = removeMaterializedRows(rows, (normalizedEvent.old_values ?? []).map(mapRow), getKey);
           callback([...rows]);
+          this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
           return;
         }
 
-        rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey);
+        rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
         callback([...rows]);
+        this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
       },
-      options.subscriptionOptions,
+      this.liveEventsOptionsFromLiveOptions(options),
     );
   }
 
   /**
-   * Subscribe to a table and receive the SDK-maintained current row set.
+  * Open a table and receive the SDK-maintained current row set.
    */
-  async liveTableRows<T = RowData>(
+  async liveTable<T = RowData>(
     tableName: string,
-    callback: LiveRowsCallback<T>,
-    options: LiveRowsOptions<T> = {},
+    callback: LiveCallback<T>,
+    options: LiveOptions<T> = {},
   ): Promise<Unsubscribe> {
     return this.live(`SELECT * FROM ${tableName}`, callback, options);
+  }
+
+  createLiveQueryController<T = RowData>(
+    descriptor: LiveQueryDescriptor<T>,
+    options: LiveQueryControllerOptions<T> = {},
+  ): LiveQueryController<T> {
+    return new LiveQueryController<T>(this, descriptor, options);
   }
 
   /** Unsubscribe by subscription ID */
@@ -1399,23 +1324,32 @@ export class KalamDBClient {
     return subscriptionId;
   }
 
-  private createRawSubscriptionCallback(
-    callback: SubscriptionCallback,
+  private createLiveEventsCallback(
+    callback: LiveEventsCallback,
+    onError?: (event: SubscriptionErrorEvent) => void,
+    onCheckpoint?: (checkpoint: LiveCheckpoint) => void,
   ): (eventJson: string) => void {
     return this.createJsonCallback(
       'subscription',
       (eventJson) => normalizeSubscriptionEvent(JSON.parse(eventJson) as ServerMessage),
       (event) => {
         this.log(LogLevel.Verbose, 'subscription', `Event: type=${event.type}`);
+        if (event.type === 'error') {
+          onError?.(event as SubscriptionErrorEvent);
+        }
         callback(event);
+        if ('subscription_id' in event) {
+          this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, lastSeqIdFromSubscriptionEvent(event));
+        }
       },
     );
   }
 
   private createLiveRowsCallback<T>(
-    callback: LiveRowsCallback<T>,
+    callback: LiveCallback<T>,
     mapRow: (row: RowData) => T,
     onError?: (event: SubscriptionErrorEvent) => void,
+    onCheckpoint?: (checkpoint: LiveCheckpoint) => void,
   ): (eventJson: string) => void {
     return this.createJsonCallback(
       'subscription',
@@ -1425,6 +1359,7 @@ export class KalamDBClient {
         rows?: unknown;
         code?: string;
         message?: string;
+        last_seq_id?: string | number | SeqId | null;
       }),
       (event) => {
         if (event.type === 'error') {
@@ -1438,8 +1373,38 @@ export class KalamDBClient {
         }
 
         callback((event.rows ?? []).map(mapRow));
+        this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, event.last_seq_id);
       },
     );
+  }
+
+  private emitLiveCheckpoint(
+    onCheckpoint: ((checkpoint: LiveCheckpoint) => void) | undefined,
+    subscriptionId: string,
+    lastSeqId?: SeqId,
+  ): void {
+    if (!onCheckpoint) {
+      return;
+    }
+
+    const checkpoint = lastSeqId ?? this.getLastSeqId(subscriptionId);
+    if (!checkpoint) {
+      return;
+    }
+
+    onCheckpoint({
+      subscriptionId,
+      lastSeqId: checkpoint,
+    });
+  }
+
+  private liveEventsOptionsFromLiveOptions<T>(options: LiveOptions<T>): LiveEventsOptions {
+    return {
+      ...(options.batchSize !== undefined ? { batchSize: options.batchSize } : {}),
+      ...(options.lastRows !== undefined ? { lastRows: options.lastRows } : {}),
+      ...(options.from !== undefined ? { from: options.from } : {}),
+      ...(options.autoFetchBatches !== undefined ? { autoFetchBatches: options.autoFetchBatches } : {}),
+    };
   }
 
   private createJsonCallback<T>(
@@ -1531,6 +1496,30 @@ export class KalamDBClient {
     this.applyEventHandlers();
   }
 
+  private async replaceWasmClient(nextClient: WasmClient): Promise<void> {
+    const previousClient = this.wasmClient;
+    this.wasmClient = nextClient;
+    this.attachWasmClientState();
+
+    if (!previousClient || previousClient === nextClient) {
+      return;
+    }
+
+    try {
+      previousClient.setAutoReconnect(false);
+      if (previousClient.isConnected?.()) {
+        await this.serializeWasmCall(() => previousClient.disconnect());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } catch (error) {
+      this.log(LogLevel.Warn, 'connection', `Failed to clean up replaced WASM client: ${error}`);
+    } finally {
+      if (typeof previousClient.free === 'function') {
+        previousClient.free();
+      }
+    }
+  }
+
   private async ensureJwtForBasicAuth(): Promise<void> {
     if (this.auth?.type === 'basic') {
       await this.login();
@@ -1547,8 +1536,7 @@ export class KalamDBClient {
       const result = await this.resolveWasmAuthProvider();
       this.auth = { type: 'jwt', token: result.jwt.token };
       if (this.wasmClient) {
-        this.wasmClient = WasmClient.withJwt(this.url, result.jwt.token);
-        this.attachWasmClientState();
+        await this.replaceWasmClient(WasmClient.withJwt(this.url, result.jwt.token));
       }
     } catch (error) {
       this.log(LogLevel.Warn, 'auth', `Failed to reauthenticate: ${error}`);

@@ -128,7 +128,7 @@ void main() {
 
           // Subscribe but don't send any data => connection is idle.
           final events = <ChangeEvent>[];
-          final stream = client.subscribe('SELECT * FROM $tbl');
+          final stream = client.liveEvents('SELECT * FROM $tbl');
           final sub = stream.listen(events.add);
 
           // Wait for ack + several keepalive intervals to accumulate pings.

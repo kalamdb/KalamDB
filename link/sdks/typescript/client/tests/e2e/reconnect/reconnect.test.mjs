@@ -103,7 +103,7 @@ async function shutdownClient(client) {
 
 async function reconnectViaSubscription(client, tableName) {
   const events = [];
-  const unsub = await client.subscribe(tableName, (event) => {
+  const unsub = await client.liveEvents(`SELECT * FROM ${tableName}`, (event) => {
     events.push(event);
   });
   await waitFor(() => events.some((event) => event.type === 'subscription_ack'));
@@ -238,7 +238,7 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const events = [];
 
     // Subscribe to the table.
-    const unsub = await client.subscribe(tbl, (event) => {
+    const unsub = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       events.push(event);
     });
 
@@ -268,7 +268,7 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
 
     // Re-subscribe after disconnect; this should reconnect automatically.
     const postReconnectEvents = [];
-    const unsub2 = await client.subscribe(tbl, (event) => {
+    const unsub2 = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       postReconnectEvents.push(event);
     });
     assert.equal(client.isConnected(), true, 'should reconnect on subscribe');
@@ -314,8 +314,8 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const events1 = [];
     const events2 = [];
 
-    const unsub1 = await client.subscribe(tbl, (ev) => events1.push(ev));
-    const unsub2 = await client.subscribe(tbl2, (ev) => events2.push(ev));
+    const unsub1 = await client.liveEvents(`SELECT * FROM ${tbl}`, (ev) => events1.push(ev));
+    const unsub2 = await client.liveEvents(`SELECT * FROM ${tbl2}`, (ev) => events2.push(ev));
 
     await waitFor(() =>
       events1.some((e) => e.type === 'subscription_ack')
@@ -333,8 +333,8 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const postEvents1 = [];
     const postEvents2 = [];
 
-    const unsub3 = await client.subscribe(tbl, (ev) => postEvents1.push(ev));
-    const unsub4 = await client.subscribe(tbl2, (ev) => postEvents2.push(ev));
+    const unsub3 = await client.liveEvents(`SELECT * FROM ${tbl}`, (ev) => postEvents1.push(ev));
+    const unsub4 = await client.liveEvents(`SELECT * FROM ${tbl2}`, (ev) => postEvents2.push(ev));
 
     await waitFor(() =>
       postEvents1.some((e) => e.type === 'subscription_ack')
@@ -365,7 +365,7 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     await shutdownClient(writer);
   });
 
-  test('subscribeWithSql from resumes with only seqs greater than checkpoint', async () => {
+  test('liveEvents from resumes with only seqs greater than checkpoint', async () => {
     const tblFrom = `${ns}.from_seq_boundary`;
     const sql = `SELECT id, payload FROM ${tblFrom} WHERE id >= 41001`;
 
@@ -390,10 +390,10 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
       );
 
       const baselineEvents = [];
-      const stopBaseline = await client.subscribeWithSql(
+      const stopBaseline = await client.liveEvents(
         sql,
         (event) => baselineEvents.push(event),
-        { last_rows: 2 },
+        { lastRows: 2 },
       );
 
       await waitFor(() => hasRowId(baselineEvents, baselineA) && hasRowId(baselineEvents, baselineB));
@@ -412,10 +412,10 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
       );
 
       const resumedEvents = [];
-      const stopResumed = await client.subscribeWithSql(
+      const stopResumed = await client.liveEvents(
         sql,
         (event) => resumedEvents.push(event),
-        { from: checkpoint, last_rows: 0 },
+        { from: checkpoint, lastRows: 0 },
       );
 
       try {
@@ -426,8 +426,8 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
           return !!sub?.lastSeqId && sub.lastSeqId.compareTo(checkpoint) > 0;
         });
 
-        assertRowsStrictlyAfter(resumedEvents, checkpoint, 'subscribeWithSql(from)');
-        assertNoDuplicateSeqRows(resumedEvents, 'subscribeWithSql(from)');
+        assertRowsStrictlyAfter(resumedEvents, checkpoint, 'liveEvents(from)');
+        assertNoDuplicateSeqRows(resumedEvents, 'liveEvents(from)');
         assert.ok(!hasRowId(resumedEvents, baselineA), 'should not replay baseline row A');
         assert.ok(!hasRowId(resumedEvents, baselineB), 'should not replay baseline row B');
       } finally {
@@ -460,20 +460,20 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const preEventsB = [];
     const preEventsC = [];
 
-    const unsubA = await client.subscribeWithSql(
+    const unsubA = await client.liveEvents(
       `SELECT id, payload FROM ${tblA}`,
       (ev) => preEventsA.push(ev),
-      { last_rows: 0 },
+      { lastRows: 0 },
     );
-    const unsubB = await client.subscribeWithSql(
+    const unsubB = await client.liveEvents(
       `SELECT id, payload FROM ${tblB}`,
       (ev) => preEventsB.push(ev),
-      { last_rows: 0 },
+      { lastRows: 0 },
     );
-    const unsubC = await client.subscribeWithSql(
+    const unsubC = await client.liveEvents(
       `SELECT id, payload FROM ${tblC}`,
       (ev) => preEventsC.push(ev),
-      { last_rows: 0 },
+      { lastRows: 0 },
     );
 
     await waitFor(() =>
@@ -503,19 +503,19 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const postEventsB = [];
     const postEventsC = [];
 
-    const unsubA2 = await client.subscribeWithSql(
+    const unsubA2 = await client.liveEvents(
       `SELECT id, payload FROM ${tblA} WHERE id >= ${gapRows.a}`,
       (ev) => postEventsA.push(ev),
     );
-    const unsubB2 = await client.subscribeWithSql(
+    const unsubB2 = await client.liveEvents(
       `SELECT id, payload FROM ${tblB} WHERE id >= ${gapRows.b}`,
       (ev) => postEventsB.push(ev),
     );
-    const unsubC2 = await client.subscribeWithSql(
+    const unsubC2 = await client.liveEvents(
       `SELECT id, payload FROM ${tblC} WHERE id >= ${gapRows.c}`,
       (ev) => postEventsC.push(ev),
     );
-    assert.equal(client.isConnected(), true, 'client should reconnect on subscribeWithSql');
+    assert.equal(client.isConnected(), true, 'client should reconnect on liveEvents');
 
     await waitFor(() =>
       postEventsA.some((e) => e.type === 'subscription_ack')
@@ -571,9 +571,9 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     const preBEvents = [];
     const preCEvents = [];
 
-    const preUnsubA = await client.subscribeWithSql(`SELECT id, payload FROM ${tblA}`, (e) => preAEvents.push(e), { last_rows: 0 });
-    const preUnsubB = await client.subscribeWithSql(`SELECT id, payload FROM ${tblB}`, (e) => preBEvents.push(e), { last_rows: 0 });
-    const preUnsubC = await client.subscribeWithSql(`SELECT id, payload FROM ${tblC}`, (e) => preCEvents.push(e), { last_rows: 0 });
+    const preUnsubA = await client.liveEvents(`SELECT id, payload FROM ${tblA}`, (e) => preAEvents.push(e), { lastRows: 0 });
+    const preUnsubB = await client.liveEvents(`SELECT id, payload FROM ${tblB}`, (e) => preBEvents.push(e), { lastRows: 0 });
+    const preUnsubC = await client.liveEvents(`SELECT id, payload FROM ${tblC}`, (e) => preCEvents.push(e), { lastRows: 0 });
 
     await waitFor(() =>
       preAEvents.some((e) => e.type === 'subscription_ack')
@@ -610,15 +610,15 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
       const eventsB = [];
       const eventsC = [];
 
-      const unsubA = await client.subscribeWithSql(
+      const unsubA = await client.liveEvents(
         `SELECT id, payload FROM ${tblA} WHERE id >= ${gap.a}`,
         (e) => eventsA.push(e),
       );
-      const unsubB = await client.subscribeWithSql(
+      const unsubB = await client.liveEvents(
         `SELECT id, payload FROM ${tblB} WHERE id >= ${gap.b}`,
         (e) => eventsB.push(e),
       );
-      const unsubC = await client.subscribeWithSql(
+      const unsubC = await client.liveEvents(
         `SELECT id, payload FROM ${tblC} WHERE id >= ${gap.c}`,
         (e) => eventsC.push(e),
       );

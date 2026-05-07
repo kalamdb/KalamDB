@@ -4,14 +4,14 @@ import {
   Auth,
   ChangeType,
   MessageType,
+  type RowData,
   createClient,
   type SubscriptionErrorEvent,
 } from '@kalamdb/client';
 import { eq } from 'drizzle-orm';
-import { kalamDriver, liveTable, subscribeTable, type TableSubscriptionEvent } from '@kalamdb/orm';
+import { kalamDriver, liveTable } from '@kalamdb/orm';
 import { drizzle } from 'drizzle-orm/pg-proxy';
 import {
-  chat_demo_agent_events as agentEvents,
   chat_demo_agent_eventsConfig as agentEventsConfig,
   chat_demo_messages as chatMessages,
   type ChatDemoAgentEvents as AgentEventRow,
@@ -37,6 +37,11 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
   second: '2-digit',
 });
 
+function resolveBrowserWasmUrl(): string {
+  const base = '/wasm/kalam_client_bg.wasm';
+  return import.meta.env.DEV ? `${base}?t=${Date.now()}` : base;
+}
+
 function createAuthedClient() {
   return createClient({
     url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:8080',
@@ -45,6 +50,7 @@ function createAuthedClient() {
       import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
     ),
     disableCompression: true,
+    wasmUrl: resolveBrowserWasmUrl(),
   });
 }
 
@@ -145,6 +151,28 @@ function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
   return null;
 }
 
+function sqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function mapAgentEventRow(row: RowData): AgentEventRow {
+  return {
+    _seq: row._seq?.asSeqId()?.toString() ?? row._seq?.asString() ?? null,
+    id: row.id?.asString() ?? '',
+    response_id: row.response_id?.asString() ?? '',
+    room: row.room?.asString() ?? '',
+    sender_username: row.sender_username?.asString() ?? '',
+    stage: row.stage?.asString() ?? '',
+    preview: row.preview?.asString() ?? '',
+    message: row.message?.asString() ?? '',
+    created_at: row.created_at?.asDate() ?? new Date(0),
+  };
+}
+
+function mapAgentEventRows(rows: RowData[] | undefined): AgentEventRow[] {
+  return (rows ?? []).map(mapAgentEventRow);
+}
+
 export function App() {
   const [messages, setMessages] = useState<ChatMessageRow[]>([]);
   const [events, setEvents] = useState<AgentEventRow[]>([]);
@@ -167,7 +195,7 @@ export function App() {
       });
     };
 
-    const handleEventSubscription = (event: TableSubscriptionEvent<typeof agentEvents>): void => {
+    const handleEventSubscription = (event: { type: string; rows?: RowData[]; old_values?: RowData[]; code?: string; message?: string; change_type?: string }): void => {
       if (!active) {
         return;
       }
@@ -183,7 +211,7 @@ export function App() {
       }
 
       if (event.type === MessageType.InitialDataBatch) {
-        publishEvents(upsertEvents(bufferedEvents, event.rows ?? []));
+        publishEvents(upsertEvents(bufferedEvents, mapAgentEventRows(event.rows)));
         return;
       }
 
@@ -192,16 +220,16 @@ export function App() {
       }
 
       if (event.change_type === ChangeType.Delete) {
-        publishEvents(removeEvents(bufferedEvents, event.old_values ?? []));
+        publishEvents(removeEvents(bufferedEvents, mapAgentEventRows(event.old_values)));
         return;
       }
 
       let nextEvents = bufferedEvents;
       if (event.change_type === ChangeType.Update) {
-        nextEvents = removeEvents(nextEvents, event.old_values ?? []);
+        nextEvents = removeEvents(nextEvents, mapAgentEventRows(event.old_values));
       }
 
-      publishEvents(upsertEvents(nextEvents, event.rows ?? []));
+      publishEvents(upsertEvents(nextEvents, mapAgentEventRows(event.rows)));
     };
 
     const start = async (): Promise<void> => {
@@ -217,11 +245,11 @@ export function App() {
           },
           {
             where: eq(chatMessages.room, ROOM),
-            // `last_rows` asks the server for a rewind window at subscribe time.
+            // `lastRows` asks the server for a rewind window at subscribe time.
             // `limit` keeps the materialized client-side live state bounded
             // after that rewind and across later live changes.
             limit: MAX_CHAT_MESSAGES,
-            subscriptionOptions: { last_rows: MAX_CHAT_MESSAGES },
+            lastRows: MAX_CHAT_MESSAGES,
             onError: (event: SubscriptionErrorEvent) => {
               if (!active) {
                 return;
@@ -235,13 +263,11 @@ export function App() {
 
         // The draft rail keeps raw protocol frames so rapid typing bursts can
         // be reconciled locally instead of waiting for a full live-row view.
-        const eventsUnsubscribe = await subscribeTable(
-          client,
-          agentEvents,
+        const eventsUnsubscribe = await client.liveEvents(
+          `SELECT * FROM chat_demo.agent_events WHERE room = ${sqlLiteral(ROOM)}`,
           handleEventSubscription,
           {
-            where: eq(agentEvents.room, ROOM),
-            last_rows: MAX_AGENT_EVENTS,
+            lastRows: MAX_AGENT_EVENTS,
           },
         );
         unsubscribers.push(eventsUnsubscribe);

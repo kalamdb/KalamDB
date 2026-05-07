@@ -50,7 +50,7 @@ async fn test_proxy_server_down_during_initial_load() {
     client.connect().await.expect("connect through proxy");
 
     let mut sub = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("init-load-drop-{}", suffix),
             format!("SELECT id, value FROM {}", table),
         ))

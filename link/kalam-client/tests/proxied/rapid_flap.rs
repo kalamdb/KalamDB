@@ -40,7 +40,7 @@ async fn test_rapid_flapping_connection_stabilises_and_resumes() {
         client.connect().await.expect("initial connect through proxy");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("rapid-flap-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

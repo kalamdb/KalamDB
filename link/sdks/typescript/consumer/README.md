@@ -180,3 +180,7 @@ Notes:
 - Topic payloads are decoded from the HTTP API's base64 payload field and exposed as `message.payload`.
 - When you only need browser/app features, install `@kalamdb/client` alone.
 - Low-level worker bindings are also available at `@kalamdb/consumer/wasm`.
+
+## License
+
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../LICENSE.txt](../../../../LICENSE.txt) and [../../../../NOTICE](../../../../NOTICE).

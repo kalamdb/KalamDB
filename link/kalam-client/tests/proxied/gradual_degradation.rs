@@ -39,7 +39,7 @@ async fn test_gradual_latency_ramp_forces_reconnect_then_recovers() {
         client.connect().await.expect("initial connect through proxy");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("latency-ramp-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

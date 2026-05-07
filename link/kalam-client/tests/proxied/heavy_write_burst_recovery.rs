@@ -39,7 +39,7 @@ async fn test_heavy_write_burst_during_outage_all_delivered() {
         client.connect().await.expect("connect through proxy");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("burst-recovery-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

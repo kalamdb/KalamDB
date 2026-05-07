@@ -95,7 +95,7 @@ class KalamClient {
   ///   Defaults to `false`.
   /// * [wsLazyConnect] — controls when the WebSocket connection is
   ///   established.  When `true` (the default), the connection is deferred
-  ///   until the first `subscribe()` call, avoiding unnecessary connections
+  ///   until the first `liveEvents()`, `live()`, or `liveTable()` call, avoiding unnecessary connections
   ///   when the client is only used for HTTP queries.  When `false`, the
   ///   connection is established eagerly during `connect()`.  The SDK
   ///   manages the connection lifecycle automatically — there is no need
@@ -174,8 +174,8 @@ class KalamClient {
     client._startConnectionEventPumpIfNeeded();
 
     // When ws_lazy_connect is enabled (default), defer the WebSocket
-    // connection until the first subscribe() call.  The Rust client's
-    // subscribe_with_config will call connect() automatically.
+    // connection until the first live stream call. The Rust client's
+    // Live streams call connect() automatically.
     if (!wsLazyConnect) {
       // Establish a shared WebSocket connection so all subscriptions are
       // multiplexed over a single connection.  The Rust SharedConnection
@@ -187,7 +187,7 @@ class KalamClient {
     } else {
       KalamLogger.info(
         'client',
-        'wsLazyConnect enabled — WebSocket will connect on first subscribe',
+        'wsLazyConnect enabled — WebSocket will connect on first live stream',
       );
     }
 
@@ -407,7 +407,7 @@ class KalamClient {
   // Subscriptions
   // ---------------------------------------------------------------------------
 
-  /// Subscribe to live changes on a SQL query.
+  /// Open live changes on a SQL query and receive every protocol event.
   ///
   /// Returns a `Stream<ChangeEvent>` that emits:
   /// - [AckEvent] — subscription confirmed with schema info
@@ -430,7 +430,7 @@ class KalamClient {
   /// Cancel the subscription by cancelling the `StreamSubscription`.
   ///
   /// ```dart
-  /// final stream = client.subscribe('SELECT * FROM messages');
+  /// final stream = client.liveEvents('SELECT * FROM messages');
   /// await for (final event in stream) {
   ///   switch (event) {
   ///     case InsertEvent():
@@ -442,20 +442,22 @@ class KalamClient {
   ///   }
   /// }
   /// ```
-  Stream<ChangeEvent> subscribe(
+  Stream<ChangeEvent> liveEvents(
     String sql, {
     int? batchSize,
     int? lastRows,
     SeqId? from,
     String? subscriptionId,
+    void Function(LiveCheckpoint checkpoint)? onCheckpoint,
+    void Function(SubscriptionError error)? onError,
   }) {
     final logicalSubscriptionId =
-        _ensureSubscriptionId(subscriptionId, prefix: 'sub');
-    return runBridgeSubscriptionStream<bridge.DartSubscription,
+        _ensureSubscriptionId(subscriptionId, prefix: 'events');
+    return runBridgeSubscriptionStream<bridge.DartLiveEventsSubscription,
         gen.DartChangeEvent, ChangeEvent>(
-      description: 'subscription for: $sql',
+      description: 'live events for: $sql',
       prepare: _prepareSubscriptionConnect,
-      open: () => bridge.dartSubscribe(
+      open: () => bridge.dartLiveEventsSubscribe(
         client: _handle,
         sql: sql,
         config: _buildSubscriptionConfig(
@@ -466,18 +468,22 @@ class KalamClient {
           from: from,
         ),
       ),
-      next: (sub) => bridge.dartSubscriptionNext(subscription: sub),
-      close: (sub) => bridge.dartSubscriptionClose(subscription: sub),
+      next: (sub) => bridge.dartLiveEventsNext(subscription: sub),
+      close: (sub) => bridge.dartLiveEventsClose(subscription: sub),
       cancel: () => bridge.dartCancelSubscription(
         client: _handle,
         subscriptionId: logicalSubscriptionId,
       ),
-      decode: _fromBridgeChangeEvent,
+      decode: (event) => _fromBridgeChangeEvent(
+        event,
+        onCheckpoint: onCheckpoint,
+        onError: onError,
+      ),
       isDisposed: () => _isDisposed,
     );
   }
 
-  /// Subscribe to a SQL query and receive the current materialized row set.
+  /// Open a SQL query and receive the current materialized row set.
   ///
   /// The row materialization happens inside the shared Rust client layer, so Dart
   /// applications can use a higher-level live query API without reimplementing
@@ -494,7 +500,7 @@ class KalamClient {
   ///
   /// Keep using Dart-side sorting and grouping after rows arrive. Use [limit]
   /// only when the materialized live state itself should stay bounded.
-  Stream<List<T>> liveQueryRowsWithSql<T>(
+  Stream<List<T>> live<T>(
     String sql, {
     int? batchSize,
     int? lastRows,
@@ -503,6 +509,7 @@ class KalamClient {
     int? limit,
     List<String>? keyColumns,
     T Function(Map<String, KalamCellValue> row)? mapRow,
+    void Function(LiveCheckpoint checkpoint)? onCheckpoint,
   }) {
     final logicalSubscriptionId =
         _ensureSubscriptionId(subscriptionId, prefix: 'live');
@@ -510,7 +517,7 @@ class KalamClient {
         gen.DartLiveRowsEvent, List<T>>(
       description: 'live rows subscription for: $sql',
       prepare: _prepareSubscriptionConnect,
-      open: () => bridge.dartLiveQueryRowsSubscribe(
+      open: () => bridge.dartLiveSubscribe(
         client: _handle,
         sql: sql,
         config: _buildSubscriptionConfig(
@@ -525,19 +532,23 @@ class KalamClient {
           keyColumns: keyColumns,
         ),
       ),
-      next: (sub) => bridge.dartLiveQueryRowsNext(subscription: sub),
-      close: (sub) => bridge.dartLiveQueryRowsClose(subscription: sub),
+      next: (sub) => bridge.dartLiveNext(subscription: sub),
+      close: (sub) => bridge.dartLiveClose(subscription: sub),
       cancel: () => bridge.dartCancelSubscription(
         client: _handle,
         subscriptionId: logicalSubscriptionId,
       ),
-      decode: (event) => _fromBridgeLiveRowsEvent(event, mapRow: mapRow),
+      decode: (event) => _fromBridgeLiveRowsEvent(
+        event,
+        mapRow: mapRow,
+        onCheckpoint: onCheckpoint,
+      ),
       isDisposed: () => _isDisposed,
     );
   }
 
-  /// Subscribe to a table and receive the current materialized row set.
-  Stream<List<T>> liveTableRows<T>(
+  /// Open a table and receive the current materialized row set.
+  Stream<List<T>> liveTable<T>(
     String tableName, {
     int? batchSize,
     int? lastRows,
@@ -546,8 +557,9 @@ class KalamClient {
     int? limit,
     List<String>? keyColumns,
     T Function(Map<String, KalamCellValue> row)? mapRow,
+    void Function(LiveCheckpoint checkpoint)? onCheckpoint,
   }) {
-    return liveQueryRowsWithSql<T>(
+    return live<T>(
       'SELECT * FROM $tableName',
       batchSize: batchSize,
       lastRows: lastRows,
@@ -556,6 +568,7 @@ class KalamClient {
       limit: limit,
       keyColumns: keyColumns,
       mapRow: mapRow,
+      onCheckpoint: onCheckpoint,
     );
   }
 
@@ -710,8 +723,12 @@ class KalamClient {
     };
   }
 
-  static ChangeEvent _fromBridgeChangeEvent(gen.DartChangeEvent event) {
-    return switch (event) {
+  static ChangeEvent _fromBridgeChangeEvent(
+    gen.DartChangeEvent event, {
+    void Function(LiveCheckpoint checkpoint)? onCheckpoint,
+    void Function(SubscriptionError error)? onError,
+  }) {
+    final changeEvent = switch (event) {
       gen.DartChangeEvent_Ack(
         :final subscriptionId,
         :final totalRows,
@@ -770,17 +787,42 @@ class KalamClient {
         SubscriptionError(
             subscriptionId: subscriptionId, code: code, message: message),
     };
+
+    if (changeEvent case SubscriptionError error) {
+      onError?.call(error);
+    }
+    final checkpoint = _checkpointFromBridgeChangeEvent(event);
+    if (checkpoint != null) {
+      onCheckpoint?.call(checkpoint);
+    }
+    return changeEvent;
   }
 
   static List<T> _fromBridgeLiveRowsEvent<T>(
     gen.DartLiveRowsEvent event, {
     T Function(Map<String, KalamCellValue> row)? mapRow,
+    void Function(LiveCheckpoint checkpoint)? onCheckpoint,
   }) {
     return switch (event) {
-      gen.DartLiveRowsEvent_Rows(:final rowsJson) => _mapLiveRows(
-          _decodeTypedRows(rowsJson),
-          mapRow,
-        ),
+      gen.DartLiveRowsEvent_Rows(
+        :final subscriptionId,
+        :final rowsJson,
+        :final lastSeqId,
+      ) => () {
+          if (lastSeqId != null) {
+            onCheckpoint?.call(
+              LiveCheckpoint(
+                subscriptionId: subscriptionId,
+                lastSeqId: SeqId.parse(lastSeqId.toString()),
+              ),
+            );
+          }
+
+          return _mapLiveRows(
+            _decodeTypedRows(rowsJson),
+            mapRow,
+          );
+        }(),
       gen.DartLiveRowsEvent_Error(
         :final subscriptionId,
         :final code,
@@ -792,6 +834,51 @@ class KalamClient {
           message: message,
         ),
     };
+  }
+
+  static LiveCheckpoint? _checkpointFromBridgeChangeEvent(
+    gen.DartChangeEvent event,
+  ) {
+    return switch (event) {
+      gen.DartChangeEvent_InitialDataBatch(
+        :final subscriptionId,
+        :final rowsJson,
+      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      gen.DartChangeEvent_Insert(
+        :final subscriptionId,
+        :final rowsJson,
+      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      gen.DartChangeEvent_Update(
+        :final subscriptionId,
+        :final rowsJson,
+        :final oldRowsJson,
+      ) => _checkpointFromRowsJson(subscriptionId, rowsJson) ??
+          _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      gen.DartChangeEvent_Delete(
+        :final subscriptionId,
+        :final oldRowsJson,
+      ) => _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      gen.DartChangeEvent_Ack() || gen.DartChangeEvent_Error() => null,
+    };
+  }
+
+  static LiveCheckpoint? _checkpointFromRowsJson(
+    String subscriptionId,
+    List<String> rowsJson,
+  ) {
+    SeqId? maxSeqId;
+    for (final row in _decodeTypedRows(rowsJson)) {
+      final seqId = row['_seq']?.asSeqId();
+      if (seqId != null &&
+          (maxSeqId == null || seqId.compareTo(maxSeqId) > 0)) {
+        maxSeqId = seqId;
+      }
+    }
+
+    if (maxSeqId == null) {
+      return null;
+    }
+    return LiveCheckpoint(subscriptionId: subscriptionId, lastSeqId: maxSeqId);
   }
 
   static List<Map<String, KalamCellValue>> _decodeTypedRows(

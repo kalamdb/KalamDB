@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 624624298;
+  int get rustContentHash => 1469282476;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -111,16 +111,29 @@ abstract class RustLibApi extends BaseApi {
   Future<List<DartSubscriptionInfo>> crateApiDartListSubscriptions(
       {required DartKalamClient client});
 
-  Future<void> crateApiDartLiveQueryRowsClose(
+  Future<void> crateApiDartLiveClose(
       {required DartLiveRowsSubscription subscription});
 
-  String crateApiDartLiveQueryRowsId(
+  Future<void> crateApiDartLiveEventsClose(
+      {required DartLiveEventsSubscription subscription});
+
+  String crateApiDartLiveEventsId(
+      {required DartLiveEventsSubscription subscription});
+
+  Future<DartChangeEvent?> crateApiDartLiveEventsNext(
+      {required DartLiveEventsSubscription subscription});
+
+  Future<DartLiveEventsSubscription> crateApiDartLiveEventsSubscribe(
+      {required DartKalamClient client,
+      required String sql,
+      DartSubscriptionConfig? config});
+
+  String crateApiDartLiveId({required DartLiveRowsSubscription subscription});
+
+  Future<DartLiveRowsEvent?> crateApiDartLiveNext(
       {required DartLiveRowsSubscription subscription});
 
-  Future<DartLiveRowsEvent?> crateApiDartLiveQueryRowsNext(
-      {required DartLiveRowsSubscription subscription});
-
-  Future<DartLiveRowsSubscription> crateApiDartLiveQueryRowsSubscribe(
+  Future<DartLiveRowsSubscription> crateApiDartLiveSubscribe(
       {required DartKalamClient client,
       required String sql,
       DartSubscriptionConfig? config,
@@ -139,19 +152,6 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiDartSignalDispose({required DartKalamClient client});
 
-  Future<DartSubscription> crateApiDartSubscribe(
-      {required DartKalamClient client,
-      required String sql,
-      DartSubscriptionConfig? config});
-
-  Future<void> crateApiDartSubscriptionClose(
-      {required DartSubscription subscription});
-
-  String crateApiDartSubscriptionId({required DartSubscription subscription});
-
-  Future<DartChangeEvent?> crateApiDartSubscriptionNext(
-      {required DartSubscription subscription});
-
   Future<void> crateApiDartUpdateAuth(
       {required DartKalamClient client, required DartAuthProvider auth});
 
@@ -165,6 +165,15 @@ abstract class RustLibApi extends BaseApi {
       get rust_arc_decrement_strong_count_DartKalamClientPtr;
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_DartLiveEventsSubscription;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_DartLiveEventsSubscription;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_DartLiveEventsSubscriptionPtr;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_DartLiveRowsSubscription;
 
   RustArcDecrementStrongCountFnType
@@ -172,15 +181,6 @@ abstract class RustLibApi extends BaseApi {
 
   CrossPlatformFinalizerArg
       get rust_arc_decrement_strong_count_DartLiveRowsSubscriptionPtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_DartSubscription;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_DartSubscription;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_DartSubscriptionPtr;
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -437,7 +437,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiDartLiveQueryRowsClose(
+  Future<void> crateApiDartLiveClose(
       {required DartLiveRowsSubscription subscription}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -451,46 +451,153 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_AnyhowException,
       ),
-      constMeta: kCrateApiDartLiveQueryRowsCloseConstMeta,
+      constMeta: kCrateApiDartLiveCloseConstMeta,
       argValues: [subscription],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiDartLiveQueryRowsCloseConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_live_query_rows_close",
+  TaskConstMeta get kCrateApiDartLiveCloseConstMeta => const TaskConstMeta(
+        debugName: "dart_live_close",
         argNames: ["subscription"],
       );
 
   @override
-  String crateApiDartLiveQueryRowsId(
-      {required DartLiveRowsSubscription subscription}) {
+  Future<void> crateApiDartLiveEventsClose(
+      {required DartLiveEventsSubscription subscription}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+            subscription, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 10, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartLiveEventsCloseConstMeta,
+      argValues: [subscription],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartLiveEventsCloseConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_live_events_close",
+        argNames: ["subscription"],
+      );
+
+  @override
+  String crateApiDartLiveEventsId(
+      {required DartLiveEventsSubscription subscription}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
             subscription, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiDartLiveQueryRowsIdConstMeta,
+      constMeta: kCrateApiDartLiveEventsIdConstMeta,
       argValues: [subscription],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiDartLiveQueryRowsIdConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_live_query_rows_id",
+  TaskConstMeta get kCrateApiDartLiveEventsIdConstMeta => const TaskConstMeta(
+        debugName: "dart_live_events_id",
         argNames: ["subscription"],
       );
 
   @override
-  Future<DartLiveRowsEvent?> crateApiDartLiveQueryRowsNext(
+  Future<DartChangeEvent?> crateApiDartLiveEventsNext(
+      {required DartLiveEventsSubscription subscription}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+            subscription, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 12, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_opt_box_autoadd_dart_change_event,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartLiveEventsNextConstMeta,
+      argValues: [subscription],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartLiveEventsNextConstMeta => const TaskConstMeta(
+        debugName: "dart_live_events_next",
+        argNames: ["subscription"],
+      );
+
+  @override
+  Future<DartLiveEventsSubscription> crateApiDartLiveEventsSubscribe(
+      {required DartKalamClient client,
+      required String sql,
+      DartSubscriptionConfig? config}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
+            client, serializer);
+        sse_encode_String(sql, serializer);
+        sse_encode_opt_box_autoadd_dart_subscription_config(config, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 13, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kCrateApiDartLiveEventsSubscribeConstMeta,
+      argValues: [client, sql, config],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartLiveEventsSubscribeConstMeta =>
+      const TaskConstMeta(
+        debugName: "dart_live_events_subscribe",
+        argNames: ["client", "sql", "config"],
+      );
+
+  @override
+  String crateApiDartLiveId({required DartLiveRowsSubscription subscription}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+            subscription, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiDartLiveIdConstMeta,
+      argValues: [subscription],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiDartLiveIdConstMeta => const TaskConstMeta(
+        debugName: "dart_live_id",
+        argNames: ["subscription"],
+      );
+
+  @override
+  Future<DartLiveRowsEvent?> crateApiDartLiveNext(
       {required DartLiveRowsSubscription subscription}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
@@ -498,26 +605,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
             subscription, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 11, port: port_);
+            funcId: 15, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_dart_live_rows_event,
         decodeErrorData: sse_decode_AnyhowException,
       ),
-      constMeta: kCrateApiDartLiveQueryRowsNextConstMeta,
+      constMeta: kCrateApiDartLiveNextConstMeta,
       argValues: [subscription],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiDartLiveQueryRowsNextConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_live_query_rows_next",
+  TaskConstMeta get kCrateApiDartLiveNextConstMeta => const TaskConstMeta(
+        debugName: "dart_live_next",
         argNames: ["subscription"],
       );
 
   @override
-  Future<DartLiveRowsSubscription> crateApiDartLiveQueryRowsSubscribe(
+  Future<DartLiveRowsSubscription> crateApiDartLiveSubscribe(
       {required DartKalamClient client,
       required String sql,
       DartSubscriptionConfig? config,
@@ -532,22 +638,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_opt_box_autoadd_dart_live_rows_config(
             liveConfig, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 12, port: port_);
+            funcId: 16, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription,
         decodeErrorData: sse_decode_AnyhowException,
       ),
-      constMeta: kCrateApiDartLiveQueryRowsSubscribeConstMeta,
+      constMeta: kCrateApiDartLiveSubscribeConstMeta,
       argValues: [client, sql, config, liveConfig],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiDartLiveQueryRowsSubscribeConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_live_query_rows_subscribe",
+  TaskConstMeta get kCrateApiDartLiveSubscribeConstMeta => const TaskConstMeta(
+        debugName: "dart_live_subscribe",
         argNames: ["client", "sql", "config", "liveConfig"],
       );
 
@@ -564,7 +669,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(user, serializer);
         sse_encode_String(password, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 13, port: port_);
+            funcId: 17, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -590,7 +695,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 14, port: port_);
+            funcId: 18, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_dart_connection_event,
@@ -618,7 +723,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             client, serializer);
         sse_encode_String(refreshToken, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 15, port: port_);
+            funcId: 19, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_dart_login_response,
@@ -642,7 +747,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
             client, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -657,115 +762,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiDartSignalDisposeConstMeta => const TaskConstMeta(
         debugName: "dart_signal_dispose",
         argNames: ["client"],
-      );
-
-  @override
-  Future<DartSubscription> crateApiDartSubscribe(
-      {required DartKalamClient client,
-      required String sql,
-      DartSubscriptionConfig? config}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
-            client, serializer);
-        sse_encode_String(sql, serializer);
-        sse_encode_opt_box_autoadd_dart_subscription_config(config, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 17, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription,
-        decodeErrorData: sse_decode_AnyhowException,
-      ),
-      constMeta: kCrateApiDartSubscribeConstMeta,
-      argValues: [client, sql, config],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiDartSubscribeConstMeta => const TaskConstMeta(
-        debugName: "dart_subscribe",
-        argNames: ["client", "sql", "config"],
-      );
-
-  @override
-  Future<void> crateApiDartSubscriptionClose(
-      {required DartSubscription subscription}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-            subscription, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 18, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData: sse_decode_AnyhowException,
-      ),
-      constMeta: kCrateApiDartSubscriptionCloseConstMeta,
-      argValues: [subscription],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiDartSubscriptionCloseConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_subscription_close",
-        argNames: ["subscription"],
-      );
-
-  @override
-  String crateApiDartSubscriptionId({required DartSubscription subscription}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-            subscription, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_String,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiDartSubscriptionIdConstMeta,
-      argValues: [subscription],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiDartSubscriptionIdConstMeta => const TaskConstMeta(
-        debugName: "dart_subscription_id",
-        argNames: ["subscription"],
-      );
-
-  @override
-  Future<DartChangeEvent?> crateApiDartSubscriptionNext(
-      {required DartSubscription subscription}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-            subscription, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 20, port: port_);
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_opt_box_autoadd_dart_change_event,
-        decodeErrorData: sse_decode_AnyhowException,
-      ),
-      constMeta: kCrateApiDartSubscriptionNextConstMeta,
-      argValues: [subscription],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiDartSubscriptionNextConstMeta =>
-      const TaskConstMeta(
-        debugName: "dart_subscription_next",
-        argNames: ["subscription"],
       );
 
   @override
@@ -804,20 +800,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient;
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_DartLiveEventsSubscription => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_DartLiveEventsSubscription => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_DartLiveRowsSubscription => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription;
 
   RustArcDecrementStrongCountFnType
       get rust_arc_decrement_strong_count_DartLiveRowsSubscription => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_DartSubscription => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_DartSubscription => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
@@ -834,6 +830,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DartLiveEventsSubscription
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalDcoDecode(
+        raw as List<dynamic>);
+  }
+
+  @protected
   DartLiveRowsSubscription
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           dynamic raw) {
@@ -843,19 +848,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  DartSubscription
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   DartKalamClient
       dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DartKalamClientImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  DartLiveEventsSubscription
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalDcoDecode(
+        raw as List<dynamic>);
   }
 
   @protected
@@ -868,19 +874,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  DartSubscription
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   DartKalamClient
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DartKalamClientImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  DartLiveEventsSubscription
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalDcoDecode(
+        raw as List<dynamic>);
   }
 
   @protected
@@ -890,14 +897,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return DartLiveRowsSubscriptionImpl.frbInternalDcoDecode(
         raw as List<dynamic>);
-  }
-
-  @protected
-  DartSubscription
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1146,6 +1145,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return DartLiveRowsEvent_Rows(
           subscriptionId: dco_decode_String(raw[1]),
           rowsJson: dco_decode_list_String(raw[2]),
+          lastSeqId: dco_decode_opt_box_autoadd_i_64(raw[3]),
         );
       case 1:
         return DartLiveRowsEvent_Error(
@@ -1439,20 +1439,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DartLiveEventsSubscription
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   DartLiveRowsSubscription
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DartLiveRowsSubscriptionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  DartSubscription
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1466,20 +1466,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DartLiveEventsSubscription
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   DartLiveRowsSubscription
       sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DartLiveRowsSubscriptionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  DartSubscription
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1493,20 +1493,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  DartLiveEventsSubscription
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return DartLiveEventsSubscriptionImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   DartLiveRowsSubscription
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return DartLiveRowsSubscriptionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  DartSubscription
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return DartSubscriptionImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1770,8 +1770,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 0:
         var var_subscriptionId = sse_decode_String(deserializer);
         var var_rowsJson = sse_decode_list_String(deserializer);
+        var var_lastSeqId = sse_decode_opt_box_autoadd_i_64(deserializer);
         return DartLiveRowsEvent_Rows(
-            subscriptionId: var_subscriptionId, rowsJson: var_rowsJson);
+            subscriptionId: var_subscriptionId,
+            rowsJson: var_rowsJson,
+            lastSeqId: var_lastSeqId);
       case 1:
         var var_subscriptionId = sse_decode_String(deserializer);
         var var_code = sse_decode_String(deserializer);
@@ -2159,6 +2162,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          DartLiveEventsSubscription self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as DartLiveEventsSubscriptionImpl)
+            .frbInternalSseEncode(move: true),
+        serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
           DartLiveRowsSubscription self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2169,21 +2183,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          DartSubscription self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as DartSubscriptionImpl).frbInternalSseEncode(move: true),
-        serializer);
-  }
-
-  @protected
-  void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
           DartKalamClient self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as DartKalamClientImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          DartLiveEventsSubscription self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as DartLiveEventsSubscriptionImpl)
+            .frbInternalSseEncode(move: false),
         serializer);
   }
 
@@ -2200,16 +2215,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          DartSubscription self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as DartSubscriptionImpl).frbInternalSseEncode(move: false),
-        serializer);
-  }
-
-  @protected
-  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartKalamClient(
           DartKalamClient self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2220,21 +2225,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
-          DartLiveRowsSubscription self, SseSerializer serializer) {
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveEventsSubscription(
+          DartLiveEventsSubscription self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-        (self as DartLiveRowsSubscriptionImpl).frbInternalSseEncode(move: null),
+        (self as DartLiveEventsSubscriptionImpl)
+            .frbInternalSseEncode(move: null),
         serializer);
   }
 
   @protected
   void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartSubscription(
-          DartSubscription self, SseSerializer serializer) {
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDartLiveRowsSubscription(
+          DartLiveRowsSubscription self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
-        (self as DartSubscriptionImpl).frbInternalSseEncode(move: null),
+        (self as DartLiveRowsSubscriptionImpl).frbInternalSseEncode(move: null),
         serializer);
   }
 
@@ -2488,11 +2494,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     switch (self) {
       case DartLiveRowsEvent_Rows(
           subscriptionId: final subscriptionId,
-          rowsJson: final rowsJson
+          rowsJson: final rowsJson,
+          lastSeqId: final lastSeqId
         ):
         sse_encode_i_32(0, serializer);
         sse_encode_String(subscriptionId, serializer);
         sse_encode_list_String(rowsJson, serializer);
+        sse_encode_opt_box_autoadd_i_64(lastSeqId, serializer);
       case DartLiveRowsEvent_Error(
           subscriptionId: final subscriptionId,
           code: final code,
@@ -2820,6 +2828,28 @@ class DartKalamClientImpl extends RustOpaque implements DartKalamClient {
 }
 
 @sealed
+class DartLiveEventsSubscriptionImpl extends RustOpaque
+    implements DartLiveEventsSubscription {
+  // Not to be used by end users
+  DartLiveEventsSubscriptionImpl.frbInternalDcoDecode(List<dynamic> wire)
+      : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  DartLiveEventsSubscriptionImpl.frbInternalSseDecode(
+      BigInt ptr, int externalSizeOnNative)
+      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount: RustLib.instance.api
+        .rust_arc_increment_strong_count_DartLiveEventsSubscription,
+    rustArcDecrementStrongCount: RustLib.instance.api
+        .rust_arc_decrement_strong_count_DartLiveEventsSubscription,
+    rustArcDecrementStrongCountPtr: RustLib.instance.api
+        .rust_arc_decrement_strong_count_DartLiveEventsSubscriptionPtr,
+  );
+}
+
+@sealed
 class DartLiveRowsSubscriptionImpl extends RustOpaque
     implements DartLiveRowsSubscription {
   // Not to be used by end users
@@ -2838,26 +2868,5 @@ class DartLiveRowsSubscriptionImpl extends RustOpaque
         .instance.api.rust_arc_decrement_strong_count_DartLiveRowsSubscription,
     rustArcDecrementStrongCountPtr: RustLib.instance.api
         .rust_arc_decrement_strong_count_DartLiveRowsSubscriptionPtr,
-  );
-}
-
-@sealed
-class DartSubscriptionImpl extends RustOpaque implements DartSubscription {
-  // Not to be used by end users
-  DartSubscriptionImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  DartSubscriptionImpl.frbInternalSseDecode(
-      BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_DartSubscription,
-    rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_DartSubscription,
-    rustArcDecrementStrongCountPtr: RustLib
-        .instance.api.rust_arc_decrement_strong_count_DartSubscriptionPtr,
   );
 }

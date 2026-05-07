@@ -57,7 +57,7 @@ async fn test_shared_connection_recovers_subscriptions_in_different_stages() {
         client.connect().await.expect("connect through proxy");
 
         let mut live_sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("mixed-live-{}", suffix),
                 format!("SELECT id, value FROM {}", live_table),
             ))
@@ -109,7 +109,7 @@ async fn test_shared_connection_recovers_subscriptions_in_different_stages() {
         let live_from = query_max_seq(&writer, &live_table).await;
 
         let mut seed_sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("mixed-seed-{}", suffix),
                 format!("SELECT id, value FROM {}", seed_table),
             ))

@@ -110,25 +110,25 @@ impl KalamLinkClient {
             .await
     }
 
-    /// Subscribe to real-time changes
+    /// Open a low-level live event stream.
     ///
-    /// Subscriptions are multiplexed over the shared WebSocket connection.
-    pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
+    /// Live streams are multiplexed over the shared WebSocket connection.
+    pub async fn live_events(&self, query: &str) -> Result<SubscriptionManager> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         let subscription_id = format!("sub_{}", nanos);
-        self.subscribe_with_config(SubscriptionConfig::new(subscription_id, query))
+        self.live_events_with_config(SubscriptionConfig::new(subscription_id, query))
             .await
     }
 
-    /// Subscribe with advanced configuration (pre-generated ID, options, ws_url override)
+    /// Open a low-level live event stream with advanced configuration.
     ///
     /// When [`ConnectionOptions::ws_lazy_connect`] is `true` (the default)
     /// and no shared connection exists yet, `connect()` is called
-    /// automatically before subscribing.
-    pub async fn subscribe_with_config(
+    /// automatically before opening the stream.
+    pub async fn live_events_with_config(
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
@@ -140,7 +140,7 @@ impl KalamLinkClient {
             }
         }
 
-        // Phase 1: Send the subscribe command while holding the lock (fast —
+        // Phase 1: Send the protocol subscribe command while holding the lock (fast —
         // only enqueues a channel message).  Grab the unsub/progress senders
         // and the oneshot for the Ready ack, then release the lock so other
         // callers can pipeline their own subscribes concurrently.
@@ -177,13 +177,13 @@ impl KalamLinkClient {
         }
 
         Err(KalamLinkError::WebSocketError(
-            "Not connected. Call connect() before subscribing.".to_string(),
+            "Not connected. Call connect() before opening live streams.".to_string(),
         ))
     }
 
-    /// Subscribe to a SQL query and receive materialized row snapshots.
-    pub async fn live_query_rows(&self, query: &str) -> Result<LiveRowsSubscription> {
-        self.live_query_rows_with_config(
+    /// Open a SQL query and receive materialized row snapshots.
+    pub async fn live(&self, query: &str) -> Result<LiveRowsSubscription> {
+        self.live_with_config(
             SubscriptionConfig::new(
                 format!(
                     "live_rows_{}",
@@ -199,20 +199,20 @@ impl KalamLinkClient {
         .await
     }
 
-    /// Subscribe with advanced low-level and materialization configuration.
-    pub async fn live_query_rows_with_config(
+    /// Open materialized live rows with advanced low-level and materialization configuration.
+    pub async fn live_with_config(
         &self,
         config: SubscriptionConfig,
         live_rows_config: LiveRowsConfig,
     ) -> Result<LiveRowsSubscription> {
-        let subscription = self.subscribe_with_config(config).await?;
+        let subscription = self.live_events_with_config(config).await?;
         Ok(LiveRowsSubscription::new(subscription, live_rows_config))
     }
 
     /// Establish a shared WebSocket connection.
     ///
-    /// After calling this, all subsequent [`subscribe()`](Self::subscribe)
-    /// calls will multiplex over the single connection.
+    /// After calling this, all subsequent [`live_events()`](Self::live_events)
+    /// and [`live()`](Self::live) calls will multiplex over the single connection.
     pub async fn connect(&self) -> Result<()> {
         let mut conn_guard = self.connection.lock().await;
         if conn_guard.is_some() {

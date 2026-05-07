@@ -123,16 +123,16 @@ pub struct ConnectionOptions {
     #[serde(default)]
     pub disable_compression: bool,
 
-    /// Defer the WebSocket connection until the first subscription is created.
+    /// Defer the WebSocket connection until the first live stream is opened.
     ///
     /// When `true` (the default), calling `connect()` is not required — the
     /// client will automatically open the shared WebSocket connection the
-    /// first time `subscribe()` (or `subscribe_with_config()`) is called.
+    /// first time `live_events()` (or `live_events_with_config()`) is called.
     /// The same `AuthProvider` used for HTTP queries is reused for the
     /// WebSocket handshake.
     ///
     /// When `false`, the caller is expected to establish the WebSocket
-    /// connection explicitly by calling `connect()` before subscribing.
+    /// connection explicitly by calling `connect()` before opening live streams.
     ///
     /// Default: `true`.
     #[serde(default = "default_ws_lazy_connect")]

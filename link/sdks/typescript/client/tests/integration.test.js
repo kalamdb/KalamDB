@@ -136,11 +136,11 @@ test('KalamDB Integration Tests', async (t) => {
     
     let receivedEvents = [];
     
-    const subId = await client.subscribe('test_sdk.test_subscribe', (event) => {
+    const unsub = await client.liveEvents('SELECT * FROM test_sdk.test_subscribe', (event) => {
       receivedEvents.push(event);
     });
     
-    assert.ok(subId, 'Should receive subscription ID');
+    assert.equal(typeof unsub, 'function', 'Should receive unsubscribe function');
     
     // Give subscription time to establish
     await new Promise(resolve => setTimeout(resolve, 1000));

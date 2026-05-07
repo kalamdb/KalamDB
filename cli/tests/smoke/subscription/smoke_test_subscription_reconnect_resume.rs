@@ -146,7 +146,7 @@ fn smoke_subscription_reconnect_basic_resume() {
         let sub_id = format!("recon_basic_{}", ns);
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(&sub_id, &query))
+            .live_events_with_config(SubscriptionConfig::new(&sub_id, &query))
             .await
             .expect("subscribe");
 
@@ -196,7 +196,7 @@ fn smoke_subscription_reconnect_basic_resume() {
 
         let sub_id2 = format!("recon_basic2_{}", ns);
         let mut sub2 = client
-            .subscribe_with_config(SubscriptionConfig::new(&sub_id2, &query))
+            .live_events_with_config(SubscriptionConfig::new(&sub_id2, &query))
             .await
             .expect("re-subscribe after reconnect");
 
@@ -281,7 +281,7 @@ fn smoke_subscription_resume_from_seq_id() {
         let sub_id = format!("recon_seq_{}", ns);
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(&sub_id, &query))
+            .live_events_with_config(SubscriptionConfig::new(&sub_id, &query))
             .await
             .expect("subscribe");
 
@@ -356,7 +356,7 @@ fn smoke_subscription_resume_from_seq_id() {
         cfg2.options = Some(options);
 
         let mut sub2 =
-            client.subscribe_with_config(cfg2).await.expect("re-subscribe with from_seq_id");
+            client.live_events_with_config(cfg2).await.expect("re-subscribe with from_seq_id");
 
         // Gap rows must arrive (as catch-up initial data or change events).
         let resume_events = collect_until(&mut sub2, event_timeout(15), |evs| {

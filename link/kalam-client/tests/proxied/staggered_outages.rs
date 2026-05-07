@@ -37,7 +37,7 @@ async fn test_shared_connection_recovers_across_staggered_outages() {
         client.connect().await.expect("initial connect through proxy");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("staggered-outages-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

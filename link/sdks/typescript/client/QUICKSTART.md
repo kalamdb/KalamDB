@@ -62,7 +62,7 @@ const stop = await client.live(
     console.log('rows', rows.length);
   },
   {
-    subscriptionOptions: { last_rows: 20 },
+    lastRows: 20,
   },
 );
 ```
@@ -70,20 +70,20 @@ const stop = await client.live(
 Live SQL should stay in the strict supported form:
 
 - `SELECT ... FROM ... WHERE ...`
-- do not put `ORDER BY` or `LIMIT` inside `live()` / `subscribeWithSql()` SQL
+- do not put `ORDER BY` or `LIMIT` inside `live()` / `liveEvents()` SQL
 - do ordering or capping in application code after rows arrive
 
 ## 4. Low-level Subscription API
 
-Use `subscribeWithSql()` only when you need raw subscription protocol events.
+Use `liveEvents()` only when you need raw subscription protocol events.
 
 ```typescript
-const stopRaw = await client.subscribeWithSql(
+const stopRaw = await client.liveEvents(
   "SELECT * FROM app.messages WHERE room = 'main'",
   (event) => {
     console.log(event.type);
   },
-  { last_rows: 20 },
+  { lastRows: 20 },
 );
 
 await stopRaw();
@@ -113,7 +113,7 @@ async function main() {
   const stop = await client.live(
     "SELECT * FROM app.messages WHERE room = 'main'",
     (rows) => console.log('live rows', rows.length),
-    { subscriptionOptions: { last_rows: 10 } },
+    { lastRows: 10 },
   );
 
   try {

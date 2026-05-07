@@ -40,7 +40,7 @@ async fn test_unsubscribe_during_outage_prevents_resubscribe() {
         client.connect().await.expect("connect through proxy");
 
         let mut sub_keep = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("unsub-keep-{}", suffix),
                 format!("SELECT id, value FROM {}", table_keep),
             ))
@@ -48,7 +48,7 @@ async fn test_unsubscribe_during_outage_prevents_resubscribe() {
             .expect("subscribe keep");
 
         let mut sub_drop = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("unsub-drop-{}", suffix),
                 format!("SELECT id, value FROM {}", table_drop),
             ))

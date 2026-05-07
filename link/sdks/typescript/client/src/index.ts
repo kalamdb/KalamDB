@@ -10,7 +10,7 @@
  *   authProvider: async () => Auth.basic('admin', 'admin'),
  * });
  *
- * const unsub = await client.subscribe('messages', (event) => {
+ * const unsub = await client.liveEvents('SELECT * FROM messages', (event) => {
  *   console.log('Change:', event);
  * });
  *
@@ -71,8 +71,13 @@ export type {
   LogListener,
   LoginResponse,
   LoginUserInfo,
-  LiveRowsCallback,
-  LiveRowsOptions,
+  LiveCallback,
+  LiveCheckpoint,
+  LiveEventsCallback,
+  LiveEventsOptions,
+  LiveOptions,
+  LiveGetKey,
+  LiveStreamOptions,
   OnConnectCallback,
   OnDisconnectCallback,
   OnErrorCallback,
@@ -85,19 +90,51 @@ export type {
   RowData,
   SchemaField,
   ServerMessage,
-  SubscriptionCallback,
   SubscriptionErrorEvent,
-  SubscriptionHandle,
   SubscriptionInfo,
-  SubscriptionOptions,
   TimestampFormat,
-  TypedSubscriptionCallback,
+  TypedLiveEventsCallback,
   Unsubscribe,
   UploadProgress,
 } from './types.js';
 
 // Client
 export { createClient, KalamDBClient } from './client.js';
+
+export {
+  createLiveQueryDescriptor,
+  createRawSqlLiveDescriptor,
+  LiveQueryDescriptorError,
+  normalizeLiveSql,
+} from './live/descriptor.js';
+
+export {
+  parseLiveOrderBy,
+  projectLiveRows,
+} from './live/projection.js';
+
+export { LiveQueryController } from './live/controller.js';
+
+export type {
+  LiveQueryDescriptor,
+  LiveQueryDescriptorInput,
+  LiveQueryDescriptorMode,
+  NormalizedLiveSql,
+  RawSqlLiveDescriptorOptions,
+} from './live/descriptor.js';
+
+export type {
+  LiveProjectionDirection,
+  LiveProjectionOrder,
+  LiveProjectionPlan,
+} from './live/projection.js';
+
+export type {
+  LiveQueryControllerListener,
+  LiveQueryControllerOptions,
+  LiveQueryControllerSnapshot,
+  LiveQueryControllerStatus,
+} from './live/controller.js';
 
 // Query helpers
 export {
@@ -119,7 +156,6 @@ export type {
 export {
   BoundFileRef,
   FileRef,
-  KalamChange,
   KalamRow,
   parseFileRef,
   parseFileRefs,

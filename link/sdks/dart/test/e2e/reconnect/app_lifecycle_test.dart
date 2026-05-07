@@ -84,7 +84,7 @@ Future<
 
     subscriptions.add(
       client
-          .subscribe(
+          .liveEvents(
             'SELECT * FROM ${entry.value}',
             subscriptionId: subscriptionId,
             from: checkpoint,

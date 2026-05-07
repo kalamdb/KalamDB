@@ -110,7 +110,8 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
         );
         config.options = Some(SubscriptionOptions::new().with_batch_size(3));
 
-        let mut sub = client.subscribe_with_config(config).await.expect("subscribe should succeed");
+        let mut sub =
+            client.live_events_with_config(config).await.expect("subscribe should succeed");
 
         let ack = timeout(TEST_TIMEOUT, sub.next())
             .await

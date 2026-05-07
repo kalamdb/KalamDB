@@ -7,7 +7,7 @@
 //!
 //! FRB v2 generates `StreamSink` in user boilerplate code rather than
 //! exporting it from the crate.  To avoid depending on generated code,
-//! subscriptions use an **async pull model**: call `dart_subscription_next`
+//! live streams use an **async pull model**: call `dart_live_events_next`
 //! in a loop from Dart, which internally awaits the next event from the
 //! underlying `SubscriptionManager`.
 //!
@@ -510,14 +510,14 @@ pub fn dart_connection_events_enabled(client: &DartKalamClient) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Subscription (async pull model)
+// Live streams (async pull model)
 // ---------------------------------------------------------------------------
 
-/// Opaque handle to an active live-query subscription.
+/// Opaque handle to an active low-level live event stream.
 ///
-/// On the Dart side, call [`dart_subscription_next`] in a loop to pull
-/// events. The loop ends when `None` is returned (subscription closed).
-pub struct DartSubscription {
+/// On the Dart side, call [`dart_live_events_next`] in a loop to pull events.
+/// The loop ends when `None` is returned (stream closed).
+pub struct DartLiveEventsSubscription {
     inner: Arc<Mutex<kalam_client::SubscriptionManager>>,
     sub_id: String,
 }
@@ -534,9 +534,9 @@ pub struct DartLiveRowsSubscription {
 
 /// Establish a shared WebSocket connection.
 ///
-/// After this call, subsequent [`dart_subscribe`] calls will multiplex
-/// over a single WebSocket instead of opening one per subscription.
-/// The connection handles auto-reconnection and re-subscription.
+/// After this call, subsequent live calls will multiplex over a single
+/// WebSocket instead of opening one per stream. The connection handles
+/// auto-reconnection and re-subscription.
 ///
 /// Calling this when already connected is a no-op.
 pub async fn dart_connect(client: &DartKalamClient) -> anyhow::Result<()> {
@@ -564,12 +564,12 @@ pub async fn dart_is_connected(client: &DartKalamClient) -> anyhow::Result<bool>
 /// This sends an explicit unsubscribe command that:
 /// 1. Removes the subscription from the client-side map
 /// 2. Sends an unsubscribe message to the server
-/// 3. Drops the event channel, causing any blocking [`dart_subscription_next`] call to return
+/// 3. Drops the event channel, causing any blocking [`dart_live_events_next`] call to return
 ///    `None`
 ///
-/// Unlike [`dart_subscription_close`], this does **not** require the
-/// `DartSubscription` mutex, so it can be called safely even while
-/// [`dart_subscription_next`] is blocked.  Use this from Dart's
+/// Unlike [`dart_live_events_close`], this does **not** require the
+/// `DartLiveEventsSubscription` mutex, so it can be called safely even while
+/// [`dart_live_events_next`] is blocked.  Use this from Dart's
 /// `StreamController.onCancel` to immediately release server-side
 /// resources.
 pub async fn dart_cancel_subscription(
@@ -580,29 +580,29 @@ pub async fn dart_cancel_subscription(
     Ok(())
 }
 
-/// Create a live-query subscription.
+/// Create a low-level live event stream.
 ///
 /// * `sql` — the SELECT query to subscribe to.
 /// * `config` — optional advanced configuration (batch size, etc.).
 ///
-/// Returns an opaque [`DartSubscription`] handle.  Use
-/// [`dart_subscription_next`] to pull events and
-/// [`dart_subscription_close`] to tear down.
-pub async fn dart_subscribe(
+/// Returns an opaque [`DartLiveEventsSubscription`] handle. Use
+/// [`dart_live_events_next`] to pull events and
+/// [`dart_live_events_close`] to tear down.
+pub async fn dart_live_events_subscribe(
     client: &DartKalamClient,
     sql: String,
     config: Option<DartSubscriptionConfig>,
-) -> anyhow::Result<DartSubscription> {
+) -> anyhow::Result<DartLiveEventsSubscription> {
     let sub = if let Some(cfg) = config {
         let mut native_cfg = cfg.into_native();
         native_cfg.sql = sql;
-        client.inner.subscribe_with_config(native_cfg).await?
+        client.inner.live_events_with_config(native_cfg).await?
     } else {
-        client.inner.subscribe(&sql).await?
+        client.inner.live_events(&sql).await?
     };
 
     let sub_id = sub.subscription_id().to_owned();
-    Ok(DartSubscription {
+    Ok(DartLiveEventsSubscription {
         inner: Arc::new(Mutex::new(sub)),
         sub_id,
     })
@@ -611,9 +611,9 @@ pub async fn dart_subscribe(
 /// Pull the next change event from a subscription.
 ///
 /// Returns `None` when the subscription has ended (server closed or
-/// [`dart_subscription_close`] was called).
-pub async fn dart_subscription_next(
-    subscription: &DartSubscription,
+/// [`dart_live_events_close`] was called).
+pub async fn dart_live_events_next(
+    subscription: &DartLiveEventsSubscription,
 ) -> anyhow::Result<Option<DartChangeEvent>> {
     let mut sub = subscription.inner.lock().await;
     match sub.next().await {
@@ -624,7 +624,9 @@ pub async fn dart_subscription_next(
 }
 
 /// Close a subscription and release server-side resources.
-pub async fn dart_subscription_close(subscription: &DartSubscription) -> anyhow::Result<()> {
+pub async fn dart_live_events_close(
+    subscription: &DartLiveEventsSubscription,
+) -> anyhow::Result<()> {
     let mut sub = subscription.inner.lock().await;
     sub.close().await?;
     Ok(())
@@ -632,12 +634,12 @@ pub async fn dart_subscription_close(subscription: &DartSubscription) -> anyhow:
 
 /// Get the server-assigned subscription ID.
 #[frb(sync)]
-pub fn dart_subscription_id(subscription: &DartSubscription) -> String {
+pub fn dart_live_events_id(subscription: &DartLiveEventsSubscription) -> String {
     subscription.sub_id.clone()
 }
 
 /// Create a materialized live-query subscription.
-pub async fn dart_live_query_rows_subscribe(
+pub async fn dart_live_subscribe(
     client: &DartKalamClient,
     sql: String,
     config: Option<DartSubscriptionConfig>,
@@ -652,7 +654,7 @@ pub async fn dart_live_query_rows_subscribe(
     let sub = if let Some(cfg) = config {
         let mut native_cfg = cfg.into_native();
         native_cfg.sql = sql;
-        client.inner.live_query_rows_with_config(native_cfg, native_live_config).await?
+        client.inner.live_with_config(native_cfg, native_live_config).await?
     } else {
         let native_cfg = kalam_client::SubscriptionConfig::new(
             format!(
@@ -664,7 +666,7 @@ pub async fn dart_live_query_rows_subscribe(
             ),
             sql,
         );
-        client.inner.live_query_rows_with_config(native_cfg, native_live_config).await?
+        client.inner.live_with_config(native_cfg, native_live_config).await?
     };
 
     let sub_id = sub.subscription_id().to_owned();
@@ -675,7 +677,7 @@ pub async fn dart_live_query_rows_subscribe(
 }
 
 /// Pull the next materialized live-row event from a subscription.
-pub async fn dart_live_query_rows_next(
+pub async fn dart_live_next(
     subscription: &DartLiveRowsSubscription,
 ) -> anyhow::Result<Option<DartLiveRowsEvent>> {
     let mut sub = subscription.inner.lock().await;
@@ -687,9 +689,7 @@ pub async fn dart_live_query_rows_next(
 }
 
 /// Close a materialized live-row subscription.
-pub async fn dart_live_query_rows_close(
-    subscription: &DartLiveRowsSubscription,
-) -> anyhow::Result<()> {
+pub async fn dart_live_close(subscription: &DartLiveRowsSubscription) -> anyhow::Result<()> {
     let mut sub = subscription.inner.lock().await;
     sub.close().await?;
     Ok(())
@@ -697,7 +697,7 @@ pub async fn dart_live_query_rows_close(
 
 /// Get the server-assigned subscription ID for a live-row subscription.
 #[frb(sync)]
-pub fn dart_live_query_rows_id(subscription: &DartLiveRowsSubscription) -> String {
+pub fn dart_live_id(subscription: &DartLiveRowsSubscription) -> String {
     subscription.sub_id.clone()
 }
 

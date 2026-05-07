@@ -4827,7 +4827,7 @@ impl SubscriptionListener {
                 };
 
                 // Start subscription
-                let mut subscription = match client.subscribe(&query).await {
+                let mut subscription = match client.live_events(&query).await {
                     Ok(s) => s,
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));

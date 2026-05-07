@@ -44,8 +44,8 @@
  * client.setAutoReconnect(true);
  * client.setReconnectDelay(1000, 30000);
  *
- * // WebSocket connects automatically on first subscribe (wsLazyConnect=true by default)
- * const subId = await client.subscribeWithSql(
+ * // WebSocket connects automatically on first live call (wsLazyConnect=true by default)
+ * const subId = await client.liveEvents(
  *   "SELECT * FROM chat.messages",
  *   JSON.stringify({
  *     batch_size: 100,
@@ -163,7 +163,44 @@ export class KalamClient {
      * - `{ type: "rows", subscription_id, rows }`
      * - `{ type: "error", subscription_id, code, message }`
      */
-    liveQueryRowsWithSql(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
+    live(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
+    /**
+     * Subscribe to a SQL query and receive low-level live events.
+     *
+     * # Arguments
+     * * `sql` - SQL SELECT query to subscribe to
+     * * `options` - Optional JSON string with subscription options:
+     *   - `batch_size`: Number of rows per batch (default: server-configured)
+     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+     *   - `from`: Resume from a specific sequence ID (internal use)
+     * * `callback` - JavaScript function to call when changes occur
+     *
+     * # Returns
+     * Subscription ID for later unsubscribe
+     *
+     * # Example (JavaScript)
+     * ```js
+     * // Subscribe with options
+     * const subId = await client.liveEvents(
+     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
+     *   JSON.stringify({ batch_size: 50, from: 42 }),
+     *   (event) => console.log('Change:', event)
+     * );
+     * ```
+     */
+    liveEvents(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
+    /**
+     * Subscribe to table changes (T051, T063I-T063J)
+     *
+     * # Arguments
+     * * `table_name` - Name of the table to subscribe to
+     * * `callback` - JavaScript function to call when changes occur
+     *
+     * # Returns
+     * Subscription ID for later unsubscribe
+     */
+    liveTable(table_name: string, options: string | null | undefined, callback: Function): Promise<string>;
     /**
      * Login with current Basic Auth credentials and switch to JWT authentication
      *
@@ -317,6 +354,10 @@ export class KalamClient {
      */
     refresh_access_token(refresh_token: string): Promise<any>;
     /**
+     * Request the next initial-data batch for a subscription.
+     */
+    requestNextBatch(subscription_id: string): void;
+    /**
      * Send a single application-level keepalive ping to the server.
      *
      * Usually called automatically by the internal ping timer; exposed so
@@ -402,10 +443,10 @@ export class KalamClient {
      * Control lazy WebSocket connections.
      *
      * When `true` (the default), the WebSocket connection is deferred until
-     * the first `subscribe()` / `subscribeWithSql()` call. The SDK manages
+     * the first `live()`, `liveTable()`, or `liveEvents()` call. The SDK manages
      * the connection lifecycle automatically.
      *
-     * When `false`, the caller should call `connect()` before subscribing.
+     * When `false`, the caller should call `connect()` before opening live streams.
      *
      * Default: `true`.
      *
@@ -414,47 +455,10 @@ export class KalamClient {
      * // Eager connection (override the default lazy behaviour)
      * client.setWsLazyConnect(false);
      * await client.connect();
-     * const subId = await client.subscribeWithSql('SELECT * FROM messages', null, cb);
+     * const subId = await client.liveEvents('SELECT * FROM messages', null, cb);
      * ```
      */
     setWsLazyConnect(lazy: boolean): void;
-    /**
-     * Subscribe to table changes (T051, T063I-T063J)
-     *
-     * # Arguments
-     * * `table_name` - Name of the table to subscribe to
-     * * `callback` - JavaScript function to call when changes occur
-     *
-     * # Returns
-     * Subscription ID for later unsubscribe
-     */
-    subscribe(table_name: string, callback: Function): Promise<string>;
-    /**
-     * Subscribe to a SQL query with optional subscription options
-     *
-     * # Arguments
-     * * `sql` - SQL SELECT query to subscribe to
-     * * `options` - Optional JSON string with subscription options:
-     *   - `batch_size`: Number of rows per batch (default: server-configured)
-     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
-     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
-     *   - `from`: Resume from a specific sequence ID (internal use)
-     * * `callback` - JavaScript function to call when changes occur
-     *
-     * # Returns
-     * Subscription ID for later unsubscribe
-     *
-     * # Example (JavaScript)
-     * ```js
-     * // Subscribe with options
-     * const subId = await client.subscribeWithSql(
-     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-     *   JSON.stringify({ batch_size: 50, from: 42 }),
-     *   (event) => console.log('Change:', event)
-     * );
-     * ```
-     */
-    subscribeWithSql(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
     /**
      * Unsubscribe from table changes (T052, T063M)
      *
@@ -582,7 +586,9 @@ export interface InitOutput {
     readonly kalamclient_insert: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kalamclient_isConnected: (a: number) => number;
     readonly kalamclient_isReconnecting: (a: number) => number;
-    readonly kalamclient_liveQueryRowsWithSql: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly kalamclient_live: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly kalamclient_liveEvents: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly kalamclient_liveTable: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly kalamclient_login: (a: number) => number;
     readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly kalamclient_onConnect: (a: number, b: number) => void;
@@ -593,6 +599,7 @@ export interface InitOutput {
     readonly kalamclient_query: (a: number, b: number, c: number) => number;
     readonly kalamclient_queryWithParams: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kalamclient_refresh_access_token: (a: number, b: number, c: number) => number;
+    readonly kalamclient_requestNextBatch: (a: number, b: number, c: number, d: number) => void;
     readonly kalamclient_sendPing: (a: number, b: number) => void;
     readonly kalamclient_setAuthProvider: (a: number, b: number) => void;
     readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
@@ -601,8 +608,6 @@ export interface InitOutput {
     readonly kalamclient_setPingInterval: (a: number, b: number) => void;
     readonly kalamclient_setReconnectDelay: (a: number, b: bigint, c: bigint) => void;
     readonly kalamclient_setWsLazyConnect: (a: number, b: number) => void;
-    readonly kalamclient_subscribe: (a: number, b: number, c: number, d: number) => number;
-    readonly kalamclient_subscribeWithSql: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => number;
     readonly kalamclient_withJwt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseIso8601: (a: number, b: number, c: number) => void;
@@ -613,10 +618,10 @@ export interface InitOutput {
     readonly timestampNow: () => number;
     readonly __wasm_bindgen_func_elem_713: (a: number, b: number, c: number, d: number) => void;
     readonly __wasm_bindgen_func_elem_724: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_3552: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3552_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3552_3: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3551: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_3561: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3561_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3561_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3560: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

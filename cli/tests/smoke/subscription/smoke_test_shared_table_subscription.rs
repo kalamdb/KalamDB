@@ -37,7 +37,7 @@ fn try_subscribe_as_user(username: &str, password: &str, query: &str) -> Result<
         .map_err(|e| format!("Failed to build runtime: {}", e))?;
 
     let result = rt.block_on(async move {
-        let mut subscription = client.subscribe(query).await?;
+        let mut subscription = client.live_events(query).await?;
 
         // The server sends permission errors as WebSocket error events, not as connection
         // failures. We must read at least one event to detect the server's response.

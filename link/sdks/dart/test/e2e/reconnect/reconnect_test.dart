@@ -219,7 +219,7 @@ void main() {
       () async {
         // Collect events before disconnect.
         final preEvents = <ChangeEvent>[];
-        final stream = client.subscribe('SELECT id, payload FROM $tbl');
+        final stream = client.liveEvents('SELECT id, payload FROM $tbl');
         final sub = stream.listen(preEvents.add);
 
         // Wait for ack.
@@ -260,7 +260,7 @@ void main() {
 
           // Re-subscribe after reconnect.
           final postEvents = <ChangeEvent>[];
-          final postStream = client.subscribe('SELECT id, payload FROM $tbl');
+          final postStream = client.liveEvents('SELECT id, payload FROM $tbl');
           final postSub = postStream.listen(postEvents.add);
 
           // Wait for ack + initial data.
@@ -319,7 +319,7 @@ void main() {
           }
 
           final eventsBefore = <ChangeEvent>[];
-          final streamBefore = client.subscribe(
+          final streamBefore = client.liveEvents(
             'SELECT id, payload FROM $tbl WHERE id >= ${preIds.first}',
             lastRows: preIds.length,
             subscriptionId: checkpointSubId,
@@ -369,7 +369,7 @@ void main() {
           expect(await client.isConnected, isTrue);
 
           final eventsAfter = <ChangeEvent>[];
-          final streamAfter = client.subscribe(
+          final streamAfter = client.liveEvents(
             'SELECT id, payload FROM $tbl WHERE id >= ${preIds.first}',
             from: checkpoint,
             lastRows: 0,
@@ -460,9 +460,9 @@ void main() {
         // Subscribe to both tables.
         final events1 = <ChangeEvent>[];
         final events2 = <ChangeEvent>[];
-        final sub1 = client.subscribe('SELECT * FROM $tbl').listen(events1.add);
+        final sub1 = client.liveEvents('SELECT * FROM $tbl').listen(events1.add);
         final sub2 =
-            client.subscribe('SELECT * FROM $tbl2').listen(events2.add);
+            client.liveEvents('SELECT * FROM $tbl2').listen(events2.add);
 
         await sleep(const Duration(seconds: 3));
         expect(events1.whereType<AckEvent>(), isNotEmpty, reason: 'sub1 ack');
@@ -483,9 +483,9 @@ void main() {
         final postEvents1 = <ChangeEvent>[];
         final postEvents2 = <ChangeEvent>[];
         final postSub1 =
-            client.subscribe('SELECT * FROM $tbl').listen(postEvents1.add);
+            client.liveEvents('SELECT * FROM $tbl').listen(postEvents1.add);
         final postSub2 =
-            client.subscribe('SELECT * FROM $tbl2').listen(postEvents2.add);
+            client.liveEvents('SELECT * FROM $tbl2').listen(postEvents2.add);
 
         await sleep(const Duration(seconds: 3));
 
@@ -592,13 +592,13 @@ void main() {
         final preEventsC = <ChangeEvent>[];
 
         final subA = client
-            .subscribe('SELECT id, payload FROM $tblA', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblA', lastRows: 0)
             .listen(preEventsA.add);
         final subB = client
-            .subscribe('SELECT id, payload FROM $tblB', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblB', lastRows: 0)
             .listen(preEventsB.add);
         final subC = client
-            .subscribe('SELECT id, payload FROM $tblC', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblC', lastRows: 0)
             .listen(preEventsC.add);
 
         await waitFor(() {
@@ -642,13 +642,13 @@ void main() {
         final postEventsC = <ChangeEvent>[];
 
         final postSubA = client
-            .subscribe('SELECT id, payload FROM $tblA WHERE id >= $gapA')
+            .liveEvents('SELECT id, payload FROM $tblA WHERE id >= $gapA')
             .listen(postEventsA.add);
         final postSubB = client
-            .subscribe('SELECT id, payload FROM $tblB WHERE id >= $gapB')
+            .liveEvents('SELECT id, payload FROM $tblB WHERE id >= $gapB')
             .listen(postEventsB.add);
         final postSubC = client
-            .subscribe('SELECT id, payload FROM $tblC WHERE id >= $gapC')
+            .liveEvents('SELECT id, payload FROM $tblC WHERE id >= $gapC')
             .listen(postEventsC.add);
 
         await waitFor(() {
@@ -758,13 +758,13 @@ void main() {
         final preEventsC = <ChangeEvent>[];
 
         final preSubA = client
-            .subscribe('SELECT id, payload FROM $tblA', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblA', lastRows: 0)
             .listen(preEventsA.add);
         final preSubB = client
-            .subscribe('SELECT id, payload FROM $tblB', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblB', lastRows: 0)
             .listen(preEventsB.add);
         final preSubC = client
-            .subscribe('SELECT id, payload FROM $tblC', lastRows: 0)
+            .liveEvents('SELECT id, payload FROM $tblC', lastRows: 0)
             .listen(preEventsC.add);
 
         await waitFor(() {
@@ -818,13 +818,13 @@ void main() {
           final eventsC = <ChangeEvent>[];
 
           final subA = client
-              .subscribe('SELECT id, payload FROM $tblA WHERE id >= $gapA')
+              .liveEvents('SELECT id, payload FROM $tblA WHERE id >= $gapA')
               .listen(eventsA.add);
           final subB = client
-              .subscribe('SELECT id, payload FROM $tblB WHERE id >= $gapB')
+              .liveEvents('SELECT id, payload FROM $tblB WHERE id >= $gapB')
               .listen(eventsB.add);
           final subC = client
-              .subscribe('SELECT id, payload FROM $tblC WHERE id >= $gapC')
+              .liveEvents('SELECT id, payload FROM $tblC WHERE id >= $gapC')
               .listen(eventsC.add);
 
           await waitFor(() {

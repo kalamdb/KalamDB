@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { eq } from 'drizzle-orm';
 import { text, bigint, timestamp } from 'drizzle-orm/pg-core';
-import { liveTable, subscribeTable, file, kTable } from '../dist/index.js';
+import { liveTable, file, kTable } from '../dist/index.js';
 import { requirePassword, createTestClient } from './helpers.mjs';
 
 requirePassword();
@@ -155,7 +155,7 @@ describe('liveTable', () => {
     await client.query("DELETE FROM test_live.items WHERE name = 'after-unsub'");
   });
 
-  it('maps typed change rows for subscribeTable', async () => {
+  it('maps typed rows with a WHERE clause', async () => {
     let resolvePromise;
     let rejectPromise;
     const resultPromise = new Promise((resolve, reject) => {
@@ -163,29 +163,29 @@ describe('liveTable', () => {
       rejectPromise = reject;
     });
 
-    const timeout = setTimeout(() => rejectPromise(new Error('Timed out waiting for typed subscription event')), 10000);
-    const unsub = await subscribeTable(
+    const timeout = setTimeout(() => rejectPromise(new Error('Timed out waiting for typed live rows')), 10000);
+    const unsub = await liveTable(
       client,
       test_live_items,
-      (event) => {
-        if (event.type !== 'change' || !event.rows?.some((row) => row.name === 'typed-subscribe')) {
+      (rows) => {
+        if (!rows.some((row) => row.name === 'typed-live')) {
           return;
         }
 
         clearTimeout(timeout);
-        resolvePromise(event.rows.find((row) => row.name === 'typed-subscribe'));
+        resolvePromise(rows.find((row) => row.name === 'typed-live'));
       },
-      { where: eq(test_live_items.name, 'typed-subscribe') },
+      { where: eq(test_live_items.name, 'typed-live') },
     );
 
-    await client.query("INSERT INTO test_live.items (name) VALUES ('typed-subscribe')");
+    await client.query("INSERT INTO test_live.items (name) VALUES ('typed-live')");
 
     const row = await resultPromise;
-    assert.equal(row.name, 'typed-subscribe');
+    assert.equal(row.name, 'typed-live');
     assert.ok(typeof row.id === 'number');
 
     await unsub();
-    await client.query("DELETE FROM test_live.items WHERE name = 'typed-subscribe'");
+    await client.query("DELETE FROM test_live.items WHERE name = 'typed-live'");
   });
 
   it('handles FILE column type in live rows', async () => {

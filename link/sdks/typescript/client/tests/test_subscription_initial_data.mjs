@@ -2,7 +2,7 @@
 // @ts-check
 
 /**
- * Simple test to verify @kalamdb/client WASM subscriptions with subscribeWithSql
+ * Simple test to verify @kalamdb/client WASM subscriptions with liveEvents
  * Tests initial_data_batch reception like the UI would use
  */
 
@@ -56,7 +56,7 @@ async function executeSQL(sql) {
 }
 
 async function runTest() {
-  console.log('🧪 WASM subscribeWithSql Subscription Test\n');
+  console.log('🧪 WASM liveEvents Subscription Test\n');
 
   // Initialize WASM (like websocket.test.mjs does)
   let KalamClient;
@@ -108,14 +108,14 @@ async function runTest() {
   /** @type {any[]} */
   const receivedEvents = [];
 
-  // Subscribe using subscribeWithSql (like the UI does, but WASM receives JSON string)
-  console.log('\n📋 Test: Subscribe with SQL (using subscribeWithSql)');
+  // Subscribe using liveEvents (like the UI does, but WASM receives JSON string)
+  console.log('\n📋 Test: Subscribe with SQL (using liveEvents)');
   const sql = `SELECT * FROM ${table}`;
   console.log(`  SQL: ${sql}`);
   
-  // Note: WASM subscribeWithSql callback receives JSON STRING, not parsed object
+  // Note: WASM liveEvents callback receives JSON STRING, not parsed object
   // The TypeScript KalamDBClient wrapper parses it, but we're using raw WASM
-  const subscriptionId = await client.subscribeWithSql(sql, null, (/** @type {string} */ eventJson) => {
+  const subscriptionId = await client.liveEvents(sql, null, (/** @type {string} */ eventJson) => {
     // Parse JSON string (like TypeScript wrapper does)
     let event;
     try {

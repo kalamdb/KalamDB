@@ -301,7 +301,7 @@ async fn test_subscription_basic() {
     // Try to create subscription
     let sub_result = timeout(
         Duration::from_secs(5),
-        client.subscribe(&format!("SELECT * FROM {}.events", ns)),
+        client.live_events(&format!("SELECT * FROM {}.events", ns)),
     )
     .await;
 
@@ -351,7 +351,7 @@ async fn test_subscription_with_custom_config() {
     // Create subscription with custom config
     let config = SubscriptionConfig::new("sub-custom", format!("SELECT * FROM {}.data", ns));
 
-    let sub_result = timeout(Duration::from_secs(5), client.subscribe_with_config(config)).await;
+    let sub_result = timeout(Duration::from_secs(5), client.live_events_with_config(config)).await;
 
     match sub_result {
         Ok(Ok(_subscription)) => {

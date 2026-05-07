@@ -1,8 +1,8 @@
 # KalamDB TypeScript/JavaScript SDK
 
-The official TypeScript/JavaScript SDK for KalamDB, built on top of a Rust → WASM core.
+The official TypeScript/JavaScript SDK for KalamDB, built on top of a Rust -> WASM core.
 
-Worker and topic-consumer APIs now live in the separate `@kalamdb/consumer` package. This page focuses on the app-facing `@kalamdb/client` surface.
+Worker and topic-consumer APIs now live in the separate `@kalamdb/consumer` package. React live-query UI APIs live in `@kalamdb/react`, which wraps the app-facing `@kalamdb/client` surface.
 
 - **Tiny bundle size** with minimal dependencies
 - **Cross-platform**: Works in Node.js and browsers
@@ -17,6 +17,13 @@ npm install @kalamdb/client
 yarn add @kalamdb/client
 # or
 pnpm add @kalamdb/client
+```
+
+For React live-query components and hooks:
+
+```bash
+npm install @kalamdb/client @kalamdb/react react react-dom
+npm install @kalamdb/orm drizzle-orm
 ```
 
 ## Building From Source (This Repo)
@@ -96,6 +103,58 @@ const unsubscribe = await client.subscribe('app.messages', (event) => {
 await unsubscribe();
 await client.disconnect();
 ```
+
+## React Live Queries
+
+`@kalamdb/react` provides `KalamProvider`, `LiveQuery`, `LiveQueries`, `useLiveQuery`, `useLiveQueries`, and `useLiveSelection`. It supports raw SQL mode and typed Drizzle mode through `@kalamdb/orm`.
+
+```tsx
+import { KalamProvider, LiveQueries, useLiveSelection } from '@kalamdb/react';
+import { asc, eq } from 'drizzle-orm';
+import { createClient, Auth } from '@kalamdb/client';
+import { approvals, messages, toolCalls, typing } from './schema.generated';
+
+const client = createClient({
+  url: 'http://localhost:8080',
+  authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
+});
+
+export function AssistantScreen({ conversationId }: { conversationId: string }) {
+  return (
+    <KalamProvider client={client}>
+      <LiveQueries
+        queries={{
+          messages: {
+            table: messages,
+            where: (table) => eq(table.conversationId, conversationId),
+            orderBy: (table) => asc(table.createdAt),
+            deps: [conversationId],
+          },
+          typing: { table: typing, where: (table) => eq(table.conversationId, conversationId), deps: [conversationId] },
+          toolCalls: { table: toolCalls, where: (table) => eq(table.conversationId, conversationId), deps: [conversationId] },
+          approvals: { table: approvals, where: (table) => eq(table.conversationId, conversationId), deps: [conversationId] },
+        }}
+      >
+        {(live) => <AssistantBody live={live} />}
+      </LiveQueries>
+    </KalamProvider>
+  );
+}
+
+function AssistantBody({ live }) {
+  const assistant = useLiveSelection(live, (context) => ({
+    messages: context.messages.rows,
+    typingUsers: context.typing.rows.map((row) => row.userName),
+    activeTools: context.toolCalls.rows.filter((row) => row.status !== 'completed'),
+    pendingApprovals: context.approvals.rows.filter((row) => row.status === 'pending'),
+    approve: (approvalId: string) => context.update(approvals, approvalId).set({ status: 'approved' }),
+  }));
+
+  return <AssistantLayout {...assistant} busy={live.state.loading || live.state.updating} />;
+}
+```
+
+The repo includes [../../examples/react-ai-chat](../../examples/react-ai-chat), a runnable React validation app with conversation sidebar, history loading, multi-file messages, typing, tool activity, streamed replies, edit/cancel actions, and human approvals.
 
 ## API Reference
 

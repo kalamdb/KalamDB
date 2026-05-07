@@ -1,6 +1,9 @@
 """Type stubs for the kalamdb Python SDK."""
 
-from typing import Any
+from typing import Any, Callable
+
+CheckpointCallback = Callable[[dict[str, str]], None]
+ErrorCallback = Callable[[dict[str, Any]], None]
 
 class KalamError(Exception):
     """Base class for all KalamDB SDK errors."""
@@ -136,12 +139,56 @@ class KalamClient:
         """
         ...
 
+    async def live_events(
+        self,
+        sql: str,
+        *,
+        batch_size: int | None = None,
+        last_rows: int | None = None,
+        from_: int | str | None = None,
+        auto_fetch_batches: bool | None = None,
+        on_checkpoint: CheckpointCallback | None = None,
+        on_error: ErrorCallback | None = None,
+    ) -> "LiveEvents":
+        """Open a low-level live event stream for a SQL query."""
+        ...
+
+    async def live(
+        self,
+        sql: str,
+        *,
+        batch_size: int | None = None,
+        last_rows: int | None = None,
+        from_: int | str | None = None,
+        auto_fetch_batches: bool | None = None,
+        limit: int | None = None,
+        key_columns: list[str] | None = None,
+        on_checkpoint: CheckpointCallback | None = None,
+    ) -> "LiveRows":
+        """Open a materialized live row stream for a SQL query."""
+        ...
+
+    async def live_table(
+        self,
+        table: str,
+        *,
+        batch_size: int | None = None,
+        last_rows: int | None = None,
+        from_: int | str | None = None,
+        auto_fetch_batches: bool | None = None,
+        limit: int | None = None,
+        key_columns: list[str] | None = None,
+        on_checkpoint: CheckpointCallback | None = None,
+    ) -> "LiveRows":
+        """Open a materialized live row stream for SELECT * FROM table."""
+        ...
+
     async def __aenter__(self) -> "KalamClient": ...
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
 
 
-class Subscription:
-    """Live subscription to a SQL query. Iterate with `async for event in sub`."""
+class LiveEvents:
+    """Low-level live event stream. Iterate with `async for event in events`."""
 
     async def next(self) -> dict[str, Any]:
         """Get the next change event.
@@ -151,13 +198,31 @@ class Subscription:
         ...
 
     async def close(self) -> None:
-        """Close the subscription."""
+        """Close the live event stream."""
         ...
 
-    async def __aenter__(self) -> "Subscription": ...
+    async def __aenter__(self) -> "LiveEvents": ...
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
-    def __aiter__(self) -> "Subscription": ...
+    def __aiter__(self) -> "LiveEvents": ...
     async def __anext__(self) -> dict[str, Any]: ...
+    def __repr__(self) -> str: ...
+
+
+class LiveRows:
+    """Materialized live row stream. Iterate with `async for rows in live`."""
+
+    async def next(self) -> list[dict[str, Any]]:
+        """Get the next materialized row snapshot."""
+        ...
+
+    async def close(self) -> None:
+        """Close the live row stream."""
+        ...
+
+    async def __aenter__(self) -> "LiveRows": ...
+    async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None: ...
+    def __aiter__(self) -> "LiveRows": ...
+    async def __anext__(self) -> list[dict[str, Any]]: ...
     def __repr__(self) -> str: ...
 
 

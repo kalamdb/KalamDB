@@ -15,15 +15,14 @@
  *   methods (same logic as Rust `impl FileRef`).
  * - **`BoundFileRef`** — TS-only: binds server/table context for no-arg URLs.
  * - **`KalamRow<T>`** — TS-only: generic typed row wrapper with `.file()`.
- * - **`KalamChange<T>`** — TS-only: generic typed change event wrapper.
  *
  * The `FileRef` methods (`downloadUrl`, `isImage`, `formatSize`, etc.) mirror
  * the Rust impl.  They're kept in TS (not WASM calls) to avoid crossing the
  * WASM boundary for trivial string operations — each SDK implements them from
  * the same Rust reference.
  *
- * `KalamRow<T>` and `KalamChange<T>` are inherently SDK-level because they
- * use TypeScript generics (Rust FFI can't express `<T>` row types).
+ * `KalamRow<T>` is inherently SDK-level because it uses TypeScript generics
+ * that Rust FFI cannot express.
  *
  * @example
  * ```typescript
@@ -425,15 +424,14 @@ export interface FileRefContext {
  *
  * @example
  * ```typescript
- * const unsub = await client.subscribeRows<User>('default.users', (change) => {
- *   change.rows.forEach(row => {
- *     const avatar = row.file('avatar');
- *     if (avatar) {
- *       img.src = avatar.downloadUrl();        // full URL
- *       console.log(avatar.relativeUrl());     // /api/v1/files/default/users/f0001/12345
- *       console.log(avatar.name, avatar.formatSize()); // all FileRef attrs still work
- *     }
- *   });
+ * const rows = await client.queryRows<User>('SELECT * FROM default.users', 'default.users');
+ * rows.forEach(row => {
+ *   const avatar = row.file('avatar');
+ *   if (avatar) {
+ *     img.src = avatar.downloadUrl();        // full URL
+ *     console.log(avatar.relativeUrl());     // /api/v1/files/default/users/f0001/12345
+ *     console.log(avatar.name, avatar.formatSize()); // all FileRef attrs still work
+ *   }
  * });
  * ```
  */
@@ -524,12 +522,6 @@ export class KalamRow<T extends Record<string, unknown> = Record<string, unknown
    *   console.log(row.cell('age').asInt());
    * });
    *
-   * // Subscribe path — same API:
-   * await client.subscribeRows<User>('users', (change) => {
-   *   change.rows.forEach(row => {
-   *     console.log(row.cell('name').asString());
-   *   });
-   * });
    * ```
    */
   cell(column: keyof T): KalamCellValue {
@@ -586,62 +578,6 @@ export class KalamRow<T extends Record<string, unknown> = Record<string, unknown
     const ref = FileRef.from(rawValue);
     if (!ref) return null;
     return new BoundFileRef(ref.toObject(), this._ctx);
-  }
-}
-
-/**
- * A live subscription change event with rows wrapped as `KalamRow<T>`.
- *
- * SDK-level generic wrapper — maps the raw `ServerMessage` from the shared Rust
- * WASM layer into typed rows with `.file()` support.
- *
- * The raw `ServerMessage.rows` are `HashMap<String, JsonValue>[]` in Rust,
- * which arrive as plain JS objects. This wrapper casts them to `T` and wraps
- * each in a `KalamRow<T>` for file access.
- *
- * @example
- * ```typescript
- * const unsub = await client.subscribeRows<User>('default.users', (change) => {
- *   if (change.type === 'insert' || change.type === 'update') {
- *     change.rows.forEach(row => {
- *       const avatar = row.file('avatar');
- *       if (avatar) console.log('Avatar:', avatar.downloadUrl());
- *     });
- *   }
- * });
- * ```
- */
-export class KalamChange<T extends Record<string, unknown> = Record<string, unknown>> {
-  /** Change type: `'insert'`, `'update'`, `'delete'`, `'initial_data_batch'`, etc. */
-  readonly type: string;
-
-  /** New/current rows (present on insert, update, initial_data_batch). */
-  readonly rows: KalamRow<T>[];
-
-  /**
-   * Previous row values before the change (present on update and delete).
-   * Empty array for inserts.
-   */
-  readonly oldValues: KalamRow<T>[];
-
-  /** Raw underlying `ServerMessage` from the shared Rust WASM layer. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly raw: any;
-
-  /**
-   * Construct from a raw `ServerMessage` event and table context.
-   *
-   * Rows come from Rust as `HashMap<String, JsonValue>[]` — plain JS objects.
-   * This constructor casts them to `T` and wraps with `KalamRow` for file access.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(event: any, ctx: FileRefContext) {
-    this.raw = event;
-    this.type = (event as { type?: string }).type ?? 'unknown';
-    const rowsArr: T[] = Array.isArray(event.rows) ? (event.rows as T[]) : [];
-    const oldArr: T[] = Array.isArray(event.old_values) ? (event.old_values as T[]) : [];
-    this.rows = rowsArr.map(r => new KalamRow<T>(r, ctx));
-    this.oldValues = oldArr.map(r => new KalamRow<T>(r, ctx));
   }
 }
 

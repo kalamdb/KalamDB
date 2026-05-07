@@ -38,7 +38,7 @@ async fn test_proxy_server_down_during_live_updates_resumes() {
     client.connect().await.expect("connect through proxy");
 
     let mut sub = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("live-update-drop-{}", suffix),
             format!("SELECT id, value FROM {}", table),
         ))

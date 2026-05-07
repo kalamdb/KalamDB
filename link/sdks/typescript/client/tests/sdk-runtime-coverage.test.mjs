@@ -151,7 +151,7 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
         lastSeqId: sub.lastSeqId,
       })));
     },
-    async subscribeWithSql(sql, optionsJson, callback) {
+    async liveEvents(sql, optionsJson, callback) {
       nextSubscriptionId += 1;
       const id = `sub-${nextSubscriptionId}`;
       this.subscribeCalls.push({ sql, optionsJson });
@@ -159,7 +159,7 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
       subscriptions.push({ id, query: sql, lastSeqId: undefined });
       return id;
     },
-    async liveQueryRowsWithSql(sql, optionsJson, callback) {
+    async live(sql, optionsJson, callback) {
       nextSubscriptionId += 1;
       const id = `live-${nextSubscriptionId}`;
       this.liveSubscribeCalls.push({ sql, optionsJson });
@@ -202,7 +202,12 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
       if (sub && lastSeqId !== undefined) {
         sub.lastSeqId = String(lastSeqId);
       }
-      callback(JSON.stringify({ type: 'rows', subscription_id: subscriptionId, rows }));
+      callback(JSON.stringify({
+        type: 'rows',
+        subscription_id: subscriptionId,
+        rows,
+        ...(lastSeqId !== undefined ? { last_seq_id: String(lastSeqId) } : {}),
+      }));
     },
     emitLiveError(subscriptionId, code, message) {
       const callback = liveCallbacks.get(subscriptionId);
@@ -264,7 +269,7 @@ test('query serializes concurrent WASM calls per client', async () => {
   assert.deepEqual(fakeWasmClient.queryCalls, ['SELECT 1', 'SELECT 2']);
 });
 
-test('subscribeRows wraps change rows and oldValues as KalamRow instances', async () => {
+test('liveEvents opens the low-level SQL event stream', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
     authProvider: async () => Auth.jwt('coverage-token'),
@@ -273,28 +278,31 @@ test('subscribeRows wraps change rows and oldValues as KalamRow instances', asyn
   client.initialized = true;
   client.wasmClient = fakeWasmClient;
 
-  const changes = [];
-  const unsub = await client.subscribeRows('demo.tasks', (change) => {
-    changes.push(change);
+  const seen = [];
+  const checkpoints = [];
+  const unsub = await client.liveEvents('SELECT * FROM demo.logs', (event) => {
+    seen.push(event.type);
+  }, { lastRows: 2, onCheckpoint: ({ lastSeqId }) => checkpoints.push(lastSeqId.toString()) });
+
+  assert.equal(fakeWasmClient.subscribeCalls.length, 1);
+  assert.deepEqual(JSON.parse(fakeWasmClient.subscribeCalls[0].optionsJson), {
+    last_rows: 2,
   });
 
   fakeWasmClient.emitSubscription('sub-1', {
     type: 'change',
-    change_type: 'update',
+    change_type: 'insert',
     subscription_id: 'sub-1',
-    rows: [{ id: 7, title: 'after' }],
-    old_values: [{ id: 7, title: 'before' }],
-  }, 77);
+    rows: [{ id: 1, _seq: '1' }],
+    old_values: [],
+  }, 1);
 
-  assert.equal(changes.length, 1);
-  assert.equal(changes[0].rows[0].cell('id').asInt(), 7);
-  assert.equal(changes[0].rows[0].typedData.title.asString(), 'after');
-  assert.equal(changes[0].oldValues[0].typedData.title.asString(), 'before');
-
+  assert.deepEqual(seen, ['change']);
+  assert.deepEqual(checkpoints, ['1']);
   await unsub();
 });
 
-test('liveTableRows delegates to live using SELECT * sugar', async () => {
+test('liveTable delegates to live using SELECT * sugar', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
     authProvider: async () => Auth.jwt('coverage-token'),
@@ -304,10 +312,11 @@ test('liveTableRows delegates to live using SELECT * sugar', async () => {
   client.wasmClient = fakeWasmClient;
 
   const snapshots = [];
-  const unsub = await client.liveTableRows('demo.tasks', (rows) => {
+  const unsub = await client.liveTable('demo.tasks', (rows) => {
     snapshots.push(rows.map((row) => row.id.asInt()));
   }, {
-    subscriptionOptions: { last_rows: 5, from: SeqId.from('10') },
+    lastRows: 5,
+    from: SeqId.from('10'),
   });
 
   assert.equal(fakeWasmClient.liveSubscribeCalls[0].sql, 'SELECT * FROM demo.tasks');
@@ -331,11 +340,13 @@ test('live passes key columns through to Rust materialization', async () => {
   client.wasmClient = fakeWasmClient;
 
   const snapshots = [];
+  const checkpoints = [];
   const unsub = await client.live('SELECT * FROM demo.messages', (rows) => {
     snapshots.push(rows.map((row) => row.message_id.asString()));
   }, {
-    keyColumn: ['room_id', 'message_id'],
-    subscriptionOptions: { last_rows: 10 },
+    getKey: ['room_id', 'message_id'],
+    lastRows: 10,
+    onCheckpoint: ({ lastSeqId }) => checkpoints.push(lastSeqId.toString()),
   });
 
   assert.deepEqual(JSON.parse(fakeWasmClient.liveSubscribeCalls[0].optionsJson), {
@@ -348,6 +359,7 @@ test('live passes key columns through to Rust materialization', async () => {
     { room_id: 'room-1', message_id: 'm-2' },
   ], 21);
   assert.deepEqual(snapshots[0], ['m-1', 'm-2']);
+  assert.deepEqual(checkpoints, ['21']);
 
   await unsub();
 });
@@ -437,12 +449,12 @@ test('live uses subscribe fallback when getKey is provided and handles updates/d
       id: row.id.asString(),
       title: row.title.asString(),
     }),
-    subscriptionOptions: { last_rows: 3 },
+    lastRows: 3,
     onError: (event) => errors.push(`${event.code}:${event.message}`),
   });
 
-  assert.equal(fakeWasmClient.subscribeCalls.length, 1, 'fallback should use subscribeWithSql');
-  assert.equal(fakeWasmClient.liveSubscribeCalls.length, 0, 'fallback must not call liveQueryRowsWithSql');
+  assert.equal(fakeWasmClient.subscribeCalls.length, 1, 'fallback should use liveEvents');
+  assert.equal(fakeWasmClient.liveSubscribeCalls.length, 0, 'fallback must not call live');
   assert.deepEqual(JSON.parse(fakeWasmClient.subscribeCalls[0].optionsJson), {
     last_rows: 3,
   });
@@ -502,9 +514,9 @@ test('log listener receives messages at configured level and parse errors are lo
   client.initialized = true;
   client.wasmClient = fakeWasmClient;
 
-  const unsub = await client.subscribeWithSql('SELECT * FROM demo.logs', () => {});
+  const unsub = await client.liveEvents('SELECT * FROM demo.logs', () => {});
   assert.ok(
-    entries.some((entry) => entry.tag === 'subscription' && entry.message.includes('Subscribing to:')),
+    entries.some((entry) => entry.tag === 'subscription' && entry.message.includes('Opening live events:')),
     'debug subscription start log should be emitted',
   );
   assert.ok(
@@ -523,7 +535,7 @@ test('log listener receives messages at configured level and parse errors are lo
   await unsub();
 });
 
-test('live normalizes keyColumns and reports default onError fields for live-row errors', async () => {
+test('live reports default onError fields for live-row errors', async () => {
   const errors = [];
   const snapshots = [];
   const client = createClient({
@@ -538,7 +550,7 @@ test('live normalizes keyColumns and reports default onError fields for live-row
     snapshots.push(rows.length);
   }, {
     limit: 50,
-    keyColumns: [' room_id ', '', 'room_id', 'message_id'],
+    getKey: [' room_id ', '', 'room_id', 'message_id'],
     onError: (event) => errors.push(event),
   });
 

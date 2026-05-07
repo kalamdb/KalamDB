@@ -486,3 +486,7 @@ CREATE SERVER kalam_server
 - [../docker/build/Dockerfile](../docker/build/Dockerfile)
 - [../docker/run/single/docker-compose.yml](../docker/run/single/docker-compose.yml)
 - [local_test.sql](local_test.sql)
+
+## License
+
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../LICENSE.txt](../LICENSE.txt) and [../NOTICE](../NOTICE).

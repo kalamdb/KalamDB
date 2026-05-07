@@ -20,6 +20,7 @@
       "@/*": ["./src/*"],
       "@kalamdb/client": ["../link/sdks/typescript/client/dist/src/index.d.ts"],
       "@kalamdb/orm": ["../link/sdks/typescript/orm/dist/index.d.ts"],
+      "@kalamdb/react": ["../link/sdks/typescript/react/dist/index.d.ts"],
       "drizzle-orm": ["./node_modules/drizzle-orm"],
       "drizzle-orm/*": ["./node_modules/drizzle-orm/*"]
     }

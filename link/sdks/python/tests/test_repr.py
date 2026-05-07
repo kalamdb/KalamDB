@@ -11,14 +11,14 @@ async def test_client_repr_shows_url(client):
 
 
 @pytest.mark.asyncio
-async def test_subscription_repr_is_informative(client, temp_namespace):
+async def test_live_events_repr_is_informative(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (id BIGINT PRIMARY KEY, v TEXT)
     """)
-    sub = await client.subscribe(f"SELECT * FROM {temp_namespace}.t")
+    sub = await client.live_events(f"SELECT * FROM {temp_namespace}.t")
     try:
         r = repr(sub)
-        assert "Subscription" in r
+        assert "LiveEvents" in r
     finally:
         await sub.close()
 

@@ -41,7 +41,7 @@ async fn test_event_counter_integrity_through_multiple_outages() {
         client.connect().await.expect("initial connect");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("event-counter-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

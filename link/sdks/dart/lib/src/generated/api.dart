@@ -7,7 +7,7 @@ import 'frb_generated.dart';
 import 'models.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`
+// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `push_connection_event`, `push_debug_connection_event`
 
 /// Create a new KalamDB client.
 ///
@@ -15,18 +15,18 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// * `auth` — authentication method (basic, JWT, or none).
 /// * `timeout_ms` — optional HTTP request timeout in milliseconds (default 30 000).
 /// * `max_retries` — optional retry count for idempotent queries (default 3).
-/// * `enable_connection_events` — when `true`, connection lifecycle events
-///   (connect, disconnect, error, receive, send) are queued internally and
-///   can be retrieved via [`dart_next_connection_event`].
-/// * `disable_compression` — when `true`, the WebSocket URL includes
-///   `?compress=false` so the server sends plain-text JSON frames instead of
-///   gzip-compressed binary frames. Useful during development.
-/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval
-///   in milliseconds (default 10 000). Set to 0 to disable keep-alive pings.
-/// * `ws_lazy_connect` — controls when the WebSocket connection is established.
-///   When `true` (the default), the connection is deferred until the first
-///   `subscribe()` call. When `false`, the connection is established eagerly.
-///   Authentication uses the same provider configured for HTTP queries.
+/// * `enable_connection_events` — when `true`, connection lifecycle events (connect, disconnect,
+///   error, receive, send) are queued internally and can be retrieved via
+///   [`dart_next_connection_event`].
+/// * `disable_compression` — when `true`, the WebSocket URL includes `?compress=false` so the
+///   server sends plain-text JSON frames instead of gzip-compressed binary frames. Useful during
+///   development.
+/// * `keepalive_interval_ms` — optional WebSocket keep-alive ping interval in milliseconds (default
+///   10 000). Set to 0 to disable keep-alive pings.
+/// * `ws_lazy_connect` — controls when the WebSocket connection is established. When `true` (the
+///   default), the connection is deferred until the first `subscribe()` call. When `false`, the
+///   connection is established eagerly. Authentication uses the same provider configured for HTTP
+///   queries.
 ///
 /// **Note:** This function intentionally omits `#[frb(sync)]` so that FRB
 /// dispatches it to a worker thread via `executeNormal`. The client
@@ -72,8 +72,8 @@ Future<void> dartUpdateAuth(
 
 /// Execute a SQL query, optionally with parameters and namespace.
 ///
-/// * `params_json` — JSON-encoded array of parameter values, e.g. `'["val1", 42]'`.
-///   Pass `null` for no parameters.
+/// * `params_json` — JSON-encoded array of parameter values, e.g. `'["val1", 42]'`. Pass `null` for
+///   no parameters.
 /// * `namespace` — optional namespace context for unqualified table names.
 Future<DartQueryResponse> dartExecuteQuery(
         {required DartKalamClient client,
@@ -127,9 +127,9 @@ bool dartConnectionEventsEnabled({required DartKalamClient client}) =>
 
 /// Establish a shared WebSocket connection.
 ///
-/// After this call, subsequent [`dart_subscribe`] calls will multiplex
-/// over a single WebSocket instead of opening one per subscription.
-/// The connection handles auto-reconnection and re-subscription.
+/// After this call, subsequent live calls will multiplex over a single
+/// WebSocket instead of opening one per stream. The connection handles
+/// auto-reconnection and re-subscription.
 ///
 /// Calling this when already connected is a no-op.
 Future<void> dartConnect({required DartKalamClient client}) =>
@@ -152,12 +152,12 @@ Future<bool> dartIsConnected({required DartKalamClient client}) =>
 /// This sends an explicit unsubscribe command that:
 /// 1. Removes the subscription from the client-side map
 /// 2. Sends an unsubscribe message to the server
-/// 3. Drops the event channel, causing any blocking
-///    [`dart_subscription_next`] call to return `None`
+/// 3. Drops the event channel, causing any blocking [`dart_live_events_next`] call to return
+///    `None`
 ///
-/// Unlike [`dart_subscription_close`], this does **not** require the
-/// `DartSubscription` mutex, so it can be called safely even while
-/// [`dart_subscription_next`] is blocked.  Use this from Dart's
+/// Unlike [`dart_live_events_close`], this does **not** require the
+/// `DartLiveEventsSubscription` mutex, so it can be called safely even while
+/// [`dart_live_events_next`] is blocked.  Use this from Dart's
 /// `StreamController.onCancel` to immediately release server-side
 /// resources.
 Future<void> dartCancelSubscription(
@@ -165,64 +165,60 @@ Future<void> dartCancelSubscription(
     RustLib.instance.api.crateApiDartCancelSubscription(
         client: client, subscriptionId: subscriptionId);
 
-/// Create a live-query subscription.
+/// Create a low-level live event stream.
 ///
 /// * `sql` — the SELECT query to subscribe to.
 /// * `config` — optional advanced configuration (batch size, etc.).
 ///
-/// Returns an opaque [`DartSubscription`] handle.  Use
-/// [`dart_subscription_next`] to pull events and
-/// [`dart_subscription_close`] to tear down.
-Future<DartSubscription> dartSubscribe(
+/// Returns an opaque [`DartLiveEventsSubscription`] handle. Use
+/// [`dart_live_events_next`] to pull events and
+/// [`dart_live_events_close`] to tear down.
+Future<DartLiveEventsSubscription> dartLiveEventsSubscribe(
         {required DartKalamClient client,
         required String sql,
         DartSubscriptionConfig? config}) =>
-    RustLib.instance.api
-        .crateApiDartSubscribe(client: client, sql: sql, config: config);
+    RustLib.instance.api.crateApiDartLiveEventsSubscribe(
+        client: client, sql: sql, config: config);
 
 /// Pull the next change event from a subscription.
 ///
 /// Returns `None` when the subscription has ended (server closed or
-/// [`dart_subscription_close`] was called).
-Future<DartChangeEvent?> dartSubscriptionNext(
-        {required DartSubscription subscription}) =>
-    RustLib.instance.api
-        .crateApiDartSubscriptionNext(subscription: subscription);
+/// [`dart_live_events_close`] was called).
+Future<DartChangeEvent?> dartLiveEventsNext(
+        {required DartLiveEventsSubscription subscription}) =>
+    RustLib.instance.api.crateApiDartLiveEventsNext(subscription: subscription);
 
 /// Close a subscription and release server-side resources.
-Future<void> dartSubscriptionClose({required DartSubscription subscription}) =>
+Future<void> dartLiveEventsClose(
+        {required DartLiveEventsSubscription subscription}) =>
     RustLib.instance.api
-        .crateApiDartSubscriptionClose(subscription: subscription);
+        .crateApiDartLiveEventsClose(subscription: subscription);
 
 /// Get the server-assigned subscription ID.
-String dartSubscriptionId({required DartSubscription subscription}) =>
-    RustLib.instance.api.crateApiDartSubscriptionId(subscription: subscription);
+String dartLiveEventsId({required DartLiveEventsSubscription subscription}) =>
+    RustLib.instance.api.crateApiDartLiveEventsId(subscription: subscription);
 
 /// Create a materialized live-query subscription.
-Future<DartLiveRowsSubscription> dartLiveQueryRowsSubscribe(
+Future<DartLiveRowsSubscription> dartLiveSubscribe(
         {required DartKalamClient client,
         required String sql,
         DartSubscriptionConfig? config,
         DartLiveRowsConfig? liveConfig}) =>
-    RustLib.instance.api.crateApiDartLiveQueryRowsSubscribe(
+    RustLib.instance.api.crateApiDartLiveSubscribe(
         client: client, sql: sql, config: config, liveConfig: liveConfig);
 
 /// Pull the next materialized live-row event from a subscription.
-Future<DartLiveRowsEvent?> dartLiveQueryRowsNext(
+Future<DartLiveRowsEvent?> dartLiveNext(
         {required DartLiveRowsSubscription subscription}) =>
-    RustLib.instance.api
-        .crateApiDartLiveQueryRowsNext(subscription: subscription);
+    RustLib.instance.api.crateApiDartLiveNext(subscription: subscription);
 
 /// Close a materialized live-row subscription.
-Future<void> dartLiveQueryRowsClose(
-        {required DartLiveRowsSubscription subscription}) =>
-    RustLib.instance.api
-        .crateApiDartLiveQueryRowsClose(subscription: subscription);
+Future<void> dartLiveClose({required DartLiveRowsSubscription subscription}) =>
+    RustLib.instance.api.crateApiDartLiveClose(subscription: subscription);
 
 /// Get the server-assigned subscription ID for a live-row subscription.
-String dartLiveQueryRowsId({required DartLiveRowsSubscription subscription}) =>
-    RustLib.instance.api
-        .crateApiDartLiveQueryRowsId(subscription: subscription);
+String dartLiveId({required DartLiveRowsSubscription subscription}) =>
+    RustLib.instance.api.crateApiDartLiveId(subscription: subscription);
 
 /// List all active subscriptions on the shared connection.
 ///
@@ -235,8 +231,8 @@ Future<List<DartSubscriptionInfo>> dartListSubscriptions(
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartKalamClient>>
 abstract class DartKalamClient implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartLiveEventsSubscription>>
+abstract class DartLiveEventsSubscription implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartLiveRowsSubscription>>
 abstract class DartLiveRowsSubscription implements RustOpaqueInterface {}
-
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DartSubscription>>
-abstract class DartSubscription implements RustOpaqueInterface {}

@@ -136,12 +136,30 @@ async function runTests() {
       failed++;
     }
 
-    // Test subscribe method exists
-    if (typeof client.subscribe === 'function') {
-      console.log('  ✓ subscribe method exists');
+    // Test liveEvents method exists
+    if (typeof client.liveEvents === 'function') {
+      console.log('  ✓ liveEvents method exists');
       passed++;
     } else {
-      console.log('  ✗ subscribe method missing');
+      console.log('  ✗ liveEvents method missing');
+      failed++;
+    }
+
+    // Test live method exists
+    if (typeof client.live === 'function') {
+      console.log('  ✓ live method exists');
+      passed++;
+    } else {
+      console.log('  ✗ live method missing');
+      failed++;
+    }
+
+    // Test liveTable method exists
+    if (typeof client.liveTable === 'function') {
+      console.log('  ✓ liveTable method exists');
+      passed++;
+    } else {
+      console.log('  ✗ liveTable method missing');
       failed++;
     }
 

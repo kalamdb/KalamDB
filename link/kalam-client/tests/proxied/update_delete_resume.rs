@@ -57,7 +57,7 @@ async fn test_update_and_delete_events_resume_without_replay() {
         client.connect().await.expect("connect through proxy");
 
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("update-delete-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

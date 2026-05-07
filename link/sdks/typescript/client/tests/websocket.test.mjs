@@ -245,7 +245,7 @@ async function runTests() {
   
   try {
     // Subscribe to todos
-    todosSubId = await client.subscribe(TODOS_TABLE, (/** @type {string} */ msgStr) => {
+    todosSubId = await client.liveTable(TODOS_TABLE, null, (/** @type {string} */ msgStr) => {
       const msg = JSON.parse(msgStr);
       todosMessages.push(msg);
       log(`  📨 [TODOS] ${msg.type}: ${msg.rows?.length || 0} rows`);
@@ -253,7 +253,7 @@ async function runTests() {
     pass(`Subscribed to todos: ${todosSubId}`);
     
     // Subscribe to events (same WebSocket connection!)
-    eventsSubId = await client.subscribe(EVENTS_TABLE, (/** @type {string} */ msgStr) => {
+    eventsSubId = await client.liveTable(EVENTS_TABLE, null, (/** @type {string} */ msgStr) => {
       const msg = JSON.parse(msgStr);
       eventsMessages.push(msg);
       log(`  📨 [EVENTS] ${msg.type}: ${msg.rows?.length || 0} rows`);

@@ -135,7 +135,7 @@ async fn test_is_closed_flag_transitions() {
 
     let client = fast_client().expect("client should build");
     let cfg = SubscriptionConfig::new(unique_ident("sub_flag"), format!("SELECT * FROM {}", full));
-    let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
+    let mut sub = client.live_events_with_config(cfg).await.expect("subscribe should succeed");
 
     assert!(!sub.is_closed(), "should be open after subscribe()");
 
@@ -159,7 +159,7 @@ async fn test_close_is_idempotent() {
 
     let client = fast_client().expect("client should build");
     let cfg = SubscriptionConfig::new(unique_ident("sub_idem"), format!("SELECT * FROM {}", full));
-    let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
+    let mut sub = client.live_events_with_config(cfg).await.expect("subscribe should succeed");
 
     sub.close().await.expect("first close() should succeed");
     sub.close().await.expect("second close() should be a no-op");
@@ -183,7 +183,7 @@ async fn test_next_returns_none_after_close() {
     let client = fast_client().expect("client should build");
     let cfg =
         SubscriptionConfig::new(unique_ident("sub_nextnone"), format!("SELECT * FROM {}", full));
-    let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
+    let mut sub = client.live_events_with_config(cfg).await.expect("subscribe should succeed");
 
     sub.close().await.unwrap();
 
@@ -218,7 +218,7 @@ async fn test_explicit_close_removes_from_live() {
 
     let client = fast_client().expect("client should build");
     let cfg = SubscriptionConfig::new(unique_ident("sub_close"), query_sql.clone());
-    let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
+    let mut sub = client.live_events_with_config(cfg).await.expect("subscribe should succeed");
 
     // Wait for the subscription to register server-side
     let appeared = wait_live_query(&unique_comment, true, Duration::from_secs(5)).await;
@@ -262,7 +262,7 @@ async fn test_drop_without_close_removes_from_live() {
 
     let client = fast_client().expect("client should build");
     let cfg = SubscriptionConfig::new(unique_ident("sub_drop"), query_sql.clone());
-    let sub = client.subscribe_with_config(cfg).await.expect("subscribe should succeed");
+    let sub = client.live_events_with_config(cfg).await.expect("subscribe should succeed");
 
     // Wait for it to appear
     let appeared = wait_live_query(&unique_comment, true, Duration::from_secs(5)).await;

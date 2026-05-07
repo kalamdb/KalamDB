@@ -300,7 +300,7 @@ async fn test_multiple_filtered_subscriptions() {
     );
 
     let mut thinking_sub =
-        match timeout(TEST_TIMEOUT, client.subscribe_with_config(thinking_config)).await {
+        match timeout(TEST_TIMEOUT, client.live_events_with_config(thinking_config)).await {
             Ok(Ok(sub)) => sub,
             Ok(Err(e)) => {
                 cleanup_table(&table).await;
@@ -324,7 +324,7 @@ async fn test_multiple_filtered_subscriptions() {
     );
 
     let mut typing_sub =
-        match timeout(TEST_TIMEOUT, client.subscribe_with_config(typing_config)).await {
+        match timeout(TEST_TIMEOUT, client.live_events_with_config(typing_config)).await {
             Ok(Ok(sub)) => sub,
             Ok(Err(e)) => {
                 let _ = thinking_sub.close().await;
@@ -725,7 +725,8 @@ async fn test_unsubscribe_stops_changes() {
         format!("SELECT * FROM {} WHERE type = 'test'", table),
     );
 
-    let mut subscription = match timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await {
+    let mut subscription = match timeout(TEST_TIMEOUT, client.live_events_with_config(config)).await
+    {
         Ok(Ok(sub)) => sub,
         Ok(Err(e)) => {
             cleanup_table(&table).await;

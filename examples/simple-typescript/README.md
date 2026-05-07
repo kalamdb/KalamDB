@@ -228,7 +228,7 @@ vercel deploy dist
 
 ## License
 
-Same as KalamDB main project.
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../LICENSE.txt](../../LICENSE.txt) and [../../NOTICE](../../NOTICE).
 
 ## Contributing
 

@@ -94,7 +94,7 @@ async fn subscribe_with_retry(
 ) -> SubscriptionManager {
     let mut last_error: Option<String> = None;
     for attempt in 0..max_attempts {
-        let mut subscription = client.subscribe(query).await.expect("Failed to subscribe");
+        let mut subscription = client.live_events(query).await.expect("Failed to subscribe");
 
         if let Ok(Some(Ok(event))) =
             tokio::time::timeout(Duration::from_secs(5), subscription.next()).await
@@ -379,7 +379,7 @@ fn cluster_test_subscription_multi_node_identical() {
     cluster_runtime().block_on(async {
         // Create subscription on leader only (Spec 021: leader-only reads)
         let leader_client = create_ws_client(&leader_url);
-        let mut subscription = leader_client.subscribe(&query).await.expect("Failed to subscribe");
+        let mut subscription = leader_client.live_events(&query).await.expect("Failed to subscribe");
         let received_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         // Insert multiple rows on leader
@@ -609,7 +609,7 @@ fn cluster_test_subscription_user_table_any_node() {
             .expect("Failed to build client");
 
             let query = format!("SELECT * FROM {}", full);
-            match client.subscribe(&query).await {
+            match client.live_events(&query).await {
                 Ok(_sub) => {
                     println!("  ✓ Node {} accepts user table subscription", idx);
                 },

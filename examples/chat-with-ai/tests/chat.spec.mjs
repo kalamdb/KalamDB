@@ -15,6 +15,14 @@ const adminPassword = 'kalamdb123';
 let agentProcess;
 const testGroup = `chat-demo-test-${Date.now()}`;
 
+function appendNodeOption(existing, flag) {
+  if (!existing) {
+    return flag;
+  }
+
+  return existing.split(/\s+/).includes(flag) ? existing : `${existing} ${flag}`;
+}
+
 async function login(user, password) {
   const response = await fetch(`${serverUrl}/v1/api/auth/login`, {
     method: 'POST',
@@ -334,6 +342,7 @@ test.beforeAll(async () => {
       ...process.env,
       KALAMDB_GROUP: testGroup,
       KALAMDB_START: 'latest',
+      NODE_OPTIONS: appendNodeOption(process.env.NODE_OPTIONS, '--preserve-symlinks'),
     },
   });
 
@@ -584,10 +593,10 @@ test('subscription can disconnect and resume from the saved checkpoint without r
   let resumedUnsubscribe;
 
   try {
-    initialUnsubscribe = await client.subscribeWithSql(
+    initialUnsubscribe = await client.liveEvents(
       sql,
       (event) => preEvents.push(event),
-      { last_rows: 0 },
+      { lastRows: 0 },
     );
 
     await waitFor(
@@ -614,10 +623,10 @@ test('subscription can disconnect and resume from the saved checkpoint without r
 
     await insertAssistantMessages(resumeRoom, [gapContent]);
 
-    resumedUnsubscribe = await client.subscribeWithSql(
+    resumedUnsubscribe = await client.liveEvents(
       sql,
       (event) => resumedEvents.push(event),
-      { from: checkpoint, last_rows: 0 },
+      { from: checkpoint, lastRows: 0 },
     );
 
     expect(client.isConnected()).toBe(true);

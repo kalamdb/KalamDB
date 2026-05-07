@@ -38,7 +38,7 @@ async fn test_shared_connection_auto_reconnects_after_socket_drop_and_resumes() 
     client.connect().await.expect("connect should succeed through proxy");
 
     let mut sub = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("socket-drop-sub-{}", suffix),
             format!("SELECT id, value FROM {}", table),
         ))

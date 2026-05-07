@@ -50,6 +50,7 @@ pub(crate) enum WasmLiveRowsEvent {
     Rows {
         subscription_id: String,
         rows: Vec<crate::models::RowData>,
+        last_seq_id: Option<SeqId>,
     },
     Error {
         subscription_id: String,
@@ -121,9 +122,11 @@ pub(crate) fn callback_payload(
                 crate::subscription::LiveRowsEvent::Rows {
                     subscription_id,
                     rows,
+                    last_seq_id,
                 } => WasmLiveRowsEvent::Rows {
                     subscription_id,
                     rows,
+                    last_seq_id,
                 },
                 crate::subscription::LiveRowsEvent::Error {
                     subscription_id,

@@ -434,6 +434,24 @@ final class SubscriptionError extends ChangeEvent {
   String toString() => 'SubscriptionError($code): $message';
 }
 
+/// Checkpoint emitted after a live stream advances.
+class LiveCheckpoint {
+  /// Subscription ID assigned when opening the live stream.
+  final String subscriptionId;
+
+  /// Last fully applied sequence ID for this event or materialized snapshot.
+  final SeqId lastSeqId;
+
+  const LiveCheckpoint({
+    required this.subscriptionId,
+    required this.lastSeqId,
+  });
+
+  @override
+  String toString() =>
+      'LiveCheckpoint(subscriptionId: $subscriptionId, lastSeqId: $lastSeqId)';
+}
+
 // ---------------------------------------------------------------------------
 // Subscription info (listing)
 // ---------------------------------------------------------------------------
