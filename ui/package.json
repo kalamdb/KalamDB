@@ -8,7 +8,7 @@
   "scripts": {
     "build:sdk": "cd ../link/sdks/typescript/client && npm install && npm run build",
     "build:orm": "cd ../link/sdks/typescript/orm && npm install && npm run build && node -e \"const fs=require('fs');for(const p of ['node_modules/drizzle-orm','node_modules/@kalamdb/client']){try{fs.rmSync(p,{recursive:true,force:true})}catch{}}\"",
-    "build:react": "cd ../link/sdks/typescript/react && npm install && npm run build",
+    "build:react": "cd ../link/sdks/typescript/react-old && npm install && npm run build",
     "generate:schema": "npm run build:sdk && npm run build:orm && node ../link/sdks/typescript/orm/dist/cli.js --out src/lib/schema.ts --namespace system --namespace dba",
     "clean": "node -e \"const fs=require('fs');const rm=(p)=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('node_modules/.vite');rm('dist')\"",
     "clean:all": "node -e \"const fs=require('fs');const rm=(p)=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}};rm('node_modules/.vite');rm('dist');rm('node_modules/@kalam')\"",
@@ -27,7 +27,7 @@
   "dependencies": {
     "@kalamdb/client": "file:../link/sdks/typescript/client",
     "@kalamdb/orm": "file:../link/sdks/typescript/orm",
-    "@kalamdb/react": "file:../link/sdks/typescript/react",
+    "@kalamdb/react": "file:../link/sdks/typescript/react-old",
     "@monaco-editor/react": "^4.7.0",
     "@reduxjs/toolkit": "^2.11.2",
     "@tailwindcss/postcss": "^4.2.4",

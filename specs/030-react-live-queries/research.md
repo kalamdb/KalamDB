@@ -2,7 +2,7 @@
 
 ## Decision: Add `@kalamdb/react` as a sibling SDK package under `link/sdks/typescript/`
 
-- **Decision**: Create a new package at `link/sdks/typescript/react` with its own `package.json`, `tsconfig.json`, `README.md`, `src/`, and `tests/`, following the same publish/build layout used by `client/`, `orm/`, and `consumer/`.
+- **Decision**: Create a new package at `link/sdks/typescript/react-old` with its own `package.json`, `tsconfig.json`, `README.md`, `src/`, and `tests/`, following the same publish/build layout used by `client/`, `orm/`, and `consumer/`.
 - **Rationale**: The repo already organizes TypeScript deliverables as independent npm packages. A sibling package keeps React-specific dependencies and test tooling out of the shared client and preserves a clean public surface for framework bindings.
 - **Alternatives considered**:
   - Put React exports inside `@kalamdb/client`: rejected because it would force React dependencies into the shared client and make future Angular/Vue packaging harder.

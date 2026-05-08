@@ -17,7 +17,7 @@ Create a new `@kalamdb/react` package that exposes declarative `LiveQuery` and `
 **Project Type**: TypeScript SDK library package with React bindings plus Admin UI integration  
 **Performance Goals**: First live render completes after one initial fetch plus one live-subscription handshake; committed row changes surface in the UI within the 2-second spec target; multi-query screens reuse the existing client instead of creating duplicate connections; high-churn assistant datasets such as typing and presence do not require effect-driven mirror state  
 **Constraints**: Direct live SQL currently supports only `SELECT ... FROM ... WHERE ...`; `ORDER BY` and `LIMIT` must be reapplied client-side; max 100 subscriptions per connection; initial live snapshot ceiling is 10,000 rows; shared logic must stay UI-agnostic inside `@kalamdb/client`; React surface should prefer hook-first composition and provider-based wiring for complex screens; SDK changes must update repo docs and KalamSite docs  
-**Scale/Scope**: One new `link/sdks/typescript/react` package, shared client live-controller additions, optional ORM descriptor helpers, docs/examples including an assistant workflow, one Admin UI consumer path, and one standalone `examples/react-ai-chat` validation app; initial multi-query release is typed-query only
+**Scale/Scope**: One new `link/sdks/typescript/react-old` package, shared client live-controller additions, optional ORM descriptor helpers, docs/examples including an assistant workflow, one Admin UI consumer path, and one standalone `examples/react-ai-chat` validation app; initial multi-query release is typed-query only
 
 ## Constitution Check
 

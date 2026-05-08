@@ -61,7 +61,7 @@ export default defineConfig(({ mode }) => {
         ),
         "@kalamdb/react": path.resolve(
           __dirname,
-          "../link/sdks/typescript/react/dist/index.js",
+          "../link/sdks/typescript/react-old/dist/index.js",
         ),
       },
     },
@@ -83,7 +83,7 @@ export default defineConfig(({ mode }) => {
           path.resolve(__dirname, "."),
           path.resolve(__dirname, "../link/sdks/typescript/client"),
           path.resolve(__dirname, "../link/sdks/typescript/orm"),
-          path.resolve(__dirname, "../link/sdks/typescript/react"),
+          path.resolve(__dirname, "../link/sdks/typescript/react-old"),
         ],
       },
       // Disable caching for WASM and SDK files

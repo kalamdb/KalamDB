@@ -223,6 +223,14 @@ jobs:
           npm install --legacy-peer-deps
           npm run build
 
+      - name: Build React SDK (@kalamdb/react)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript/react-old
+          npm install
+          npm run build
+
       - name: Install Admin UI dependencies
         shell: bash
         run: |

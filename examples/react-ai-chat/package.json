@@ -23,7 +23,7 @@
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
-    "@kalamdb/react": "file:../../link/sdks/typescript/react",
+    "@kalamdb/react": "file:../../link/sdks/typescript/react-old",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.14.0",

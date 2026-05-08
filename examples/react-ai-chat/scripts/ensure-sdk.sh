@@ -13,4 +13,4 @@ ensure_package() {
 
 ensure_package "link/sdks/typescript/client" "build:ts"
 ensure_package "link/sdks/typescript/orm" "build"
-ensure_package "link/sdks/typescript/react" "build"
+ensure_package "link/sdks/typescript/react-old" "build"
