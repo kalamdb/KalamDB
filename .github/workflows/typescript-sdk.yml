@@ -2,18 +2,7 @@ name: TypeScript SDK
 
 on:
   push:
-    branches: [main, dev]
-    paths:
-      - 'link/sdks/typescript/**'
-      - 'link/kalam-client/**'
-      - 'link/kalam-consumer-wasm/**'
-      - 'link/link-common/**'
-      - 'backend/server.example.toml'
-      - 'scripts/test-typescript-sdk-release.sh'
-      - 'versions.json'
-      - 'scripts/versions.py'
-      - '.github/workflows/typescript-sdk.yml'
-  pull_request:
+    branches: [main]
     paths:
       - 'link/sdks/typescript/**'
       - 'link/kalam-client/**'
@@ -65,6 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       typescript_version: ${{ steps.versions.outputs.typescript_version }}
+      latest_server_release_tag: ${{ steps.latest_server.outputs.release_tag }}
+      latest_server_asset_name: ${{ steps.latest_server.outputs.asset_name }}
+      latest_server_asset_api_url: ${{ steps.latest_server.outputs.asset_api_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -87,19 +79,102 @@ jobs:
           set -euo pipefail
           python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
 
-  test:
-    name: TypeScript SDK Tests
+      - name: Resolve latest released server asset
+        id: latest_server
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20"
+          RELEASES_JSON="$(curl -fsS \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL")"
+
+          RELEASES_JSON="$RELEASES_JSON" python3 <<'PYTHON'
+          import json
+          import os
+          import re
+          import sys
+
+          releases = json.loads(os.environ["RELEASES_JSON"])
+          asset_pattern = re.compile(r"^kalamdb-server-.*-linux-x86_64\.tar\.gz$")
+
+          for release in releases:
+              if release.get("draft"):
+                  continue
+
+              for asset in release.get("assets", []):
+                  name = asset.get("name", "")
+                  if asset_pattern.match(name):
+                      with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                          handle.write(f"release_tag={release['tag_name']}\n")
+                          handle.write(f"asset_name={name}\n")
+                          handle.write(f"asset_api_url={asset['url']}\n")
+                      sys.exit(0)
+
+          raise SystemExit("No released linux x86_64 kalamdb-server asset found in the latest GitHub releases.")
+          PYTHON
+
+  download_release_server_binary:
+    name: Download Latest Released SDK Server Binary
     runs-on: ubuntu-latest
     needs: resolve_versions
-    outputs:
-      total: ${{ steps.parse_badge.outputs.total }}
-      passed: ${{ steps.parse_badge.outputs.passed }}
-      failed: ${{ steps.parse_badge.outputs.failed }}
-      message: ${{ steps.parse_badge.outputs.message }}
-      color: ${{ steps.parse_badge.outputs.color }}
+    steps:
+      - name: Download latest release server asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ASSET_NAME="${{ needs.resolve_versions.outputs.latest_server_asset_name }}"
+          ASSET_API_URL="${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}"
+          mkdir -p release-server dist
+
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            -o "dist/${ASSET_NAME}" \
+            "$ASSET_API_URL"
+
+          tar -xzf "dist/${ASSET_NAME}" -C release-server
+          EXTRACTED_BIN="$(find release-server -maxdepth 1 -type f -name 'kalamdb-server-*linux-x86_64' | head -n1)"
+          if [[ -z "$EXTRACTED_BIN" ]]; then
+            echo "Failed to locate kalamdb-server binary in ${ASSET_NAME}" >&2
+            exit 1
+          fi
+          chmod +x "$EXTRACTED_BIN"
+          mv "$EXTRACTED_BIN" release-server/kalamdb-server
+          echo "Using latest released SDK server from ${{ needs.resolve_versions.outputs.latest_server_release_tag }}"
+
+      - name: Upload SDK test server binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: release-server/kalamdb-server
+          if-no-files-found: error
+
+  test_packages:
+    name: TypeScript SDK Tests (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_versions
+      - download_release_server_binary
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [client, consumer, orm]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Download server binary
+        uses: actions/download-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: .
 
       - name: Install system dependencies
         shell: bash
@@ -132,14 +207,14 @@ jobs:
           cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
           wasm-pack --version
 
-      - name: Build local SDK test server binary
+      - name: Prepare server binary
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --manifest-path backend/Cargo.toml --bin kalamdb-server
-          chmod +x backend/target/debug/kalamdb-server
+          chmod +x ./kalamdb-server
+          echo "SDK test source: latest-release"
 
-      - name: Run TypeScript client, consumer, and ORM npm package tests
+      - name: Run TypeScript SDK package tests
         id: run_tests
         continue-on-error: true
         shell: bash
@@ -148,32 +223,79 @@ jobs:
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
-          KALAMDB_SERVER_BIN: ${{ github.workspace }}/backend/target/debug/kalamdb-server
-          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-server.log
-          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output.txt
+          KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
+          TS_SDK_PACKAGES: ${{ matrix.package }}
+          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.package }}-server.log
+          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output-${{ matrix.package }}.txt
         run: |
           set -euo pipefail
           ./scripts/test-typescript-sdk-release.sh
 
-      - name: Verify TypeScript npm package test coverage
+      - name: Verify TypeScript package test coverage
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          output="ts-sdk-test-output.txt"
-          for package in client consumer orm; do
-            if ! grep -q "Running @kalamdb/${package} tests" "$output"; then
-              echo "Missing @kalamdb/${package} npm package test run in ${output}" >&2
-              exit 1
-            fi
-          done
+          output="ts-sdk-test-output-${{ matrix.package }}.txt"
+          if ! grep -q "Running @kalamdb/${{ matrix.package }} tests" "$output"; then
+            echo "Missing @kalamdb/${{ matrix.package }} npm package test run in ${output}" >&2
+            exit 1
+          fi
+
+      - name: Print TypeScript SDK server log
+        if: always()
+        shell: bash
+        run: |
+          echo "=== TypeScript SDK server log ==="
+          cat "ts-sdk-${{ matrix.package }}-server.log" || true
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ts-sdk-server-log-${{ matrix.package }}
+          path: ts-sdk-${{ matrix.package }}-server.log
+          if-no-files-found: ignore
+
+      - name: Upload TypeScript SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ts-sdk-test-output-${{ matrix.package }}
+          path: ts-sdk-test-output-${{ matrix.package }}.txt
+          if-no-files-found: ignore
+
+      - name: Fail if TypeScript SDK tests failed
+        if: always() && steps.run_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "TypeScript SDK tests failed for ${{ matrix.package }}" >&2
+          exit 1
+
+  summarize_tests:
+    name: Summarize TypeScript SDK Tests
+    runs-on: ubuntu-latest
+    needs: test_packages
+    if: ${{ always() && needs.test_packages.result != 'cancelled' }}
+    outputs:
+      total: ${{ steps.parse_badge.outputs.total }}
+      passed: ${{ steps.parse_badge.outputs.passed }}
+      failed: ${{ steps.parse_badge.outputs.failed }}
+      message: ${{ steps.parse_badge.outputs.message }}
+      color: ${{ steps.parse_badge.outputs.color }}
+    steps:
+      - name: Download TypeScript SDK test outputs
+        uses: actions/download-artifact@v6
+        with:
+          pattern: ts-sdk-test-output-*
+          path: ts-sdk-test-artifacts
+          merge-multiple: true
 
       - name: Parse TypeScript SDK test counts
-        if: always()
         id: parse_badge
         shell: bash
         env:
-          STEP_OUTCOME: ${{ steps.run_tests.outcome }}
+          JOB_RESULT: ${{ needs.test_packages.result }}
         run: |
           set -euo pipefail
           python3 <<'PYTHON'
@@ -181,15 +303,28 @@ jobs:
           import re
           from pathlib import Path
 
-          output_path = Path("ts-sdk-test-output.txt")
-          text = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
+          artifacts_dir = Path("ts-sdk-test-artifacts")
+          expected_packages = {"client", "consumer", "orm"}
+          found_packages = set()
+          total = 0
+          passed = 0
+          failed = 0
 
-          total = sum(int(value) for value in re.findall(r"^(?:#|ℹ) tests (\d+)$", text, flags=re.MULTILINE))
-          passed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) pass (\d+)$", text, flags=re.MULTILINE))
-          failed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) fail (\d+)$", text, flags=re.MULTILINE))
-          outcome = os.environ.get("STEP_OUTCOME", "failure")
+          for output_path in artifacts_dir.glob("ts-sdk-test-output-*.txt"):
+              package = output_path.stem.removeprefix("ts-sdk-test-output-")
+              found_packages.add(package)
+              text = output_path.read_text(encoding="utf-8", errors="replace")
+              total += sum(int(value) for value in re.findall(r"^(?:#|ℹ) tests (\d+)$", text, flags=re.MULTILINE))
+              passed += sum(int(value) for value in re.findall(r"^(?:#|ℹ) pass (\d+)$", text, flags=re.MULTILINE))
+              failed += sum(int(value) for value in re.findall(r"^(?:#|ℹ) fail (\d+)$", text, flags=re.MULTILINE))
 
-          if total == 0 and outcome == "success":
+          missing_packages = sorted(expected_packages - found_packages)
+          outcome = os.environ.get("JOB_RESULT", "failure")
+
+          if missing_packages:
+              message = f"missing outputs: {', '.join(missing_packages)}"
+              color = "red"
+          elif total == 0 and outcome == "success":
               message = "passed"
               color = "brightgreen"
           elif total == 0:
@@ -207,41 +342,11 @@ jobs:
               handle.write(f"color={color}\n")
           PYTHON
 
-      - name: Print TypeScript SDK server log
-        if: always()
-        shell: bash
-        run: |
-          echo "=== TypeScript SDK server log ==="
-          cat ts-sdk-server.log || true
-
-      - name: Upload server log
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: ts-sdk-server-log
-          path: ts-sdk-server.log
-          if-no-files-found: ignore
-
-      - name: Upload TypeScript SDK test output
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: ts-sdk-test-output
-          path: ts-sdk-test-output.txt
-          if-no-files-found: ignore
-
-      - name: Fail if TypeScript SDK tests failed
-        if: always() && steps.run_tests.outcome != 'success'
-        shell: bash
-        run: |
-          echo "TypeScript SDK tests failed" >&2
-          exit 1
-
   update_badge:
     name: Update TypeScript SDK Badge
     runs-on: ubuntu-latest
-    needs: test
-    if: ${{ always() && github.ref == 'refs/heads/main' && needs.test.result != 'cancelled' }}
+    needs: summarize_tests
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.summarize_tests.result != 'cancelled' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -260,9 +365,9 @@ jobs:
             cat > .github/badges/sdk-typescript-tests.json <<EOF
           {
             "schemaVersion": 1,
-            "label": "typescript sdk tests (${{ needs.test.outputs.total }})",
-            "message": "${{ needs.test.outputs.message }}",
-            "color": "${{ needs.test.outputs.color }}"
+            "label": "typescript sdk tests (${{ needs.summarize_tests.outputs.total }})",
+            "message": "${{ needs.summarize_tests.outputs.message }}",
+            "color": "${{ needs.summarize_tests.outputs.color }}"
           }
           EOF
           }
@@ -296,7 +401,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_versions
-      - test
+      - test_packages
     if: ${{ inputs.publish }}
     steps:
       - name: Checkout

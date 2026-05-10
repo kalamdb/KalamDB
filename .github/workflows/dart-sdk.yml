@@ -2,16 +2,7 @@ name: Dart SDK
 
 on:
   push:
-    branches: [main, dev]
-    paths:
-      - 'link/sdks/dart/**'
-      - 'link/kalam-link-dart/**'
-      - 'link/link-common/**'
-      - 'backend/server.example.toml'
-      - 'versions.json'
-      - 'scripts/versions.py'
-      - '.github/workflows/dart-sdk.yml'
-  pull_request:
+    branches: [main]
     paths:
       - 'link/sdks/dart/**'
       - 'link/kalam-link-dart/**'
@@ -50,6 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       dart_version: ${{ steps.versions.outputs.dart_version }}
+      latest_server_release_tag: ${{ steps.latest_server.outputs.release_tag }}
+      latest_server_asset_name: ${{ steps.latest_server.outputs.asset_name }}
+      latest_server_asset_api_url: ${{ steps.latest_server.outputs.asset_api_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -72,10 +66,89 @@ jobs:
           set -euo pipefail
           python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
 
+      - name: Resolve latest released server asset
+        id: latest_server
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20"
+          RELEASES_JSON="$(curl -fsS \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL")"
+
+          RELEASES_JSON="$RELEASES_JSON" python3 <<'PYTHON'
+          import json
+          import os
+          import re
+          import sys
+
+          releases = json.loads(os.environ["RELEASES_JSON"])
+          asset_pattern = re.compile(r"^kalamdb-server-.*-linux-x86_64\.tar\.gz$")
+
+          for release in releases:
+              if release.get("draft"):
+                  continue
+
+              for asset in release.get("assets", []):
+                  name = asset.get("name", "")
+                  if asset_pattern.match(name):
+                      with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                          handle.write(f"release_tag={release['tag_name']}\n")
+                          handle.write(f"asset_name={name}\n")
+                          handle.write(f"asset_api_url={asset['url']}\n")
+                      sys.exit(0)
+
+          raise SystemExit("No released linux x86_64 kalamdb-server asset found in the latest GitHub releases.")
+          PYTHON
+
+  download_release_server_binary:
+    name: Download Latest Released SDK Server Binary
+    runs-on: ubuntu-latest
+    needs: resolve_versions
+    steps:
+      - name: Download latest release server asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ASSET_NAME="${{ needs.resolve_versions.outputs.latest_server_asset_name }}"
+          ASSET_API_URL="${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}"
+          mkdir -p release-server dist
+
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            -o "dist/${ASSET_NAME}" \
+            "$ASSET_API_URL"
+
+          tar -xzf "dist/${ASSET_NAME}" -C release-server
+          EXTRACTED_BIN="$(find release-server -maxdepth 1 -type f -name 'kalamdb-server-*linux-x86_64' | head -n1)"
+          if [[ -z "$EXTRACTED_BIN" ]]; then
+            echo "Failed to locate kalamdb-server binary in ${ASSET_NAME}" >&2
+            exit 1
+          fi
+          chmod +x "$EXTRACTED_BIN"
+          mv "$EXTRACTED_BIN" release-server/kalamdb-server
+          echo "Using latest released SDK server from ${{ needs.resolve_versions.outputs.latest_server_release_tag }}"
+
+      - name: Upload SDK test server binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: release-server/kalamdb-server
+          if-no-files-found: error
+
   test:
     name: Dart SDK Tests
     runs-on: ubuntu-latest
-    needs: resolve_versions
+    needs:
+      - resolve_versions
+      - download_release_server_binary
     outputs:
       total: ${{ steps.parse_badge.outputs.total }}
       passed: ${{ steps.parse_badge.outputs.passed }}
@@ -85,6 +158,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Download server binary
+        uses: actions/download-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: .
 
       - name: Install system dependencies
         shell: bash
@@ -110,12 +189,12 @@ jobs:
         with:
           channel: stable
 
-      - name: Build local SDK test server binary
+      - name: Prepare server binary
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --manifest-path backend/Cargo.toml --bin kalamdb-server
-          chmod +x backend/target/debug/kalamdb-server
+          chmod +x ./kalamdb-server
+          echo "SDK test source: latest-release"
 
       - name: Start SDK test server
         shell: bash
@@ -126,7 +205,7 @@ jobs:
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
-          ./backend/target/debug/kalamdb-server server.toml > dart-sdk-server.log 2>&1 &
+          ./kalamdb-server server.toml > dart-sdk-server.log 2>&1 &
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..120}; do
