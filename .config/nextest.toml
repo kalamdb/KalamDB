@@ -25,8 +25,9 @@ test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
 filter = 'test(autocommit_read_write_latency_regression_stays_within_five_percent)'
-# This perf regression compares two nearly identical code paths and should run in isolation.
-test-group = "stateful-heavy"
+# This perf regression compares two nearly identical code paths and needs full
+# scheduler isolation from unrelated tests to avoid runner-noise false positives.
+threads-required = 15
 
 [[profile.default.overrides]]
 filter = 'test(e2e_perf_sequential_insert_100)'

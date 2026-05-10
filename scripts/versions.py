@@ -21,23 +21,78 @@ PROTOCOL = "v1"
 DEV_CHANNEL_CORE = "main"
 DEV_CHANNEL_STABILITY = "dev"
 
-DOCS_ARCHIVED_VERSIONS: dict[str, tuple[dict[str, str], ...]] = {
-    "server": (
-        {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
-        {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
-    ),
-    "pg-extension": (
-        {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
-    ),
-    "typescript-sdk": (
-        {"slug": "0-4-2-rc-1", "label": "0.4.2-rc.1"},
-        {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
-        {"slug": "0-4-x", "label": "0.4.x"},
-    ),
-    "dart-sdk": (
-        {"slug": "0-4-1-beta-2", "label": "0.4.1-beta.2"},
-    ),
+DOCS_VERSIONED_SECTIONS: dict[str, dict[str, Any]] = {
+    "server": {
+        "folder_name": "server",
+        "root_href": "/docs/server",
+        "current_core_component": "server",
+        "archived": (
+            {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
+            {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
+        ),
+    },
+    "pg-extension": {
+        "folder_name": "pg-kalam",
+        "legacy_folder_name": "postgres-extension",
+        "root_href": "/docs/pg-kalam",
+        "legacy_root_hrefs": ("/docs/postgres-extension",),
+        "current_core_component": "pg_extension",
+        "archived": (
+            {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
+        ),
+    },
+    "typescript-sdk": {
+        "folder_name": "ts-sdk",
+        "root_href": "/docs/ts-sdk",
+        "legacy_root_hrefs": ("/docs/sdk/typescript",),
+        "legacy_sdk_child_name": "typescript",
+        "current_packages": (
+            {"source_group": "typescript", "package_name": "@kalamdb/client"},
+            {"source_group": "typescript", "package_name": "@kalamdb/consumer"},
+            {"source_group": "typescript", "package_name": "@kalamdb/orm"},
+        ),
+        "archived": (
+            {"slug": "0-4-2-rc-1", "label": "0.4.2-rc.1"},
+            {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
+            {"slug": "0-4-x", "label": "0.4.x"},
+        ),
+    },
+    "dart-sdk": {
+        "folder_name": "dart-sdk",
+        "root_href": "/docs/dart-sdk",
+        "legacy_root_hrefs": ("/docs/sdk/dart",),
+        "legacy_sdk_child_name": "dart",
+        "current_packages": (
+            {"source_group": "dart", "package_name": "kalam_link"},
+        ),
+        "archived": (
+            {"slug": "0-4-1-beta-2", "label": "0.4.1-beta.2"},
+        ),
+    },
 }
+
+DOCS_COMPATIBILITY_MATRIX: tuple[dict[str, Any], ...] = (
+    {
+        "sections": {
+            "server": "0-4-2-rc-3",
+            "pg-extension": "0-4-2-rc-3",
+            "typescript-sdk": "0-4-2-rc-1",
+            "dart-sdk": "0-4-1-beta-2",
+        },
+        "rust_sdk": "Beta source package",
+        "notes": "Recommended release-candidate pairing for 0.4.2 testing.",
+    },
+    {
+        "sections": {
+            "server": "0-4-1-beta",
+            "pg-extension": None,
+            "typescript-sdk": "0-4-1-beta",
+            "dart-sdk": "0-4-1-beta-2",
+        },
+        "rust_sdk": "Beta source package",
+        "notes": "Use for older beta applications that are not ready to move to 0.4.2 release candidates.",
+    },
+)
 
 WORKSPACE_CARGO = ROOT / "Cargo.toml"
 BACKEND_CARGO = ROOT / "backend" / "Cargo.toml"
@@ -202,14 +257,45 @@ def build_package_entry(version: str, compatible_core: str, depends_on: dict[str
 
 
 def build_docs_manifest() -> dict[str, Any]:
+    sections: dict[str, Any] = {}
+
+    for section_id, section in DOCS_VERSIONED_SECTIONS.items():
+        rendered_section: dict[str, Any] = {
+            "folder_name": section["folder_name"],
+            "root_href": section["root_href"],
+            "archived": [dict(entry) for entry in section["archived"]],
+        }
+
+        if "legacy_folder_name" in section:
+            rendered_section["legacy_folder_name"] = section["legacy_folder_name"]
+
+        if "legacy_root_hrefs" in section:
+            rendered_section["legacy_root_hrefs"] = list(section["legacy_root_hrefs"])
+
+        if "legacy_sdk_child_name" in section:
+            rendered_section["legacy_sdk_child_name"] = section["legacy_sdk_child_name"]
+
+        if "current_core_component" in section:
+            rendered_section["current_core_component"] = section["current_core_component"]
+
+        if "current_packages" in section:
+            rendered_section["current_packages"] = [
+                dict(entry) for entry in section["current_packages"]
+            ]
+
+        sections[section_id] = rendered_section
+
     return {
         "versioning": {
-            "sections": {
-                section_id: {
-                    "archived": [dict(entry) for entry in archived_versions],
+            "sections": sections,
+            "compatibility_matrix": [
+                {
+                    "sections": dict(row["sections"]),
+                    "rust_sdk": row["rust_sdk"],
+                    "notes": row["notes"],
                 }
-                for section_id, archived_versions in DOCS_ARCHIVED_VERSIONS.items()
-            }
+                for row in DOCS_COMPATIBILITY_MATRIX
+            ],
         }
     }
 
