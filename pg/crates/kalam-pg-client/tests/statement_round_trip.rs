@@ -140,26 +140,6 @@ impl OperationExecutor for NotLeaderExecutor {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Spin up a KalamPgService with the mock executor on the given port.
-async fn start_server(port: u16) {
-    start_server_with_executor("127.0.0.1", port, Arc::new(MockExecutor)).await;
-}
-
-async fn start_server_with_executor(host: &str, port: u16, executor: Arc<dyn OperationExecutor>) {
-    let bind_addr = format!("{host}:{port}").parse().expect("bind addr");
-    let service = KalamPgService::new(false, None).with_operation_executor(executor);
-
-    tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(PgServiceServer::new(service))
-            .serve(bind_addr)
-            .await
-            .expect("serve pg grpc");
-    });
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-}
-
 async fn start_server_with_executor_on_ephemeral_port(
     host: &str,
     executor: Arc<dyn OperationExecutor>,
@@ -206,7 +186,9 @@ async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
     (follower_rpc_port, leader_rpc_port)
 }
 
-async fn connect(port: u16) -> RemoteKalamClient {
+async fn start_mock_server_and_client() -> RemoteKalamClient {
+    let port = start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor))
+        .await;
     connect_to("127.0.0.1", port).await
 }
 
@@ -227,8 +209,7 @@ async fn connect_to(host: &str, port: u16) -> RemoteKalamClient {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn scan_returns_arrow_batches() {
-    start_server(59981).await;
-    let client = connect(59981).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -256,8 +237,7 @@ async fn scan_returns_arrow_batches() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn scan_with_projection_and_limit() {
-    start_server(59982).await;
-    let client = connect(59982).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -444,8 +424,7 @@ async fn rollback_transaction_follows_leader_redirect_hint() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn insert_single_row() {
-    start_server(59983).await;
-    let client = connect(59983).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -467,8 +446,7 @@ async fn insert_single_row() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn insert_multiple_rows() {
-    start_server(59984).await;
-    let client = connect(59984).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -494,8 +472,7 @@ async fn insert_multiple_rows() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn insert_with_user_id() {
-    start_server(59985).await;
-    let client = connect(59985).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -517,8 +494,7 @@ async fn insert_with_user_id() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn update_single_row() {
-    start_server(59986).await;
-    let client = connect(59986).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -541,8 +517,7 @@ async fn update_single_row() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn update_with_user_id() {
-    start_server(59987).await;
-    let client = connect(59987).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -565,8 +540,7 @@ async fn update_with_user_id() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn delete_single_row() {
-    start_server(59988).await;
-    let client = connect(59988).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -581,8 +555,7 @@ async fn delete_single_row() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn delete_with_user_id() {
-    start_server(59989).await;
-    let client = connect(59989).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -597,8 +570,7 @@ async fn delete_with_user_id() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn transaction_lifecycle_with_dml() {
-    start_server(59990).await;
-    let client = connect(59990).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
@@ -642,8 +614,7 @@ async fn transaction_lifecycle_with_dml() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn transaction_rollback() {
-    start_server(59991).await;
-    let client = connect(59991).await;
+    let client = start_mock_server_and_client().await;
 
     let session = client.open_session(None, Some("app")).await.expect("open session");
 
