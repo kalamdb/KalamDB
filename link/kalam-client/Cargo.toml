@@ -60,6 +60,11 @@ name = "test_subscription_cleanup"
 path = "tests/test_subscription_cleanup.rs"
 required-features = ["e2e-tests"]
 
+[[test]]
+name = "proxied"
+path = "tests/proxied.rs"
+required-features = ["e2e-tests"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tokio-netem = { workspace = true }

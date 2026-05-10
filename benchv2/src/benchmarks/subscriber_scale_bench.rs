@@ -427,7 +427,7 @@ impl Benchmark for SubscriberScaleBench {
                                 let sql = format!("SELECT * FROM {}.scale_sub", ns);
                                 let mut sub_config = SubscriptionConfig::without_initial_data(sub_name, sql);
                                 sub_config.ws_url = Some(target_ws_url.clone());
-                                link.subscribe_with_config(sub_config).await
+                                link.live_events_with_config(sub_config).await
                             }) => {
                                 match result {
                                     Ok(Ok(sub)) => Ok(sub),

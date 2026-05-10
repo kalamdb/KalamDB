@@ -239,7 +239,7 @@ impl Benchmark for ConnectionScaleBench {
                                         format!("SELECT * FROM {}.conn_scale", namespace),
                                     );
                                     sub_config.ws_url = Some(ws_target.clone());
-                                    link.subscribe_with_config(sub_config).await
+                                    link.live_events_with_config(sub_config).await
                                 }) => {
                                     match result {
                                         Ok(Ok(sub)) => Ok(sub),
@@ -1104,7 +1104,9 @@ async fn validate_ws_targets(
         cfg.ws_url = Some(target.clone());
 
         let probe = client.new_isolated_link_for_ws_url(Some(target))?;
-        let result = tokio::time::timeout(TARGET_VALIDATE_TIMEOUT, probe.subscribe_with_config(cfg)).await;
+        let result =
+            tokio::time::timeout(TARGET_VALIDATE_TIMEOUT, probe.live_events_with_config(cfg))
+                .await;
         match result {
             Ok(Ok(mut subscription)) => {
                 let _ = subscription.close().await;
