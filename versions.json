@@ -12,6 +12,56 @@
       "stability": "dev"
     }
   },
+  "docs": {
+    "versioning": {
+      "sections": {
+        "server": {
+          "archived": [
+            {
+              "slug": "0-4-2-rc-3",
+              "label": "0.4.2-rc.3"
+            },
+            {
+              "slug": "0-4-1-beta",
+              "label": "0.4.1-beta"
+            }
+          ]
+        },
+        "pg-extension": {
+          "archived": [
+            {
+              "slug": "0-4-2-rc-3",
+              "label": "0.4.2-rc.3"
+            }
+          ]
+        },
+        "typescript-sdk": {
+          "archived": [
+            {
+              "slug": "0-4-2-rc-1",
+              "label": "0.4.2-rc.1"
+            },
+            {
+              "slug": "0-4-1-beta",
+              "label": "0.4.1-beta"
+            },
+            {
+              "slug": "0-4-x",
+              "label": "0.4.x"
+            }
+          ]
+        },
+        "dart-sdk": {
+          "archived": [
+            {
+              "slug": "0-4-1-beta-2",
+              "label": "0.4.1-beta.2"
+            }
+          ]
+        }
+      }
+    }
+  },
   "archived": [],
   "packages": {
     "core_components": {

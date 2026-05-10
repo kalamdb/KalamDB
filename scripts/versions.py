@@ -21,6 +21,24 @@ PROTOCOL = "v1"
 DEV_CHANNEL_CORE = "main"
 DEV_CHANNEL_STABILITY = "dev"
 
+DOCS_ARCHIVED_VERSIONS: dict[str, tuple[dict[str, str], ...]] = {
+    "server": (
+        {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
+        {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
+    ),
+    "pg-extension": (
+        {"slug": "0-4-2-rc-3", "label": "0.4.2-rc.3"},
+    ),
+    "typescript-sdk": (
+        {"slug": "0-4-2-rc-1", "label": "0.4.2-rc.1"},
+        {"slug": "0-4-1-beta", "label": "0.4.1-beta"},
+        {"slug": "0-4-x", "label": "0.4.x"},
+    ),
+    "dart-sdk": (
+        {"slug": "0-4-1-beta-2", "label": "0.4.1-beta.2"},
+    ),
+}
+
 WORKSPACE_CARGO = ROOT / "Cargo.toml"
 BACKEND_CARGO = ROOT / "backend" / "Cargo.toml"
 CLI_CARGO = ROOT / "cli" / "Cargo.toml"
@@ -183,6 +201,19 @@ def build_package_entry(version: str, compatible_core: str, depends_on: dict[str
     return entry
 
 
+def build_docs_manifest() -> dict[str, Any]:
+    return {
+        "versioning": {
+            "sections": {
+                section_id: {
+                    "archived": [dict(entry) for entry in archived_versions],
+                }
+                for section_id, archived_versions in DOCS_ARCHIVED_VERSIONS.items()
+            }
+        }
+    }
+
+
 def append_archived_release(existing: dict[str, Any] | None, current_core_version: str) -> list[dict[str, Any]]:
     archived = list(existing.get("archived", [])) if existing else []
     previous_latest = (existing or {}).get("channels", {}).get("latest", {})
@@ -250,6 +281,7 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
                 "stability": DEV_CHANNEL_STABILITY,
             },
         },
+        "docs": build_docs_manifest(),
         "archived": append_archived_release(existing, core_version),
         "packages": {
             "core_components": {

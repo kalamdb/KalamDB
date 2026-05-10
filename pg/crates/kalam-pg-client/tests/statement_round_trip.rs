@@ -4,7 +4,7 @@
 //! a `RemoteKalamClient`, and exercises a full round-trip:
 //!     client → gRPC → KalamPgService → OperationExecutor → response → client
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use arrow::{
     array::{Array, Int64Array, StringArray},
@@ -19,6 +19,7 @@ use kalamdb_pg::{
     DeleteRequest, InsertRequest, KalamPgService, MutationResult, OperationExecutor,
     PgServiceServer, ScanRequest, ScanResult, UpdateRequest,
 };
+use tokio::net::TcpListener;
 use tonic::{Code, Status};
 
 // ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ async fn start_server(port: u16) {
 }
 
 async fn start_server_with_executor(host: &str, port: u16, executor: Arc<dyn OperationExecutor>) {
-    let bind_addr: SocketAddr = format!("{host}:{port}").parse().expect("bind addr");
+    let bind_addr = format!("{host}:{port}").parse().expect("bind addr");
     let service = KalamPgService::new(false, None).with_operation_executor(executor);
 
     tokio::spawn(async move {
@@ -157,6 +158,52 @@ async fn start_server_with_executor(host: &str, port: u16, executor: Arc<dyn Ope
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+async fn start_server_with_executor_on_ephemeral_port(
+    host: &str,
+    executor: Arc<dyn OperationExecutor>,
+) -> u16 {
+    let listener = TcpListener::bind(format!("{host}:0"))
+        .await
+        .expect("bind ephemeral port");
+    let port = listener.local_addr().expect("local addr").port();
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
+    let service = KalamPgService::new(false, None).with_operation_executor(executor);
+
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(PgServiceServer::new(service))
+            .serve_with_incoming(incoming)
+            .await
+            .expect("serve pg grpc");
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    port
+}
+
+fn leader_api_port_for_rpc_port(leader_rpc_port: u16) -> u16 {
+    leader_rpc_port
+        .checked_sub(1000)
+        .expect("ephemeral RPC port must support leader API mapping")
+}
+
+async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
+    let leader_rpc_port =
+        start_server_with_executor_on_ephemeral_port(host, Arc::new(MockExecutor)).await;
+    let leader_api_port = leader_api_port_for_rpc_port(leader_rpc_port);
+    let follower_rpc_port = start_server_with_executor_on_ephemeral_port(
+        host,
+        Arc::new(NotLeaderExecutor {
+            leader_api_addr: format!("http://{host}:{leader_api_port}"),
+            code,
+        }),
+    )
+    .await;
+
+    (follower_rpc_port, leader_rpc_port)
 }
 
 async fn connect(port: u16) -> RemoteKalamClient {
@@ -237,20 +284,8 @@ async fn scan_with_projection_and_limit() {
 #[ntest::timeout(10000)]
 async fn scan_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39081;
-    let leader_rpc_port = 39083;
-    let leader_api_port = 38083;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::Internal,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, _leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::Internal).await;
 
     let client = connect_to(host, follower_rpc_port).await;
     let session = client.open_session(None, Some("app")).await.expect("open session");
@@ -268,20 +303,8 @@ async fn scan_follows_leader_redirect_hint() {
 #[ntest::timeout(10000)]
 async fn execute_sql_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39181;
-    let leader_rpc_port = 39183;
-    let leader_api_port = 38183;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::Internal,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, _leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::Internal).await;
 
     let client = connect_to(host, follower_rpc_port).await;
     let session = client.open_session(None, Some("app")).await.expect("open session");
@@ -298,20 +321,8 @@ async fn execute_sql_follows_leader_redirect_hint() {
 #[ntest::timeout(10000)]
 async fn execute_query_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39281;
-    let leader_rpc_port = 39283;
-    let leader_api_port = 38283;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::Internal,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, _leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::Internal).await;
 
     let client = connect_to(host, follower_rpc_port).await;
     let session = client.open_session(None, Some("app")).await.expect("open session");
@@ -329,20 +340,8 @@ async fn execute_query_follows_leader_redirect_hint() {
 #[ntest::timeout(10000)]
 async fn insert_follows_leader_redirect_hint_from_failed_precondition() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39381;
-    let leader_rpc_port = 39383;
-    let leader_api_port = 38383;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::FailedPrecondition,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, _leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::FailedPrecondition).await;
 
     let client = connect_to(host, follower_rpc_port).await;
     let session = client.open_session(None, Some("app")).await.expect("open session");
@@ -366,20 +365,8 @@ async fn insert_follows_leader_redirect_hint_from_failed_precondition() {
 #[ntest::timeout(10000)]
 async fn begin_transaction_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39481;
-    let leader_rpc_port = 39483;
-    let leader_api_port = 38483;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::FailedPrecondition,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, _leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::FailedPrecondition).await;
 
     let client = connect_to(host, follower_rpc_port).await;
     let session = client.open_session(None, Some("app")).await.expect("open session");
@@ -396,20 +383,8 @@ async fn begin_transaction_follows_leader_redirect_hint() {
 #[ntest::timeout(10000)]
 async fn commit_transaction_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39581;
-    let leader_rpc_port = 39583;
-    let leader_api_port = 38583;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::FailedPrecondition,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::FailedPrecondition).await;
 
     let follower_client = connect_to(host, follower_rpc_port).await;
     let session = follower_client
@@ -439,20 +414,8 @@ async fn commit_transaction_follows_leader_redirect_hint() {
 #[ntest::timeout(10000)]
 async fn rollback_transaction_follows_leader_redirect_hint() {
     let host = "127.0.0.1";
-    let follower_rpc_port = 39681;
-    let leader_rpc_port = 39683;
-    let leader_api_port = 38683;
-
-    start_server_with_executor(
-        host,
-        follower_rpc_port,
-        Arc::new(NotLeaderExecutor {
-            leader_api_addr: format!("http://{host}:{leader_api_port}"),
-            code: Code::FailedPrecondition,
-        }),
-    )
-    .await;
-    start_server_with_executor(host, leader_rpc_port, Arc::new(MockExecutor)).await;
+    let (follower_rpc_port, leader_rpc_port) =
+        start_leader_redirect_servers(host, Code::FailedPrecondition).await;
 
     let follower_client = connect_to(host, follower_rpc_port).await;
     let session = follower_client
