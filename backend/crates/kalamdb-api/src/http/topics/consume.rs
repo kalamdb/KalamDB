@@ -59,7 +59,7 @@ pub async fn consume_handler(
     }
 
     let topic_id = &body.topic_id;
-    let group_id = &body.group_id;
+    let group_id = body.group_id.as_ref();
 
     // Verify topic exists
     let topics_provider = app_context.system_tables().topics();
@@ -82,19 +82,22 @@ pub async fn consume_handler(
 
     // Determine start offset based on position.
     //
-    // All positions first check the consumer group's committed offset.
-    // If a committed offset exists, we resume from there (last_acked + 1).
-    // The position only matters when no offset has been committed yet:
+    // Grouped reads first check the consumer group's committed offset. If a
+    // committed offset exists, we resume from there (last_acked + 1). The
+    // requested position only matters when no offset has been committed yet.
+    // Stateless reads do not check or create group state, so the requested
+    // position is honored on every call:
     //   - Earliest: start from offset 0 (replay all history)
     //   - Latest: start from high-water mark (last offset + 1)
     //   - Offset: start from the explicit offset
-    let committed_offset =
+    let committed_offset = group_id.and_then(|group_id| {
         topic_publisher.get_group_offsets(topic_id, group_id).ok().and_then(|offsets| {
             offsets
                 .iter()
                 .find(|o| o.partition_id == body.partition_id)
                 .map(|o| o.last_acked_offset + 1)
-        });
+        })
+    });
 
     let start_offset = match committed_offset {
         Some(committed) => committed,
@@ -118,14 +121,25 @@ pub async fn consume_handler(
         },
     };
 
-    // Fetch messages
-    let messages = match topic_publisher.fetch_messages_for_group(
-        topic_id,
-        group_id,
-        body.partition_id,
-        start_offset,
-        body.limit as usize,
-    ) {
+    // Fetch messages.
+    let messages_result = if let Some(group_id) = group_id {
+        topic_publisher.fetch_messages_for_group(
+            topic_id,
+            group_id,
+            body.partition_id,
+            start_offset,
+            body.limit as usize,
+        )
+    } else {
+        topic_publisher.fetch_messages(
+            topic_id,
+            body.partition_id,
+            start_offset,
+            body.limit as usize,
+        )
+    };
+
+    let messages = match messages_result {
         Ok(msgs) => msgs,
         Err(e) => {
             return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(

@@ -11,10 +11,11 @@ import {
 } from "@/store/apiSlice";
 import {
   buildConsumeSqlSnippet,
+  buildResetConsumerGroupSqlSnippet,
   buildTopicSqlSnippet,
 } from "@/features/streaming/sql";
 import { decodeTopicPayload } from "@/features/streaming/service";
-import type { PayloadDecodeMode, StreamingMessage } from "@/features/streaming/types";
+import type { ConsumeReadMode, PayloadDecodeMode, StreamingMessage } from "@/features/streaming/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CodeBlock } from "@/components/ui/code-block";
@@ -73,6 +74,7 @@ export default function StreamingTopicDetail() {
 
   const selectedTopic = useMemo(() => topics.find((topic) => topic.topicId === topicId) ?? null, [topics, topicId]);
 
+  const [readMode, setReadMode] = useState<ConsumeReadMode>("Inspect");
   const [groupId, setGroupId] = useState(`ui-debug-${user?.username ?? "admin"}`);
   const [partitionId, setPartitionId] = useState("0");
   const [startMode, setStartMode] = useState<"Latest" | "Earliest" | "Offset">("Latest");
@@ -115,7 +117,7 @@ export default function StreamingTopicDetail() {
 
     const batch = await consumeMessages({
       topicId,
-      groupId: groupId.trim() || "ui-debug-admin",
+      groupId: readMode === "Group" ? groupId.trim() || "ui-debug-admin" : undefined,
       partitionId: parsedPartitionId,
       startMode,
       offset: startMode === "Offset" ? parsedOffset : undefined,
@@ -211,17 +213,56 @@ export default function StreamingTopicDetail() {
                       state: {
                         prefillSql: buildConsumeSqlSnippet(
                           selectedTopic.topicId,
+                          null,
+                          startMode,
+                          Number(offsetValue),
+                          Number(limitValue) || 100,
+                        ),
+                        prefillTitle: `Inspect ${selectedTopic.topicId}`,
+                      },
+                    })
+                  }
+                >
+                  Open Inspect SQL
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    navigate("/sql", {
+                      state: {
+                        prefillSql: buildConsumeSqlSnippet(
+                          selectedTopic.topicId,
                           groupId.trim() || "ui-debug-admin",
                           startMode,
                           Number(offsetValue),
                           Number(limitValue) || 100,
                         ),
-                        prefillTitle: `Consume ${selectedTopic.topicId}`,
+                        prefillTitle: `Group consume ${selectedTopic.topicId}`,
                       },
                     })
                   }
                 >
-                  Open Consume SQL
+                  Open Group SQL
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    navigate("/sql", {
+                      state: {
+                        prefillSql: buildResetConsumerGroupSqlSnippet(
+                          selectedTopic.topicId,
+                          groupId.trim() || "ui-debug-admin",
+                          Number(partitionId) || 0,
+                          Number(offsetValue) || 0,
+                        ),
+                        prefillTitle: `Reset ${groupId.trim() || "ui-debug-admin"}`,
+                      },
+                    })
+                  }
+                >
+                  Open Reset SQL
                 </Button>
               </div>
             </CardContent>
@@ -233,9 +274,25 @@ export default function StreamingTopicDetail() {
               <CardDescription>Consume a bounded window from this topic for inspection</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-6">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Mode</p>
+                <Select value={readMode} onValueChange={(value) => setReadMode(value as ConsumeReadMode)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Inspect">Inspect</SelectItem>
+                    <SelectItem value="Group">Group</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1 md:col-span-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Group ID</p>
-                <Input value={groupId} onChange={(event) => setGroupId(event.target.value)} />
+                <Input
+                  value={groupId}
+                  onChange={(event) => setGroupId(event.target.value)}
+                  disabled={readMode !== "Group"}
+                />
               </div>
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Partition</p>
@@ -294,10 +351,11 @@ export default function StreamingTopicDetail() {
               </div>
               <div className="flex items-end md:col-span-2">
                 <Button onClick={() => void fetchMessages()} disabled={consumeState.isLoading}>
-                  {consumeState.isLoading ? "Consuming..." : "Consume"}
+                  {consumeState.isLoading ? "Fetching..." : readMode === "Group" ? "Consume" : "Inspect"}
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground md:col-span-6">
+                {readMode === "Group" ? "Group mode claims offsets for the selected group. " : "Inspect mode does not use a group cursor. "}
                 {lastFetchedAt ? `Last fetched: ${formatNullableTimestamp(lastFetchedAt)}` : "No messages fetched yet."}
                 {nextOffset !== null ? `  |  Next offset: ${nextOffset}` : ""}
                 {nextOffset !== null ? `  |  Has more: ${hasMore ? "yes" : "no"}` : ""}

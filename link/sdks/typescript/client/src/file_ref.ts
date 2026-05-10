@@ -11,15 +11,13 @@
  *
  * - **`FileRefData`** — mirrors the Rust struct (once WASM is rebuilt,
  *   re-export the auto-generated interface from `wasm/` instead).
- * - **`FileRef`** — thin TS class wrapping `FileRefData`, adds convenience
- *   methods (same logic as Rust `impl FileRef`).
+ * - **`FileRef`** — thin TS class wrapping `FileRefData`, with URL/path
+ *   helpers delegated to the Rust `link-common` implementation.
  * - **`BoundFileRef`** — TS-only: binds server/table context for no-arg URLs.
  * - **`KalamRow<T>`** — TS-only: generic typed row wrapper with `.file()`.
  *
- * The `FileRef` methods (`downloadUrl`, `isImage`, `formatSize`, etc.) mirror
- * the Rust impl.  They're kept in TS (not WASM calls) to avoid crossing the
- * WASM boundary for trivial string operations — each SDK implements them from
- * the same Rust reference.
+ * The URL, stored filename, and storage path helpers call the shared Rust
+ * implementation so the HTTP route shape only lives in one place.
  *
  * `KalamRow<T>` is inherently SDK-level because it uses TypeScript generics
  * that Rust FFI cannot express.
@@ -35,6 +33,12 @@
 // Note: lazy import pattern avoids circular dependency (cell_value.ts → file_ref.ts → cell_value.ts)
 
 import { KalamCellValue, wrapRowMap } from './cell_value.js';
+import {
+  fileRefDownloadUrl,
+  fileRefRelativePath,
+  fileRefRelativeUrl,
+  fileRefStoredName,
+} from '../wasm/kalam_client.js';
 import type { RowData } from './cell_value.js';
 
 /**
@@ -69,12 +73,27 @@ export interface FileRefData {
   shard?: number;
 }
 
+function isFileRefData(value: unknown): value is FileRefData {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.id === 'string'
+    && typeof candidate.sub === 'string'
+    && typeof candidate.name === 'string'
+    && typeof candidate.size === 'number'
+    && Number.isFinite(candidate.size)
+    && typeof candidate.mime === 'string'
+    && typeof candidate.sha256 === 'string'
+    && (candidate.shard === undefined || typeof candidate.shard === 'number');
+}
+
 /**
  * Type-safe FileRef class for working with FILE columns.
  *
- * Methods mirror the Rust `impl FileRef` in `link/link-common/src/models/file_ref.rs`.
- * Implemented in TypeScript to avoid per-call WASM boundary overhead for
- * trivial string operations — each SDK follows the same Rust reference.
+ * URL/path methods delegate to the Rust `impl FileRef` in
+ * `link/link-common/src/models/file_ref.rs`.
  */
 export class FileRef implements FileRefData {
   id: string;
@@ -113,9 +132,8 @@ export class FileRef implements FileRefData {
 
     try {
       const data = typeof json === 'string' ? JSON.parse(json) : json;
-      return new FileRef(data);
-    } catch (err) {
-      console.error('[FileRef] Failed to parse JSON:', err);
+      return isFileRefData(data) ? new FileRef(data) : null;
+    } catch {
       return null;
     }
   }
@@ -141,7 +159,7 @@ export class FileRef implements FileRefData {
       return FileRef.fromJson(value);
     }
 
-    if (typeof value === 'object' && value !== null) {
+    if (isFileRefData(value)) {
       return new FileRef(value as FileRefData);
     }
 
@@ -159,12 +177,11 @@ export class FileRef implements FileRefData {
    * @example
    * ```typescript
    * const url = fileRef.getDownloadUrl('http://localhost:8080', 'default', 'users');
-   * // Returns: http://localhost:8080/api/v1/files/default/users/f0001/12345
+   * // Returns: http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg
    * ```
    */
   getDownloadUrl(baseUrl: string, namespace: string, table: string): string {
-    const cleanUrl = baseUrl.replace(/\/$/, '');
-    return `${cleanUrl}/api/v1/files/${namespace}/${table}/${this.sub}/${this.id}`;
+    return fileRefDownloadUrl(this.toJson(), baseUrl, namespace, table);
   }
 
   /**
@@ -175,14 +192,7 @@ export class FileRef implements FileRefData {
    * @returns Stored filename
    */
   storedName(): string {
-    const sanitized = this.sanitizeFilename(this.name);
-    const ext = this.extractExtension(this.name);
-
-    if (sanitized.length === 0) {
-      return `${this.id}.${ext}`;
-    }
-
-    return `${this.id}-${sanitized}.${ext}`;
+    return fileRefStoredName(this.toJson());
   }
 
   /**
@@ -194,11 +204,7 @@ export class FileRef implements FileRefData {
    * @returns Relative path
    */
   relativePath(): string {
-    const storedName = this.storedName();
-    if (this.shard !== undefined) {
-      return `shard-${this.shard}/${this.sub}/${storedName}`;
-    }
-    return `${this.sub}/${storedName}`;
+    return fileRefRelativePath(this.toJson());
   }
 
   /**
@@ -315,56 +321,6 @@ export class FileRef implements FileRefData {
     };
   }
 
-  /**
-   * Sanitize filename for storage (matches Rust implementation)
-   *
-   * @private
-   */
-  private sanitizeFilename(name: string): string {
-    const nameWithoutExt = name.includes('.')
-      ? name.substring(0, name.lastIndexOf('.'))
-      : name;
-
-    const sanitized = nameWithoutExt
-      .split('')
-      .map((c) => {
-        if (/[a-zA-Z0-9]/.test(c)) {
-          return c.toLowerCase();
-        }
-        if (c === ' ' || c === '_' || c === '-') {
-          return '-';
-        }
-        return '';
-      })
-      .join('')
-      .substring(0, 50);
-
-    // Remove leading/trailing dashes and collapse multiple dashes
-    return sanitized
-      .replace(/^-+/, '')
-      .replace(/-+$/, '')
-      .replace(/-+/g, '-');
-  }
-
-  /**
-   * Extract file extension (matches Rust implementation)
-   *
-   * @private
-   */
-  private extractExtension(name: string): string {
-    if (!name.includes('.')) {
-      return 'bin';
-    }
-
-    const ext = name.substring(name.lastIndexOf('.') + 1).toLowerCase();
-
-    // Only keep extension if it's ASCII alphanumeric and reasonable length
-    if (ext.length <= 10 && /^[a-z0-9]+$/.test(ext)) {
-      return ext;
-    }
-
-    return 'bin';
-  }
 }
 
 /**
@@ -429,7 +385,7 @@ export interface FileRefContext {
  *   const avatar = row.file('avatar');
  *   if (avatar) {
  *     img.src = avatar.downloadUrl();        // full URL
- *     console.log(avatar.relativeUrl());     // /api/v1/files/default/users/f0001/12345
+ *     console.log(avatar.relativeUrl());     // /v1/files/default/users/f0001/12345-photo.jpg
  *     console.log(avatar.name, avatar.formatSize()); // all FileRef attrs still work
  *   }
  * });
@@ -449,7 +405,7 @@ export class BoundFileRef extends FileRef {
    * @example
    * ```typescript
    * const url = row.file('avatar')?.downloadUrl();
-   * // → 'http://localhost:8080/api/v1/files/default/users/f0001/12345'
+   * // → 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg'
    * ```
    */
   downloadUrl(): string {
@@ -465,11 +421,11 @@ export class BoundFileRef extends FileRef {
    * @example
    * ```typescript
    * const path = row.file('avatar')?.relativeUrl();
-   * // → '/api/v1/files/default/users/f0001/12345'
+   * // → '/v1/files/default/users/f0001/12345-photo.jpg'
    * ```
    */
   relativeUrl(): string {
-    return `/api/v1/files/${this._ctx.namespace}/${this._ctx.table}/${this.sub}/${this.id}`;
+    return fileRefRelativeUrl(this.toJson(), this._ctx.namespace, this._ctx.table);
   }
 }
 

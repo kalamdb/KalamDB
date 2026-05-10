@@ -62,7 +62,7 @@ pub use storage_commands::{
 pub use subscribe_commands::SubscribeStatement;
 pub use topic_commands::{
     AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
-    CreateTopicStatement, DropTopicStatement,
+    CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
 };
 pub use use_namespace::UseNamespaceStatement;
 pub use user_commands::{

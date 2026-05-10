@@ -67,6 +67,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                         .service(
                             web::scope("/topics")
                                 .service(http::topics::consume_handler)
+                            .service(http::topics::latest_offsets_handler)
                                 .service(http::topics::ack_handler),
                         ),
                 )

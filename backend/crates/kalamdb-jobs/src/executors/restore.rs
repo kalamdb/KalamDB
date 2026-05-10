@@ -71,11 +71,8 @@ impl RestoreExecutor {
     }
 
     fn is_archive_path(path: &Path) -> bool {
-        let value = path
-            .to_string_lossy()
-            .trim()
-            .trim_end_matches(['/', '\\'])
-            .to_ascii_lowercase();
+        let value =
+            path.to_string_lossy().trim().trim_end_matches(['/', '\\']).to_ascii_lowercase();
         value.ends_with(".tar.gz") || value.ends_with(".tgz")
     }
 
@@ -148,7 +145,10 @@ impl RestoreExecutor {
             let relative_path = relative_path.into_owned();
 
             if relative_path.components().any(|component| {
-                matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
             }) {
                 return Err(KalamDbError::InvalidOperation(
                     "Backup archive contains an unsafe path".to_string(),
@@ -351,11 +351,8 @@ mod tests {
         fs::create_dir_all(source_root.join("rocksdb")).expect("rocksdb dir");
         fs::create_dir_all(source_root.join("storage/app/messages")).expect("storage dir");
         fs::write(source_root.join("rocksdb/CURRENT"), "manifest").expect("rocksdb file");
-        fs::write(
-            source_root.join("storage/app/messages/part-1.parquet"),
-            "parquet",
-        )
-        .expect("storage file");
+        fs::write(source_root.join("storage/app/messages/part-1.parquet"), "parquet")
+            .expect("storage file");
 
         let archive_path = temp_dir.path().join("restore.tar.gz");
         let archive_file = File::create(&archive_path).expect("archive file");

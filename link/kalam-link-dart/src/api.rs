@@ -27,6 +27,7 @@ use std::{
 };
 
 use flutter_rust_bridge::frb;
+use kalam_client::FileRef;
 use tokio::sync::{Mutex, Notify};
 
 use crate::models::{
@@ -38,6 +39,43 @@ use crate::models::{
 const DART_INITIAL_RECONNECT_DELAY_MS: u64 = 200;
 const DART_MAX_RECONNECT_DELAY_MS: u64 = 2_000;
 const DART_CONNECTION_EVENT_QUEUE_CAPACITY: usize = 256;
+
+fn parse_dart_file_ref(file_ref_json: &str) -> anyhow::Result<FileRef> {
+    FileRef::from_json(file_ref_json).ok_or_else(|| anyhow::anyhow!("invalid FileRef JSON"))
+}
+
+/// Build a FILE download URL using the canonical `link-common` FileRef model.
+#[frb(sync)]
+pub fn dart_file_ref_download_url(
+    file_ref_json: String,
+    base_url: String,
+    namespace: String,
+    table: String,
+) -> anyhow::Result<String> {
+    Ok(parse_dart_file_ref(&file_ref_json)?.download_url(&base_url, &namespace, &table))
+}
+
+/// Build a FILE download path using the canonical `link-common` FileRef model.
+#[frb(sync)]
+pub fn dart_file_ref_relative_url(
+    file_ref_json: String,
+    namespace: String,
+    table: String,
+) -> anyhow::Result<String> {
+    Ok(parse_dart_file_ref(&file_ref_json)?.relative_url(&namespace, &table))
+}
+
+/// Return the stored filename using the canonical `link-common` FileRef model.
+#[frb(sync)]
+pub fn dart_file_ref_stored_name(file_ref_json: String) -> anyhow::Result<String> {
+    Ok(parse_dart_file_ref(&file_ref_json)?.stored_name())
+}
+
+/// Return the storage-relative path using the canonical `link-common` FileRef model.
+#[frb(sync)]
+pub fn dart_file_ref_relative_path(file_ref_json: String) -> anyhow::Result<String> {
+    Ok(parse_dart_file_ref(&file_ref_json)?.relative_path())
+}
 
 // ---------------------------------------------------------------------------
 // Client wrapper
@@ -219,9 +257,10 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        build_dart_connection_options, push_connection_event, push_debug_connection_event,
-        DART_CONNECTION_EVENT_QUEUE_CAPACITY, DART_INITIAL_RECONNECT_DELAY_MS,
-        DART_MAX_RECONNECT_DELAY_MS,
+        build_dart_connection_options, dart_file_ref_download_url, dart_file_ref_relative_path,
+        dart_file_ref_relative_url, dart_file_ref_stored_name, push_connection_event,
+        push_debug_connection_event, DART_CONNECTION_EVENT_QUEUE_CAPACITY,
+        DART_INITIAL_RECONNECT_DELAY_MS, DART_MAX_RECONNECT_DELAY_MS,
     };
     use crate::models::DartConnectionEvent;
 
@@ -283,6 +322,39 @@ mod tests {
         let guard = queue.lock().unwrap();
         assert_eq!(guard.len(), DART_CONNECTION_EVENT_QUEUE_CAPACITY);
         assert!(matches!(guard.back(), Some(DartConnectionEvent::Error { .. })));
+    }
+
+    #[test]
+    fn dart_file_ref_helpers_delegate_to_link_common() {
+        let file_ref_json = r#"{"id":"12345","sub":"f0001","name":"My Avatar.png","size":4096,"mime":"image/png","sha256":"abc123"}"#.to_string();
+
+        assert_eq!(
+            dart_file_ref_download_url(
+                file_ref_json.clone(),
+                "http://localhost:8080/".to_string(),
+                "app".to_string(),
+                "users".to_string(),
+            )
+            .unwrap(),
+            "http://localhost:8080/v1/files/app/users/f0001/12345-my-avatar.png"
+        );
+        assert_eq!(
+            dart_file_ref_relative_url(
+                file_ref_json.clone(),
+                "app".to_string(),
+                "users".to_string(),
+            )
+            .unwrap(),
+            "/v1/files/app/users/f0001/12345-my-avatar.png"
+        );
+        assert_eq!(
+            dart_file_ref_stored_name(file_ref_json.clone()).unwrap(),
+            "12345-my-avatar.png"
+        );
+        assert_eq!(
+            dart_file_ref_relative_path(file_ref_json).unwrap(),
+            "f0001/12345-my-avatar.png"
+        );
     }
 }
 

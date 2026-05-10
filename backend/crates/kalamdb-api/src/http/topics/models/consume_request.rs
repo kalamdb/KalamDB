@@ -19,9 +19,9 @@ pub struct ConsumeRequest {
     /// Topic identifier (type-safe)
     #[serde(deserialize_with = "deserialize_topic_id")]
     pub topic_id: TopicId,
-    /// Consumer group identifier (type-safe)
-    #[serde(deserialize_with = "deserialize_consumer_group_id")]
-    pub group_id: ConsumerGroupId,
+    /// Consumer group identifier (type-safe). Omit for stateless inspection reads.
+    #[serde(default, deserialize_with = "deserialize_optional_consumer_group_id")]
+    pub group_id: Option<ConsumerGroupId>,
     /// Starting position: "Latest", "Earliest", or {"Offset": 12345}
     #[serde(default = "default_start_position")]
     pub start: StartPosition,
@@ -44,10 +44,12 @@ where
     Ok(TopicId::new(&s))
 }
 
-fn deserialize_consumer_group_id<'de, D>(deserializer: D) -> Result<ConsumerGroupId, D::Error>
+fn deserialize_optional_consumer_group_id<'de, D>(
+    deserializer: D,
+) -> Result<Option<ConsumerGroupId>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    Ok(ConsumerGroupId::new(&s))
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.filter(|s| !s.trim().is_empty()).map(|s| ConsumerGroupId::new(&s)))
 }

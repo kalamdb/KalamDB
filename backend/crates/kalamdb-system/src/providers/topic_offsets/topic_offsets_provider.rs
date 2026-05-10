@@ -153,6 +153,34 @@ impl TopicOffsetsTableProvider {
         self.store.insert(&key, &row).into_system_error("update offset error")
     }
 
+    /// Reset a consumer group partition so the next fetch starts at `next_offset`.
+    ///
+    /// `next_offset = 0` removes the committed offset row because the table stores
+    /// `last_acked_offset` and there is no valid offset before zero.
+    pub fn reset_offset(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+        next_offset: u64,
+    ) -> Result<(), SystemError> {
+        let key = Self::make_key(topic_id, group_id, partition_id);
+
+        if next_offset == 0 {
+            return self.store.delete(&key).into_system_error("delete offset error");
+        }
+
+        let topic_offset = TopicOffset::new(
+            topic_id.clone(),
+            group_id.clone(),
+            partition_id,
+            next_offset - 1,
+            chrono::Utc::now().timestamp_millis(),
+        );
+        let row = Self::encode_offset_row(&topic_offset)?;
+        self.store.insert(&key, &row).into_system_error("reset offset error")
+    }
+
     /// Delete all offsets for a consumer group
     pub fn delete_group_offsets(
         &self,

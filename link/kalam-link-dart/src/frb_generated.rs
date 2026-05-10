@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1469282476;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -409673072;
 
 // Section: executor
 
@@ -387,6 +387,148 @@ fn wire__crate__api__dart_execute_query_impl(
                     .await,
                 )
             }
+        },
+    )
+}
+fn wire__crate__api__dart_file_ref_download_url_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_file_ref_download_url",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_ref_json = <String>::sse_decode(&mut deserializer);
+            let api_base_url = <String>::sse_decode(&mut deserializer);
+            let api_namespace = <String>::sse_decode(&mut deserializer);
+            let api_table = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_file_ref_download_url(
+                        api_file_ref_json,
+                        api_base_url,
+                        api_namespace,
+                        api_table,
+                    )?;
+                    Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
+fn wire__crate__api__dart_file_ref_relative_path_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_file_ref_relative_path",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_ref_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_file_ref_relative_path(api_file_ref_json)?;
+                    Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
+fn wire__crate__api__dart_file_ref_relative_url_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_file_ref_relative_url",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_ref_json = <String>::sse_decode(&mut deserializer);
+            let api_namespace = <String>::sse_decode(&mut deserializer);
+            let api_table = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_file_ref_relative_url(
+                        api_file_ref_json,
+                        api_namespace,
+                        api_table,
+                    )?;
+                    Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
+fn wire__crate__api__dart_file_ref_stored_name_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "dart_file_ref_stored_name",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_file_ref_json = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok = crate::api::dart_file_ref_stored_name(api_file_ref_json)?;
+                    Ok(output_ok)
+                })(),
+            )
         },
     )
 }
@@ -1970,18 +2112,18 @@ fn pde_ffi_dispatcher_primary_impl(
         4 => wire__crate__api__dart_create_client_impl(port, ptr, rust_vec_len, data_len),
         5 => wire__crate__api__dart_disconnect_impl(port, ptr, rust_vec_len, data_len),
         6 => wire__crate__api__dart_execute_query_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__dart_is_connected_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__dart_list_subscriptions_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__dart_live_close_impl(port, ptr, rust_vec_len, data_len),
-        10 => wire__crate__api__dart_live_events_close_impl(port, ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__dart_live_events_next_impl(port, ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__dart_live_events_subscribe_impl(port, ptr, rust_vec_len, data_len),
-        15 => wire__crate__api__dart_live_next_impl(port, ptr, rust_vec_len, data_len),
-        16 => wire__crate__api__dart_live_subscribe_impl(port, ptr, rust_vec_len, data_len),
-        17 => wire__crate__api__dart_login_impl(port, ptr, rust_vec_len, data_len),
-        18 => wire__crate__api__dart_next_connection_event_impl(port, ptr, rust_vec_len, data_len),
-        19 => wire__crate__api__dart_refresh_token_impl(port, ptr, rust_vec_len, data_len),
-        21 => wire__crate__api__dart_update_auth_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire__crate__api__dart_is_connected_impl(port, ptr, rust_vec_len, data_len),
+        12 => wire__crate__api__dart_list_subscriptions_impl(port, ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__dart_live_close_impl(port, ptr, rust_vec_len, data_len),
+        14 => wire__crate__api__dart_live_events_close_impl(port, ptr, rust_vec_len, data_len),
+        16 => wire__crate__api__dart_live_events_next_impl(port, ptr, rust_vec_len, data_len),
+        17 => wire__crate__api__dart_live_events_subscribe_impl(port, ptr, rust_vec_len, data_len),
+        19 => wire__crate__api__dart_live_next_impl(port, ptr, rust_vec_len, data_len),
+        20 => wire__crate__api__dart_live_subscribe_impl(port, ptr, rust_vec_len, data_len),
+        21 => wire__crate__api__dart_login_impl(port, ptr, rust_vec_len, data_len),
+        22 => wire__crate__api__dart_next_connection_event_impl(port, ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__dart_refresh_token_impl(port, ptr, rust_vec_len, data_len),
+        25 => wire__crate__api__dart_update_auth_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1995,9 +2137,13 @@ fn pde_ffi_dispatcher_sync_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         3 => wire__crate__api__dart_connection_events_enabled_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__dart_live_events_id_impl(ptr, rust_vec_len, data_len),
-        14 => wire__crate__api__dart_live_id_impl(ptr, rust_vec_len, data_len),
-        20 => wire__crate__api__dart_signal_dispose_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__dart_file_ref_download_url_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__dart_file_ref_relative_path_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__dart_file_ref_relative_url_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__dart_file_ref_stored_name_impl(ptr, rust_vec_len, data_len),
+        15 => wire__crate__api__dart_live_events_id_impl(ptr, rust_vec_len, data_len),
+        18 => wire__crate__api__dart_live_id_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__dart_signal_dispose_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

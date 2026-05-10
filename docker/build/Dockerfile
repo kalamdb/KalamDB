@@ -259,11 +259,15 @@ RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /config/server.toml
 # Switch to non-root user
 USER kalamdb
 
-# mimalloc tuning: eager memory return and reduced arena count.
-# MIMALLOC_PURGE_DELAY=100: purge freed segments after 100ms (default 10s)
-# MIMALLOC_ARENA_EAGER_COMMIT=1: commit arena pages immediately
-ENV MIMALLOC_PURGE_DELAY=100
-ENV MIMALLOC_ARENA_EAGER_COMMIT=1
+# mimalloc tuning for low idle RSS on Linux containers.
+# The default image favors minimal idle footprint; production deployments can
+# override worker/thread counts or allocator knobs through environment variables.
+ENV MIMALLOC_PURGE_DELAY=0
+ENV MIMALLOC_PURGE_DECOMMITS=1
+ENV MIMALLOC_EAGER_COMMIT=0
+ENV MIMALLOC_ARENA_EAGER_COMMIT=0
+ENV MIMALLOC_ABANDONED_PAGE_PURGE=1
+ENV MIMALLOC_ALLOW_THP=0
 
 # Set working directory
 WORKDIR /data

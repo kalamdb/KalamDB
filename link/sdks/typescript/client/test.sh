@@ -46,6 +46,7 @@ if curl -sf "$KALAMDB_URL/health" > /dev/null 2>&1 \
   node --test --test-concurrency=1 \
     tests/e2e/auth/auth.test.mjs \
     tests/e2e/query/query.test.mjs \
+    tests/e2e/query/file-download.test.mjs \
     tests/e2e/query/dml-helpers.test.mjs \
     tests/e2e/ddl/ddl.test.mjs \
     tests/e2e/lifecycle/lifecycle.test.mjs \

@@ -7,7 +7,37 @@ import 'frb_generated.dart';
 import 'models.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `push_connection_event`, `push_debug_connection_event`
+// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `parse_dart_file_ref`, `push_connection_event`, `push_debug_connection_event`
+
+/// Build a FILE download URL using the canonical `link-common` FileRef model.
+String dartFileRefDownloadUrl(
+        {required String fileRefJson,
+        required String baseUrl,
+        required String namespace,
+        required String table}) =>
+    RustLib.instance.api.crateApiDartFileRefDownloadUrl(
+        fileRefJson: fileRefJson,
+        baseUrl: baseUrl,
+        namespace: namespace,
+        table: table);
+
+/// Build a FILE download path using the canonical `link-common` FileRef model.
+String dartFileRefRelativeUrl(
+        {required String fileRefJson,
+        required String namespace,
+        required String table}) =>
+    RustLib.instance.api.crateApiDartFileRefRelativeUrl(
+        fileRefJson: fileRefJson, namespace: namespace, table: table);
+
+/// Return the stored filename using the canonical `link-common` FileRef model.
+String dartFileRefStoredName({required String fileRefJson}) =>
+    RustLib.instance.api
+        .crateApiDartFileRefStoredName(fileRefJson: fileRefJson);
+
+/// Return the storage-relative path using the canonical `link-common` FileRef model.
+String dartFileRefRelativePath({required String fileRefJson}) =>
+    RustLib.instance.api
+        .crateApiDartFileRefRelativePath(fileRefJson: fileRefJson);
 
 /// Create a new KalamDB client.
 ///

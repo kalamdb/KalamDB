@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'generated/api.dart' as bridge;
+
 /// Data shape for a file reference stored in a KalamDB FILE column.
 ///
 /// Matches the Rust `FileRef` struct and the TypeScript `FileRefData` interface.
@@ -39,6 +41,7 @@ class KalamFileRefData {
 /// Type-safe file reference for KalamDB FILE columns.
 ///
 /// Provides parsing from JSON, download URL generation, and metadata access.
+/// URL/path helpers delegate to the shared Rust `link-common` FileRef model.
 ///
 /// ```dart
 /// final ref = KalamFileRef.tryParse(row['attachment']);
@@ -133,11 +136,34 @@ class KalamFileRef implements KalamFileRefData {
   ///
   /// ```dart
   /// final url = ref.getDownloadUrl('http://localhost:18080', 'default', 'messages');
-  /// // → http://localhost:18080/api/v1/files/default/messages/f0001/12345
+  /// // → http://localhost:18080/v1/files/default/messages/f0001/12345-photo.jpg
   /// ```
   String getDownloadUrl(String baseUrl, String namespace, String table) {
-    final cleanUrl = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
-    return '$cleanUrl/api/v1/files/$namespace/$table/$sub/$id';
+    return bridge.dartFileRefDownloadUrl(
+      fileRefJson: toJson(),
+      baseUrl: baseUrl,
+      namespace: namespace,
+      table: table,
+    );
+  }
+
+  /// Relative HTTP download path for this file.
+  String relativeUrl(String namespace, String table) {
+    return bridge.dartFileRefRelativeUrl(
+      fileRefJson: toJson(),
+      namespace: namespace,
+      table: table,
+    );
+  }
+
+  /// Stored filename used by the backend file service.
+  String storedName() {
+    return bridge.dartFileRefStoredName(fileRefJson: toJson());
+  }
+
+  /// Relative storage path within the table folder.
+  String relativePath() {
+    return bridge.dartFileRefRelativePath(fileRefJson: toJson());
   }
 
   /// Whether this is an image file (based on MIME type).

@@ -434,6 +434,26 @@ GROUP '<group_id>'
 UPTO OFFSET <offset>;
 ```
 
+### RESET CONSUMER GROUP
+
+```sql
+RESET CONSUMER GROUP '<group_id>'
+ON <topic_name>
+[PARTITION <partition_id>]
+TO <next_offset>;
+```
+
+Examples:
+
+```sql
+RESET CONSUMER GROUP 'worker-1' ON app.new_messages TO 0;
+RESET CONSUMER GROUP 'worker-1' ON app.new_messages PARTITION 0 TO 250;
+```
+
+`RESET CONSUMER GROUP` is admin-only and moves one consumer-group partition to
+the next offset you specify. It also clears pending in-memory claims for that
+group partition so the reset takes effect immediately.
+
 ## Cluster Commands
 
 ```sql

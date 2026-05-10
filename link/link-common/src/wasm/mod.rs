@@ -2,6 +2,7 @@ use wasm_bindgen::prelude::*;
 
 mod auth;
 mod client;
+mod file_ref;
 mod helpers;
 mod reconnect;
 mod state;
@@ -9,6 +10,9 @@ mod timestamp;
 mod validation;
 
 pub use client::KalamClient;
+pub use file_ref::{
+    file_ref_download_url, file_ref_relative_path, file_ref_relative_url, file_ref_stored_name,
+};
 pub use timestamp::{parse_iso8601, timestamp_now, WasmTimestampFormatter};
 
 #[wasm_bindgen]

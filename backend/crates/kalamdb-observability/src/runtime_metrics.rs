@@ -26,6 +26,20 @@ pub struct RuntimeMetrics {
     pub memory_rss_gap_mb: Option<u64>,
     pub memory_physical_footprint_bytes: Option<u64>,
     pub memory_physical_footprint_mb: Option<u64>,
+    pub memory_linux_rollup_rss_bytes: Option<u64>,
+    pub memory_linux_rollup_rss_mb: Option<u64>,
+    pub memory_linux_pss_bytes: Option<u64>,
+    pub memory_linux_pss_mb: Option<u64>,
+    pub memory_linux_anonymous_bytes: Option<u64>,
+    pub memory_linux_anonymous_mb: Option<u64>,
+    pub memory_linux_private_clean_bytes: Option<u64>,
+    pub memory_linux_private_clean_mb: Option<u64>,
+    pub memory_linux_private_dirty_bytes: Option<u64>,
+    pub memory_linux_private_dirty_mb: Option<u64>,
+    pub memory_linux_shared_clean_bytes: Option<u64>,
+    pub memory_linux_shared_clean_mb: Option<u64>,
+    pub memory_linux_shared_dirty_bytes: Option<u64>,
+    pub memory_linux_shared_dirty_mb: Option<u64>,
     pub cpu_usage_percent: Option<f32>,
     pub system_total_memory_mb: u64,
     pub system_used_memory_mb: u64,
@@ -73,6 +87,64 @@ impl RuntimeMetrics {
         if let Some(mb) = self.memory_physical_footprint_mb {
             pairs.push(("memory_physical_footprint_mb".to_string(), mb.to_string()));
         }
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_rollup_rss_bytes",
+            self.memory_linux_rollup_rss_bytes,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_rollup_rss_mb",
+            self.memory_linux_rollup_rss_mb,
+        );
+        push_optional_pair(&mut pairs, "memory_linux_pss_bytes", self.memory_linux_pss_bytes);
+        push_optional_pair(&mut pairs, "memory_linux_pss_mb", self.memory_linux_pss_mb);
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_anonymous_bytes",
+            self.memory_linux_anonymous_bytes,
+        );
+        push_optional_pair(&mut pairs, "memory_linux_anonymous_mb", self.memory_linux_anonymous_mb);
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_private_clean_bytes",
+            self.memory_linux_private_clean_bytes,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_private_clean_mb",
+            self.memory_linux_private_clean_mb,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_private_dirty_bytes",
+            self.memory_linux_private_dirty_bytes,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_private_dirty_mb",
+            self.memory_linux_private_dirty_mb,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_shared_clean_bytes",
+            self.memory_linux_shared_clean_bytes,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_shared_clean_mb",
+            self.memory_linux_shared_clean_mb,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_shared_dirty_bytes",
+            self.memory_linux_shared_dirty_bytes,
+        );
+        push_optional_pair(
+            &mut pairs,
+            "memory_linux_shared_dirty_mb",
+            self.memory_linux_shared_dirty_mb,
+        );
         if let Some(cpu) = self.cpu_usage_percent {
             pairs.push(("cpu_usage_percent".to_string(), format!("{:.2}", cpu)));
         }
@@ -158,6 +230,7 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
     let mut memory_rss_gap_mb = None;
     let mut memory_physical_footprint_bytes = None;
     let mut memory_physical_footprint_mb = None;
+    let mut linux_memory_breakdown = None;
     let mut memory_usage_source = "rss";
     let mut cpu_usage_percent = None;
     #[allow(unused_mut)]
@@ -180,6 +253,8 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
                 memory_physical_footprint_mb =
                     memory_physical_footprint_bytes.map(|bytes| bytes / 1024 / 1024);
             }
+
+            linux_memory_breakdown = current_linux_memory_breakdown_bytes();
 
             if let Some(footprint_bytes) = memory_physical_footprint_bytes {
                 memory_usage_source = "physical_footprint";
@@ -209,6 +284,19 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
     let system_total_memory_mb = sys.total_memory() / 1024 / 1024;
     let system_used_memory_mb = sys.used_memory() / 1024 / 1024;
 
+    let memory_linux_rollup_rss_bytes = linux_memory_breakdown.as_ref().and_then(|b| b.rss_bytes);
+    let memory_linux_pss_bytes = linux_memory_breakdown.as_ref().and_then(|b| b.pss_bytes);
+    let memory_linux_anonymous_bytes =
+        linux_memory_breakdown.as_ref().and_then(|b| b.anonymous_bytes);
+    let memory_linux_private_clean_bytes =
+        linux_memory_breakdown.as_ref().and_then(|b| b.private_clean_bytes);
+    let memory_linux_private_dirty_bytes =
+        linux_memory_breakdown.as_ref().and_then(|b| b.private_dirty_bytes);
+    let memory_linux_shared_clean_bytes =
+        linux_memory_breakdown.as_ref().and_then(|b| b.shared_clean_bytes);
+    let memory_linux_shared_dirty_bytes =
+        linux_memory_breakdown.as_ref().and_then(|b| b.shared_dirty_bytes);
+
     RuntimeMetrics {
         uptime_seconds,
         uptime_human,
@@ -223,6 +311,20 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
         memory_rss_gap_mb,
         memory_physical_footprint_bytes,
         memory_physical_footprint_mb,
+        memory_linux_rollup_rss_bytes,
+        memory_linux_rollup_rss_mb: memory_linux_rollup_rss_bytes.map(bytes_to_mb),
+        memory_linux_pss_bytes,
+        memory_linux_pss_mb: memory_linux_pss_bytes.map(bytes_to_mb),
+        memory_linux_anonymous_bytes,
+        memory_linux_anonymous_mb: memory_linux_anonymous_bytes.map(bytes_to_mb),
+        memory_linux_private_clean_bytes,
+        memory_linux_private_clean_mb: memory_linux_private_clean_bytes.map(bytes_to_mb),
+        memory_linux_private_dirty_bytes,
+        memory_linux_private_dirty_mb: memory_linux_private_dirty_bytes.map(bytes_to_mb),
+        memory_linux_shared_clean_bytes,
+        memory_linux_shared_clean_mb: memory_linux_shared_clean_bytes.map(bytes_to_mb),
+        memory_linux_shared_dirty_bytes,
+        memory_linux_shared_dirty_mb: memory_linux_shared_dirty_bytes.map(bytes_to_mb),
         cpu_usage_percent,
         system_total_memory_mb,
         system_used_memory_mb,
@@ -230,6 +332,71 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
         pid: pid_num,
         allocator_metrics: collect_allocator_metrics(),
     }
+}
+
+fn push_optional_pair(pairs: &mut Vec<(String, String)>, name: &str, value: Option<u64>) {
+    if let Some(value) = value {
+        pairs.push((name.to_string(), value.to_string()));
+    }
+}
+
+fn bytes_to_mb(bytes: u64) -> u64 {
+    bytes / 1024 / 1024
+}
+
+#[derive(Debug, Default)]
+struct LinuxMemoryBreakdown {
+    rss_bytes: Option<u64>,
+    pss_bytes: Option<u64>,
+    anonymous_bytes: Option<u64>,
+    private_clean_bytes: Option<u64>,
+    private_dirty_bytes: Option<u64>,
+    shared_clean_bytes: Option<u64>,
+    shared_dirty_bytes: Option<u64>,
+}
+
+#[cfg(target_os = "linux")]
+fn current_linux_memory_breakdown_bytes() -> Option<LinuxMemoryBreakdown> {
+    let contents = std::fs::read_to_string("/proc/self/smaps_rollup").ok()?;
+    let mut breakdown = LinuxMemoryBreakdown::default();
+
+    for line in contents.lines() {
+        if breakdown.rss_bytes.is_none() {
+            breakdown.rss_bytes = parse_smaps_kb_line(line, "Rss:");
+        }
+        if breakdown.pss_bytes.is_none() {
+            breakdown.pss_bytes = parse_smaps_kb_line(line, "Pss:");
+        }
+        if breakdown.anonymous_bytes.is_none() {
+            breakdown.anonymous_bytes = parse_smaps_kb_line(line, "Anonymous:");
+        }
+        if breakdown.private_clean_bytes.is_none() {
+            breakdown.private_clean_bytes = parse_smaps_kb_line(line, "Private_Clean:");
+        }
+        if breakdown.private_dirty_bytes.is_none() {
+            breakdown.private_dirty_bytes = parse_smaps_kb_line(line, "Private_Dirty:");
+        }
+        if breakdown.shared_clean_bytes.is_none() {
+            breakdown.shared_clean_bytes = parse_smaps_kb_line(line, "Shared_Clean:");
+        }
+        if breakdown.shared_dirty_bytes.is_none() {
+            breakdown.shared_dirty_bytes = parse_smaps_kb_line(line, "Shared_Dirty:");
+        }
+    }
+
+    Some(breakdown)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_linux_memory_breakdown_bytes() -> Option<LinuxMemoryBreakdown> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn parse_smaps_kb_line(line: &str, key: &str) -> Option<u64> {
+    let value = line.strip_prefix(key)?.trim();
+    let kilobytes = value.strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+    Some(kilobytes * 1024)
 }
 
 #[cfg(target_os = "macos")]

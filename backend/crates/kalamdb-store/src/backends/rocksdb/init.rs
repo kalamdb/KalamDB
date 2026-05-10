@@ -51,6 +51,11 @@ impl RocksDbInit {
 
     /// Open and return both the DB and the list of column family names.
     pub fn open_with_cf_names(&self) -> Result<(Arc<DB>, Vec<String>)> {
+        let (db, cf_names, _) = self.open_with_cf_names_and_cache()?;
+        Ok((db, cf_names))
+    }
+
+    pub(crate) fn open_with_cf_names_and_cache(&self) -> Result<(Arc<DB>, Vec<String>, Cache)> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -60,7 +65,8 @@ impl RocksDbInit {
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
-        self.open_internal(&db_opts, &cache)
+        let (db, cf_names) = self.open_internal(&db_opts, &cache)?;
+        Ok((db, cf_names, cache))
     }
 
     fn open_internal(&self, db_opts: &Options, cache: &Cache) -> Result<(Arc<DB>, Vec<String>)> {

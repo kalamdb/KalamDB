@@ -42,11 +42,30 @@ export interface StreamingOffset {
   updatedAt: StreamingTopicOffsetRow["updated_at"] | null;
 }
 
+export interface StreamingConsumerOffsetSummary {
+  topicId: StreamingTopicOffsetRow["topic_id"];
+  topicName: StreamingTopicRow["name"];
+  groupId: StreamingTopicOffsetRow["group_id"];
+  claimedPartitions: number;
+  configuredPartitions: StreamingTopicRow["partitions"];
+  lastAckedOffset: number;
+  committedOffset: number;
+  updatedAt: StreamingTopicOffsetRow["updated_at"] | null;
+}
+
+export interface StreamingTopicPartitionCursor {
+  topicId: StreamingTopicOffsetRow["topic_id"];
+  partitionId: StreamingTopicOffsetRow["partition_id"];
+  nextOffset: number;
+  lastOffset: number | null;
+}
+
 export type ConsumeStartMode = "Latest" | "Earliest" | "Offset";
+export type ConsumeReadMode = "Inspect" | "Group";
 
 export interface ConsumeMessagesInput {
   topicId: StreamingTopicId;
-  groupId: StreamingGroupId;
+  groupId?: StreamingGroupId;
   partitionId: StreamingPartitionId;
   startMode: ConsumeStartMode;
   offset?: number;

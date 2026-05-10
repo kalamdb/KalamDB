@@ -9,7 +9,7 @@ use kalamdb_sql::{
     classifier::SqlStatementKind,
     ddl::{
         AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition,
-        ConsumeStatement, CreateTopicStatement, DropTopicStatement,
+        ConsumeStatement, CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
     },
 };
 
@@ -77,7 +77,19 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
             partition_id: 0,
             upto_offset: 0,
         }),
-        topics::AckHandler::new(app_context),
+        topics::AckHandler::new(app_context.clone()),
         SqlStatementKind::AckTopic,
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::ResetConsumerGroup(ResetConsumerGroupStatement {
+            topic_name: "_placeholder".to_string(),
+            group_id: "_placeholder".to_string(),
+            partition_id: 0,
+            next_offset: 0,
+        }),
+        topics::ResetConsumerGroupHandler::new(app_context),
+        SqlStatementKind::ResetConsumerGroup,
     );
 }
