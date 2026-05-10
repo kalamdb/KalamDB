@@ -2,13 +2,7 @@ name: Python SDK
 
 on:
   push:
-    branches: [main, dev]
-    paths:
-      - 'link/sdks/python/**'
-      - 'link/kalam-client/**'
-      - 'link/link-common/**'
-      - '.github/workflows/python-sdk.yml'
-  pull_request:
+    branches: [main]
     paths:
       - 'link/sdks/python/**'
       - 'link/kalam-client/**'

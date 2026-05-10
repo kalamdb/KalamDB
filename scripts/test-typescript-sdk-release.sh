@@ -11,11 +11,20 @@ ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
 JWT_SECRET="sdk-test-secret-key-minimum-32-characters-long"
 SERVER_LOG="${TS_SDK_SERVER_LOG:-$ROOT_DIR/ts-sdk-server.log}"
 TEST_OUTPUT="${TS_SDK_TEST_OUTPUT:-$ROOT_DIR/ts-sdk-test-output.txt}"
+PACKAGES_RAW="${TS_SDK_PACKAGES:-client consumer orm}"
 SERVER_BIN="${KALAMDB_SERVER_BIN:-}"
 SKIP_SERVER_START="${KALAMDB_SKIP_SERVER_START:-false}"
 SKIP_AUTH_SETUP="${KALAMDB_SKIP_AUTH_SETUP:-false}"
 SERVER_PID=""
 AUTH_TMP_DIR=""
+
+PACKAGES_NORMALIZED="${PACKAGES_RAW//,/ }"
+read -r -a SELECTED_PACKAGES <<<"$PACKAGES_NORMALIZED"
+
+if [[ ${#SELECTED_PACKAGES[@]} -eq 0 ]]; then
+    echo "No TypeScript SDK packages were selected for testing." >&2
+    exit 1
+fi
 
 json_token_from_file() {
     local path="$1"
@@ -141,6 +150,44 @@ cleanup() {
     fi
 }
 
+run_selected_package() {
+    local package="$1"
+
+    case "$package" in
+        client)
+            echo "Running @kalamdb/client tests..."
+            cd "$ROOT_DIR/link/sdks/typescript/client"
+            KALAMDB_URL="$SERVER_URL" \
+            KALAMDB_USER="$SERVER_USER" \
+            KALAMDB_PASSWORD="$SERVER_PASSWORD" \
+            bash ./test.sh
+            ;;
+        consumer)
+            echo "Running @kalamdb/consumer tests..."
+            cd "$ROOT_DIR/link/sdks/typescript/consumer"
+            KALAMDB_URL="$SERVER_URL" \
+            KALAMDB_USER="$SERVER_USER" \
+            KALAMDB_PASSWORD="$SERVER_PASSWORD" \
+            bash ./test.sh
+            ;;
+        orm)
+            echo "Running @kalamdb/orm tests..."
+            cd "$ROOT_DIR/link/sdks/typescript/orm"
+            KALAMDB_URL="$SERVER_URL" \
+            KALAMDB_USER="$SERVER_USER" \
+            KALAMDB_PASSWORD="$SERVER_PASSWORD" \
+            KALAMDB_TEST_URL="$SERVER_URL" \
+            KALAMDB_TEST_USER="$SERVER_USER" \
+            KALAMDB_TEST_PASSWORD="$SERVER_PASSWORD" \
+            bash ./test.sh
+            ;;
+        *)
+            echo "Unknown TypeScript SDK package: $package" >&2
+            return 1
+            ;;
+    esac
+}
+
 trap cleanup EXIT
 
 if [[ "$SKIP_SERVER_START" != "true" ]]; then
@@ -196,27 +243,7 @@ fi
 ensure_test_auth_ready
 
 (
-    echo "Running @kalamdb/client tests..."
-    cd "$ROOT_DIR/link/sdks/typescript/client"
-    KALAMDB_URL="$SERVER_URL" \
-    KALAMDB_USER="$SERVER_USER" \
-    KALAMDB_PASSWORD="$SERVER_PASSWORD" \
-    bash ./test.sh
-
-    echo "Running @kalamdb/consumer tests..."
-    cd "$ROOT_DIR/link/sdks/typescript/consumer"
-    KALAMDB_URL="$SERVER_URL" \
-    KALAMDB_USER="$SERVER_USER" \
-    KALAMDB_PASSWORD="$SERVER_PASSWORD" \
-    bash ./test.sh
-
-    echo "Running @kalamdb/orm tests..."
-    cd "$ROOT_DIR/link/sdks/typescript/orm"
-    KALAMDB_URL="$SERVER_URL" \
-    KALAMDB_USER="$SERVER_USER" \
-    KALAMDB_PASSWORD="$SERVER_PASSWORD" \
-    KALAMDB_TEST_URL="$SERVER_URL" \
-    KALAMDB_TEST_USER="$SERVER_USER" \
-    KALAMDB_TEST_PASSWORD="$SERVER_PASSWORD" \
-    bash ./test.sh
+    for package in "${SELECTED_PACKAGES[@]}"; do
+        run_selected_package "$package"
+    done
 ) 2>&1 | tee "$TEST_OUTPUT"
