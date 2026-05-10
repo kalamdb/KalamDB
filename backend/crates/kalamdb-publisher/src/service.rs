@@ -133,8 +133,18 @@ impl ClaimState {
 
     /// Remove pending claims fully covered by the acknowledged offset.
     fn ack_up_to(&mut self, acked_offset_inclusive: u64) {
-        self.pending.retain(|claim| claim.end_exclusive > acked_offset_inclusive + 1);
-        let next = acked_offset_inclusive + 1;
+        let next = acked_offset_inclusive.saturating_add(1);
+        self.pending.retain_mut(|claim| {
+            if claim.end_exclusive <= next {
+                return false;
+            }
+
+            if claim.start < next {
+                claim.start = next;
+            }
+
+            true
+        });
         if self.cursor < next {
             self.cursor = next;
         }
@@ -1190,6 +1200,36 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_publish_preserves_actor_user_id() {
+        let service = service_with_primary_key(&["id"]);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("shared_events"));
+        let topic_id = TopicId::new("shared_actor_topic");
+        let actor_user_id = UserId::from("actor_user_1");
+
+        let topic = create_test_topic(topic_id.clone(), table_id.clone(), TopicOp::Insert);
+        service.add_topic(topic);
+
+        let rows = [create_test_row(1, "alpha"), create_test_row(2, "beta")];
+        let published = service
+            .publish_batch(&table_id, TopicOp::Insert, &rows, Some(&actor_user_id))
+            .unwrap();
+        assert_eq!(published, rows.len());
+
+        let mut messages = Vec::new();
+        for partition_id in 0..2 {
+            messages.extend(service.fetch_messages(&topic_id, partition_id, 0, 10).unwrap());
+        }
+
+        assert_eq!(messages.len(), rows.len());
+        assert!(
+            messages.iter().all(|message| message.user_id.as_ref() == Some(&actor_user_id)),
+            "every published message should retain the shared-table actor user"
+        );
+    }
+
+    #[test]
     fn test_no_routes_returns_zero() {
         let backend = Arc::new(InMemoryBackend::new());
         let service = TopicPublisherService::new(backend);
@@ -1430,6 +1470,41 @@ mod tests {
             let state = service.group_claim_state.get(&cursor_key).unwrap();
             assert_eq!(state.pending.len(), 0, "Pending claim should be removed after ack");
         }
+    }
+
+    #[test]
+    fn test_partial_ack_trims_pending_claim_start() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service = TopicPublisherService::new(backend);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("partial_ack_topic");
+        let group_id = ConsumerGroupId::new("partial_ack_group");
+
+        let topic = create_test_topic(topic_id.clone(), table_id.clone(), TopicOp::Insert);
+        service.add_topic(topic);
+
+        for idx in 0..20 {
+            let row = create_test_row(idx, &format!("e_{}", idx));
+            service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+        }
+
+        let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        assert_eq!(batch.first().map(|message| message.offset), Some(0));
+        assert_eq!(batch.last().map(|message| message.offset), Some(9));
+
+        service.ack_offset(&topic_id, &group_id, 0, 4).unwrap();
+
+        let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+        let state = service.group_claim_state.get(&cursor_key).unwrap();
+        assert_eq!(state.pending.len(), 1, "Partially acked claim should stay pending");
+        assert_eq!(
+            state.pending[0].start, 5,
+            "Expired claims must restart after the last acked offset"
+        );
+        assert_eq!(state.pending[0].end_exclusive, 10);
+        assert_eq!(state.cursor, 10);
     }
 
     #[test]

@@ -6,7 +6,7 @@ What it does:
 
 - the browser writes a user message into the `chat_demo.messages` USER table with the ORM
 - `chat_demo.ai_inbox` receives those inserts as a topic
-- `src/agent.ts` runs `runAgent()` from `@kalamdb/consumer`
+- `src/agent.ts` runs `runConsumer()` from `@kalamdb/consumer`
 - the agent writes progress rows into `chat_demo.agent_events`
 - the agent commits one assistant reply back into `chat_demo.messages`
 - every open browser tab sees the rows through live subscriptions
@@ -76,15 +76,16 @@ chatMessagesConfig.systemColumns; // ["_seq", "_deleted"]
 
 ## The Tiny Agent Path
 
-The worker uses the generated row type directly. `runAgent()` decodes KalamDB topic payloads and unwraps `{ row: ... }` envelopes automatically, so there is no custom parser in the demo agent:
+The worker uses the generated row type directly. `runConsumer()` decodes KalamDB topic payloads and unwraps `{ row: ... }` envelopes automatically, so there is no custom parser in the demo worker:
 
 ```ts
-await runAgent<ChatDemoMessages>({
+await runConsumer<ChatDemoMessages>({
     client,
     name: 'chat-ai-agent',
     topic: 'chat_demo.ai_inbox',
     groupId: 'chat-ai-agent',
-    onRow: async (_ctx, row) => {
+    onChange: async (_ctx, change) => {
+        const row = change.data;
         if (row.role !== 'user') return;
         // Build and persist the assistant reply here.
     },

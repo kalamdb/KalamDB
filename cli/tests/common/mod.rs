@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
     fs::OpenOptions,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -3200,6 +3200,43 @@ fn execute_sql_via_cli_as_with_args(
     execute_sql_via_cli_as_with_args_and_urls(username, password, sql, extra_args, None)
 }
 
+fn spawn_child_output_reader<R>(
+    mut reader: R,
+) -> std::thread::JoinHandle<std::io::Result<String>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = String::new();
+        reader.read_to_string(&mut output)?;
+        Ok(output)
+    })
+}
+
+fn take_child_output_readers(
+    child: &mut Child,
+) -> (
+    Option<std::thread::JoinHandle<std::io::Result<String>>>,
+    Option<std::thread::JoinHandle<std::io::Result<String>>>,
+) {
+    (
+        child.stdout.take().map(spawn_child_output_reader),
+        child.stderr.take().map(spawn_child_output_reader),
+    )
+}
+
+fn join_child_output_reader(
+    handle: Option<std::thread::JoinHandle<std::io::Result<String>>>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match handle {
+        Some(handle) => match handle.join() {
+            Ok(output) => Ok(output?),
+            Err(_) => Err("child output reader thread panicked".into()),
+        },
+        None => Ok(String::new()),
+    }
+}
+
 fn execute_sql_via_cli_as_with_args_and_urls(
     username: &str,
     password: &str,
@@ -3241,16 +3278,14 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             let creds_path = creds_dir.path().join("credentials.toml");
             let spawn_start = Instant::now();
 
-            let token = get_access_token_for_url_sync(url, username, password);
-
             let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
-            child.arg("-u").arg(url);
-
-            if let Some(token) = token {
-                child.arg("--token").arg(token);
-            } else {
-                child.arg("--user").arg(username).arg("--password").arg(password);
-            }
+                child
+                    .arg("-u")
+                    .arg(url)
+                    .arg("--user")
+                    .arg(username)
+                    .arg("--password")
+                    .arg(password);
 
             child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
@@ -3270,6 +3305,7 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .stderr(std::process::Stdio::piped());
 
             let mut child = child.spawn()?;
+            let (stdout_reader, stderr_reader) = take_child_output_readers(&mut child);
 
             let spawn_duration = spawn_start.elapsed();
             eprintln!("[TEST_CLI] Process spawned in {:?}", spawn_duration);
@@ -3283,17 +3319,8 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                     let wait_duration = wait_start.elapsed();
                     let total_duration_ms = spawn_start.elapsed().as_millis();
 
-                    // Now read stdout/stderr since the process completed
-                    let mut stdout = String::new();
-                    let mut stderr = String::new();
-                    if let Some(ref mut out) = child.stdout {
-                        use std::io::Read;
-                        out.read_to_string(&mut stdout)?;
-                    }
-                    if let Some(ref mut err) = child.stderr {
-                        use std::io::Read;
-                        err.read_to_string(&mut stderr)?;
-                    }
+                    let stdout = join_child_output_reader(stdout_reader)?;
+                    let stderr = join_child_output_reader(stderr_reader)?;
 
                     if status.success() {
                         if !stderr.is_empty() {
@@ -3379,8 +3406,13 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                     // Timeout - kill the child and return error
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = join_child_output_reader(stdout_reader);
+                    let stderr = join_child_output_reader(stderr_reader).unwrap_or_default();
                     let wait_duration = wait_start.elapsed();
                     eprintln!("[TEST_CLI] TIMEOUT after {:?}", wait_duration);
+                    if !stderr.is_empty() {
+                        eprintln!("[TEST_CLI] TIMEOUT stderr: {}", stderr);
+                    }
                     let err_msg = format!("CLI command timed out after {:?}", timeout_duration);
                     if is_retryable_cluster_error_for_sql(sql, &err_msg) {
                         last_err = Some(err_msg);
@@ -3478,20 +3510,15 @@ pub fn execute_sql_file_as_root_via_cli(
         for (idx, url) in urls.iter().enumerate() {
             let creds_dir = TempDir::new().map_err(|err| err.to_string())?;
             let creds_path = creds_dir.path().join("credentials.toml");
-            let token = get_access_token_for_url_sync(url, admin_username(), admin_password());
 
             let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
-            child.arg("-u").arg(url);
-
-            if let Some(token) = token {
-                child.arg("--token").arg(token);
-            } else {
                 child
+                    .arg("-u")
+                    .arg(url)
                     .arg("--user")
                     .arg(admin_username())
                     .arg("--password")
                     .arg(admin_password());
-            }
 
             child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
@@ -3510,20 +3537,13 @@ pub fn execute_sql_file_as_root_via_cli(
                 .stderr(std::process::Stdio::piped());
 
             let mut child = child.spawn()?;
+            let (stdout_reader, stderr_reader) = take_child_output_readers(&mut child);
             use wait_timeout::ChildExt;
 
             match child.wait_timeout(Duration::from_secs(60))? {
                 Some(status) => {
-                    let mut stdout = String::new();
-                    let mut stderr = String::new();
-                    if let Some(ref mut out) = child.stdout {
-                        use std::io::Read;
-                        out.read_to_string(&mut stdout)?;
-                    }
-                    if let Some(ref mut err) = child.stderr {
-                        use std::io::Read;
-                        err.read_to_string(&mut stderr)?;
-                    }
+                    let stdout = join_child_output_reader(stdout_reader)?;
+                    let stderr = join_child_output_reader(stderr_reader)?;
 
                     if status.success() {
                         if let Some(output_err) = cli_output_error(&stdout) {
@@ -3565,6 +3585,8 @@ pub fn execute_sql_file_as_root_via_cli(
                 None => {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = join_child_output_reader(stdout_reader);
+                    let _ = join_child_output_reader(stderr_reader);
                     last_err = Some("CLI file command timed out after 60s".to_string());
                     retry_after_attempt = true;
                 },

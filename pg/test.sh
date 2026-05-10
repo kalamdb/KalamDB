@@ -41,6 +41,20 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NEXTEST_FILTER="test(e2e)"
 USE_NO_FAIL_FAST=false
 
+run_nextest_slice() {
+    local label="$1"
+    shift
+
+    step "$label"
+    cargo nextest run \
+        -p kalam-pg-extension \
+        --features e2e \
+        -E "$NEXTEST_FILTER" \
+        --test-threads 1 \
+        "$@" \
+        "${NEXTEST_EXTRA_ARGS[@]+${NEXTEST_EXTRA_ARGS[@]}}"
+}
+
 # ── Argument parsing ───────────────────────────────────────────────────────
 usage() { head -35 "$0"; }
 
@@ -145,12 +159,34 @@ cd "$REPO_ROOT"
 NEXTEST_EXTRA_ARGS=()
 $USE_NO_FAIL_FAST && NEXTEST_EXTRA_ARGS+=("--no-fail-fast")
 
-cargo nextest run \
-    -p kalam-pg-extension \
-    --features e2e \
-    -E "$NEXTEST_FILTER" \
-    --test-threads 1 \
-    "${NEXTEST_EXTRA_ARGS[@]+"${NEXTEST_EXTRA_ARGS[@]}"}"
+case "$NEXTEST_FILTER" in
+    "test(e2e)")
+        echo "    Running e2e_perf first to avoid warmed-server perf inflation."
+        echo ""
+        run_nextest_slice "Running perf e2e tests ..." --test e2e_perf
+        run_nextest_slice \
+            "Running remaining e2e tests ..." \
+            --test e2e_ddl \
+            --test e2e_dml \
+            --test e2e_scenarios \
+            --test extension_metadata \
+            --test session_settings
+        ;;
+    "test(e2e) & !test(e2e_ddl)")
+        echo "    Running e2e_perf first to avoid warmed-server perf inflation."
+        echo ""
+        run_nextest_slice "Running perf e2e tests ..." --test e2e_perf
+        run_nextest_slice \
+            "Running remaining non-DDL e2e tests ..." \
+            --test e2e_dml \
+            --test e2e_scenarios \
+            --test extension_metadata \
+            --test session_settings
+        ;;
+    *)
+        run_nextest_slice "Running e2e tests ..."
+        ;;
+esac
 
 echo ""
 echo "========================================================"

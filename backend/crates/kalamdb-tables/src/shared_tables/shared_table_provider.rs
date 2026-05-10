@@ -55,7 +55,7 @@ use crate::{
     shared_tables::{SharedTableIndexedStore, SharedTablePkIndex, SharedTableRow},
     utils::{
         base::{self, BaseTableProvider, DeferredMvccScanProvider, TableProviderCore},
-        row_utils::extract_full_user_context,
+        row_utils::{extract_full_user_context, extract_user_context},
     },
 };
 
@@ -843,7 +843,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 );
             }
 
-            // Fire topic/CDC notification (INSERT) - no user_id for shared tables
+            // Fire topic/CDC notification (INSERT). User is actor metadata only;
+            // live fanout remains shared-scoped.
             let notification_service = self.core.services.notification_service.clone();
             let table_id = self.core.table_id().clone();
 
@@ -857,7 +858,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                             &table_id,
                             kalamdb_commons::models::TopicOp::Insert,
                             &row,
-                            None,
+                            Some(_user_id),
                         )
                         .await;
                 }
@@ -892,7 +893,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         rows: Vec<Row>,
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
         let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-        self.insert_batch_with_commit_seq(rows, commit_seq).await
+        self.insert_batch_with_commit_seq(Some(_user_id), rows, commit_seq).await
     }
 
     async fn update(
@@ -1057,7 +1058,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 );
             }
 
-            // Fire topic/CDC notification (UPDATE) - no user_id for shared tables
+            // Fire topic/CDC notification (UPDATE). User is actor metadata only;
+            // live fanout remains shared-scoped.
             let notification_service = self.core.services.notification_service.clone();
             let table_id = self.core.table_id().clone();
 
@@ -1071,7 +1073,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                             &table_id,
                             kalamdb_commons::models::TopicOp::Update,
                             &new_row,
-                            None,
+                            Some(_user_id),
                         )
                         .await;
                 }
@@ -1223,7 +1225,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 );
             }
 
-            // Fire topic/CDC notification (DELETE) - no user_id for shared tables
+            // Fire topic/CDC notification (DELETE). User is actor metadata only;
+            // live fanout remains shared-scoped.
             let notification_service = self.core.services.notification_service.clone();
             let table_id = self.core.table_id().clone();
 
@@ -1237,7 +1240,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                             &table_id,
                             kalamdb_commons::models::TopicOp::Delete,
                             &row,
-                            None,
+                            Some(_user_id),
                         )
                         .await;
                 }
@@ -1672,6 +1675,7 @@ impl SharedTableProvider {
 
     pub async fn insert_batch_with_commit_seq(
         &self,
+        actor_user_id: Option<&UserId>,
         rows: Vec<Row>,
         commit_seq: u64,
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
@@ -1704,7 +1708,7 @@ impl SharedTableProvider {
                             &table_id,
                             kalamdb_commons::models::TopicOp::Insert,
                             &rows,
-                            None,
+                            actor_user_id,
                         )
                         .await;
                 }
@@ -2091,13 +2095,16 @@ impl TableProvider for SharedTableProvider {
 
         self.ensure_shared_write_route(state).await?;
 
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
         if let Some(transaction_query_context) = extract_transaction_query_context(state) {
             let inserted = crate::utils::datafusion_dml::stage_insert_rows(
                 transaction_query_context,
                 self.core.table_id(),
                 TableType::Shared,
-                None,
+                Some(user_id.clone()),
                 self.primary_key_field_name(),
                 rows,
             )?;
@@ -2106,7 +2113,7 @@ impl TableProvider for SharedTableProvider {
         }
 
         let inserted = self
-            .insert_batch(base::system_user_id(), rows)
+            .insert_batch(user_id, rows)
             .await
             .map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
@@ -2123,6 +2130,9 @@ impl TableProvider for SharedTableProvider {
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         self.ensure_shared_write_route(state).await?;
+
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let pk_column = self.primary_key_field_name().to_string();
         let schema = self.schema_ref();
@@ -2166,7 +2176,7 @@ impl TableProvider for SharedTableProvider {
                         .clone(),
                     self.core.table_id().clone(),
                     TableType::Shared,
-                    None,
+                    Some(user_id.clone()),
                     OperationKind::Delete,
                     pk_value,
                     Row::new(std::collections::BTreeMap::new()),
@@ -2177,7 +2187,7 @@ impl TableProvider for SharedTableProvider {
             }
 
             if self
-                .delete_by_pk_value(base::system_user_id(), &pk_value)
+                .delete_by_pk_value(user_id, &pk_value)
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?
             {
@@ -2219,6 +2229,9 @@ impl TableProvider for SharedTableProvider {
         crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
 
         self.ensure_shared_write_route(state).await?;
+
+        let (user_id, _role) =
+            extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let pk_column = self.primary_key_field_name().to_string();
         crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
@@ -2278,7 +2291,7 @@ impl TableProvider for SharedTableProvider {
                         .clone(),
                     self.core.table_id().clone(),
                     TableType::Shared,
-                    None,
+                    Some(user_id.clone()),
                     OperationKind::Update,
                     pk_value,
                     evaluated_updates,
@@ -2289,7 +2302,7 @@ impl TableProvider for SharedTableProvider {
             }
 
             let result = self
-                .update_by_pk_value(base::system_user_id(), &pk_value, evaluated_updates)
+                .update_by_pk_value(user_id, &pk_value, evaluated_updates)
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             if let Some(row_key) = result {
@@ -2336,13 +2349,13 @@ impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
 
     async fn update_row_by_pk(
         &self,
-        _user_id: &UserId,
+        user_id: &UserId,
         pk_value: &str,
         updates: Row,
     ) -> Result<bool, KalamDbError> {
         self.ensure_shared_write_leader().await?;
 
-        match self.update_by_pk_value(base::system_user_id(), pk_value, updates).await {
+        match self.update_by_pk_value(user_id, pk_value, updates).await {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false), // no-op: row unchanged
             Err(KalamDbError::NotFound(_)) => Ok(false),
@@ -2352,12 +2365,12 @@ impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
 
     async fn delete_row_by_pk(
         &self,
-        _user_id: &UserId,
+        user_id: &UserId,
         pk_value: &str,
     ) -> Result<bool, KalamDbError> {
         self.ensure_shared_write_leader().await?;
 
-        self.delete_by_pk_value(base::system_user_id(), pk_value).await
+        self.delete_by_pk_value(user_id, pk_value).await
     }
 
     async fn insert_rows_returning(

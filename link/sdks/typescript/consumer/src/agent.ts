@@ -1,17 +1,22 @@
 import type {
-  AgentContext,
-  AgentFailureContext,
+  AgentChangeParser,
+  AgentConnectionRetryPolicy,
   AgentLLMAdapter,
   AgentLLMContext,
   AgentLLMInput,
   ConsumePayload,
+  ConsumerChange,
+  ConsumerRunContext,
+  ConsumerFailureContext,
+  ConsumerRunMessage,
   AgentRetryPolicy,
   AgentRunKeyFactory,
-  AgentRowParser,
+  ConsumeContext,
   ConsumeMessage,
   LangChainChatModelLike,
   RunAgentOptions,
   RunConsumerOptions,
+  UserId,
 } from './types.js';
 
 const DEFAULT_RETRY: Required<Omit<AgentRetryPolicy, 'shouldRetry'>> & {
@@ -22,6 +27,28 @@ const DEFAULT_RETRY: Required<Omit<AgentRetryPolicy, 'shouldRetry'>> & {
   maxBackoffMs: 5000,
   multiplier: 2,
   jitterRatio: 0,
+  shouldRetry: () => true,
+};
+
+type NormalizedConnectionRetryPolicy = Required<Omit<AgentConnectionRetryPolicy, 'maxAttempts' | 'shouldRetry'>> & {
+  maxAttempts: number | undefined;
+  shouldRetry: NonNullable<AgentConnectionRetryPolicy['shouldRetry']>;
+};
+
+type BackoffPolicy = {
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+  multiplier: number;
+  jitterRatio: number;
+};
+
+const DEFAULT_CONNECTION_RETRY: NormalizedConnectionRetryPolicy = {
+  enabled: true,
+  maxAttempts: undefined,
+  initialBackoffMs: 500,
+  maxBackoffMs: 30_000,
+  multiplier: 1.8,
+  jitterRatio: 0.2,
   shouldRetry: () => true,
 };
 
@@ -42,7 +69,30 @@ function normalizeRetryPolicy(retry: AgentRetryPolicy | undefined): Required<Age
   };
 }
 
-function backoffMsForAttempt(attempt: number, policy: Required<AgentRetryPolicy>): number {
+function normalizeConnectionRetryPolicy(retry: AgentConnectionRetryPolicy | undefined): NormalizedConnectionRetryPolicy {
+  const maxAttempts = retry?.maxAttempts === undefined
+    ? DEFAULT_CONNECTION_RETRY.maxAttempts
+    : Math.max(1, Math.floor(retry.maxAttempts));
+  const initialBackoffMs = Math.max(0, Math.floor(retry?.initialBackoffMs ?? DEFAULT_CONNECTION_RETRY.initialBackoffMs));
+  const maxBackoffMs = Math.max(initialBackoffMs, Math.floor(retry?.maxBackoffMs ?? DEFAULT_CONNECTION_RETRY.maxBackoffMs));
+  const multiplier = Math.max(1, retry?.multiplier ?? DEFAULT_CONNECTION_RETRY.multiplier);
+  const jitterRatio = Math.min(1, Math.max(0, retry?.jitterRatio ?? DEFAULT_CONNECTION_RETRY.jitterRatio));
+
+  return {
+    enabled: retry?.enabled ?? DEFAULT_CONNECTION_RETRY.enabled,
+    maxAttempts,
+    initialBackoffMs,
+    maxBackoffMs,
+    multiplier,
+    jitterRatio,
+    shouldRetry: retry?.shouldRetry ?? DEFAULT_CONNECTION_RETRY.shouldRetry,
+  };
+}
+
+function backoffMsForAttempt(
+  attempt: number,
+  policy: BackoffPolicy,
+): number {
   if (attempt <= 1 || policy.initialBackoffMs <= 0) {
     return 0;
   }
@@ -61,15 +111,31 @@ function backoffMsForAttempt(attempt: number, policy: Required<AgentRetryPolicy>
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener('abort', cleanup);
+      resolve();
+    };
+
+    timer = setTimeout(cleanup, ms);
+    signal?.addEventListener('abort', cleanup, { once: true });
+  });
 }
 
 function defaultRunKeyFactory({ name, message }: { name: string; message: ConsumeMessage }): string {
   return `${name}:${message.topic}:${message.partition_id}:${message.offset}`;
 }
 
-function defaultRowParser<TPayload extends ConsumePayload>(
+function defaultChangeParser<TPayload extends ConsumePayload>(
   message: ConsumeMessage<TPayload>,
 ): Record<string, unknown> | null {
   const payload = message.payload ?? message.value;
@@ -90,14 +156,15 @@ function normalizeLLMInput(
   input: string | Omit<AgentLLMInput, 'systemPrompt'>,
   systemPrompt: string | undefined,
   runKey: string,
-  row: Record<string, unknown>,
+  change: Record<string, unknown>,
 ): AgentLLMInput {
   if (typeof input === 'string') {
     return {
       prompt: input,
       systemPrompt,
       runKey,
-      row,
+      change,
+      row: change,
     };
   }
 
@@ -105,7 +172,8 @@ function normalizeLLMInput(
     ...input,
     systemPrompt,
     runKey,
-    row,
+    change: input.change ?? change,
+    row: input.row ?? change,
   };
 }
 
@@ -113,25 +181,67 @@ function createLLMContext(
   llm: AgentLLMAdapter | undefined,
   systemPrompt: string | undefined,
   runKey: string,
-  row: Record<string, unknown>,
+  change: Record<string, unknown>,
 ): AgentLLMContext | null {
   if (!llm) {
     return null;
   }
 
   return {
-    complete: async (input) => llm.complete(normalizeLLMInput(input, systemPrompt, runKey, row)),
+    complete: async (input) => llm.complete(normalizeLLMInput(input, systemPrompt, runKey, change)),
     stream: async function* (input) {
       if (!llm.stream) {
         throw new Error('LLM adapter does not support streaming');
       }
 
-      const stream = llm.stream(normalizeLLMInput(input, systemPrompt, runKey, row));
+      const stream = llm.stream(normalizeLLMInput(input, systemPrompt, runKey, change));
       for await (const chunk of stream) {
         yield chunk;
       }
     },
   };
+}
+
+function buildConsumerChange<TData extends Record<string, unknown>, TPayload extends ConsumePayload>(
+  data: TData,
+  message: ConsumeMessage<TPayload>,
+  user: UserId,
+): ConsumerChange<TData, TPayload> {
+  const contextMessage = buildConsumerRunMessage(message);
+  return {
+    data,
+    message: contextMessage,
+    user,
+    key: message.key,
+    op: message.op,
+    timestampMs: message.timestamp_ms,
+    partitionId: message.partition_id,
+    offset: message.offset,
+    topic: message.topic,
+    groupId: message.group_id,
+  };
+}
+
+function resolveConsumerUser<TPayload extends ConsumePayload>(
+  consumeCtx: ConsumeContext<TPayload>,
+  message: ConsumeMessage<TPayload>,
+): UserId {
+  const user = consumeCtx.user ?? message.user;
+  if (!user) {
+    throw new Error(
+      'runConsumer: consumed message is missing required user metadata; upgrade the server or republish the topic event with a user id',
+    );
+  }
+  return user;
+}
+
+function buildConsumerRunMessage<TPayload extends ConsumePayload>(
+  message: ConsumeMessage<TPayload>,
+): ConsumerRunMessage<TPayload> {
+  const { payload: _payload, value: _value, change: _change, ...metadata } = message as ConsumeMessage<TPayload> & {
+    change?: unknown;
+  };
+  return metadata;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -220,25 +330,37 @@ export function createLangChainAdapter(model: LangChainChatModelLike): AgentLLMA
   };
 }
 
-export async function runAgent<
-  TRow extends Record<string, unknown> = Record<string, unknown>,
-  TPayload extends ConsumePayload = ConsumePayload,
+export async function runConsumer<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
 >(
-  options: RunAgentOptions<TRow, TPayload>,
+  options: RunConsumerOptions<TData, TPayload>,
 ): Promise<void> {
   if (!options.name.trim()) {
-    throw new Error('runAgent: name is required');
+    throw new Error('runConsumer: name is required');
   }
   if (!options.topic.trim()) {
-    throw new Error('runAgent: topic is required');
+    throw new Error('runConsumer: topic is required');
   }
   if (!options.groupId.trim()) {
-    throw new Error('runAgent: groupId is required');
+    throw new Error('runConsumer: groupId is required');
+  }
+  if (!options.onChange && !options.onMessage && !options.onRow) {
+    throw new Error('runConsumer: onChange is required');
   }
 
   const retryPolicy = normalizeRetryPolicy(options.retry);
+  const connectionRetryPolicy = normalizeConnectionRetryPolicy(options.connectionRetry);
   const runKeyFactory = options.runKeyFactory ?? defaultRunKeyFactory;
-  const rowParser = (options.rowParser ?? defaultRowParser) as AgentRowParser<TRow, TPayload>;
+  const changeParser = (options.changeParser ?? options.rowParser ?? defaultChangeParser) as AgentChangeParser<TData, TPayload>;
+  const onChange = options.onChange ?? (async (ctx: ConsumerRunContext<TData, TPayload>, change: ConsumerChange<TData, TPayload>) => {
+    if (options.onMessage) {
+      await options.onMessage(ctx, change);
+      return;
+    }
+
+    await options.onRow!(ctx, change.data, change);
+  });
   const consumerOptions = {
     topic: options.topic,
     group_id: options.groupId,
@@ -249,160 +371,178 @@ export async function runAgent<
     auto_ack: false,
   };
 
-  const consumer = options.client.consumer<TPayload>(consumerOptions);
-  const abortHandler = () => consumer.stop();
-  options.stopSignal?.addEventListener('abort', abortHandler, { once: true });
+  const runOnce = async (): Promise<void> => {
+    const consumer = options.client.consumer<TPayload>(consumerOptions);
+    const abortHandler = () => consumer.stop();
+    options.stopSignal?.addEventListener('abort', abortHandler, { once: true });
 
-  try {
-    await consumer.run(async (consumeCtx) => {
-      const row = rowParser(consumeCtx.message);
-      if (!row) {
-        return;
-      }
-
-      const runKey = runKeyFactory({
-        name: options.name,
-        message: consumeCtx.message,
-      });
-
-      let acked = false;
-      const ack = async () => {
-        if (acked) {
+    try {
+      await consumer.run(async (consumeCtx) => {
+        const data = changeParser(consumeCtx.message);
+        if (!data) {
+          await consumeCtx.ack();
           return;
         }
-        await consumeCtx.ack();
-        acked = true;
-      };
+        const message = consumeCtx.message;
+        const user = resolveConsumerUser(consumeCtx, message);
+        const change = buildConsumerChange<TData, TPayload>(data, message, user);
 
-      let lastError: unknown;
-      for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt += 1) {
-        const ctx: AgentContext<TRow, TPayload> = {
+        const runKey = runKeyFactory({
           name: options.name,
-          topic: options.topic,
-          groupId: options.groupId,
+          message,
+        });
+
+        let acked = false;
+        const ack = async () => {
+          if (acked) {
+            return;
+          }
+          await consumeCtx.ack();
+          acked = true;
+        };
+
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt += 1) {
+          const ctx: ConsumerRunContext<TData, TPayload> = {
+            name: options.name,
+            runKey,
+            attempt,
+            maxAttempts: retryPolicy.maxAttempts,
+            systemPrompt: options.systemPrompt,
+            llm: createLLMContext(options.llm, options.systemPrompt, runKey, change.data),
+            sql: async (sql, params) => options.client.query(sql, params),
+            queryOne: async (sql, params) => options.client.queryOne(sql, params),
+            queryAll: async (sql, params) => options.client.queryAll(sql, params),
+            ack,
+          };
+
+          try {
+            await onChange(ctx, change);
+            await ack();
+            return;
+          } catch (error) {
+            lastError = error;
+            if (acked) {
+              options.onError?.({ error, runKey, message: consumeCtx.message });
+              return;
+            }
+
+            const shouldRetry = attempt < retryPolicy.maxAttempts && retryPolicy.shouldRetry(error, attempt);
+            if (!shouldRetry) {
+              break;
+            }
+
+            const backoffMs = backoffMsForAttempt(attempt + 1, retryPolicy);
+            options.onRetry?.({
+              error,
+              attempt,
+              maxAttempts: retryPolicy.maxAttempts,
+              backoffMs,
+              runKey,
+              message: consumeCtx.message,
+            });
+
+            if (backoffMs > 0) {
+              await sleep(backoffMs, options.stopSignal);
+            }
+          }
+        }
+
+        if (!options.onFailed) {
+          options.onError?.({
+            error: lastError ?? new Error('Agent message failed with unknown error'),
+            runKey,
+            message: consumeCtx.message,
+          });
+          return;
+        }
+
+        const failedCtx: ConsumerFailureContext<TData, TPayload> = {
+          name: options.name,
           runKey,
-          attempt,
+          attempt: retryPolicy.maxAttempts,
           maxAttempts: retryPolicy.maxAttempts,
-          message: consumeCtx.message,
-          row,
-          user: consumeCtx.user,
           systemPrompt: options.systemPrompt,
-          llm: createLLMContext(options.llm, options.systemPrompt, runKey, row),
+          llm: createLLMContext(options.llm, options.systemPrompt, runKey, change.data),
           sql: async (sql, params) => options.client.query(sql, params),
           queryOne: async (sql, params) => options.client.queryOne(sql, params),
           queryAll: async (sql, params) => options.client.queryAll(sql, params),
           ack,
+          error: lastError,
         };
 
         try {
-          await options.onRow(ctx, row);
-          await ack();
-          return;
-        } catch (error) {
-          lastError = error;
-          if (acked) {
-            options.onError?.({ error, runKey, message: consumeCtx.message });
-            return;
-          }
-
-          const shouldRetry = attempt < retryPolicy.maxAttempts && retryPolicy.shouldRetry(error, attempt);
-          if (!shouldRetry) {
-            break;
-          }
-
-          const backoffMs = backoffMsForAttempt(attempt + 1, retryPolicy);
-          options.onRetry?.({
-            error,
-            attempt,
-            maxAttempts: retryPolicy.maxAttempts,
-            backoffMs,
-            runKey,
-            message: consumeCtx.message,
-          });
-
-          if (backoffMs > 0) {
-            await sleep(backoffMs);
-          }
-        }
-      }
-
-      if (!options.onFailed) {
-        options.onError?.({
-          error: lastError ?? new Error('Agent message failed with unknown error'),
-          runKey,
-          message: consumeCtx.message,
-        });
-        return;
-      }
-
-      const failedCtx: AgentFailureContext<TRow, TPayload> = {
-        name: options.name,
-        topic: options.topic,
-        groupId: options.groupId,
-        runKey,
-        attempt: retryPolicy.maxAttempts,
-        maxAttempts: retryPolicy.maxAttempts,
-        message: consumeCtx.message,
-        row,
-        user: consumeCtx.user,
-        systemPrompt: options.systemPrompt,
-        llm: createLLMContext(options.llm, options.systemPrompt, runKey, row),
-        sql: async (sql, params) => options.client.query(sql, params),
-        queryOne: async (sql, params) => options.client.queryOne(sql, params),
-        queryAll: async (sql, params) => options.client.queryAll(sql, params),
-        ack,
-        error: lastError,
-      };
-
-      try {
-        await options.onFailed(failedCtx);
-      } catch (failureHandlerError) {
-        options.onError?.({
-          error: failureHandlerError,
-          runKey,
-          message: consumeCtx.message,
-        });
-        return;
-      }
-
-      const shouldAckAfterFailure = options.ackOnFailed ?? true;
-      if (shouldAckAfterFailure) {
-        try {
-          await ack();
-        } catch (error) {
+          await options.onFailed(failedCtx, change);
+        } catch (failureHandlerError) {
           options.onError?.({
-            error,
+            error: failureHandlerError,
             runKey,
             message: consumeCtx.message,
           });
+          return;
         }
+
+        const shouldAckAfterFailure = options.ackOnFailed ?? true;
+        if (shouldAckAfterFailure) {
+          try {
+            await ack();
+          } catch (error) {
+            options.onError?.({
+              error,
+              runKey,
+              message: consumeCtx.message,
+            });
+          }
+        }
+      });
+    } finally {
+      options.stopSignal?.removeEventListener('abort', abortHandler);
+    }
+  };
+
+  let connectionAttempt = 0;
+  while (!options.stopSignal?.aborted) {
+    try {
+      await runOnce();
+      return;
+    } catch (error) {
+      if (options.stopSignal?.aborted) {
+        return;
       }
-    });
-  } finally {
-    options.stopSignal?.removeEventListener('abort', abortHandler);
+
+      connectionAttempt += 1;
+      const retryBudgetExhausted = connectionRetryPolicy.maxAttempts !== undefined
+        && connectionAttempt >= connectionRetryPolicy.maxAttempts;
+      const shouldRetry = connectionRetryPolicy.enabled
+        && !retryBudgetExhausted
+        && connectionRetryPolicy.shouldRetry(error, connectionAttempt);
+
+      if (!shouldRetry) {
+        options.onConnectionError?.({ error, attempt: connectionAttempt });
+        throw error;
+      }
+
+      const backoffMs = backoffMsForAttempt(connectionAttempt + 1, connectionRetryPolicy);
+      options.onConnectionRetry?.({
+        error,
+        attempt: connectionAttempt,
+        maxAttempts: connectionRetryPolicy.maxAttempts,
+        backoffMs,
+      });
+
+      await sleep(backoffMs, options.stopSignal);
+    }
   }
 }
 
-export async function runConsumer<TPayload extends ConsumePayload = ConsumePayload>(
-  options: RunConsumerOptions<TPayload>,
+/**
+ * @deprecated Use `runConsumer` instead.
+ */
+export async function runAgent<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+>(
+  options: RunAgentOptions<TData, TPayload>,
 ): Promise<void> {
-  await runAgent({
-    client: options.client,
-    name: options.name,
-    topic: options.topic,
-    groupId: options.groupId,
-    start: options.start,
-    batchSize: options.batchSize,
-    partitionId: options.partitionId,
-    timeoutSeconds: options.timeoutSeconds,
-    retry: options.retry,
-    onRow: async (ctx) => {
-      await options.onMessage(ctx);
-    },
-    onFailed: options.onFailed,
-    ackOnFailed: options.ackOnFailed,
-    stopSignal: options.stopSignal,
-    onRetry: options.onRetry,
-    onError: options.onError,
-  });
+  await runConsumer(options);
 }

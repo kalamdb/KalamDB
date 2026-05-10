@@ -124,6 +124,29 @@ impl DmlExecutor {
         }
     }
 
+    async fn emit_shared_autocommit_notification(
+        &self,
+        actor_user_id: Option<&UserId>,
+        notification: ChangeNotification,
+    ) {
+        let has_live_subscribers = NotificationServiceTrait::has_subscribers(
+            self.app_context.notification_service().as_ref(),
+            None,
+            &notification.table_id,
+        );
+        let table_id = notification.table_id.clone();
+
+        let _ = self.publish_transaction_notification(actor_user_id, &notification).await;
+
+        if has_live_subscribers {
+            self.app_context.notification_service().notify_table_change(
+                None,
+                table_id,
+                notification,
+            );
+        }
+    }
+
     // =========================================================================
     // User Table Operations (per-user sharded data)
     // =========================================================================
@@ -352,15 +375,18 @@ impl DmlExecutor {
     pub async fn insert_shared_data(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         rows: &[Row],
     ) -> Result<usize, ApplierError> {
         let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.insert_shared_data_with_commit_seq(table_id, rows, commit_seq).await
+        self.insert_shared_data_with_commit_seq(table_id, actor_user_id, rows, commit_seq)
+            .await
     }
 
     pub async fn insert_shared_data_with_commit_seq(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         rows: &[Row],
         commit_seq: u64,
     ) -> Result<usize, ApplierError> {
@@ -372,7 +398,7 @@ impl DmlExecutor {
 
         if let Some(provider) = provider_arc.as_any().downcast_ref::<SharedTableProvider>() {
             let row_ids = provider
-                .insert_batch_with_commit_seq(rows.to_vec(), commit_seq)
+                .insert_batch_with_commit_seq(actor_user_id, rows.to_vec(), commit_seq)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
             self.observe_commit_seq(commit_seq);
@@ -390,17 +416,25 @@ impl DmlExecutor {
     pub async fn update_shared_data(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         updates: &[Row],
         filter: Option<&str>,
     ) -> Result<usize, ApplierError> {
         let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.update_shared_data_with_commit_seq(table_id, updates, filter, commit_seq)
-            .await
+        self.update_shared_data_with_commit_seq(
+            table_id,
+            actor_user_id,
+            updates,
+            filter,
+            commit_seq,
+        )
+        .await
     }
 
     pub async fn update_shared_data_with_commit_seq(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         updates: &[Row],
         filter: Option<&str>,
         commit_seq: u64,
@@ -442,7 +476,7 @@ impl DmlExecutor {
             let affected_rows = usize::from(updated.is_some());
             if let Some((_row_key, notification)) = updated {
                 if let Some(notification) = notification {
-                    self.emit_autocommit_notification(None, notification).await;
+                    self.emit_shared_autocommit_notification(actor_user_id, notification).await;
                 }
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
@@ -474,15 +508,18 @@ impl DmlExecutor {
     pub async fn delete_shared_data(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
     ) -> Result<usize, ApplierError> {
         let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.delete_shared_data_with_commit_seq(table_id, pk_values, commit_seq).await
+        self.delete_shared_data_with_commit_seq(table_id, actor_user_id, pk_values, commit_seq)
+            .await
     }
 
     pub async fn delete_shared_data_with_commit_seq(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
         commit_seq: u64,
     ) -> Result<usize, ApplierError> {
@@ -516,7 +553,7 @@ impl DmlExecutor {
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     if let Some(notification) = notification {
-                        self.emit_autocommit_notification(None, notification).await;
+                        self.emit_shared_autocommit_notification(actor_user_id, notification).await;
                     }
                     deleted_count += 1;
                     delete_file_refs_best_effort(
@@ -986,14 +1023,20 @@ impl DmlExecutor {
                     )));
                 }
 
-                for (_mutation, (_row_key, notification)) in
+                for (mutation, (_row_key, notification)) in
                     mutations.iter().zip(applied.into_iter())
                 {
                     affected_rows += 1;
                     side_effect_plan.record_manifest_update();
 
                     if let Some(notification) = notification {
-                        if self.publish_transaction_notification(None, &notification).await {
+                        if self
+                            .publish_transaction_notification(
+                                mutation.user_id.as_ref(),
+                                &notification,
+                            )
+                            .await
+                        {
                             side_effect_plan.record_publisher_event();
                         }
 
@@ -1090,7 +1133,10 @@ impl DmlExecutor {
             side_effect_plan.record_manifest_update();
 
             if let Some(notification) = notification {
-                if self.publish_transaction_notification(None, &notification).await {
+                if self
+                    .publish_transaction_notification(mutation.user_id.as_ref(), &notification)
+                    .await
+                {
                     side_effect_plan.record_publisher_event();
                 }
 

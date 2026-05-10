@@ -239,13 +239,13 @@ Use this API for protocol tooling, debugging, or custom reconciliation. For app 
 
 Topic workers now live in the separate `@kalamdb/consumer` package so app-only installs keep the main SDK lean.
 
-Install the worker package only when you need topic consumption or the agent runtime:
+Install the worker package only when you need topic consumption or the worker runtime:
 
 ```bash
 npm i @kalamdb/client @kalamdb/consumer
 ```
 
-Use `@kalamdb/client` for app-facing SQL, live rows, subscriptions, auth, and files. Use `@kalamdb/consumer` for `consumeBatch()`, `ack()`, `consumer()`, `runAgent()`, and `runConsumer()`.
+Use `@kalamdb/client` for app-facing SQL, live rows, subscriptions, auth, and files. Use `@kalamdb/consumer` for `consumeBatch()`, `ack()`, `consumer()`, and `runConsumer()`.
 
 ## Files
 

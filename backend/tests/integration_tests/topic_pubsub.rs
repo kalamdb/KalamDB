@@ -20,10 +20,12 @@ use kalam_client::{
     parse_i64,
 };
 use kalamdb_commons::{
-    models::{ConsumerGroupId, TopicId},
+    models::{ConsumerGroupId, TopicId, TopicOp, UserId},
     Role,
 };
 use kalamdb_core::app_context::AppContext;
+use kalamdb_store::EntityStore;
+use kalamdb_tables::TopicMessage;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -36,6 +38,10 @@ struct HttpConsumeMessage {
     offset: u64,
     partition_id: u32,
     key: Option<String>,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    op: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -286,6 +292,25 @@ fn last_row_offset(response: &QueryResponse) -> u64 {
         .expect("Expected consume response to contain at least one offset row") as u64
 }
 
+fn http_message_offsets(messages: &[HttpConsumeMessage]) -> Vec<u64> {
+    messages.iter().map(|message| message.offset).collect()
+}
+
+fn assert_consecutive_http_offsets(
+    messages: &[HttpConsumeMessage],
+    expected_start: u64,
+    context: &str,
+) {
+    let offsets = http_message_offsets(messages);
+    let expected: Vec<u64> =
+        (expected_start..expected_start.saturating_add(offsets.len() as u64)).collect();
+    assert_eq!(
+        offsets, expected,
+        "{}: expected consecutive offsets starting at {}, got {:?}",
+        context, expected_start, offsets
+    );
+}
+
 async fn ack_topic_offset(server: &TestServer, topic: &str, group: &str, upto_offset: u64) {
     let response = server
         .execute_sql(&format!("ACK {} GROUP '{}' UPTO OFFSET {}", topic, group, upto_offset))
@@ -466,6 +491,174 @@ async fn wait_for_topic_routes(
 
         tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
     }
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+#[serial]
+async fn test_http_consume_returns_stored_user_id_without_lookup() {
+    let server = TestServer::new_shared().await;
+    let http_server = http_server::get_global_server().await;
+    let auth_header = http_server
+        .bearer_auth_header("root")
+        .expect("Failed to create root auth header");
+
+    let namespace = consolidated_helpers::unique_namespace("tp_http_user");
+    let topic_table = consolidated_helpers::unique_table("topic");
+    let topic = format!("{}.{}", namespace, topic_table);
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
+    assert_eq!(create_topic.status, ResponseStatus::Success);
+
+    let message = TopicMessage::new_with_user(
+        TopicId::new(&topic),
+        0,
+        0,
+        br#"{"status":"orphaned-user"}"#.to_vec(),
+        Some("manual-key".to_string()),
+        chrono::Utc::now().timestamp_millis(),
+        Some(UserId::new("deleted-user-123")),
+        TopicOp::Insert,
+    );
+
+    server
+        .app_context
+        .topic_publisher()
+        .message_store()
+        .put(&message.id(), &message)
+        .expect("Failed to seed topic message");
+
+    let group_id = format!("http-user-{}", consolidated_helpers::unique_table("group"));
+    let (status, payload) = post_topics_consume(
+        http_server,
+        &auth_header,
+        json!({
+            "topic_id": topic,
+            "group_id": group_id,
+            "start": "earliest",
+            "limit": 10,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "Consume should succeed: {:?}", payload);
+    let response: HttpConsumeResponse = serde_json::from_value(payload.clone())
+        .expect("Consume payload should match HttpConsumeResponse");
+    assert_eq!(response.messages.len(), 1);
+    assert_eq!(payload["messages"][0]["user"].as_str(), Some("deleted-user-123"));
+    assert_eq!(payload["messages"][0]["op"].as_str(), Some("Insert"));
+}
+
+#[tokio::test]
+#[ntest::timeout(30000)]
+#[serial]
+async fn test_http_consume_shared_table_cdc_includes_actor_user_for_insert_update_delete() {
+    let server = http_server::get_global_server().await;
+    let auth_header = server.bearer_auth_header("root").expect("Failed to create root auth header");
+
+    let namespace = consolidated_helpers::unique_namespace("tp_http_shared_actor");
+    let table = consolidated_helpers::unique_table("shared_events");
+    let topic_table = consolidated_helpers::unique_table("topic");
+    let topic = format!("{}.{}", namespace, topic_table);
+    let source_table = format!("{}.{}", namespace, table);
+
+    let create_namespace = server
+        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("CREATE NAMESPACE request failed");
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE SHARED TABLE {} (id INT PRIMARY KEY, payload TEXT)",
+            source_table
+        ))
+        .await
+        .expect("CREATE SHARED TABLE request failed");
+    assert_eq!(create_table.status, ResponseStatus::Success);
+
+    let create_topic = server
+        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
+        .await
+        .expect("CREATE TOPIC request failed");
+    assert_eq!(create_topic.status, ResponseStatus::Success);
+
+    for op in ["INSERT", "UPDATE", "DELETE"] {
+        let add_source = server
+            .execute_sql(&format!(
+                "ALTER TOPIC {} ADD SOURCE {} ON {} WITH (payload = 'full')",
+                topic, source_table, op
+            ))
+            .await
+            .expect("ALTER TOPIC ADD SOURCE request failed");
+        assert_eq!(
+            add_source.status,
+            ResponseStatus::Success,
+            "ALTER TOPIC ADD SOURCE ON {} failed: {:?}",
+            op,
+            add_source.error
+        );
+    }
+    wait_for_topic_routes(server, &topic, 3).await;
+
+    let insert = server
+        .execute_sql(&format!("INSERT INTO {} (id, payload) VALUES (1, 'created')", source_table))
+        .await
+        .expect("INSERT request failed");
+    assert_eq!(insert.status, ResponseStatus::Success, "shared INSERT failed");
+
+    let update = server
+        .execute_sql(&format!("UPDATE {} SET payload = 'updated' WHERE id = 1", source_table))
+        .await
+        .expect("UPDATE request failed");
+    assert_eq!(update.status, ResponseStatus::Success, "shared UPDATE failed");
+
+    let delete = server
+        .execute_sql(&format!("DELETE FROM {} WHERE id = 1", source_table))
+        .await
+        .expect("DELETE request failed");
+    assert_eq!(delete.status, ResponseStatus::Success, "shared DELETE failed");
+
+    let group_id = format!("http-shared-{}", consolidated_helpers::unique_table("group"));
+    let consumed = wait_until_group_reads_at_least(
+        server,
+        &auth_header,
+        &topic,
+        &group_id,
+        json!("earliest"),
+        10,
+        3,
+    )
+    .await;
+
+    assert_eq!(consumed.messages.len(), 3);
+    assert_consecutive_http_offsets(
+        &consumed.messages,
+        0,
+        "shared-table CDC messages should stay ordered across insert/update/delete",
+    );
+    assert!(
+        consumed.messages.iter().all(|message| message.user.as_deref() == Some("root")),
+        "shared-table topic consume should surface the acting user for every change"
+    );
+
+    let observed_ops: std::collections::BTreeSet<String> = consumed
+        .messages
+        .iter()
+        .map(|message| message.op.clone().expect("topic message should include op"))
+        .collect();
+    let expected_ops: std::collections::BTreeSet<String> =
+        ["Insert", "Update", "Delete"].into_iter().map(str::to_string).collect();
+    assert_eq!(observed_ops, expected_ops);
+    assert!(
+        consumed.messages.iter().all(|message| message.key.as_deref() == Some("1")),
+        "shared-table topic messages should retain the primary-key topic key"
+    );
 }
 
 /// Test basic topic creation via SQL
@@ -1427,20 +1620,36 @@ async fn test_http_api_consume_ack_option_combinations() {
     );
 
     let group = format!("group-{}", consolidated_helpers::unique_table("earliest"));
-    let first_batch = wait_until_group_reads_at_least(
+    let (first_status, first_payload) = post_topics_consume(
         server,
         &auth_header,
-        &topic,
-        &group,
-        json!("earliest"),
-        2,
-        2,
+        json!({
+            "topic_id": topic,
+            "group_id": group,
+            "start": "earliest",
+            "limit": 2,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        }),
     )
     .await;
+    assert_eq!(
+        first_status,
+        StatusCode::OK,
+        "First grouped consume should return HTTP 200, payload={:?}",
+        first_payload
+    );
+    let first_batch: HttpConsumeResponse =
+        serde_json::from_value(first_payload).expect("First grouped consume should deserialize");
     assert_eq!(
         first_batch.messages.len(),
         2,
         "batch_size/limit should cap first consume response"
+    );
+    assert_consecutive_http_offsets(
+        &first_batch.messages,
+        0,
+        "HTTP grouped consume should return the first batch in offset order",
     );
     assert!(first_batch.has_more, "Expected more data after first limited batch");
     assert_eq!(
@@ -1475,19 +1684,32 @@ async fn test_http_api_consume_ack_option_combinations() {
         "Ack response should echo acknowledged offset"
     );
 
-    let resumed = wait_until_group_reads_at_least(
+    let (resumed_status, resumed_payload) = post_topics_consume(
         server,
         &auth_header,
-        &topic,
-        &group,
-        json!("earliest"),
-        10,
-        10,
+        json!({
+            "topic_id": topic,
+            "group_id": group,
+            "start": "earliest",
+            "limit": 10,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        }),
     )
     .await;
-    assert!(
-        resumed.messages.iter().all(|m| m.offset > ack_offset),
-        "Messages should resume strictly after acked offset"
+    assert_eq!(
+        resumed_status,
+        StatusCode::OK,
+        "Resumed grouped consume should return HTTP 200, payload={:?}",
+        resumed_payload
+    );
+    let resumed: HttpConsumeResponse = serde_json::from_value(resumed_payload)
+        .expect("Resumed grouped consume should deserialize");
+    assert_eq!(resumed.messages.len(), 10, "Expected the next limited batch after ack");
+    assert_consecutive_http_offsets(
+        &resumed.messages,
+        ack_offset + 1,
+        "HTTP grouped consume should resume on the next offset after ack without replay",
     );
 
     let latest_group = format!("group-{}", consolidated_helpers::unique_table("latest"));
@@ -1535,19 +1757,35 @@ async fn test_http_api_consume_ack_option_combinations() {
         );
     }
 
-    let latest_after_new = wait_until_group_reads_at_least(
+    let (latest_after_new_status, latest_after_new_payload) = post_topics_consume(
         server,
         &auth_header,
-        &topic,
-        &latest_group,
-        json!({ "Offset": latest_initial.next_offset }),
-        10,
-        2,
+        json!({
+            "topic_id": topic,
+            "group_id": latest_group,
+            "start": { "Offset": latest_initial.next_offset },
+            "limit": 10,
+            "partition_id": 0,
+            "timeout_seconds": 1
+        }),
     )
     .await;
+    assert_eq!(
+        latest_after_new_status,
+        StatusCode::OK,
+        "Latest follow-up consume should return HTTP 200, payload={:?}",
+        latest_after_new_payload
+    );
+    let latest_after_new: HttpConsumeResponse = serde_json::from_value(latest_after_new_payload)
+        .expect("Latest follow-up consume should deserialize");
     assert!(
         latest_after_new.messages.len() >= 2,
         "Latest consumer should observe newly inserted rows"
+    );
+    assert_consecutive_http_offsets(
+        &latest_after_new.messages,
+        latest_initial.next_offset,
+        "Latest HTTP consume should return new rows in publish order",
     );
 }
 

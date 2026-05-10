@@ -40,6 +40,9 @@ export {
 
 export type {
   AckResponse,
+  AgentChange,
+  AgentChangeParser,
+  AgentConnectionRetryPolicy,
   AgentContext,
   AgentFailureContext,
   AgentFailureHandler,
@@ -52,10 +55,16 @@ export type {
   AgentRowParser,
   AgentRunKeyFactory,
   ConsumeContext,
+  ConsumerChange,
+  ConsumerChangeHandler,
+  ConsumerChangeParser,
   ConsumerClientLike,
   ConsumerClientOptions,
+  ConsumerFailureContext,
   ConsumerHandle,
   ConsumerHandler,
+  ConsumerRunMessage,
+  ConsumerRunContext,
   ConsumeMessage,
   ConsumeRequest,
   ConsumeResponse,
@@ -64,5 +73,7 @@ export type {
   RunAgentOptions,
   RunConsumerOptions,
 } from './types.js';
+
+export { TopicOp } from './types.js';
 
 export { KalamConsumerClient as default } from './client.js';

@@ -2,7 +2,7 @@
 
 This is the worker-only example in the set.
 
-It demonstrates the smallest useful `@kalamdb/consumer` `runAgent()` flow:
+It demonstrates the smallest useful `@kalamdb/consumer` `runConsumer()` flow:
 
 1. a row lands in `blog.blogs`
 2. KalamDB routes the change into `blog.summarizer`
@@ -11,6 +11,8 @@ It demonstrates the smallest useful `@kalamdb/consumer` `runAgent()` flow:
 5. failures are stored in `blog.summary_failures`
 
 There is no model dependency here. The summarizer is deterministic so the example is easy to read and the test is stable.
+
+Use `change.data` as the blog row inside `onChange()`. This example routes changes from `blog.blogs`, which is a `SHARED` table in `setup.sql`, so `change.user` is expected to be `undefined` here.
 
 ## Quick start
 

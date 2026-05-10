@@ -56,8 +56,11 @@ jobs:
     name: Resolve TypeScript SDK Version
     runs-on: ubuntu-latest
     outputs:
+      root_version: ${{ steps.versions.outputs.root_version }}
       typescript_version: ${{ steps.versions.outputs.typescript_version }}
       latest_server_release_tag: ${{ steps.latest_server.outputs.release_tag }}
+      selected_server_version: ${{ steps.latest_server.outputs.selected_version }}
+      selected_server_selection_reason: ${{ steps.latest_server.outputs.selection_reason }}
       latest_server_asset_name: ${{ steps.latest_server.outputs.asset_name }}
       latest_server_asset_api_url: ${{ steps.latest_server.outputs.asset_api_url }}
     steps:
@@ -93,6 +96,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --github-output "$GITHUB_OUTPUT" \
             --token "$GITHUB_TOKEN" \
+            --preferred-version "${{ steps.versions.outputs.root_version }}" \
             --asset-pattern '^kalamdb-server-.*-linux-x86_64\.tar\.gz$'
 
   download_release_server_binary:
@@ -113,7 +117,7 @@ jobs:
             "${{ needs.resolve_versions.outputs.latest_server_asset_name }}" \
             "${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}" \
             "$PWD/release-server/kalamdb-server"
-          echo "Using latest released SDK server from ${{ needs.resolve_versions.outputs.latest_server_release_tag }}"
+          echo "Using SDK test server release ${{ needs.resolve_versions.outputs.latest_server_release_tag }} (${{ needs.resolve_versions.outputs.selected_server_version }}, ${{ needs.resolve_versions.outputs.selected_server_selection_reason }}) for requested version ${{ needs.resolve_versions.outputs.root_version }}"
 
       - name: Upload SDK test server binary
         uses: actions/upload-artifact@v6

@@ -6,6 +6,7 @@ use kalamdb_commons::{models::TableId, schemas::TableType};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
+    error_extensions::KalamDbResultExt,
     sql::{
         context::{ExecutionContext, ExecutionResult, ScalarValue},
         executor::handlers::TypedStatementHandler,
@@ -21,6 +22,38 @@ pub struct CreateTableHandler {
 impl CreateTableHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
+    }
+
+    async fn maybe_existing_if_not_exists_message(
+        &self,
+        statement: &CreateTableStatement,
+    ) -> Result<Option<String>, KalamDbError> {
+        if !statement.if_not_exists {
+            return Ok(None);
+        }
+
+        let app_ctx = self.app_context.clone();
+        let table_id = TableId::new(statement.namespace_id.clone(), statement.table_name.clone());
+
+        tokio::task::spawn_blocking(move || {
+            let schema_registry = app_ctx.schema_registry();
+            let existing_def = schema_registry
+                .get_table_if_exists(&table_id)
+                .into_kalamdb_error("Failed to check table existence")?;
+
+            let Some(existing_def) = existing_def else {
+                return Ok(None);
+            };
+
+            if schema_registry.get_provider(&table_id).is_none() {
+                log::info!("Table {} exists but provider missing - registering now", table_id);
+                schema_registry.put((*existing_def).clone())?;
+            }
+
+            Ok(Some(format!("Table {} already exists (IF NOT EXISTS)", table_id)))
+        })
+        .await
+        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
     }
 
     fn resolve_table_type(
@@ -67,6 +100,10 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         let table_name = statement.table_name.clone();
         let table_type = statement.table_type;
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+
+        if let Some(message) = self.maybe_existing_if_not_exists_message(&statement).await? {
+            return Ok(ExecutionResult::Success { message });
+        }
 
         // Build TableDefinition (validate + build, no execution yet)
         // Offload sync RocksDB reads (namespace existence, storage lookup) to blocking thread
@@ -203,6 +240,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_table_if_not_exists_existing_table_skips_audit() {
+        let app_ctx = test_app_context_simple();
+        let namespaces_provider = app_ctx.system_tables().namespaces();
+        let namespace_id = NamespaceId::default();
+        if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
+            let namespace = kalamdb_system::Namespace {
+                namespace_id: namespace_id.clone(),
+                name: "default".to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                options: None,
+                table_count: 0,
+            };
+            namespaces_provider.create_namespace(namespace).unwrap();
+        }
+
+        let handler = CreateTableHandler::new(app_ctx.clone());
+        let ctx = create_test_context(Role::Dba);
+        let mut stmt = create_test_statement(TableType::User);
+        stmt.table_name = format!("test_ine_{}", chrono::Utc::now().timestamp_millis()).into();
+        stmt.if_not_exists = true;
+        let table_id = TableId::new(stmt.namespace_id.clone(), stmt.table_name.clone());
+
+        let table_def = crate::helpers::table_creation::build_table_definition(
+            app_ctx.clone(),
+            &stmt,
+            ctx.user_id(),
+            ctx.user_role(),
+        )
+        .unwrap();
+        app_ctx.schema_registry().register_table(table_def).unwrap();
+
+        let before_audit_count = app_ctx.system_tables().audit_logs().scan_all().unwrap().len();
+        let result = handler.execute(stmt, vec![], &ctx).await;
+        let after_audit_count = app_ctx.system_tables().audit_logs().scan_all().unwrap().len();
+
+        assert!(result.is_ok(), "CREATE TABLE IF NOT EXISTS failed: {:?}", result);
+        if let Ok(ExecutionResult::Success { message }) = result {
+            assert_eq!(
+                message,
+                format!("Table {} already exists (IF NOT EXISTS)", table_id)
+            );
+        }
+        assert_eq!(after_audit_count, before_audit_count);
+    }
+
+    #[tokio::test]
     async fn test_create_table_authorization_user() {
         let app_ctx = test_app_context_simple();
         let handler = CreateTableHandler::new(app_ctx);
@@ -324,8 +407,8 @@ mod tests {
         assert!(result3.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result3 {
             let msg = message.to_lowercase();
-            assert!(msg.contains("create table"));
-            assert!(msg.contains("raft consensus"));
+            assert!(msg.contains("already exists"));
+            assert!(msg.contains("if not exists"));
         }
     }
 }

@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Auth } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 import { drizzle } from 'drizzle-orm/pg-proxy';
 import { and, eq } from 'drizzle-orm';
 import { text } from 'drizzle-orm/pg-core';
@@ -108,13 +108,13 @@ after(async () => {
   await adminClient?.disconnect();
 });
 
-describe('ORM with @kalamdb/consumer runAgent', () => {
-  it('uses generated-style tables, filters rows, and writes through ORM builders in an agent', async () => {
+describe('ORM with @kalamdb/consumer runConsumer', () => {
+  it('uses generated-style tables, filters rows, and writes through ORM builders in a consumer worker', async () => {
     const groupId = `orm-agent-${randomUUID()}`;
     const targetBucket = `bucket-${randomUUID()}`;
     const controller = new AbortController();
 
-    const agentTask = runAgent({
+    const agentTask = runConsumer({
       client: workerClient,
       name: 'orm-consumer-agent',
       topic: topicName,
@@ -128,7 +128,8 @@ describe('ORM with @kalamdb/consumer runAgent', () => {
         initialBackoffMs: 0,
         maxBackoffMs: 0,
       },
-      onRow: async (_ctx, row) => {
+      onChange: async (_ctx, change) => {
+        const row = change.data;
         if (row.kind !== 'summarize' || row.bucket !== targetBucket) {
           return;
         }

@@ -4,7 +4,7 @@
 //! `Meta` group's last applied index on the leader at proposal time. Followers
 //! buffer data commands until local `Meta` has applied at least that index.
 
-use kalamdb_commons::{models::TransactionId, TableId};
+use kalamdb_commons::{models::TransactionId, TableId, UserId};
 use serde::{Deserialize, Serialize};
 
 /// Commands for shared data shards (1 shard by default)
@@ -23,6 +23,8 @@ pub enum SharedDataCommand {
         required_meta_index: u64,
         #[serde(default)]
         transaction_id: Option<TransactionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor_user_id: Option<UserId>,
         table_id: TableId,
         /// Rows to insert
         rows: Vec<kalamdb_commons::models::rows::Row>,
@@ -34,6 +36,8 @@ pub enum SharedDataCommand {
         required_meta_index: u64,
         #[serde(default)]
         transaction_id: Option<TransactionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor_user_id: Option<UserId>,
         table_id: TableId,
         /// Updates to apply
         updates: Vec<kalamdb_commons::models::rows::Row>,
@@ -47,6 +51,8 @@ pub enum SharedDataCommand {
         required_meta_index: u64,
         #[serde(default)]
         transaction_id: Option<TransactionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor_user_id: Option<UserId>,
         table_id: TableId,
         /// Primary keys to delete
         pk_values: Option<Vec<String>>,
@@ -106,6 +112,14 @@ impl SharedDataCommand {
             | SharedDataCommand::Delete { transaction_id, .. } => transaction_id.as_ref(),
         }
     }
+
+    pub fn actor_user_id(&self) -> Option<&UserId> {
+        match self {
+            SharedDataCommand::Insert { actor_user_id, .. }
+            | SharedDataCommand::Update { actor_user_id, .. }
+            | SharedDataCommand::Delete { actor_user_id, .. } => actor_user_id.as_ref(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +133,7 @@ mod tests {
         let mut cmd = SharedDataCommand::Update {
             required_meta_index: 300,
             transaction_id: None,
+            actor_user_id: None,
             table_id: TableId::new(NamespaceId::from("ns"), TableName::from("shared_table")),
             updates: vec![],
             filter: None,
@@ -135,6 +150,7 @@ mod tests {
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 10,
             transaction_id: None,
+            actor_user_id: None,
             table_id: table_id.clone(),
             rows: vec![],
         };
@@ -147,6 +163,7 @@ mod tests {
         let cmd = SharedDataCommand::Delete {
             required_meta_index: 999,
             transaction_id: None,
+            actor_user_id: None,
             table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
             pk_values: None,
         };
@@ -162,12 +179,14 @@ mod tests {
             SharedDataCommand::Insert {
                 required_meta_index: 10,
                 transaction_id: None,
+                actor_user_id: None,
                 table_id: table_id.clone(),
                 rows: vec![],
             },
             SharedDataCommand::Update {
                 required_meta_index: 20,
                 transaction_id: None,
+                actor_user_id: None,
                 table_id: table_id.clone(),
                 updates: vec![],
                 filter: None,
@@ -175,6 +194,7 @@ mod tests {
             SharedDataCommand::Delete {
                 required_meta_index: 30,
                 transaction_id: None,
+                actor_user_id: None,
                 table_id: table_id.clone(),
                 pk_values: None,
             },
@@ -193,6 +213,7 @@ mod tests {
         let mut insert = SharedDataCommand::Insert {
             required_meta_index: 100,
             transaction_id: None,
+            actor_user_id: None,
             table_id: table_id.clone(),
             rows: vec![],
         };
@@ -200,6 +221,7 @@ mod tests {
         let mut update = SharedDataCommand::Update {
             required_meta_index: 100,
             transaction_id: None,
+            actor_user_id: None,
             table_id: table_id.clone(),
             updates: vec![],
             filter: None,
@@ -208,6 +230,7 @@ mod tests {
         let mut delete = SharedDataCommand::Delete {
             required_meta_index: 100,
             transaction_id: None,
+            actor_user_id: None,
             table_id: table_id.clone(),
             pk_values: None,
         };
@@ -219,5 +242,19 @@ mod tests {
         assert_eq!(insert.required_meta_index(), 0);
         assert_eq!(update.required_meta_index(), 0);
         assert_eq!(delete.required_meta_index(), 0);
+    }
+
+    #[test]
+    fn test_shared_command_actor_user_id() {
+        let actor_user_id = UserId::from("actor_1");
+        let cmd = SharedDataCommand::Insert {
+            required_meta_index: 10,
+            transaction_id: None,
+            actor_user_id: Some(actor_user_id.clone()),
+            table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
+            rows: vec![],
+        };
+
+        assert_eq!(cmd.actor_user_id(), Some(&actor_user_id));
     }
 }

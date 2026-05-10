@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { Auth, type KalamDBClient } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 export { buildApprovalMessage, buildAssistantReply, createToolPlan, splitIntoTokenChunks } from './logic';
 import { buildApprovalMessage, buildAssistantReply, createToolPlan, splitIntoTokenChunks } from './logic';
 
@@ -202,7 +202,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
   const sqlClient = client as unknown as KalamDBClient;
 
   await Promise.all([
-    runAgent<TopicRow>({
+    runConsumer<TopicRow>({
       client,
       name: 'react-ai-chat-message-agent',
       topic: MESSAGE_TOPIC,
@@ -211,9 +211,9 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       batchSize: 10,
       timeoutSeconds: 30,
       stopSignal,
-      onRow: async (_ctx, row) => handleUserMessage(sqlClient, row),
+      onChange: async (_ctx, change) => handleUserMessage(sqlClient, change.data),
     }),
-    runAgent<TopicRow>({
+    runConsumer<TopicRow>({
       client,
       name: 'react-ai-chat-action-agent',
       topic: ACTION_TOPIC,
@@ -222,7 +222,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       batchSize: 10,
       timeoutSeconds: 30,
       stopSignal,
-      onRow: async (_ctx, row) => handleApprovalAction(sqlClient, row),
+      onChange: async (_ctx, change) => handleApprovalAction(sqlClient, change.data),
     }),
   ]);
 }

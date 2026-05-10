@@ -145,11 +145,11 @@ await client.disconnect();
 
 ## AI Agent Example (Topic Subscription)
 
-Subscribe an AI agent to a KalamDB topic and process each row with an LLM — fully managed retries, backpressure, and at-least-once delivery via `runAgent`.
+Subscribe a worker to a KalamDB topic and process each change with managed retries, backpressure, and at-least-once delivery via `runConsumer`.
 
 ```ts
 import { createClient, Auth } from '@kalamdb/client';
-import { runAgent } from '@kalamdb/consumer';
+import { runConsumer } from '@kalamdb/consumer';
 
 const client = createClient({
   url: 'http://localhost:8080',
@@ -159,7 +159,7 @@ const client = createClient({
 const abort = new AbortController();
 process.on('SIGINT', () => abort.abort());
 
-await runAgent<{ title: string; body: string }>({
+await runConsumer<{ title: string; body: string }>({
   client,
   name: 'summarizer-agent',
   topic: 'blog.posts',       // KalamDB topic to consume
@@ -169,14 +169,16 @@ await runAgent<{ title: string; body: string }>({
   timeoutSeconds: 30,
   stopSignal: abort.signal,
 
-  // Called for every row; return value is written back as metadata
-  onRow: async ({ row }) => {
+  // Called for every inserted, updated, or deleted topic change
+  onChange: async (ctx, change) => {
+    const row = change.data;
     const summary = await myLlm.summarize(row.body);
-    console.log(`[${row.title}] →`, summary);
+    console.log(`[${change.op ?? 'change'}:${row.title}] →`, summary);
   },
 
-  onFailed: async ({ row, error }) => {
-    console.error('failed row', row, error);
+  onFailed: async (ctx, change) => {
+    const row = change.data;
+    console.error('failed row', row, ctx.error);
   },
 
   retry: {

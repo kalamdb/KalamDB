@@ -9,7 +9,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
@@ -294,6 +294,52 @@ async fn poll_records_until(
     records
 }
 
+async fn poll_records_raw_until(
+    consumer: &mut kalam_client::consumer::TopicConsumer,
+    min_records: usize,
+    timeout: Duration,
+) -> Vec<ConsumerRecord> {
+    let mut records = Vec::new();
+    let mut last_error: Option<String> = None;
+    let deadline = Instant::now() + timeout;
+
+    while Instant::now() < deadline {
+        match consumer.poll().await {
+            Ok(batch) => {
+                if batch.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+
+                records.extend(batch);
+                if records.len() >= min_records {
+                    break;
+                }
+            },
+            Err(err) => {
+                let message = err.to_string();
+                last_error = Some(message.clone());
+                if message.contains("error decoding response body")
+                    || message.contains("network")
+                    || message.contains("NetworkError")
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+                panic!("Failed to poll: {}", message);
+            },
+        }
+    }
+
+    if records.is_empty() {
+        if let Some(message) = last_error {
+            eprintln!("[TEST] poll_records_raw_until last error: {}", message);
+        }
+    }
+
+    records
+}
+
 /// Helper to parse JSON payload from binary
 fn parse_payload(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes).expect("Failed to parse payload")
@@ -364,6 +410,30 @@ fn parse_u64_row_field(row: &HashMap<String, serde_json::Value>, key: &str) -> u
         return value;
     }
     panic!("{} should be an unsigned integer, got {}", key, untyped);
+}
+
+fn record_offsets(records: &[ConsumerRecord]) -> Vec<u64> {
+    records.iter().map(|record| record.offset).collect()
+}
+
+fn record_payload_ids(records: &[ConsumerRecord]) -> Vec<i64> {
+    records
+        .iter()
+        .map(|record| {
+            let payload = parse_payload(&record.payload);
+            parse_i64_field(&payload, "id").expect("record payload should include id")
+        })
+        .collect()
+}
+
+fn assert_consecutive_offsets(offsets: &[u64], expected_start: u64, context: &str) {
+    let expected: Vec<u64> =
+        (expected_start..expected_start.saturating_add(offsets.len() as u64)).collect();
+    assert_eq!(
+        offsets, expected,
+        "{}: expected consecutive offsets starting at {}, got {:?}",
+        context, expected_start, offsets
+    );
 }
 
 async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, serde_json::Value>> {
@@ -757,8 +827,18 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(20)).await;
+        let records = poll_records_raw_until(&mut consumer, 2, Duration::from_secs(20)).await;
         assert_eq!(records.len(), 2);
+        assert_consecutive_offsets(
+            &record_offsets(&records),
+            0,
+            "first same-group consumer should receive the earliest offsets in order",
+        );
+        assert_eq!(
+            record_payload_ids(&records),
+            vec![1, 2],
+            "first same-group consumer should receive the first published payload ids in order"
+        );
 
         for record in &records {
             consumer.mark_processed(record);
@@ -774,8 +854,23 @@ async fn test_topic_consume_offset_persistence() {
             .topic(&topic)
             .group_id(&group_id)
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .poll_timeout(Duration::from_millis(250))
             .build()
             .expect("Failed to build consumer");
+
+        let empty_poll_started = Instant::now();
+        let initial_empty = consumer
+            .poll_with_timeout(Duration::from_millis(750))
+            .await
+            .expect("Same-group poll after commit should succeed");
+        assert!(
+            initial_empty.is_empty(),
+            "same group should not replay committed records before new publishes"
+        );
+        assert!(
+            empty_poll_started.elapsed() < Duration::from_secs(3),
+            "same group should stay caught up without waiting for the 10s visibility timeout"
+        );
 
         // Insert second batch after consumer is ready
         for i in 3..=4 {
@@ -786,16 +881,54 @@ async fn test_topic_consume_offset_persistence() {
             .await;
         }
 
-        let records = poll_records_until(&mut consumer, 2, Duration::from_secs(20)).await;
+        let records = poll_records_raw_until(&mut consumer, 2, Duration::from_secs(20)).await;
         assert_eq!(records.len(), 2, "Should receive only batch 2");
+        assert_consecutive_offsets(
+            &record_offsets(&records),
+            2,
+            "same group should resume on the next offsets after the first commit",
+        );
+        assert_eq!(
+            record_payload_ids(&records),
+            vec![3, 4],
+            "same group should only receive the newly published payload ids after commit"
+        );
 
         for record in &records {
             let payload = parse_payload(&record.payload);
-            let id = payload.get("id").and_then(|v| v.as_i64()).unwrap();
+            let id = parse_i64_field(&payload, "id").expect("payload should include id");
             assert!(id >= 3 && id <= 4);
             consumer.mark_processed(record);
         }
-        consumer.commit_sync().await.ok();
+        consumer.commit_sync().await.expect("Second batch commit should succeed");
+        consumer.close().await.expect("Second consumer should close cleanly");
+    }
+
+    {
+        let client = create_test_client().await;
+        let mut consumer = client
+            .consumer()
+            .topic(&topic)
+            .group_id(&group_id)
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .poll_timeout(Duration::from_millis(250))
+            .build()
+            .expect("Failed to build third consumer");
+
+        let empty_poll_started = Instant::now();
+        let tail_poll = consumer
+            .poll_with_timeout(Duration::from_millis(750))
+            .await
+            .expect("Tail poll after second commit should succeed");
+        assert!(
+            tail_poll.is_empty(),
+            "same group should remain at the tail after committing all delivered messages"
+        );
+        assert!(
+            empty_poll_started.elapsed() < Duration::from_secs(3),
+            "tail poll should stay empty immediately instead of waiting for claim expiry"
+        );
+        consumer.close().await.expect("Third consumer should close cleanly");
     }
 
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
@@ -833,14 +966,18 @@ async fn test_topic_consume_from_earliest() {
         .build()
         .expect("Failed to build consumer");
 
-    let records = poll_records_until(&mut consumer, 4, Duration::from_secs(20)).await;
+    let records = poll_records_raw_until(&mut consumer, 4, Duration::from_secs(20)).await;
     assert_eq!(records.len(), 4, "Should receive all 4 messages");
-
-    let mut offsets: Vec<u64> = records.iter().map(|r| r.offset).collect();
-    offsets.sort_unstable();
-    for (i, offset) in offsets.iter().enumerate() {
-        assert_eq!(*offset, i as u64);
-    }
+    assert_consecutive_offsets(
+        &record_offsets(&records),
+        0,
+        "earliest consumer should receive offsets in publish order",
+    );
+    assert_eq!(
+        record_payload_ids(&records),
+        vec![1, 2, 3, 4],
+        "earliest consumer should receive payload ids in publish order"
+    );
 
     execute_sql(&format!("DROP TOPIC {}", topic)).await;
     execute_sql(&format!("DROP TABLE {}.{}", namespace, table)).await;
@@ -1036,7 +1173,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
         match test_case.start {
             StartMode::Earliest => {
                 let first_batch =
-                    poll_records_until(&mut consumer, 1, Duration::from_secs(20)).await;
+                    poll_records_raw_until(&mut consumer, 1, Duration::from_secs(20)).await;
+                let first_offsets = record_offsets(&first_batch);
                 assert!(
                     !first_batch.is_empty(),
                     "earliest should return backlog (batch_size={}, auto_commit={})",
@@ -1050,11 +1188,17 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     test_case.batch_size,
                     test_case.auto_commit
                 );
+                assert_consecutive_offsets(
+                    &first_offsets,
+                    0,
+                    &format!(
+                        "earliest batch should start at offset 0 and stay ordered (batch_size={}, auto_commit={})",
+                        test_case.batch_size, test_case.auto_commit
+                    ),
+                );
 
-                let first_max_offset = first_batch
-                    .iter()
-                    .map(|record| record.offset)
-                    .max()
+                let first_max_offset = *first_offsets
+                    .last()
                     .expect("first batch should have at least one record");
 
                 for record in &first_batch {
@@ -1081,15 +1225,29 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     .expect("Failed to build resumed consumer");
 
                 let resumed_batch =
-                    poll_records_until(&mut resumed_consumer, 3, Duration::from_secs(20)).await;
+                    poll_records_raw_until(&mut resumed_consumer, 3, Duration::from_secs(20)).await;
+                let resumed_offsets = record_offsets(&resumed_batch);
                 assert!(
                     !resumed_batch.is_empty(),
                     "resumed earliest consumer should continue after committed offset"
                 );
                 assert!(
-                    resumed_batch.iter().all(|record| record.offset > first_max_offset),
+                    resumed_offsets.iter().all(|offset| *offset > first_max_offset),
                     "resumed records must start after committed offset (first_max_offset={})",
                     first_max_offset
+                );
+                assert_eq!(
+                    resumed_offsets.first().copied(),
+                    Some(first_max_offset + 1),
+                    "resumed earliest consumer should continue from the next offset after the committed batch"
+                );
+                assert_consecutive_offsets(
+                    &resumed_offsets,
+                    first_max_offset + 1,
+                    &format!(
+                        "resumed earliest consumer should stay ordered after commit (batch_size={}, auto_commit={})",
+                        test_case.batch_size, test_case.auto_commit
+                    ),
                 );
                 for record in &resumed_batch {
                     resumed_consumer.mark_processed(record);
@@ -1125,35 +1283,39 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                 }
 
                 let live_batch =
-                    poll_records_until(&mut consumer, live_count as usize, Duration::from_secs(25))
+                    poll_records_raw_until(
+                        &mut consumer,
+                        live_count as usize,
+                        Duration::from_secs(25),
+                    )
                         .await;
+                let live_offsets = record_offsets(&live_batch);
                 assert!(
                     live_batch.len() >= live_count as usize,
                     "latest consumer should receive all new records (expected>={}, got={})",
                     live_count,
                     live_batch.len()
                 );
-
-                let received_live_ids: HashSet<i64> = live_batch
-                    .iter()
-                    .filter_map(|record| {
-                        let payload = parse_payload(&record.payload);
-                        parse_i64_field(&payload, "id")
-                    })
-                    .collect();
-
-                for expected_id in &expected_live_ids {
-                    assert!(
-                        received_live_ids.contains(expected_id),
-                        "latest consumer missed live id={} (batch_size={}, auto_commit={})",
-                        expected_id,
-                        test_case.batch_size,
-                        test_case.auto_commit
-                    );
-                }
-                assert!(
-                    received_live_ids.iter().all(|id| *id >= live_base_id),
-                    "latest consumer should not replay old backlog ids"
+                assert_consecutive_offsets(
+                    &live_offsets,
+                    backlog_count as u64,
+                    &format!(
+                        "latest consumer should receive only newly published offsets in order (batch_size={}, auto_commit={})",
+                        test_case.batch_size, test_case.auto_commit
+                    ),
+                );
+                let received_live_ids = record_payload_ids(&live_batch);
+                let expected_live_ids_ordered: Vec<i64> =
+                    (live_base_id..live_base_id + live_count).collect();
+                assert_eq!(
+                    received_live_ids,
+                    expected_live_ids_ordered,
+                    "latest consumer should preserve publish order for newly inserted ids"
+                );
+                assert_eq!(
+                    expected_live_ids.len(),
+                    live_count as usize,
+                    "expected live ids should cover the entire published live range"
                 );
 
                 for record in &live_batch {
@@ -1178,11 +1340,18 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     .poll_timeout(Duration::from_secs(1))
                     .build()
                     .expect("Failed to build resumed latest consumer");
-                let resumed_batch =
-                    poll_records_until(&mut resumed_consumer, 1, Duration::from_secs(2)).await;
+                let empty_poll_started = Instant::now();
+                let resumed_batch = resumed_consumer
+                    .poll_with_timeout(Duration::from_millis(750))
+                    .await
+                    .expect("resumed latest consumer poll should succeed");
                 assert!(
                     resumed_batch.is_empty(),
                     "no duplicate delivery expected after latest case commit and restart"
+                );
+                assert!(
+                    empty_poll_started.elapsed() < Duration::from_secs(3),
+                    "resumed latest consumer should remain caught up without waiting for claim expiry"
                 );
                 let _ = resumed_consumer.close().await;
             },

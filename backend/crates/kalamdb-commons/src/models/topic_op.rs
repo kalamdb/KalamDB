@@ -3,7 +3,7 @@
 use std::{fmt, str::FromStr};
 
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Enum representing topic operation types for change data capture.
 ///
@@ -19,11 +19,6 @@ use serde::{Deserialize, Serialize};
 /// assert_eq!(op.to_string(), "insert");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Serialize, Deserialize),
-    serde(rename_all = "lowercase")
-)]
 pub enum TopicOp {
     /// Captures INSERT operations on source tables
     #[default]
@@ -44,6 +39,15 @@ impl TopicOp {
         }
     }
 
+    /// Returns the stable topic wire representation.
+    pub fn as_wire_str(&self) -> &'static str {
+        match self {
+            TopicOp::Insert => "Insert",
+            TopicOp::Update => "Update",
+            TopicOp::Delete => "Delete",
+        }
+    }
+
     /// Attempts to parse a TopicOp from a string, returning None if invalid.
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -52,6 +56,28 @@ impl TopicOp {
             "delete" => Some(TopicOp::Delete),
             _ => None,
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for TopicOp {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_wire_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> Deserialize<'de> for TopicOp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        TopicOp::from_str_opt(&value)
+            .ok_or_else(|| serde::de::Error::custom(format!("Invalid TopicOp: {}", value)))
     }
 }
 
@@ -94,6 +120,13 @@ mod tests {
     }
 
     #[test]
+    fn test_topic_op_as_wire_str() {
+        assert_eq!(TopicOp::Insert.as_wire_str(), "Insert");
+        assert_eq!(TopicOp::Update.as_wire_str(), "Update");
+        assert_eq!(TopicOp::Delete.as_wire_str(), "Delete");
+    }
+
+    #[test]
     fn test_topic_op_display() {
         assert_eq!(TopicOp::Insert.to_string(), "insert");
         assert_eq!(TopicOp::Update.to_string(), "update");
@@ -104,6 +137,7 @@ mod tests {
     fn test_topic_op_from_str() {
         assert_eq!("insert".parse::<TopicOp>().unwrap(), TopicOp::Insert);
         assert_eq!("INSERT".parse::<TopicOp>().unwrap(), TopicOp::Insert);
+        assert_eq!("Insert".parse::<TopicOp>().unwrap(), TopicOp::Insert);
         assert_eq!("update".parse::<TopicOp>().unwrap(), TopicOp::Update);
         assert_eq!("delete".parse::<TopicOp>().unwrap(), TopicOp::Delete);
         assert!("invalid".parse::<TopicOp>().is_err());

@@ -14,6 +14,42 @@ use crate::common::*;
 #[path = "../../src/args.rs"]
 mod cli_args;
 
+fn wait_for_topic_insert_route(topic: &str, expected_routes: usize) {
+    let sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    while Instant::now() < deadline {
+        if let Ok(output) = execute_sql_as_root_via_client_json(&sql) {
+            if let Ok(response) = parse_cli_json_output(&output) {
+                if let Some(rows) = get_rows_as_hashmaps(&response) {
+                    if let Some(row) = rows.first() {
+                        if let Some(routes_value) = row.get("routes") {
+                            let routes_untyped = extract_typed_value(routes_value);
+                            if let Some(routes_json) = routes_untyped
+                                .as_str()
+                                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                            {
+                                let route_count = routes_json
+                                    .as_array()
+                                    .map(|routes| routes.len())
+                                    .unwrap_or(0);
+                                if route_count >= expected_routes {
+                                    std::thread::sleep(Duration::from_millis(100));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    panic!("topic routes were not ready in time for {}", topic);
+}
+
 #[test]
 fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
     struct Coverage<'a> {
@@ -693,19 +729,7 @@ fn test_cli_consume_flags_work_end_to_end() {
     ))
     .expect("add topic source");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let readiness_sql = format!("SELECT routes FROM system.topics WHERE topic_id = '{}'", topic);
-    let mut ready = false;
-    while Instant::now() < deadline {
-        if let Ok(out) = execute_sql_as_root_via_client(&readiness_sql) {
-            if out.contains("INSERT") || out.contains("insert") {
-                ready = true;
-                break;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(ready, "topic routes were not ready in time for {}", topic);
+    wait_for_topic_insert_route(&topic, 1);
 
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (id, msg) VALUES (1, 'hello'), (2, 'world')",

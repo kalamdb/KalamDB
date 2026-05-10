@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kalamdb_commons::{
-    models::{rows::Row, TransactionId},
+    models::{rows::Row, TransactionId, UserId},
     TableId,
 };
 use kalamdb_raft::{RaftError, SharedDataApplier, TransactionApplyResult};
@@ -39,6 +39,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn insert(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         rows: &[Row],
         commit_seq: u64,
     ) -> Result<usize, RaftError> {
@@ -46,7 +47,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
 
         self.executor
             .dml()
-            .insert_shared_data_with_commit_seq(table_id, rows, commit_seq)
+            .insert_shared_data_with_commit_seq(table_id, actor_user_id, rows, commit_seq)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -54,6 +55,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn update(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         updates: &[Row],
         filter: Option<&str>,
         commit_seq: u64,
@@ -62,7 +64,13 @@ impl SharedDataApplier for ProviderSharedDataApplier {
 
         self.executor
             .dml()
-            .update_shared_data_with_commit_seq(table_id, updates, filter, commit_seq)
+            .update_shared_data_with_commit_seq(
+                table_id,
+                actor_user_id,
+                updates,
+                filter,
+                commit_seq,
+            )
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -70,6 +78,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
     async fn delete(
         &self,
         table_id: &TableId,
+        actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
         commit_seq: u64,
     ) -> Result<usize, RaftError> {
@@ -77,7 +86,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
 
         self.executor
             .dml()
-            .delete_shared_data_with_commit_seq(table_id, pk_values, commit_seq)
+            .delete_shared_data_with_commit_seq(table_id, actor_user_id, pk_values, commit_seq)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }

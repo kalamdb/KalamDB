@@ -229,7 +229,12 @@ impl SharedDataStateMachine {
         };
 
         match cmd {
-            SharedDataCommand::Insert { table_id, rows, .. } => {
+            SharedDataCommand::Insert {
+                table_id,
+                rows,
+                actor_user_id,
+                ..
+            } => {
                 log::debug!(
                     "SharedDataStateMachine[{}]: Insert into {:?} ({} rows)",
                     self.shard,
@@ -239,7 +244,7 @@ impl SharedDataStateMachine {
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.insert(&table_id, &rows, commit_seq).await {
+                    match a.insert(&table_id, actor_user_id.as_ref(), &rows, commit_seq).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -268,6 +273,7 @@ impl SharedDataStateMachine {
 
             SharedDataCommand::Update {
                 table_id,
+                actor_user_id,
                 updates,
                 filter,
                 ..
@@ -275,7 +281,16 @@ impl SharedDataStateMachine {
                 log::debug!("SharedDataStateMachine[{}]: Update {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.update(&table_id, &updates, filter.as_deref(), commit_seq).await {
+                    match a
+                        .update(
+                            &table_id,
+                            actor_user_id.as_ref(),
+                            &updates,
+                            filter.as_deref(),
+                            commit_seq,
+                        )
+                        .await
+                    {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -302,13 +317,17 @@ impl SharedDataStateMachine {
 
             SharedDataCommand::Delete {
                 table_id,
+                actor_user_id,
                 pk_values,
                 ..
             } => {
                 log::debug!("SharedDataStateMachine[{}]: Delete from {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.delete(&table_id, pk_values.as_deref(), commit_seq).await {
+                    match a
+                        .delete(&table_id, actor_user_id.as_ref(), pk_values.as_deref(), commit_seq)
+                        .await
+                    {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -561,19 +580,31 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind},
+        models::{rows::Row, NamespaceId, OperationKind, UserId},
         TableId,
     };
+    use parking_lot::Mutex;
 
     use super::*;
 
     struct TransactionBatchSharedApplier;
+
+    struct RecordingSharedDataApplier {
+        actor_records: Arc<Mutex<Vec<(OperationKind, Option<UserId>)>>>,
+    }
+
+    impl RecordingSharedDataApplier {
+        fn new(actor_records: Arc<Mutex<Vec<(OperationKind, Option<UserId>)>>>) -> Self {
+            Self { actor_records }
+        }
+    }
 
     #[async_trait]
     impl SharedDataApplier for TransactionBatchSharedApplier {
         async fn insert(
             &self,
             _table_id: &TableId,
+            _actor_user_id: Option<&UserId>,
             rows: &[Row],
             _commit_seq: u64,
         ) -> Result<usize, RaftError> {
@@ -583,6 +614,7 @@ mod tests {
         async fn update(
             &self,
             _table_id: &TableId,
+            _actor_user_id: Option<&UserId>,
             _updates: &[Row],
             _filter: Option<&str>,
             _commit_seq: u64,
@@ -593,9 +625,62 @@ mod tests {
         async fn delete(
             &self,
             _table_id: &TableId,
+            _actor_user_id: Option<&UserId>,
             _pk_values: Option<&[String]>,
             _commit_seq: u64,
         ) -> Result<usize, RaftError> {
+            Ok(1)
+        }
+
+        async fn apply_transaction_batch(
+            &self,
+            _transaction_id: &TransactionId,
+            mutations: &[StagedMutation],
+            commit_seq: u64,
+        ) -> Result<crate::TransactionApplyResult, RaftError> {
+            Ok(crate::TransactionApplyResult {
+                rows_affected: mutations.len(),
+                commit_seq,
+                notifications_sent: 0,
+                manifest_updates: 0,
+                publisher_events: 0,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SharedDataApplier for RecordingSharedDataApplier {
+        async fn insert(
+            &self,
+            _table_id: &TableId,
+            actor_user_id: Option<&UserId>,
+            rows: &[Row],
+            _commit_seq: u64,
+        ) -> Result<usize, RaftError> {
+            self.actor_records.lock().push((OperationKind::Insert, actor_user_id.cloned()));
+            Ok(rows.len())
+        }
+
+        async fn update(
+            &self,
+            _table_id: &TableId,
+            actor_user_id: Option<&UserId>,
+            _updates: &[Row],
+            _filter: Option<&str>,
+            _commit_seq: u64,
+        ) -> Result<usize, RaftError> {
+            self.actor_records.lock().push((OperationKind::Update, actor_user_id.cloned()));
+            Ok(1)
+        }
+
+        async fn delete(
+            &self,
+            _table_id: &TableId,
+            actor_user_id: Option<&UserId>,
+            _pk_values: Option<&[String]>,
+            _commit_seq: u64,
+        ) -> Result<usize, RaftError> {
+            self.actor_records.lock().push((OperationKind::Delete, actor_user_id.cloned()));
             Ok(1)
         }
 
@@ -624,6 +709,7 @@ mod tests {
             rows: vec![],
             required_meta_index: 0,
             transaction_id: None,
+            actor_user_id: None,
         };
         let cmd_bytes = crate::codec::command_codec::encode_shared_data_command(&cmd).unwrap();
 
@@ -643,6 +729,7 @@ mod tests {
             rows: vec![],
             required_meta_index: 0,
             transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
             .await
@@ -655,6 +742,7 @@ mod tests {
             filter: None,
             required_meta_index: 0,
             transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
             .await
@@ -666,6 +754,7 @@ mod tests {
             pk_values: None,
             required_meta_index: 0,
             transaction_id: None,
+            actor_user_id: None,
         };
         sm.apply(3, 1, &crate::codec::command_codec::encode_shared_data_command(&delete).unwrap())
             .await
@@ -683,6 +772,63 @@ mod tests {
             assert_eq!(ops[2].operation, OperationKind::Delete);
             assert_eq!(ops[0].table_id, TableId::new(NamespaceId::default(), "settings".into()));
         }
+    }
+
+    #[tokio::test]
+    async fn test_shared_data_state_machine_passes_actor_user_id_to_applier() {
+        let actor_records = Arc::new(Mutex::new(Vec::new()));
+        let sm = SharedDataStateMachine::with_applier(
+            0,
+            Arc::new(RecordingSharedDataApplier::new(actor_records.clone())),
+        );
+        let table_id = TableId::new(NamespaceId::default(), "settings".into());
+        let insert_actor = UserId::from("insert_actor");
+        let update_actor = UserId::from("update_actor");
+        let delete_actor = UserId::from("delete_actor");
+
+        let insert = SharedDataCommand::Insert {
+            table_id: table_id.clone(),
+            rows: vec![],
+            required_meta_index: 0,
+            transaction_id: None,
+            actor_user_id: Some(insert_actor.clone()),
+        };
+        sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
+            .await
+            .unwrap();
+
+        let update = SharedDataCommand::Update {
+            table_id: table_id.clone(),
+            updates: vec![],
+            filter: Some("1".to_string()),
+            required_meta_index: 0,
+            transaction_id: None,
+            actor_user_id: Some(update_actor.clone()),
+        };
+        sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
+            .await
+            .unwrap();
+
+        let delete = SharedDataCommand::Delete {
+            table_id,
+            pk_values: Some(vec!["1".to_string()]),
+            required_meta_index: 0,
+            transaction_id: None,
+            actor_user_id: Some(delete_actor.clone()),
+        };
+        sm.apply(3, 1, &crate::codec::command_codec::encode_shared_data_command(&delete).unwrap())
+            .await
+            .unwrap();
+
+        let records = actor_records.lock().clone();
+        assert_eq!(
+            records,
+            vec![
+                (OperationKind::Insert, Some(insert_actor)),
+                (OperationKind::Update, Some(update_actor)),
+                (OperationKind::Delete, Some(delete_actor)),
+            ]
+        );
     }
 
     #[tokio::test]

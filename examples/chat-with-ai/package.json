@@ -2,7 +2,7 @@
   "name": "kalamdb-chat-with-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "Compact chat example showing user-table inserts, topic fan-out, and a runAgent worker",
+  "description": "Compact chat example showing user-table inserts, topic fan-out, and a runConsumer worker",
   "scripts": {
     "presetup": "bash scripts/ensure-sdk.sh",
     "pregenerate:schema": "bash scripts/ensure-sdk.sh",
@@ -23,18 +23,18 @@
     "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.41.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "drizzle-orm": "^0.45.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.53.2",
-    "@types/node": "^25.5.2",
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.2",
-    "vite": "^7.3.2"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.11"
   }
 }
