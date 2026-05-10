@@ -16,7 +16,8 @@ import {
   type KalamCellValue,
   type ConnectionError,
   type DisconnectReason,
-  type LiveRowsOptions,
+  type LiveEventsOptions,
+  type LiveOptions,
   type LogEntry,
   type LogListener,
   type OnConnectCallback,
@@ -27,11 +28,32 @@ import {
   type QueryResponse,
   type RowData,
   type ServerMessage,
-  type SubscriptionHandle,
-  type SubscriptionOptions,
   type Unsubscribe,
 } from '@kalamdb/client';
 import { getBackendOrigin } from "./backend-url";
+
+type SubscriptionCursor = LiveEventsOptions['from'];
+
+export interface SubscriptionOptions {
+  batch_size?: number;
+  last_rows?: number;
+  from?: SubscriptionCursor;
+  auto_fetch_batches?: boolean;
+}
+
+export interface SubscriptionHandle {
+  id: string;
+  unsubscribe: Unsubscribe;
+  requestNextBatch: () => Promise<void>;
+}
+
+export interface LiveRowsOptions<T> extends SubscriptionOptions {
+  mapRow?: LiveOptions<T>['mapRow'];
+  limit?: LiveOptions<T>['limit'];
+  getKey?: LiveOptions<T>['getKey'];
+  onError?: LiveOptions<T>['onError'];
+  onCheckpoint?: LiveOptions<T>['onCheckpoint'];
+}
 
 let client: KalamDBClient | null = null;
 let subscriptionClient: KalamDBClient | null = null;
@@ -468,6 +490,29 @@ function normalizeSubscriptionTarget(
   };
 }
 
+function toSdkLiveEventsOptions(options?: SubscriptionOptions): LiveEventsOptions {
+  return {
+    batchSize: options?.batch_size,
+    lastRows: options?.last_rows,
+    from: options?.from,
+    autoFetchBatches: options?.auto_fetch_batches,
+  };
+}
+
+function toSdkLiveRowsOptions<T>(options?: LiveRowsOptions<T>): LiveOptions<T> {
+  return {
+    batchSize: options?.batch_size,
+    lastRows: options?.last_rows,
+    from: options?.from,
+    autoFetchBatches: options?.auto_fetch_batches,
+    mapRow: options?.mapRow,
+    limit: options?.limit,
+    getKey: options?.getKey,
+    onError: options?.onError,
+    onCheckpoint: options?.onCheckpoint,
+  };
+}
+
 /**
  * Subscribe to table changes
  * Returns an unsubscribe function (Firebase/Supabase style)
@@ -493,20 +538,62 @@ export async function subscribeWithHandle(
 ): Promise<SubscriptionHandle> {
   const liveClient = await ensureSubscriptionClient();
   const { cleanSql, subscribeOptions, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery, options);
+  const sql = isSqlQuery ? cleanSql : `SELECT * FROM ${cleanSql}`;
   
   debugLog('[kalam-client] Subscribing to:', cleanSql, 'with options:', subscribeOptions);
 
-  try {
-    const handle = isSqlQuery
-      ? await liveClient.subscribeWithSqlHandle(cleanSql, callback, subscribeOptions)
-      : await liveClient.subscribeWithSqlHandle(`SELECT * FROM ${cleanSql}`, callback, subscribeOptions);
+  return await new Promise<SubscriptionHandle>((resolve, reject) => {
+    let unsubscribe: Unsubscribe | null = null;
+    let subscriptionId: string | null = null;
+    let settled = false;
 
-    debugLog('[kalam-client] Subscription registered successfully');
-    return handle;
-  } catch (err) {
-    console.error('[kalam-client] Subscription setup failed:', err);
-    throw err;
-  }
+    const resolveHandle = () => {
+      if (settled || !unsubscribe || !subscriptionId) {
+        return;
+      }
+
+      settled = true;
+      const id = subscriptionId;
+      debugLog('[kalam-client] Subscription registered successfully:', subscriptionId);
+      resolve({
+        id,
+        unsubscribe,
+        requestNextBatch: () => liveClient.requestNextBatch(id),
+      });
+    };
+
+    const rejectHandle = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    void (async () => {
+      try {
+        unsubscribe = await liveClient.liveEvents(
+          sql,
+          (event) => {
+            if (event.type === 'subscription_ack' && !subscriptionId) {
+              subscriptionId = event.subscription_id;
+              resolveHandle();
+            } else if (!subscriptionId && (event.type === 'auth_error' || event.type === 'error')) {
+              rejectHandle(new Error(event.message));
+            }
+
+            callback(event);
+          },
+          toSdkLiveEventsOptions(subscribeOptions),
+        );
+        resolveHandle();
+      } catch (err) {
+        console.error('[kalam-client] Subscription setup failed:', err);
+        rejectHandle(err);
+      }
+    })();
+  });
 }
 
 export async function requestNextBatch(subscriptionId: string): Promise<void> {
@@ -525,16 +612,20 @@ export async function subscribeRows<T = RowData>(
   options?: LiveRowsOptions<T>,
 ): Promise<Unsubscribe> {
   const liveClient = await ensureSubscriptionClient();
-  const { cleanSql, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery);
+  const { cleanSql, subscribeOptions, isSqlQuery } = normalizeSubscriptionTarget(tableOrQuery, options);
+  const liveOptions = toSdkLiveRowsOptions<T>({
+    ...options,
+    ...subscribeOptions,
+  });
 
   try {
     if (isSqlQuery) {
       debugLog('[kalam-client] Detected SQL query, using live');
-      return await liveClient.live(cleanSql, callback, options);
+      return await liveClient.live(cleanSql, callback, liveOptions);
     }
 
-    debugLog('[kalam-client] Detected table name, using liveTableRows');
-    return await liveClient.liveTableRows(cleanSql, callback, options);
+    debugLog('[kalam-client] Detected table name, using liveTable');
+    return await liveClient.liveTable(cleanSql, callback, liveOptions);
   } catch (err) {
     console.error('[kalam-client] Subscription setup failed:', err);
     throw err;
@@ -617,4 +708,4 @@ export type {
 };
 
 // Re-export types for convenience
-export type { LiveRowsOptions, QueryResponse, RowData, ServerMessage, SubscriptionOptions, Unsubscribe };
+export type { QueryResponse, RowData, ServerMessage, Unsubscribe };

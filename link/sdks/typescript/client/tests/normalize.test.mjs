@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { normalizeQueryResponse, sortColumns, SYSTEM_TABLES_ORDER } from '../dist/src/helpers/query_helpers.js';
-import { normalizeSubscriptionOptions } from '../dist/src/helpers/subscription_helpers.js';
+import { normalizeLiveStreamOptions } from '../dist/src/helpers/subscription_helpers.js';
 
 // Helper: build a minimal QueryResponse using the current schema format
 function makeResp(columnNames, rows) {
@@ -77,14 +77,14 @@ function getColumns(resp) {
   assert.deepEqual(tail, ['x', 'y']);
 }
 
-// Subscription options include SDK-only batch control and accept camel-case alias.
+// Live stream options expose flat camel-case names and serialize to wire options.
 {
   assert.deepEqual(
-    normalizeSubscriptionOptions({ batch_size: 5, auto_fetch_batches: false }),
+    normalizeLiveStreamOptions({ batchSize: 5, autoFetchBatches: false }),
     { batch_size: 5, auto_fetch_batches: false },
   );
   assert.deepEqual(
-    normalizeSubscriptionOptions({ autoFetchBatches: true }),
+    normalizeLiveStreamOptions({ autoFetchBatches: true }),
     { auto_fetch_batches: true },
   );
 }

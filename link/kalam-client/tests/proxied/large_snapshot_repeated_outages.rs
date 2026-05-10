@@ -59,7 +59,7 @@ async fn test_large_initial_snapshot_survives_repeated_outages() {
         config.options = Some(SubscriptionOptions::new().with_batch_size(3));
 
         let mut sub = client
-            .subscribe_with_config(config)
+            .live_events_with_config(config)
             .await
             .expect("subscribe large snapshot table");
 

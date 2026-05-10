@@ -86,7 +86,7 @@ async fn test_proxy_blackhole_keeps_socket_open_until_client_times_out() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("blackhole-timeout-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))
@@ -243,7 +243,7 @@ async fn test_proxy_latency_does_not_false_positive_disconnect() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("latency-tolerant-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))
@@ -335,7 +335,7 @@ async fn test_proxy_packet_loss_style_stalls_resume_without_replay() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("lossy-stalls-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))
@@ -482,7 +482,7 @@ async fn test_tokio_netem_fragmented_writes_preserve_live_stream() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("netem-sliced-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))
@@ -575,7 +575,7 @@ async fn test_tokio_netem_bandwidth_collapse_forces_resume_without_replay() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("netem-throttle-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))
@@ -708,7 +708,7 @@ async fn test_tokio_netem_forced_transport_termination_recovers() {
 
         client.connect().await.expect("initial connect through proxy");
         let mut sub = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("netem-terminator-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             ))

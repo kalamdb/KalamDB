@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { RadioTower, Users, Gauge } from "lucide-react";
+import { RadioTower, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const streamingTabs = [
@@ -9,13 +9,8 @@ const streamingTabs = [
     icon: RadioTower,
   },
   {
-    to: "/streaming/groups",
-    label: "Consumer Groups",
-    icon: Users,
-  },
-  {
     to: "/streaming/offsets",
-    label: "Offsets",
+    label: "Consumers",
     icon: Gauge,
   },
 ];

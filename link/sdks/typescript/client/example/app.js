@@ -505,15 +505,15 @@ window.testSubscribe = async function() {
     // Make sure table exists first
     await client.query('CREATE TABLE IF NOT EXISTS test_browser.todos (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), title TEXT NOT NULL, completed BOOLEAN DEFAULT false, priority TEXT DEFAULT \'medium\', created_at TIMESTAMP DEFAULT NOW()) WITH (TYPE=\'USER\', FLUSH_POLICY=\'rows:100\')');
     
-    // Use subscribeWithSql for filtered query with options
+    // Use liveEvents for filtered query with options
     // Returns an unsubscribe function (Firebase/Supabase style)
-    unsubscribeTodos = await client.subscribeWithSql(
+    unsubscribeTodos = await client.liveEvents(
       'SELECT * FROM test_browser.todos',
       (data) => {
         logJson('← [TODOS] WebSocket message', data, 'success');
         updateSubscriptionBar();
       },
-      { batch_size: 50 }  // Load initial data in batches of 50
+      { batchSize: 50 }  // Load initial data in batches of 50
     );
     
     log(`✅ Subscribed to test_browser.todos`, 'success');
@@ -638,15 +638,15 @@ window.testCreateAndSubscribeTodos = async function() {
     const result = await client.query(sql);
     logJson('← Result', result, 'success');
     
-    // Subscribe with SQL query and options
-    log('→ SUBSCRIBE test_browser.todos (with batch_size: 100)', 'info');
-    unsubscribeTodos = await client.subscribeWithSql(
+    // Open liveEvents with SQL query and options
+    log('→ liveEvents test_browser.todos (with batchSize: 100)', 'info');
+    unsubscribeTodos = await client.liveEvents(
       'SELECT * FROM test_browser.todos',
       (data) => {
         logJson('← [TODOS] WebSocket message', data, 'success');
         updateSubscriptionBar();
       },
-      { batch_size: 100 }
+      { batchSize: 100 }
     );
     
     log(`✅ Subscribed to todos`, 'success');
@@ -697,15 +697,15 @@ window.testCreateAndSubscribeEvents = async function() {
     const result = await client.query(sql);
     logJson('← Result', result, 'success');
     
-    // Subscribe to stream with SQL query and options
-    log('→ SUBSCRIBE test_browser.events (with batch_size: 25)', 'info');
-    unsubscribeEvents = await client.subscribeWithSql(
+    // Open stream with SQL query and options
+    log('→ liveEvents test_browser.events (with batchSize: 25)', 'info');
+    unsubscribeEvents = await client.liveEvents(
       'SELECT * FROM test_browser.events',
       (data) => {
         logJson('← [EVENTS] WebSocket message', data, 'success');
         updateSubscriptionBar();
       },
-      { batch_size: 25 }
+      { batchSize: 25 }
     );
     
     log(`✅ Subscribed to events`, 'success');

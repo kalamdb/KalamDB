@@ -1,5 +1,9 @@
 use super::{LiveRowsConfig, LiveRowsEvent};
-use crate::models::{ChangeEvent, KalamCellValue, RowData};
+use crate::{
+    models::{ChangeEvent, KalamCellValue, RowData},
+    seq_id::SeqId,
+    seq_tracking,
+};
 
 /// Stateful reducer that materializes the current row set from change events.
 #[derive(Debug, Clone, Default)]
@@ -27,6 +31,8 @@ impl LiveRowsMaterializer {
 
     /// Apply a low-level change event and emit a high-level snapshot when relevant.
     pub fn apply(&mut self, event: ChangeEvent) -> Option<LiveRowsEvent> {
+        let last_seq_id = last_seq_id_for_event(&event);
+
         match event {
             ChangeEvent::Ack {
                 subscription_id,
@@ -40,6 +46,7 @@ impl LiveRowsMaterializer {
                     return Some(LiveRowsEvent::Rows {
                         subscription_id,
                         rows: self.rows.clone(),
+                        last_seq_id,
                     });
                 }
                 None
@@ -54,6 +61,7 @@ impl LiveRowsMaterializer {
                 Some(LiveRowsEvent::Rows {
                     subscription_id,
                     rows: self.rows.clone(),
+                    last_seq_id,
                 })
             },
             ChangeEvent::Insert {
@@ -64,6 +72,7 @@ impl LiveRowsMaterializer {
                 Some(LiveRowsEvent::Rows {
                     subscription_id,
                     rows: self.rows.clone(),
+                    last_seq_id,
                 })
             },
             ChangeEvent::Update {
@@ -76,6 +85,7 @@ impl LiveRowsMaterializer {
                 Some(LiveRowsEvent::Rows {
                     subscription_id,
                     rows: self.rows.clone(),
+                    last_seq_id,
                 })
             },
             ChangeEvent::Delete {
@@ -86,6 +96,7 @@ impl LiveRowsMaterializer {
                 Some(LiveRowsEvent::Rows {
                     subscription_id,
                     rows: self.rows.clone(),
+                    last_seq_id,
                 })
             },
             ChangeEvent::Error {
@@ -134,6 +145,23 @@ impl LiveRowsMaterializer {
         if excess > 0 {
             self.rows.drain(..excess);
         }
+    }
+}
+
+fn last_seq_id_for_event(event: &ChangeEvent) -> Option<SeqId> {
+    match event {
+        ChangeEvent::Ack { batch_control, .. } => batch_control.last_seq_id,
+        ChangeEvent::InitialDataBatch {
+            rows,
+            batch_control,
+            ..
+        } => batch_control.last_seq_id.or_else(|| seq_tracking::extract_max_seq(rows)),
+        ChangeEvent::Insert { rows, .. } => seq_tracking::extract_max_seq(rows),
+        ChangeEvent::Update { rows, old_rows, .. } => {
+            seq_tracking::extract_max_seq(rows).or_else(|| seq_tracking::extract_max_seq(old_rows))
+        },
+        ChangeEvent::Delete { old_rows, .. } => seq_tracking::extract_max_seq(old_rows),
+        ChangeEvent::Error { .. } | ChangeEvent::Unknown { .. } => None,
     }
 }
 

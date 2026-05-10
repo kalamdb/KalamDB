@@ -45,7 +45,7 @@ function createReadmeWasmClient() {
       this.queryWithParamsCalls.push({ sql, paramsJson });
       return JSON.stringify({ status: 'success', results: [] });
     },
-    async liveQueryRowsWithSql(sql, optionsJson, callback) {
+    async live(sql, optionsJson, callback) {
       nextSubscriptionId += 1;
       const subscriptionId = `sub-${nextSubscriptionId}`;
       this.lastLiveQueryOptionsJson = optionsJson;
@@ -78,6 +78,7 @@ function createReadmeWasmClient() {
         type: 'rows',
         subscription_id: subscriptionId,
         rows,
+        ...(lastSeqId !== undefined ? { last_seq_id: String(lastSeqId) } : {}),
       }));
     },
   };
@@ -109,15 +110,13 @@ test('README live resume example passes options and exposes typed checkpoints', 
         role: row.role.asString(),
         body: row.body.asString(),
       })));
-
-      const active = client.getSubscriptions().find((sub) => sub.tableName === inboxSql);
-      checkpoints.push(active?.lastSeqId?.toString());
     },
     {
       limit: 200,
-      subscriptionOptions: {
-        last_rows: 200,
-        from: startFrom,
+      lastRows: 200,
+      from: startFrom,
+      onCheckpoint: ({ lastSeqId }) => {
+        checkpoints.push(lastSeqId.toString());
       },
     },
   );

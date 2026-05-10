@@ -48,7 +48,7 @@ export default defineConfig(({ mode }) => {
     base: "/ui/",
     resolve: {
       preserveSymlinks: true,
-      dedupe: ["drizzle-orm", "@kalamdb/client", "@kalamdb/orm"],
+      dedupe: ["drizzle-orm", "@kalamdb/client", "@kalamdb/orm", "react", "react-dom"],
       alias: {
         "@": path.resolve(__dirname, "./src"),
         "@kalamdb/client": path.resolve(

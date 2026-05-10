@@ -62,7 +62,7 @@ pub struct HealthCounts {
     pub jobs_total: usize,
 }
 
-/// Descriptor class breakdown captured from `lsof`.
+/// Descriptor class breakdown captured from process file descriptors.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenFileBreakdown {
     pub total: usize,
@@ -362,8 +362,50 @@ impl HealthMonitor {
     }
 
     /// Count open file descriptors for the current process (Unix only)
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     fn collect_open_file_breakdown() -> Option<OpenFileBreakdown> {
+        Self::collect_proc_fd_breakdown().or_else(Self::collect_lsof_open_file_breakdown)
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn collect_open_file_breakdown() -> Option<OpenFileBreakdown> {
+        Self::collect_lsof_open_file_breakdown()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn collect_proc_fd_breakdown() -> Option<OpenFileBreakdown> {
+        use std::{fs, os::unix::fs::FileTypeExt};
+
+        let entries = fs::read_dir("/proc/self/fd").ok()?;
+        let mut breakdown = OpenFileBreakdown::default();
+
+        for entry in entries.flatten() {
+            breakdown.total += 1;
+
+            match fs::metadata(entry.path()) {
+                Ok(metadata) => {
+                    let file_type = metadata.file_type();
+                    if file_type.is_file() {
+                        breakdown.regular += 1;
+                    } else if file_type.is_dir() {
+                        breakdown.directories += 1;
+                    } else if file_type.is_socket() {
+                        breakdown.other += 1;
+                    } else {
+                        breakdown.other += 1;
+                    }
+                },
+                Err(_) => {
+                    breakdown.other += 1;
+                },
+            }
+        }
+
+        Some(breakdown)
+    }
+
+    #[cfg(unix)]
+    fn collect_lsof_open_file_breakdown() -> Option<OpenFileBreakdown> {
         use std::process::Command;
 
         let output = Command::new("lsof")

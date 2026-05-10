@@ -391,6 +391,14 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         let stored_name_b = file_ref_b.stored_name();
 
         let client = reqwest::Client::new();
+        let download_a_owner_scope = format!(
+            "{}/v1/files/{}/{}/{}/{}",
+            server.base_url(),
+            namespace,
+            table_name,
+            file_ref_a.sub,
+            stored_name_a
+        );
         let download_a = format!(
             "{}/v1/files/{}/{}/{}/{}?user_id={}",
             server.base_url(),
@@ -410,6 +418,16 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
             userb_id
         );
 
+        let anonymous_on_a = client.get(&download_a_owner_scope).send().await?;
+        assert_ne!(anonymous_on_a.status(), reqwest::StatusCode::OK);
+
+        let usera_own_no_query = client
+            .get(&download_a_owner_scope)
+            .header("Authorization", usera_auth.clone())
+            .send()
+            .await?;
+        assert_eq!(usera_own_no_query.status(), reqwest::StatusCode::OK);
+
         let usera_on_b = client
             .get(&download_b)
             .header("Authorization", usera_auth.clone())
@@ -424,7 +442,21 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
             .await?;
         assert_eq!(userb_on_a.status(), reqwest::StatusCode::FORBIDDEN);
 
-        for auth in [&service_auth, &dba_auth, &root_auth] {
+        let service_on_a = client
+            .get(&download_a)
+            .header("Authorization", service_auth.clone())
+            .send()
+            .await?;
+        assert_eq!(service_on_a.status(), reqwest::StatusCode::FORBIDDEN);
+
+        let service_without_user_id = client
+            .get(&download_a_owner_scope)
+            .header("Authorization", service_auth.clone())
+            .send()
+            .await?;
+        assert_ne!(service_without_user_id.status(), reqwest::StatusCode::OK);
+
+        for auth in [&dba_auth, &root_auth] {
             let resp_a =
                 client.get(&download_a).header("Authorization", auth.clone()).send().await?;
             assert_eq!(resp_a.status(), reqwest::StatusCode::OK);

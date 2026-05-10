@@ -52,7 +52,7 @@ fn subscribe_as_user(username: &str, password: &str, query: &str) -> Result<(), 
         .map_err(|e| format!("Failed to build runtime: {}", e))?;
 
     let subscribe_result = rt.block_on(async move {
-        let mut subscription = client.subscribe(query).await?;
+        let mut subscription = client.live_events(query).await?;
 
         // Wait for the first event: ACK means success, Error means permission denied.
         // The server sends permission errors as WebSocket error events, not as connection

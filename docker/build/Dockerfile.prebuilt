@@ -74,6 +74,17 @@ RUN mkdir -p /data/.kalam && \
     chown -R 65532:65532 /data /config
 
 ENV HOME=/data
+
+# mimalloc tuning for low idle RSS in the published container image.
+# Deployments that want higher concurrency can still override server config or
+# allocator knobs explicitly at runtime.
+ENV MIMALLOC_PURGE_DELAY=0
+ENV MIMALLOC_PURGE_DECOMMITS=1
+ENV MIMALLOC_EAGER_COMMIT=0
+ENV MIMALLOC_ARENA_EAGER_COMMIT=0
+ENV MIMALLOC_ABANDONED_PAGE_PURGE=1
+ENV MIMALLOC_ALLOW_THP=0
+
 USER 65532:65532
 WORKDIR /data
 

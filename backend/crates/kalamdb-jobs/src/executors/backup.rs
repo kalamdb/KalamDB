@@ -72,11 +72,8 @@ impl BackupExecutor {
     }
 
     fn is_archive_path(path: &Path) -> bool {
-        let value = path
-            .to_string_lossy()
-            .trim()
-            .trim_end_matches(['/', '\\'])
-            .to_ascii_lowercase();
+        let value =
+            path.to_string_lossy().trim().trim_end_matches(['/', '\\']).to_ascii_lowercase();
         value.ends_with(".tar.gz") || value.ends_with(".tgz")
     }
 
@@ -400,11 +397,8 @@ mod tests {
         fs::create_dir_all(source_root.join("rocksdb")).expect("rocksdb dir");
         fs::create_dir_all(source_root.join("storage/app/messages")).expect("storage dir");
         fs::write(source_root.join("rocksdb/CURRENT"), "manifest").expect("rocksdb file");
-        fs::write(
-            source_root.join("storage/app/messages/part-1.parquet"),
-            "parquet",
-        )
-        .expect("storage file");
+        fs::write(source_root.join("storage/app/messages/part-1.parquet"), "parquet")
+            .expect("storage file");
         fs::write(source_root.join("server.toml"), "port = 8080\n").expect("config file");
 
         let archive_path = temp_dir.path().join("backup.tar.gz");

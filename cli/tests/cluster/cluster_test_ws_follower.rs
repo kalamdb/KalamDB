@@ -76,7 +76,7 @@ async fn subscribe_with_retry(
 ) -> SubscriptionManager {
     let mut last_error: Option<String> = None;
     for attempt in 0..max_attempts {
-        let mut subscription = client.subscribe(query).await.expect("Failed to subscribe");
+        let mut subscription = client.live_events(query).await.expect("Failed to subscribe");
 
         if let Ok(Some(Ok(event))) =
             tokio::time::timeout(Duration::from_secs(5), subscription.next()).await

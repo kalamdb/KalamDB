@@ -2,14 +2,15 @@ import { KalamCellValue, wrapRowMap } from '../cell_value.js';
 import type { RowData } from '../cell_value.js';
 import { SeqId } from '../seq_id.js';
 import type {
-  LiveRowsOptions,
+  LiveEventsOptions,
+  LiveOptions,
+  LiveStreamOptions,
   ServerMessage,
   SubscriptionInfo,
-  SubscriptionOptions,
 } from '../types.js';
 
-export function normalizeSubscriptionOptions(
-  options?: SubscriptionOptions,
+export function normalizeLiveStreamOptions(
+  options?: LiveStreamOptions,
 ): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   if (!options) {
     return undefined;
@@ -17,21 +18,20 @@ export function normalizeSubscriptionOptions(
 
   const normalized: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
 
-  if (options.batch_size !== undefined) {
-    normalized.batch_size = options.batch_size;
+  if (options.batchSize !== undefined) {
+    normalized.batch_size = options.batchSize;
   }
 
-  if (options.last_rows !== undefined) {
-    normalized.last_rows = options.last_rows;
+  if (options.lastRows !== undefined) {
+    normalized.last_rows = options.lastRows;
   }
 
   if (options.from !== undefined) {
     normalized.from = options.from instanceof SeqId ? options.from.toString() : SeqId.from(options.from).toString();
   }
 
-  const autoFetchBatches = options.auto_fetch_batches ?? options.autoFetchBatches;
-  if (autoFetchBatches !== undefined) {
-    normalized.auto_fetch_batches = autoFetchBatches;
+  if (options.autoFetchBatches !== undefined) {
+    normalized.auto_fetch_batches = options.autoFetchBatches;
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
@@ -48,6 +48,7 @@ export type LiveRowsWasmEvent = {
   rows?: RowData[];
   code?: string;
   message?: string;
+  last_seq_id?: SeqId;
 };
 
 export interface LocalSubscriptionMetadata {
@@ -91,23 +92,60 @@ export function normalizeSubscriptionEvent(event: ServerMessage): NormalizedSubs
   return normalized;
 }
 
+export function lastSeqIdFromSubscriptionEvent(event: NormalizedSubscriptionEvent): SeqId | undefined {
+  if ('batch_control' in event) {
+    const batchControl = event.batch_control as { last_seq_id?: string | number | SeqId | null } | undefined;
+    const batchSeqId = normalizeWireSeqId(batchControl?.last_seq_id);
+    if (batchSeqId) {
+      return batchSeqId;
+    }
+  }
+
+  return maxSeqIdFromRows(event.rows) ?? maxSeqIdFromRows(event.old_values);
+}
+
+function maxSeqIdFromRows(rows: RowData[] | undefined): SeqId | undefined {
+  let max: SeqId | undefined;
+  for (const row of rows ?? []) {
+    const cell = row._seq;
+    const seqId = cell instanceof KalamCellValue
+      ? cell.asSeqId()
+      : normalizeWireSeqId(cell as string | number | SeqId | null | undefined);
+    if (seqId && (!max || seqId.compareTo(max) > 0)) {
+      max = seqId;
+    }
+  }
+
+  return max;
+}
+
 export function normalizeLiveRowsWasmEvent(event: {
   type: 'rows' | 'error';
   subscription_id: string;
   rows?: unknown;
   code?: string;
   message?: string;
+  last_seq_id?: string | number | SeqId | null;
 }): LiveRowsWasmEvent {
+  const lastSeqId = normalizeWireSeqId(event.last_seq_id);
+
   return {
-    ...event,
+    type: event.type,
+    subscription_id: event.subscription_id,
+    ...(event.code !== undefined ? { code: event.code } : {}),
+    ...(event.message !== undefined ? { message: event.message } : {}),
     rows: wrapSubscriptionRows(event.rows),
+    ...(lastSeqId ? { last_seq_id: lastSeqId } : {}),
   };
 }
 
-export function normalizeLiveRowsKeyColumns<T>(
-  options: LiveRowsOptions<T>,
+export function normalizeLiveKeyColumns<T>(
+  options: LiveOptions<T>,
 ): string[] | undefined {
-  const declaredColumns = options.keyColumns ?? options.keyColumn;
+  const declaredColumns = typeof options.getKey === 'function'
+    ? undefined
+    : options.getKey;
+
   if (declaredColumns === undefined) {
     return undefined;
   }
@@ -120,19 +158,31 @@ export function normalizeLiveRowsKeyColumns<T>(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-export function normalizeLiveRowsOptions<T>(
-  options: LiveRowsOptions<T>,
+function normalizeWireSeqId(value: string | number | SeqId | null | undefined): SeqId | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return value instanceof SeqId ? value : SeqId.from(value);
+  } catch {
+    return undefined;
+  }
+}
+
+export function normalizeLiveOptions<T>(
+  options: LiveOptions<T>,
 ): {
   limit?: number;
   key_columns?: string[];
-  subscription_options?: { batch_size?: number; last_rows?: number; from?: string };
+  subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
 } | undefined {
-  const keyColumns = normalizeLiveRowsKeyColumns(options);
-  const subscriptionOptions = normalizeSubscriptionOptions(options.subscriptionOptions);
+  const keyColumns = normalizeLiveKeyColumns(options);
+  const streamOptions = normalizeLiveStreamOptions(options);
   const normalized: {
     limit?: number;
     key_columns?: string[];
-    subscription_options?: { batch_size?: number; last_rows?: number; from?: string };
+    subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
   } = {};
 
   if (options.limit !== undefined) {
@@ -143,11 +193,17 @@ export function normalizeLiveRowsOptions<T>(
     normalized.key_columns = keyColumns;
   }
 
-  if (subscriptionOptions) {
-    normalized.subscription_options = subscriptionOptions;
+  if (streamOptions) {
+    normalized.subscription_options = streamOptions;
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function normalizeLiveEventsOptions(
+  options?: LiveEventsOptions,
+): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
+  return normalizeLiveStreamOptions(options);
 }
 
 export function defaultRowKey(value: unknown): string | null {

@@ -37,7 +37,7 @@ async fn test_proxy_server_down_while_reconnecting() {
     client.connect().await.expect("initial connect");
 
     let mut sub = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("reconn-drop-{}", suffix),
             format!("SELECT id, value FROM {}", table),
         ))

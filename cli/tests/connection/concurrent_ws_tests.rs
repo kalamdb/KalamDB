@@ -99,7 +99,7 @@ fn test_concurrent_websocket_subscriptions() {
                     };
 
                     let mut sub = match client
-                        .subscribe_with_config(SubscriptionConfig::without_initial_data(
+                        .live_events_with_config(SubscriptionConfig::without_initial_data(
                             format!("conc_sub_{}", i),
                             &query,
                         ))
@@ -278,7 +278,7 @@ fn test_rapid_connect_disconnect() {
 
             let subscribe_result = tokio::time::timeout(
                 Duration::from_secs(8),
-                client.subscribe_with_config(SubscriptionConfig::without_initial_data(
+                client.live_events_with_config(SubscriptionConfig::without_initial_data(
                     format!("rapid_{}", i),
                     &query,
                 )),

@@ -1,20 +1,28 @@
-use pyo3::prelude::*;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError};
+use pyo3::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use kalam_client::{
-    AuthProvider,
-    KalamLinkClient,
-    KalamLinkError,
-    SubscriptionManager,
+    AuthProvider, KalamLinkClient, KalamLinkError, LiveRowsConfig, LiveRowsEvent,
+    LiveRowsSubscription, SeqId, SubscriptionConfig, SubscriptionManager, SubscriptionOptions,
 };
 use kalam_client::{AutoOffsetReset, TopicConsumer};
 
 create_exception!(kalamdb, KalamError, PyException, "Base class for all KalamDB SDK errors.");
-create_exception!(kalamdb, KalamConnectionError, KalamError, "Network, WebSocket, or timeout error.");
-create_exception!(kalamdb, KalamAuthError, KalamError, "Authentication failure (bad credentials, expired token).");
+create_exception!(
+    kalamdb,
+    KalamConnectionError,
+    KalamError,
+    "Network, WebSocket, or timeout error."
+);
+create_exception!(
+    kalamdb,
+    KalamAuthError,
+    KalamError,
+    "Authentication failure (bad credentials, expired token)."
+);
 create_exception!(kalamdb, KalamServerError, KalamError, "Server returned an error response.");
 create_exception!(kalamdb, KalamConfigError, KalamError, "Invalid client configuration.");
 
@@ -25,8 +33,7 @@ fn is_token_expired_error(err: &KalamLinkError) -> bool {
     // embedded in the error message. We could parse the body JSON, but the
     // error's Display already includes the status/message and TOKEN_EXPIRED
     // as a substring is a reliable signal.
-    matches!(err, KalamLinkError::ServerError { .. })
-        && err.to_string().contains("TOKEN_EXPIRED")
+    matches!(err, KalamLinkError::ServerError { .. }) && err.to_string().contains("TOKEN_EXPIRED")
 }
 
 /// Ensure the client behind `state` is authenticated. No-op if already so.
@@ -40,18 +47,14 @@ async fn ensure_authenticated_locked(state: &mut ClientState) -> PyResult<()> {
     }
     match &state.original_auth {
         AuthProvider::BasicAuth(username, password) => {
-            let login = state
-                .client
-                .login(username, password)
-                .await
-                .map_err(to_py_err)?;
+            let login = state.client.login(username, password).await.map_err(to_py_err)?;
             let token = login.access_token.clone();
             state.client.set_auth(AuthProvider::jwt_token(token.clone()));
             state.jwt = Some(token);
-        }
+        },
         AuthProvider::JwtToken(_) | AuthProvider::None => {
             // Already set on builder / no auth needed.
-        }
+        },
     }
     state.authenticated = true;
     Ok(())
@@ -81,10 +84,7 @@ async fn execute_with_auth_retry(
                     .collect()
             });
 
-        let result = guard
-            .client
-            .execute_query(sql, borrowed_files, params.clone(), None)
-            .await;
+        let result = guard.client.execute_query(sql, borrowed_files, params.clone(), None).await;
 
         match result {
             Ok(response) => return Ok(response),
@@ -94,11 +94,143 @@ async fn execute_with_auth_retry(
                 guard.authenticated = false;
                 guard.jwt = None;
                 continue;
-            }
+            },
             Err(e) => return Err(to_py_err(e)),
         }
     }
     unreachable!("retry loop always returns");
+}
+
+fn new_subscription_id(prefix: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{prefix}_{nanos}")
+}
+
+fn py_seq_id(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<SeqId>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Ok(raw) = value.extract::<i64>() {
+        return Ok(Some(SeqId::from_i64(raw)));
+    }
+    let raw: String = value.extract()?;
+    SeqId::from_string(&raw).map(Some).map_err(KalamConfigError::new_err)
+}
+
+fn live_subscription_config(
+    sql: String,
+    prefix: &str,
+    batch_size: Option<usize>,
+    last_rows: Option<u32>,
+    from: Option<SeqId>,
+    auto_fetch_batches: Option<bool>,
+) -> SubscriptionConfig {
+    let mut options = SubscriptionOptions::new();
+    if let Some(value) = batch_size {
+        options = options.with_batch_size(value);
+    }
+    if let Some(value) = last_rows {
+        options = options.with_last_rows(value);
+    }
+    if let Some(value) = from {
+        options = options.with_from(value);
+    }
+    if let Some(value) = auto_fetch_batches {
+        options = options.with_auto_fetch_batches(value);
+    }
+
+    let mut config = SubscriptionConfig::new(new_subscription_id(prefix), sql);
+    config.options = Some(options);
+    config
+}
+
+fn table_live_sql(table: &str) -> PyResult<String> {
+    for part in table.split('.') {
+        if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            return Err(KalamConfigError::new_err(format!(
+                "invalid table name '{table}'; expected namespace.table identifiers"
+            )));
+        }
+    }
+    Ok(format!("SELECT * FROM {table}"))
+}
+
+fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: SeqId) -> PyResult<PyObject> {
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("subscription_id", subscription_id)?;
+    dict.set_item("last_seq_id", seq_id.as_i64().to_string())?;
+    Ok(dict.unbind().into())
+}
+
+fn call_checkpoint(
+    callback: Option<&PyObject>,
+    subscription_id: &str,
+    seq_id: Option<SeqId>,
+) -> PyResult<()> {
+    let Some(seq_id) = seq_id else {
+        return Ok(());
+    };
+    let Some(callback) = callback else {
+        return Ok(());
+    };
+    Python::with_gil(|py| {
+        let checkpoint = checkpoint_dict(py, subscription_id, seq_id)?;
+        callback.call1(py, (checkpoint,))?;
+        Ok(())
+    })
+}
+
+fn change_event_checkpoint(event: &kalam_client::ChangeEvent) -> Option<(&str, SeqId)> {
+    match event {
+        kalam_client::ChangeEvent::Ack {
+            subscription_id,
+            batch_control,
+            ..
+        } => batch_control.last_seq_id.map(|seq| (subscription_id.as_str(), seq)),
+        kalam_client::ChangeEvent::InitialDataBatch {
+            subscription_id,
+            rows,
+            batch_control,
+        } => batch_control
+            .last_seq_id
+            .or_else(|| kalam_client::seq_tracking::extract_max_seq(rows))
+            .map(|seq| (subscription_id.as_str(), seq)),
+        kalam_client::ChangeEvent::Insert {
+            subscription_id,
+            rows,
+        } => kalam_client::seq_tracking::extract_max_seq(rows)
+            .map(|seq| (subscription_id.as_str(), seq)),
+        kalam_client::ChangeEvent::Update {
+            subscription_id,
+            rows,
+            old_rows,
+        } => kalam_client::seq_tracking::extract_max_seq(rows)
+            .or_else(|| kalam_client::seq_tracking::extract_max_seq(old_rows))
+            .map(|seq| (subscription_id.as_str(), seq)),
+        kalam_client::ChangeEvent::Delete {
+            subscription_id,
+            old_rows,
+        } => kalam_client::seq_tracking::extract_max_seq(old_rows)
+            .map(|seq| (subscription_id.as_str(), seq)),
+        kalam_client::ChangeEvent::Error { .. } | kalam_client::ChangeEvent::Unknown { .. } => None,
+    }
+}
+
+fn call_error(callback: Option<&PyObject>, message: &serde_json::Value) -> PyResult<()> {
+    let Some(callback) = callback else {
+        return Ok(());
+    };
+    Python::with_gil(|py| {
+        let py_message = serde_json_value_to_py(py, message)?;
+        callback.call1(py, (py_message,))?;
+        Ok(())
+    })
 }
 
 /// Convert a KalamLinkError to the right Python exception class.
@@ -111,11 +243,11 @@ fn to_py_err(err: KalamLinkError) -> PyErr {
         KalamLinkError::AuthenticationError(_) => KalamAuthError::new_err(message),
         KalamLinkError::ServerError { .. } | KalamLinkError::SetupRequired(_) => {
             KalamServerError::new_err(message)
-        }
+        },
         KalamLinkError::ConfigurationError(_) => KalamConfigError::new_err(message),
         KalamLinkError::SerializationError(_) | KalamLinkError::Cancelled => {
             PyRuntimeError::new_err(message)
-        }
+        },
     }
 }
 
@@ -221,19 +353,19 @@ impl KalamClient {
                     .ok_or_else(|| KalamConfigError::new_err("auth dict missing 'password'"))?
                     .extract()?;
                 AuthProvider::basic_auth(username, password)
-            }
+            },
             "jwt" => {
                 let token: String = auth
                     .get_item("token")?
                     .ok_or_else(|| KalamConfigError::new_err("auth dict missing 'token'"))?
                     .extract()?;
                 AuthProvider::jwt_token(token)
-            }
+            },
             other => {
                 return Err(KalamConfigError::new_err(format!(
                     "Unknown auth type: '{other}'. Use Auth.basic() or Auth.jwt()"
                 )));
-            }
+            },
         };
 
         let url_owned = url.to_string();
@@ -251,9 +383,7 @@ impl KalamClient {
         }
 
         // Build the Rust client synchronously — this does NOT touch the network.
-        let mut builder = KalamLinkClient::builder()
-            .base_url(&url_owned)
-            .auth(provider.clone());
+        let mut builder = KalamLinkClient::builder().base_url(&url_owned).auth(provider.clone());
         if let Some(secs) = timeout_seconds {
             builder = builder.timeout(std::time::Duration::from_secs_f64(secs));
         }
@@ -381,11 +511,8 @@ impl KalamClient {
                         }
                     } else if let Some(positional_rows) = &result.rows {
                         // Build dicts from schema + positional rows
-                        let column_names: Vec<&str> = result
-                            .schema
-                            .iter()
-                            .map(|f| f.name.as_str())
-                            .collect();
+                        let column_names: Vec<&str> =
+                            result.schema.iter().map(|f| f.name.as_str()).collect();
 
                         for row in positional_rows {
                             let dict = pyo3::types::PyDict::new(py);
@@ -564,9 +691,7 @@ impl KalamClient {
     /// Async context manager entry — enables `async with KalamClient(...) as client:`.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(slf_obj)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
     /// Async context manager exit — automatically calls `disconnect()` on scope exit.
@@ -618,7 +743,7 @@ impl KalamClient {
                 return Err(KalamConfigError::new_err(format!(
                     "start must be 'earliest' or 'latest', got '{other}'"
                 )));
-            }
+            },
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -642,9 +767,14 @@ impl KalamClient {
                 .map_err(to_py_err)?;
 
             Ok(Python::with_gil(|py| {
-                Py::new(py, Consumer {
-                    inner: Arc::new(Mutex::new(Some(consumer))),
-                }).unwrap().into_any()
+                Py::new(
+                    py,
+                    Consumer {
+                        inner: Arc::new(Mutex::new(Some(consumer))),
+                    },
+                )
+                .unwrap()
+                .into_any()
             }))
         })
     }
@@ -658,29 +788,116 @@ impl KalamClient {
         format!("KalamClient(url='{}', {})", self.url, status)
     }
 
-    /// Subscribe to real-time changes from a SQL query.
-    ///
-    /// Returns a Subscription object that can be iterated with `async for`.
-    ///
-    /// Example:
-    ///     sub = await client.subscribe("SELECT * FROM chat.messages")
-    ///     async for event in sub:
-    ///         print("change:", event)
-    ///     await sub.close()
-    fn subscribe<'py>(&self, py: Python<'py>, sql: String) -> PyResult<Bound<'py, PyAny>> {
+    /// Open a low-level live event stream for a SQL query.
+    #[pyo3(signature = (sql, *, batch_size=None, last_rows=None, from_=None, auto_fetch_batches=None, on_checkpoint=None, on_error=None))]
+    fn live_events<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        batch_size: Option<usize>,
+        last_rows: Option<u32>,
+        from_: Option<Bound<'py, PyAny>>,
+        auto_fetch_batches: Option<bool>,
+        on_checkpoint: Option<PyObject>,
+        on_error: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
+        let from = py_seq_id(from_)?;
+        let config = live_subscription_config(
+            sql,
+            "events",
+            batch_size,
+            last_rows,
+            from,
+            auto_fetch_batches,
+        );
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = state.lock().await;
             ensure_authenticated_locked(&mut guard).await?;
-            let manager = guard.client.subscribe(&sql).await.map_err(to_py_err)?;
+            let manager = guard.client.live_events_with_config(config).await.map_err(to_py_err)?;
 
             Ok(Python::with_gil(|py| {
-                Py::new(py, Subscription {
-                    inner: Arc::new(Mutex::new(Some(manager))),
-                }).unwrap().into_any()
+                Py::new(
+                    py,
+                    LiveEvents {
+                        inner: Arc::new(Mutex::new(Some(manager))),
+                        on_checkpoint,
+                        on_error,
+                    },
+                )
+                .unwrap()
+                .into_any()
             }))
         })
+    }
+
+    /// Open a materialized live row stream for a SQL query.
+    #[pyo3(signature = (sql, *, batch_size=None, last_rows=None, from_=None, auto_fetch_batches=None, limit=None, key_columns=None, on_checkpoint=None))]
+    fn live<'py>(
+        &self,
+        py: Python<'py>,
+        sql: String,
+        batch_size: Option<usize>,
+        last_rows: Option<u32>,
+        from_: Option<Bound<'py, PyAny>>,
+        auto_fetch_batches: Option<bool>,
+        limit: Option<usize>,
+        key_columns: Option<Vec<String>>,
+        on_checkpoint: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let state = self.state.clone();
+        let from = py_seq_id(from_)?;
+        let config =
+            live_subscription_config(sql, "live", batch_size, last_rows, from, auto_fetch_batches);
+        let live_config = LiveRowsConfig { limit, key_columns };
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = state.lock().await;
+            ensure_authenticated_locked(&mut guard).await?;
+            let manager =
+                guard.client.live_with_config(config, live_config).await.map_err(to_py_err)?;
+
+            Ok(Python::with_gil(|py| {
+                Py::new(
+                    py,
+                    LiveRows {
+                        inner: Arc::new(Mutex::new(Some(manager))),
+                        on_checkpoint,
+                    },
+                )
+                .unwrap()
+                .into_any()
+            }))
+        })
+    }
+
+    /// Open a materialized live row stream for `SELECT * FROM namespace.table`.
+    #[pyo3(signature = (table, *, batch_size=None, last_rows=None, from_=None, auto_fetch_batches=None, limit=None, key_columns=None, on_checkpoint=None))]
+    fn live_table<'py>(
+        &self,
+        py: Python<'py>,
+        table: String,
+        batch_size: Option<usize>,
+        last_rows: Option<u32>,
+        from_: Option<Bound<'py, PyAny>>,
+        auto_fetch_batches: Option<bool>,
+        limit: Option<usize>,
+        key_columns: Option<Vec<String>>,
+        on_checkpoint: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let sql = table_live_sql(&table)?;
+        self.live(
+            py,
+            sql,
+            batch_size,
+            last_rows,
+            from_,
+            auto_fetch_batches,
+            limit,
+            key_columns,
+            on_checkpoint,
+        )
     }
 }
 
@@ -706,9 +923,8 @@ impl Consumer {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
-            let consumer = guard
-                .as_mut()
-                .ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
+            let consumer =
+                guard.as_mut().ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
 
             let records = consumer.poll().await.map_err(to_py_err)?;
 
@@ -735,9 +951,8 @@ impl Consumer {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
-            let consumer = guard
-                .as_mut()
-                .ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
+            let consumer =
+                guard.as_mut().ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
 
             // Reconstruct a minimal ConsumerRecord just to reuse the existing
             // offset-tracking API. Only `offset` is read inside `mark_processed`.
@@ -764,9 +979,8 @@ impl Consumer {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
-            let consumer = guard
-                .as_mut()
-                .ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
+            let consumer =
+                guard.as_mut().ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
 
             consumer.commit_sync().await.map_err(to_py_err)?;
             Ok(Python::with_gil(|py| py.None()))
@@ -786,9 +1000,7 @@ impl Consumer {
     /// Async context manager entry.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(slf_obj)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
     /// Async context manager exit — auto-closes.
@@ -819,48 +1031,63 @@ impl Consumer {
     }
 }
 
-/// A live subscription to a SQL query.
+/// A low-level live event stream for a SQL query.
 ///
-/// Use `async for event in subscription` to receive change events,
-/// or call `await subscription.next()` manually.
+/// Use `async for event in live_events` to receive change events, or call
+/// `await live_events.next()` manually.
 #[pyclass]
-struct Subscription {
+struct LiveEvents {
     inner: Arc<Mutex<Option<SubscriptionManager>>>,
+    on_checkpoint: Option<PyObject>,
+    on_error: Option<PyObject>,
 }
 
 #[pymethods]
-impl Subscription {
+impl LiveEvents {
     /// Get the next change event.
     ///
-    /// Raises StopAsyncIteration when the subscription stream ends (connection
+    /// Raises StopAsyncIteration when the live event stream ends (connection
     /// closed or unsubscribed). This matches the `async for` iterator contract,
     /// so you can use either `await sub.next()` or `async for event in sub`
     /// and get consistent behaviour either way.
     fn next<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
+        let on_checkpoint = self.on_checkpoint.as_ref().map(|callback| callback.clone_ref(py));
+        let on_error = self.on_error.as_ref().map(|callback| callback.clone_ref(py));
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
-            let manager = guard
-                .as_mut()
-                .ok_or_else(|| pyo3::exceptions::PyStopAsyncIteration::new_err(
-                    "Subscription is closed",
-                ))?;
+            let manager = guard.as_mut().ok_or_else(|| {
+                pyo3::exceptions::PyStopAsyncIteration::new_err("LiveEvents stream is closed")
+            })?;
 
             match manager.next().await {
                 Some(Ok(event)) => {
+                    let checkpoint = change_event_checkpoint(&event);
                     let msg = event.to_server_message();
-                    Python::with_gil(|py| serialize_to_py(py, &msg))
-                }
+                    let json_msg = serde_json::to_value(&msg).map_err(|e| {
+                        PyRuntimeError::new_err(format!("JSON serialization error: {e}"))
+                    })?;
+                    if let Some((subscription_id, seq_id)) = checkpoint {
+                        call_checkpoint(on_checkpoint.as_ref(), subscription_id, Some(seq_id))?;
+                    }
+                    if matches!(
+                        json_msg.get("type").and_then(serde_json::Value::as_str),
+                        Some("error")
+                    ) {
+                        call_error(on_error.as_ref(), &json_msg)?;
+                    }
+                    Python::with_gil(|py| serde_json_value_to_py(py, &json_msg))
+                },
                 Some(Err(e)) => Err(to_py_err(e)),
-                None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err(
-                    "Subscription stream ended",
-                )),
+                None => {
+                    Err(pyo3::exceptions::PyStopAsyncIteration::new_err("LiveEvents stream ended"))
+                },
             }
         })
     }
 
-    /// Close the subscription.
+    /// Close the live event stream.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
 
@@ -873,15 +1100,13 @@ impl Subscription {
         })
     }
 
-    /// Async context manager entry — enables `async with await client.subscribe(...) as sub:`.
+    /// Async context manager entry — enables `async with await client.live_events(...) as events:`.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(slf_obj)
-        })
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
-    /// Async context manager exit — automatically closes the subscription.
+    /// Async context manager exit — automatically closes the live event stream.
     #[pyo3(signature = (_exc_type, _exc_value, _traceback))]
     fn __aexit__<'py>(
         &self,
@@ -906,16 +1131,18 @@ impl Subscription {
             Ok(_) => "closed",
             Err(_) => "busy",
         };
-        format!("Subscription({state})")
+        format!("LiveEvents({state})")
     }
 
-    /// Async iterator support: `async for event in subscription`.
+    /// Async iterator support: `async for event in live_events`.
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
+        let on_checkpoint = self.on_checkpoint.as_ref().map(|callback| callback.clone_ref(py));
+        let on_error = self.on_error.as_ref().map(|callback| callback.clone_ref(py));
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
@@ -925,13 +1152,113 @@ impl Subscription {
 
             match manager.next().await {
                 Some(Ok(event)) => {
+                    let checkpoint = change_event_checkpoint(&event);
                     let msg = event.to_server_message();
-                    Python::with_gil(|py| serialize_to_py(py, &msg))
-                }
+                    let json_msg = serde_json::to_value(&msg).map_err(|e| {
+                        PyRuntimeError::new_err(format!("JSON serialization error: {e}"))
+                    })?;
+                    if let Some((subscription_id, seq_id)) = checkpoint {
+                        call_checkpoint(on_checkpoint.as_ref(), subscription_id, Some(seq_id))?;
+                    }
+                    if matches!(
+                        json_msg.get("type").and_then(serde_json::Value::as_str),
+                        Some("error")
+                    ) {
+                        call_error(on_error.as_ref(), &json_msg)?;
+                    }
+                    Python::with_gil(|py| serde_json_value_to_py(py, &json_msg))
+                },
                 Some(Err(e)) => Err(to_py_err(e)),
                 None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err("")),
             }
         })
+    }
+}
+
+/// A materialized live row stream for a SQL query or table.
+#[pyclass]
+struct LiveRows {
+    inner: Arc<Mutex<Option<LiveRowsSubscription>>>,
+    on_checkpoint: Option<PyObject>,
+}
+
+#[pymethods]
+impl LiveRows {
+    /// Get the next materialized row snapshot.
+    fn next<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let on_checkpoint = self.on_checkpoint.as_ref().map(|callback| callback.clone_ref(py));
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = inner.lock().await;
+            let manager = guard.as_mut().ok_or_else(|| {
+                pyo3::exceptions::PyStopAsyncIteration::new_err("LiveRows stream is closed")
+            })?;
+
+            match manager.next().await {
+                Some(Ok(LiveRowsEvent::Rows {
+                    subscription_id,
+                    rows,
+                    last_seq_id,
+                })) => {
+                    call_checkpoint(on_checkpoint.as_ref(), &subscription_id, last_seq_id)?;
+                    Python::with_gil(|py| serialize_to_py(py, &rows))
+                },
+                Some(Ok(LiveRowsEvent::Error { code, message, .. })) => {
+                    Err(KalamServerError::new_err(format!("{code}: {message}")))
+                },
+                Some(Err(e)) => Err(to_py_err(e)),
+                None => {
+                    Err(pyo3::exceptions::PyStopAsyncIteration::new_err("LiveRows stream ended"))
+                },
+            }
+        })
+    }
+
+    /// Close the live row stream.
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = inner.lock().await;
+            if let Some(mut manager) = guard.take() {
+                let _ = manager.close().await;
+            }
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
+    }
+
+    #[pyo3(signature = (_exc_type, _exc_value, _traceback))]
+    fn __aexit__<'py>(
+        &self,
+        py: Python<'py>,
+        _exc_type: Bound<'py, PyAny>,
+        _exc_value: Bound<'py, PyAny>,
+        _traceback: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.close(py)
+    }
+
+    fn __repr__(&self) -> String {
+        let state = match self.inner.try_lock() {
+            Ok(guard) if guard.is_some() => "open",
+            Ok(_) => "closed",
+            Err(_) => "busy",
+        };
+        format!("LiveRows({state})")
+    }
+
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.next(py)
     }
 }
 
@@ -1015,7 +1342,7 @@ fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult
             } else {
                 Ok(py.None())
             }
-        }
+        },
         serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.unbind().into()),
         serde_json::Value::Array(arr) => {
             let list = pyo3::types::PyList::empty(py);
@@ -1023,14 +1350,14 @@ fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult
                 list.append(serde_json_value_to_py(py, item)?)?;
             }
             Ok(list.unbind().into())
-        }
+        },
         serde_json::Value::Object(map) => {
             let dict = pyo3::types::PyDict::new(py);
             for (k, v) in map {
                 dict.set_item(k, serde_json_value_to_py(py, v)?)?;
             }
             Ok(dict.unbind().into())
-        }
+        },
     }
 }
 
@@ -1039,7 +1366,8 @@ fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<KalamClient>()?;
     m.add_class::<Auth>()?;
-    m.add_class::<Subscription>()?;
+    m.add_class::<LiveEvents>()?;
+    m.add_class::<LiveRows>()?;
     m.add_class::<Consumer>()?;
 
     let py = m.py();

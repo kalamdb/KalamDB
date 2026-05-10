@@ -235,7 +235,7 @@ void main() {
           );
           expect(create.success, isTrue);
 
-          final stream = subscriberClient.subscribe(
+          final stream = subscriberClient.liveEvents(
             'SELECT id, title FROM $fullTable',
             batchSize: 100,
           );
@@ -362,7 +362,7 @@ void main() {
           expect(create.success, isTrue);
 
           sub = subscriberClient
-              .subscribe(
+              .liveEvents(
             'SELECT id, title FROM $fullTable',
             batchSize: 100,
           )

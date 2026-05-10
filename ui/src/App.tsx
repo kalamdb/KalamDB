@@ -20,7 +20,6 @@ const Logging = lazy(() => import("./pages/Logging"));
 const Settings = lazy(() => import("./pages/Settings"));
 const StreamingTopics = lazy(() => import("./pages/StreamingTopics"));
 const StreamingTopicDetail = lazy(() => import("./pages/StreamingTopicDetail"));
-const StreamingGroups = lazy(() => import("./pages/StreamingGroups"));
 const StreamingOffsets = lazy(() => import("./pages/StreamingOffsets"));
 
 function RouteFallback() {
@@ -62,7 +61,7 @@ function App() {
                         <Route path="streaming" element={<Navigate to="/streaming/topics" replace />} />
                         <Route path="streaming/topics" element={<StreamingTopics />} />
                         <Route path="streaming/topics/:topicId" element={<StreamingTopicDetail />} />
-                        <Route path="streaming/groups" element={<StreamingGroups />} />
+                        <Route path="streaming/groups" element={<Navigate to="/streaming/offsets" replace />} />
                         <Route path="streaming/offsets" element={<StreamingOffsets />} />
                         <Route path="logging" element={<Logging />} />
                         <Route path="logging/:tab" element={<Logging />} />

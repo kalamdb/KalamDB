@@ -117,10 +117,10 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
     try {
       // Subscribe and wait for ack
       const preEvents = [];
-      const unsub = await client.subscribeWithSql(
+      const unsub = await client.liveEvents(
         `SELECT id, value FROM ${tbl}`,
         (ev) => preEvents.push(ev),
-        { last_rows: 0 },
+        { lastRows: 0 },
       );
       await waitFor(() => preEvents.some((e) => e.type === 'subscription_ack'));
 
@@ -155,10 +155,10 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
       // Reconnect with from: checkpoint
       const resumedEvents = [];
-      const unsub2 = await client.subscribeWithSql(
+      const unsub2 = await client.liveEvents(
         `SELECT id, value FROM ${tbl}`,
         (ev) => resumedEvents.push(ev),
-        { from: checkpoint, last_rows: 0 },
+        { from: checkpoint, lastRows: 0 },
       );
       assert.equal(client.isConnected(), true, 'should reconnect on subscribe');
 
@@ -210,9 +210,9 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
       const sqlB = `SELECT id, value FROM ${tblB}`;
       const sqlC = `SELECT id, value FROM ${tblC}`;
 
-      const unsubA = await client.subscribeWithSql(sqlA, (ev) => evA.push(ev), { last_rows: 0 });
-      const unsubB = await client.subscribeWithSql(sqlB, (ev) => evB.push(ev), { last_rows: 0 });
-      const unsubC = await client.subscribeWithSql(sqlC, (ev) => evC.push(ev), { last_rows: 0 });
+      const unsubA = await client.liveEvents(sqlA, (ev) => evA.push(ev), { lastRows: 0 });
+      const unsubB = await client.liveEvents(sqlB, (ev) => evB.push(ev), { lastRows: 0 });
+      const unsubC = await client.liveEvents(sqlC, (ev) => evC.push(ev), { lastRows: 0 });
 
       await waitFor(() =>
         evA.some((e) => e.type === 'subscription_ack') &&
@@ -257,9 +257,9 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
       // Reconnect from checkpoints
       const rEvA = [], rEvB = [], rEvC = [];
-      const rUnsubA = await client.subscribeWithSql(sqlA, (ev) => rEvA.push(ev), { from: cpA, last_rows: 0 });
-      const rUnsubB = await client.subscribeWithSql(sqlB, (ev) => rEvB.push(ev), { from: cpB, last_rows: 0 });
-      const rUnsubC = await client.subscribeWithSql(sqlC, (ev) => rEvC.push(ev), { from: cpC, last_rows: 0 });
+      const rUnsubA = await client.liveEvents(sqlA, (ev) => rEvA.push(ev), { from: cpA, lastRows: 0 });
+      const rUnsubB = await client.liveEvents(sqlB, (ev) => rEvB.push(ev), { from: cpB, lastRows: 0 });
+      const rUnsubC = await client.liveEvents(sqlC, (ev) => rEvC.push(ev), { from: cpC, lastRows: 0 });
 
       await waitFor(() =>
         rEvA.some((e) => e.type === 'subscription_ack') &&
@@ -317,7 +317,7 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
     try {
       const preEvents = [];
-      const unsub = await client.subscribeWithSql(sql, (ev) => preEvents.push(ev), { last_rows: 0 });
+      const unsub = await client.liveEvents(sql, (ev) => preEvents.push(ev), { lastRows: 0 });
       await waitFor(() => preEvents.some((e) => e.type === 'subscription_ack'));
 
       await writer.query(`INSERT INTO ${tbl} (id, value) VALUES (${preId}, 'pre')`);
@@ -336,7 +336,7 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
       // Brief reconnect then immediate second disconnect
       const tempEvents = [];
-      const tempUnsub = await client.subscribeWithSql(sql, (ev) => tempEvents.push(ev));
+      const tempUnsub = await client.liveEvents(sql, (ev) => tempEvents.push(ev));
       await waitFor(() => tempEvents.some((e) => e.type === 'subscription_ack'));
       await tempUnsub();
       await client.disconnect();
@@ -346,9 +346,9 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
       // Final recovery from checkpoint
       const resumedEvents = [];
-      const unsub2 = await client.subscribeWithSql(sql, (ev) => resumedEvents.push(ev), {
+      const unsub2 = await client.liveEvents(sql, (ev) => resumedEvents.push(ev), {
         from: checkpoint,
-        last_rows: 0,
+        lastRows: 0,
       });
       await waitFor(() => resumedEvents.some((e) => e.type === 'subscription_ack'));
 

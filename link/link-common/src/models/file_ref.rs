@@ -84,20 +84,33 @@ impl FileRef {
     /// Full download URL for this file.
     ///
     /// ```text
-    /// {base_url}/api/v1/files/{namespace}/{table}/{sub}/{id}
+    /// {base_url}/v1/files/{namespace}/{table}/{sub}/{stored_name}
     /// ```
     pub fn download_url(&self, base_url: &str, namespace: &str, table: &str) -> String {
         let base = base_url.trim_end_matches('/');
-        format!("{}/api/v1/files/{}/{}/{}/{}", base, namespace, table, self.sub, self.id)
+        format!(
+            "{}/v1/files/{}/{}/{}/{}",
+            base,
+            namespace,
+            table,
+            self.sub,
+            self.stored_name()
+        )
     }
 
     /// Relative HTTP path (no host) for this file.
     ///
     /// ```text
-    /// /api/v1/files/{namespace}/{table}/{sub}/{id}
+    /// /v1/files/{namespace}/{table}/{sub}/{stored_name}
     /// ```
     pub fn relative_url(&self, namespace: &str, table: &str) -> String {
-        format!("/api/v1/files/{}/{}/{}/{}", namespace, table, self.sub, self.id)
+        format!(
+            "/v1/files/{}/{}/{}/{}",
+            namespace,
+            table,
+            self.sub,
+            self.stored_name()
+        )
     }
 
     // ------------------------------------------------------------------
@@ -304,9 +317,12 @@ mod tests {
         };
         assert_eq!(
             fr.download_url("http://localhost:8080", "default", "users"),
-            "http://localhost:8080/api/v1/files/default/users/f0001/123"
+            "http://localhost:8080/v1/files/default/users/f0001/123-t.png"
         );
-        assert_eq!(fr.relative_url("default", "users"), "/api/v1/files/default/users/f0001/123");
+        assert_eq!(
+            fr.relative_url("default", "users"),
+            "/v1/files/default/users/f0001/123-t.png"
+        );
     }
 
     #[test]

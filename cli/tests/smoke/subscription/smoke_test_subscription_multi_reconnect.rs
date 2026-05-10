@@ -132,11 +132,11 @@ fn smoke_subscription_multi_reconnect_parallel() {
 
             // Subscribe to BOTH queries (mirrors App.tsx with messages + agent_events).
             let mut sub_a = client
-                .subscribe_with_config(SubscriptionConfig::new(&sub_id_a, &query_a))
+                .live_events_with_config(SubscriptionConfig::new(&sub_id_a, &query_a))
                 .await
                 .expect("subscribe A");
             let mut sub_b = client
-                .subscribe_with_config(SubscriptionConfig::new(&sub_id_b, &query_b))
+                .live_events_with_config(SubscriptionConfig::new(&sub_id_b, &query_b))
                 .await
                 .expect("subscribe B");
 

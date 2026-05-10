@@ -219,6 +219,7 @@ sealed class DartLiveRowsEvent with _$DartLiveRowsEvent {
   const factory DartLiveRowsEvent.rows({
     required String subscriptionId,
     required List<String> rowsJson,
+    PlatformInt64? lastSeqId,
   }) = DartLiveRowsEvent_Rows;
   const factory DartLiveRowsEvent.error({
     required String subscriptionId,

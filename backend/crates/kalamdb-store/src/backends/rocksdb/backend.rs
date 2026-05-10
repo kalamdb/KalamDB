@@ -57,11 +57,11 @@ impl RocksDBBackend {
         sync_writes: bool,
         disable_wal: bool,
         settings: RocksDbSettings,
+        block_cache: Cache,
     ) -> Self {
         let mut write_opts = WriteOptions::default();
         write_opts.set_sync(sync_writes);
         write_opts.disable_wal(disable_wal);
-        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
         let backend = Self {
             db,
             write_opts,
@@ -76,7 +76,9 @@ impl RocksDBBackend {
 
     /// Creates a new RocksDB backend with the given database handle.
     pub fn new(db: Arc<DB>) -> Self {
-        Self::new_internal(db, false, false, RocksDbSettings::default())
+        let settings = RocksDbSettings::default();
+        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        Self::new_internal(db, false, false, settings, block_cache)
     }
 
     /// Creates a new backend with write options and explicit RocksDB tuning settings.
@@ -86,7 +88,19 @@ impl RocksDBBackend {
         disable_wal: bool,
         settings: RocksDbSettings,
     ) -> Self {
-        Self::new_internal(db, sync_writes, disable_wal, settings)
+        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
+    }
+
+    /// Creates a new backend using the same block cache used to open existing column families.
+    pub(crate) fn with_options_settings_and_cache(
+        db: Arc<DB>,
+        sync_writes: bool,
+        disable_wal: bool,
+        settings: RocksDbSettings,
+        block_cache: Cache,
+    ) -> Self {
+        Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
 
     /// Set the known physical column family names.

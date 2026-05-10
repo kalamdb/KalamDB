@@ -2060,14 +2060,16 @@ extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String subscriptionId, List<String> rowsJson)? rows,
+    TResult Function(String subscriptionId, List<String> rowsJson,
+            PlatformInt64? lastSeqId)?
+        rows,
     TResult Function(String subscriptionId, String code, String message)? error,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case DartLiveRowsEvent_Rows() when rows != null:
-        return rows(_that.subscriptionId, _that.rowsJson);
+        return rows(_that.subscriptionId, _that.rowsJson, _that.lastSeqId);
       case DartLiveRowsEvent_Error() when error != null:
         return error(_that.subscriptionId, _that.code, _that.message);
       case _:
@@ -2090,7 +2092,8 @@ extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String subscriptionId, List<String> rowsJson)
+    required TResult Function(String subscriptionId, List<String> rowsJson,
+            PlatformInt64? lastSeqId)
         rows,
     required TResult Function(
             String subscriptionId, String code, String message)
@@ -2099,7 +2102,7 @@ extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
     final _that = this;
     switch (_that) {
       case DartLiveRowsEvent_Rows():
-        return rows(_that.subscriptionId, _that.rowsJson);
+        return rows(_that.subscriptionId, _that.rowsJson, _that.lastSeqId);
       case DartLiveRowsEvent_Error():
         return error(_that.subscriptionId, _that.code, _that.message);
     }
@@ -2119,14 +2122,16 @@ extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String subscriptionId, List<String> rowsJson)? rows,
+    TResult? Function(String subscriptionId, List<String> rowsJson,
+            PlatformInt64? lastSeqId)?
+        rows,
     TResult? Function(String subscriptionId, String code, String message)?
         error,
   }) {
     final _that = this;
     switch (_that) {
       case DartLiveRowsEvent_Rows() when rows != null:
-        return rows(_that.subscriptionId, _that.rowsJson);
+        return rows(_that.subscriptionId, _that.rowsJson, _that.lastSeqId);
       case DartLiveRowsEvent_Error() when error != null:
         return error(_that.subscriptionId, _that.code, _that.message);
       case _:
@@ -2139,7 +2144,9 @@ extension DartLiveRowsEventPatterns on DartLiveRowsEvent {
 
 class DartLiveRowsEvent_Rows extends DartLiveRowsEvent {
   const DartLiveRowsEvent_Rows(
-      {required this.subscriptionId, required final List<String> rowsJson})
+      {required this.subscriptionId,
+      required final List<String> rowsJson,
+      this.lastSeqId})
       : _rowsJson = rowsJson,
         super._();
 
@@ -2151,6 +2158,8 @@ class DartLiveRowsEvent_Rows extends DartLiveRowsEvent {
     // ignore: implicit_dynamic_type
     return EqualUnmodifiableListView(_rowsJson);
   }
+
+  final PlatformInt64? lastSeqId;
 
   /// Create a copy of DartLiveRowsEvent
   /// with the given fields replaced by the non-null parameter values.
@@ -2168,16 +2177,18 @@ class DartLiveRowsEvent_Rows extends DartLiveRowsEvent {
             other is DartLiveRowsEvent_Rows &&
             (identical(other.subscriptionId, subscriptionId) ||
                 other.subscriptionId == subscriptionId) &&
-            const DeepCollectionEquality().equals(other._rowsJson, _rowsJson));
+            const DeepCollectionEquality().equals(other._rowsJson, _rowsJson) &&
+            (identical(other.lastSeqId, lastSeqId) ||
+                other.lastSeqId == lastSeqId));
   }
 
   @override
   int get hashCode => Object.hash(runtimeType, subscriptionId,
-      const DeepCollectionEquality().hash(_rowsJson));
+      const DeepCollectionEquality().hash(_rowsJson), lastSeqId);
 
   @override
   String toString() {
-    return 'DartLiveRowsEvent.rows(subscriptionId: $subscriptionId, rowsJson: $rowsJson)';
+    return 'DartLiveRowsEvent.rows(subscriptionId: $subscriptionId, rowsJson: $rowsJson, lastSeqId: $lastSeqId)';
   }
 }
 
@@ -2189,7 +2200,8 @@ abstract mixin class $DartLiveRowsEvent_RowsCopyWith<$Res>
       _$DartLiveRowsEvent_RowsCopyWithImpl;
   @override
   @useResult
-  $Res call({String subscriptionId, List<String> rowsJson});
+  $Res call(
+      {String subscriptionId, List<String> rowsJson, PlatformInt64? lastSeqId});
 }
 
 /// @nodoc
@@ -2207,6 +2219,7 @@ class _$DartLiveRowsEvent_RowsCopyWithImpl<$Res>
   $Res call({
     Object? subscriptionId = null,
     Object? rowsJson = null,
+    Object? lastSeqId = freezed,
   }) {
     return _then(DartLiveRowsEvent_Rows(
       subscriptionId: null == subscriptionId
@@ -2217,6 +2230,10 @@ class _$DartLiveRowsEvent_RowsCopyWithImpl<$Res>
           ? _self._rowsJson
           : rowsJson // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      lastSeqId: freezed == lastSeqId
+          ? _self.lastSeqId
+          : lastSeqId // ignore: cast_nullable_to_non_nullable
+              as PlatformInt64?,
     ));
   }
 }

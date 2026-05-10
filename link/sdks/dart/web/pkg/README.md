@@ -24,7 +24,7 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 - Create clients with `createClient({ url, authProvider, ... })`
 - `authProvider` is required and can return `Auth.basic(...)`, `Auth.jwt(...)`, or `Auth.none()`
 - WebSocket connection management is automatic; with `wsLazyConnect: true` the SDK connects on the first realtime call
-- Prefer `live()` / `liveTableRows()` for UI state and `subscribeWithSql()` when you need raw protocol events
+- Prefer `live()` / `liveTable()` for UI state and `liveEvents()` when you need raw protocol events
 - Topic worker APIs live in the TypeScript SDK: `consumer()`, `consumeBatch()`, `ack()`, `runAgent()`
 
 ### Dart / Flutter
@@ -32,7 +32,7 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 - Call `KalamClient.init()` once before first use
 - Create clients with `KalamClient.connect(url: ..., authProvider: ...)`
 - Auth flows use `authProvider`, `login(...)`, `refreshToken(...)`, and `refreshAuth(...)`
-- The SDK exposes both low-level events via `subscribe(...)` and materialized row helpers via `liveQueryRowsWithSql()` / `liveTableRows()`
+- The SDK exposes low-level events via `liveEvents(...)` and materialized row helpers via `live(...)` / `liveTable(...)`
 
 ## Repository Layout
 
@@ -92,7 +92,7 @@ If `wasm-opt` is not installed, install Binaryen and rerun the optimization step
 
 ## License
 
-See the main KalamDB repository for license information.
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../../LICENSE.txt](../../../../../LICENSE.txt) and [../../../../../NOTICE](../../../../../NOTICE).
 
 ## Contributing
 

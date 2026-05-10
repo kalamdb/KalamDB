@@ -108,4 +108,5 @@ Contributions are welcome! Please follow the standard Git workflow:
 3. Submit a pull request with a description of your changes.
 
 ## License
-This project is licensed under the MIT License. See the LICENSE file for details.
+
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../LICENSE.txt](../LICENSE.txt) and [../NOTICE](../NOTICE).

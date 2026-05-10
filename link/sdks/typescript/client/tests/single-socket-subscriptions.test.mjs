@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { Auth, createClient } from '../dist/src/index.js';
+import { KalamClient as WasmClient } from '../dist/wasm/kalam_client.js';
 
 function createFakeWasmClient({ subscribeError, disconnectError, failOnConcurrentSubscribe = false } = {}) {
   let connected = false;
@@ -33,7 +34,7 @@ function createFakeWasmClient({ subscribeError, disconnectError, failOnConcurren
       await new Promise((resolve) => setTimeout(resolve, 10));
       connected = true;
     },
-    async subscribeWithSql(_sql, _optionsJson, callback) {
+    async liveEvents(_sql, _optionsJson, callback) {
       this.subscribeCalls += 1;
       if (failOnConcurrentSubscribe && subscribeInFlight) {
         throw new Error('Concurrent subscription registration');
@@ -53,7 +54,7 @@ function createFakeWasmClient({ subscribeError, disconnectError, failOnConcurren
         subscribeInFlight = false;
       }
     },
-    async liveQueryRowsWithSql(_sql, _optionsJson, callback) {
+    async live(_sql, _optionsJson, callback) {
       this.subscribeCalls += 1;
       if (failOnConcurrentSubscribe && subscribeInFlight) {
         throw new Error('Concurrent subscription registration');
@@ -118,8 +119,8 @@ test('multiple subscriptions on one client share one websocket connection', asyn
   client.wasmClient = fakeWasmClient;
 
   const [unsubscribeMessages, unsubscribeEvents] = await Promise.all([
-    client.subscribeWithSql('SELECT * FROM chat_demo.messages', () => {}),
-    client.subscribeWithSql('SELECT * FROM chat_demo.agent_events', () => {}),
+    client.liveEvents('SELECT * FROM chat_demo.messages', () => {}),
+    client.liveEvents('SELECT * FROM chat_demo.agent_events', () => {}),
   ]);
 
   assert.equal(fakeWasmClient.connectCalls, 1);
@@ -130,6 +131,35 @@ test('multiple subscriptions on one client share one websocket connection', asyn
   await unsubscribeEvents();
 
   assert.equal(client.getSubscriptionCount(), 0);
+});
+
+test('basic auth bootstrap connects only the post-login JWT websocket client', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:8080',
+    authProvider: async () => Auth.basic('fixture-user', 'fixture-pass'),
+  });
+
+  const anonymousClient = createFakeWasmClient();
+  const jwtClient = createFakeWasmClient();
+  const originalWithJwt = WasmClient.withJwt;
+
+  client.initialized = true;
+  client.auth = Auth.basic('fixture-user', 'fixture-pass');
+  client.wasmClient = anonymousClient;
+  client.performDirectBasicLogin = async () => ({ access_token: 'jwt-token' });
+  WasmClient.withJwt = () => jwtClient;
+
+  try {
+    const unsubscribe = await client.liveEvents('SELECT * FROM chat_demo.messages', () => {});
+
+    assert.equal(anonymousClient.connectCalls, 0, 'anonymous bootstrap client should not open a websocket');
+    assert.equal(jwtClient.connectCalls, 1, 'JWT client should open the only websocket');
+    assert.equal(jwtClient.subscribeCalls, 1, 'subscription should register on the JWT client');
+
+    await unsubscribe();
+  } finally {
+    WasmClient.withJwt = originalWithJwt;
+  }
 });
 
 test('concurrent subscription registration is serialized per client', async () => {
@@ -144,8 +174,8 @@ test('concurrent subscription registration is serialized per client', async () =
   client.wasmClient = fakeWasmClient;
 
   const [unsubscribeMessages, unsubscribeEvents] = await Promise.all([
-    client.subscribeWithSql('SELECT * FROM chat_demo.messages', () => {}),
-    client.subscribeWithSql('SELECT * FROM chat_demo.agent_events', () => {}),
+    client.liveEvents('SELECT * FROM chat_demo.messages', () => {}),
+    client.liveEvents('SELECT * FROM chat_demo.agent_events', () => {}),
   ]);
 
   assert.equal(fakeWasmClient.connectCalls, 1);
@@ -170,7 +200,7 @@ test('failed subscriptions do not leak local subscription state', async () => {
   client.wasmClient = fakeWasmClient;
 
   await assert.rejects(
-    client.subscribeWithSql('SELECT * FROM missing.table', () => {}),
+    client.liveEvents('SELECT * FROM missing.table', () => {}),
     /Subscription failed \(NOT_FOUND\): table missing/,
   );
 
@@ -190,7 +220,7 @@ test('getSubscriptions trusts wasm empty snapshots over stale local metadata', a
   client.initialized = true;
   client.wasmClient = fakeWasmClient;
 
-  await client.subscribeWithSql('SELECT * FROM chat_demo.messages', () => {});
+  await client.liveEvents('SELECT * FROM chat_demo.messages', () => {});
   assert.equal(client.getSubscriptionCount(), 1);
 
   fakeWasmClient.dropRemoteSubscription('sub-1');
@@ -210,15 +240,15 @@ test('disconnect clears local subscription metadata even when wasm disconnect fa
   client.initialized = true;
   client.wasmClient = fakeWasmClient;
 
-  await client.subscribeWithSql('SELECT * FROM chat_demo.messages', () => {});
-  await client.subscribeWithSql('SELECT * FROM chat_demo.agent_events', () => {});
+  await client.liveEvents('SELECT * FROM chat_demo.messages', () => {});
+  await client.liveEvents('SELECT * FROM chat_demo.agent_events', () => {});
   assert.equal(client.getSubscriptionCount(), 2);
 
   await assert.rejects(client.disconnect(), /disconnect failed/);
   assert.equal(client.getSubscriptionCount(), 0);
 });
 
-test('subscribeWithSql normalizes websocket rows into RowData cells', async () => {
+test('liveEvents normalizes websocket rows into RowData cells', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:8080',
     authProvider: async () => Auth.jwt('fixture-token'),
@@ -229,7 +259,7 @@ test('subscribeWithSql normalizes websocket rows into RowData cells', async () =
   client.wasmClient = fakeWasmClient;
 
   const events = [];
-  const unsubscribe = await client.subscribeWithSql('SELECT * FROM chat_demo.messages', (event) => {
+  const unsubscribe = await client.liveEvents('SELECT * FROM chat_demo.messages', (event) => {
     events.push(event);
   });
 
@@ -334,7 +364,7 @@ test('parallel subscribe storms connect once and keep sibling subscriptions isol
   const eventBatches = Array.from({ length: 12 }, () => []);
   const unsubs = await Promise.all(
     eventBatches.map((events, index) =>
-      client.subscribeWithSql(
+      client.liveEvents(
         `SELECT * FROM chat_demo.messages WHERE id = ${index + 1}`,
         (event) => {
           events.push(event);
@@ -406,8 +436,8 @@ test('change events are delivered only to the matching subscription (cross-subsc
   const eventsB = [];
 
   const [unsubA, unsubB] = await Promise.all([
-    client.subscribeWithSql('SELECT * FROM ns.table_a', (event) => eventsA.push(event)),
-    client.subscribeWithSql('SELECT * FROM ns.table_b', (event) => eventsB.push(event)),
+    client.liveEvents('SELECT * FROM ns.table_a', (event) => eventsA.push(event)),
+    client.liveEvents('SELECT * FROM ns.table_b', (event) => eventsB.push(event)),
   ]);
 
   // The fake WASM client assigns sub-1 to table_a and sub-2 to table_b.
@@ -459,8 +489,8 @@ test('same SQL subscribed twice keeps events isolated by subscription_id', async
   const eventsSecond = [];
 
   const [unsubFirst, unsubSecond] = await Promise.all([
-    client.subscribeWithSql(sql, (event) => eventsFirst.push(event)),
-    client.subscribeWithSql(sql, (event) => eventsSecond.push(event)),
+    client.liveEvents(sql, (event) => eventsFirst.push(event)),
+    client.liveEvents(sql, (event) => eventsSecond.push(event)),
   ]);
 
   assert.equal(fakeWasmClient.connectCalls, 1);

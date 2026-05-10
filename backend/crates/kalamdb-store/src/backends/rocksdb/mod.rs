@@ -19,12 +19,13 @@ pub fn open_storage_backend(
     settings: &kalamdb_configs::RocksDbSettings,
 ) -> anyhow::Result<(Arc<dyn StorageBackend>, usize)> {
     let db_init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
-    let (db, cf_names) = db_init.open_with_cf_names()?;
-    let backend = Arc::new(RocksDBBackend::with_options_and_settings(
+    let (db, cf_names, block_cache) = db_init.open_with_cf_names_and_cache()?;
+    let backend = Arc::new(RocksDBBackend::with_options_settings_and_cache(
         db,
         settings.sync_writes,
         settings.disable_wal,
         settings.clone(),
+        block_cache,
     ));
     backend.set_known_cf_names(cf_names.clone());
     Ok((backend, cf_names.len()))

@@ -587,7 +587,7 @@ export function StudioResultsGrid({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <div className="flex h-11 shrink-0 items-end justify-between gap-3 border-b border-border px-3">
         <Tabs
           value={resultView}
@@ -739,7 +739,7 @@ export function StudioResultsGrid({
             </div>
           )}
 
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea className="min-h-0 min-w-0 flex-1">
             <div className="min-w-max">
               <table className="min-w-max border-collapse">
               <thead className="sticky top-0 z-10">

@@ -301,6 +301,30 @@ async fn ack_topic_offset(server: &TestServer, topic: &str, group: &str, upto_of
     );
 }
 
+async fn reset_topic_group_offset(server: &TestServer, topic: &str, group: &str, next_offset: u64) {
+    let response = server
+        .execute_sql(&format!("RESET CONSUMER GROUP '{}' ON {} TO {}", group, topic, next_offset))
+        .await;
+    assert_eq!(
+        response.status,
+        ResponseStatus::Success,
+        "RESET CONSUMER GROUP should succeed for topic='{}' group='{}' next_offset={}: {:?}",
+        topic,
+        group,
+        next_offset,
+        response.error
+    );
+
+    let returned_next_offset = response
+        .rows_as_maps()
+        .first()
+        .and_then(|row| row.get("next_offset"))
+        .map(parse_i64)
+        .expect("RESET CONSUMER GROUP should return next_offset")
+        as u64;
+    assert_eq!(returned_next_offset, next_offset);
+}
+
 async fn assert_topic_offset_state(
     server: &TestServer,
     topic: &str,
@@ -1196,6 +1220,75 @@ async fn test_sql_group_from_offset_starts_at_requested_offset_and_persists_resu
 }
 
 #[tokio::test]
+#[ntest::timeout(45000)]
+#[serial]
+async fn test_sql_reset_consumer_group_moves_cursor_and_clears_claims() {
+    let server = TestServer::new_shared().await;
+    let _cache_guard = TopicPublisherCacheGuard {
+        app_context: server.app_context.clone(),
+    };
+
+    let (topic, source_table) = setup_topic_source_fixture(&server, "tp_sql_reset").await;
+    let group = format!("reset-{}", consolidated_helpers::unique_table("group"));
+
+    for id in 0..5 {
+        let insert = server
+            .execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'payload_{}')",
+                source_table, id, id
+            ))
+            .await;
+        assert_eq!(insert.status, ResponseStatus::Success);
+    }
+
+    let readiness_sql = format!("CONSUME FROM {} FROM EARLIEST LIMIT 10", topic);
+    let ready = wait_until_sql_consume_row_count_at_least(&server, &readiness_sql, 5).await;
+    assert_eq!(ready.row_count(), 5, "Expected stateless consume to observe all rows");
+
+    let first = wait_until_sql_consume_row_count_at_least(
+        &server,
+        &format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group),
+        2,
+    )
+    .await;
+    assert_eq!(row_offsets(&first), vec![0, 1]);
+
+    let second = wait_until_sql_consume_row_count_at_least(
+        &server,
+        &format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group),
+        2,
+    )
+    .await;
+    assert_eq!(row_offsets(&second), vec![2, 3]);
+
+    reset_topic_group_offset(&server, &topic, &group, 0).await;
+    assert_topic_offset_state(&server, &topic, &group, None).await;
+
+    let replay = wait_until_sql_consume_row_count_at_least(
+        &server,
+        &format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group),
+        2,
+    )
+    .await;
+    assert_eq!(
+        row_offsets(&replay),
+        vec![0, 1],
+        "Reset to 0 should clear pending claims and replay immediately"
+    );
+
+    reset_topic_group_offset(&server, &topic, &group, 3).await;
+    assert_topic_offset_state(&server, &topic, &group, Some(2)).await;
+
+    let from_three = wait_until_sql_consume_row_count_at_least(
+        &server,
+        &format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group),
+        2,
+    )
+    .await;
+    assert_eq!(row_offsets(&from_three), vec![3, 4]);
+}
+
+#[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_sql_consume_without_group_is_stateless_and_does_not_persist_offsets() {
     let server = TestServer::new_shared().await;
@@ -1455,6 +1548,101 @@ async fn test_http_api_consume_ack_option_combinations() {
     assert!(
         latest_after_new.messages.len() >= 2,
         "Latest consumer should observe newly inserted rows"
+    );
+}
+
+#[tokio::test]
+#[ntest::timeout(60000)]
+async fn test_http_api_consume_without_group_is_stateless() {
+    let server = http_server::get_global_server().await;
+    let namespace = consolidated_helpers::unique_namespace("tp_http_stateless");
+    let table = consolidated_helpers::unique_table("events");
+    let topic_table = consolidated_helpers::unique_table("topic");
+    let topic = format!("{}.{}", namespace, topic_table);
+    let source_table = format!("{}.{}", namespace, table);
+
+    let auth_header = server.bearer_auth_header("root").expect("Failed to create root auth header");
+
+    let create_namespace = server
+        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("CREATE NAMESPACE request failed");
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", source_table))
+        .await
+        .expect("CREATE TABLE request failed");
+    assert_eq!(create_table.status, ResponseStatus::Success);
+
+    let create_topic = server
+        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
+        .await
+        .expect("CREATE TOPIC request failed");
+    assert_eq!(create_topic.status, ResponseStatus::Success);
+
+    let add_source = server
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
+        .await
+        .expect("ALTER TOPIC ADD SOURCE request failed");
+    assert_eq!(add_source.status, ResponseStatus::Success);
+    wait_for_topic_routes(server, &topic, 1).await;
+
+    for id in 0..3 {
+        let insert = server
+            .execute_sql(&format!(
+                "INSERT INTO {} (id, payload) VALUES ({}, 'event_{}')",
+                source_table, id, id
+            ))
+            .await
+            .expect("INSERT request failed");
+        assert_eq!(insert.status, ResponseStatus::Success, "INSERT {} failed", id);
+    }
+
+    let request_body = json!({
+        "topic_id": topic,
+        "start": "earliest",
+        "limit": 2,
+        "partition_id": 0,
+        "timeout_seconds": 1
+    });
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(20);
+    let first = loop {
+        let (status, payload) =
+            post_topics_consume(server, &auth_header, request_body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "Stateless consume failed: {:?}", payload);
+        let response: HttpConsumeResponse =
+            serde_json::from_value(payload).expect("Consume payload should deserialize");
+        if response.messages.len() == 2 {
+            break response;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("Timed out waiting for stateless HTTP consume to return messages");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    };
+
+    let (second_status, second_payload) =
+        post_topics_consume(server, &auth_header, request_body).await;
+    assert_eq!(second_status, StatusCode::OK, "Second stateless consume failed");
+    let second: HttpConsumeResponse =
+        serde_json::from_value(second_payload).expect("Second consume payload should deserialize");
+
+    let first_offsets: Vec<u64> = first.messages.iter().map(|message| message.offset).collect();
+    let second_offsets: Vec<u64> = second.messages.iter().map(|message| message.offset).collect();
+    assert_eq!(first_offsets, vec![0, 1]);
+    assert_eq!(second_offsets, vec![0, 1]);
+
+    let topic_offsets = server
+        .app_context()
+        .system_tables()
+        .topic_offsets()
+        .get_topic_offsets(&TopicId::new(&topic))
+        .expect("Failed to read topic offsets");
+    assert!(
+        topic_offsets.is_empty(),
+        "Stateless HTTP consume must not create consumer group offsets"
     );
 }
 

@@ -5,14 +5,14 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_subscription_ack_includes_schema(client, temp_namespace):
+async def test_live_events_ack_includes_schema(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             payload TEXT
         )
     """)
-    async with await client.subscribe(f"SELECT * FROM {temp_namespace}.t") as sub:
+    async with await client.live_events(f"SELECT * FROM {temp_namespace}.t") as sub:
         async with asyncio.timeout(3):
             event = await sub.next()
         assert event["type"] == "subscription_ack"
@@ -23,14 +23,14 @@ async def test_subscription_ack_includes_schema(client, temp_namespace):
 
 
 @pytest.mark.asyncio
-async def test_subscription_initial_data_batch_is_empty_on_fresh_table(client, temp_namespace):
+async def test_live_events_initial_data_batch_is_empty_on_fresh_table(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             payload TEXT
         )
     """)
-    async with await client.subscribe(f"SELECT * FROM {temp_namespace}.t") as sub:
+    async with await client.live_events(f"SELECT * FROM {temp_namespace}.t") as sub:
         await sub.next()  # ack
         async with asyncio.timeout(3):
             batch = await sub.next()
@@ -39,7 +39,7 @@ async def test_subscription_initial_data_batch_is_empty_on_fresh_table(client, t
 
 
 @pytest.mark.asyncio
-async def test_subscription_initial_data_includes_existing_rows(client, temp_namespace):
+async def test_live_events_initial_data_includes_existing_rows(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -48,7 +48,7 @@ async def test_subscription_initial_data_includes_existing_rows(client, temp_nam
     """)
     await client.insert(f"{temp_namespace}.t", {"payload": "preexisting"})
 
-    async with await client.subscribe(f"SELECT * FROM {temp_namespace}.t") as sub:
+    async with await client.live_events(f"SELECT * FROM {temp_namespace}.t") as sub:
         await sub.next()  # ack
         async with asyncio.timeout(3):
             batch = await sub.next()
@@ -58,14 +58,14 @@ async def test_subscription_initial_data_includes_existing_rows(client, temp_nam
 
 
 @pytest.mark.asyncio
-async def test_subscribe_delivers_live_insert(client, temp_namespace):
+async def test_live_events_delivers_live_insert(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             payload TEXT
         )
     """)
-    sub = await client.subscribe(f"SELECT * FROM {temp_namespace}.t")
+    sub = await client.live_events(f"SELECT * FROM {temp_namespace}.t")
 
     async def insert_later():
         await asyncio.sleep(0.3)
@@ -86,7 +86,7 @@ async def test_subscribe_delivers_live_insert(client, temp_namespace):
 
 
 @pytest.mark.asyncio
-async def test_subscribe_delivers_delete_event(client, temp_namespace):
+async def test_live_events_delivers_delete_event(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (
             id BIGINT PRIMARY KEY,
@@ -95,7 +95,7 @@ async def test_subscribe_delivers_delete_event(client, temp_namespace):
     """)
     await client.insert(f"{temp_namespace}.t", {"id": 42, "payload": "doomed"})
 
-    sub = await client.subscribe(f"SELECT * FROM {temp_namespace}.t")
+    sub = await client.live_events(f"SELECT * FROM {temp_namespace}.t")
 
     async def delete_later():
         await asyncio.sleep(0.3)
@@ -116,11 +116,11 @@ async def test_subscribe_delivers_delete_event(client, temp_namespace):
 
 
 @pytest.mark.asyncio
-async def test_subscribe_raises_stop_async_iteration_on_close(client, temp_namespace):
+async def test_live_events_raises_stop_async_iteration_on_close(client, temp_namespace):
     await client.query(f"""
         CREATE TABLE {temp_namespace}.t (id BIGINT PRIMARY KEY, v TEXT)
     """)
-    sub = await client.subscribe(f"SELECT * FROM {temp_namespace}.t")
+    sub = await client.live_events(f"SELECT * FROM {temp_namespace}.t")
     await sub.close()
     with pytest.raises(StopAsyncIteration):
         await sub.next()
@@ -135,8 +135,8 @@ async def test_multiple_subscriptions_on_same_client(client, temp_namespace):
         CREATE TABLE {temp_namespace}.t2 (id BIGINT PRIMARY KEY, v TEXT)
     """)
 
-    sub1 = await client.subscribe(f"SELECT * FROM {temp_namespace}.t1")
-    sub2 = await client.subscribe(f"SELECT * FROM {temp_namespace}.t2")
+    sub1 = await client.live_events(f"SELECT * FROM {temp_namespace}.t1")
+    sub2 = await client.live_events(f"SELECT * FROM {temp_namespace}.t2")
     try:
         async with asyncio.timeout(3):
             ack1 = await sub1.next()

@@ -6,7 +6,9 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
+import initWasm from '../dist/wasm/kalam_client.js';
 
 import {
   KalamCellValue,
@@ -14,6 +16,10 @@ import {
   wrapRowMap,
   KalamRow,
 } from '../dist/src/index.js';
+
+await initWasm({
+  module_or_path: await readFile(new URL('../dist/wasm/kalam_client_bg.wasm', import.meta.url)),
+});
 
 /* ================================================================== */
 /*  KalamCellValue — factory & type guards                             */
@@ -338,6 +344,27 @@ describe('KalamRow — unified query & subscribe access pattern', () => {
   });
 });
 
+describe('KalamRow.file()', () => {
+  it('returns a context-bound file ref with correct download paths', () => {
+    const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+    const row = new KalamRow({
+      avatar: {
+        id: '12345',
+        sub: 'f0001',
+        name: 'photo.jpg',
+        size: 1024,
+        mime: 'image/jpeg',
+        sha256: 'abc123',
+      },
+    }, ctx);
+
+    const ref = row.file('avatar');
+    assert.ok(ref !== null);
+    assert.equal(ref.downloadUrl(), 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg');
+    assert.equal(ref.relativeUrl(), '/v1/files/default/users/f0001/12345-photo.jpg');
+  });
+});
+
 /* ================================================================== */
 /*  FILE column support via asFile()                                   */
 /* ================================================================== */
@@ -381,9 +408,7 @@ describe('KalamCellValue.asFileUrl()', () => {
       sha256: 'abc123',
     };
     const url = KalamCellValue.from(fileData).asFileUrl('http://localhost:8080', 'default', 'users');
-    assert.ok(url !== null);
-    assert.ok(url.includes('12345'));
-    assert.ok(url.includes('default'));
+    assert.equal(url, 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg');
   });
 
   it('returns null for non-file values', () => {

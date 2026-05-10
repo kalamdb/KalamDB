@@ -68,7 +68,7 @@ async fn test_blackhole_during_subscribe_handshake_recovers() {
         // We wrap it in a timeout so the test can continue.
         let sub_result = timeout(
             Duration::from_secs(3),
-            client.subscribe_with_config(SubscriptionConfig::new(
+            client.live_events_with_config(SubscriptionConfig::new(
                 format!("blackhole-sub-{}", suffix),
                 format!("SELECT id, value FROM {}", table),
             )),
@@ -85,7 +85,7 @@ async fn test_blackhole_during_subscribe_handshake_recovers() {
             Ok(Err(e)) => {
                 // subscribe failed — retry once the shared connection is healthy again.
                 client
-                    .subscribe_with_config(SubscriptionConfig::new(
+                    .live_events_with_config(SubscriptionConfig::new(
                         format!("blackhole-sub-{}", suffix),
                         format!("SELECT id, value FROM {}", table),
                     ))
@@ -95,7 +95,7 @@ async fn test_blackhole_during_subscribe_handshake_recovers() {
             Err(_timeout) => {
                 // subscribe hung while traffic was blackholed; retry once traffic resumes.
                 client
-                    .subscribe_with_config(SubscriptionConfig::new(
+                    .live_events_with_config(SubscriptionConfig::new(
                         format!("blackhole-sub-{}", suffix),
                         format!("SELECT id, value FROM {}", table),
                     ))

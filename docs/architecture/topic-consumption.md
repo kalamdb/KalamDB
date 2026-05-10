@@ -56,6 +56,17 @@ If a consumer claims messages and does not ack before
 `topics.visibility_timeout_secs`, the next fetch expires that stale claim and
 resets the group cursor to the earliest expired offset for redelivery.
 
+`RESET CONSUMER GROUP` is the explicit administrative path for moving a group
+cursor backward or forward. It force-sets the next offset for one
+`(topic_id, group_id, partition_id)`, clears any in-memory pending claims for
+that key, and updates `system.topic_offsets` when the requested next offset is
+greater than zero. Resetting to `0` removes the committed offset row because the
+table stores `last_acked_offset` and there is no valid offset before zero.
+
+HTTP consume can omit `group_id` for stateless inspection reads. Stateless reads
+use the requested `start` position on every request and do not create group
+claims or committed offset rows.
+
 The visibility timeout can be configured in `server.toml`:
 
 ```toml

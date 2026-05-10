@@ -3,7 +3,7 @@ export { parseKalamDataType, type KalamDataTypeDescriptor, type KalamDataTypeKin
 export { generateSchema, type GenerateOptions } from './generate.js';
 export { bytes, embedding, file } from './file-column.js';
 export { executeAsUser } from './sql.js';
-export { liveTable, subscribeTable, type TableSubscriptionEvent } from './live.js';
+export { compileLiveTableDescriptor, getLiveTableName, liveTable } from './live.js';
 export {
 	getKalamTableConfig,
 	kSystemColumns,

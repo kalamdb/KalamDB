@@ -14,10 +14,10 @@ import {
   type BatchStatus,
   type QueryResponse,
   type ServerMessage,
-  type SubscriptionOptions,
+  type LiveEventsOptions,
   type Unsubscribe,
   type LoginResponse,
-  type LiveRowsOptions,
+  type LiveOptions,
 } from '../src/index.js';
 
 // Test: Constructor with Auth.basic
@@ -71,8 +71,8 @@ async function testMethods() {
   const insertResult: QueryResponse = await client.insert('table', { id: 1 });
   const deleteResult: void = await client.delete('table', '123');
 
-  // Subscription methods
-  const unsub: Unsubscribe = await client.subscribe('table', (event: ServerMessage) => {
+  // Live event methods
+  const unsub: Unsubscribe = await client.liveEvents('SELECT * FROM table', (event: ServerMessage) => {
     if (event.type === 'change') {
       const ct = event.change_type;
       const rows = event.rows;
@@ -85,21 +85,25 @@ async function testMethods() {
     }
   });
 
-  // Subscription with options
-  const opts: SubscriptionOptions = {
-    batch_size: 50,
-    last_rows: 100,
+  // Live events with options
+  const opts: LiveEventsOptions = {
+    batchSize: 50,
+    lastRows: 100,
     from: SeqId.from('42'),
   };
-  const unsub2 = await client.subscribeWithSql(
+  const unsub2 = await client.liveEvents(
     'SELECT * FROM chat.messages',
     (_event: ServerMessage) => {},
     opts,
   );
 
-  const liveOpts: LiveRowsOptions<Record<string, unknown>> = {
+  const liveOpts: LiveOptions<Record<string, unknown>> = {
     limit: 50,
-    keyColumns: ['id'],
+    getKey: ['id'],
+    onCheckpoint: ({ lastSeqId }) => {
+      const seq: SeqId = lastSeqId;
+      console.log(seq.toString());
+    },
   };
   const unsub3 = await client.live(
     'SELECT * FROM chat.messages',

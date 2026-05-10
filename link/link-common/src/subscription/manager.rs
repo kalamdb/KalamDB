@@ -27,7 +27,7 @@ use crate::{
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let client = KalamLinkClient::builder().base_url("http://localhost:3000").build()?;
 ///
-/// let mut subscription = client.subscribe("SELECT * FROM messages").await?;
+/// let mut subscription = client.live_events("SELECT * FROM messages").await?;
 ///
 /// while let Some(event) = subscription.next().await {
 ///     match event {

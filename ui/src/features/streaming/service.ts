@@ -10,9 +10,11 @@ import type {
   ConsumeMessagesInput,
   DecodedPayload,
   PayloadDecodeMode,
+  StreamingConsumerOffsetSummary,
   StreamingConsumerGroup,
   StreamingMessage,
   StreamingOffset,
+  StreamingTopicPartitionCursor,
   StreamingTopic,
   StreamingTopicOffsetRow,
   StreamingTopicRoute,
@@ -136,6 +138,97 @@ export function mapOffsetRows(rows: StreamingTopicOffsetRow[]): StreamingOffset[
   });
 }
 
+export function summarizeStreamingConsumerOffsets(
+  topics: StreamingTopic[],
+  offsets: StreamingOffset[],
+): StreamingConsumerOffsetSummary[] {
+  const topicById = new Map(topics.map((topic) => [topic.topicId, topic]));
+  const summaries = new Map<string, StreamingConsumerOffsetSummary>();
+
+  offsets.forEach((offset) => {
+    const topic = topicById.get(offset.topicId);
+    const key = `${offset.groupId}:${offset.topicId}`;
+    const existing = summaries.get(key) ?? {
+      topicId: offset.topicId,
+      topicName: topic?.name ?? offset.topicId,
+      groupId: offset.groupId,
+      claimedPartitions: 0,
+      configuredPartitions: topic?.partitions ?? 0,
+      lastAckedOffset: 0,
+      committedOffset: 0,
+      updatedAt: null,
+    };
+
+    existing.claimedPartitions += 1;
+    existing.configuredPartitions = Math.max(
+      existing.configuredPartitions,
+      topic?.partitions ?? existing.claimedPartitions,
+    );
+    existing.lastAckedOffset += offset.lastAckedOffset;
+    existing.committedOffset += offset.nextOffset;
+
+    if (offset.updatedAt && (!existing.updatedAt || offset.updatedAt > existing.updatedAt)) {
+      existing.updatedAt = offset.updatedAt;
+    }
+
+    summaries.set(key, existing);
+  });
+
+  return Array.from(summaries.values()).sort((left, right) => {
+    const leftUpdated = left.updatedAt ?? "";
+    const rightUpdated = right.updatedAt ?? "";
+    if (leftUpdated !== rightUpdated) {
+      return rightUpdated.localeCompare(leftUpdated);
+    }
+
+    const groupCompare = left.groupId.localeCompare(right.groupId);
+    if (groupCompare !== 0) {
+      return groupCompare;
+    }
+
+    return left.topicId.localeCompare(right.topicId);
+  });
+}
+
+interface LatestOffsetsApiResponse {
+  offsets: Array<{
+    topic_id: string;
+    partition_id: number;
+    next_offset: number;
+    last_offset: number | null;
+  }>;
+}
+
+export async function fetchStreamingTopicPartitionCursors(
+  partitions: Array<Pick<StreamingTopicPartitionCursor, "topicId" | "partitionId">>,
+): Promise<StreamingTopicPartitionCursor[]> {
+  const uniquePartitions = new Map<string, Pick<StreamingTopicPartitionCursor, "topicId" | "partitionId">>();
+
+  partitions.forEach((partition) => {
+    uniquePartitions.set(`${partition.topicId}:${partition.partitionId}`, partition);
+  });
+
+  if (uniquePartitions.size === 0) {
+    return [];
+  }
+
+  const response = await api.post<LatestOffsetsApiResponse>("/topics/latest-offsets", {
+    partitions: Array.from(uniquePartitions.values()).map((partition) => ({
+      topic_id: partition.topicId,
+      partition_id: partition.partitionId,
+    })),
+  });
+
+  return response.offsets.map((offset) => ({
+    topicId: offset.topic_id,
+    partitionId: Number(offset.partition_id ?? 0),
+    nextOffset: Number(offset.next_offset ?? 0),
+    lastOffset: offset.last_offset === null || offset.last_offset === undefined
+      ? null
+      : Number(offset.last_offset),
+  }));
+}
+
 export async function fetchStreamingTopics(): Promise<StreamingTopic[]> {
   const db = getDb();
   const rows = await db
@@ -232,11 +325,14 @@ export async function fetchStreamingOffsets(filters?: StreamingOffsetsFilter): P
 export function buildConsumeRequestBody(input: ConsumeMessagesInput): Record<string, unknown> {
   const body: Record<string, unknown> = {
     topic_id: input.topicId,
-    group_id: input.groupId,
     partition_id: input.partitionId,
     limit: input.limit,
     timeout_seconds: input.timeoutSeconds,
   };
+
+  if (input.groupId?.trim()) {
+    body.group_id = input.groupId.trim();
+  }
 
   if (input.startMode === "Offset") {
     body.start = { Offset: Math.max(0, input.offset ?? 0) };

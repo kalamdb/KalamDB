@@ -297,4 +297,4 @@ For details, see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 
 ## License
 
-MIT OR Apache-2.0
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../LICENSE.txt](../LICENSE.txt) and [../NOTICE](../NOTICE).

@@ -29,9 +29,9 @@ async def main():
             "content": "hello from python"
         })
 
-        # Subscribe to live changes
-        async with await client.subscribe("SELECT * FROM app.messages") as sub:
-            async for event in sub:
+        # Open raw live change events
+        async with await client.live_events("SELECT * FROM app.messages") as events:
+            async for event in events:
                 print("change:", event)
                 if event.get("change_type") == "insert":
                     break
@@ -185,12 +185,16 @@ stop.set()
 ## Live Subscriptions
 
 ```python
-sub = await client.subscribe("SELECT * FROM chat.messages WHERE thread_id = 1")
+events = await client.live_events(
+    "SELECT * FROM chat.messages WHERE thread_id = 1",
+    last_rows=50,
+    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_seq_id"]),
+)
 
-async for event in sub:
+async for event in events:
     kind = event.get("type")
     if kind == "subscription_ack":
-        print("subscribed, total rows:", event["total_rows"])
+        print("opened, total rows:", event["total_rows"])
     elif kind == "initial_data_batch":
         for row in event["rows"]:
             print("initial:", row)
@@ -200,7 +204,25 @@ async for event in sub:
         print("error:", event["message"])
         break
 
-await sub.close()
+await events.close()
+```
+
+For UI-facing row lists, use materialized rows so the SDK applies inserts,
+updates, deletes, and checkpoints for you:
+
+```python
+live_rows = await client.live(
+    "SELECT id, body FROM chat.messages WHERE thread_id = 1",
+    last_rows=20,
+    limit=20,
+    key_columns=["id"],
+    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_seq_id"]),
+)
+
+async for rows in live_rows:
+    render(rows)
+
+tasks = await client.live_table("app.tasks", last_rows=20, key_columns=["id"])
 ```
 
 ## Building from source
@@ -254,4 +276,4 @@ This mirrors the architecture of the Dart SDK (also FFI) and differs from the Ty
 
 ## License
 
-Apache-2.0
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../LICENSE.txt](../../../LICENSE.txt) and [../../../NOTICE](../../../NOTICE).

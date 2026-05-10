@@ -191,21 +191,19 @@ export type ServerMessage =
   | { type: 'error'; subscription_id: string; code: string; message: string };
 
 /**
- * Type-safe subscription options exposed by the SDK.
+ * Type-safe live stream controls exposed by the SDK.
  *
  * The SDK accepts a real `SeqId` for resume checkpoints and normalizes it to
  * the wire format expected by the underlying transport.
  */
-export interface SubscriptionOptions {
+export interface LiveStreamOptions {
   /** Hint for server-side batch sizing during the initial data load. */
-  batch_size?: number;
+  batchSize?: number;
   /** Number of newest rows to rewind before live changes begin. */
-  last_rows?: number;
+  lastRows?: number;
   /** Resume from a specific sequence ID. */
   from?: WireSeqId;
   /** Request every initial-data batch automatically when the server has more rows. */
-  auto_fetch_batches?: boolean;
-  /** Camel-case alias accepted by the WASM layer. Prefer auto_fetch_batches. */
   autoFetchBatches?: boolean;
 }
 
@@ -285,9 +283,9 @@ export type LogListener = (entry: LogEntry) => void;
 /* ================================================================== */
 
 /**
- * Subscription callback function type
+ * Low-level live event callback function type.
  */
-export type SubscriptionCallback = (event: ServerMessage) => void;
+export type LiveEventsCallback = (event: ServerMessage) => void;
 
 /**
  * Typed subscription callback for convenience.
@@ -296,14 +294,14 @@ export type SubscriptionCallback = (event: ServerMessage) => void;
  * ```typescript
  * interface ChatMessage { id: string; content: string; sender: string }
  *
- * const handleEvent: TypedSubscriptionCallback<ChatMessage> = (event) => {
+ * const handleEvent: TypedLiveEventsCallback<ChatMessage> = (event) => {
  *   if (event.type === 'change' && event.rows) {
  *     const messages: ChatMessage[] = event.rows;
  *   }
  * };
  * ```
  */
-export type TypedSubscriptionCallback<T extends Record<string, unknown>> = (
+export type TypedLiveEventsCallback<T extends Record<string, unknown>> = (
   event: ServerMessage & { rows?: T[]; old_values?: T[] },
 ) => void;
 
@@ -316,14 +314,33 @@ export type SubscriptionErrorEvent = Extract<
 >;
 
 /**
+ * Shared live-row checkpoint emitted after a snapshot has been applied.
+ */
+export interface LiveCheckpoint {
+  subscriptionId: string;
+  lastSeqId: TypedSeqId;
+}
+
+/**
+ * Row identity strategy for high-level live query materialization.
+ *
+ * - `string` or `string[]` keeps reconciliation in the shared Rust core
+ * - a callback falls back to TypeScript because arbitrary JS cannot be shared
+ */
+export type LiveGetKey<T> =
+  | string
+  | string[]
+  | ((row: T) => string | null | undefined);
+
+/**
  * Callback that receives the fully materialized row set for a live query.
  */
-export type LiveRowsCallback<T> = (rows: T[]) => void;
+export type LiveCallback<T> = (rows: T[]) => void;
 
 /**
  * Options for SDK-managed live query row materialization.
  */
-export interface LiveRowsOptions<T> {
+export interface LiveOptions<T> extends LiveStreamOptions {
   /**
    * Map each incoming `RowData` into an application-level shape.
    * Defaults to the raw `RowData` object.
@@ -332,60 +349,54 @@ export interface LiveRowsOptions<T> {
   /**
    * Maximum number of rows retained in the materialized live result set.
    *
-   * This is separate from the subscription startup controls:
-   * - `subscriptionOptions.batch_size` chunks the initial server snapshot
-   * - `subscriptionOptions.last_rows` chooses how much history to rewind first
+  * This is separate from the subscription startup controls:
+  * - `batchSize` chunks the initial server snapshot
+  * - `lastRows` chooses how much history to rewind first
    * - `limit` bounds the reconciled row set that the client keeps afterward
    */
   limit?: number;
   /**
-   * Column names that together identify a stable row in Rust-side materialization.
-   *
-   * Use this when your query does not expose a plain `id` column but does
-   * expose a stable natural or composite key.
-   */
-  keyColumns?: string[];
-  /**
-   * Deprecated alias for `keyColumns`.
-   */
-  keyColumn?: string | string[];
-  /**
    * Resolve a stable key for upsert/delete handling.
    *
-   * When this is provided, live row reconciliation falls back to the
-   * TypeScript layer because arbitrary JavaScript callbacks cannot be shared
-   * with the Rust core.
-   */
-  getKey?: (row: T) => string | null | undefined;
-  /**
-    * Subscription startup options passed through to the server.
+    * Pass a column name or column-name array when the query exposes a stable
+    * key and you want reconciliation to stay in the shared Rust core.
     *
-    * These shape the initial subscribe / resume phase and do not cap the
-    * ongoing materialized row set after live changes begin.
+    * Pass a callback only when identity must be derived in JavaScript.
+    * Callback-based identity falls back to the TypeScript layer because
+    * arbitrary JavaScript cannot be shared with the Rust core.
    */
-  subscriptionOptions?: SubscriptionOptions;
+  getKey?: LiveGetKey<T>;
   /**
    * Optional error callback for post-start subscription failures.
    */
   onError?: (event: SubscriptionErrorEvent) => void;
+  /**
+   * Optional checkpoint callback invoked after a snapshot has been applied.
+   *
+   * Use this to persist the latest `SeqId` for later resume without reading
+   * subscription metadata manually.
+   */
+  onCheckpoint?: (checkpoint: LiveCheckpoint) => void;
+}
+
+/**
+ * Options for low-level live event subscriptions.
+ */
+export interface LiveEventsOptions extends LiveStreamOptions {
+  /**
+   * Optional error callback for subscription error events.
+   */
+  onError?: (event: SubscriptionErrorEvent) => void;
+  /**
+   * Optional checkpoint callback invoked after an event advances the stream.
+   */
+  onCheckpoint?: (checkpoint: LiveCheckpoint) => void;
 }
 
 /**
  * Function to unsubscribe from a subscription (Firebase/Supabase style)
  */
 export type Unsubscribe = () => Promise<void>;
-
-/**
- * Handle for a live subscription with explicit batch control.
- */
-export interface SubscriptionHandle {
-  /** Server/client subscription id used in WebSocket messages. */
-  id: string;
-  /** Unsubscribe from this subscription. */
-  unsubscribe: Unsubscribe;
-  /** Fetch the next initial-data batch for this subscription. */
-  requestNextBatch: () => Promise<void>;
-}
 
 /* ================================================================== */
 /*  Connection Lifecycle Event Handlers                               */
@@ -551,11 +562,11 @@ export interface ClientOptions {
    * Control when the WebSocket connection is established.
    *
    * When `true` (the default), the WebSocket connection is deferred until
-   * the first `subscribe()` or `subscribeWithSql()` call. This avoids
+  * the first `live()`, `liveTable()`, or `liveEvents()` call. This avoids
    * unnecessary connections when the client is only used for HTTP queries.
    *
    * When `false`, the WebSocket connection is established eagerly during
-   * initialization (before any subscribe call). Use this when you want the
+  * initialization (before any live call). Use this when you want the
    * connection ready immediately.
    *
    * Authentication uses the `authProvider` configured on the client.

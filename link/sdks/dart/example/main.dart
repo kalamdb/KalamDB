@@ -91,7 +91,7 @@ Future<void> main() async {
   // -------------------------------------------------------------------------
   // 7. Live subscriptions (JWT client)
   // -------------------------------------------------------------------------
-  final stream = client.subscribe(
+  final stream = client.liveEvents(
     'SELECT * FROM $fullTable',
   );
 

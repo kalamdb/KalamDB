@@ -193,7 +193,7 @@
         log(`Created test table ${table}`);
 
         const events = [];
-        unsubscribe = await client.subscribe(table, (event) => {
+        unsubscribe = await client.liveEvents(`SELECT * FROM ${table}`, (event) => {
           events.push(event);
           log(`event: ${event.type}`);
         });

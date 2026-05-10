@@ -11,8 +11,8 @@ KalamDB is built for apps where every user or tenant owns a private data space. 
 `@kalamdb/client` provides:
 
 - SQL execution over HTTP
-- materialized live query rows over WebSocket with `live()` and `liveTableRows()`
-- low-level realtime events with `subscribe()` / `subscribeWithSql()` when you need raw frames
+- materialized live query rows over WebSocket with `live()` and `liveTable()`
+- low-level realtime events with `liveEvents()` when you need raw frames
 - per-user and per-tenant isolation with USER tables
 - FILE upload/download helpers
 
@@ -20,6 +20,8 @@ Runtime targets:
 
 - Node.js `>= 18`
 - modern browsers
+
+For React apps, install `@kalamdb/react` on top of this package. It wraps the same `live()` controller with `KalamProvider`, `LiveQuery`, `LiveQueries`, `useLiveQuery`, `useLiveQueries`, and assistant-friendly derived selection helpers.
 
 ## Installation
 
@@ -38,20 +40,32 @@ Most UIs do not want `subscription_ack`, `initial_data_batch`, `change`, and `er
 - shared behavior with the Rust and Dart clients
 - simpler React, Vue, Svelte, and plain browser code
 
-Use `subscriptionOptions.last_rows` when you want an initial rewind from the
+Use `lastRows` when you want an initial rewind from the
 server. Use `limit` when you want the client to keep the materialized live row
 set bounded over time.
 
 The knobs apply at different layers:
 
-- `subscriptionOptions.batch_size` chunks the initial snapshot from the server
-- `subscriptionOptions.last_rows` chooses how much history to rewind first
+- `batchSize` chunks the initial snapshot from the server
+- `lastRows` chooses how much history to rewind first
 - `limit` caps the materialized live row set the client keeps afterward
 
-Use `subscribeWithSql()` only when you need the raw event protocol.
+Use `liveEvents()` only when you need the raw event protocol.
 
-If your query does not expose an `id` column, prefer declarative `keyColumns`
-with `live()` so row reconciliation still stays inside the shared Rust core:
+React users can delegate this row materialization to `@kalamdb/react`:
+
+```tsx
+import { LiveQuery } from '@kalamdb/react';
+
+<LiveQuery query="SELECT * FROM support.inbox WHERE room = 'main' ORDER BY created_at ASC">
+  {({ rows, state }) => (
+    <section>{state.loading ? 'Loading' : rows.length}</section>
+  )}
+</LiveQuery>
+```
+
+If your query does not expose an `id` column, pass column names through
+`getKey` so row reconciliation still stays inside the shared Rust core:
 
 ```ts
 const stop = await client.live(
@@ -60,7 +74,7 @@ const stop = await client.live(
     console.log(rows.length);
   },
   {
-    keyColumns: ['room_id', 'message_id'],
+    getKey: ['room_id', 'message_id'],
   },
 );
 ```
@@ -115,7 +129,7 @@ const stop = await client.live(
   },
   {
     limit: 200,
-    subscriptionOptions: { last_rows: 200 },
+    lastRows: 200,
     onError: (event) => {
       console.error(event.code, event.message);
     },
@@ -134,7 +148,7 @@ await client.disconnect();
 
 ## Resume From a Specific `SeqId`
 
-When you want offline resume or a durable checkpoint, persist the last `SeqId` you applied and feed it back into `subscriptionOptions.from`.
+When you want offline resume or a durable checkpoint, persist the last `SeqId` you applied and feed it back into `from`.
 
 ```ts
 import { Auth, SeqId, createClient } from '@kalamdb/client';
@@ -164,18 +178,15 @@ const stop = await client.live(
   (rows) => {
     renderInbox(rows);
 
-    // Persist the last fully applied server sequence so the next session can
-    // continue from that exact point.
-    const active = client.getSubscriptions().find((sub) => sub.tableName === inboxSql);
-    if (active?.lastSeqId) {
-      latestCheckpoint = active.lastSeqId.toString();
-    }
   },
   {
     limit: 200,
-    subscriptionOptions: {
-      last_rows: 200,
-      ...(startFrom ? { from: startFrom } : {}),
+    lastRows: 200,
+    ...(startFrom ? { from: startFrom } : {}),
+    onCheckpoint: ({ lastSeqId }) => {
+      // Persist the last fully applied server sequence so the next session can
+      // continue from that exact point.
+      latestCheckpoint = lastSeqId.toString();
     },
   },
 );
@@ -201,12 +212,12 @@ That keeps the write inside Alice's USER-table or STREAM-table partition through
 
 ## Lower-Level Realtime API
 
-If you need raw subscription frames, `subscribeWithSql()` still exists.
+If you need raw protocol frames, use `liveEvents()`.
 
 ```ts
 import { ChangeType, MessageType } from '@kalamdb/client';
 
-const stop = await client.subscribeWithSql(
+const stop = await client.liveEvents(
   "SELECT * FROM support.inbox WHERE room = 'main'",
   (event) => {
     // Use this path when you need raw subscription protocol events.
@@ -218,7 +229,7 @@ const stop = await client.subscribeWithSql(
       console.log('new rows', event.rows);
     }
   },
-  { batch_size: 200, last_rows: 200 },
+  { batchSize: 200, lastRows: 200 },
 );
 ```
 
@@ -287,8 +298,8 @@ The npm README examples are backed by SDK tests:
 
 - `query()`, `queryOne()`, `queryAll()`, `queryRows()` for SQL reads
 - `insert()`, `update()`, `delete()` for convenience DML
-- `live()` and `liveTableRows()` for materialized realtime rows
-- `subscribe()` and `subscribeWithSql()` for low-level subscription frames
+- `live()` and `liveTable()` for materialized realtime rows
+- `liveEvents()` for low-level subscription frames
 - `getSubscriptions()` for active subscriptions and typed `lastSeqId` checkpoints
 
 Full docs: [kalamdb.org/docs/sdk/typescript](https://kalamdb.org/docs/sdk/typescript)
@@ -297,3 +308,7 @@ Full docs: [kalamdb.org/docs/sdk/typescript](https://kalamdb.org/docs/sdk/typesc
 ---
 
 > Browser and Node.js support is powered by a Rust core compiled to WebAssembly (WASM). See [DEV.md](DEV.md) for build and contribution details.
+
+## License
+
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../LICENSE.txt](../../../../LICENSE.txt) and [../../../../NOTICE](../../../../NOTICE).

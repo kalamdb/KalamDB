@@ -226,7 +226,7 @@ impl BatchSubscriptionListener {
                     config.options = Some(opts);
                 }
 
-                let mut subscription = match client.subscribe_with_config(config).await {
+                let mut subscription = match client.live_events_with_config(config).await {
                     Ok(s) => s,
                     Err(e) => {
                         let _ = event_tx.send(format!("ERROR: Failed to subscribe: {}", e));

@@ -43,8 +43,8 @@
  * client.setAutoReconnect(true);
  * client.setReconnectDelay(1000, 30000);
  *
- * // WebSocket connects automatically on first subscribe (wsLazyConnect=true by default)
- * const subId = await client.subscribeWithSql(
+ * // WebSocket connects automatically on first live call (wsLazyConnect=true by default)
+ * const subId = await client.liveEvents(
  *   "SELECT * FROM chat.messages",
  *   JSON.stringify({
  *     batch_size: 100,
@@ -279,12 +279,71 @@ export class KalamClient {
      * @param {Function} callback
      * @returns {Promise<string>}
      */
-    liveQueryRowsWithSql(sql, options, callback) {
+    live(sql, options, callback) {
         const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
         var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         var len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_liveQueryRowsWithSql(this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(callback));
+        const ret = wasm.kalamclient_live(this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(callback));
+        return takeObject(ret);
+    }
+    /**
+     * Subscribe to a SQL query and receive low-level live events.
+     *
+     * # Arguments
+     * * `sql` - SQL SELECT query to subscribe to
+     * * `options` - Optional JSON string with subscription options:
+     *   - `batch_size`: Number of rows per batch (default: server-configured)
+     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
+     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
+     *   - `from`: Resume from a specific sequence ID (internal use)
+     * * `callback` - JavaScript function to call when changes occur
+     *
+     * # Returns
+     * Subscription ID for later unsubscribe
+     *
+     * # Example (JavaScript)
+     * ```js
+     * // Subscribe with options
+     * const subId = await client.liveEvents(
+     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
+     *   JSON.stringify({ batch_size: 50, from: 42 }),
+     *   (event) => console.log('Change:', event)
+     * );
+     * ```
+     * @param {string} sql
+     * @param {string | null | undefined} options
+     * @param {Function} callback
+     * @returns {Promise<string>}
+     */
+    liveEvents(sql, options, callback) {
+        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_liveEvents(this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(callback));
+        return takeObject(ret);
+    }
+    /**
+     * Subscribe to table changes (T051, T063I-T063J)
+     *
+     * # Arguments
+     * * `table_name` - Name of the table to subscribe to
+     * * `callback` - JavaScript function to call when changes occur
+     *
+     * # Returns
+     * Subscription ID for later unsubscribe
+     * @param {string} table_name
+     * @param {string | null | undefined} options
+     * @param {Function} callback
+     * @returns {Promise<string>}
+     */
+    liveTable(table_name, options, callback) {
+        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kalamclient_liveTable(this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(callback));
         return takeObject(ret);
     }
     /**
@@ -508,6 +567,25 @@ export class KalamClient {
         return takeObject(ret);
     }
     /**
+     * Request the next initial-data batch for a subscription.
+     * @param {string} subscription_id
+     */
+    requestNextBatch(subscription_id) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.kalamclient_requestNextBatch(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * Send a single application-level keepalive ping to the server.
      *
      * Usually called automatically by the internal ping timer; exposed so
@@ -624,10 +702,10 @@ export class KalamClient {
      * Control lazy WebSocket connections.
      *
      * When `true` (the default), the WebSocket connection is deferred until
-     * the first `subscribe()` / `subscribeWithSql()` call. The SDK manages
+     * the first `live()`, `liveTable()`, or `liveEvents()` call. The SDK manages
      * the connection lifecycle automatically.
      *
-     * When `false`, the caller should call `connect()` before subscribing.
+     * When `false`, the caller should call `connect()` before opening live streams.
      *
      * Default: `true`.
      *
@@ -636,68 +714,12 @@ export class KalamClient {
      * // Eager connection (override the default lazy behaviour)
      * client.setWsLazyConnect(false);
      * await client.connect();
-     * const subId = await client.subscribeWithSql('SELECT * FROM messages', null, cb);
+     * const subId = await client.liveEvents('SELECT * FROM messages', null, cb);
      * ```
      * @param {boolean} lazy
      */
     setWsLazyConnect(lazy) {
         wasm.kalamclient_setWsLazyConnect(this.__wbg_ptr, lazy);
-    }
-    /**
-     * Subscribe to table changes (T051, T063I-T063J)
-     *
-     * # Arguments
-     * * `table_name` - Name of the table to subscribe to
-     * * `callback` - JavaScript function to call when changes occur
-     *
-     * # Returns
-     * Subscription ID for later unsubscribe
-     * @param {string} table_name
-     * @param {Function} callback
-     * @returns {Promise<string>}
-     */
-    subscribe(table_name, callback) {
-        const ptr0 = passStringToWasm0(table_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_subscribe(this.__wbg_ptr, ptr0, len0, addHeapObject(callback));
-        return takeObject(ret);
-    }
-    /**
-     * Subscribe to a SQL query with optional subscription options
-     *
-     * # Arguments
-     * * `sql` - SQL SELECT query to subscribe to
-     * * `options` - Optional JSON string with subscription options:
-     *   - `batch_size`: Number of rows per batch (default: server-configured)
-     *   - `auto_reconnect`: Override client auto-reconnect for this subscription (default: true)
-     *   - `include_old_values`: Include old values in UPDATE/DELETE events (default: false)
-     *   - `from`: Resume from a specific sequence ID (internal use)
-     * * `callback` - JavaScript function to call when changes occur
-     *
-     * # Returns
-     * Subscription ID for later unsubscribe
-     *
-     * # Example (JavaScript)
-     * ```js
-     * // Subscribe with options
-     * const subId = await client.subscribeWithSql(
-     *   "SELECT * FROM chat.messages WHERE conversation_id = 1",
-     *   JSON.stringify({ batch_size: 50, from: 42 }),
-     *   (event) => console.log('Change:', event)
-     * );
-     * ```
-     * @param {string} sql
-     * @param {string | null | undefined} options
-     * @param {Function} callback
-     * @returns {Promise<string>}
-     */
-    subscribeWithSql(sql, options, callback) {
-        const ptr0 = passStringToWasm0(sql, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        var ptr1 = isLikeNone(options) ? 0 : passStringToWasm0(options, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        var len1 = WASM_VECTOR_LEN;
-        const ret = wasm.kalamclient_subscribeWithSql(this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(callback));
-        return takeObject(ret);
     }
     /**
      * Unsubscribe from table changes (T052, T063M)
@@ -1235,22 +1257,22 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 121, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3552);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3561);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 121, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3552_2);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3561_2);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 121, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3552_3);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3561_3);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 122, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3551);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3560);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000006: function(arg0) {
@@ -1277,20 +1299,20 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_3551(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_3551(arg0, arg1);
+function __wasm_bindgen_func_elem_3560(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_3560(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_3552(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_3552(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_3561(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_3561(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_3552_2(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_3552_2(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_3561_2(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_3561_2(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_3552_3(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_3552_3(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_3561_3(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_3561_3(arg0, arg1, addHeapObject(arg2));
 }
 
 function __wasm_bindgen_func_elem_713(arg0, arg1, arg2) {

@@ -78,7 +78,7 @@ fn smoke_subscription_listing_and_close_removes() {
             // 2) Subscribe
             let query_sql = format!("SELECT * FROM {}", full_clone);
             let cfg = SubscriptionConfig::new("sub_list_1".to_string(), query_sql.clone());
-            let mut sub1 = client.subscribe_with_config(cfg).await.expect("subscribe 1");
+            let mut sub1 = client.live_events_with_config(cfg).await.expect("subscribe 1");
 
             // Wait for ack
             let ack_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -108,7 +108,7 @@ fn smoke_subscription_listing_and_close_removes() {
 
             // 4) Subscribe to a second query
             let cfg2 = SubscriptionConfig::new("sub_list_2".to_string(), query_sql.clone());
-            let mut sub2 = client.subscribe_with_config(cfg2).await.expect("subscribe 2");
+            let mut sub2 = client.live_events_with_config(cfg2).await.expect("subscribe 2");
             // Wait for ack
             let ack_deadline2 = tokio::time::Instant::now() + Duration::from_secs(5);
             loop {
@@ -208,7 +208,7 @@ fn smoke_subscription_listing_tracks_seq_id() {
                 "sub_seq_1".to_string(),
                 format!("SELECT * FROM {}", full_clone),
             );
-            let mut sub = client.subscribe_with_config(cfg).await.expect("subscribe");
+            let mut sub = client.live_events_with_config(cfg).await.expect("subscribe");
 
             // Wait for ack
             let ack_deadline = tokio::time::Instant::now() + Duration::from_secs(5);

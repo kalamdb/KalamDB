@@ -36,7 +36,7 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 - Call `KalamClient.init()` once before first use
 - Create clients with `KalamClient.connect(url: ..., authProvider: ...)`
 - Auth flows use `authProvider`, `login(...)`, `refreshToken(...)`, and `refreshAuth(...)`
-- The SDK exposes low-level events via `subscribe(...)` and materialized row helpers via `liveQueryRowsWithSql()` / `liveTableRows()`
+- The SDK exposes low-level events via `liveEvents(...)` and materialized row helpers via `live(...)` / `liveTable(...)`
 - Topic worker APIs are intentionally not part of the Dart SDK yet
 
 ## Repository Layout
@@ -65,7 +65,7 @@ If you change the shared Rust implementation in `link-common` or the `kalam-clie
 
 ## License
 
-See the main KalamDB repository for license information.
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../LICENSE.txt](../LICENSE.txt) and [../NOTICE](../NOTICE).
 
 ## Contributing
 

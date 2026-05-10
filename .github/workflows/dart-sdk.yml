@@ -1,0 +1,364 @@
+name: Dart SDK
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'link/sdks/dart/**'
+      - 'link/kalam-link-dart/**'
+      - 'link/link-common/**'
+      - 'backend/server.example.toml'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/dart-sdk.yml'
+  pull_request:
+    paths:
+      - 'link/sdks/dart/**'
+      - 'link/kalam-link-dart/**'
+      - 'link/link-common/**'
+      - 'backend/server.example.toml'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/dart-sdk.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish Dart SDK to pub.dev"
+        type: boolean
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      publish:
+        description: "Publish Dart SDK to pub.dev"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+  RUSTC_WRAPPER: ""
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+
+jobs:
+  resolve_versions:
+    name: Resolve Dart SDK Version
+    runs-on: ubuntu-latest
+    outputs:
+      dart_version: ${{ steps.versions.outputs.dart_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify versions.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py verify
+
+      - name: Resolve versions from versions.json
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
+
+  test:
+    name: Dart SDK Tests
+    runs-on: ubuntu-latest
+    needs: resolve_versions
+    outputs:
+      total: ${{ steps.parse_badge.outputs.total }}
+      passed: ${{ steps.parse_badge.outputs.passed }}
+      failed: ${{ steps.parse_badge.outputs.failed }}
+      message: ${{ steps.parse_badge.outputs.message }}
+      color: ${{ steps.parse_badge.outputs.color }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libclang-dev pkg-config libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Cache Rust (dart bridge)
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dart-bridge
+          cache-on-failure: true
+          workspaces: link -> link/target
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build local SDK test server binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path backend/Cargo.toml --bin kalamdb-server
+          chmod +x backend/target/debug/kalamdb-server
+
+      - name: Start SDK test server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp backend/server.example.toml server.toml
+          sed -i 's|data_path = "./data"|data_path = "./test-data"|g' server.toml
+          sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
+          sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
+          mkdir -p test-data/rocksdb test-data/storage test-data/logs
+          ./backend/target/debug/kalamdb-server server.toml > dart-sdk-server.log 2>&1 &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
+          for i in {1..120}; do
+            if curl -sf http://localhost:8080/health > /dev/null 2>&1 || curl -sf http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
+              echo "✅ SDK test server ready (${i}s)"
+              if [[ -s dart-sdk-server.log ]]; then
+                echo "Recent server log output:"
+                tail -n 40 dart-sdk-server.log || true
+              fi
+              exit 0
+            fi
+            kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat dart-sdk-server.log; exit 1; }
+            echo "  Waiting... ($i/120)"
+            sleep 1
+          done
+          echo "❌ Timed out waiting for SDK test server"
+          cat dart-sdk-server.log || true
+          exit 1
+
+      - name: Run Dart SDK tests
+        id: run_tests
+        continue-on-error: true
+        shell: bash
+        working-directory: link/sdks/dart
+        env:
+          KALAMDB_URL: "http://localhost:8080"
+          KALAMDB_USER: "admin"
+          KALAMDB_PASSWORD: "kalamdb123"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          DART_SDK_MODELS_MACHINE_OUTPUT: ${{ github.workspace }}/dart-sdk-models-machine.jsonl
+          DART_SDK_E2E_MACHINE_OUTPUT: ${{ github.workspace }}/dart-sdk-e2e-machine.jsonl
+        run: |
+          set -euo pipefail
+          bash ./test.sh
+
+      - name: Parse Dart SDK test counts
+        if: always()
+        id: parse_badge
+        shell: bash
+        env:
+          STEP_OUTCOME: ${{ steps.run_tests.outcome }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+
+          def iter_events(path: Path):
+              if not path.exists():
+                  return
+              for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                  line = raw_line.strip()
+                  if not line:
+                      continue
+                  try:
+                      parsed = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+                  events = parsed if isinstance(parsed, list) else [parsed]
+                  for event in events:
+                      if isinstance(event, dict):
+                          yield event
+
+          hidden = {}
+          total = 0
+          passed = 0
+          failed = 0
+
+          for path_str in ("dart-sdk-models-machine.jsonl", "dart-sdk-e2e-machine.jsonl"):
+              for event in iter_events(Path(path_str)):
+                  event_type = event.get("type")
+                  if event_type == "testStart":
+                      test_info = event.get("test", {})
+                      test_id = test_info.get("id")
+                      if test_id is not None:
+                          hidden[test_id] = bool(test_info.get("hidden", False))
+                  elif event_type == "testDone":
+                      test_id = event.get("testID")
+                      if hidden.get(test_id, False):
+                          continue
+                      total += 1
+                      result = event.get("result")
+                      if result == "success":
+                          passed += 1
+                      elif result in {"failure", "error"}:
+                          failed += 1
+
+          outcome = os.environ.get("STEP_OUTCOME", "failure")
+          if total == 0 and outcome == "success":
+              message = "passed"
+              color = "brightgreen"
+          elif total == 0:
+              message = "failed"
+              color = "red"
+          else:
+              message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+              color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"total={total}\n")
+              handle.write(f"passed={passed}\n")
+              handle.write(f"failed={failed}\n")
+              handle.write(f"message={message}\n")
+              handle.write(f"color={color}\n")
+          PYTHON
+
+      - name: Print Dart SDK server log
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Dart SDK server log ==="
+          cat dart-sdk-server.log || true
+
+      - name: Stop SDK test server
+        if: always()
+        shell: bash
+        run: |
+          [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dart-sdk-server-log
+          path: dart-sdk-server.log
+          if-no-files-found: ignore
+
+      - name: Upload Dart SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: dart-sdk-test-output
+          path: |
+            dart-sdk-models-machine.jsonl
+            dart-sdk-e2e-machine.jsonl
+          if-no-files-found: ignore
+
+      - name: Fail if Dart SDK tests failed
+        if: always() && steps.run_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "Dart SDK tests failed" >&2
+          exit 1
+
+  update_badge:
+    name: Update Dart SDK Badge
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.test.result != 'cancelled' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update Dart SDK badge file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          render_badge() {
+            mkdir -p .github/badges
+
+            cat > .github/badges/sdk-dart-tests.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "dart sdk tests (${{ needs.test.outputs.total }})",
+            "message": "${{ needs.test.outputs.message }}",
+            "color": "${{ needs.test.outputs.color }}"
+          }
+          EOF
+          }
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B sdk-dart-badge-update origin/main
+
+            render_badge
+
+            if git diff --quiet -- .github/badges/sdk-dart-tests.json; then
+              echo "Dart SDK badge file already up to date"
+              exit 0
+            fi
+
+            git add .github/badges/sdk-dart-tests.json
+            git commit -m "docs: update dart sdk test badge"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "Dart SDK badge push was not a fast-forward; retrying from latest origin/main (attempt ${attempt}/3)."
+            sleep 2
+          done
+
+          echo "Failed to push Dart SDK badge update after retries" >&2
+          exit 1
+
+  publish:
+    name: Publish Dart SDK to pub.dev
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ inputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Configure pub.dev credentials
+        shell: bash
+        env:
+          PUB_DEV_CREDENTIALS_JSON: ${{ secrets.PUB_DEV_CREDENTIALS_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PUB_DEV_CREDENTIALS_JSON}" ]]; then
+            echo "❌ Missing required secret: PUB_DEV_CREDENTIALS_JSON"
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.pub-cache"
+          printf '%s' "$PUB_DEV_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
+          chmod 600 "$HOME/.pub-cache/credentials.json"
+
+      - name: Publish Dart package
+        shell: bash
+        working-directory: link/sdks/dart
+        run: |
+          set -euo pipefail
+          chmod +x ./publish.sh
+          ./publish.sh

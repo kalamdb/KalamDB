@@ -137,6 +137,8 @@ pub enum SqlStatementKind {
     ConsumeTopic(ConsumeStatement),
     /// ACK <topic> GROUP '<id>' [PARTITION <n>] UPTO OFFSET <offset>
     AckTopic(AckStatement),
+    /// RESET CONSUMER GROUP '<id>' ON <topic> [PARTITION <n>] TO <offset>
+    ResetConsumerGroup(ResetConsumerGroupStatement),
 
     // ===== User Management =====
     /// CREATE USER <username> WITH ...
@@ -285,6 +287,7 @@ impl SqlStatement {
             | SqlStatementKind::DropTopic(_)
             | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_)
+            | SqlStatementKind::ResetConsumerGroup(_)
             | SqlStatementKind::CreateUser(_)
             | SqlStatementKind::AlterUser(_)
             | SqlStatementKind::DropUser(_)
@@ -350,6 +353,7 @@ impl SqlStatement {
             SqlStatementKind::AddTopicSource(_) => "ALTER TOPIC ADD SOURCE",
             SqlStatementKind::ConsumeTopic(_) => "CONSUME FROM",
             SqlStatementKind::AckTopic(_) => "ACK",
+            SqlStatementKind::ResetConsumerGroup(_) => "RESET CONSUMER GROUP",
             SqlStatementKind::CreateUser(_) => "CREATE USER",
             SqlStatementKind::AlterUser(_) => "ALTER USER",
             SqlStatementKind::DropUser(_) => "DROP USER",

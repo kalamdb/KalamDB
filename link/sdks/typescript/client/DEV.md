@@ -107,6 +107,7 @@ The e2e files are:
 
 - `tests/e2e/auth/auth.test.mjs`
 - `tests/e2e/query/query.test.mjs`
+- `tests/e2e/query/file-download.test.mjs`
 - `tests/e2e/query/dml-helpers.test.mjs`
 - `tests/e2e/ddl/ddl.test.mjs`
 - `tests/e2e/lifecycle/lifecycle.test.mjs`

@@ -2,7 +2,7 @@
 
 Drizzle ORM driver, KalamDB table helpers, live table helpers, and schema generator for KalamDB.
 
-Use this package with `@kalamdb/client` when you want Drizzle-style queries in a browser app, admin UI, or Node service. Use `@kalamdb/consumer` separately for topic workers and agents.
+Use this package with `@kalamdb/client` when you want Drizzle-style queries in a browser app, admin UI, or Node service. Use `@kalamdb/consumer` separately for topic workers and agents. Use the same generated table definitions with `@kalamdb/react` when a React UI needs typed live-query hooks and component wrappers.
 
 ## Install
 
@@ -139,12 +139,44 @@ import { messages } from './schema';
 
 const stop = await liveTable(client, messages, (rows) => {
   console.log(rows);
-}, { subscriptionOptions: { last_rows: 50 } });
+}, { lastRows: 50 });
 
 await stop();
 ```
 
-`liveTable()` and `subscribeTable()` reuse the same `@kalamdb/client` connection and normalize timestamp/date/time fields according to the Drizzle table definition.
+`liveTable()` reuses the same `@kalamdb/client` connection and normalizes timestamp/date/time fields according to the Drizzle table definition.
+
+`liveTable()` accepts the same row-oriented live options as `@kalamdb/client.live()`, including `lastRows`, `from`, `limit`, `getKey`, and `onCheckpoint` when you want to persist a resume cursor. Raw event streams stay in `@kalamdb/client.liveEvents()`.
+
+## React Typed Mode
+
+`@kalamdb/react` can compile the same Drizzle table descriptors into live query controllers:
+
+```tsx
+import { LiveQueries } from '@kalamdb/react';
+import { asc, eq } from 'drizzle-orm';
+import { messages, typing } from './schema.generated';
+
+<LiveQueries
+  queries={{
+    messages: {
+      table: messages,
+      where: (table) => eq(table.conversationId, conversationId),
+      orderBy: (table) => asc(table.createdAt),
+      deps: [conversationId],
+    },
+    typing: {
+      table: typing,
+      where: (table) => eq(table.conversationId, conversationId),
+      deps: [conversationId],
+    },
+  }}
+>
+  {({ messages, typing }) => <ChatView messages={messages.rows} typing={typing.rows} />}
+</LiveQueries>
+```
+
+This keeps schema ownership in the ORM package and avoids a separate React-specific schema layer.
 
 ## Execute as a user
 
@@ -167,3 +199,7 @@ await executeAsUser(
 ```
 
 Only pass a user id that your service account is authorized to impersonate.
+
+## License
+
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../LICENSE.txt](../../../../LICENSE.txt) and [../../../../NOTICE](../../../../NOTICE).

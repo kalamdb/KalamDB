@@ -78,11 +78,11 @@ describe('Subscription', { timeout: 150_000 }, () => {
   });
 
   // -----------------------------------------------------------------------
-  // Basic subscribe / unsubscribe
+  // Basic liveEvents / unsubscribe
   // -----------------------------------------------------------------------
-  test('subscribe returns unsubscribe function', async () => {
+  test('liveEvents returns unsubscribe function', async () => {
     const events = [];
-    const unsub = await client.subscribe(tbl, (event) => {
+    const unsub = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       events.push(event);
     });
     assert.equal(typeof unsub, 'function');
@@ -94,9 +94,9 @@ describe('Subscription', { timeout: 150_000 }, () => {
   // -----------------------------------------------------------------------
   // Receives subscription_ack
   // -----------------------------------------------------------------------
-  test('subscribe receives subscription_ack event', async () => {
+  test('liveEvents receives subscription_ack event', async () => {
     const events = [];
-    const unsub = await client.subscribe(tbl, (event) => {
+    const unsub = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       events.push(event);
     });
 
@@ -114,7 +114,7 @@ describe('Subscription', { timeout: 150_000 }, () => {
   // -----------------------------------------------------------------------
   test('insert triggers change event on subscriber', async () => {
     const events = [];
-    const unsub = await client.subscribe(tbl, (event) => {
+    const unsub = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       events.push(event);
     });
 
@@ -143,12 +143,12 @@ describe('Subscription', { timeout: 150_000 }, () => {
   });
 
   // -----------------------------------------------------------------------
-  // subscribeWithSql
+  // liveEvents
   // -----------------------------------------------------------------------
-  test('subscribeWithSql with WHERE clause works', async () => {
+  test('liveEvents with WHERE clause works', async () => {
     const events = [];
     const targetId = 600;
-    const unsub = await client.subscribeWithSql(
+    const unsub = await client.liveEvents(
       `SELECT * FROM ${tbl} WHERE id = ${targetId}`,
       (event) => events.push(event),
     );
@@ -175,7 +175,7 @@ describe('Subscription', { timeout: 150_000 }, () => {
   // -----------------------------------------------------------------------
   test('getSubscriptions / isSubscribedTo track subscriptions', async () => {
     const events = [];
-    const unsub = await client.subscribe(tbl, (event) => {
+    const unsub = await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       events.push(event);
     });
     await waitFor(() => !!findAckEvent(events), 5_000);
@@ -197,10 +197,10 @@ describe('Subscription', { timeout: 150_000 }, () => {
     const sqlEvents = [];
 
     // Subscribe twice with different queries to ensure separate subscriptions
-    await client.subscribe(tbl, (event) => {
+    await client.liveEvents(`SELECT * FROM ${tbl}`, (event) => {
       tableEvents.push(event);
     });
-    await client.subscribeWithSql(`SELECT * FROM ${tbl} WHERE id > 0`, (event) => {
+    await client.liveEvents(`SELECT * FROM ${tbl} WHERE id > 0`, (event) => {
       sqlEvents.push(event);
     });
     await waitFor(() => !!findAckEvent(tableEvents) && !!findAckEvent(sqlEvents), 5_000);
@@ -222,10 +222,10 @@ describe('Subscription', { timeout: 150_000 }, () => {
 
     try {
       for (const [index, subscriber] of subscriberClients.entries()) {
-        const unsub = await subscriber.subscribeWithSql(
+        const unsub = await subscriber.liveEvents(
           `SELECT id, body FROM ${tbl} WHERE id >= ${baseId}`,
           (event) => eventBatches[index].push(event),
-          { last_rows: 0 },
+          { lastRows: 0 },
         );
         unsubs.push(unsub);
       }
@@ -269,10 +269,10 @@ describe('Subscription', { timeout: 150_000 }, () => {
 
     try {
       for (const id of ids) {
-        const unsub = await client.subscribeWithSql(
+        const unsub = await client.liveEvents(
           `SELECT id, body FROM ${tbl} WHERE id = ${id}`,
           (event) => eventBatches.get(id).push(event),
-          { last_rows: 0 },
+          { lastRows: 0 },
         );
         unsubs.push(unsub);
       }

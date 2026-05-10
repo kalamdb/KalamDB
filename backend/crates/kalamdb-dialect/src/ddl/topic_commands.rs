@@ -5,6 +5,7 @@
 //! - DROP TOPIC: Remove a topic
 //! - ALTER TOPIC ADD SOURCE: Add a table route to a topic
 //! - CONSUME FROM: Consume messages from a topic
+//! - RESET CONSUMER GROUP: Move a consumer group cursor to a specific next offset
 
 use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
 
@@ -111,6 +112,23 @@ pub struct AckStatement {
     pub upto_offset: u64,
 }
 
+/// RESET CONSUMER GROUP statement for moving a group cursor.
+///
+/// Syntax:
+/// ```sql
+/// RESET CONSUMER GROUP '<group_id>'
+/// ON <topic_name>
+/// [PARTITION <partition_id>]
+/// TO <offset>;
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResetConsumerGroupStatement {
+    pub topic_name: String,
+    pub group_id: String,
+    pub partition_id: u32,
+    pub next_offset: u64,
+}
+
 // Implement DdlAst trait for all topic statement types
 impl DdlAst for CreateTopicStatement {}
 impl DdlAst for DropTopicStatement {}
@@ -118,6 +136,7 @@ impl DdlAst for ClearTopicStatement {}
 impl DdlAst for AddTopicSourceStatement {}
 impl DdlAst for ConsumeStatement {}
 impl DdlAst for AckStatement {}
+impl DdlAst for ResetConsumerGroupStatement {}
 
 /// Parse CREATE TOPIC statement
 ///
@@ -335,6 +354,39 @@ pub fn parse_ack(sql: &str) -> Result<AckStatement, String> {
     })
 }
 
+/// Parse RESET CONSUMER GROUP statement.
+///
+/// Syntax: RESET CONSUMER GROUP '<group>' ON <topic> [PARTITION <n>] TO <offset>
+pub fn parse_reset_consumer_group(sql: &str) -> Result<ResetConsumerGroupStatement, String> {
+    let normalized = normalize_sql(sql);
+    let sql_upper = normalized.to_uppercase();
+
+    if !sql_upper.starts_with("RESET CONSUMER GROUP ") {
+        return Err("Expected RESET CONSUMER GROUP statement".to_string());
+    }
+
+    let group_id = extract_reset_group_id(&normalized)?;
+    let topic_name = extract_reset_topic_name(&normalized)?;
+
+    let partition_id = if sql_upper.contains(" PARTITION ") {
+        let partition_str = extract_keyword_value(&normalized, "PARTITION")?;
+        partition_str
+            .parse::<u32>()
+            .map_err(|_| "PARTITION must be a non-negative integer".to_string())?
+    } else {
+        0
+    };
+
+    let next_offset = extract_reset_next_offset(&normalized)?;
+
+    Ok(ResetConsumerGroupStatement {
+        topic_name,
+        group_id,
+        partition_id,
+        next_offset,
+    })
+}
+
 // Helper functions
 
 // TODO: We aready have a method inside tableId for this. Refactor to use that.
@@ -444,6 +496,67 @@ fn extract_group_id(sql: &str) -> Result<String, String> {
     Ok(group_id)
 }
 
+fn extract_reset_group_id(sql: &str) -> Result<String, String> {
+    let sql_upper = sql.to_uppercase();
+    let prefix = "RESET CONSUMER GROUP ";
+    let group_pos = sql_upper
+        .find(prefix)
+        .ok_or_else(|| "RESET CONSUMER GROUP keyword not found".to_string())?;
+    let after_group = &sql[group_pos + prefix.len()..];
+
+    if after_group.starts_with('\'') {
+        let end_quote = after_group[1..]
+            .find('\'')
+            .ok_or_else(|| "Unclosed quote in group ID".to_string())?;
+        return Ok(after_group[1..end_quote + 1].to_string());
+    }
+
+    if after_group.starts_with('"') {
+        let end_quote = after_group[1..]
+            .find('"')
+            .ok_or_else(|| "Unclosed quote in group ID".to_string())?;
+        return Ok(after_group[1..end_quote + 1].to_string());
+    }
+
+    let group_id = after_group
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "Missing consumer group ID".to_string())?;
+    Ok(group_id.to_string())
+}
+
+fn extract_reset_topic_name(sql: &str) -> Result<String, String> {
+    let sql_upper = sql.to_uppercase();
+    let on_pos = sql_upper.find(" ON ").ok_or_else(|| "RESET requires ON <topic>".to_string())?;
+    let after_on = &sql[on_pos + 4..];
+    let topic_name = after_on
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "Missing topic name after ON".to_string())?
+        .trim_end_matches(';');
+
+    if topic_name.is_empty() {
+        return Err("Missing topic name after ON".to_string());
+    }
+
+    Ok(topic_name.to_string())
+}
+
+fn extract_reset_next_offset(sql: &str) -> Result<u64, String> {
+    let sql_upper = sql.to_uppercase();
+    let to_pos = sql_upper.find(" TO ").ok_or_else(|| "RESET requires TO <offset>".to_string())?;
+    let after_to = sql[to_pos + 4..].trim();
+    let offset_str = after_to
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "Missing offset after TO".to_string())?
+        .trim_end_matches(';');
+
+    offset_str
+        .parse::<u64>()
+        .map_err(|_| format!("Invalid offset '{}'. Must be a non-negative integer", offset_str))
+}
+
 fn parse_consume_position_from_sql(sql: &str) -> Result<ConsumePosition, String> {
     let sql_upper = sql.to_uppercase();
 
@@ -538,5 +651,28 @@ mod tests {
         assert_eq!(stmt.group_id, "ai-service");
         assert_eq!(stmt.partition_id, 2);
         assert_eq!(stmt.upto_offset, 500);
+    }
+
+    #[test]
+    fn test_parse_reset_consumer_group_basic() {
+        let stmt =
+            parse_reset_consumer_group("RESET CONSUMER GROUP 'ai-service' ON app.messages TO 0")
+                .unwrap();
+        assert_eq!(stmt.topic_name, "app.messages");
+        assert_eq!(stmt.group_id, "ai-service");
+        assert_eq!(stmt.partition_id, 0);
+        assert_eq!(stmt.next_offset, 0);
+    }
+
+    #[test]
+    fn test_parse_reset_consumer_group_with_partition() {
+        let stmt = parse_reset_consumer_group(
+            "RESET CONSUMER GROUP 'ai-service' ON app.messages PARTITION 2 TO 500;",
+        )
+        .unwrap();
+        assert_eq!(stmt.topic_name, "app.messages");
+        assert_eq!(stmt.group_id, "ai-service");
+        assert_eq!(stmt.partition_id, 2);
+        assert_eq!(stmt.next_offset, 500);
     }
 }

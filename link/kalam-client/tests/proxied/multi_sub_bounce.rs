@@ -42,21 +42,21 @@ async fn test_proxy_three_subscriptions_resume_after_server_bounce() {
     client.connect().await.expect("connect through proxy");
 
     let mut sub_a = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("bounce3-a-{}", suffix),
             format!("SELECT id, value FROM {}", table_a),
         ))
         .await
         .expect("subscribe A");
     let mut sub_b = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("bounce3-b-{}", suffix),
             format!("SELECT id, value FROM {}", table_b),
         ))
         .await
         .expect("subscribe B");
     let mut sub_c = client
-        .subscribe_with_config(SubscriptionConfig::new(
+        .live_events_with_config(SubscriptionConfig::new(
             format!("bounce3-c-{}", suffix),
             format!("SELECT id, value FROM {}", table_c),
         ))

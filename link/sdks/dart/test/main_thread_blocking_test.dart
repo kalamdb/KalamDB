@@ -94,7 +94,8 @@ class _MockRustLibApi extends MockRustLibApi {
   }
 
   @override
-  String crateApiDartSubscriptionId({required DartSubscription subscription}) {
+  String crateApiDartLiveEventsId(
+      {required DartLiveEventsSubscription subscription}) {
     return 'mock-sub-id';
   }
 
@@ -169,7 +170,7 @@ class _MockRustLibApi extends MockRustLibApi {
   }
 
   @override
-  Future<DartSubscription> crateApiDartSubscribe({
+  Future<DartLiveEventsSubscription> crateApiDartLiveEventsSubscribe({
     required DartKalamClient client,
     required String sql,
     gen.DartSubscriptionConfig? config,
@@ -178,15 +179,15 @@ class _MockRustLibApi extends MockRustLibApi {
   }
 
   @override
-  Future<gen.DartChangeEvent?> crateApiDartSubscriptionNext({
-    required DartSubscription subscription,
+  Future<gen.DartChangeEvent?> crateApiDartLiveEventsNext({
+    required DartLiveEventsSubscription subscription,
   }) async {
     throw UnimplementedError();
   }
 
   @override
-  Future<void> crateApiDartSubscriptionClose({
-    required DartSubscription subscription,
+  Future<void> crateApiDartLiveEventsClose({
+    required DartLiveEventsSubscription subscription,
   }) async {}
 
   @override
@@ -213,15 +214,15 @@ class _MockRustLibApi extends MockRustLibApi {
 
   @override
   RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_DartSubscription => (_) {};
+      get rust_arc_increment_strong_count_DartLiveEventsSubscription => (_) {};
 
   @override
   RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_DartSubscription => (_) {};
+      get rust_arc_decrement_strong_count_DartLiveEventsSubscription => (_) {};
 
   @override
   CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_DartSubscriptionPtr =>
+      get rust_arc_decrement_strong_count_DartLiveEventsSubscriptionPtr =>
           throw UnimplementedError();
 }
 

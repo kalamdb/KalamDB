@@ -109,7 +109,7 @@ impl SubscriptionListenerAdvanced {
                     if let Some(opts) = options.as_ref() {
                         config.options = Some(opts.clone());
                     }
-                    match client.subscribe_with_config(config).await {
+                    match client.live_events_with_config(config).await {
                         Ok(s) => {
                             subscription = Some(s);
                             break;

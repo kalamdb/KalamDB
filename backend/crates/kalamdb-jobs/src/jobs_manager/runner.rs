@@ -270,13 +270,25 @@ impl JobsManager {
         };
         let wal_cleanup_enabled = wal_cleanup_interval.is_some();
 
-        // Leadership check interval (for cluster mode)
-        let mut leadership_interval = tokio::time::interval_at(
-            Instant::now() + Duration::from_secs(1),
-            Duration::from_secs(1),
-        );
-        leadership_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut is_leader = self.is_cluster_leader().await;
+        // Leadership checks are only useful in cluster mode. In standalone mode this node is
+        // always the leader, so avoid a permanent 1s idle wake-up.
+        let cluster_mode = app_context.executor().is_cluster_mode();
+        let mut leadership_interval = if cluster_mode {
+            let mut interval = tokio::time::interval_at(
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(1),
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            Some(interval)
+        } else {
+            None
+        };
+        let leadership_enabled = leadership_interval.is_some();
+        let mut is_leader = if cluster_mode {
+            self.is_cluster_leader().await
+        } else {
+            true
+        };
         let mut was_leader = is_leader;
         let max_concurrent = max_concurrent.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -286,7 +298,7 @@ impl JobsManager {
 
         // Adaptive idle polling (reduces CPU in empty systems)
         let idle_poll_min_ms: u64 = 500;
-        let idle_poll_max_ms: u64 = 5_000;
+        let idle_poll_max_ms: u64 = 30_000;
         let mut idle_poll_ms = idle_poll_min_ms;
         let mut poll_interval = tokio::time::interval_at(
             Instant::now() + Duration::from_millis(idle_poll_ms),
@@ -320,7 +332,14 @@ impl JobsManager {
                     // Priority 2: fallback polling for crash recovery/retries
                     _ = poll_interval.tick() => None,
                     // Periodic leadership check
-                    _ = leadership_interval.tick() => {
+                    _ = async {
+                        if leadership_enabled {
+                            let interval = leadership_interval
+                                .as_mut()
+                                .expect("leadership interval missing");
+                            interval.tick().await;
+                        }
+                    }, if leadership_enabled => {
                         let leader_now = self.is_cluster_leader().await;
                         if leader_now && !was_leader {
                             log::info!("[JobLoop] This node became leader - handling failover");
@@ -335,8 +354,11 @@ impl JobsManager {
                     // Periodic health metrics logging (all nodes)
                     _ = health_interval.tick() => {
                         let app_ctx = self.get_attached_app_context();
-                        if let Err(e) = HealthMonitor::log_metrics(app_ctx).await {
-                            log::warn!("Failed to log health metrics: {}", e);
+                        HealthMonitor::maintain_idle_resources(app_ctx.as_ref());
+                        if log::log_enabled!(Level::Debug) {
+                            if let Err(e) = HealthMonitor::log_metrics(app_ctx).await {
+                                log::warn!("Failed to log health metrics: {}", e);
+                            }
                         }
                         continue;
                     }

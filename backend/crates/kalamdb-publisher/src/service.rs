@@ -704,6 +704,28 @@ impl TopicPublisherService {
         Ok(())
     }
 
+    /// Reset a consumer group partition to a specific next offset.
+    ///
+    /// This force-sets persisted progress and replaces any in-memory pending
+    /// claims for the same topic/group/partition so follow-up reads start at the
+    /// requested offset without waiting for claim expiry.
+    pub fn reset_group_offset(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+        next_offset: u64,
+    ) -> Result<()> {
+        self.offset_store
+            .reset_offset(topic_id, group_id, partition_id, next_offset)
+            .map_err(|e| CommonError::Internal(format!("Failed to reset offset: {}", e)))?;
+
+        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+        self.group_claim_state.insert(cursor_key, ClaimState::new(next_offset));
+
+        Ok(())
+    }
+
     /// Get all committed offsets for a consumer group on a topic.
     pub fn get_group_offsets(
         &self,

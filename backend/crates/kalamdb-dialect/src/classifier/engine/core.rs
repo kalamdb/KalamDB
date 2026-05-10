@@ -589,6 +589,18 @@ impl SqlStatement {
                     crate::ddl::topic_commands::parse_ack(sql).map(SqlStatementKind::AckTopic)
                 })
             },
+            ["RESET", "CONSUMER", "GROUP", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for consumer group reset"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    crate::ddl::topic_commands::parse_reset_consumer_group(sql)
+                        .map(SqlStatementKind::ResetConsumerGroup)
+                })
+            },
 
             // Backup and restore operations - require admin
             ["BACKUP", "DATABASE", ..] => {
@@ -843,9 +855,12 @@ impl SqlStatement {
             SqlStatementKind::CreateTopic(_)
             | SqlStatementKind::DropTopic(_)
             | SqlStatementKind::ClearTopic(_)
-            | SqlStatementKind::AddTopicSource(_) => Err("Admin privileges (DBA or System role) \
+            | SqlStatementKind::AddTopicSource(_)
+            | SqlStatementKind::ResetConsumerGroup(_) => {
+                Err("Admin privileges (DBA or System role) \
                                                           required for topic management"
-                .to_string()),
+                    .to_string())
+            },
 
             // Backup/Restore requires admin
             SqlStatementKind::BackupDatabase(_) | SqlStatementKind::RestoreDatabase(_) => {

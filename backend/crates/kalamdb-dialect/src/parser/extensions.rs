@@ -36,7 +36,7 @@ pub use crate::ddl::subscribe_commands::SubscribeStatement;
 // Topic pub/sub commands
 pub use crate::ddl::topic_commands::{
     AddTopicSourceStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
-    CreateTopicStatement, DropTopicStatement,
+    CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
 };
 // User commands (CREATE USER, ALTER USER, DROP USER)
 pub use crate::ddl::user_commands::{
@@ -79,6 +79,8 @@ pub enum ExtensionStatement {
     AddTopicSource(AddTopicSourceStatement),
     /// CONSUME FROM command (pub/sub)
     ConsumeTopic(ConsumeStatement),
+    /// RESET CONSUMER GROUP command (pub/sub)
+    ResetConsumerGroup(ResetConsumerGroupStatement),
     /// CREATE USER command
     CreateUser(CreateUserStatement),
     /// ALTER USER command
@@ -291,6 +293,16 @@ impl ExtensionStatement {
             crate::ddl::topic_commands::parse_consume,
             ExtensionStatement::ConsumeTopic,
             "CONSUME FROM",
+        ) {
+            return result;
+        }
+        if let Some(result) = Self::parse_with_prefix(
+            sql,
+            &sql_upper,
+            &["RESET CONSUMER GROUP"],
+            crate::ddl::topic_commands::parse_reset_consumer_group,
+            ExtensionStatement::ResetConsumerGroup,
+            "RESET CONSUMER GROUP",
         ) {
             return result;
         }

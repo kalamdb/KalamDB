@@ -124,16 +124,16 @@ async fn test_insert_rejects_empty_object() {
     );
 }
 
-// T063X: Test subscribe() registers callback and receives messages
+// T063X: Test liveEvents() registers callback and receives messages
 #[wasm_bindgen_test]
-async fn test_subscribe_not_connected() {
+async fn test_live_events_not_connected() {
     let client = create_test_client();
 
     let callback = js_sys::Function::new_no_args("");
-    let result = client.subscribe("todos".to_string(), callback).await;
+    let result = client.live_events("SELECT * FROM todos".to_string(), None, callback).await;
 
     // Should fail because not connected
-    assert!(result.is_err(), "Subscribe should fail when not connected");
+    assert!(result.is_err(), "liveEvents should fail when not connected");
 }
 
 // T063Y: Test unsubscribe() removes callback and stops receiving messages
@@ -161,7 +161,7 @@ async fn test_delete_rejects_invalid_row_id() {
 }
 
 // T063AB: Test that multiple subscriptions share the same WebSocket connection
-// This verifies that calling subscribe() multiple times does NOT open new WebSocket connections
+// This verifies that opening liveEvents multiple times does NOT open new WebSocket connections
 #[wasm_bindgen_test]
 async fn test_multiple_subscriptions_share_single_websocket() {
     let mut client = create_test_client();
@@ -184,9 +184,10 @@ async fn test_multiple_subscriptions_share_single_websocket() {
     let callback3 =
         js_sys::Function::new_with_args("data", "console.log('Subscription 3:', data);");
 
-    let sub1_result = client.subscribe("todos".to_string(), callback1).await;
-    let sub2_result = client.subscribe("events".to_string(), callback2).await;
-    let sub3_result = client.subscribe("messages".to_string(), callback3).await;
+    let sub1_result = client.live_events("SELECT * FROM todos".to_string(), None, callback1).await;
+    let sub2_result = client.live_events("SELECT * FROM events".to_string(), None, callback2).await;
+    let sub3_result =
+        client.live_events("SELECT * FROM messages".to_string(), None, callback3).await;
 
     // All subscriptions should use the same connection
     // The isConnected() check verifies the single WebSocket is still open
@@ -230,7 +231,7 @@ async fn test_multiple_subscriptions_share_single_websocket() {
 
 // T063AC: Test subscription reuse for same table returns different subscription IDs
 #[wasm_bindgen_test]
-async fn test_subscribe_same_table_multiple_times() {
+async fn test_live_events_same_table_multiple_times() {
     let mut client = create_test_client();
 
     let connect_result = client.connect().await;
@@ -240,12 +241,12 @@ async fn test_subscribe_same_table_multiple_times() {
         return;
     }
 
-    // Subscribe to the same table twice
+    // Open the same table twice
     let callback1 = js_sys::Function::new_with_args("data", "console.log('First:', data);");
     let callback2 = js_sys::Function::new_with_args("data", "console.log('Second:', data);");
 
-    let sub1_result = client.subscribe("todos".to_string(), callback1).await;
-    let sub2_result = client.subscribe("todos".to_string(), callback2).await;
+    let sub1_result = client.live_events("SELECT * FROM todos".to_string(), None, callback1).await;
+    let sub2_result = client.live_events("SELECT * FROM todos".to_string(), None, callback2).await;
 
     // Note: Current implementation uses "sub-{table_name}" as ID, so second subscription
     // will overwrite the first callback in the HashMap. This is a known behavior.

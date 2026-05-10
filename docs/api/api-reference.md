@@ -16,7 +16,7 @@ This reference is aligned with the current route + handler implementations.
 ### SQL and files
 
 - `POST /v1/api/sql`
-- `GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}`
+- `GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_name}`
 
 ### WebSocket
 
@@ -212,7 +212,7 @@ Current `error.code` values include:
 
 ## 4) File Download API
 
-## `GET /v1/files/{namespace}/{table_name}/{subfolder}/{file_id}`
+## `GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_name}`
 
 Download previously stored file bytes.
 
@@ -224,17 +224,17 @@ Download previously stored file bytes.
 
 - `user_id` (optional)
   - Only meaningful for **user tables**
-  - Cross-user downloads are allowed only when the authenticated actor is authorized for the target ID's cached role class
+  - Cross-user raw-byte downloads are limited to `dba` and `system` actors that are authorized for the target ID's cached role class
 
 ### Behavior by table type
 
-- `User` table: downloads from the authenticated user scope by default, or from an authorized target user scope when `user_id` is allowed by the role matrix. Service, DBA, and system target IDs are checked from the in-memory privileged-user role cache; other target IDs are treated as regular users.
+- `User` table: downloads from the authenticated user scope by default. `dba` and `system` actors may supply `user_id` for an authorized target user scope. `service` actors can write user-scoped rows through `EXECUTE AS USER`, but cannot directly download another user's FILE bytes with `user_id`.
 - `Shared` table: allowed only if shared access policy permits; `user_id` query is rejected
 - `Stream`/`System` table: rejected (`file storage not supported`)
 
 ### Validation
 
-- `subfolder` and `file_id` are path-validated (no traversal patterns)
+- `subfolder` and `stored_name` are path-validated (no traversal patterns)
 
 ### Responses
 
@@ -444,6 +444,8 @@ Response:
 Notes:
 
 - `payload` is base64-encoded bytes
+- omit `group_id` for stateless inspection; stateless reads honor `start` on every request and do not create group offsets
+- include `group_id` for durable group consumption; existing committed offsets resume before `start` is considered
 - `timeout_seconds` is accepted in request but is not currently used by handler logic
 
 ### `POST /v1/api/topics/ack`

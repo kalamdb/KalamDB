@@ -55,7 +55,7 @@ void main() {
           // Subscribe, receive ACK, then cancel. Repeat several times.
           for (var i = 0; i < 5; i++) {
             final events = <ChangeEvent>[];
-            final stream = client.subscribe(
+            final stream = client.liveEvents(
               'SELECT * FROM $tbl',
               subscriptionId: fixedSubId,
             );
@@ -76,7 +76,7 @@ void main() {
           // After 5 cycles, we should still be able to subscribe.
           // If subscriptions leaked, the server limit would be hit.
           final events = <ChangeEvent>[];
-          final stream = client.subscribe(
+          final stream = client.liveEvents(
             'SELECT * FROM $tbl',
             subscriptionId: fixedSubId,
           );
@@ -131,7 +131,7 @@ void main() {
           for (var i = 0; i < 3; i++) {
             final subId = 'multi-test-$i';
             allEvents[subId] = [];
-            final stream = client.subscribe(
+            final stream = client.liveEvents(
               'SELECT * FROM $tbl',
               subscriptionId: subId,
             );
@@ -190,7 +190,7 @@ void main() {
           // Rapidly create and cancel subscriptions (auto-generated IDs).
           for (var i = 0; i < 15; i++) {
             final events = <ChangeEvent>[];
-            final stream = client.subscribe('SELECT * FROM $tbl');
+            final stream = client.liveEvents('SELECT * FROM $tbl');
             final sub = stream.listen(events.add);
 
             // Wait briefly for ACK.
@@ -205,7 +205,7 @@ void main() {
 
           // Should still work after 15 cycles.
           final events = <ChangeEvent>[];
-          final stream = client.subscribe('SELECT * FROM $tbl');
+          final stream = client.liveEvents('SELECT * FROM $tbl');
           final sub = stream.listen(events.add);
 
           await sleep(const Duration(seconds: 2));
@@ -255,9 +255,9 @@ void main() {
           // Create 2 subscriptions.
           final sub1Events = <ChangeEvent>[];
           final sub2Events = <ChangeEvent>[];
-          final stream1 = client.subscribe('SELECT * FROM $tbl',
+          final stream1 = client.liveEvents('SELECT * FROM $tbl',
               subscriptionId: 'count-sub-1');
-          final stream2 = client.subscribe('SELECT * FROM $tbl',
+          final stream2 = client.liveEvents('SELECT * FROM $tbl',
               subscriptionId: 'count-sub-2');
           final s1 = stream1.listen(sub1Events.add);
           final s2 = stream2.listen(sub2Events.add);

@@ -154,4 +154,4 @@ If port 5173 is busy, Vite prints the next available local URL. Use the URL from
 
 ## License
 
-Part of the KalamDB project. See the repository root for license details.
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../LICENSE.txt](../../LICENSE.txt) and [../../NOTICE](../../NOTICE).

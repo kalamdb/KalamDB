@@ -16,7 +16,7 @@ Topic consumer / ACK worker APIs and initial server bootstrap flows are intentio
 - **SQL queries** over HTTP with `$1`, `$2`, ... parameter binding
 - **Typed rows** via `Map<String, KalamCellValue>` accessors like `asString()`, `asInt()`, and `asFile()`
 - **Live subscriptions** to any `SELECT` query over WebSocket
-- **Materialized live rows** with `liveQueryRowsWithSql()` and `liveTableRows()`
+- **Materialized live rows** with `live()`, `liveTable()`, and `onCheckpoint` resume hooks
 - **Authentication flows** with `Auth.jwt`, `Auth.basic` user/password bootstrap, `Auth.none`, `login()`, `refreshToken()`, and `refreshAuth()`
 - **Connection diagnostics** with `ConnectionHandlers`, keepalive control, and SDK logging hooks
 - **Subscription inspection** with `getSubscriptions()` and `SeqId` resume support
@@ -139,7 +139,7 @@ final client = await KalamClient.connect(
 | `url` | `String` | required | Server base URL |
 | `authProvider` | `AuthProvider` | `Auth.none()` | Credentials callback invoked during connect and reconnect |
 | `disableCompression` | `bool` | `false` | Disable WebSocket gzip compression for local debugging |
-| `wsLazyConnect` | `bool` | `true` | Defer WebSocket connect until the first `subscribe()` call |
+| `wsLazyConnect` | `bool` | `true` | Defer WebSocket connect until the first `liveEvents()` call |
 | `timeout` | `Duration` | `30s` | HTTP request timeout |
 | `maxRetries` | `int` | `3` | Retry count for idempotent queries |
 | `connectionHandlers` | `ConnectionHandlers?` | `null` | Connection lifecycle callbacks |
@@ -250,10 +250,10 @@ final scoped = await client.query(
 
 ## Live Subscriptions
 
-Subscribe to any `SELECT` query. The returned `Stream<ChangeEvent>` emits the initial snapshot plus live changes.
+Open any `SELECT` query. The returned `Stream<ChangeEvent>` emits the initial snapshot plus live changes.
 
 Live SQL must stay within the strict supported shape: `SELECT ... FROM ... WHERE ...`.
-Do not use `ORDER BY` or `LIMIT` inside `subscribe()` or materialized live-query SQL.
+Do not use `ORDER BY` or `LIMIT` inside `liveEvents()` or materialized live-query SQL.
 
 The controls apply at different stages:
 
@@ -272,7 +272,7 @@ That means reconnect and resume behavior is aligned with the shared Rust client
 logic instead of being reimplemented separately in Flutter code.
 
 ```dart
-final stream = client.subscribe(
+final stream = client.liveEvents(
   'SELECT * FROM chat.messages WHERE room_id = $1',
   batchSize: 100,
   lastRows: 50,
@@ -282,7 +282,7 @@ final stream = client.subscribe(
 await for (final event in stream) {
   switch (event) {
     case AckEvent(:final subscriptionId, :final totalRows):
-      print('Subscribed $subscriptionId with $totalRows snapshot rows');
+      print('Opened $subscriptionId with $totalRows snapshot rows');
     case InitialDataBatch(:final rows, :final hasMore):
       print('Snapshot batch ${rows.length}, hasMore=$hasMore');
     case InsertEvent(:final row):
@@ -304,7 +304,7 @@ final sub = stream.listen((_) {});
 await sub.cancel();
 ```
 
-### `subscribe()` options
+### `liveEvents()` options
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -338,10 +338,13 @@ For UI-facing row lists, prefer the materialized helpers instead of reconciling
 change events yourself:
 
 ```dart
-final rowsStream = client.liveQueryRowsWithSql<Map<String, KalamCellValue>>(
+final rowsStream = client.live<Map<String, KalamCellValue>>(
   "SELECT id, body FROM chat.messages WHERE room = 'main'",
   lastRows: 20,
   limit: 20,
+  onCheckpoint: (checkpoint) {
+    print('resume from ${checkpoint.lastSeqId}');
+  },
 );
 
 await for (final rows in rowsStream) {
@@ -352,7 +355,7 @@ await for (final rows in rowsStream) {
 Or use table-name convenience:
 
 ```dart
-final tasks = client.liveTableRows<Map<String, KalamCellValue>>('app.tasks');
+final tasks = client.liveTable<Map<String, KalamCellValue>>('app.tasks');
 ```
 
 ## Connection Lifecycle and Logging
@@ -442,7 +445,7 @@ class SyncService {
 
     final client = await _getClient();
     _messagesSubscription ??= client
-        .subscribe('SELECT * FROM messages', from: lastSeenSeqId)
+        .liveEvents('SELECT * FROM messages', from: lastSeenSeqId)
         .listen(_handleEvent);
   }
 
@@ -497,9 +500,9 @@ Avoid this pattern. Build the UI first, then resolve auth and connect from a pro
 | `KalamClient.init()` | Initialize the Rust runtime once |
 | `KalamClient.connect(...)` | Create a client handle and configure auth, logging, retries, and WebSocket behavior |
 | `query(sql, {params, namespace})` | Execute SQL over HTTP |
-| `subscribe(sql, {batchSize, lastRows, from, subscriptionId})` | Subscribe to live query changes |
-| `liveQueryRowsWithSql(sql, {batchSize, lastRows, from, subscriptionId, limit, keyColumns, mapRow})` | Subscribe to a reconciled live row set |
-| `liveTableRows(tableName, {batchSize, lastRows, from, subscriptionId, limit, keyColumns, mapRow})` | Subscribe to reconciled rows for `SELECT * FROM table` |
+| `liveEvents(sql, {batchSize, lastRows, from, subscriptionId})` | Open live query changes |
+| `live(sql, {batchSize, lastRows, from, subscriptionId, limit, keyColumns, mapRow, onCheckpoint})` | Open a reconciled live row set |
+| `liveTable(tableName, {batchSize, lastRows, from, subscriptionId, limit, keyColumns, mapRow, onCheckpoint})` | Open reconciled rows for `SELECT * FROM table` |
 | `login(user, password)` | Exchange user/password credentials for JWT tokens |
 | `refreshToken(refreshToken)` | Refresh an access token |
 | `refreshAuth(...)` | Re-run `authProvider` and update credentials in place |
@@ -511,7 +514,7 @@ Avoid this pattern. Build the UI first, then resolve auth and connect from a pro
 
 ## License
 
-Apache-2.0
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../LICENSE.txt](../../../LICENSE.txt) and [../../../NOTICE](../../../NOTICE).
 
 ## Links
 

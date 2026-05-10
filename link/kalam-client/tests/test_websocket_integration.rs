@@ -260,7 +260,7 @@ async fn test_websocket_subscription_creation() {
 
     // Create subscription
     let subscription_result =
-        timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
+        timeout(TEST_TIMEOUT, client.live_events(&format!("SELECT * FROM {}", table))).await;
 
     // Test passes if subscription succeeds or fails gracefully (no panic)
     // WebSocket subscriptions may not be fully implemented
@@ -297,7 +297,7 @@ async fn test_websocket_subscription_with_config() {
     // Create subscription with custom config
     let config = SubscriptionConfig::new("sub-config-test", format!("SELECT * FROM {}", table));
 
-    let subscription_result = timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await;
+    let subscription_result = timeout(TEST_TIMEOUT, client.live_events_with_config(config)).await;
 
     // Test passes if subscription succeeds or fails gracefully (no panic)
     let subscription_attempted = match subscription_result {
@@ -352,7 +352,7 @@ async fn test_websocket_initial_data_snapshot() {
 
     for attempt in 0..8 {
         let subscription_result =
-            timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
+            timeout(TEST_TIMEOUT, client.live_events(&format!("SELECT * FROM {}", table))).await;
 
         let mut subscription = match subscription_result {
             Ok(Ok(subscription)) => subscription,
@@ -450,7 +450,7 @@ async fn test_websocket_insert_notification() {
     let client = create_test_client().expect("Failed to create client");
 
     let subscription_result =
-        timeout(TEST_TIMEOUT, client.subscribe(&format!("SELECT * FROM {}", table))).await;
+        timeout(TEST_TIMEOUT, client.live_events(&format!("SELECT * FROM {}", table))).await;
 
     match subscription_result {
         Ok(Ok(mut subscription)) => {
@@ -530,7 +530,7 @@ async fn test_websocket_filtered_subscription() {
     // Subscribe with WHERE filter
     let subscription_result = timeout(
         TEST_TIMEOUT,
-        client.subscribe(&format!("SELECT * FROM {} WHERE event_type = 'filtered'", table)),
+        client.live_events(&format!("SELECT * FROM {} WHERE event_type = 'filtered'", table)),
     )
     .await;
 

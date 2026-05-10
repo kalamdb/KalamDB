@@ -162,7 +162,7 @@ fn subscription_slow_consumer_initial_data() {
     let (events, hit_error) = rt.block_on(async {
         // Use a generous initial_data_timeout so slow processing doesn't kill us
         let client = slow_client(180, 180).expect("client");
-        let mut sub = client.subscribe(&query).await.expect("subscribe");
+        let mut sub = client.live_events(&query).await.expect("subscribe");
         drain_with_delay(
             &mut sub,
             (total_rows + 5) as usize,
@@ -242,7 +242,7 @@ fn subscription_3g_like_high_latency() {
     // Single runtime handles both phases: initial data and live change events
     let (initial_ok, change_found) = rt.block_on(async {
         let client = slow_client(60, 60).expect("client");
-        let mut sub = client.subscribe(&query).await.expect("subscribe");
+        let mut sub = client.live_events(&query).await.expect("subscribe");
 
         // Wait 300ms (simulated RTT) before starting to read
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -318,7 +318,7 @@ fn subscription_slow_consumer_concurrent_writes() {
 
     let (insert_count, error_count) = rt.block_on(async {
         let client = slow_client(180, 180).expect("client");
-        let mut sub = client.subscribe(&query).await.expect("subscribe");
+        let mut sub = client.live_events(&query).await.expect("subscribe");
 
         // Drain initial empty Ack
         let (_, _) =
@@ -405,7 +405,7 @@ fn subscription_reconnect_after_drop() {
     let (first_count, second_count) = rt.block_on(async {
         // ── First connection: read a couple events then drop abruptly ──
         let client1 = slow_client(60, 60).expect("client1");
-        let mut sub1 = client1.subscribe(&query).await.expect("subscribe1");
+        let mut sub1 = client1.live_events(&query).await.expect("subscribe1");
         let (evs1, _) =
             drain_with_delay(&mut sub1, 3, Duration::from_millis(0), Duration::from_secs(10)).await;
         let c1 = evs1.len();
@@ -418,7 +418,7 @@ fn subscription_reconnect_after_drop() {
 
         // ── Second connection: full subscription, verify snapshot ──
         let client2 = slow_client(60, 60).expect("client2");
-        let mut sub2 = client2.subscribe(&query).await.expect("subscribe2");
+        let mut sub2 = client2.live_events(&query).await.expect("subscribe2");
         let (evs2, hit_err2) =
             drain_with_delay(&mut sub2, 15, Duration::from_millis(0), Duration::from_secs(30))
                 .await;
@@ -501,7 +501,7 @@ fn subscription_timeout_graceful_then_reconnect() {
         .expect("tight client");
 
         // This might succeed quickly or fail — either is acceptable
-        match client_tight.subscribe(&query).await {
+        match client_tight.live_events(&query).await {
             Ok(mut sub) => {
                 let (evs, _) = drain_with_delay(
                     &mut sub,
@@ -526,7 +526,7 @@ fn subscription_timeout_graceful_then_reconnect() {
 
         // ── Phase 2: normal timeouts – must succeed ──
         let client_normal = slow_client(30, 30).expect("normal client");
-        let mut sub_normal = client_normal.subscribe(&query).await.expect("normal subscribe");
+        let mut sub_normal = client_normal.live_events(&query).await.expect("normal subscribe");
         let (evs_normal, hit_err) = drain_with_delay(
             &mut sub_normal,
             40,
@@ -630,7 +630,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
                             },
                         };
 
-                        let mut sub = match client.subscribe(&q).await {
+                        let mut sub = match client.live_events(&q).await {
                             Ok(s) => s,
                             Err(e) => {
                                 eprintln!("[SUB {}] subscribe error: {}", idx, e);
@@ -757,7 +757,7 @@ fn subscription_large_initial_data_slow_batch_consumer() {
         );
         let mut config = SubscriptionConfig::new(&sub_id, &query);
         config.options = Some(SubscriptionOptions::default().with_batch_size(8));
-        let mut sub = client.subscribe_with_config(config).await.expect("subscribe");
+        let mut sub = client.live_events_with_config(config).await.expect("subscribe");
 
         // 50ms per event – slow 3G batch consumer
         drain_with_delay(
@@ -833,7 +833,7 @@ fn subscription_repeated_reconnect_loop() {
             println!("[TEST] reconnect loop round {}/{}", round, RECONNECT_ROUNDS);
 
             let client = slow_client(30, 30).expect("client");
-            let mut sub = client.subscribe(&query).await.expect("subscribe");
+            let mut sub = client.live_events(&query).await.expect("subscribe");
 
             // Read just a few events then drop abruptly (simulates connection reset)
             let (evs, hit_error) =
@@ -900,7 +900,7 @@ fn subscription_stable_after_idle_pause() {
 
     let found = rt.block_on(async {
         let client = slow_client(30, 30).expect("client");
-        let mut sub = client.subscribe(&query).await.expect("subscribe");
+        let mut sub = client.live_events(&query).await.expect("subscribe");
 
         // Drain initial snapshot
         let (_, _) =
@@ -968,7 +968,7 @@ fn subscription_burst_then_slow_catchup() {
 
     let (received_burst, hit_error) = rt.block_on(async {
         let client = slow_client(180, 180).expect("client");
-        let mut sub = client.subscribe(&query).await.expect("subscribe");
+        let mut sub = client.live_events(&query).await.expect("subscribe");
 
         // Drain empty initial Ack
         let (_, _) =

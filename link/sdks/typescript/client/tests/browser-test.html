@@ -358,8 +358,9 @@
         let subscriptionId;
 
         try {
-          subscriptionId = await client.subscribe(
+          subscriptionId = await client.liveTable(
             FULL_TABLE_NAME,
+            null,
             (message) => {
               subscriptionReceived = true;
               log(`→ Subscription message: ${JSON.stringify(message).substring(0, 100)}...`);

@@ -42,7 +42,7 @@ async fn test_subscribe_during_reconnect_eventually_delivers() {
 
         // Subscribe to table A and confirm it works.
         let mut sub_a = client
-            .subscribe_with_config(SubscriptionConfig::new(
+            .live_events_with_config(SubscriptionConfig::new(
                 format!("sub-reconn-a-{}", suffix),
                 format!("SELECT id, value FROM {}", table_a),
             ))
@@ -110,7 +110,7 @@ async fn test_subscribe_during_reconnect_eventually_delivers() {
         let expected_connects = connect_count.load(Ordering::SeqCst) + 1;
 
         // Subscribe while reconnect is (potentially) in progress.
-        let sub_b_future = client.subscribe_with_config(SubscriptionConfig::new(
+        let sub_b_future = client.live_events_with_config(SubscriptionConfig::new(
             format!("sub-reconn-b-{}", suffix),
             format!("SELECT id, value FROM {}", table_b),
         ));

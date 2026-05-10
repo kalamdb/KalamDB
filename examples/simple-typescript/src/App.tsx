@@ -88,7 +88,7 @@ export function App() {
             setStatus('live');
           },
           {
-            subscriptionOptions: { last_rows: 12 },
+            lastRows: 12,
             onError: (event) => {
               if (!active) {
                 return;

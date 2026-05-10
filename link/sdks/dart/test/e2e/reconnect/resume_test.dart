@@ -60,7 +60,7 @@ void main() {
         try {
           // Subscribe and wait for ack
           final preEvents = <ChangeEvent>[];
-          final stream1 = client.subscribe(sql, lastRows: 0);
+          final stream1 = client.liveEvents(sql, lastRows: 0);
           sub1 = stream1.listen(preEvents.add);
 
           await waitForCondition(
@@ -110,7 +110,7 @@ void main() {
 
           // Re-subscribe from checkpoint
           final resumedEvents = <ChangeEvent>[];
-          final stream2 = client.subscribe(sql, lastRows: 0, from: checkpoint);
+          final stream2 = client.liveEvents(sql, lastRows: 0, from: checkpoint);
           sub2 = stream2.listen(resumedEvents.add);
 
           await waitForCondition(
@@ -193,9 +193,9 @@ void main() {
           final evB = <ChangeEvent>[];
           final evC = <ChangeEvent>[];
 
-          subs.add(client.subscribe(sqlA, lastRows: 0).listen(evA.add));
-          subs.add(client.subscribe(sqlB, lastRows: 0).listen(evB.add));
-          subs.add(client.subscribe(sqlC, lastRows: 0).listen(evC.add));
+          subs.add(client.liveEvents(sqlA, lastRows: 0).listen(evA.add));
+          subs.add(client.liveEvents(sqlB, lastRows: 0).listen(evB.add));
+          subs.add(client.liveEvents(sqlC, lastRows: 0).listen(evC.add));
 
           await waitForCondition(() =>
               evA.whereType<AckEvent>().isNotEmpty &&
@@ -255,11 +255,11 @@ void main() {
           final rEvC = <ChangeEvent>[];
 
           subs.add(
-              client.subscribe(sqlA, lastRows: 0, from: cpA).listen(rEvA.add));
+              client.liveEvents(sqlA, lastRows: 0, from: cpA).listen(rEvA.add));
           subs.add(
-              client.subscribe(sqlB, lastRows: 0, from: cpB).listen(rEvB.add));
+              client.liveEvents(sqlB, lastRows: 0, from: cpB).listen(rEvB.add));
           subs.add(
-              client.subscribe(sqlC, lastRows: 0, from: cpC).listen(rEvC.add));
+              client.liveEvents(sqlC, lastRows: 0, from: cpC).listen(rEvC.add));
 
           await waitForCondition(() =>
               rEvA.whereType<AckEvent>().isNotEmpty &&
@@ -350,7 +350,7 @@ void main() {
 
         try {
           final preEvents = <ChangeEvent>[];
-          final stream1 = client.subscribe(sql, lastRows: 0);
+          final stream1 = client.liveEvents(sql, lastRows: 0);
           sub1 = stream1.listen(preEvents.add);
 
           await waitForCondition(
@@ -396,7 +396,7 @@ void main() {
           await client.reconnectWebSocket();
 
           final resumedEvents = <ChangeEvent>[];
-          final stream2 = client.subscribe(sql, lastRows: 0, from: checkpoint);
+          final stream2 = client.liveEvents(sql, lastRows: 0, from: checkpoint);
           sub2 = stream2.listen(resumedEvents.add);
 
           await waitForCondition(
