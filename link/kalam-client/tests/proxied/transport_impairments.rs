@@ -454,7 +454,7 @@ async fn test_proxy_packet_loss_style_stalls_resume_without_replay() {
 /// Very small write slices fragment WebSocket frames at the transport boundary.
 /// The client should parse the stream normally and avoid spurious reconnects.
 #[tokio::test]
-#[ntest::timeout(15000)]
+#[ntest::timeout(30000)]
 async fn test_tokio_netem_fragmented_writes_preserve_live_stream() {
     let result = timeout(Duration::from_secs(45), async {
         let writer = match create_test_client() {

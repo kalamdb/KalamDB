@@ -8,6 +8,9 @@ on:
       - 'link/kalam-link-dart/**'
       - 'link/link-common/**'
       - 'backend/server.example.toml'
+      - 'scripts/download-release-server.sh'
+      - 'scripts/resolve-latest-release-asset.py'
+      - 'scripts/start-sdk-test-server.sh'
       - 'versions.json'
       - 'scripts/versions.py'
       - '.github/workflows/dart-sdk.yml'
@@ -73,36 +76,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20"
-          RELEASES_JSON="$(curl -fsS \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "$API_URL")"
-
-          RELEASES_JSON="$RELEASES_JSON" python3 <<'PYTHON'
-          import json
-          import os
-          import re
-          import sys
-
-          releases = json.loads(os.environ["RELEASES_JSON"])
-          asset_pattern = re.compile(r"^kalamdb-server-.*-linux-x86_64\.tar\.gz$")
-
-          for release in releases:
-              if release.get("draft"):
-                  continue
-
-              for asset in release.get("assets", []):
-                  name = asset.get("name", "")
-                  if asset_pattern.match(name):
-                      with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-                          handle.write(f"release_tag={release['tag_name']}\n")
-                          handle.write(f"asset_name={name}\n")
-                          handle.write(f"asset_api_url={asset['url']}\n")
-                      sys.exit(0)
-
-          raise SystemExit("No released linux x86_64 kalamdb-server asset found in the latest GitHub releases.")
-          PYTHON
+          python3 scripts/resolve-latest-release-asset.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT" \
+            --token "$GITHUB_TOKEN" \
+            --asset-pattern '^kalamdb-server-.*-linux-x86_64\.tar\.gz$'
 
   download_release_server_binary:
     name: Download Latest Released SDK Server Binary
@@ -115,25 +93,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          ASSET_NAME="${{ needs.resolve_versions.outputs.latest_server_asset_name }}"
-          ASSET_API_URL="${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}"
-          mkdir -p release-server dist
-
-          curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/octet-stream" \
-            -o "dist/${ASSET_NAME}" \
-            "$ASSET_API_URL"
-
-          tar -xzf "dist/${ASSET_NAME}" -C release-server
-          EXTRACTED_BIN="$(find release-server -maxdepth 1 -type f -name 'kalamdb-server-*linux-x86_64' | head -n1)"
-          if [[ -z "$EXTRACTED_BIN" ]]; then
-            echo "Failed to locate kalamdb-server binary in ${ASSET_NAME}" >&2
-            exit 1
-          fi
-          chmod +x "$EXTRACTED_BIN"
-          mv "$EXTRACTED_BIN" release-server/kalamdb-server
+          bash scripts/download-release-server.sh \
+            "${{ needs.resolve_versions.outputs.latest_server_asset_name }}" \
+            "${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}" \
+            "$PWD/release-server/kalamdb-server"
           echo "Using latest released SDK server from ${{ needs.resolve_versions.outputs.latest_server_release_tag }}"
 
       - name: Upload SDK test server binary
@@ -200,30 +163,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp backend/server.example.toml server.toml
-          sed -i 's|data_path = "./data"|data_path = "./test-data"|g' server.toml
-          sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
-          sed -i 's|jwt_secret = ".*"|jwt_secret = "sdk-test-secret-key-minimum-32-characters-long"|g' server.toml
-          mkdir -p test-data/rocksdb test-data/storage test-data/logs
-          ./kalamdb-server server.toml > dart-sdk-server.log 2>&1 &
-          SERVER_PID=$!
-          echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
-          for i in {1..120}; do
-            if curl -sf http://localhost:8080/health > /dev/null 2>&1 || curl -sf http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
-              echo "✅ SDK test server ready (${i}s)"
-              if [[ -s dart-sdk-server.log ]]; then
-                echo "Recent server log output:"
-                tail -n 40 dart-sdk-server.log || true
-              fi
-              exit 0
-            fi
-            kill -0 "$SERVER_PID" 2>/dev/null || { echo "❌ Server died"; cat dart-sdk-server.log; exit 1; }
-            echo "  Waiting... ($i/120)"
-            sleep 1
-          done
-          echo "❌ Timed out waiting for SDK test server"
-          cat dart-sdk-server.log || true
-          exit 1
+          SERVER_WORK_DIR="$PWD/sdk-test-server"
+          KALAMDB_SERVER_BIN="$PWD/kalamdb-server" \
+          KALAMDB_SERVER_WORK_DIR="$SERVER_WORK_DIR" \
+          KALAMDB_SERVER_LOG="$PWD/dart-sdk-server.log" \
+          KALAMDB_SERVER_PID_FILE="$SERVER_WORK_DIR/server.pid" \
+          KALAMDB_SERVER_WAIT_SECONDS="120" \
+          KALAMDB_URL="http://localhost:8080" \
+          bash scripts/start-sdk-test-server.sh
+          echo "SERVER_PID=$(cat "$SERVER_WORK_DIR/server.pid")" >> "$GITHUB_ENV"
 
       - name: Run Dart SDK tests
         id: run_tests

@@ -191,53 +191,16 @@ run_selected_package() {
 trap cleanup EXIT
 
 if [[ "$SKIP_SERVER_START" != "true" ]]; then
-    : > "$SERVER_LOG"
-    rm -rf "$WORK_DIR"
-    mkdir -p "$WORK_DIR/data" "$WORK_DIR/logs"
-    cp "$ROOT_DIR/backend/server.example.toml" "$WORK_DIR/server.toml"
-
-    perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g' "$WORK_DIR/server.toml"
-
-    if [[ -n "$SERVER_BIN" ]]; then
-        SERVER_CMD=("$SERVER_BIN" "$WORK_DIR/server.toml")
-    else
-        SERVER_CMD=(cargo run --manifest-path "$ROOT_DIR/backend/Cargo.toml" --bin kalamdb-server -- "$WORK_DIR/server.toml")
-    fi
-
-    (
-        cd "$ROOT_DIR"
-        KALAMDB_SERVER_HOST=0.0.0.0 \
-        KALAMDB_JWT_SECRET="$JWT_SECRET" \
-        "${SERVER_CMD[@]}" > "$SERVER_LOG" 2>&1
-    ) &
-    SERVER_PID=$!
-fi
-
-for i in {1..60}; do
-    if curl -sf "$SERVER_URL/health" > /dev/null 2>&1 \
-        || curl -sf "$SERVER_URL/v1/api/healthcheck" > /dev/null 2>&1; then
-        echo "✅ TypeScript SDK test server ready (${i}s)"
-        break
-    fi
-    if [[ -n "$SERVER_PID" ]] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
-        echo "❌ TypeScript SDK test server died"
-        cat "$SERVER_LOG" || true
-        exit 1
-    fi
-    echo "  Waiting for TypeScript SDK test server... ($i/60)"
-    sleep 1
-done
-
-if ! curl -sf "$SERVER_URL/health" > /dev/null 2>&1 \
-    && ! curl -sf "$SERVER_URL/v1/api/healthcheck" > /dev/null 2>&1; then
-    echo "❌ Timed out waiting for TypeScript SDK test server"
-    cat "$SERVER_LOG" || true
-    exit 1
-fi
-
-if [[ -s "$SERVER_LOG" ]]; then
-    echo "Recent TypeScript SDK server log output:"
-    tail -n 40 "$SERVER_LOG" || true
+    SERVER_PID_FILE="$WORK_DIR/server.pid"
+    KALAMDB_SERVER_BIN="$SERVER_BIN" \
+    KALAMDB_SERVER_WORK_DIR="$WORK_DIR" \
+    KALAMDB_SERVER_LOG="$SERVER_LOG" \
+    KALAMDB_SERVER_PID_FILE="$SERVER_PID_FILE" \
+    KALAMDB_SERVER_WAIT_SECONDS="60" \
+    KALAMDB_JWT_SECRET="$JWT_SECRET" \
+    KALAMDB_URL="$SERVER_URL" \
+    bash "$ROOT_DIR/scripts/start-sdk-test-server.sh"
+    SERVER_PID="$(cat "$SERVER_PID_FILE")"
 fi
 
 ensure_test_auth_ready
