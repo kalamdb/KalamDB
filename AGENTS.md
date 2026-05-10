@@ -52,6 +52,14 @@ use kalamdb_commons::models::UserId;
 - Only edit the version in root `Cargo.toml`
 - All crates will automatically use the new version
 
+## SDK Versioning Rules
+
+- Root Rust release components share the root workspace version from `Cargo.toml`: server, CLI, PG extension, and the current `link/kalam-client` crate.
+- Each non-Rust SDK keeps its own package version source, but all packages under `link/sdks/typescript/**` move as one cohort and must use the same package version.
+- Internal TypeScript compatibility ranges for sibling KalamDB packages must use a prerelease-safe bounded floor. Do not use `>=X.Y.Z` while the shared SDK cohort is still on prereleases, because npm semver excludes versions like `X.Y.Z-beta.1` from that range. Use `>=X.Y.Z-0 <X.(Y+1).0` when you want a base-version floor that still admits current prereleases and prevents future minor or major drift. For the current 0.5 cohort, that means `>=0.5.0-0 <0.6.0`.
+- For local TypeScript SDK installs and tests before publish, keep sibling KalamDB packages available via `file:` devDependencies. A peerDependency alone is not enough when the depended-on package version has not been published yet.
+- When SDK versions or internal SDK dependency ranges change, update `versions.json` and validate with `python3 scripts/versions.py verify`.
+
 ## Active Technologies
 - Rust 1.92+ (stable toolchain, edition 2021)
 - RocksDB 0.24, Apache Arrow 52.0, Apache Parquet 52.0, DataFusion 40.0, Actix-Web 4.4

@@ -1,0 +1,373 @@
+name: TypeScript SDK
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'link/sdks/typescript/**'
+      - 'link/kalam-client/**'
+      - 'link/kalam-consumer-wasm/**'
+      - 'link/link-common/**'
+      - 'backend/server.example.toml'
+      - 'scripts/test-typescript-sdk-release.sh'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/typescript-sdk.yml'
+  pull_request:
+    paths:
+      - 'link/sdks/typescript/**'
+      - 'link/kalam-client/**'
+      - 'link/kalam-consumer-wasm/**'
+      - 'link/link-common/**'
+      - 'backend/server.example.toml'
+      - 'scripts/test-typescript-sdk-release.sh'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/typescript-sdk.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish TypeScript SDK packages to npm"
+        type: boolean
+        required: false
+        default: false
+      force_publish:
+        description: "Force republish (unpublish existing version first)"
+        type: boolean
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      publish:
+        description: "Publish TypeScript SDK packages to npm"
+        type: boolean
+        required: false
+        default: false
+      force_publish:
+        description: "Force republish (unpublish existing version first)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+  WASM_PACK_VERSION: "0.14.0"
+  RUSTC_WRAPPER: ""
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+
+jobs:
+  resolve_versions:
+    name: Resolve TypeScript SDK Version
+    runs-on: ubuntu-latest
+    outputs:
+      typescript_version: ${{ steps.versions.outputs.typescript_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify versions.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py verify
+
+      - name: Resolve versions from versions.json
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
+
+  test:
+    name: TypeScript SDK Tests
+    runs-on: ubuntu-latest
+    needs: resolve_versions
+    outputs:
+      total: ${{ steps.parse_badge.outputs.total }}
+      passed: ${{ steps.parse_badge.outputs.passed }}
+      failed: ${{ steps.parse_badge.outputs.failed }}
+      message: ${{ steps.parse_badge.outputs.message }}
+      color: ${{ steps.parse_badge.outputs.color }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libclang-dev pkg-config libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sdk-tests-typescript
+          cache-on-failure: true
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install wasm-pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+          wasm-pack --version
+
+      - name: Build local SDK test server binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path backend/Cargo.toml --bin kalamdb-server
+          chmod +x backend/target/debug/kalamdb-server
+
+      - name: Run TypeScript client, consumer, and ORM npm package tests
+        id: run_tests
+        continue-on-error: true
+        shell: bash
+        env:
+          KALAMDB_URL: "http://localhost:8080"
+          KALAMDB_USER: "admin"
+          KALAMDB_PASSWORD: "kalamdb123"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          KALAMDB_SERVER_BIN: ${{ github.workspace }}/backend/target/debug/kalamdb-server
+          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-server.log
+          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output.txt
+        run: |
+          set -euo pipefail
+          ./scripts/test-typescript-sdk-release.sh
+
+      - name: Verify TypeScript npm package test coverage
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="ts-sdk-test-output.txt"
+          for package in client consumer orm; do
+            if ! grep -q "Running @kalamdb/${package} tests" "$output"; then
+              echo "Missing @kalamdb/${package} npm package test run in ${output}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Parse TypeScript SDK test counts
+        if: always()
+        id: parse_badge
+        shell: bash
+        env:
+          STEP_OUTCOME: ${{ steps.run_tests.outcome }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYTHON'
+          import os
+          import re
+          from pathlib import Path
+
+          output_path = Path("ts-sdk-test-output.txt")
+          text = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
+
+          total = sum(int(value) for value in re.findall(r"^(?:#|ℹ) tests (\d+)$", text, flags=re.MULTILINE))
+          passed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) pass (\d+)$", text, flags=re.MULTILINE))
+          failed = sum(int(value) for value in re.findall(r"^(?:#|ℹ) fail (\d+)$", text, flags=re.MULTILINE))
+          outcome = os.environ.get("STEP_OUTCOME", "failure")
+
+          if total == 0 and outcome == "success":
+              message = "passed"
+              color = "brightgreen"
+          elif total == 0:
+              message = "failed"
+              color = "red"
+          else:
+              message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+              color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"total={total}\n")
+              handle.write(f"passed={passed}\n")
+              handle.write(f"failed={failed}\n")
+              handle.write(f"message={message}\n")
+              handle.write(f"color={color}\n")
+          PYTHON
+
+      - name: Print TypeScript SDK server log
+        if: always()
+        shell: bash
+        run: |
+          echo "=== TypeScript SDK server log ==="
+          cat ts-sdk-server.log || true
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ts-sdk-server-log
+          path: ts-sdk-server.log
+          if-no-files-found: ignore
+
+      - name: Upload TypeScript SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ts-sdk-test-output
+          path: ts-sdk-test-output.txt
+          if-no-files-found: ignore
+
+      - name: Fail if TypeScript SDK tests failed
+        if: always() && steps.run_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "TypeScript SDK tests failed" >&2
+          exit 1
+
+  update_badge:
+    name: Update TypeScript SDK Badge
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.test.result != 'cancelled' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update TypeScript SDK badge file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          render_badge() {
+            mkdir -p .github/badges
+
+            cat > .github/badges/sdk-typescript-tests.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "typescript sdk tests (${{ needs.test.outputs.total }})",
+            "message": "${{ needs.test.outputs.message }}",
+            "color": "${{ needs.test.outputs.color }}"
+          }
+          EOF
+          }
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B sdk-typescript-badge-update origin/main
+
+            render_badge
+
+            if git diff --quiet -- .github/badges/sdk-typescript-tests.json; then
+              echo "TypeScript SDK badge file already up to date"
+              exit 0
+            fi
+
+            git add .github/badges/sdk-typescript-tests.json
+            git commit -m "docs: update typescript sdk test badge"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "TypeScript SDK badge push was not a fast-forward; retrying from latest origin/main (attempt ${attempt}/3)."
+            sleep 2
+          done
+
+          echo "Failed to push TypeScript SDK badge update after retries" >&2
+          exit 1
+
+  publish:
+    name: Publish TypeScript SDK packages to npm
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_versions
+      - test
+    if: ${{ inputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+          wasm-pack --version
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: npm-publish
+          cache-on-failure: true
+
+      - name: Publish @kalamdb/client to npm
+        shell: bash
+        working-directory: link/sdks/typescript/client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/consumer to npm
+        shell: bash
+        working-directory: link/sdks/typescript/consumer
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/orm to npm
+        shell: bash
+        working-directory: link/sdks/typescript/orm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG

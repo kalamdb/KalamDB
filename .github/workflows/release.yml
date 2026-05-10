@@ -52,9 +52,56 @@ env:
   CARGO_BUILD_RUSTC_WRAPPER: ""
 
 jobs:
-  read_version:
-    name: Read Version from Cargo.toml
+  sync_versions_manifest:
+    name: Sync Versions Manifest
     runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+      changed: ${{ steps.commit.outputs.changed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Sync versions.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py sync --write
+
+      - name: Commit versions manifest
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- versions.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "chore: update versions manifest"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  read_version:
+    name: Read Version Metadata
+    runs-on: ubuntu-latest
+    needs: sync_versions_manifest
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -63,26 +110,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Read version and set outputs
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p}' Cargo.toml | head -n1)"
-          if [[ -z "$VERSION" ]]; then
-            echo "Failed to read [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          TAG="v${VERSION}"
-          PRE_RELEASE="${{ github.event.inputs.pre_release }}"
-          if [[ -z "$PRE_RELEASE" ]]; then
-            PRE_RELEASE="true"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "pre_release=$PRE_RELEASE" >> "$GITHUB_OUTPUT"
-          echo "✅ Version: $VERSION, Tag: $TAG, Pre-release: $PRE_RELEASE"
+          python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
 
   license_compliance:
     name: License Compliance
@@ -1435,6 +1476,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs:
+      - sync_versions_manifest
       - license_compliance
       - build_cli_linux_x86_64
       - build_cli_linux_aarch64
@@ -1456,6 +1498,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
 
       - name: Update README release metadata
         shell: bash
@@ -1515,6 +1559,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
+          target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
           prerelease: ${{ needs.read_version.outputs.pre_release == 'true' }}
           generate_release_notes: true
           files: |
@@ -1524,6 +1569,7 @@ jobs:
             dist/${{ needs.read_version.outputs.version }}/LICENSE.txt
             dist/${{ needs.read_version.outputs.version }}/NOTICE
             dist/${{ needs.read_version.outputs.version }}/THIRD_PARTY_LICENSES.md
+            versions.json
 
   docker:
     name: Push Docker image (Docker Hub)

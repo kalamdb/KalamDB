@@ -1,0 +1,64 @@
+name: Version Drift
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'backend/Cargo.toml'
+      - 'cli/Cargo.toml'
+      - 'pg/Cargo.toml'
+      - 'link/kalam-client/Cargo.toml'
+      - 'link/sdks/typescript/**/package.json'
+      - 'link/sdks/dart/pubspec.yaml'
+      - 'link/sdks/python/pyproject.toml'
+      - 'link/sdks/python/Cargo.toml'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/versions.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/typescript-sdk.yml'
+      - '.github/workflows/dart-sdk.yml'
+      - '.github/workflows/python-sdk.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'backend/Cargo.toml'
+      - 'cli/Cargo.toml'
+      - 'pg/Cargo.toml'
+      - 'link/kalam-client/Cargo.toml'
+      - 'link/sdks/typescript/**/package.json'
+      - 'link/sdks/dart/pubspec.yaml'
+      - 'link/sdks/python/pyproject.toml'
+      - 'link/sdks/python/Cargo.toml'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/versions.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/typescript-sdk.yml'
+      - '.github/workflows/dart-sdk.yml'
+      - '.github/workflows/python-sdk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify versions.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify versions manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py verify
