@@ -69,7 +69,7 @@ impl Benchmark for ConcurrentSubscriberBench {
                     let sub_config = SubscriptionConfig::new(sub_name, sql);
 
                     let mut sub = link
-                        .subscribe_with_config(sub_config)
+                        .live_events_with_config(sub_config)
                         .await
                         .map_err(|e| format!("Subscribe #{} failed: {}", sub_id, e))?;
 

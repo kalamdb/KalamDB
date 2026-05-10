@@ -77,13 +77,6 @@ fn configured_server_type() -> Option<&'static str> {
     None
 }
 
-fn has_explicit_server_target() -> bool {
-    parse_test_arg("--url").is_some()
-        || parse_test_arg("--urls").is_some()
-        || std::env::var("KALAMDB_SERVER_URL").is_ok()
-        || std::env::var("KALAMDB_CLUSTER_URLS").is_ok()
-}
-
 fn configured_server_targets() -> Vec<String> {
     let mut targets = Vec::new();
 
@@ -154,7 +147,11 @@ fn should_use_local_visibility_timeout_config() -> bool {
         _ => {},
     }
 
-    !has_explicit_server_target() || should_trust_local_server_config_for_target()
+    // In implicit auto-detect mode we may have attached to an arbitrary running
+    // server, so only trust the repo-local config when the selected target is
+    // explicitly local (including the auto-started fresh-server path, which sets
+    // `KALAMDB_SERVER_URL`).
+    should_trust_local_server_config_for_target()
 }
 
 fn local_visibility_timeout_config_path() -> Option<PathBuf> {

@@ -848,7 +848,7 @@ async fn create_subscription(
     loop {
         let config = SubscriptionConfig::without_initial_data(subscription_id.clone(), sql.clone());
 
-        match timeout(SUBSCRIBE_TIMEOUT, link.subscribe_with_config(config)).await {
+        match timeout(SUBSCRIBE_TIMEOUT, link.live_events_with_config(config)).await {
             Ok(Ok(subscription)) => return Ok(subscription),
             Ok(Err(error))
                 if attempts < CHAT_SUBSCRIBE_RETRY_ATTEMPTS

@@ -328,7 +328,7 @@ impl KalamClient {
         let endpoint = self.pick_endpoint();
         endpoint
             .link
-            .subscribe(sql)
+            .live_events(sql)
             .await
             .map_err(|e| format!("Subscribe error: {}", e))
     }
@@ -346,7 +346,7 @@ impl KalamClient {
 
         endpoint
             .link
-            .subscribe_with_config(config)
+            .live_events_with_config(config)
             .await
             .map_err(|e| format!("Subscribe error: {}", e))
     }
