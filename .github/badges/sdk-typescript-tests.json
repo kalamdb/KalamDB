@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "label": "typescript sdk tests (0)",
-  "message": "missing outputs: client, consumer, orm",
+  "label": "typescript sdk tests (177)",
+  "message": "176/177 passed, 1 failed",
   "color": "red"
 }
