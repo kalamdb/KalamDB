@@ -116,7 +116,6 @@ function normalizeStart(start: ConsumeRequest['start']): TopicStartPayload {
 
 export class KalamConsumerClient {
   private readonly sqlClient: KalamDBClient;
-  private readonly url: string;
   private readonly authProvider: ClientOptions['authProvider'];
   private readonly authProviderMaxAttempts: number;
   private readonly authProviderInitialBackoffMs: number;
@@ -133,7 +132,6 @@ export class KalamConsumerClient {
     }
 
     this.sqlClient = new KalamDBClient(options);
-    this.url = options.url;
     this.authProvider = options.authProvider;
     this.authProviderMaxAttempts = options.authProviderMaxAttempts ?? 3;
     this.authProviderInitialBackoffMs = options.authProviderInitialBackoffMs ?? 250;
@@ -384,7 +382,7 @@ export class KalamConsumerClient {
       return auth;
     }
 
-    const response = await this.performDirectBasicLogin(auth.user, auth.password);
+    const response = await this.sqlClient.login();
     return { type: 'jwt', token: response.access_token };
   }
 
@@ -399,21 +397,6 @@ export class KalamConsumerClient {
         return String(exhaustive);
       }
     }
-  }
-
-  private async performDirectBasicLogin(user: string, password: string): Promise<LoginResponse> {
-    const response = await fetch(`${this.url}/v1/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user, password }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(body || `Login failed: HTTP ${response.status}`);
-    }
-
-    return (await response.json()) as LoginResponse;
   }
 
   private isRetryableTopicAuthError(error: unknown): boolean {

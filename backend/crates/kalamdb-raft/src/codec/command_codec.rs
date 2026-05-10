@@ -271,6 +271,7 @@ mod tests {
         let decoded =
             decode_shared_data_command(&bytes).expect("decode shared command with default");
         assert!(decoded.transaction_id().is_none());
+        assert!(decoded.actor_user_id().is_none());
     }
 
     #[test]

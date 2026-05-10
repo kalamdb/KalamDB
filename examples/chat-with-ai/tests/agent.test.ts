@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Auth, createClient, type KalamDBClient } from '@kalamdb/client';
-import { createConsumerClient, runAgent, type ConsumerClientLike } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer, type ConsumerClientLike } from '@kalamdb/consumer';
 import { buildReply } from '../src/agent.js';
 
 const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
@@ -158,7 +158,7 @@ test('buildReply handles queue keyword', () => {
 
 test('buildReply uses default advice for generic messages', () => {
   const reply = buildReply('hello world');
-  assert.ok(reply.includes('runAgent()'), 'should mention runAgent in default advice');
+  assert.ok(reply.includes('runConsumer()'), 'should mention runConsumer in default advice');
 });
 
 test('two agents in the same group avoid duplicates and fail over to the standby worker', { timeout: 30_000 }, async (t) => {
@@ -194,7 +194,7 @@ test('two agents in the same group avoid duplicates and fail over to the standby
   const controllerA = new AbortController();
   const controllerB = new AbortController();
 
-  const startAgent = (name: string, client: WorkerClient, stopSignal: AbortSignal): Promise<void> => runAgent({
+  const startAgent = (name: string, client: WorkerClient, stopSignal: AbortSignal): Promise<void> => runConsumer({
     client,
     name,
     topic: topicName,
@@ -203,7 +203,8 @@ test('two agents in the same group avoid duplicates and fail over to the standby
     batchSize: 1,
     timeoutSeconds: 2,
     stopSignal,
-    onRow: async (_ctx, row) => {
+    onChange: async (_ctx, change) => {
+      const row = change.data;
       if (row.role !== 'user' || row.room !== room) {
         return;
       }

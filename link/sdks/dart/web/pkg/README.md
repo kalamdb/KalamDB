@@ -25,7 +25,7 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 - `authProvider` is required and can return `Auth.basic(...)`, `Auth.jwt(...)`, or `Auth.none()`
 - WebSocket connection management is automatic; with `wsLazyConnect: true` the SDK connects on the first realtime call
 - Prefer `live()` / `liveTable()` for UI state and `liveEvents()` when you need raw protocol events
-- Topic worker APIs live in the TypeScript SDK: `consumer()`, `consumeBatch()`, `ack()`, `runAgent()`
+- Topic worker APIs live in the TypeScript SDK: `consumer()`, `consumeBatch()`, `ack()`, `runConsumer()`
 
 ### Dart / Flutter
 

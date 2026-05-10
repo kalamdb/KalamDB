@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runAgent } from '../dist/src/index.js';
+import { runConsumer } from '../dist/src/index.js';
 
 function createReadmeAgentClient(messages) {
   const state = {
@@ -40,7 +40,7 @@ function createReadmeAgentClient(messages) {
   return { client, state };
 }
 
-test('README runAgent example writes back through executeAsUser inside the user tenant', async () => {
+test('README runConsumer example writes back through executeAsUser inside the user tenant', async () => {
   const message = {
     offset: 7,
     partition_id: 0,
@@ -58,7 +58,7 @@ test('README runAgent example writes back through executeAsUser inside the user 
 
   const { client, state } = createReadmeAgentClient([message]);
 
-  await runAgent({
+  await runConsumer({
     client,
     name: 'support-summary-agent',
     topic: 'support.inbox_events',
@@ -68,8 +68,9 @@ test('README runAgent example writes back through executeAsUser inside the user 
       initialBackoffMs: 0,
       maxBackoffMs: 0,
     },
-    onRow: async (ctx, row) => {
-      const user = String(ctx.user ?? '').trim();
+    onChange: async (_ctx, change) => {
+      const user = String(change.user).trim();
+      const row = change.data;
       const body = String(row.body ?? '').trim();
       if (!user || !body) {
         return;

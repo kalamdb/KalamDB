@@ -1,5 +1,6 @@
 use std::fmt;
 
+pub use kalamdb_commons::models::TopicOp;
 use serde::{de::Visitor, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,14 +90,6 @@ pub enum PayloadMode {
     Key,
     Full,
     Diff,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "PascalCase")]
-pub enum TopicOp {
-    Insert,
-    Update,
-    Delete,
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! Topic message model
 
-use kalamdb_commons::models::TopicId;
+use kalamdb_commons::models::{TopicId, TopicOp, UserId};
 use serde::Serialize;
 
 /// Message in consume response
@@ -20,7 +20,7 @@ pub struct TopicMessage {
     pub timestamp_ms: i64,
     /// Canonical user identifier of the user who produced this message
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
+    pub user: Option<UserId>,
     /// Operation type that triggered this message (Insert, Update, Delete)
-    pub op: String, // TODO: Use TopicOp instead
+    pub op: TopicOp,
 }

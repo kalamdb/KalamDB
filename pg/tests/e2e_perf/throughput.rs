@@ -1,5 +1,29 @@
 use super::common::*;
 
+async fn wait_for_pg_count(
+    client: &tokio_postgres::Client,
+    qualified_table: &str,
+    expected_count: i64,
+    timeout: std::time::Duration,
+) -> f64 {
+    let deadline = std::time::Instant::now() + timeout;
+
+    loop {
+        let (count, count_ms) = timed_count(client, qualified_table, None).await;
+        if count == expected_count {
+            return count_ms;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "row count for {qualified_table} did not become {expected_count}; last count={count}"
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::test]
 #[ntest::timeout(50000)]
 async fn e2e_perf_batch_insert_10k() {
@@ -33,8 +57,13 @@ async fn e2e_perf_batch_insert_10k() {
 
     eprintln!("[PERF] Batch INSERT {TOTAL} rows: {insert_ms:.0}ms ({rows_per_sec:.0} rows/sec)");
 
-    let (count, count_ms) = timed_count(&pg, &qualified_table, None).await;
-    assert_eq!(count, TOTAL as i64, "row count mismatch");
+    let count_ms = wait_for_pg_count(
+        &pg,
+        &qualified_table,
+        TOTAL as i64,
+        std::time::Duration::from_secs(5),
+    )
+    .await;
     eprintln!("[PERF] COUNT(*) {TOTAL} rows: {count_ms:.1}ms");
 
     assert!(

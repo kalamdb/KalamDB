@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 
 type StartAgentOptions = {
   stopSignal?: AbortSignal;
@@ -34,7 +34,16 @@ export function buildSummary(content: string): string {
   const compact = content.replace(/\s+/g, ' ').trim();
   const sentence = compact.split(/[.!?]/)[0]?.trim() ?? compact;
   const shortened = sentence.slice(0, 140).trim();
-  return shortened.endsWith('.') ? shortened : `${shortened}.`;
+  let summary = shortened.endsWith('.') ? shortened : `${shortened}.`;
+  summary += ' This blog post is about ';
+  const keywords = ['technology', 'health', 'finance', 'travel', 'food', 'education'];
+  let hash = 0;
+  for (let index = 0; index < compact.length; index += 1) {
+    hash = (hash * 31 + compact.charCodeAt(index)) >>> 0;
+  }
+  const keyword = keywords[hash % keywords.length];
+  summary += keyword + '.';
+  return summary;
 }
 
 export async function startSummarizerAgent(options: StartAgentOptions = {}): Promise<void> {
@@ -50,7 +59,7 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
   console.log(`summarizer-agent ready (topic=${config.topic}, group=${groupId})`);
 
   try {
-    await runAgent<Record<string, unknown>>({
+    await runConsumer<Record<string, unknown>>({
       client,
       name: 'summarizer-agent',
       topic: config.topic,
@@ -58,7 +67,8 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
       start,
       stopSignal: options.stopSignal,
       retry: { maxAttempts: 3, initialBackoffMs: 250, maxBackoffMs: 1500 },
-      onRow: async (ctx, row) => {
+      onChange: async (ctx, change) => {
+        const row = change.data;
         const blogId = row.blog_id ?? row.blogId;
         const content = String(row.content ?? '').trim();
         const currentSummary = String(row.summary ?? '').trim();
@@ -77,10 +87,10 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
           [nextSummary, blogId],
         );
       },
-      onFailed: async (ctx) => {
+      onFailed: async (ctx, change) => {
         await ctx.sql(
           'INSERT INTO blog.summary_failures (run_key, blog_id, error) VALUES ($1, $2, $3)',
-          [ctx.runKey, String(ctx.row.blog_id ?? 'unknown'), String(ctx.error ?? 'unknown')],
+          [ctx.runKey, String(change.data.blog_id ?? 'unknown'), String(ctx.error ?? 'unknown')],
         );
       },
       ackOnFailed: true,

@@ -124,6 +124,7 @@ pub trait UnifiedApplier: Send + Sync {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError>;
 
@@ -131,6 +132,7 @@ pub trait UnifiedApplier: Send + Sync {
     async fn update_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError>;
@@ -139,6 +141,7 @@ pub trait UnifiedApplier: Send + Sync {
     async fn delete_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError>;
 
@@ -454,11 +457,13 @@ impl UnifiedApplier for RaftApplier {
     async fn insert_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,
+            actor_user_id,
             table_id,
             rows,
         };
@@ -468,12 +473,14 @@ impl UnifiedApplier for RaftApplier {
     async fn update_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,
+            actor_user_id,
             table_id,
             updates,
             filter,
@@ -484,11 +491,13 @@ impl UnifiedApplier for RaftApplier {
     async fn delete_shared_data(
         &self,
         table_id: TableId,
+        actor_user_id: Option<UserId>,
         pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError> {
         let raft_cmd = SharedDataCommand::Delete {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,
+            actor_user_id,
             table_id,
             pk_values,
         };

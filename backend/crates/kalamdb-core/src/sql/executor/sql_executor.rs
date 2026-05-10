@@ -79,7 +79,11 @@ impl SqlExecutor {
         let applier = self.app_context.applier();
         let rows_affected = match insert_rows.table_type {
             kalamdb_commons::schemas::TableType::Shared => applier
-                .insert_shared_data(table_id.clone(), insert_rows.rows)
+                .insert_shared_data(
+                    table_id.clone(),
+                    Some(exec_ctx.user_id().clone()),
+                    insert_rows.rows,
+                )
                 .await
                 .map_err(KalamDbError::from)?
                 .rows_affected(),

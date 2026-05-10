@@ -1,6 +1,6 @@
 # @kalamdb/consumer
 
-Topic consumer and agent runtime package for KalamDB.
+Topic consumer worker runtime package for KalamDB.
 
 Use `@kalamdb/client` for app-facing SQL, live rows, subscriptions, and file uploads. Add `@kalamdb/consumer` only when you need topic polling, acknowledgments, or the high-level worker runtime.
 
@@ -19,7 +19,8 @@ npm i @kalamdb/client @kalamdb/consumer
 - `consumeBatch()` for one-shot topic polling
 - `ack()` for explicit offset commits
 - `consumer().run()` for continuous polling loops
-- `runAgent()` and `runConsumer()` for higher-level worker orchestration
+- `runConsumer()` for higher-level worker orchestration with retries, ACKs, and reconnects
+- `runAgent()` as a deprecated compatibility alias for `runConsumer()`
 
 Topic HTTP endpoints require bearer authentication and role `service`, `dba`, or `system`.
 
@@ -27,14 +28,14 @@ Topic HTTP endpoints require bearer authentication and role `service`, `dba`, or
 
 ```ts
 import { Auth } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 
 const client = createConsumerClient({
   url: 'http://localhost:8080',
   authProvider: async () => Auth.basic('support-worker', 'Secret123!'),
 });
 
-await runAgent({
+await runConsumer({
   client,
   name: 'support-summary-agent',
   topic: 'support.inbox_events',
@@ -44,8 +45,9 @@ await runAgent({
     initialBackoffMs: 250,
     maxBackoffMs: 2_000,
   },
-  onRow: async (ctx, row) => {
-    const user = String(ctx.user ?? '').trim();
+  onChange: async (_ctx, change) => {
+    const user = String(change.user).trim();
+    const row = change.data;
     const body = String(row.body ?? '').trim();
     if (!user || !body) {
       return;
@@ -61,7 +63,9 @@ await runAgent({
 });
 ```
 
-For standard KalamDB topic sources, `runAgent()` does not need a `rowParser`. The runtime uses the already decoded `message.payload`, unwraps legacy `{ row: ... }` envelopes when present, and passes the row to `onRow`. Add `rowParser` only when you intentionally publish a custom payload shape.
+For standard KalamDB topic sources, `runConsumer()` does not need a parser. The runtime uses the already decoded low-level `message.payload`, unwraps legacy `{ row: ... }` envelopes when present, and exposes the changed row/event as `change.data`. Per-change envelope metadata also lives on `change`: `user`, typed `op`, `key`, `timestampMs`, `partitionId`, `offset`, `topic`, `groupId`, and a metadata-only `message` view. The high-level runtime intentionally keeps `ctx` for execution state and helpers only: `name`, `runKey`, retry attempt fields, SQL helpers, ACK, and optional LLM helpers. That means high-level `ctx` has no `message`, `change`, `user`, `op`, or `offset` duplicates. `change.message` intentionally omits `payload`, deprecated `value`, and raw transport `change` fields, so the row shape lives in one place: `change.data`. `change.user` is required for consumed topic events; if a server or republished topic message omits it, the consumer treats that as invalid message metadata instead of exposing `undefined`. Add `changeParser` only when you intentionally publish a custom payload shape.
+
+`runConsumer()` keeps the worker alive across transient server shutdowns or network disconnects by retrying the consumer loop with exponential backoff and jitter. Tune this with `connectionRetry` or stop cleanly with `stopSignal`.
 
 ## Lower-Level Consumer
 
@@ -126,7 +130,7 @@ Each consumed message includes the current backend topic envelope fields:
   key: '{"id":"01HS..."}',
   timestamp_ms: 1730000000000,
   user: 'user_123',
-  op: 'Insert',
+  op: 'Insert', // TopicOp.Insert
   payload: {
     id: '01HS...',
     author: 'user',
@@ -166,11 +170,40 @@ await handle.run(async (ctx) => {
 });
 ```
 
+The same `change` shape works with generated ORM row types. Type the row as the first generic, use `change.data` for the row, and keep event metadata next to it on `change`:
+
+```ts
+type BlogRow = {
+  blog_id: string;
+  title: string;
+  content: string;
+  _table: string;
+  _seqid?: string;
+};
+
+await runConsumer<BlogRow>({
+  client,
+  name: 'blog-worker',
+  topic: 'blog.events',
+  groupId: 'blog-worker',
+  onChange: async (ctx, change) => {
+    const row = change.data;
+    console.log(change.op, change.user, row.blog_id, row._seqid);
+
+    await ctx.sql(
+      'UPDATE blog.blogs SET updated = NOW() WHERE blog_id = $1',
+      [row.blog_id],
+    );
+  },
+});
+```
+
 Notes:
 
 - `payload` is already decoded from the HTTP API's base64 `payload` field.
 - For `WITH (payload = 'full')`, `payload` is usually the changed row JSON plus `_table` metadata.
-- `runAgent()` automatically treats that decoded row payload as the handler row.
+- `runConsumer()` automatically treats that decoded row payload as `change.data`.
+- `op` is typed as `TopicOp` (`'Insert' | 'Update' | 'Delete'`).
 - `value` is still present as a deprecated alias for `payload` while older callers migrate.
 - `key` is the backend topic key string. It is not a separate message id.
 

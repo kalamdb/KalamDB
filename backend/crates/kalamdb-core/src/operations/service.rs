@@ -328,7 +328,7 @@ impl OperationExecutor for OperationService {
             },
             TableType::Shared => {
                 let resp = applier
-                    .insert_shared_data(request.table_id, request.rows)
+                    .insert_shared_data(request.table_id, request.user_id, request.rows)
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
@@ -367,7 +367,12 @@ impl OperationExecutor for OperationService {
             },
             TableType::Shared => {
                 let resp = applier
-                    .update_shared_data(request.table_id, request.updates, Some(request.pk_value))
+                    .update_shared_data(
+                        request.table_id,
+                        request.user_id,
+                        request.updates,
+                        Some(request.pk_value),
+                    )
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
@@ -401,7 +406,11 @@ impl OperationExecutor for OperationService {
             },
             TableType::Shared => {
                 let resp = applier
-                    .delete_shared_data(request.table_id, Some(vec![request.pk_value]))
+                    .delete_shared_data(
+                        request.table_id,
+                        request.user_id,
+                        Some(vec![request.pk_value]),
+                    )
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()

@@ -41,7 +41,7 @@ impl<M: RepositoryModel> SharedTableRepository<M> {
             .collect::<Result<Vec<_>>>()?;
         self.app_context
             .applier()
-            .insert_shared_data(M::repository_table_id(), rows)
+            .insert_shared_data(M::repository_table_id(), None, rows)
             .await?;
         Ok(())
     }
@@ -52,7 +52,7 @@ impl<M: RepositoryModel> SharedTableRepository<M> {
         let row = model_to_row(&model, table_def.as_ref())?;
         self.app_context
             .applier()
-            .update_shared_data(M::repository_table_id(), vec![row], Some(primary_key))
+            .update_shared_data(M::repository_table_id(), None, vec![row], Some(primary_key))
             .await?;
         Ok(())
     }
@@ -68,7 +68,7 @@ impl<M: RepositoryModel> SharedTableRepository<M> {
     pub async fn delete(&self, primary_key: &str) -> Result<()> {
         self.app_context
             .applier()
-            .delete_shared_data(M::repository_table_id(), Some(vec![primary_key.to_string()]))
+            .delete_shared_data(M::repository_table_id(), None, Some(vec![primary_key.to_string()]))
             .await?;
         Ok(())
     }

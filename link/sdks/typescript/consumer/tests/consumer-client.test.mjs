@@ -95,6 +95,39 @@ test('consumeBatch maps options to the topic HTTP API and decodes payloads', asy
   }
 });
 
+test('consumeBatch accepts user_id in consume responses', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => jsonResponse({
+    messages: [{
+      topic_id: 'orders',
+      partition_id: 0,
+      offset: 4,
+      user_id: 'producer-42',
+      payload: Buffer.from(JSON.stringify({ id: 4, status: 'updated' }), 'utf8').toString('base64'),
+    }],
+    next_offset: 5,
+    has_more: false,
+  });
+
+  try {
+    const client = createConsumerClient({
+      url: 'http://127.0.0.1:8080',
+      authProvider: async () => Auth.jwt('jwt-123'),
+    });
+
+    const batch = await client.consumeBatch({
+      topic: 'orders',
+      group_id: 'billing',
+    });
+
+    assert.equal(batch.messages.length, 1);
+    assert.equal(batch.messages[0].user, 'producer-42');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ack exchanges basic auth once and reuses the cached JWT for later requests', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -162,6 +195,7 @@ test('consumer run preserves the latest cursor after an empty poll', async () =>
             topic_id: 'events',
             partition_id: 0,
             offset: 41,
+            user: 'reader-1',
             payload: Buffer.from(JSON.stringify({ status: 'live', _table: 'events' }), 'utf8').toString('base64'),
           }],
           next_offset: 42,
@@ -237,6 +271,7 @@ test('consumer run supports manual and auto acknowledgments', async () => {
         topic_id: 'events',
         partition_id: 0,
         offset: 20,
+        user: 'manual-user',
         payload: Buffer.from(JSON.stringify({ status: 'manual' }), 'utf8').toString('base64'),
       }],
       next_offset: 21,
@@ -247,6 +282,7 @@ test('consumer run supports manual and auto acknowledgments', async () => {
         topic_id: 'events',
         partition_id: 1,
         offset: 30,
+        user: 'auto-user',
         payload: Buffer.from(JSON.stringify({ status: 'auto' }), 'utf8').toString('base64'),
       }],
       next_offset: 31,
@@ -304,6 +340,7 @@ test('consumer run supports manual and auto acknowledgments', async () => {
     await autoHandle.run(async (ctx) => {
       autoCalls += 1;
       assert.equal(ctx.message.partition_id, 1);
+      assert.equal(ctx.user, 'auto-user');
       assert.deepEqual(ctx.message.payload, { status: 'auto' });
       autoHandle.stop();
     });
@@ -324,6 +361,38 @@ test('consumer run supports manual and auto acknowledgments', async () => {
         upto_offset: 30,
       },
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('consumeBatch rejects consume responses missing user metadata', async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => jsonResponse({
+    messages: [{
+      topic_id: 'orders',
+      partition_id: 0,
+      offset: 4,
+      payload: Buffer.from(JSON.stringify({ id: 4, status: 'updated' }), 'utf8').toString('base64'),
+    }],
+    next_offset: 5,
+    has_more: false,
+  });
+
+  try {
+    const client = createConsumerClient({
+      url: 'http://127.0.0.1:8080',
+      authProvider: async () => Auth.jwt('jwt-123'),
+    });
+
+    await assert.rejects(
+      () => client.consumeBatch({
+        topic: 'orders',
+        group_id: 'billing',
+      }),
+      /missing required user metadata/i,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

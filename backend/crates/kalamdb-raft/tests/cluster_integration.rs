@@ -609,6 +609,7 @@ async fn test_all_groups_accept_proposals() {
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 0,
             transaction_id: None,
+            actor_user_id: None,
             table_id: TableId::new(NamespaceId::from("shared"), TableName::from("data")),
             rows: vec![make_test_row()],
         };
@@ -882,6 +883,7 @@ async fn test_shared_data_shard_operations() {
     let cmd = SharedDataCommand::Insert {
         required_meta_index: 0,
         transaction_id: None,
+        actor_user_id: None,
         table_id: table_id.clone(),
         rows: vec![make_test_row()],
     };
@@ -892,6 +894,7 @@ async fn test_shared_data_shard_operations() {
     let cmd = SharedDataCommand::Update {
         required_meta_index: 0,
         transaction_id: None,
+        actor_user_id: None,
         table_id: table_id.clone(),
         updates: vec![make_test_row()],
         filter: None,
@@ -903,6 +906,7 @@ async fn test_shared_data_shard_operations() {
     let cmd = SharedDataCommand::Delete {
         required_meta_index: 0,
         transaction_id: None,
+        actor_user_id: None,
         table_id: table_id.clone(),
         pk_values: None,
     };

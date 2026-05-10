@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
-import { createConsumerClient, runAgent } from '@kalamdb/consumer';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 import { executeAsUser, kalamDriver } from '@kalamdb/orm';
 import { drizzle } from 'drizzle-orm/pg-proxy';
 import {
@@ -47,7 +47,7 @@ function assertValidUser(user: string): string {
 export function buildReply(content: string): string {
   const trimmed = content.trim();
   const lowered = trimmed.toLowerCase();
-  let extra = 'This demo now uses runAgent() to consume new user messages from a topic — zero polling, zero wasted queries.';
+  let extra = 'This demo now uses runConsumer() to consume new user messages from a topic — zero polling, zero wasted queries.';
 
   if (lowered.includes('latency')) {
     extra = 'I would inspect the slowest route first, then compare the latest write volume against the baseline you see in the database.';
@@ -108,11 +108,11 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     );
   };
 
-  console.log(`chat-demo-agent ready (user=${KALAMDB_USER}, mode=topic-consumer via runAgent)`);
+  console.log(`chat-demo-agent ready (user=${KALAMDB_USER}, mode=topic-consumer via runConsumer)`);
   console.log(`  topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
   console.log(`  messages=${chatMessagesConfig.tableType} events=${agentEventsConfig.tableType} seq=${canReadMessageSeq ? 'enabled' : 'disabled'}`);
 
-  await runAgent<ChatMessageRow>({
+  await runConsumer<ChatMessageRow>({
     client,
     name: 'chat-ai-agent',
     topic: TOPIC_NAME,
@@ -122,7 +122,8 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     timeoutSeconds: 30,
     stopSignal: options.stopSignal,
 
-    onRow: async (_ctx, row) => {
+    onChange: async (_ctx, change) => {
+      const row = change.data;
       if (row.role !== 'user') {
         console.log(`[agent] skipping non-user message id=${row.id} role=${row.role}`);
         return;

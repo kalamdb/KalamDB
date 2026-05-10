@@ -1,6 +1,7 @@
 use kalamdb_commons::UserId;
 use serde::{Deserialize, Serialize};
 
+use super::TopicOp;
 use crate::models::RowData;
 
 /// A single consumed message from a topic.
@@ -15,7 +16,7 @@ pub struct ConsumeMessage {
 
     /// Operation type from the topic envelope (`Insert`, `Update`, or `Delete`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub op: Option<String>,
+    pub op: Option<TopicOp>,
 
     /// Message timestamp in milliseconds since epoch
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,9 +34,10 @@ pub struct ConsumeMessage {
     /// Consumer group ID
     pub group_id: String,
 
-    /// Canonical user identifier of the user who produced this message/event
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<UserId>,
+    /// Canonical user identifier of the user who produced this message/event.
+    /// This is required for consumer-facing change processing.
+    #[serde(alias = "username", alias = "user_id")]
+    pub user: UserId,
 
     /// Decoded payload from the HTTP API's base64 `payload` field.
     ///

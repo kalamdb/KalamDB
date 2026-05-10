@@ -355,6 +355,7 @@ async fn test_shared_data_buffering() {
         }],
         required_meta_index: current_meta + 500,
         transaction_id: None,
+        actor_user_id: None,
     };
 
     let cmd_bytes = encode_shared_data_command(&cmd).unwrap();
@@ -375,6 +376,7 @@ async fn test_shared_data_buffering() {
         }],
         required_meta_index: 0,
         transaction_id: None,
+        actor_user_id: None,
     };
     let cmd2_bytes = encode_shared_data_command(&cmd2).unwrap();
     sm.apply(2, 1, &cmd2_bytes).await.unwrap();
@@ -399,6 +401,7 @@ async fn test_shared_data_snapshot_roundtrip() {
         }],
         required_meta_index: current_meta + 2000, // Will be buffered
         transaction_id: None,
+        actor_user_id: None,
     };
 
     let cmd_bytes = encode_shared_data_command(&cmd).unwrap();

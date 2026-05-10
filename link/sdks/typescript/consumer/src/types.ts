@@ -30,6 +30,14 @@ export interface ConsumerClientOptions extends ClientOptions {
 
 export type ConsumeStart = 'latest' | 'earliest' | number | { offset: number } | { Offset: number };
 
+export const TopicOp = {
+  Insert: 'Insert',
+  Update: 'Update',
+  Delete: 'Delete',
+} as const;
+
+export type TopicOp = (typeof TopicOp)[keyof typeof TopicOp];
+
 export interface ConsumeRequest {
   topic: string;
   group_id: string;
@@ -45,13 +53,13 @@ export type ConsumePayload = Record<string, unknown>;
 
 export interface ConsumeMessage<TPayload extends ConsumePayload = ConsumePayload> {
   key?: string;
-  op?: string;
+  op?: TopicOp;
   timestamp_ms?: number;
   offset: number;
   partition_id: number;
   topic: string;
   group_id: string;
-  user?: UserId;
+  user: UserId;
   payload: TPayload;
   /**
    * @deprecated Use `payload` instead.
@@ -59,6 +67,11 @@ export interface ConsumeMessage<TPayload extends ConsumePayload = ConsumePayload
    */
   value: TPayload;
 }
+
+export type ConsumerRunMessage<TPayload extends ConsumePayload = ConsumePayload> = Omit<
+  ConsumeMessage<TPayload>,
+  'payload' | 'value'
+>;
 
 export interface ConsumeResponse<TPayload extends ConsumePayload = ConsumePayload> {
   messages: ConsumeMessage<TPayload>[];
@@ -72,7 +85,7 @@ export interface AckResponse {
 }
 
 export interface ConsumeContext<TPayload extends ConsumePayload = ConsumePayload> {
-  readonly user: UserId | undefined;
+  readonly user: UserId;
   readonly message: ConsumeMessage<TPayload>;
   ack: () => Promise<void>;
 }
@@ -107,6 +120,10 @@ export interface AgentLLMInput {
   messages?: AgentLLMMessage[];
   systemPrompt?: string;
   runKey?: string;
+  change?: Record<string, unknown>;
+  /**
+   * @deprecated Use `change` instead.
+   */
   row?: Record<string, unknown>;
 }
 
@@ -134,16 +151,34 @@ export interface AgentRetryPolicy {
   shouldRetry?: (error: unknown, attempt: number) => boolean;
 }
 
-export interface AgentContext<TRow extends Record<string, unknown>, TPayload extends ConsumePayload = ConsumePayload> {
-  readonly name: string;
+export interface AgentConnectionRetryPolicy {
+  enabled?: boolean;
+  maxAttempts?: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  multiplier?: number;
+  jitterRatio?: number;
+  shouldRetry?: (error: unknown, attempt: number) => boolean;
+}
+
+export interface ConsumerChange<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData> {
+  readonly data: TData;
+  readonly message: ConsumerRunMessage<TPayload>;
+  readonly user: UserId;
+  readonly key: string | undefined;
+  readonly op: TopicOp | undefined;
+  readonly timestampMs: number | undefined;
+  readonly partitionId: number;
+  readonly offset: number;
   readonly topic: string;
   readonly groupId: string;
+}
+
+export interface ConsumerRunContext<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData> {
+  readonly name: string;
   readonly runKey: string;
   readonly attempt: number;
   readonly maxAttempts: number;
-  readonly message: ConsumeMessage<TPayload>;
-  readonly row: TRow;
-  readonly user: UserId | undefined;
   readonly systemPrompt: string | undefined;
   readonly llm: AgentLLMContext | null;
   sql: (sql: string, params?: unknown[]) => Promise<QueryResponse>;
@@ -152,15 +187,48 @@ export interface AgentContext<TRow extends Record<string, unknown>, TPayload ext
   ack: () => Promise<void>;
 }
 
-export interface AgentFailureContext<TRow extends Record<string, unknown>, TPayload extends ConsumePayload = ConsumePayload>
-  extends AgentContext<TRow, TPayload> {
+export type ConsumerChangeHandler<
+  TData extends Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = (ctx: ConsumerRunContext<TData, TPayload>, change: ConsumerChange<TData, TPayload>) => Promise<void>;
+
+export interface ConsumerFailureContext<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData>
+  extends ConsumerRunContext<TData, TPayload> {
   readonly error: unknown;
 }
 
+/**
+ * @deprecated Use `ConsumerChange` instead.
+ */
+export type AgentChange<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData> = ConsumerChange<TData, TPayload>;
+
+/**
+ * @deprecated Use `ConsumerRunContext` instead.
+ */
+export type AgentContext<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData> = ConsumerRunContext<TData, TPayload>;
+
+/**
+ * @deprecated Use `ConsumerFailureContext` instead.
+ */
+export type AgentFailureContext<TData extends Record<string, unknown>, TPayload extends ConsumePayload = TData> = ConsumerFailureContext<TData, TPayload>;
+
+export type AgentChangeParser<
+  TData extends Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = (message: ConsumeMessage<TPayload>) => TData | null;
+
+/**
+ * @deprecated Use `AgentChangeParser` instead.
+ */
 export type AgentRowParser<
-  TRow extends Record<string, unknown>,
-  TPayload extends ConsumePayload = ConsumePayload,
-> = (message: ConsumeMessage<TPayload>) => TRow | null;
+  TData extends Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = AgentChangeParser<TData, TPayload>;
+
+export type ConsumerChangeParser<
+  TData extends Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = AgentChangeParser<TData, TPayload>;
 
 export type AgentRunKeyFactory = (args: {
   name: string;
@@ -168,13 +236,13 @@ export type AgentRunKeyFactory = (args: {
 }) => string;
 
 export type AgentFailureHandler<
-  TRow extends Record<string, unknown>,
-  TPayload extends ConsumePayload = ConsumePayload,
-> = (ctx: AgentFailureContext<TRow, TPayload>) => Promise<void>;
+  TData extends Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = (ctx: ConsumerFailureContext<TData, TPayload>, change: ConsumerChange<TData, TPayload>) => Promise<void>;
 
-export interface RunAgentOptions<
-  TRow extends Record<string, unknown> = Record<string, unknown>,
-  TPayload extends ConsumePayload = ConsumePayload,
+export interface RunConsumerOptions<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
 > {
   client: ConsumerClientLike;
   name: string;
@@ -187,15 +255,28 @@ export interface RunAgentOptions<
   systemPrompt?: string;
   llm?: AgentLLMAdapter;
   retry?: AgentRetryPolicy;
+  connectionRetry?: AgentConnectionRetryPolicy;
   runKeyFactory?: AgentRunKeyFactory;
   /**
-   * Optional custom row decoder. When omitted, `runAgent()` uses KalamDB's
+    * Optional custom change decoder. When omitted, `runConsumer()` uses KalamDB's
    * default topic decoder and unwraps either `{ row: ... }` CDC envelopes or
    * direct row payloads, so generated ORM row types can be used directly.
    */
-  rowParser?: AgentRowParser<TRow, TPayload>;
-  onRow: (ctx: AgentContext<TRow, TPayload>, row: TRow) => Promise<void>;
-  onFailed?: AgentFailureHandler<TRow, TPayload>;
+  changeParser?: AgentChangeParser<TData, TPayload>;
+  /**
+   * @deprecated Use `changeParser` instead.
+   */
+  rowParser?: AgentChangeParser<TData, TPayload>;
+  onChange?: ConsumerChangeHandler<TData, TPayload>;
+  /**
+    * @deprecated Use `onChange(ctx, change)` instead.
+   */
+    onMessage?: (ctx: ConsumerRunContext<TData, TPayload>, change: ConsumerChange<TData, TPayload>) => Promise<void>;
+  /**
+   * @deprecated Use `onChange(ctx, change)` and read the changed row from `change.data`.
+   */
+    onRow?: (ctx: ConsumerRunContext<TData, TPayload>, row: TData, change: ConsumerChange<TData, TPayload>) => Promise<void>;
+  onFailed?: AgentFailureHandler<TData, TPayload>;
   ackOnFailed?: boolean;
   stopSignal?: AbortSignal;
   onRetry?: (args: {
@@ -206,6 +287,16 @@ export interface RunAgentOptions<
     runKey: string;
     message: ConsumeMessage<TPayload>;
   }) => void;
+  onConnectionRetry?: (args: {
+    error: unknown;
+    attempt: number;
+    maxAttempts: number | undefined;
+    backoffMs: number;
+  }) => void;
+  onConnectionError?: (args: {
+    error: unknown;
+    attempt: number;
+  }) => void;
   onError?: (args: {
     error: unknown;
     runKey: string;
@@ -213,20 +304,10 @@ export interface RunAgentOptions<
   }) => void;
 }
 
-export interface RunConsumerOptions<TPayload extends ConsumePayload = ConsumePayload> {
-  client: ConsumerClientLike;
-  name: string;
-  topic: string;
-  groupId: string;
-  start?: ConsumeRequest['start'];
-  batchSize?: number;
-  partitionId?: number;
-  timeoutSeconds?: number;
-  retry?: AgentRetryPolicy;
-  stopSignal?: AbortSignal;
-  onMessage: (ctx: AgentContext<Record<string, unknown>, TPayload>) => Promise<void>;
-  onFailed?: AgentFailureHandler<Record<string, unknown>, TPayload>;
-  ackOnFailed?: boolean;
-  onRetry?: RunAgentOptions<Record<string, unknown>, TPayload>['onRetry'];
-  onError?: RunAgentOptions<Record<string, unknown>, TPayload>['onError'];
-}
+/**
+ * @deprecated Use `RunConsumerOptions` instead.
+ */
+export type RunAgentOptions<
+  TData extends Record<string, unknown> = Record<string, unknown>,
+  TPayload extends ConsumePayload = TData,
+> = RunConsumerOptions<TData, TPayload>;

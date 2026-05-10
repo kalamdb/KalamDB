@@ -1059,7 +1059,16 @@ export class KalamDBClient {
    */
   async login(): Promise<LoginResponse> {
     await this.initialize();
-    const auth = this.auth;
+    let auth = this.auth;
+    if (!auth || auth.type !== 'basic') {
+      auth = await resolveAuthProviderWithRetry(this._authProvider, {
+        maxAttempts: this.authProviderMaxAttempts,
+        initialBackoffMs: this.authProviderInitialBackoffMs,
+        maxBackoffMs: this.authProviderMaxBackoffMs,
+      });
+      this.auth = auth;
+    }
+
     if (!auth || auth.type !== 'basic') {
       throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(user, password)');
     }

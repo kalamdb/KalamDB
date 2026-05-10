@@ -12,6 +12,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -39,6 +40,172 @@ fn is_retryable_consumer_poll_error(message: &str) -> bool {
     topic_test_support::is_retryable_consumer_poll_error(message)
 }
 
+fn parse_test_arg(flag: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let prefix = format!("{}=", flag);
+
+    for (index, arg) in args.iter().enumerate() {
+        if arg == flag {
+            return args.get(index + 1).cloned();
+        }
+        if let Some(value) = arg.strip_prefix(&prefix) {
+            return Some(value.to_string());
+        }
+    }
+
+    None
+}
+
+fn configured_server_type() -> Option<&'static str> {
+    if let Ok(value) = std::env::var("KALAMDB_SERVER_TYPE") {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fresh" => return Some("fresh"),
+            "running" => return Some("running"),
+            "cluster" => return Some("cluster"),
+            _ => {},
+        }
+    }
+
+    if let Ok(value) = std::env::var("KALAMDB_AUTO_START_TEST_SERVER") {
+        match value.trim() {
+            "1" => return Some("fresh"),
+            "0" => return Some("running"),
+            _ => {},
+        }
+    }
+
+    None
+}
+
+fn has_explicit_server_target() -> bool {
+    parse_test_arg("--url").is_some()
+        || parse_test_arg("--urls").is_some()
+        || std::env::var("KALAMDB_SERVER_URL").is_ok()
+        || std::env::var("KALAMDB_CLUSTER_URLS").is_ok()
+}
+
+fn configured_server_targets() -> Vec<String> {
+    let mut targets = Vec::new();
+
+    if let Some(url) = parse_test_arg("--url") {
+        targets.push(url);
+    }
+
+    if let Some(urls) = parse_test_arg("--urls") {
+        targets.extend(
+            urls.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        );
+    }
+
+    if let Ok(url) = std::env::var("KALAMDB_SERVER_URL") {
+        if !url.trim().is_empty() {
+            targets.push(url);
+        }
+    }
+
+    if let Ok(urls) = std::env::var("KALAMDB_CLUSTER_URLS") {
+        targets.extend(
+            urls.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        );
+    }
+
+    targets
+}
+
+fn is_local_server_target(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let host_port = trimmed
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or(trimmed);
+
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+
+    matches!(host, "127.0.0.1" | "localhost" | "0.0.0.0" | "::1")
+}
+
+fn should_trust_local_server_config_for_target() -> bool {
+    let targets = configured_server_targets();
+    !targets.is_empty() && targets.iter().all(|target| is_local_server_target(target))
+}
+
+fn should_use_local_visibility_timeout_config() -> bool {
+    match configured_server_type() {
+        Some("fresh") => return true,
+        Some("running") | Some("cluster") => {
+            return should_trust_local_server_config_for_target();
+        },
+        _ => {},
+    }
+
+    !has_explicit_server_target() || should_trust_local_server_config_for_target()
+}
+
+fn local_visibility_timeout_config_path() -> Option<PathBuf> {
+    if !should_use_local_visibility_timeout_config() {
+        return None;
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if common::is_cluster_mode() {
+        Some(manifest_dir.join("../.cluster-local/node1/server.toml"))
+    } else {
+        Some(manifest_dir.join("../backend/server.toml"))
+    }
+}
+
+fn read_visibility_timeout_secs_from_server_toml(path: &Path) -> Option<u64> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut in_topics_section = false;
+
+    for raw_line in contents.lines() {
+        let line = raw_line.split('#').next().unwrap_or_default().trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            in_topics_section = line == "[topics]";
+            continue;
+        }
+
+        if !in_topics_section {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        if key.trim() != "visibility_timeout_secs" {
+            continue;
+        }
+
+        let value = value.trim().trim_matches('"');
+        if let Ok(parsed) = value.parse::<u64>() {
+            return Some(parsed);
+        }
+    }
+
+    None
+}
+
 fn configured_topic_visibility_timeout_secs() -> u64 {
     for env_key in [
         "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
@@ -49,17 +216,33 @@ fn configured_topic_visibility_timeout_secs() -> u64 {
         }
     }
 
+    if let Some(path) = local_visibility_timeout_config_path() {
+        if let Some(value) = read_visibility_timeout_secs_from_server_toml(&path) {
+            return value;
+        }
+    }
+
     default_topic_visibility_timeout_secs()
 }
 
 fn topic_recovery_deadline() -> Duration {
-    let configured = configured_topic_visibility_timeout_secs();
-    let fallback = default_topic_visibility_timeout_secs();
-    Duration::from_secs(configured.max(fallback) + 30)
+    Duration::from_secs(configured_topic_visibility_timeout_secs() + 30)
+}
+
+fn topic_visibility_timeout_wait() -> Duration {
+    Duration::from_secs(configured_topic_visibility_timeout_secs() + 1)
 }
 
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
     topic_test_support::wait_for_topic_ready(topic, expected_routes).await;
+}
+
+fn response_is_success(response: &serde_json::Value) -> bool {
+    response
+        .get("status")
+        .and_then(|status| status.as_str())
+        .map(|status| status.eq_ignore_ascii_case("success"))
+        .unwrap_or(false)
 }
 
 /// Helper to parse JSON payload from binary
@@ -89,6 +272,182 @@ fn extract_i64_field(payload: &serde_json::Value, keys: &[&str]) -> Option<i64> 
         }
     }
     None
+}
+
+fn parse_u64_row_field(row: &HashMap<String, serde_json::Value>, key: &str) -> u64 {
+    let raw = row.get(key).unwrap_or_else(|| panic!("row should contain {}", key));
+    let untyped = common::extract_typed_value(raw);
+    if let Some(value) = untyped.as_u64() {
+        return value;
+    }
+    if let Some(value) = untyped.as_i64().and_then(|value| u64::try_from(value).ok()) {
+        return value;
+    }
+    if let Some(value) = untyped.as_str().and_then(|value| value.parse::<u64>().ok()) {
+        return value;
+    }
+    panic!("{} should be an unsigned integer, got {}", key, untyped);
+}
+
+fn record_offsets(records: &[ConsumerRecord]) -> Vec<u64> {
+    records.iter().map(|record| record.offset).collect()
+}
+
+fn record_payload_ids(records: &[ConsumerRecord], id_keys: &[&str]) -> Vec<i64> {
+    records
+        .iter()
+        .map(|record| {
+            let payload = parse_payload(&record.payload);
+            extract_i64_field(&payload, id_keys)
+                .unwrap_or_else(|| panic!("record payload should include one of {:?}", id_keys))
+        })
+        .collect()
+}
+
+fn assert_consecutive_offsets(offsets: &[u64], expected_start: u64, context: &str) {
+    let expected: Vec<u64> =
+        (expected_start..expected_start.saturating_add(offsets.len() as u64)).collect();
+    assert_eq!(
+        offsets, expected,
+        "{}: expected consecutive offsets starting at {}, got {:?}",
+        context, expected_start, offsets
+    );
+}
+
+fn assert_complete_ids(ids: &[i64], expected_total: usize, context: &str) {
+    let mut actual = ids.to_vec();
+    actual.sort_unstable();
+    actual.dedup();
+    let expected: Vec<i64> = (0..expected_total as i64).collect();
+    assert_eq!(
+        actual, expected,
+        "{}: expected complete unique ids 0..{}, got {:?}",
+        context,
+        expected_total.saturating_sub(1),
+        actual
+    );
+}
+
+async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, serde_json::Value>> {
+    let response = common::execute_sql_via_http_as_root(&format!(
+        "SELECT topic_id, group_id, partition_id, last_acked_offset FROM system.topic_offsets \
+         WHERE topic_id = '{}' AND group_id = '{}' ORDER BY partition_id",
+        topic, group_id
+    ))
+    .await
+    .expect("topic offset query should return a response");
+
+    assert!(
+        response_is_success(&response),
+        "topic offset query should succeed: {}",
+        response
+    );
+
+    common::get_rows_as_hashmaps(&response).unwrap_or_default()
+}
+
+struct RawRecordPollConfig {
+    min_records: usize,
+    deadline: Duration,
+    idle_sleep: Duration,
+    per_record_delay: Duration,
+    commit_each_batch: bool,
+}
+
+async fn poll_records_raw_until(
+    consumer: &mut kalam_client::consumer::TopicConsumer,
+    config: RawRecordPollConfig,
+) -> Vec<ConsumerRecord> {
+    let deadline = std::time::Instant::now() + config.deadline;
+    let mut records = Vec::new();
+
+    while std::time::Instant::now() < deadline && records.len() < config.min_records {
+        match consumer.poll().await {
+            Ok(batch) if batch.is_empty() => {
+                tokio::time::sleep(config.idle_sleep).await;
+            },
+            Ok(batch) => {
+                for record in batch {
+                    if !config.per_record_delay.is_zero() {
+                        tokio::time::sleep(config.per_record_delay).await;
+                    }
+                    consumer.mark_processed(&record);
+                    records.push(record);
+                }
+
+                if config.commit_each_batch {
+                    consumer
+                        .commit_sync()
+                        .await
+                        .expect("commit after poll batch should succeed");
+                }
+            },
+            Err(err) => {
+                let message = err.to_string();
+                if is_retryable_consumer_poll_error(&message) {
+                    tokio::time::sleep(config.idle_sleep).await;
+                    continue;
+                }
+                panic!("topic consumer poll error: {}", message);
+            },
+        }
+    }
+
+    assert!(
+        records.len() >= config.min_records,
+        "Expected at least {} records within {:?}, got {}",
+        config.min_records,
+        config.deadline,
+        records.len()
+    );
+
+    records
+}
+
+fn build_large_payload(id: usize, payload_size: usize) -> String {
+    let prefix = format!("blob_{:04}_", id);
+    if prefix.len() >= payload_size {
+        return prefix;
+    }
+
+    let fill_char = char::from(b'a' + (id % 26) as u8);
+    format!("{}{}", prefix, fill_char.to_string().repeat(payload_size - prefix.len()))
+}
+
+async fn publish_large_payload_rows(
+    table: &str,
+    expected_messages: usize,
+    payload_size: usize,
+    publisher_parallelism: usize,
+) {
+    let mut publish_handles = Vec::with_capacity(publisher_parallelism);
+
+    for publisher in 0..publisher_parallelism {
+        let base_count = expected_messages / publisher_parallelism;
+        let extra = usize::from(publisher < expected_messages % publisher_parallelism);
+        let count = base_count + extra;
+        let start_id =
+            publisher * base_count + publisher.min(expected_messages % publisher_parallelism);
+        let table = table.to_string();
+
+        publish_handles.push(tokio::spawn(async move {
+            for idx in 0..count {
+                let id = start_id + idx;
+                let payload = build_large_payload(id, payload_size);
+                execute_sql(&format!(
+                    "INSERT INTO {} (id, payload, payload_size, bucket) VALUES ({}, '{}', {}, \
+                     'bucket_{}')",
+                    table, id, payload, payload_size, publisher
+                ))
+                .await
+                .expect("large payload insert failed");
+            }
+        }));
+    }
+
+    for handle in publish_handles {
+        handle.await.expect("large payload publisher task failed");
+    }
 }
 
 /// Test high-load concurrent publishing to multiple tables with single topic consumer
@@ -1112,34 +1471,21 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         .await;
 
     let consumer_a_claim_target = 160usize;
-    let mut claimed_by_a = HashSet::<(u32, u64)>::new();
-    {
+    let claimed_by_a = {
         let mut consumer_a =
-            topic_test_support::build_test_consumer(&topic, &group_id, 80, false).await;
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(35);
-        while std::time::Instant::now() < deadline && claimed_by_a.len() < consumer_a_claim_target {
-            match consumer_a.poll().await {
-                Ok(batch) if batch.is_empty() => {
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                },
-                Ok(batch) => {
-                    for rec in &batch {
-                        claimed_by_a.insert((rec.partition_id, rec.offset));
-                        consumer_a.mark_processed(rec);
-                    }
-                },
-                Err(err) => {
-                    let message = err.to_string();
-                    if is_retryable_consumer_poll_error(&message) {
-                        tokio::time::sleep(Duration::from_millis(80)).await;
-                        continue;
-                    }
-                    panic!("consumer-a poll error: {}", message);
-                },
-            }
-        }
-    } // drop without commit -> simulate crash/ack failure
+            topic_test_support::build_test_consumer(&topic, &group_id, 40, false).await;
+        poll_records_raw_until(
+            &mut consumer_a,
+            RawRecordPollConfig {
+                min_records: consumer_a_claim_target,
+                deadline: Duration::from_secs(35),
+                idle_sleep: Duration::from_millis(80),
+                per_record_delay: Duration::ZERO,
+                commit_each_batch: false,
+            },
+        )
+        .await
+    }; // drop without commit -> simulate crash/ack failure
 
     assert!(
         claimed_by_a.len() >= 120,
@@ -1147,60 +1493,483 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         claimed_by_a.len()
     );
 
+    let claimed_offsets = record_offsets(&claimed_by_a);
+    assert_consecutive_offsets(&claimed_offsets, 0, "consumer-a claimed prefix before failure");
+
+    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+
     let mut consumer_b =
-        topic_test_support::build_test_consumer(&topic, &group_id, 120, false).await;
+        topic_test_support::build_test_consumer(&topic, &group_id, 60, false).await;
 
-    let mut recovered_offsets = HashSet::<(u32, u64)>::new();
-    let deadline = std::time::Instant::now() + topic_recovery_deadline();
-    let mut idle_loops = 0u32;
+    let recovered_records = poll_records_raw_until(
+        &mut consumer_b,
+        RawRecordPollConfig {
+            min_records: expected_messages,
+            deadline: topic_recovery_deadline(),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::from_millis(2),
+            commit_each_batch: false,
+        },
+    )
+    .await;
 
-    while std::time::Instant::now() < deadline && recovered_offsets.len() < expected_messages {
-        match consumer_b.poll().await {
-            Ok(batch) if batch.is_empty() => {
-                idle_loops += 1;
-                if idle_loops >= 25 && recovered_offsets.len() >= expected_messages {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(80)).await;
+    assert_eq!(
+        recovered_records.len(),
+        expected_messages,
+        "Recovered consumer must process every produced message exactly once after timeout"
+    );
+
+    let recovered_offsets = record_offsets(&recovered_records);
+    let recovered_ids = record_payload_ids(&recovered_records, &["id"]);
+    assert_consecutive_offsets(&recovered_offsets, 0, "ordered recovery offsets");
+    assert_complete_ids(&recovered_ids, expected_messages, "ordered recovery id coverage");
+
+    let commit_result = consumer_b.commit_sync().await.expect("recovery commit should succeed");
+    assert_eq!(
+        commit_result.acknowledged_offset,
+        (expected_messages - 1) as u64,
+        "Recovered consumer should commit the final produced offset"
+    );
+
+    let empty_after_commit = consumer_b
+        .poll_with_timeout(Duration::from_millis(750))
+        .await
+        .expect("post-commit poll should succeed");
+    assert!(
+        empty_after_commit.is_empty(),
+        "Committed recovery consumer should not receive an immediate replay"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// Verify that an unacked prefix is not re-delivered before the visibility
+/// timeout, then recovers in order after expiry, and a stale ACK cannot
+/// regress the committed group offset.
+#[tokio::test]
+#[ntest::timeout(180000)]
+async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_not_replay() {
+    let namespace = common::generate_unique_namespace("late_ack_visibility");
+    let table = format!("{}.events", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("late_ack_topic"));
+    let group_id = format!("late-ack-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create namespace");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
+        .await
+        .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages = 120usize;
+    topic_test_support::publish_numbered_rows(&table, "payload", "payload", expected_messages, 8)
+        .await;
+
+    let claimed_prefix = {
+        let mut consumer_a =
+            topic_test_support::build_test_consumer(&topic, &group_id, 20, false).await;
+        poll_records_raw_until(
+            &mut consumer_a,
+            RawRecordPollConfig {
+                min_records: 60,
+                deadline: Duration::from_secs(20),
+                idle_sleep: Duration::from_millis(80),
+                per_record_delay: Duration::ZERO,
+                commit_each_batch: false,
             },
-            Ok(batch) => {
-                idle_loops = 0;
-                for rec in &batch {
-                    // Simulate downstream processing latency per message.
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                    recovered_offsets.insert((rec.partition_id, rec.offset));
-                    consumer_b.mark_processed(rec);
-                }
-            },
-            Err(err) => {
-                let message = err.to_string();
-                if is_retryable_consumer_poll_error(&message) {
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                    continue;
-                }
-                panic!("consumer-b poll error: {}", message);
-            },
+        )
+        .await
+    };
+
+    let claimed_offsets = record_offsets(&claimed_prefix);
+    assert_consecutive_offsets(&claimed_offsets, 0, "unacked claimed prefix offsets");
+
+    let claimed_set: HashSet<u64> = claimed_offsets.iter().copied().collect();
+    let last_claimed_offset = *claimed_offsets.last().expect("claimed prefix should not be empty");
+    let stale_ack_offset = claimed_offsets[claimed_offsets.len() / 2];
+
+    {
+        let mut consumer_b =
+            topic_test_support::build_test_consumer(&topic, &group_id, 20, false).await;
+        let pre_timeout_batch = consumer_b
+            .poll_with_timeout(Duration::from_secs(1))
+            .await
+            .expect("pre-timeout poll should succeed");
+
+        for record in &pre_timeout_batch {
+            assert!(
+                !claimed_set.contains(&record.offset),
+                "Claimed offsets must not be re-delivered before visibility timeout expires"
+            );
+            assert!(
+                record.offset > last_claimed_offset,
+                "Pre-timeout delivery should only advance beyond the pending prefix"
+            );
         }
     }
 
-    if !recovered_offsets.is_empty() {
-        let _ = consumer_b.commit_sync().await;
-    }
+    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+
+    let mut consumer_c =
+        topic_test_support::build_test_consumer(&topic, &group_id, 30, false).await;
+    let recovered_records = poll_records_raw_until(
+        &mut consumer_c,
+        RawRecordPollConfig {
+            min_records: expected_messages,
+            deadline: topic_recovery_deadline(),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
+            commit_each_batch: false,
+        },
+    )
+    .await;
 
     assert_eq!(
-        recovered_offsets.len(),
+        recovered_records.len(),
         expected_messages,
-        "Recovered consumer must process every produced message"
+        "Recovered stream should include the full message set exactly once"
     );
 
-    let mut offsets: Vec<u64> = recovered_offsets.iter().map(|(_, offset)| *offset).collect();
-    offsets.sort_unstable();
+    let recovered_offsets = record_offsets(&recovered_records);
+    let recovered_ids = record_payload_ids(&recovered_records, &["id"]);
+    assert_consecutive_offsets(&recovered_offsets, 0, "post-timeout recovered offsets");
+    assert_complete_ids(&recovered_ids, expected_messages, "post-timeout recovered id coverage");
 
-    assert_eq!(offsets.first().copied(), Some(0), "Recovered stream should include offset 0");
+    let commit_result = consumer_c.commit_sync().await.expect("recovery commit should succeed");
     assert_eq!(
-        offsets.last().copied(),
-        Some((expected_messages - 1) as u64),
-        "Recovered stream should include the latest produced offset"
+        commit_result.acknowledged_offset,
+        (expected_messages - 1) as u64,
+        "Recovered consumer should commit the final produced offset"
+    );
+
+    let offsets_after_commit = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(
+        offsets_after_commit.len(),
+        1,
+        "Commit should persist one topic offset row for the group"
+    );
+    assert_eq!(
+        parse_u64_row_field(&offsets_after_commit[0], "last_acked_offset"),
+        (expected_messages - 1) as u64,
+        "Committed offset should match the last produced message"
+    );
+
+    execute_sql(&format!(
+        "ACK {} GROUP '{}' PARTITION 0 UPTO OFFSET {}",
+        topic, group_id, stale_ack_offset
+    ))
+    .await
+    .expect("stale ack should not fail");
+
+    let offsets_after_stale_ack = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(
+        parse_u64_row_field(&offsets_after_stale_ack[0], "last_acked_offset"),
+        (expected_messages - 1) as u64,
+        "Late ACK must not regress the committed group offset"
+    );
+
+    let mut consumer_d =
+        topic_test_support::build_test_consumer(&topic, &group_id, 20, false).await;
+    let empty_after_recovery = consumer_d
+        .poll_with_timeout(Duration::from_millis(750))
+        .await
+        .expect("post-recovery poll should succeed");
+    assert!(
+        empty_after_recovery.is_empty(),
+        "Fully committed stream should not replay after a stale ACK"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// Verify that after committing an initial prefix, a crash with a later
+/// unacked claim resumes from exactly the first unacked offset instead of
+/// replaying the committed prefix or skipping ahead.
+#[tokio::test]
+#[ntest::timeout(180000)]
+async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset() {
+    let namespace = common::generate_unique_namespace("partial_commit_recovery");
+    let table = format!("{}.events", namespace);
+    let topic = format!(
+        "{}.{}",
+        namespace,
+        common::generate_unique_table("partial_commit_topic")
+    );
+    let group_id = format!("partial-commit-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create namespace");
+    execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
+        .await
+        .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages = 120usize;
+    let committed_prefix_len = 48usize;
+    let unacked_claim_len = 32usize;
+    topic_test_support::publish_numbered_rows(&table, "payload", "payload", expected_messages, 8)
+        .await;
+
+    let mut consumer_a =
+        topic_test_support::build_test_consumer(&topic, &group_id, 16, false).await;
+    let committed_records = poll_records_raw_until(
+        &mut consumer_a,
+        RawRecordPollConfig {
+            min_records: committed_prefix_len,
+            deadline: Duration::from_secs(20),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
+            commit_each_batch: false,
+        },
+    )
+    .await;
+
+    let committed_offsets = record_offsets(&committed_records);
+    let committed_ids = record_payload_ids(&committed_records, &["id"]);
+    assert_consecutive_offsets(&committed_offsets, 0, "committed prefix offsets");
+
+    let initial_commit = consumer_a
+        .commit_sync()
+        .await
+        .expect("initial prefix commit should succeed");
+    assert_eq!(
+        initial_commit.acknowledged_offset,
+        committed_offsets.last().copied().expect("committed prefix should not be empty"),
+        "Committed prefix should durably ack the last processed offset"
+    );
+
+    let offsets_after_initial_commit = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(
+        offsets_after_initial_commit.len(),
+        1,
+        "Initial commit should persist one topic offset row"
+    );
+    assert_eq!(
+        parse_u64_row_field(&offsets_after_initial_commit[0], "last_acked_offset"),
+        (committed_prefix_len - 1) as u64,
+        "Committed prefix should persist its last offset"
+    );
+
+    let pending_records = poll_records_raw_until(
+        &mut consumer_a,
+        RawRecordPollConfig {
+            min_records: unacked_claim_len,
+            deadline: Duration::from_secs(20),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
+            commit_each_batch: false,
+        },
+    )
+    .await;
+    let pending_offsets = record_offsets(&pending_records);
+    assert_consecutive_offsets(
+        &pending_offsets,
+        committed_prefix_len as u64,
+        "unacked claimed tail offsets",
+    );
+
+    drop(consumer_a); // crash after claiming the tail without committing it
+
+    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+
+    let mut consumer_b =
+        topic_test_support::build_test_consumer(&topic, &group_id, 24, false).await;
+    let recovered_records = poll_records_raw_until(
+        &mut consumer_b,
+        RawRecordPollConfig {
+            min_records: expected_messages - committed_prefix_len,
+            deadline: topic_recovery_deadline(),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::ZERO,
+            commit_each_batch: false,
+        },
+    )
+    .await;
+
+    assert_eq!(
+        recovered_records.len(),
+        expected_messages - committed_prefix_len,
+        "Recovery after a partial commit should only deliver the unacked suffix"
+    );
+
+    let recovered_offsets = record_offsets(&recovered_records);
+    let recovered_ids = record_payload_ids(&recovered_records, &["id"]);
+    assert_consecutive_offsets(
+        &recovered_offsets,
+        committed_prefix_len as u64,
+        "recovered offsets after committed prefix",
+    );
+    assert_eq!(
+        recovered_offsets.first().copied(),
+        Some(committed_prefix_len as u64),
+        "Recovery must resume from the first unacked offset"
+    );
+    assert_eq!(
+        recovered_offsets.first().copied(),
+        pending_offsets.first().copied(),
+        "Recovered suffix must start at the first expired unacked claim"
+    );
+
+    let committed_id_set: HashSet<i64> = committed_ids.iter().copied().collect();
+    let recovered_id_set: HashSet<i64> = recovered_ids.iter().copied().collect();
+    assert_eq!(
+        committed_id_set.intersection(&recovered_id_set).count(),
+        0,
+        "Recovered suffix should not replay any already committed payload ids"
+    );
+
+    let mut combined_ids = committed_ids.clone();
+    combined_ids.extend(recovered_ids.iter().copied());
+    assert_complete_ids(
+        &combined_ids,
+        expected_messages,
+        "partial commit plus recovery should cover the full id set",
+    );
+
+    let recovery_commit = consumer_b
+        .commit_sync()
+        .await
+        .expect("recovery commit should succeed");
+    assert_eq!(
+        recovery_commit.acknowledged_offset,
+        (expected_messages - 1) as u64,
+        "Recovery commit should advance to the final produced offset"
+    );
+
+    let offsets_after_recovery = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(
+        parse_u64_row_field(&offsets_after_recovery[0], "last_acked_offset"),
+        (expected_messages - 1) as u64,
+        "Committed group offset should end at the final produced message"
+    );
+
+    let mut consumer_c =
+        topic_test_support::build_test_consumer(&topic, &group_id, 20, false).await;
+    let empty_after_full_recovery = consumer_c
+        .poll_with_timeout(Duration::from_millis(750))
+        .await
+        .expect("post-recovery poll should succeed");
+    assert!(
+        empty_after_full_recovery.is_empty(),
+        "Fully recovered stream should not replay after the recovery commit"
+    );
+
+    let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
+    let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
+    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+}
+
+/// Validate that a slower consumer still receives every large payload in order,
+/// with no skipped offsets and no immediate replay after commit.
+#[tokio::test]
+#[ntest::timeout(180000)]
+async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
+    let namespace = common::generate_unique_namespace("large_payload_topic");
+    let table = format!("{}.events", namespace);
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("large_payload"));
+    let group_id = format!("large-payload-group-{}", common::random_string(8));
+
+    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .await
+        .expect("create namespace");
+    execute_sql(&format!(
+        "CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT, payload_size INT, bucket TEXT)",
+        table
+    ))
+    .await
+    .expect("create table");
+    execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
+    execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
+        .await
+        .expect("add source");
+    wait_for_topic_ready(&topic, 1).await;
+
+    let expected_messages = 192usize;
+    let payload_size = 8 * 1024usize;
+    publish_large_payload_rows(&table, expected_messages, payload_size, 8).await;
+
+    let mut consumer = topic_test_support::build_test_consumer(&topic, &group_id, 24, false).await;
+    let records = poll_records_raw_until(
+        &mut consumer,
+        RawRecordPollConfig {
+            min_records: expected_messages,
+            deadline: Duration::from_secs(60),
+            idle_sleep: Duration::from_millis(80),
+            per_record_delay: Duration::from_millis(5),
+            commit_each_batch: true,
+        },
+    )
+    .await;
+
+    assert_eq!(
+        records.len(),
+        expected_messages,
+        "Slow consumer should process every large payload exactly once"
+    );
+
+    let offsets = record_offsets(&records);
+    let ids = record_payload_ids(&records, &["id"]);
+    assert_consecutive_offsets(&offsets, 0, "large payload offsets");
+    assert_complete_ids(&ids, expected_messages, "large payload id coverage");
+
+    for record in &records {
+        let payload = parse_payload(&record.payload);
+        let id = extract_i64_field(&payload, &["id"]).expect("large payload record should include id");
+        let payload_text = extract_string_field(&payload, "payload")
+            .expect("large payload record should include payload text");
+        let declared_size = extract_i64_field(&payload, &["payload_size"])
+            .expect("large payload record should include payload_size");
+
+        assert_eq!(
+            declared_size,
+            payload_size as i64,
+            "payload_size metadata should match the inserted payload size"
+        );
+        assert_eq!(
+            payload_text.len(),
+            payload_size,
+            "payload text length should match the inserted payload size"
+        );
+        assert!(
+            payload_text.starts_with(&format!("blob_{:04}_", id)),
+            "payload {} should preserve its deterministic prefix",
+            id
+        );
+    }
+
+    let offsets_after_commit = topic_offset_rows(&topic, &group_id).await;
+    assert_eq!(
+        offsets_after_commit.len(),
+        1,
+        "Slow consumer commits should persist one group offset row"
+    );
+    assert_eq!(
+        parse_u64_row_field(&offsets_after_commit[0], "last_acked_offset"),
+        (expected_messages - 1) as u64,
+        "Committed offset should reach the final large payload record"
+    );
+
+    let empty_after_commit = consumer
+        .poll_with_timeout(Duration::from_millis(750))
+        .await
+        .expect("post-commit poll should succeed");
+    assert!(
+        empty_after_commit.is_empty(),
+        "Large payload stream should not replay immediately after commit"
     );
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;

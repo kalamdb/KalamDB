@@ -150,10 +150,6 @@ pub async fn consume_handler(
 
     // Convert to response format from the internal topic message envelope.
     // Envelope fields: topic_id, partition_id, offset, key, payload, timestamp_ms, user_id, op
-    // Cache user_id → username lookups to avoid redundant RocksDB reads within a single batch.
-    let mut user_cache: std::collections::HashMap<kalamdb_commons::models::UserId, Option<String>> =
-        std::collections::HashMap::new();
-
     // Clone topic_id once for the entire response batch.
     let batch_topic_id = topic.topic_id.clone();
     // Pre-create the base64 engine reference once.
@@ -163,21 +159,6 @@ pub async fn consume_handler(
         .iter()
         .map(|msg| {
             use base64::Engine;
-            // Resolve the producer user id for the consumer response.
-            let user = msg.user_id.as_ref().and_then(|uid| {
-                user_cache
-                    .entry(uid.clone())
-                    .or_insert_with(|| {
-                        app_context
-                            .system_tables()
-                            .users()
-                            .get_user_by_id(uid)
-                            .ok()
-                            .flatten()
-                            .map(|u| u.user_id.as_str().to_string())
-                    })
-                    .clone()
-            });
             TopicMessage {
                 topic_id: batch_topic_id.clone(),
                 partition_id: msg.partition_id,
@@ -185,12 +166,8 @@ pub async fn consume_handler(
                 payload: b64_engine.encode(&msg.payload),
                 key: msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
-                user,
-                op: match msg.op {
-                    kalamdb_commons::models::TopicOp::Insert => "Insert".to_owned(),
-                    kalamdb_commons::models::TopicOp::Update => "Update".to_owned(),
-                    kalamdb_commons::models::TopicOp::Delete => "Delete".to_owned(),
-                },
+                user: msg.user_id.clone(),
+                op: msg.op,
             }
         })
         .collect();

@@ -19,6 +19,74 @@ function readRuntimeConfig() {
   };
 }
 
+async function waitForSummary(
+  client: ReturnType<typeof createClient>,
+  content: string,
+): Promise<string | null> {
+  const deadline = Date.now() + 20_000;
+
+  while (Date.now() < deadline) {
+    const row = await client.queryOne(
+      'SELECT blog_id, summary FROM blog.blogs WHERE content = $1 ORDER BY created DESC LIMIT 1',
+      [content],
+    );
+    const summary = row?.summary?.asString() ?? null;
+    if (summary) {
+      return summary;
+    }
+    await sleep(400);
+  }
+
+  return null;
+}
+
+async function waitForCommittedOffset(
+  client: ReturnType<typeof createClient>,
+  groupId: string,
+  minOffset = 0,
+): Promise<number> {
+  const deadline = Date.now() + 20_000;
+
+  while (Date.now() < deadline) {
+    const row = await client.queryOne(
+      'SELECT last_acked_offset FROM system.topic_offsets WHERE topic_id = $1 AND group_id = $2 AND partition_id = 0',
+      ['blog.summarizer', groupId],
+    );
+    const offset = row?.last_acked_offset?.asInt() ?? null;
+    if (offset !== null && offset >= minOffset) {
+      return offset;
+    }
+    await sleep(300);
+  }
+
+  throw new Error(`Timed out waiting for committed offset for group ${groupId}`);
+}
+
+async function waitForStableCommittedOffset(
+  client: ReturnType<typeof createClient>,
+  groupId: string,
+): Promise<number> {
+  const deadline = Date.now() + 20_000;
+  let lastOffset = await waitForCommittedOffset(client, groupId);
+  let stableSince = Date.now();
+
+  while (Date.now() < deadline) {
+    await sleep(250);
+    const currentOffset = await waitForCommittedOffset(client, groupId, lastOffset);
+    if (currentOffset !== lastOffset) {
+      lastOffset = currentOffset;
+      stableSince = Date.now();
+      continue;
+    }
+
+    if (Date.now() - stableSince >= 1_000) {
+      return currentOffset;
+    }
+  }
+
+  throw new Error(`Timed out waiting for committed offset to stabilize for group ${groupId}`);
+}
+
 test('agent writes summaries back into blog.blogs', async () => {
   execFileSync('./setup.sh', [], {
     cwd: exampleRoot,
@@ -49,26 +117,94 @@ test('agent writes summaries back into blog.blogs', async () => {
 
   try {
     await client.query('INSERT INTO blog.blogs (content, summary) VALUES ($1, $2)', [content, null]);
-
-    let summary: string | null = null;
-    const deadline = Date.now() + 20_000;
-
-    while (Date.now() < deadline) {
-      const row = await client.queryOne(
-        'SELECT blog_id, summary FROM blog.blogs WHERE content = $1 ORDER BY created DESC LIMIT 1',
-        [content],
-      );
-      summary = row?.summary?.asString() ?? null;
-      if (summary) {
-        break;
-      }
-      await sleep(400);
-    }
+    const summary = await waitForSummary(client, content);
 
     assert.equal(summary, expected);
   } finally {
     controller.abort();
     await Promise.race([agentRun, sleep(3_000)]);
+    await client.disconnect();
+  }
+});
+
+test('agent resumes the same group without replaying completed messages', async () => {
+  execFileSync('./setup.sh', [], {
+    cwd: exampleRoot,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+    },
+  });
+
+  const { serverUrl, user, password } = readRuntimeConfig();
+  const client = createClient({
+    url: serverUrl,
+    authProvider: async () => Auth.basic(user, password),
+  });
+
+  const groupId = `blog-summarizer-resume-${Date.now()}`;
+  const firstController = new AbortController();
+  const firstRun = startSummarizerAgent({
+    stopSignal: firstController.signal,
+    groupId,
+    start: 'latest',
+  });
+  await sleep(750);
+
+  const firstContent = `First resumable summary payload ${Date.now()} with enough text to trigger the summarizer.`;
+  const firstExpected = buildSummary(firstContent);
+
+  let secondController: AbortController | null = null;
+  let secondRun: Promise<void> | null = null;
+
+  try {
+    await client.query('INSERT INTO blog.blogs (content, summary) VALUES ($1, $2)', [firstContent, null]);
+    assert.equal(await waitForSummary(client, firstContent), firstExpected);
+
+    const firstAckedOffset = await waitForStableCommittedOffset(client, groupId);
+    assert.ok(firstAckedOffset >= 0, 'expected the first run to commit an offset');
+
+    firstController.abort();
+    await Promise.race([firstRun, sleep(3_000)]);
+
+    const replayRows = await client.queryAll(
+      `CONSUME FROM blog.summarizer GROUP '${groupId}' FROM EARLIEST LIMIT 10`,
+    );
+    assert.equal(
+      replayRows.length,
+      0,
+      'completed summarizer work should not remain replayable for the same group',
+    );
+
+    secondController = new AbortController();
+    secondRun = startSummarizerAgent({
+      stopSignal: secondController.signal,
+      groupId,
+      start: 'earliest',
+    });
+    await sleep(750);
+
+    const secondContent = `Second resumable summary payload ${Date.now()} proves the group continues from its committed offset.`;
+    const secondExpected = buildSummary(secondContent);
+
+    await client.query('INSERT INTO blog.blogs (content, summary) VALUES ($1, $2)', [secondContent, null]);
+    assert.equal(await waitForSummary(client, secondContent), secondExpected);
+
+    const secondAckedOffset = await waitForCommittedOffset(client, groupId, firstAckedOffset + 1);
+    assert.ok(
+      secondAckedOffset > firstAckedOffset,
+      'restarted agent should advance the same consumer-group offset',
+    );
+  } finally {
+    firstController.abort();
+    if (secondController) {
+      secondController.abort();
+    }
+    await Promise.race([firstRun, sleep(3_000)]);
+    if (secondRun) {
+      await Promise.race([secondRun, sleep(3_000)]);
+    }
     await client.disconnect();
   }
 });
