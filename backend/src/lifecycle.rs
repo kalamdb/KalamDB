@@ -7,6 +7,7 @@
 use std::{
     future::Future,
     net::{SocketAddr, TcpListener},
+    pin::Pin,
     sync::Arc,
 };
 
@@ -81,26 +82,34 @@ where
     }
 }
 
-async fn wait_for_shutdown_signal() -> std::io::Result<ShutdownSignal> {
+type ShutdownSignalFuture = Pin<Box<dyn Future<Output = std::io::Result<ShutdownSignal>> + Send>>;
+
+fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
 
+        let ctrl_c = tokio::signal::ctrl_c();
         let mut sigterm = signal(SignalKind::terminate())?;
-        select_shutdown_signal(tokio::signal::ctrl_c(), async move {
-            sigterm.recv().await;
-            Ok(())
-        })
-        .await
+        Ok(Box::pin(async move {
+            select_shutdown_signal(ctrl_c, async move {
+                sigterm.recv().await.ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "sigterm listener unexpectedly closed",
+                    )
+                })
+            })
+            .await
+        }))
     }
 
     #[cfg(not(unix))]
     {
-        select_shutdown_signal(
-            tokio::signal::ctrl_c(),
-            std::future::pending::<std::io::Result<()>>(),
-        )
-        .await
+        let ctrl_c = tokio::signal::ctrl_c();
+        Ok(Box::pin(async move {
+            select_shutdown_signal(ctrl_c, std::future::pending::<std::io::Result<()>>()).await
+        }))
     }
 }
 
@@ -540,6 +549,7 @@ pub async fn run(
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
     let connection_registry_shutdown = components.connection_registry.clone();
+    let shutdown_signal = shutdown_signal_listener();
 
     let http_runtime = HttpRuntimeState::new(
         config,
@@ -654,7 +664,12 @@ pub async fn run(
                 log::error!("Server task failed: {}", e);
             }
         }
-        signal = wait_for_shutdown_signal() => {
+        signal = async {
+            match shutdown_signal {
+                Ok(shutdown_signal) => shutdown_signal.await,
+                Err(error) => Err(error),
+            }
+        } => {
             match signal {
                 Ok(ShutdownSignal::CtrlC) => {
                     info!("Received Ctrl+C, initiating graceful shutdown...");

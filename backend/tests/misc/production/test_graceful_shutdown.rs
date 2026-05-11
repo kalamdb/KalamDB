@@ -36,6 +36,18 @@ impl Drop for ChildGuard {
 
         if matches!(child.try_wait(), Ok(None)) {
             unsafe {
+                libc::kill(child.id() as i32, libc::SIGTERM);
+            }
+            for _ in 0..10 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+
+            // Force-kill only as a last-resort cleanup if the test fails or times out while
+            // the child is still running. This keeps leaked test servers from hanging the suite.
+            unsafe {
                 libc::kill(child.id() as i32, libc::SIGKILL);
             }
             let _ = child.wait();
@@ -146,6 +158,8 @@ fn kalamdb_server_gracefully_shuts_down_on_sigterm() -> Result<(), Box<dyn std::
     let temp_dir = tempfile::tempdir()?;
     let port = reserve_local_port()?;
     let config_path = write_config_file(temp_dir.path(), port)?;
+    // `write_config_file` keeps the default compact logging format, so the server writes to
+    // `<logs_path>/server.log`.
     let log_path = temp_dir.path().join("logs").join("server.log");
 
     let child = Command::new(env!("CARGO_BIN_EXE_kalamdb-server"))
