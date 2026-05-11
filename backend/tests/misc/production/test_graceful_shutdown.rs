@@ -103,12 +103,12 @@ fn wait_for_healthcheck(port: u16, timeout: Duration) -> std::io::Result<()> {
                 if response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200") {
                     return Ok(());
                 }
-            }
+            },
             Err(error) if Instant::now() < deadline => {
                 if error.kind() != std::io::ErrorKind::ConnectionRefused {
                     return Err(error);
                 }
-            }
+            },
             Err(error) => return Err(error),
         }
 
