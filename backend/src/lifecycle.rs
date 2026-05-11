@@ -96,7 +96,7 @@ fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
                 sigterm.recv().await.ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
-                        "sigterm listener unexpectedly closed",
+                        "SIGTERM signal stream closed unexpectedly",
                     )
                 })
             })

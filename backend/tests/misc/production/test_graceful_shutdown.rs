@@ -47,6 +47,10 @@ impl Drop for ChildGuard {
 
             // Force-kill only as a last-resort cleanup if the test fails or times out while
             // the child is still running. This keeps leaked test servers from hanging the suite.
+            eprintln!(
+                "KalamDB test process {} did not exit after SIGTERM cleanup; sending SIGKILL",
+                child.id()
+            );
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGKILL);
             }
