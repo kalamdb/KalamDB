@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS todos (
 Re-run setup:
 
 ```bash
-./setup.sh
+npm run setup
 ```
 
 Update types in `src/types/todo.ts`:

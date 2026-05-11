@@ -101,6 +101,7 @@ async fn run() -> Result<()> {
             let topic = cli.topic.ok_or_else(|| {
                 CLIError::ConfigurationError("--topic is required for consume mode".into())
             })?;
+            session.print_execution_target_banner();
             session
                 .cmd_consume(
                     &topic,
@@ -117,11 +118,13 @@ async fn run() -> Result<()> {
             let sql = std::fs::read_to_string(&file).map_err(|e| {
                 CLIError::FileError(format!("Failed to read {}: {}", file.display(), e))
             })?;
+            session.print_execution_target_banner();
             session.execute_batch(&sql).await?;
         },
 
         // Execute single command
         (None, Some(command), false) => {
+            session.print_execution_target_banner();
             session.execute_input(&command).await?;
         },
 

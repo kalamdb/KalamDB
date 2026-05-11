@@ -370,6 +370,17 @@ export async function runConsumer<
     timeout_seconds: options.timeoutSeconds ?? 30,
     auto_ack: false,
   };
+  let pendingConnectionRestoreAttempt: number | null = null;
+
+  const notifyConnectionRestored = () => {
+    if (pendingConnectionRestoreAttempt === null) {
+      return;
+    }
+
+    const attempt = pendingConnectionRestoreAttempt;
+    pendingConnectionRestoreAttempt = null;
+    options.onConnectionRestored?.({ attempt });
+  };
 
   const runOnce = async (): Promise<void> => {
     const consumer = options.client.consumer<TPayload>(consumerOptions);
@@ -378,6 +389,7 @@ export async function runConsumer<
 
     try {
       await consumer.run(async (consumeCtx) => {
+        notifyConnectionRestored();
         const data = changeParser(consumeCtx.message);
         if (!data) {
           await consumeCtx.ack();
@@ -402,7 +414,9 @@ export async function runConsumer<
         };
 
         let lastError: unknown;
+        let lastAttempt = 0;
         for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt += 1) {
+          lastAttempt = attempt;
           const ctx: ConsumerRunContext<TData, TPayload> = {
             name: options.name,
             runKey,
@@ -460,7 +474,7 @@ export async function runConsumer<
         const failedCtx: ConsumerFailureContext<TData, TPayload> = {
           name: options.name,
           runKey,
-          attempt: retryPolicy.maxAttempts,
+          attempt: lastAttempt,
           maxAttempts: retryPolicy.maxAttempts,
           systemPrompt: options.systemPrompt,
           llm: createLLMContext(options.llm, options.systemPrompt, runKey, change.data),
@@ -494,6 +508,10 @@ export async function runConsumer<
             });
           }
         }
+      }, {
+        onBatchSuccess: () => {
+          notifyConnectionRestored();
+        },
       });
     } finally {
       options.stopSignal?.removeEventListener('abort', abortHandler);
@@ -518,10 +536,12 @@ export async function runConsumer<
         && connectionRetryPolicy.shouldRetry(error, connectionAttempt);
 
       if (!shouldRetry) {
+        pendingConnectionRestoreAttempt = null;
         options.onConnectionError?.({ error, attempt: connectionAttempt });
         throw error;
       }
 
+      pendingConnectionRestoreAttempt = connectionAttempt;
       const backoffMs = backoffMsForAttempt(connectionAttempt + 1, connectionRetryPolicy);
       options.onConnectionRetry?.({
         error,

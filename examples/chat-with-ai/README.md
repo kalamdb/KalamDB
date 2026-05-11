@@ -115,7 +115,7 @@ You should see your user row, live agent progress, and then a final `AI reply:` 
 - [src/schema.generated.ts](src/schema.generated.ts): generated `kTable()` definitions with `_seq`, table-kind metadata, config exports, and inferred row types
 - [src/agent.ts](src/agent.ts): topic consumer and deterministic reply worker
 - [chat-app.sql](chat-app.sql): USER table, STREAM table, and namespace setup
-- [setup.sh](setup.sh): idempotent local bootstrap script
+- [setup.mjs](setup.mjs): cross-platform local bootstrap script using the `kalam` CLI
 - [tests/chat.spec.mjs](tests/chat.spec.mjs): browser end-to-end test
 
 ## Credentials

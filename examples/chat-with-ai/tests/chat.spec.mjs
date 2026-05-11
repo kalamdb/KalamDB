@@ -324,7 +324,7 @@ async function waitForOutput(process, expected) {
 }
 
 test.beforeAll(async () => {
-  execFileSync('./setup.sh', [], {
+  execFileSync(process.execPath, ['setup.mjs'], {
     cwd: exampleRoot,
     stdio: 'inherit',
     env: {
@@ -346,7 +346,7 @@ test.beforeAll(async () => {
     },
   });
 
-  await waitForOutput(agentProcess, 'chat-demo-agent ready');
+    await waitForOutput(agentProcess, '[chat-demo-agent] starting');
 });
 
 test.afterAll(() => {

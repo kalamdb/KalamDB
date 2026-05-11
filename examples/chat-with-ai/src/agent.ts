@@ -1,4 +1,5 @@
 import { config as loadEnv } from 'dotenv';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
 import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
@@ -12,8 +13,9 @@ import {
   type ChatDemoMessages as ChatMessageRow,
 } from './schema.generated.js';
 
-loadEnv({ path: '.env.local', quiet: true });
-loadEnv({ quiet: true });
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: resolve(__dirname, '../.env.local'), quiet: true });
+loadEnv({ path: resolve(__dirname, '../.env'), quiet: true });
 
 const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
 const KALAMDB_USER = process.env.KALAMDB_USER ?? 'admin';
@@ -108,9 +110,12 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     );
   };
 
-  console.log(`chat-demo-agent ready (user=${KALAMDB_USER}, mode=topic-consumer via runConsumer)`);
-  console.log(`  topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
-  console.log(`  messages=${chatMessagesConfig.tableType} events=${agentEventsConfig.tableType} seq=${canReadMessageSeq ? 'enabled' : 'disabled'}`);
+  console.log(`[chat-demo-agent] starting (url=${KALAMDB_URL}, user=${KALAMDB_USER}, mode=topic-consumer)`);
+  console.log(`[chat-demo-agent] topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
+  console.log(`[chat-demo-agent] messages=${chatMessagesConfig.tableType} events=${agentEventsConfig.tableType} seq=${canReadMessageSeq ? 'enabled' : 'disabled'}`);
+  console.log(`[chat-demo-agent] connecting to KalamDB at ${KALAMDB_URL} ...`);
+
+  let awaitingReconnect = false;
 
   await runConsumer<ChatMessageRow>({
     client,
@@ -156,11 +161,30 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     },
 
     onError: ({ error, runKey }) => {
-      console.error(`[agent] error processing ${runKey}:`, error);
+      console.error(`[chat-demo-agent] error processing ${runKey}:`, error);
     },
 
     onRetry: ({ attempt, maxAttempts, backoffMs, runKey }) => {
-      console.warn(`[agent] retrying ${runKey} (attempt ${attempt}/${maxAttempts}, backoff ${backoffMs}ms)`);
+      console.warn(`[chat-demo-agent] retrying ${runKey} (attempt ${attempt}/${maxAttempts}, backoff ${backoffMs}ms)`);
+    },
+
+    onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
+      if (!awaitingReconnect) {
+        console.warn(`[chat-demo-agent] cannot reach KalamDB at ${KALAMDB_URL}: ${error instanceof Error ? error.message : String(error)}`);
+        awaitingReconnect = true;
+      }
+      const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;
+      console.warn(`[chat-demo-agent] reconnecting in ${backoffMs}ms (attempt ${attemptLabel})`);
+    },
+
+    onConnectionRestored: ({ attempt }) => {
+      console.log(`[chat-demo-agent] connected to KalamDB after ${attempt} reconnect ${attempt === 1 ? 'attempt' : 'attempts'}`);
+      awaitingReconnect = false;
+    },
+
+    onConnectionError: ({ error, attempt }) => {
+      console.error(`[chat-demo-agent] gave up reconnecting after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${error instanceof Error ? error.message : String(error)}`);
+      awaitingReconnect = false;
     },
   });
 }
