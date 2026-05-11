@@ -9,5 +9,8 @@ pub mod topic_message_models;
 pub mod topic_message_schema;
 pub mod topic_message_store;
 
-pub use topic_message_models::{TopicMessage, TopicMessageId};
-pub use topic_message_store::TopicMessageStore;
+pub use topic_message_models::{
+    TopicMessage, TopicMessageId, TopicRetentionDeletionStats, TopicRetentionIndexEntry,
+    TopicRetentionIndexKey,
+};
+pub use topic_message_store::{TopicMessageStore, TOPIC_RETENTION_INDEX_PARTITION_NAME};

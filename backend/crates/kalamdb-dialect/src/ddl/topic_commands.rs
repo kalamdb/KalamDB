@@ -4,10 +4,11 @@
 //! - CREATE TOPIC: Define a new pub/sub topic
 //! - DROP TOPIC: Remove a topic
 //! - ALTER TOPIC ADD SOURCE: Add a table route to a topic
+//! - ALTER TOPIC SET/CLEAR RETENTION: Configure topic retention limits
 //! - CONSUME FROM: Consume messages from a topic
 //! - RESET CONSUMER GROUP: Move a consumer group cursor to a specific next offset
 
-use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
+use kalamdb_commons::models::{PayloadMode, TableId, TopicId, TopicOp};
 
 use crate::{
     parser::utils::{extract_identifier, extract_keyword_value, normalize_sql},
@@ -18,12 +19,18 @@ use crate::{
 ///
 /// Syntax:
 /// ```sql
-/// CREATE TOPIC <topic_name> [PARTITIONS <count>];
+/// CREATE TOPIC <topic_name>
+/// [PARTITIONS <count>]
+/// [WITH (retention_seconds = <int|NULL>, retention_max_bytes = <int|NULL>)];
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTopicStatement {
     pub topic_name: String,
     pub partitions: Option<u32>,
+    /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
+    pub retention_seconds: Option<Option<i64>>,
+    /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
+    pub retention_max_bytes: Option<Option<i64>>,
 }
 
 /// DROP TOPIC statement
@@ -65,6 +72,33 @@ pub struct AddTopicSourceStatement {
     pub operation: TopicOp,
     pub filter_expr: Option<String>,
     pub payload_mode: PayloadMode,
+}
+
+/// ALTER TOPIC SET RETENTION statement
+///
+/// Syntax:
+/// ```sql
+/// ALTER TOPIC <topic_name>
+/// SET RETENTION WITH (retention_seconds = <int|NULL>, retention_max_bytes = <int|NULL>);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlterTopicRetentionStatement {
+    pub topic_name: String,
+    /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
+    pub retention_seconds: Option<Option<i64>>,
+    /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
+    pub retention_max_bytes: Option<Option<i64>>,
+}
+
+/// ALTER TOPIC CLEAR RETENTION statement
+///
+/// Syntax:
+/// ```sql
+/// ALTER TOPIC <topic_name> CLEAR RETENTION;
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClearTopicRetentionStatement {
+    pub topic_name: String,
 }
 
 /// CONSUME FROM statement
@@ -134,27 +168,31 @@ impl DdlAst for CreateTopicStatement {}
 impl DdlAst for DropTopicStatement {}
 impl DdlAst for ClearTopicStatement {}
 impl DdlAst for AddTopicSourceStatement {}
+impl DdlAst for AlterTopicRetentionStatement {}
+impl DdlAst for ClearTopicRetentionStatement {}
 impl DdlAst for ConsumeStatement {}
 impl DdlAst for AckStatement {}
 impl DdlAst for ResetConsumerGroupStatement {}
 
 /// Parse CREATE TOPIC statement
 ///
-/// Syntax: CREATE TOPIC <name> [PARTITIONS <count>]
+/// Syntax: CREATE TOPIC <name> [PARTITIONS <count>] [WITH (...)]
 pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
     let normalized = normalize_sql(sql);
-    let sql_upper = normalized.to_uppercase();
+    let (definition_sql, retention_seconds, retention_max_bytes) =
+        split_topic_definition_and_retention(&normalized)?;
+    let sql_upper = definition_sql.to_uppercase();
 
     if !sql_upper.starts_with("CREATE TOPIC") {
         return Err("Expected CREATE TOPIC".to_string());
     }
 
     // Extract topic name (3rd token: CREATE TOPIC <name>)
-    let topic_name = extract_identifier(&normalized, 2)?;
+    let topic_name = extract_identifier(&definition_sql, 2)?;
 
     // Optional: PARTITIONS <count>
     let partitions = if sql_upper.contains("PARTITIONS") {
-        let count_str = extract_keyword_value(&normalized, "PARTITIONS")?;
+        let count_str = extract_keyword_value(&definition_sql, "PARTITIONS")?;
         Some(
             count_str
                 .parse::<u32>()
@@ -167,6 +205,8 @@ pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
     Ok(CreateTopicStatement {
         topic_name,
         partitions,
+        retention_seconds,
+        retention_max_bytes,
     })
 }
 
@@ -202,8 +242,52 @@ pub fn parse_clear_topic(sql: &str) -> Result<ClearTopicStatement, String> {
     let topic_name = extract_identifier(&normalized, 2)?;
 
     Ok(ClearTopicStatement {
-        topic_id: kalamdb_commons::models::TopicId::new(topic_name),
+        topic_id: TopicId::new(topic_name),
     })
+}
+
+/// Parse ALTER TOPIC SET RETENTION statement
+///
+/// Syntax: ALTER TOPIC <name> SET RETENTION WITH (...)
+pub fn parse_alter_topic_set_retention(sql: &str) -> Result<AlterTopicRetentionStatement, String> {
+    let normalized = normalize_sql(sql);
+    let sql_upper = normalized.to_uppercase();
+
+    if !sql_upper.starts_with("ALTER TOPIC") {
+        return Err("Expected ALTER TOPIC".to_string());
+    }
+    if !sql_upper.contains(" SET RETENTION ") {
+        return Err("Expected SET RETENTION".to_string());
+    }
+
+    let topic_name = extract_identifier(&normalized, 2)?;
+    let (retention_seconds, retention_max_bytes) = parse_retention_options_from_sql(&normalized)?;
+
+    Ok(AlterTopicRetentionStatement {
+        topic_name,
+        retention_seconds,
+        retention_max_bytes,
+    })
+}
+
+/// Parse ALTER TOPIC CLEAR RETENTION statement
+///
+/// Syntax: ALTER TOPIC <name> CLEAR RETENTION
+pub fn parse_alter_topic_clear_retention(
+    sql: &str,
+) -> Result<ClearTopicRetentionStatement, String> {
+    let normalized = normalize_sql(sql);
+    let sql_upper = normalized.to_uppercase();
+
+    if !sql_upper.starts_with("ALTER TOPIC") {
+        return Err("Expected ALTER TOPIC".to_string());
+    }
+    if !sql_upper.contains(" CLEAR RETENTION") {
+        return Err("Expected CLEAR RETENTION".to_string());
+    }
+
+    let topic_name = extract_identifier(&normalized, 2)?;
+    Ok(ClearTopicRetentionStatement { topic_name })
 }
 
 /// Parse ALTER TOPIC ADD SOURCE statement
@@ -414,6 +498,87 @@ fn parse_topic_operation(op_str: &str) -> Result<TopicOp, String> {
     }
 }
 
+type ParsedRetentionOptions = (Option<Option<i64>>, Option<Option<i64>>);
+
+fn split_topic_definition_and_retention(
+    sql: &str,
+) -> Result<(String, Option<Option<i64>>, Option<Option<i64>>), String> {
+    let sql_upper = sql.to_uppercase();
+    if !sql_upper.contains(" WITH ") {
+        return Ok((sql.to_string(), None, None));
+    }
+
+    let with_pos = sql_upper.find(" WITH ").ok_or_else(|| "WITH clause not found".to_string())?;
+    let definition_sql = sql[..with_pos].trim().to_string();
+    let (retention_seconds, retention_max_bytes) = parse_retention_options_from_sql(sql)?;
+
+    Ok((definition_sql, retention_seconds, retention_max_bytes))
+}
+
+fn parse_retention_options_from_sql(sql: &str) -> Result<ParsedRetentionOptions, String> {
+    let sql_upper = sql.to_uppercase();
+    let with_pos = sql_upper.find(" WITH ").ok_or_else(|| "WITH clause not found".to_string())?;
+    let after_with = sql[with_pos + 6..].trim();
+    let inner = after_with
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .ok_or_else(|| "WITH clause must be parenthesized".to_string())?;
+
+    let mut retention_seconds = None;
+    let mut retention_max_bytes = None;
+
+    for option in inner.split(',') {
+        let option = option.trim();
+        if option.is_empty() {
+            continue;
+        }
+
+        let (key, value) = option
+            .split_once('=')
+            .ok_or_else(|| "Expected key = value in WITH clause".to_string())?;
+        let key = key.trim().to_ascii_lowercase();
+        let value = parse_nullable_i64(value.trim())?;
+
+        match key.as_str() {
+            "retention_seconds" => {
+                if retention_seconds.is_some() {
+                    return Err("Duplicate retention_seconds option".to_string());
+                }
+                retention_seconds = Some(value);
+            },
+            "retention_max_bytes" => {
+                if retention_max_bytes.is_some() {
+                    return Err("Duplicate retention_max_bytes option".to_string());
+                }
+                retention_max_bytes = Some(value);
+            },
+            _ => return Err(format!("Unknown topic retention option '{}'", key)),
+        }
+    }
+
+    if retention_seconds.is_none() && retention_max_bytes.is_none() {
+        return Err("WITH clause must include retention_seconds or retention_max_bytes".to_string());
+    }
+
+    Ok((retention_seconds, retention_max_bytes))
+}
+
+fn parse_nullable_i64(value: &str) -> Result<Option<i64>, String> {
+    let trimmed = value.trim_matches(|c| c == '\'' || c == '"').trim_end_matches(';');
+    if trimmed.eq_ignore_ascii_case("NULL") {
+        return Ok(None);
+    }
+
+    let parsed = trimmed
+        .parse::<i64>()
+        .map_err(|_| format!("Invalid retention value '{}'. Expected integer or NULL", value))?;
+    if parsed < 0 {
+        return Err("Retention values must be non-negative integers or NULL".to_string());
+    }
+
+    Ok(Some(parsed))
+}
+
 fn extract_where_clause(sql: &str) -> Result<String, String> {
     let sql_upper = sql.to_uppercase();
     let where_pos =
@@ -603,6 +768,41 @@ mod tests {
         let stmt = parse_create_topic("CREATE TOPIC app.events PARTITIONS 4").unwrap();
         assert_eq!(stmt.topic_name, "app.events");
         assert_eq!(stmt.partitions, Some(4));
+    }
+
+    #[test]
+    fn test_parse_create_topic_with_retention() {
+        let stmt = parse_create_topic(
+            "CREATE TOPIC app.events PARTITIONS 4 WITH \
+             (retention_seconds = 3600, retention_max_bytes = NULL)",
+        )
+        .unwrap();
+
+        assert_eq!(stmt.topic_name, "app.events");
+        assert_eq!(stmt.partitions, Some(4));
+        assert_eq!(stmt.retention_seconds, Some(Some(3600)));
+        assert_eq!(stmt.retention_max_bytes, Some(None));
+    }
+
+    #[test]
+    fn test_parse_alter_topic_set_retention() {
+        let stmt = parse_alter_topic_set_retention(
+            "ALTER TOPIC app.events SET RETENTION WITH \
+             (retention_seconds = NULL, retention_max_bytes = 1048576)",
+        )
+        .unwrap();
+
+        assert_eq!(stmt.topic_name, "app.events");
+        assert_eq!(stmt.retention_seconds, Some(None));
+        assert_eq!(stmt.retention_max_bytes, Some(Some(1048576)));
+    }
+
+    #[test]
+    fn test_parse_alter_topic_clear_retention() {
+        let stmt =
+            parse_alter_topic_clear_retention("ALTER TOPIC app.events CLEAR RETENTION").unwrap();
+
+        assert_eq!(stmt.topic_name, "app.events");
     }
 
     #[test]

@@ -694,12 +694,35 @@ pub struct TopicSettings {
     /// the claimed range is released for re-delivery. Default: 60.
     #[serde(default = "default_topic_visibility_timeout_secs")]
     pub visibility_timeout_secs: u64,
+
+    /// Default topic time retention in seconds. Applied when CREATE TOPIC omits
+    /// retention_seconds. SQL NULL disables the limit per topic.
+    #[serde(default = "default_topic_retention_seconds")]
+    pub default_retention_seconds: i64,
+
+    /// Default topic byte retention per partition. Applied when CREATE TOPIC omits
+    /// retention_max_bytes. SQL NULL disables the limit per topic.
+    #[serde(default = "default_topic_retention_max_bytes")]
+    pub default_retention_max_bytes: i64,
+
+    /// How often the topic retention scheduler checks for eligible topics.
+    /// A value of 0 disables automatic scheduling.
+    #[serde(default = "default_topic_retention_check_interval_seconds")]
+    pub retention_check_interval_seconds: u64,
+
+    /// Maximum messages a single topic retention job deletes per partition.
+    #[serde(default = "default_topic_retention_batch_size")]
+    pub retention_batch_size: usize,
 }
 
 impl Default for TopicSettings {
     fn default() -> Self {
         Self {
             visibility_timeout_secs: default_topic_visibility_timeout_secs(),
+            default_retention_seconds: default_topic_retention_seconds(),
+            default_retention_max_bytes: default_topic_retention_max_bytes(),
+            retention_check_interval_seconds: default_topic_retention_check_interval_seconds(),
+            retention_batch_size: default_topic_retention_batch_size(),
         }
     }
 }

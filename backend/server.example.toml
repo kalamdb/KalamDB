@@ -611,6 +611,21 @@ sql_plan_cache_ttl_seconds = 900
 # exercise redelivery promptly without inflating test timeouts.
 visibility_timeout_secs = 10
 
+# Default topic time retention in seconds (default: 604800 = 7 days).
+# Individual topics can override this with CREATE/ALTER TOPIC retention options.
+default_retention_seconds = 604800
+
+# Default topic byte retention per partition (default: 1073741824 = 1 GiB).
+# Individual topics can set this to NULL to disable byte retention.
+default_retention_max_bytes = 1073741824
+
+# Topic retention scheduler interval in seconds (default: 3600 = 1 hour).
+# Set to 0 to disable automatic topic retention scheduling.
+retention_check_interval_seconds = 3600
+
+# Maximum messages a topic retention job deletes per partition in one run.
+retention_batch_size = 10000
+
 # ============================================================================
 # RPC TLS / mTLS Configuration
 # ============================================================================

@@ -523,6 +523,22 @@ impl ConnectionsManager {
             self.unregister_connection(&conn_id);
         }
 
+        if timeout.is_zero() {
+            let remaining = self.total_connections.load(Ordering::Acquire);
+            if remaining > 0 {
+                warn!("Force closing {} connections without graceful wait", remaining);
+                self.connections.clear();
+                self.user_table_subscriptions.clear();
+                self.shared_table_subscriptions.clear();
+                self.total_connections.store(0, Ordering::Release);
+                self.total_subscriptions.store(0, Ordering::Release);
+            }
+
+            self.shutdown_token.cancel();
+            info!("WebSocket shutdown complete");
+            return;
+        }
+
         // Wait for connections to close with timeout
         let deadline = Instant::now() + timeout;
         while self.total_connections.load(Ordering::Acquire) > 0 && Instant::now() < deadline {
@@ -947,6 +963,32 @@ mod tests {
             0,
             "connection should be force-unregistered when event channel is full"
         );
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_zero_timeout_force_closes_connections() {
+        let registry = ConnectionsManager::new(
+            NodeId::new(1),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        );
+
+        let conn_id = ConnectionId::new("shutdown_now");
+        let reg = registry
+            .register_connection(conn_id, ConnectionInfo::new(None))
+            .expect("should register");
+
+        reg.state.mark_auth_started();
+        reg.state
+            .mark_authenticated(UserId::new("shutdown-user"), kalamdb_commons::Role::User);
+
+        assert_eq!(registry.connection_count(), 1);
+
+        registry.shutdown(Duration::ZERO).await;
+
+        assert_eq!(registry.connection_count(), 0);
+        assert!(registry.is_shutting_down());
     }
 
     // ==================== Shared Table Subscription Tests ====================

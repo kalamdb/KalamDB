@@ -3973,6 +3973,7 @@ dependencies = [
  "kalam-pg-fdw",
  "kalamdb-commons",
  "kalamdb-pg",
+ "libc",
  "ntest",
  "pgrx",
  "pgrx-bench",

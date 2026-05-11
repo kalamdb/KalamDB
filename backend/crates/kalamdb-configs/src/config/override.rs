@@ -49,6 +49,11 @@ impl ServerConfig {
     ///   rate_limit.max_auth_requests_per_ip_per_sec
     /// - KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS: Override topics.visibility_timeout_secs
     ///   (alias: KALAMDB_VISIBILITY_TIMEOUT_SECS)
+    /// - KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS: Override topics.default_retention_seconds
+    /// - KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES: Override topics.default_retention_max_bytes
+    /// - KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS: Override
+    ///   topics.retention_check_interval_seconds
+    /// - KALAMDB_TOPIC_RETENTION_BATCH_SIZE: Override topics.retention_batch_size
     /// - KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS: Override websocket.client_timeout_secs
     /// - KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS: Override websocket.auth_timeout_secs
     /// - KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS: Override websocket.heartbeat_interval_secs
@@ -94,6 +99,33 @@ impl ServerConfig {
         if let Ok(val) = topic_visibility_timeout {
             self.topics.visibility_timeout_secs = val.parse().map_err(|_| {
                 anyhow::anyhow!("Invalid KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS value: {}", val)
+            })?;
+        }
+
+        if let Ok(val) = env::var("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS") {
+            self.topics.default_retention_seconds = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS value: {}", val)
+            })?;
+        }
+
+        if let Ok(val) = env::var("KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES") {
+            self.topics.default_retention_max_bytes = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES value: {}", val)
+            })?;
+        }
+
+        if let Ok(val) = env::var("KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS") {
+            self.topics.retention_check_interval_seconds = val.parse().map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS value: {}",
+                    val
+                )
+            })?;
+        }
+
+        if let Ok(val) = env::var("KALAMDB_TOPIC_RETENTION_BATCH_SIZE") {
+            self.topics.retention_batch_size = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_TOPIC_RETENTION_BATCH_SIZE value: {}", val)
             })?;
         }
 
@@ -451,6 +483,28 @@ mod tests {
         assert_eq!(config.topics.visibility_timeout_secs, 5);
 
         env::remove_var("KALAMDB_VISIBILITY_TIMEOUT_SECS");
+    }
+
+    #[test]
+    fn test_env_override_topic_retention_settings() {
+        let _guard = acquire_env_lock();
+        env::set_var("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS", "120");
+        env::set_var("KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES", "2048");
+        env::set_var("KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS", "30");
+        env::set_var("KALAMDB_TOPIC_RETENTION_BATCH_SIZE", "50");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.topics.default_retention_seconds, 120);
+        assert_eq!(config.topics.default_retention_max_bytes, 2048);
+        assert_eq!(config.topics.retention_check_interval_seconds, 30);
+        assert_eq!(config.topics.retention_batch_size, 50);
+
+        env::remove_var("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS");
+        env::remove_var("KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES");
+        env::remove_var("KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS");
+        env::remove_var("KALAMDB_TOPIC_RETENTION_BATCH_SIZE");
     }
 
     #[test]

@@ -205,6 +205,22 @@ pub fn default_topic_visibility_timeout_secs() -> u64 {
     60 // 60 seconds
 }
 
+pub fn default_topic_retention_seconds() -> i64 {
+    604800 // 7 days
+}
+
+pub fn default_topic_retention_max_bytes() -> i64 {
+    1_073_741_824 // 1 GiB per partition
+}
+
+pub fn default_topic_retention_check_interval_seconds() -> u64 {
+    3600 // 1 hour
+}
+
+pub fn default_topic_retention_batch_size() -> usize {
+    10000
+}
+
 pub fn default_user_deletion_grace_period() -> i64 {
     30 // 30 days
 }

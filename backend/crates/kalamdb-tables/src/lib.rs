@@ -70,8 +70,11 @@ pub use stream_tables::stream_table_store::{
     new_stream_table_store, StreamTableStorageMode, StreamTableStore, StreamTableStoreConfig,
 };
 pub use topics::{
-    topic_message_models::{TopicMessage, TopicMessageId},
-    topic_message_store::TopicMessageStore,
+    topic_message_models::{
+        TopicMessage, TopicMessageId, TopicRetentionDeletionStats, TopicRetentionIndexEntry,
+        TopicRetentionIndexKey,
+    },
+    topic_message_store::{TopicMessageStore, TOPIC_RETENTION_INDEX_PARTITION_NAME},
 };
 pub use user_tables::{
     pk_index::{create_user_table_pk_index, UserTablePkIndex},

@@ -571,10 +571,25 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                Self::wrap(sql, || {
-                    crate::ddl::topic_commands::parse_alter_topic_add_source(sql)
-                        .map(SqlStatementKind::AddTopicSource)
-                })
+                if word_refs.get(2) == Some(&"SET") && word_refs.get(3) == Some(&"RETENTION")
+                {
+                    Self::wrap(sql, || {
+                        crate::ddl::topic_commands::parse_alter_topic_set_retention(sql)
+                            .map(SqlStatementKind::AlterTopicRetention)
+                    })
+                } else if word_refs.get(2) == Some(&"CLEAR")
+                    && word_refs.get(3) == Some(&"RETENTION")
+                {
+                    Self::wrap(sql, || {
+                        crate::ddl::topic_commands::parse_alter_topic_clear_retention(sql)
+                            .map(SqlStatementKind::ClearTopicRetention)
+                    })
+                } else {
+                    Self::wrap(sql, || {
+                        crate::ddl::topic_commands::parse_alter_topic_add_source(sql)
+                            .map(SqlStatementKind::AddTopicSource)
+                    })
+                }
             },
             ["CONSUME", "FROM", ..] | ["CONSUME", ..] => {
                 // All authenticated users can consume from topics
@@ -856,6 +871,8 @@ impl SqlStatement {
             | SqlStatementKind::DropTopic(_)
             | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_)
+            | SqlStatementKind::AlterTopicRetention(_)
+            | SqlStatementKind::ClearTopicRetention(_)
             | SqlStatementKind::ResetConsumerGroup(_) => {
                 Err("Admin privileges (DBA or System role) \
                                                           required for topic management"

@@ -688,16 +688,15 @@ pub async fn run(
                 }
             }
 
-            // Gracefully shutdown WebSocket connections BEFORE stopping HTTP server.
-            // Actix-Web's stop(true) blocks for up to shutdown_timeout (default 30s) waiting
-            // for connections to drain, which includes WebSocket connections. By closing them
-            // first we let Actix-Web drain immediately.
+            // Force-close WebSocket connections BEFORE stopping HTTP server.
+            // Live clients can resume, so do not spend shutdown time draining socket close
+            // handshakes here.
             info!("Shutting down WebSocket connections...");
-            connection_registry_shutdown.shutdown(std::time::Duration::from_secs(5)).await;
+            connection_registry_shutdown.shutdown(std::time::Duration::ZERO).await;
 
-            // Stop accepting new HTTP connections (WebSocket connections already closed,
-            // so this completes almost immediately).
-            server_handle.stop(true).await;
+            // Stop the HTTP server immediately. On process shutdown we prefer a fast exit over
+            // graceful socket draining because live clients can reconnect and resume.
+            server_handle.stop(false).await;
 
             info!(
                 "Waiting up to {}s for active jobs to complete...",

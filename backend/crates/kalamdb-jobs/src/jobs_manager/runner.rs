@@ -18,7 +18,7 @@ use tracing::Instrument;
 use super::{types::JobsManager, utils::log_job};
 use crate::{
     executors::JobDecision, AppContextJobsExt, FlushScheduler, HealthMonitor,
-    StreamEvictionScheduler,
+    StreamEvictionScheduler, TopicRetentionScheduler,
 };
 
 const JOB_NODE_QUORUM_POLL_MS: u64 = 250;
@@ -240,6 +240,20 @@ impl JobsManager {
         };
         let stream_eviction_enabled = stream_eviction_interval.is_some();
 
+        // Topic retention scheduler interval (configurable, default 1 hour)
+        let topic_retention_secs = app_context.config().topics.retention_check_interval_seconds;
+        let mut topic_retention_interval = if topic_retention_secs > 0 {
+            let mut interval = tokio::time::interval_at(
+                Instant::now() + Duration::from_secs(topic_retention_secs),
+                Duration::from_secs(topic_retention_secs),
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            Some(interval)
+        } else {
+            None
+        };
+        let topic_retention_enabled = topic_retention_interval.is_some();
+
         // Flush scheduler interval (configurable, default 60 seconds)
         let flush_check_secs = app_context.config().flush.check_interval_seconds;
         let mut flush_check_interval = if flush_check_secs > 0 {
@@ -400,6 +414,23 @@ impl JobsManager {
                             let app_ctx = self.get_attached_app_context();
                             if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
                                 log::warn!("Failed to check stream eviction: {}", e);
+                            }
+                        }
+                        continue;
+                    }
+                    // Periodic topic retention job creation (leader-only)
+                    _ = async {
+                        if topic_retention_enabled {
+                            let interval = topic_retention_interval
+                                .as_mut()
+                                .expect("topic retention interval missing");
+                            interval.tick().await;
+                        }
+                    }, if topic_retention_enabled => {
+                        if is_leader {
+                            let app_ctx = self.get_attached_app_context();
+                            if let Err(e) = TopicRetentionScheduler::check_and_schedule(&app_ctx, self).await {
+                                log::warn!("Failed to check topic retention: {}", e);
                             }
                         }
                         continue;

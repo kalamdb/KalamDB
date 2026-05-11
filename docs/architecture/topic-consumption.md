@@ -13,10 +13,57 @@ the HTTP topic consume/ack endpoints or SQL stream handlers.
   checks.
 - Matching row changes are serialized once per route and written to
   `TopicMessageStore`.
+- Each publish writes two records in one storage batch: the primary
+  offset-keyed message in `topic_messages`, and a retention index entry in
+  `topic_retention_index` keyed by
+  `(topic_id, partition_id, timestamp_ms, offset)`.
 - Per-topic-partition write locks serialize offset allocation and message writes
   so persisted offsets remain gap-free and ordered within a partition.
 - Batch publishing groups rows by partition and writes each group through one
   storage batch.
+
+## Retention
+
+Topic retention is a topic-level limits policy, independent of consumer group
+ack state. The source of truth is `system.topics`:
+
+- `retention_seconds = NULL` disables age retention.
+- `retention_max_bytes = NULL` disables byte retention.
+- `retention_max_bytes` is enforced per partition.
+- Omitted `CREATE TOPIC` retention values use `[topics]` config defaults.
+
+The default configuration is Kafka/RabbitMQ-style retention: 7 days and 1 GiB
+per partition.
+
+```toml
+[topics]
+default_retention_seconds = 604800
+default_retention_max_bytes = 1073741824
+retention_check_interval_seconds = 3600
+retention_batch_size = 10000
+```
+
+Retention deletes the oldest retained messages by age first, then by byte cap.
+It never rewrites offsets and never resets consumer group offsets. The latest
+offset remains monotonic because offset allocation is independent from retained
+message storage.
+
+`FROM EARLIEST` and HTTP `start = "Earliest"` start at the earliest currently
+available offset after retention. Explicit offsets below that low watermark, or
+a consumer group committed below it, fail with an `OffsetOutOfRange`-style error
+that includes the earliest available offset and the latest next offset.
+Operators recover lagged groups with `RESET CONSUMER GROUP ... TO <offset>`.
+
+On startup, the topic restore pass reloads persisted topics into
+`TopicPublisherService`, rebuilds retention index entries from the primary
+message log, restores offset counters from the highest retained offset, and
+recomputes per-partition retained-byte counters.
+
+The `TopicRetentionScheduler` runs from the job loop on the leader. It scans
+`system.topics`, creates at most one idempotent `TopicRetention` job per topic
+per hour using `TR:<topic_id>:<yyyy-mm-dd-HH>`, and skips topics with both
+retention limits disabled. The executor loads current topic metadata before
+deleting so policy changes take effect without rewriting queued job parameters.
 
 ## Consumer Group Claims
 
@@ -72,6 +119,10 @@ The visibility timeout can be configured in `server.toml`:
 ```toml
 [topics]
 visibility_timeout_secs = 10
+default_retention_seconds = 604800
+default_retention_max_bytes = 1073741824
+retention_check_interval_seconds = 3600
+retention_batch_size = 10000
 ```
 
 It can also be overridden with `KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS`.

@@ -495,12 +495,38 @@ impl VirtualView for SettingsView {
                 values,
                 descriptions,
                 categories,
-                [(
-                    "topics.visibility_timeout_secs",
-                    config.topics.visibility_timeout_secs,
-                    "Visibility timeout for pending consumer claims (seconds)",
-                    "topics"
-                ),]
+                [
+                    (
+                        "topics.visibility_timeout_secs",
+                        config.topics.visibility_timeout_secs,
+                        "Visibility timeout for pending consumer claims (seconds)",
+                        "topics"
+                    ),
+                    (
+                        "topics.default_retention_seconds",
+                        config.topics.default_retention_seconds,
+                        "Default topic retention age (seconds)",
+                        "topics"
+                    ),
+                    (
+                        "topics.default_retention_max_bytes",
+                        config.topics.default_retention_max_bytes,
+                        "Default topic retention size per partition (bytes)",
+                        "topics"
+                    ),
+                    (
+                        "topics.retention_check_interval_seconds",
+                        config.topics.retention_check_interval_seconds,
+                        "Topic retention scheduler interval (seconds)",
+                        "topics"
+                    ),
+                    (
+                        "topics.retention_batch_size",
+                        config.topics.retention_batch_size,
+                        "Topic retention job batch size",
+                        "topics"
+                    ),
+                ]
             );
 
             // WebSocket Settings
@@ -786,14 +812,23 @@ mod tests {
 
         let topic_timeout_row =
             (0..batch.num_rows()).find(|idx| names.value(*idx) == "topics.visibility_timeout_secs");
+        let topic_retention_row = (0..batch.num_rows())
+            .find(|idx| names.value(*idx) == "topics.default_retention_seconds");
 
         let Some(topic_timeout_row) = topic_timeout_row else {
             panic!("system.settings should expose topics.visibility_timeout_secs");
+        };
+        let Some(topic_retention_row) = topic_retention_row else {
+            panic!("system.settings should expose topics.default_retention_seconds");
         };
 
         assert_eq!(
             values.value(topic_timeout_row),
             ServerConfig::default().topics.visibility_timeout_secs.to_string()
+        );
+        assert_eq!(
+            values.value(topic_retention_row),
+            ServerConfig::default().topics.default_retention_seconds.to_string()
         );
     }
 }
