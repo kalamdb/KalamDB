@@ -34,7 +34,10 @@
   "scripts": {
     "clean": "node -e \"const fs=require('fs');try{fs.rmSync('dist',{recursive:true,force:true})}catch{}\"",
     "build": "npm run clean && tsc",
-    "test": "npm run build && vitest run --environment jsdom",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "npm run build && npm run typecheck && vitest run --environment jsdom",
+    "test:e2e": "npm --prefix tests/e2e/app install && npm run build && playwright test",
+    "test:e2e:install": "playwright install chromium",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -58,8 +61,10 @@
   "devDependencies": {
     "@kalamdb/client": "file:../client",
     "@kalamdb/orm": "file:../orm",
+    "@playwright/test": "^1.51.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "drizzle-orm": "^0.45.2",
