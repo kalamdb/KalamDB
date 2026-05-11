@@ -1,27 +1,13 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use kalamdb_commons::ChangeTypeRaw;
 use serde_json::Value as JsonValue;
 
-use super::batch::BatchControl;
+use super::BatchControl;
 use crate::{
     connection::models::ServerMessage,
     models::{KalamCellValue, SchemaField},
 };
-
-/// Type of change that occurred in the database
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ChangeTypeRaw {
-    /// New row(s) inserted
-    Insert,
-
-    /// Existing row(s) updated
-    Update,
-
-    /// Row(s) deleted
-    Delete,
-}
 
 /// Change event received via WebSocket subscription.
 #[derive(Debug, Clone)]

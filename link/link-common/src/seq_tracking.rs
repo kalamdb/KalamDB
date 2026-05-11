@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use crate::{models::KalamCellValue, seq_id::SeqId};
+use crate::{models::KalamCellValue, SeqId};
 
 /// Name of the system sequence column in every subscription row.
 pub const SEQ_COLUMN: &str = "_seq";

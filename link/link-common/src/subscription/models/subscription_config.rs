@@ -1,4 +1,4 @@
-use super::subscription_options::SubscriptionOptions;
+use super::SubscriptionOptions;
 
 /// Configuration for establishing a WebSocket subscription.
 #[derive(Debug, Clone)]

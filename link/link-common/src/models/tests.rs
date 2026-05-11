@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 use super::*;
-use crate::seq_id::SeqId;
+use crate::SeqId;
 
 // ==================== ConnectionOptions Tests ====================
 

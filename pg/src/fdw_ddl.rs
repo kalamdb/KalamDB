@@ -276,7 +276,7 @@ unsafe fn report_sql_error(message: &str) -> ! {
         errfinish(c"pg_kalam".as_ptr(), 0, c"report_sql_error".as_ptr());
     }
 
-    std::hint::unreachable_unchecked()
+    std::process::abort()
 }
 
 // ---------------------------------------------------------------------------

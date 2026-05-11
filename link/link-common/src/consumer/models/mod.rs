@@ -18,7 +18,8 @@ pub use consume_response::ConsumeResponse;
 #[cfg(feature = "tokio-runtime")]
 pub use consumer_config::ConsumerConfig;
 pub use consumer_record::ConsumerRecord;
-pub use enums::{AutoOffsetReset, CommitMode, PayloadMode, TopicOp};
+pub use enums::{AutoOffsetReset, CommitMode, PayloadMode};
+pub use kalamdb_commons::models::TopicOp;
 
 #[derive(Debug, Clone, Default)]
 pub struct ConsumerOffsets {

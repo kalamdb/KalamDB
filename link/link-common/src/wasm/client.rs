@@ -30,7 +30,7 @@ use crate::{
         ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
         SubscriptionOptions, SubscriptionRequest,
     },
-    seq_id::SeqId,
+    SeqId,
 };
 
 #[derive(Serialize)]

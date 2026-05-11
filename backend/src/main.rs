@@ -111,9 +111,11 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn raise_fd_limit() {
     use std::mem::MaybeUninit;
 
+    let mut rlim = MaybeUninit::<libc::rlimit>::uninit();
+
     unsafe {
-        let mut rlim = MaybeUninit::<libc::rlimit>::zeroed().assume_init();
-        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, rlim.as_mut_ptr()) == 0 {
+            let mut rlim = rlim.assume_init();
             let old_soft = rlim.rlim_cur;
             // On macOS kern.maxfilesperproc is typically 10240-24576;
             // request the hard limit (or a sane floor of 65536).

@@ -211,7 +211,7 @@ async fn route_event_and_refresh_connection(
     event: crate::models::ChangeEvent,
     ws: &mut WebSocketStream,
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::seq_id::SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::SeqId>,
     timeouts: &KalamLinkTimeouts,
     serialization: SerializationType,
     connected: &Arc<AtomicBool>,
@@ -225,7 +225,7 @@ async fn route_event_and_refresh_connection(
 
 async fn handle_startup_timeouts(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::seq_id::SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::SeqId>,
     ws_stream: &mut Option<WebSocketStream>,
     connected: &Arc<AtomicBool>,
     timeouts: &KalamLinkTimeouts,
@@ -301,7 +301,7 @@ pub(super) async fn connection_task(
     ready_tx: Option<oneshot::Sender<Result<()>>>,
 ) {
     let mut subs: HashMap<String, SubEntry> = HashMap::new();
-    let mut seq_id_cache: HashMap<String, crate::seq_id::SeqId> = HashMap::new();
+    let mut seq_id_cache: HashMap<String, crate::SeqId> = HashMap::new();
     let mut ws_stream: Option<WebSocketStream> = None;
     let mut shutdown_requested = false;
     let mut next_generation: u64 = 1;

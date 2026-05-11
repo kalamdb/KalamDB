@@ -1,6 +1,5 @@
 use std::fmt;
 
-pub use kalamdb_commons::models::TopicOp;
 use serde::{de::Visitor, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +93,8 @@ pub enum PayloadMode {
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::models::TopicOp;
+
     use super::*;
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::{models::RowData, seq_id::SeqId};
+use crate::{models::RowData, SeqId};
 
 /// High-level event emitted by a materialized live-query subscription.
 #[derive(Debug, Clone)]

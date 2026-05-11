@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Wire-format serialization type negotiated during authentication.
-///
-/// Mirrors `SerializationType` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationType {
@@ -15,8 +13,6 @@ pub enum SerializationType {
 }
 
 /// Wire-format compression negotiated during authentication.
-///
-/// Mirrors `CompressionType` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompressionType {
@@ -28,8 +24,6 @@ pub enum CompressionType {
 }
 
 /// Protocol options negotiated once per connection during authentication.
-///
-/// Mirrors `ProtocolOptions` from `kalamdb-commons`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolOptions {
     /// Serialization format for messages after auth.

@@ -10,9 +10,9 @@ use crate::{
     models::{
         ChangeEvent, ClientMessage, SerializationType, SubscriptionOptions, SubscriptionRequest,
     },
-    seq_id::SeqId,
     subscription::{batch_envelope, filter_replayed_event, subscription_start_ready},
     timeouts::KalamLinkTimeouts,
+    SeqId,
 };
 
 pub(super) async fn send_subscribe(

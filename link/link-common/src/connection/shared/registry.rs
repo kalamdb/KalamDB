@@ -12,10 +12,10 @@ use crate::{
     connection::FAR_FUTURE,
     error::Result,
     models::{ChangeEvent, SubscriptionInfo, SubscriptionOptions},
-    seq_id::SeqId,
     seq_tracking,
     subscription::final_resume_seq,
     timeouts::KalamLinkTimeouts,
+    SeqId,
 };
 
 #[inline]

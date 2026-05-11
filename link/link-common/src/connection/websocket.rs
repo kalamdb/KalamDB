@@ -527,7 +527,7 @@ pub(crate) fn decode_ws_payload(data: &[u8]) -> Result<String> {
 pub(crate) async fn send_next_batch_request_with_format(
     ws_stream: &mut WebSocketStream,
     subscription_id: &str,
-    last_seq_id: Option<crate::seq_id::SeqId>,
+    last_seq_id: Option<crate::SeqId>,
     serialization: crate::models::SerializationType,
 ) -> Result<()> {
     let message = ClientMessage::NextBatch {

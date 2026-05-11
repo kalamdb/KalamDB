@@ -11,10 +11,10 @@ use crate::{
     connection::SharedSubscriptionControl,
     error::Result,
     models::ChangeEvent,
-    seq_id::SeqId,
     seq_tracking,
     subscription::{buffer_event, event_progress},
     timeouts::KalamLinkTimeouts,
+    SeqId,
 };
 
 /// Manages WebSocket subscriptions for real-time change notifications.
