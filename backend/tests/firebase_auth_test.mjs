@@ -181,7 +181,7 @@ section("Step 6: Verify user was provisioned in system.users");
 let usersResult;
 try {
   usersResult = await kalamQuery(
-    `SELECT username FROM system.users WHERE username = '${expectedUsername}'`,
+    `SELECT user_id FROM system.users WHERE user_id = '${expectedUsername}'`,
     idToken
   );
   const usersJson = JSON.stringify(usersResult);

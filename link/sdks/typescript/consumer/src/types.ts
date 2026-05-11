@@ -94,8 +94,16 @@ export type ConsumerHandler<TPayload extends ConsumePayload = ConsumePayload> = 
   ctx: ConsumeContext<TPayload>,
 ) => Promise<void>;
 
+export interface ConsumerRunLifecycleHooks {
+  onBatchSuccess?: (response: {
+    nextOffset: number;
+    hasMore: boolean;
+    messageCount: number;
+  }) => void;
+}
+
 export interface ConsumerHandle<TPayload extends ConsumePayload = ConsumePayload> {
-  run: (handler: ConsumerHandler<TPayload>) => Promise<void>;
+  run: (handler: ConsumerHandler<TPayload>, hooks?: ConsumerRunLifecycleHooks) => Promise<void>;
   stop: () => void;
 }
 
@@ -292,6 +300,9 @@ export interface RunConsumerOptions<
     attempt: number;
     maxAttempts: number | undefined;
     backoffMs: number;
+  }) => void;
+  onConnectionRestored?: (args: {
+    attempt: number;
   }) => void;
   onConnectionError?: (args: {
     error: unknown;

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "setup": "bash ./setup.sh",
+    "setup": "node setup.mjs",
     "test": "playwright test"
   },
   "dependencies": {

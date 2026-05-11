@@ -453,6 +453,26 @@ impl CLISession {
         }))
     }
 
+    pub fn print_execution_target_banner(&self) {
+        let instance = self.instance.as_deref().unwrap_or("default");
+        let user = match self.username.as_str() {
+            "jwt-user" => "token-authenticated (user id unavailable)",
+            "anonymous" => "anonymous",
+            _ => self.username.as_str(),
+        };
+
+        if self.color {
+            eprintln!("{} {}", "Instance:".cyan().bold(), instance.green().bold());
+            eprintln!("{} {}", "Server:".cyan().bold(), self.server_url.green());
+            eprintln!("{} {}", "User:".cyan().bold(), user.green().bold());
+        } else {
+            eprintln!("Instance: {}", instance);
+            eprintln!("Server: {}", self.server_url);
+            eprintln!("User: {}", user);
+        }
+        eprintln!();
+    }
+
     /// Execute a SQL query with loading indicator
     ///
     /// **Implements T092**: Execute SQL via kalam-client

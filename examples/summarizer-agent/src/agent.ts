@@ -1,6 +1,9 @@
 import { config as loadEnv } from 'dotenv';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 
 type StartAgentOptions = {
@@ -18,8 +21,8 @@ type AgentConfig = {
 };
 
 function readConfig(): AgentConfig {
-  loadEnv({ path: '.env.local', quiet: true });
-  loadEnv({ quiet: true });
+  loadEnv({ path: resolve(__dirname, '../.env.local'), quiet: true });
+  loadEnv({ path: resolve(__dirname, '../.env'), quiet: true });
 
   return {
     url: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
@@ -28,6 +31,14 @@ function readConfig(): AgentConfig {
     topic: process.env.KALAMDB_TOPIC ?? 'blog.summarizer',
     group: process.env.KALAMDB_GROUP ?? 'blog-summarizer-agent',
   };
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 export function buildSummary(content: string): string {
@@ -55,8 +66,10 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
 
   const groupId = options.groupId ?? config.group;
   const start = options.start ?? 'latest';
+  let awaitingReconnect = false;
 
-  console.log(`summarizer-agent ready (topic=${config.topic}, group=${groupId})`);
+  console.log(`[summarizer-agent] starting (url=${config.url}, topic=${config.topic}, group=${groupId}, start=${start})`);
+  console.log(`[summarizer-agent] connecting to KalamDB at ${config.url} ...`);
 
   try {
     await runConsumer<Record<string, unknown>>({
@@ -67,6 +80,29 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
       start,
       stopSignal: options.stopSignal,
       retry: { maxAttempts: 3, initialBackoffMs: 250, maxBackoffMs: 1500 },
+      onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
+        if (!awaitingReconnect) {
+          console.warn(`[summarizer-agent] cannot reach KalamDB at ${config.url}: ${formatErrorMessage(error)}`);
+          awaitingReconnect = true;
+        }
+
+        const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;
+        console.warn(
+          `[summarizer-agent] reconnecting in ${backoffMs}ms (attempt ${attemptLabel})`,
+        );
+      },
+      onConnectionRestored: ({ attempt }) => {
+        const attemptsLabel = attempt === 1 ? 'attempt' : 'attempts';
+        console.log(`[summarizer-agent] connected to KalamDB after ${attempt} reconnect ${attemptsLabel}`);
+        awaitingReconnect = false;
+      },
+      onConnectionError: ({ error, attempt }) => {
+        const attemptsLabel = attempt === 1 ? 'attempt' : 'attempts';
+        console.error(
+          `summarizer-agent stopped reconnecting after ${attempt} ${attemptsLabel}: ${formatErrorMessage(error)}`,
+        );
+        awaitingReconnect = false;
+      },
       onChange: async (ctx, change) => {
         const row = change.data;
         const blogId = row.blog_id ?? row.blogId;
@@ -86,6 +122,7 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
           'UPDATE blog.blogs SET summary = $1, updated = NOW() WHERE blog_id = $2',
           [nextSummary, blogId],
         );
+        console.log(`[summarizer-agent] updated summary for blog_id=${blogId} (summary="${nextSummary}")`);
       },
       onFailed: async (ctx, change) => {
         await ctx.sql(
@@ -95,10 +132,11 @@ export async function startSummarizerAgent(options: StartAgentOptions = {}): Pro
       },
       ackOnFailed: true,
       onError: ({ error }) => {
-        console.error('summarizer-agent error', error);
+        console.error('[summarizer-agent] processing error:', error);
       },
     });
   } finally {
+    console.log('[summarizer-agent] disconnecting');
     await client.disconnect();
   }
 }

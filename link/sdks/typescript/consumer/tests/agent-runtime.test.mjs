@@ -39,7 +39,9 @@ function createMockClient(messages, options = {}) {
       let stopped = false;
 
       return {
-        run: async (handler) => {
+        run: async (handler, hooks) => {
+          hooks?.onBatchSuccess?.({ nextOffset: 0, hasMore: false, messageCount: messages.length });
+
           const dispatchMessage = async (message) => {
             await handler({
               user: message.consumeCtxUser ?? message.user,
@@ -616,6 +618,7 @@ test('runConsumer reconnects after transient consumer loop errors', async () => 
   };
 
   const retries = [];
+  const restored = [];
   let calls = 0;
 
   await runConsumer({
@@ -634,6 +637,7 @@ test('runConsumer reconnects after transient consumer loop errors', async () => 
       jitterRatio: 0,
     },
     onConnectionRetry: (event) => retries.push(event.attempt),
+    onConnectionRestored: (event) => restored.push(event.attempt),
     onChange: async () => {
       calls += 1;
     },
@@ -642,6 +646,7 @@ test('runConsumer reconnects after transient consumer loop errors', async () => 
   assert.equal(state.runs, 3);
   assert.equal(calls, 1);
   assert.deepEqual(retries, [1, 2]);
+  assert.deepEqual(restored, [2]);
   assert.deepEqual(state.ackedOffsets, [31]);
 });
 
@@ -698,6 +703,7 @@ test('runConsumer reconnects cleanly when the server goes down after processing 
   };
 
   const retries = [];
+  const restored = [];
   const seen = [];
 
   await runConsumer({
@@ -716,6 +722,7 @@ test('runConsumer reconnects cleanly when the server goes down after processing 
       jitterRatio: 0,
     },
     onConnectionRetry: (event) => retries.push(event.attempt),
+    onConnectionRestored: (event) => restored.push(event.attempt),
     onChange: async (_ctx, change) => {
       seen.push({
         offset: change.offset,
@@ -729,6 +736,7 @@ test('runConsumer reconnects cleanly when the server goes down after processing 
 
   assert.equal(state.runs, 2);
   assert.deepEqual(retries, [1]);
+  assert.deepEqual(restored, [1]);
   assert.deepEqual(seen, [
     { offset: 81, user: 'alice', op: 'Insert', seqid: '301', content: 'before disconnect' },
     { offset: 82, user: 'bob', op: 'Update', seqid: '302', content: 'after reconnect' },

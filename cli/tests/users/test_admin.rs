@@ -163,6 +163,52 @@ SELECT * FROM {};"#,
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 
+#[test]
+fn test_cli_batch_file_execution_prints_target_banner() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let sql_file = temp_dir.path().join("target-banner.sql");
+
+    std::fs::write(&sql_file, "SELECT 1 AS banner_check;").unwrap();
+
+    let mut cmd = create_cli_command_with_auth(admin_username(), admin_password());
+    cmd.arg("--no-spinner")
+        .arg("--no-color")
+        .arg("--file")
+        .arg(&sql_file)
+        .timeout(TEST_TIMEOUT);
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "Batch execution should succeed. stderr: {}\nstdout: {}",
+        stderr,
+        stdout
+    );
+    assert!(
+        stderr.contains("Instance: local"),
+        "stderr should include the instance banner. stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Server:"),
+        "stderr should include the target server line. stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains(&format!("User: {}", admin_username())),
+        "stderr should include the user banner. stderr: {}",
+        stderr
+    );
+}
+
 /// T056: Test syntax error handling
 #[test]
 fn test_cli_syntax_error_handling() {

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "tsx src/agent.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "setup": "bash ./setup.sh"
+    "setup": "node setup.mjs"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",

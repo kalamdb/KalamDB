@@ -74,6 +74,11 @@ json_token_from_file() {
     node -e 'const fs = require("fs"); const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(body.access_token || "");' "$path"
 }
 
+sql_response_has_rows() {
+    local path="$1"
+    node -e 'const fs = require("fs"); const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const result = Array.isArray(body.results) ? body.results[0] : null; const rows = Array.isArray(result?.rows) ? result.rows.length : 0; const rowCount = typeof result?.row_count === "number" ? result.row_count : rows; process.exit(rowCount > 0 ? 0 : 1);' "$path"
+}
+
 sql_escape() {
     printf '%s' "$1" | sed "s/'/''/g"
 }
@@ -106,7 +111,7 @@ ensure_admin_user() {
     [[ -n "$root_token" ]] || die "Unable to read root access token while preparing admin test user"
 
     local check_sql
-    check_sql="SELECT username FROM system.users WHERE username = '$(sql_escape "$KALAMDB_ADMIN_USER")' LIMIT 1"
+    check_sql="SELECT user_id FROM system.users WHERE user_id = '$(sql_escape "$KALAMDB_ADMIN_USER")' LIMIT 1"
     curl -sS -o "$user_check_body" \
         -H 'Content-Type: application/json' \
         -H "Authorization: Bearer $root_token" \
@@ -114,7 +119,7 @@ ensure_admin_user() {
         "$KALAMDB_SERVER_URL/v1/api/sql" >/dev/null
 
     local admin_exists=false
-    if grep -q "\"user\":\"$KALAMDB_ADMIN_USER\"" "$user_check_body"; then
+    if sql_response_has_rows "$user_check_body"; then
         admin_exists=true
     fi
 

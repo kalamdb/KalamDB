@@ -1,12 +1,14 @@
 import { config as loadEnv } from 'dotenv';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Auth, type KalamDBClient } from '@kalamdb/client';
 import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 export { buildApprovalMessage, buildAssistantReply, createToolPlan, splitIntoTokenChunks } from './logic';
 import { buildApprovalMessage, buildAssistantReply, createToolPlan, splitIntoTokenChunks } from './logic';
 
-loadEnv({ path: '.env.local', quiet: true });
-loadEnv({ quiet: true });
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: resolve(__dirname, '../../.env.local'), quiet: true });
+loadEnv({ path: resolve(__dirname, '../../.env'), quiet: true });
 
 const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
 const KALAMDB_USER = process.env.KALAMDB_USER ?? 'admin';
@@ -201,6 +203,13 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
   });
   const sqlClient = client as unknown as KalamDBClient;
 
+  console.log(`[react-ai-chat-agent] starting (url=${KALAMDB_URL}, user=${KALAMDB_USER})`);
+  console.log(`[react-ai-chat-agent] message topic=${MESSAGE_TOPIC}  action topic=${ACTION_TOPIC}`);
+  console.log(`[react-ai-chat-agent] connecting to KalamDB at ${KALAMDB_URL} ...`);
+
+  let awaitingMessageReconnect = false;
+  let awaitingActionReconnect = false;
+
   await Promise.all([
     runConsumer<TopicRow>({
       client,
@@ -212,6 +221,22 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       timeoutSeconds: 30,
       stopSignal,
       onChange: async (_ctx, change) => handleUserMessage(sqlClient, change.data),
+      onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
+        if (!awaitingMessageReconnect) {
+          console.warn(`[react-ai-chat-agent] messages: cannot reach KalamDB at ${KALAMDB_URL}: ${error instanceof Error ? error.message : String(error)}`);
+          awaitingMessageReconnect = true;
+        }
+        const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;
+        console.warn(`[react-ai-chat-agent] messages: reconnecting in ${backoffMs}ms (attempt ${attemptLabel})`);
+      },
+      onConnectionRestored: ({ attempt }) => {
+        console.log(`[react-ai-chat-agent] messages: connected to KalamDB after ${attempt} reconnect ${attempt === 1 ? 'attempt' : 'attempts'}`);
+        awaitingMessageReconnect = false;
+      },
+      onConnectionError: ({ error, attempt }) => {
+        console.error(`[react-ai-chat-agent] messages: gave up after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${error instanceof Error ? error.message : String(error)}`);
+        awaitingMessageReconnect = false;
+      },
     }),
     runConsumer<TopicRow>({
       client,
@@ -223,6 +248,22 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       timeoutSeconds: 30,
       stopSignal,
       onChange: async (_ctx, change) => handleApprovalAction(sqlClient, change.data),
+      onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
+        if (!awaitingActionReconnect) {
+          console.warn(`[react-ai-chat-agent] actions: cannot reach KalamDB at ${KALAMDB_URL}: ${error instanceof Error ? error.message : String(error)}`);
+          awaitingActionReconnect = true;
+        }
+        const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;
+        console.warn(`[react-ai-chat-agent] actions: reconnecting in ${backoffMs}ms (attempt ${attemptLabel})`);
+      },
+      onConnectionRestored: ({ attempt }) => {
+        console.log(`[react-ai-chat-agent] actions: connected to KalamDB after ${attempt} reconnect ${attempt === 1 ? 'attempt' : 'attempts'}`);
+        awaitingActionReconnect = false;
+      },
+      onConnectionError: ({ error, attempt }) => {
+        console.error(`[react-ai-chat-agent] actions: gave up after ${attempt} ${attempt === 1 ? 'attempt' : 'attempts'}: ${error instanceof Error ? error.message : String(error)}`);
+        awaitingActionReconnect = false;
+      },
     }),
   ]);
 }

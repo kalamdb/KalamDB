@@ -20,6 +20,7 @@ import type {
   ConsumerClientOptions,
   ConsumerHandle,
   ConsumerHandler,
+  ConsumerRunLifecycleHooks,
   ConsumeRequest,
   ConsumeResponse,
 } from './types.js';
@@ -208,7 +209,10 @@ export class KalamConsumerClient {
     let nextStart = options.start;
 
     return {
-      run: async (handler: ConsumerHandler<TPayload>): Promise<void> => {
+      run: async (
+        handler: ConsumerHandler<TPayload>,
+        hooks?: ConsumerRunLifecycleHooks,
+      ): Promise<void> => {
         stopRequested = false;
         nextStart = options.start;
 
@@ -216,6 +220,12 @@ export class KalamConsumerClient {
           const response = await this.consumeBatch<TPayload>({
             ...options,
             ...(nextStart === undefined ? {} : { start: nextStart }),
+          });
+
+          hooks?.onBatchSuccess?.({
+            nextOffset: response.next_offset,
+            hasMore: response.has_more,
+            messageCount: response.messages.length,
           });
 
           // Keep the server cursor after empty polls so start='latest'
