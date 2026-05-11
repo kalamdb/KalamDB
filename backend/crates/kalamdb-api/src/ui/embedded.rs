@@ -52,7 +52,9 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
 
         debug!("[embedded_ui] Found file: {} (mime: {})", path, mime_type);
 
-        return HttpResponse::Ok().content_type(mime_type).body(embedded_asset_body(content.data));
+        return HttpResponse::Ok()
+            .content_type(mime_type)
+            .body(embedded_asset_body(content.data));
     }
 
     debug!("[embedded_ui] File not found: {}, falling back to index.html", path);

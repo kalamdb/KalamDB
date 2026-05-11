@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder, TimestampMillisecondBuilder},
+    array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder, TimestampMicrosecondBuilder},
     datatypes::{DataType, Field, Schema, TimeUnit},
     record_batch::RecordBatch,
 };
@@ -44,7 +44,7 @@ impl CheckStorageHandler {
             Field::new("total_bytes", DataType::Int64, true),
             Field::new("used_bytes", DataType::Int64, true),
             Field::new("error", DataType::Utf8, true),
-            Field::new("tested_at", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+            Field::new("tested_at", DataType::Timestamp(TimeUnit::Microsecond, None), false),
         ])
     }
 }
@@ -92,7 +92,7 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
         let mut total_bytes_builder = Int64Builder::new();
         let mut used_bytes_builder = Int64Builder::new();
         let mut error_builder = StringBuilder::new();
-        let mut tested_at_builder = TimestampMillisecondBuilder::new();
+        let mut tested_at_builder = TimestampMicrosecondBuilder::new();
 
         storage_id_builder.append_value(statement.storage_id.as_str());
         status_builder.append_value(match health_result.status {

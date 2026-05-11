@@ -1,5 +1,14 @@
 use super::common::*;
 
+async fn run_with_perf_timeout<F, T>(label: &str, timeout_ms: u64, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), future)
+        .await
+        .unwrap_or_else(|_| panic!("{label} benchmark exceeded {timeout_ms} ms"))
+}
+
 async fn wait_for_pg_count(
     client: &tokio_postgres::Client,
     qualified_table: &str,
@@ -57,13 +66,9 @@ async fn e2e_perf_batch_insert_10k() {
 
     eprintln!("[PERF] Batch INSERT {TOTAL} rows: {insert_ms:.0}ms ({rows_per_sec:.0} rows/sec)");
 
-    let count_ms = wait_for_pg_count(
-        &pg,
-        &qualified_table,
-        TOTAL as i64,
-        std::time::Duration::from_secs(5),
-    )
-    .await;
+    let count_ms =
+        wait_for_pg_count(&pg, &qualified_table, TOTAL as i64, std::time::Duration::from_secs(5))
+            .await;
     eprintln!("[PERF] COUNT(*) {TOTAL} rows: {count_ms:.1}ms");
 
     assert!(
@@ -74,7 +79,6 @@ async fn e2e_perf_batch_insert_10k() {
 }
 
 #[tokio::test]
-#[ntest::timeout(3000)]
 async fn e2e_perf_sequential_insert_100() {
     let env = TestEnv::global().await;
     let mut pg = env.pg_connect().await;
@@ -86,16 +90,19 @@ async fn e2e_perf_sequential_insert_100() {
     const TOTAL: usize = 100;
 
     let start = std::time::Instant::now();
-    let tx = pg.transaction().await.expect("begin");
-    for index in 0..TOTAL {
-        tx.execute(
-            &format!("INSERT INTO {qualified_table} (id, value) VALUES ($1, $2)"),
-            &[&format!("s-{index}"), &(index as i32)],
-        )
-        .await
-        .expect("seq insert");
-    }
-    tx.commit().await.expect("commit");
+    run_with_perf_timeout("sequential insert 100", 3000, async {
+        let tx = pg.transaction().await.expect("begin");
+        for index in 0..TOTAL {
+            tx.execute(
+                &format!("INSERT INTO {qualified_table} (id, value) VALUES ($1, $2)"),
+                &[&format!("s-{index}"), &(index as i32)],
+            )
+            .await
+            .expect("seq insert");
+        }
+        tx.commit().await.expect("commit");
+    })
+    .await;
     let insert_ms = start.elapsed().as_secs_f64() * 1000.0;
     let rows_per_sec = TOTAL as f64 / (insert_ms / 1000.0);
 
@@ -108,7 +115,7 @@ async fn e2e_perf_sequential_insert_100() {
         rows_per_sec > 700.0,
         "Sequential INSERT only {rows_per_sec:.0} rows/sec — expected > 700"
     );
-    pg.disconnect().await;
+    drop(pg);
 }
 
 #[tokio::test]
@@ -421,7 +428,6 @@ async fn e2e_perf_user_table_insert_scan() {
 }
 
 #[tokio::test]
-#[ntest::timeout(3000)]
 async fn e2e_perf_cross_verify_latency() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -431,29 +437,34 @@ async fn e2e_perf_cross_verify_latency() {
     create_shared_kalam_table(&pg, &table, "id TEXT, value INTEGER").await;
 
     const ITERATIONS: usize = 10;
-    let mut latencies = Vec::with_capacity(ITERATIONS);
+    let latencies = run_with_perf_timeout("cross verify latency", 3000, async {
+        let mut latencies = Vec::with_capacity(ITERATIONS);
 
-    for index in 0..ITERATIONS {
-        let id = format!("xv-{index}");
-        let start = std::time::Instant::now();
+        for index in 0..ITERATIONS {
+            let id = format!("xv-{index}");
+            let start = std::time::Instant::now();
 
-        pg.execute(
-            &format!("INSERT INTO {qualified_table} (id, value) VALUES ($1, $2)"),
-            &[&id, &(index as i32)],
-        )
-        .await
-        .expect("xv insert");
+            pg.execute(
+                &format!("INSERT INTO {qualified_table} (id, value) VALUES ($1, $2)"),
+                &[&id, &(index as i32)],
+            )
+            .await
+            .expect("xv insert");
 
-        let result = env
-            .kalamdb_sql(&format!("SELECT id, value FROM e2e.{table} WHERE id = '{id}'"))
-            .await;
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let result = env
+                .kalamdb_sql(&format!("SELECT id, value FROM e2e.{table} WHERE id = '{id}'"))
+                .await;
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-        let result_text = serde_json::to_string(&result).unwrap_or_default();
-        assert!(result_text.contains(&id), "cross-verify: row {id} not visible via REST");
+            let result_text = serde_json::to_string(&result).unwrap_or_default();
+            assert!(result_text.contains(&id), "cross-verify: row {id} not visible via REST");
 
-        latencies.push(elapsed_ms);
-    }
+            latencies.push(elapsed_ms);
+        }
+
+        latencies
+    })
+    .await;
 
     let avg_ms = latencies.iter().sum::<f64>() / latencies.len() as f64;
     let min_ms = latencies.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -464,5 +475,5 @@ async fn e2e_perf_cross_verify_latency() {
          {max_ms:.1}ms"
     );
     assert!(avg_ms < 10_000.0, "Cross-verify avg {avg_ms:.0}ms — expected < 10000ms");
-    pg.disconnect().await;
+    drop(pg);
 }

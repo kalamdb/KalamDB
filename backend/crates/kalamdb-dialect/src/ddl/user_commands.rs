@@ -232,24 +232,26 @@ impl CreateUserStatement {
 
             if is_keyword(token, "STORAGE_MODE") {
                 iter.next();
-                let value = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
-                    UserCommandError {
-                        message: "Expected storage mode after STORAGE_MODE".to_string(),
-                        hint: Some("Valid storage modes: table, region".to_string()),
-                    }
-                })?;
+                let value =
+                    extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                        UserCommandError {
+                            message: "Expected storage mode after STORAGE_MODE".to_string(),
+                            hint: Some("Valid storage modes: table, region".to_string()),
+                        }
+                    })?;
                 storage_mode = parse_storage_mode(&value)?;
                 continue;
             }
 
             if is_keyword(token, "STORAGE_ID") {
                 iter.next();
-                let value = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
-                    UserCommandError {
-                        message: "Expected storage ID after STORAGE_ID".to_string(),
-                        hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
-                    }
-                })?;
+                let value =
+                    extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                        UserCommandError {
+                            message: "Expected storage ID after STORAGE_ID".to_string(),
+                            hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
+                        }
+                    })?;
                 storage_id = Some(StorageId::from(value));
                 continue;
             }
@@ -416,9 +418,7 @@ impl AlterUserStatement {
             } else {
                 let storage_id = extract_identifier(token).ok_or_else(|| UserCommandError {
                     message: "Expected storage ID or NULL after SET STORAGE_ID".to_string(),
-                    hint: Some(
-                        "Use SET STORAGE_ID 'local' or SET STORAGE_ID NULL".to_string(),
-                    ),
+                    hint: Some("Use SET STORAGE_ID 'local' or SET STORAGE_ID NULL".to_string()),
                 })?;
                 UserModification::SetStorageId(Some(StorageId::from(storage_id)))
             }

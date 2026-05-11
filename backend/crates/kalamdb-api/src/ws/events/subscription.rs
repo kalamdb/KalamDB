@@ -224,9 +224,7 @@ pub async fn handle_subscribe(
 }
 
 fn subscription_batch_size(options: Option<&SubscriptionOptions>) -> usize {
-    options
-        .and_then(|options| options.batch_size)
-        .unwrap_or(MAX_ROWS_PER_BATCH)
+    options.and_then(|options| options.batch_size).unwrap_or(MAX_ROWS_PER_BATCH)
 }
 
 fn validate_subscription_options(

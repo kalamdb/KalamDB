@@ -545,8 +545,8 @@ async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
 
     let consume_sql = format!("CONSUME FROM {} GROUP '{}' FROM EARLIEST LIMIT 2", topic, group_id);
     let consume_response = poll_sql_consume_until(&consume_sql, 2, Duration::from_secs(20)).await;
-    let consumed_rows = common::get_rows_as_hashmaps(&consume_response)
-        .expect("SQL CONSUME should return rows");
+    let consumed_rows =
+        common::get_rows_as_hashmaps(&consume_response).expect("SQL CONSUME should return rows");
     assert_eq!(consumed_rows.len(), 2, "SQL CONSUME should deliver both messages");
 
     let last_offset = consumed_rows
@@ -1197,9 +1197,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     ),
                 );
 
-                let first_max_offset = *first_offsets
-                    .last()
-                    .expect("first batch should have at least one record");
+                let first_max_offset =
+                    *first_offsets.last().expect("first batch should have at least one record");
 
                 for record in &first_batch {
                     consumer.mark_processed(record);
@@ -1282,13 +1281,12 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     .await;
                 }
 
-                let live_batch =
-                    poll_records_raw_until(
-                        &mut consumer,
-                        live_count as usize,
-                        Duration::from_secs(25),
-                    )
-                        .await;
+                let live_batch = poll_records_raw_until(
+                    &mut consumer,
+                    live_count as usize,
+                    Duration::from_secs(25),
+                )
+                .await;
                 let live_offsets = record_offsets(&live_batch);
                 assert!(
                     live_batch.len() >= live_count as usize,
@@ -1308,8 +1306,7 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                 let expected_live_ids_ordered: Vec<i64> =
                     (live_base_id..live_base_id + live_count).collect();
                 assert_eq!(
-                    received_live_ids,
-                    expected_live_ids_ordered,
+                    received_live_ids, expected_live_ids_ordered,
                     "latest consumer should preserve publish order for newly inserted ids"
                 );
                 assert_eq!(

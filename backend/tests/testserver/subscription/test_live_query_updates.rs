@@ -46,7 +46,7 @@ async fn test_live_query_detects_updates() -> anyhow::Result<()> {
     let client = server.link_client("root");
 
     let sql = format!("SELECT * FROM {}.{}", ns, table);
-    let mut subscription = client.subscribe(&sql).await.expect("Failed to subscribe");
+    let mut subscription = client.live_events(&sql).await.expect("Failed to subscribe");
 
     // Consume Initial Data
     let timeout = tokio::time::sleep(Duration::from_secs(5));
@@ -164,7 +164,7 @@ async fn test_live_query_detects_updates_with_like_filter() -> anyhow::Result<()
 
     let client = server.link_client("root");
     let sql = format!("SELECT * FROM {}.{} WHERE metric_name LIKE 'open_files_%'", ns, table);
-    let mut subscription = client.subscribe(&sql).await.expect("Failed to subscribe");
+    let mut subscription = client.live_events(&sql).await.expect("Failed to subscribe");
 
     let timeout = tokio::time::sleep(Duration::from_secs(5));
     tokio::pin!(timeout);

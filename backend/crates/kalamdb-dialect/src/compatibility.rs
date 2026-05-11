@@ -51,15 +51,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
 
         // Temporal -----------------------------------------------------------
         Date => DataType::Date32,
-        Timestamp(precision, _) => {
-            let unit = match precision {
-                Some(p) if *p <= 3 => TimeUnit::Millisecond,
-                Some(p) if *p <= 6 => TimeUnit::Microsecond,
-                Some(_) => TimeUnit::Nanosecond,
-                None => TimeUnit::Microsecond,
-            };
-            DataType::Timestamp(unit, None)
-        },
+        Timestamp(_, _) => DataType::Timestamp(TimeUnit::Microsecond, None),
         Datetime(_) => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         Time(_, _) => DataType::Time64(TimeUnit::Microsecond),
         SQLDataType::Interval { .. } => DataType::Interval(IntervalUnit::MonthDayNano),

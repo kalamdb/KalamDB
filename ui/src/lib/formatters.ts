@@ -2,7 +2,7 @@
  * Formatting Utilities for KalamDB Admin UI
  * 
  * Provides functions to format values for display, including:
- * - Timestamps (microseconds, milliseconds, etc.)
+ * - Timestamps (KalamDB SQL values are microseconds)
  * - Numbers
  * - Data types
  */
@@ -23,7 +23,8 @@ import {
 
 /**
  * Convert a raw timestamp value to milliseconds.
- * Handles microseconds, nanoseconds, and other units.
+ * KalamDB SQL timestamp values are microseconds; explicit units are kept for
+ * non-SQL surfaces that still expose a different transport unit.
  */
 export function toMilliseconds(
   value: number | string,
@@ -95,8 +96,11 @@ export function formatTimestamp(
   }
   
   try {
-    // Extract unit from data type
-    const unit = dataType ? extractTimestampUnit(dataType) : null;
+    const unit = dataType && /^Timestamp\(/i.test(dataType)
+      ? 'microsecond'
+      : dataType
+        ? extractTimestampUnit(dataType)
+        : null;
     
     // Convert to milliseconds
     const ms = toMilliseconds(value, unit);

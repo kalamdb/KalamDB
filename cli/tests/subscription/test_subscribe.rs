@@ -199,7 +199,6 @@ fn test_cli_subscription_commands() {
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "list-subscriptions command should succeed");
-
 }
 
 /// T042: Test live query with WHERE filter

@@ -79,9 +79,7 @@ fn should_default_to_http(raw: &str) -> bool {
 fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
     let trimmed = server_url.trim();
     if trimmed.is_empty() {
-        return Err(CLIError::ConfigurationError(
-            "Server URL must not be empty".to_string(),
-        ));
+        return Err(CLIError::ConfigurationError("Server URL must not be empty".to_string()));
     }
 
     let normalized_input = if trimmed.contains("://") {

@@ -37,6 +37,33 @@ let clientReceiveCallback: ((message: string) => void) | null = null;
 let clientSendCallback: ((message: string) => void) | null = null;
 let latestEditorCommand: (() => void) | null = null;
 
+function createLocalStorageMock(): Storage {
+  const store = new Map<string, string>();
+
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value));
+    },
+  };
+}
+
+const localStorageMock = createLocalStorageMock();
+
 vi.mock("@/lib/auth", () => ({
   useAuth: () => mockUseAuth(),
 }));
@@ -288,6 +315,11 @@ describe("SqlStudio page", () => {
     mockSaveSyncedSqlStudioWorkspaceState.mockReset();
     mockSubscribeToSyncedSqlStudioWorkspaceState.mockReset();
     mockRefetchSchemaTree.mockReset();
+    vi.stubGlobal("localStorage", localStorageMock);
+    Object.defineProperty(window, "localStorage", {
+      value: localStorageMock,
+      configurable: true,
+    });
     window.localStorage.clear();
 
     mockUseAuth.mockReturnValue({

@@ -3200,9 +3200,7 @@ fn execute_sql_via_cli_as_with_args(
     execute_sql_via_cli_as_with_args_and_urls(username, password, sql, extra_args, None)
 }
 
-fn spawn_child_output_reader<R>(
-    mut reader: R,
-) -> std::thread::JoinHandle<std::io::Result<String>>
+fn spawn_child_output_reader<R>(mut reader: R) -> std::thread::JoinHandle<std::io::Result<String>>
 where
     R: Read + Send + 'static,
 {
@@ -3279,13 +3277,13 @@ fn execute_sql_via_cli_as_with_args_and_urls(
             let spawn_start = Instant::now();
 
             let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
-                child
-                    .arg("-u")
-                    .arg(url)
-                    .arg("--user")
-                    .arg(username)
-                    .arg("--password")
-                    .arg(password);
+            child
+                .arg("-u")
+                .arg(url)
+                .arg("--user")
+                .arg(username)
+                .arg("--password")
+                .arg(password);
 
             child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)
@@ -3512,13 +3510,13 @@ pub fn execute_sql_file_as_root_via_cli(
             let creds_path = creds_dir.path().join("credentials.toml");
 
             let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"));
-                child
-                    .arg("-u")
-                    .arg(url)
-                    .arg("--user")
-                    .arg(admin_username())
-                    .arg("--password")
-                    .arg(admin_password());
+            child
+                .arg("-u")
+                .arg(url)
+                .arg("--user")
+                .arg(admin_username())
+                .arg("--password")
+                .arg(admin_password());
 
             child
                 .env("KALAMDB_CREDENTIALS_PATH", &creds_path)

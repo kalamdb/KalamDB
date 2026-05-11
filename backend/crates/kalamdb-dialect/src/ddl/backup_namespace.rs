@@ -132,9 +132,8 @@ mod tests {
 
     #[test]
     fn test_parse_backup_database_directory_path() {
-        let stmt =
-            BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb-nightly'")
-                .unwrap();
+        let stmt = BackupDatabaseStatement::parse("BACKUP DATABASE TO '/backups/kalamdb-nightly'")
+            .unwrap();
         assert_eq!(stmt.backup_path, "/backups/kalamdb-nightly");
     }
 

@@ -355,8 +355,10 @@ fn smoke_subscription_resume_from_seq_id() {
         let mut cfg2 = SubscriptionConfig::new(&sub_id2, &query);
         cfg2.options = Some(options);
 
-        let mut sub2 =
-            client.live_events_with_config(cfg2).await.expect("re-subscribe with from_seq_id");
+        let mut sub2 = client
+            .live_events_with_config(cfg2)
+            .await
+            .expect("re-subscribe with from_seq_id");
 
         // Gap rows must arrive (as catch-up initial data or change events).
         let resume_events = collect_until(&mut sub2, event_timeout(15), |evs| {

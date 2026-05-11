@@ -147,9 +147,8 @@ fn decode_consume_response_inner(
     text: &str,
     request_context: &ConsumeRequestContext,
 ) -> Result<ConsumeResponse, String> {
-    let raw: RawConsumeResponse = serde_json::from_str(text).map_err(|error| {
-        format!("Failed to parse consume response: {}", error)
-    })?;
+    let raw: RawConsumeResponse = serde_json::from_str(text)
+        .map_err(|error| format!("Failed to parse consume response: {}", error))?;
     let messages = raw
         .messages
         .into_iter()

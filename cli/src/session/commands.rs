@@ -239,9 +239,7 @@ impl CLISession {
     fn qualify_subscription_sql(sql: &str, default_namespace: &str) -> Result<String> {
         let trimmed = sql.trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\live requires a SELECT query".to_string(),
-            ));
+            return Err(CLIError::ParseError("\\live requires a SELECT query".to_string()));
         }
 
         let Some(from_idx) = Self::find_subscription_from_clause(trimmed) else {
@@ -268,7 +266,8 @@ impl CLISession {
             return Ok(trimmed.to_string());
         }
 
-        let qualified_relation = format!("{}.{}", Self::quote_identifier(default_namespace), relation);
+        let qualified_relation =
+            format!("{}.{}", Self::quote_identifier(default_namespace), relation);
 
         Ok(format!(
             "{}{}{}",
@@ -332,9 +331,7 @@ impl CLISession {
     fn build_flush_table_query(target: &str, default_namespace: Option<&str>) -> Result<String> {
         let trimmed = target.trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\flush table requires a table name".to_string(),
-            ));
+            return Err(CLIError::ParseError("\\flush table requires a table name".to_string()));
         }
 
         let parts = Self::split_identifier_parts(trimmed)?;
@@ -361,9 +358,7 @@ impl CLISession {
     fn normalize_execute_as_user(user: &str) -> Result<String> {
         let trimmed = user.trim();
         if trimmed.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\as requires a target user".to_string(),
-            ));
+            return Err(CLIError::ParseError("\\as requires a target user".to_string()));
         }
 
         let normalized = if trimmed.len() >= 2
@@ -376,9 +371,7 @@ impl CLISession {
         };
 
         if normalized.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\as requires a target user".to_string(),
-            ));
+            return Err(CLIError::ParseError("\\as requires a target user".to_string()));
         }
 
         Ok(normalized.to_string())
@@ -387,9 +380,7 @@ impl CLISession {
     pub(super) fn parse_describe_target(target: &str) -> Result<(Option<String>, String)> {
         let trimmed = target.trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\describe requires a table name".to_string(),
-            ));
+            return Err(CLIError::ParseError("\\describe requires a table name".to_string()));
         }
 
         let parts = Self::split_identifier_parts(trimmed)?;
@@ -489,18 +480,12 @@ impl CLISession {
             ("\\health", "Run public health probes"),
             ("\\dt, \\tables", "List tables"),
             ("\\d, \\describe <table>", "Describe a table"),
-            (
-                "\\as <user_id> <SQL>",
-                "Wrap a statement as EXECUTE AS '<user_id>'",
-            ),
+            ("\\as <user_id> <SQL>", "Wrap a statement as EXECUTE AS '<user_id>'"),
             ("\\format <table|json|csv>", "Change output format"),
             ("\\refresh-tables, \\refresh", "Refresh autocomplete caches"),
             ("\\stats, \\metrics", "Show system stats"),
             ("\\sessions", "Show active sessions"),
-            (
-                "\\flush [all|table <table>]",
-                "Run STORAGE FLUSH using the current namespace",
-            ),
+            ("\\flush [all|table <table>]", "Run STORAGE FLUSH using the current namespace"),
             ("\\cluster <subcommand>", "Cluster operations"),
             ("\\consume <topic>", "Consume topic messages"),
         ] {
@@ -560,10 +545,7 @@ impl CLISession {
         Self::print_help_section("Topic Consumption");
         for (command, description) in [
             ("\\consume app.events", "Consume a topic"),
-            (
-                "\\consume app.events --group my-group",
-                "Consume with a group",
-            ),
+            ("\\consume app.events --group my-group", "Consume with a group"),
             (
                 "\\consume app.events --from earliest --limit 10",
                 "Read from the earliest offset",
@@ -571,10 +553,7 @@ impl CLISession {
         ] {
             Self::print_help_row(command, description);
         }
-        println!(
-            "  {}",
-            "CLI args: kalam --consume --topic app.events --group my-group".green()
-        );
+        println!("  {}", "CLI args: kalam --consume --topic app.events --group my-group".green());
         println!();
 
         Self::print_help_section("Examples");
@@ -822,8 +801,8 @@ mod tests {
 
     #[test]
     fn test_build_execute_as_query_wraps_statement() {
-        let query = CLISession::build_execute_as_query("alice", "SELECT * FROM user.orders;  ")
-            .unwrap();
+        let query =
+            CLISession::build_execute_as_query("alice", "SELECT * FROM user.orders;  ").unwrap();
         assert_eq!(query, "EXECUTE AS 'alice' (SELECT * FROM user.orders)");
     }
 
@@ -841,8 +820,7 @@ mod tests {
 
     #[test]
     fn test_build_flush_table_query_preserves_explicit_namespace() {
-        let query = CLISession::build_flush_table_query("billing.invoices", Some("chat"))
-            .unwrap();
+        let query = CLISession::build_flush_table_query("billing.invoices", Some("chat")).unwrap();
         assert_eq!(query, "STORAGE FLUSH TABLE \"billing\".\"invoices\"");
     }
 
@@ -857,9 +835,8 @@ mod tests {
 
     #[test]
     fn test_qualify_subscription_sql_preserves_explicit_namespace() {
-        let query =
-            CLISession::qualify_subscription_sql("SELECT ID FROM billing.messages", "chat")
-                .unwrap();
+        let query = CLISession::qualify_subscription_sql("SELECT ID FROM billing.messages", "chat")
+            .unwrap();
 
         assert_eq!(query, "SELECT ID FROM billing.messages");
     }

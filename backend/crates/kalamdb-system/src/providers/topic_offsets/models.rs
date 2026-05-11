@@ -66,7 +66,7 @@ pub struct TopicOffset {
     )]
     pub last_acked_offset: u64,
 
-    /// Timestamp of last update (milliseconds since epoch)
+    /// Timestamp of last update (microseconds since epoch)
     #[column(
         id = 5,
         ordinal = 5,
@@ -74,7 +74,7 @@ pub struct TopicOffset {
         nullable = false,
         primary_key = false,
         default = "None",
-        comment = "Last update timestamp (milliseconds since epoch)"
+        comment = "Last update timestamp (microseconds since epoch)"
     )]
     pub updated_at: i64,
 }
@@ -103,10 +103,10 @@ impl TopicOffset {
     /// This is critical when multiple consumers in the same group ack
     /// out-of-order (e.g., consumer B acks offset 399, then consumer A
     /// acks offset 199 — the committed offset must stay at 399).
-    pub fn ack(&mut self, offset: u64, timestamp_ms: i64) {
+    pub fn ack(&mut self, offset: u64, timestamp_micros: i64) {
         if offset > self.last_acked_offset {
             self.last_acked_offset = offset;
-            self.updated_at = timestamp_ms;
+            self.updated_at = timestamp_micros;
         }
     }
 
@@ -127,7 +127,7 @@ mod tests {
             ConsumerGroupId::from("group1"),
             0,
             10,
-            1706745600000,
+            1706745600000000,
         );
 
         assert_eq!(offset.topic_id, TopicId::from("test_topic"));
@@ -140,15 +140,15 @@ mod tests {
     #[test]
     fn test_offset_ack_logic() {
         let mut offset =
-            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000);
+            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000000);
 
         // Ack offset 5
-        offset.ack(5, 2000);
+        offset.ack(5, 2000000);
         assert_eq!(offset.last_acked_offset, 5);
         assert_eq!(offset.next_offset(), 6);
 
         // Ack offset 10 (newer)
-        offset.ack(10, 3000);
+        offset.ack(10, 3000000);
         assert_eq!(offset.last_acked_offset, 10);
         assert_eq!(offset.next_offset(), 11);
     }
@@ -156,28 +156,28 @@ mod tests {
     #[test]
     fn test_ack_never_regresses() {
         let mut offset =
-            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000);
+            TopicOffset::new(TopicId::from("test"), ConsumerGroupId::from("group1"), 0, 0, 1000000);
 
         // Advance to offset 399
-        offset.ack(399, 2000);
+        offset.ack(399, 2000000);
         assert_eq!(offset.last_acked_offset, 399);
 
         // Try to ack a lower offset (out-of-order from Consumer A)
-        offset.ack(199, 3000);
+        offset.ack(199, 3000000);
         assert_eq!(
             offset.last_acked_offset, 399,
             "ack with lower offset must not regress committed position"
         );
-        assert_eq!(offset.updated_at, 2000, "timestamp should not change on no-op ack");
+        assert_eq!(offset.updated_at, 2000000, "timestamp should not change on no-op ack");
 
         // Equal offset is also a no-op
-        offset.ack(399, 4000);
+        offset.ack(399, 4000000);
         assert_eq!(offset.last_acked_offset, 399);
-        assert_eq!(offset.updated_at, 2000);
+        assert_eq!(offset.updated_at, 2000000);
 
         // Higher offset advances
-        offset.ack(400, 5000);
+        offset.ack(400, 5000000);
         assert_eq!(offset.last_acked_offset, 400);
-        assert_eq!(offset.updated_at, 5000);
+        assert_eq!(offset.updated_at, 5000000);
     }
 }

@@ -379,7 +379,8 @@ fn cluster_test_subscription_multi_node_identical() {
     cluster_runtime().block_on(async {
         // Create subscription on leader only (Spec 021: leader-only reads)
         let leader_client = create_ws_client(&leader_url);
-        let mut subscription = leader_client.live_events(&query).await.expect("Failed to subscribe");
+        let mut subscription =
+            leader_client.live_events(&query).await.expect("Failed to subscribe");
         let received_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         // Insert multiple rows on leader

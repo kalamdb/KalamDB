@@ -144,9 +144,7 @@ async fn start_server_with_executor_on_ephemeral_port(
     host: &str,
     executor: Arc<dyn OperationExecutor>,
 ) -> u16 {
-    let listener = TcpListener::bind(format!("{host}:0"))
-        .await
-        .expect("bind ephemeral port");
+    let listener = TcpListener::bind(format!("{host}:0")).await.expect("bind ephemeral port");
     let port = listener.local_addr().expect("local addr").port();
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
     let service = KalamPgService::new(false, None).with_operation_executor(executor);
@@ -187,8 +185,8 @@ async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
 }
 
 async fn start_mock_server_and_client() -> RemoteKalamClient {
-    let port = start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor))
-        .await;
+    let port =
+        start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor)).await;
     connect_to("127.0.0.1", port).await
 }
 

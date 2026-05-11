@@ -45,7 +45,7 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
     let client = server.link_client("root");
 
     let sql = format!("SELECT * FROM {}.{}", ns, table);
-    let mut subscription = client.subscribe(&sql).await.expect("Failed to subscribe");
+    let mut subscription = client.live_events(&sql).await.expect("Failed to subscribe");
 
     // Consume Initial Data
     let mut initial_count = 0;

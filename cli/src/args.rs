@@ -39,7 +39,6 @@ fn parse_watch_interval(value: &str) -> Result<Duration, String> {
     }
 }
 
-
 // Build information - Create a static version string at compile time
 
 // Macro to create the version string at compile time

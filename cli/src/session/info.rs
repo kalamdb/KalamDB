@@ -26,30 +26,31 @@ impl CLISession {
     pub(super) async fn show_session_info(&mut self) {
         let health_status = match self.public_probe_client() {
             Ok(probe_client) => match probe_client.health_check().await {
-            Ok(health) => {
-                self.connected = true;
-                self.server_version = Self::normalize_server_field(health.version);
-                self.server_api_version = Self::normalize_server_field(health.api_version);
-                self.server_build_date = health.build_date.and_then(Self::normalize_server_field);
-                None
-            },
-            Err(KalamLinkError::ServerError {
-                status_code: 403, ..
-            }) => {
-                // Health endpoint is localhost-only; server is reachable but we can't
-                // refresh version info. Preserve the current connected state.
-                Some(
-                    "Health endpoint is restricted to localhost (remote connection detected)"
-                        .to_string(),
-                )
-            },
-            Err(e) => {
-                self.connected = false;
-                self.server_version = None;
-                self.server_api_version = None;
-                self.server_build_date = None;
-                Some(e.to_string())
-            },
+                Ok(health) => {
+                    self.connected = true;
+                    self.server_version = Self::normalize_server_field(health.version);
+                    self.server_api_version = Self::normalize_server_field(health.api_version);
+                    self.server_build_date =
+                        health.build_date.and_then(Self::normalize_server_field);
+                    None
+                },
+                Err(KalamLinkError::ServerError {
+                    status_code: 403, ..
+                }) => {
+                    // Health endpoint is localhost-only; server is reachable but we can't
+                    // refresh version info. Preserve the current connected state.
+                    Some(
+                        "Health endpoint is restricted to localhost (remote connection detected)"
+                            .to_string(),
+                    )
+                },
+                Err(e) => {
+                    self.connected = false;
+                    self.server_version = None;
+                    self.server_api_version = None;
+                    self.server_build_date = None;
+                    Some(e.to_string())
+                },
             },
             Err(e) => Some(e.to_string()),
         };
@@ -201,10 +202,7 @@ impl CLISession {
                 "No".red()
             },
         );
-        print_info_row(
-            "Reconnect Delay",
-            format!("{} ms", conn_cfg.reconnect_delay_ms).green(),
-        );
+        print_info_row("Reconnect Delay", format!("{} ms", conn_cfg.reconnect_delay_ms).green());
         print_info_row(
             "Max Reconnect Delay",
             format!("{} ms", conn_cfg.max_reconnect_delay_ms).green(),

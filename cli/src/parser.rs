@@ -387,9 +387,7 @@ impl CommandParser {
     fn parse_execute_as_command(line: &str) -> Result<Command> {
         let remainder = line["\\as".len()..].trim_start();
         if remainder.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\as requires a target user and SQL query".into(),
-            ));
+            return Err(CLIError::ParseError("\\as requires a target user and SQL query".into()));
         }
 
         let user_end = remainder.find(char::is_whitespace).ok_or_else(|| {
@@ -400,9 +398,7 @@ impl CommandParser {
         let sql = remainder[user_end..].trim_start();
 
         if user.is_empty() || sql.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\as requires a target user and SQL query".into(),
-            ));
+            return Err(CLIError::ParseError("\\as requires a target user and SQL query".into()));
         }
 
         Ok(Command::ExecuteAs {
@@ -419,9 +415,7 @@ impl CommandParser {
             },
             [subcommand, table @ ..] if subcommand.eq_ignore_ascii_case("table") => {
                 if table.is_empty() {
-                    Err(CLIError::ParseError(
-                        "\\flush table requires a table name".into(),
-                    ))
+                    Err(CLIError::ParseError("\\flush table requires a table name".into()))
                 } else {
                     Ok(Command::Flush(FlushTarget::Table(table.join(" "))))
                 }
@@ -583,10 +577,7 @@ mod tests {
     fn test_parse_format_subscribe_and_credential_update_commands() {
         let parser = CommandParser::new();
 
-        assert_eq!(
-            parser.parse("\\format json").unwrap(),
-            Command::SetFormat("json".to_string())
-        );
+        assert_eq!(parser.parse("\\format json").unwrap(), Command::SetFormat("json".to_string()));
         assert_eq!(
             parser.parse("\\subscribe SELECT * FROM app.messages").unwrap(),
             Command::Subscribe("SELECT * FROM app.messages".to_string())
@@ -610,7 +601,9 @@ mod tests {
 
         assert_eq!(
             parser
-                .parse("\\consume app.events --group workers --from earliest --limit 5 --timeout 12")
+                .parse(
+                    "\\consume app.events --group workers --from earliest --limit 5 --timeout 12"
+                )
                 .unwrap(),
             Command::Consume {
                 topic: "app.events".to_string(),
@@ -641,10 +634,7 @@ mod tests {
             parser.parse("\\cluster purge --upto 42").unwrap(),
             Command::ClusterPurge { upto: 42 }
         );
-        assert_eq!(
-            parser.parse("\\cluster purge 42").unwrap(),
-            Command::ClusterPurge { upto: 42 }
-        );
+        assert_eq!(parser.parse("\\cluster purge 42").unwrap(), Command::ClusterPurge { upto: 42 });
         assert_eq!(
             parser.parse("\\cluster trigger-election").unwrap(),
             Command::ClusterTriggerElection
@@ -666,10 +656,7 @@ mod tests {
         assert_eq!(parser.parse("\\cluster clear").unwrap(), Command::ClusterClear);
         assert_eq!(parser.parse("\\cluster list").unwrap(), Command::ClusterList);
         assert_eq!(parser.parse("\\cluster ls").unwrap(), Command::ClusterList);
-        assert_eq!(
-            parser.parse("\\cluster list groups").unwrap(),
-            Command::ClusterListGroups
-        );
+        assert_eq!(parser.parse("\\cluster list groups").unwrap(), Command::ClusterListGroups);
     }
 
     #[test]
