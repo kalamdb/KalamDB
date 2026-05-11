@@ -382,6 +382,7 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
         batch_size,
         last_rows,
         from,
+        auto_fetch_batches: None,
     })
 }
 

@@ -58,7 +58,9 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
             Some(committed) => committed,
             None => match statement.position {
                 ConsumePosition::Offset(offset) => offset,
-                ConsumePosition::Earliest => 0,
+                ConsumePosition::Earliest => topic_publisher
+                    .earliest_available_offset(&topic_id, partition_id)
+                    .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?,
                 ConsumePosition::Latest => topic_publisher
                     .latest_offset(&topic_id, partition_id)
                     .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?

@@ -8,8 +8,9 @@ use kalamdb_handlers_support::register_typed_handler;
 use kalamdb_sql::{
     classifier::SqlStatementKind,
     ddl::{
-        AckStatement, AddTopicSourceStatement, ClearTopicStatement, ConsumePosition,
-        ConsumeStatement, CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
+        AckStatement, AddTopicSourceStatement, AlterTopicRetentionStatement,
+        ClearTopicRetentionStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
+        CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
     },
 };
 
@@ -21,6 +22,8 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         SqlStatementKind::CreateTopic(CreateTopicStatement {
             topic_name: "_placeholder".to_string(),
             partitions: None,
+            retention_seconds: None,
+            retention_max_bytes: None,
         }),
         topics::CreateTopicHandler::new(app_context.clone()),
         SqlStatementKind::CreateTopic,
@@ -55,6 +58,26 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         }),
         topics::AddTopicSourceHandler::new(app_context.clone()),
         SqlStatementKind::AddTopicSource,
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::AlterTopicRetention(AlterTopicRetentionStatement {
+            topic_name: "_placeholder".to_string(),
+            retention_seconds: None,
+            retention_max_bytes: None,
+        }),
+        topics::AlterTopicRetentionHandler::new(app_context.clone()),
+        SqlStatementKind::AlterTopicRetention,
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::ClearTopicRetention(ClearTopicRetentionStatement {
+            topic_name: "_placeholder".to_string(),
+        }),
+        topics::ClearTopicRetentionHandler::new(app_context.clone()),
+        SqlStatementKind::ClearTopicRetention,
     );
 
     register_typed_handler!(

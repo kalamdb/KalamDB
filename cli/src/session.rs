@@ -66,10 +66,11 @@ impl TerminalRawModeGuard {
     fn new() -> std::io::Result<Self> {
         unsafe {
             let fd = libc::STDIN_FILENO;
-            let mut term: libc::termios = std::mem::zeroed();
-            if libc::tcgetattr(fd, &mut term) != 0 {
+            let mut term = std::mem::MaybeUninit::<libc::termios>::uninit();
+            if libc::tcgetattr(fd, term.as_mut_ptr()) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            let mut term = term.assume_init();
 
             let original = term;
             // We want to read Ctrl+C as raw byte (0x03) and allow single-byte reads,

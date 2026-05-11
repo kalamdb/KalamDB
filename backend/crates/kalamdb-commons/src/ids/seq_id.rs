@@ -8,7 +8,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 
 use crate::{ids::SnowflakeGenerator, StorageKey};
 
@@ -21,7 +24,7 @@ use crate::{ids::SnowflakeGenerator, StorageKey};
 ///
 /// **MVCC Architecture**: Used as `_seq` column for version tracking
 /// Storage key format: `{user_id}:{_seq}` or just `{_seq}` for shared tables
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SeqId(i64);
 
 impl SeqId {
@@ -119,6 +122,64 @@ impl SeqId {
 impl fmt::Display for SeqId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Serialize for SeqId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_i64(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SeqId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SeqIdVisitor;
+
+        impl Visitor<'_> for SeqIdVisitor {
+            type Value = SeqId;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an i64 sequence ID or a decimal string")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(SeqId::new(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let value = i64::try_from(value)
+                    .map_err(|_| E::custom(format!("sequence ID {} exceeds i64 range", value)))?;
+                Ok(SeqId::new(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                SeqId::from_string(value).map_err(E::custom)
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        deserializer.deserialize_any(SeqIdVisitor)
     }
 }
 

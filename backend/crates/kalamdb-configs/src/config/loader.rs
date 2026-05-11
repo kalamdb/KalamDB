@@ -183,6 +183,20 @@ impl ServerConfig {
             return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
         }
 
+        if self.topics.default_retention_seconds <= 0 {
+            return Err(anyhow::anyhow!("topics.default_retention_seconds must be greater than 0"));
+        }
+
+        if self.topics.default_retention_max_bytes <= 0 {
+            return Err(anyhow::anyhow!(
+                "topics.default_retention_max_bytes must be greater than 0"
+            ));
+        }
+
+        if self.topics.retention_batch_size == 0 {
+            return Err(anyhow::anyhow!("topics.retention_batch_size cannot be 0"));
+        }
+
         parse_trusted_proxy_entries(&self.security.trusted_proxy_ranges).map_err(|error| {
             anyhow::anyhow!("Invalid security.trusted_proxy_ranges configuration: {}", error)
         })?;
@@ -272,6 +286,10 @@ mod tests {
             "[files]",
             "[topics]",
             "visibility_timeout_secs",
+            "default_retention_seconds",
+            "default_retention_max_bytes",
+            "retention_check_interval_seconds",
+            "retention_batch_size",
         ] {
             assert!(
                 example.contains(required_snippet),

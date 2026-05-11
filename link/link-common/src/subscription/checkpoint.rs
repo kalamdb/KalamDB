@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 #[cfg(any(feature = "tokio-runtime", test))]
 use crate::models::BatchStatus;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm", test))]
-use crate::{models::ChangeEvent, seq_id::SeqId, seq_tracking};
+use crate::{models::ChangeEvent, seq_tracking, SeqId};
 
 #[cfg(any(feature = "tokio-runtime", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

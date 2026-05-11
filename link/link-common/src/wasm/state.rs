@@ -1,8 +1,8 @@
 use crate::{
     models::{ChangeEvent, ServerMessage, SubscriptionOptions},
-    seq_id::SeqId,
     seq_tracking,
     subscription::{LiveRowsConfig, LiveRowsMaterializer},
+    SeqId,
 };
 
 #[derive(Clone)]

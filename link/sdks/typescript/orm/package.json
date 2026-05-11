@@ -35,9 +35,14 @@
   "sideEffects": false,
   "scripts": {
     "clean": "node -e \"const fs=require('fs');try{fs.rmSync('dist',{recursive:true,force:true})}catch{}\"",
+    "ensure:build-deps": "node -e \"const fs=require('fs');const required=['node_modules/drizzle-orm','node_modules/@kalamdb/client'];process.exit(required.every((entry)=>fs.existsSync(entry))?0:1)\" || npm install --no-audit --no-fund",
+    "ensure:test-deps": "node -e \"const fs=require('fs');const required=['node_modules/drizzle-orm','node_modules/@kalamdb/client','node_modules/@kalamdb/consumer'];process.exit(required.every((entry)=>fs.existsSync(entry))?0:1)\" || npm install --no-audit --no-fund",
+    "ensure:linked-client": "node -e \"const fs=require('fs');process.exit(fs.existsSync('node_modules/@kalamdb/client/dist/src/index.js')?0:1)\" || (npm --prefix ../client install --no-audit --no-fund && npm --prefix ../client run build && npm install --no-package-lock --no-save ../client)",
+    "ensure:linked-consumer": "node -e \"const fs=require('fs');process.exit(fs.existsSync('node_modules/@kalamdb/client/dist/src/index.js')&&fs.existsSync('node_modules/@kalamdb/consumer/dist/src/index.js')?0:1)\" || (npm --prefix ../consumer install --no-audit --no-fund && npm --prefix ../consumer run build && npm install --no-package-lock --no-save ../client ../consumer)",
+    "prebuild": "npm run ensure:build-deps && npm run ensure:linked-client",
     "build": "npm run clean && tsc",
     "build:orm": "npm run build",
-    "pretest": "node -e \"const fs=require('fs');const required=['node_modules/drizzle-orm','node_modules/@kalamdb/client'];if(required.every((entry)=>fs.existsSync(entry)))process.exit(0);process.exit(1)\" || npm install",
+    "pretest": "npm run ensure:test-deps && npm run ensure:linked-consumer",
     "test": "npm run build && node --test tests/ktable.test.mjs tests/generate-unit.test.mjs tests/driver.test.mjs tests/filtering.test.mjs tests/agent-consumer.test.mjs tests/temporal-normalize.test.mjs tests/file-column.test.mjs tests/strip-defaults.test.mjs tests/sql-normalize.test.mjs tests/live-descriptor.test.mjs tests/live-typed-query.test.mjs tests/generate.test.mjs tests/generate-schema-changes.test.mjs tests/live.test.mjs tests/cli.test.mjs",
     "prepublishOnly": "npm run build"
   },

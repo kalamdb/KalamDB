@@ -42,6 +42,7 @@
 //! let id_str: &str = user_id.as_str();
 //! ```
 
+pub mod api_models;
 pub mod constants;
 #[cfg(any(
     feature = "conversions",
@@ -60,6 +61,8 @@ pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod system_tables; // System table enumeration (SystemTable, StoragePartition)
 #[cfg(feature = "full")]
 pub mod websocket;
+pub mod websocket_messages;
+pub mod websocket_protocol;
 #[cfg(feature = "websocket-auth")]
 pub mod websocket_auth;
 
@@ -67,6 +70,9 @@ pub mod websocket_auth;
 extern crate self as kalamdb_commons;
 
 // Re-export commonly used types at crate root
+pub use api_models::{
+    ClusterHealthResponse, ClusterNodeHealth, HealthCheckResponse, ResponseStatus,
+};
 pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 #[cfg(feature = "conversions")]
 pub use conversions::{
@@ -87,6 +93,7 @@ pub use models::{
     AuthType,
     JobId,
     LiveQueryId,
+    KalamDataType,
     ManifestId,
     NamespaceId,
     NodeId,
@@ -99,6 +106,9 @@ pub use models::{
     TransactionOrigin,
     TransactionState,
     UserId,
+    FieldFlag,
+    FieldFlags,
+    SchemaField,
 };
 pub use schemas::{TableAccess, TableName, TableType};
 #[cfg(feature = "serialization")]
@@ -111,5 +121,12 @@ pub use websocket::{
     ChangeNotification, ChangeType as WsChangeType, Notification, SharedChangePayload,
     WebSocketMessage, WireNotification,
 };
+pub use websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
+pub use websocket_messages::{
+    BatchControl, BatchStatus, ChangeTypeRaw, ServerMessage, SubscriptionOptions,
+    SubscriptionRequest,
+};
+#[cfg(feature = "websocket-auth")]
+pub use websocket_messages::ClientMessage;
 #[cfg(feature = "websocket-auth")]
 pub use websocket_auth::WsAuthCredentials;

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::seq_id::SeqId;
+use crate::SeqId;
 
 /// Read-only snapshot of an active subscription's metadata.
 ///

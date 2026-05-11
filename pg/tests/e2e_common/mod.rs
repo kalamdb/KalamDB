@@ -1158,6 +1158,11 @@ pub fn kalamdb_pid() -> u32 {
 }
 
 pub fn process_rss_kb(pid: u32) -> u64 {
+    #[cfg(target_os = "macos")]
+    if let Some(footprint_kb) = process_physical_footprint_kb(pid) {
+        return footprint_kb;
+    }
+
     let output = Command::new("ps")
         .args(["-o", "rss=", "-p", &pid.to_string()])
         .output()
@@ -1174,6 +1179,11 @@ pub fn process_rss_kb(pid: u32) -> u64 {
 pub fn process_group_rss_kb(pids: &[u32]) -> u64 {
     if pids.is_empty() {
         return 0;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return pids.iter().filter_map(|pid| process_physical_footprint_kb(*pid)).sum();
     }
 
     let pid_list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -1228,6 +1238,27 @@ pub async fn pg_backend_pid(client: &tokio_postgres::Client) -> u32 {
         .expect("query pg_backend_pid");
     let pid: i32 = row.get(0);
     pid as u32
+}
+
+#[cfg(target_os = "macos")]
+fn process_physical_footprint_kb(pid: u32) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut usage = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+
+    let result = unsafe {
+        libc::proc_pid_rusage(
+            pid,
+            libc::RUSAGE_INFO_V4,
+            usage.as_mut_ptr() as *mut libc::rusage_info_t,
+        )
+    };
+
+    if result < 0 {
+        return None;
+    }
+
+    let usage = unsafe { usage.assume_init() };
+    Some(usage.ri_phys_footprint / 1024)
 }
 
 pub async fn ensure_schema_exists(client: &tokio_postgres::Client, schema: &str) {

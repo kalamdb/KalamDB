@@ -18,12 +18,15 @@ use kalamdb_commons::{
     models::{rows::Row, ConsumerGroupId, TableId, TopicId, TopicOp, UserId},
     storage::Partition,
 };
-use kalamdb_store::{EntityStore, StorageBackend};
+use kalamdb_store::StorageBackend;
 use kalamdb_system::providers::{
     topic_offsets::{TopicOffset, TopicOffsetsTableProvider},
     topics::Topic,
 };
-use kalamdb_tables::{TopicMessage, TopicMessageStore};
+use kalamdb_tables::{
+    TopicMessage, TopicMessageStore, TopicRetentionDeletionStats,
+    TOPIC_RETENTION_INDEX_PARTITION_NAME,
+};
 
 use crate::{models::TopicCacheStats, offset::OffsetAllocator, payload, routing::RouteCache};
 
@@ -206,6 +209,9 @@ pub struct TopicPublisherService {
     /// Per-(topic, partition) write locks that serialize offset allocation +
     /// RocksDB write to guarantee messages are stored in offset order.
     partition_write_locks: DashMap<TopicPartitionKey, Arc<Mutex<()>>>,
+    /// Approximate retained message bytes per topic partition, rebuilt at startup
+    /// and updated by publish/retention paths.
+    retained_bytes: DashMap<TopicPartitionKey, u64>,
     /// How long a consumer claim stays valid before re-delivery.
     visibility_timeout: Duration,
 }
@@ -244,6 +250,8 @@ impl TopicPublisherService {
         // so creating a separate topic_offsets CF here only adds permanent idle overhead.
         let messages_partition = Partition::new("topic_messages");
         let _ = storage_backend.create_partition(&messages_partition);
+        let retention_partition = Partition::new(TOPIC_RETENTION_INDEX_PARTITION_NAME);
+        let _ = storage_backend.create_partition(&retention_partition);
 
         let message_store =
             Arc::new(TopicMessageStore::new(storage_backend.clone(), messages_partition));
@@ -257,6 +265,7 @@ impl TopicPublisherService {
             offset_allocator: OffsetAllocator::new(),
             group_claim_state: DashMap::new(),
             partition_write_locks: DashMap::new(),
+            retained_bytes: DashMap::new(),
             visibility_timeout,
         }
     }
@@ -310,6 +319,7 @@ impl TopicPublisherService {
     /// Remove a topic from the cache.
     pub fn remove_topic(&self, topic_id: &TopicId) {
         self.route_cache.remove_topic(topic_id);
+        self.retained_bytes.retain(|key, _| key.topic_id != *topic_id);
     }
 
     /// Update a topic in the cache (removes old routes, adds new ones).
@@ -323,6 +333,48 @@ impl TopicPublisherService {
         self.offset_allocator.clear();
         self.group_claim_state.clear();
         self.partition_write_locks.clear();
+        self.retained_bytes.clear();
+    }
+
+    fn add_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+        let key = TopicPartitionKey::new(topic_id, partition_id);
+        self.retained_bytes
+            .entry(key)
+            .and_modify(|current| *current = current.saturating_add(bytes))
+            .or_insert(bytes);
+    }
+
+    fn subtract_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+        let key = TopicPartitionKey::new(topic_id, partition_id);
+        self.retained_bytes
+            .entry(key)
+            .and_modify(|current| *current = current.saturating_sub(bytes))
+            .or_insert(0);
+    }
+
+    fn set_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {
+        self.retained_bytes
+            .insert(TopicPartitionKey::new(topic_id, partition_id), bytes);
+    }
+
+    fn retained_bytes_for_partition(&self, topic_id: &TopicId, partition_id: u32) -> Result<u64> {
+        let key = TopicPartitionKey::new(topic_id, partition_id);
+        if let Some(bytes) = self.retained_bytes.get(&key) {
+            return Ok(*bytes);
+        }
+
+        let bytes = self
+            .message_store
+            .retained_bytes_for_partition(topic_id, partition_id)
+            .map_err(|e| CommonError::Internal(format!("Failed to read retained bytes: {}", e)))?;
+        self.retained_bytes.insert(key, bytes);
+        Ok(bytes)
     }
 
     // ===== Publishing Methods =====
@@ -410,9 +462,11 @@ impl TopicPublisherService {
                 operation.clone(),
             );
 
-            self.message_store.put(&message.id(), &message).map_err(|e| {
-                CommonError::Internal(format!("Failed to store topic message: {}", e))
-            })?;
+            let message_bytes =
+                self.message_store.put_message_with_retention_index(&message).map_err(|e| {
+                    CommonError::Internal(format!("Failed to store topic message: {}", e))
+                })?;
+            self.add_retained_bytes(&entry.topic_id, partition_id, message_bytes);
 
             tracing::debug!(
                 topic_name = entry.topic_id.as_str(),
@@ -575,12 +629,24 @@ impl TopicPublisherService {
                                 e
                             ))
                         })?;
-                    raw_entries.push((key_encoded, value_encoded));
+                    let retention_entry = kalamdb_tables::TopicRetentionIndexEntry::new_raw(
+                        entry.topic_id.clone(),
+                        *partition_id,
+                        timestamp_ms,
+                        offset,
+                        value_encoded.len() as u64,
+                    );
+                    raw_entries.push((retention_entry, key_encoded, value_encoded));
                 }
 
-                self.message_store.batch_put_raw(raw_entries).map_err(|e| {
-                    CommonError::Internal(format!("Failed to batch store topic messages: {}", e))
-                })?;
+                let message_bytes =
+                    self.message_store.batch_put_raw_with_retention(raw_entries).map_err(|e| {
+                        CommonError::Internal(format!(
+                            "Failed to batch store topic messages: {}",
+                            e
+                        ))
+                    })?;
+                self.add_retained_bytes(&entry.topic_id, *partition_id, message_bytes);
 
                 total_published += row_indices.len();
             }
@@ -600,6 +666,25 @@ impl TopicPublisherService {
         offset: u64,
         limit: usize,
     ) -> Result<Vec<TopicMessage>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let earliest = self.earliest_available_offset(topic_id, partition_id)?;
+        if offset < earliest {
+            let latest =
+                self.latest_offset(topic_id, partition_id)?.map(|last| last + 1).unwrap_or(0);
+            return Err(CommonError::InvalidInput(format!(
+                "OffsetOutOfRange: requested offset {} is before earliest available offset {} \
+                 for topic {} partition {} (latest next offset {})",
+                offset,
+                earliest,
+                topic_id.as_str(),
+                partition_id,
+                latest
+            )));
+        }
+
         self.message_store
             .fetch_messages(topic_id, partition_id, offset, limit)
             .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))
@@ -640,6 +725,21 @@ impl TopicPublisherService {
 
             if effective_limit == 0 {
                 return Ok(Vec::new());
+            }
+
+            let earliest = self.earliest_available_offset(topic_id, partition_id)?;
+            if effective_start < earliest {
+                let latest =
+                    self.latest_offset(topic_id, partition_id)?.map(|last| last + 1).unwrap_or(0);
+                return Err(CommonError::InvalidInput(format!(
+                    "OffsetOutOfRange: requested offset {} is before earliest available offset {} \
+                     for topic {} partition {} (latest next offset {})",
+                    effective_start,
+                    earliest,
+                    topic_id.as_str(),
+                    partition_id,
+                    latest
+                )));
             }
 
             let messages = self
@@ -683,7 +783,127 @@ impl TopicPublisherService {
     pub fn latest_offset(&self, topic_id: &TopicId, partition_id: u32) -> Result<Option<u64>> {
         let next_offset = self.offset_allocator.peek_next_offset(topic_id, partition_id);
 
-        Ok(next_offset.and_then(|next| next.checked_sub(1)))
+        if let Some(next) = next_offset {
+            return Ok(next.checked_sub(1));
+        }
+
+        self.message_store
+            .latest_offset(topic_id, partition_id)
+            .map_err(|e| CommonError::Internal(format!("Failed to fetch latest offset: {}", e)))
+    }
+
+    /// Return the lowest offset that can be consumed for this partition.
+    ///
+    /// If retention removed every stored message but offsets have previously been
+    /// allocated, the earliest available offset is the next write offset.
+    pub fn earliest_available_offset(&self, topic_id: &TopicId, partition_id: u32) -> Result<u64> {
+        if let Some(offset) = self
+            .message_store
+            .earliest_offset(topic_id, partition_id)
+            .map_err(|e| CommonError::Internal(format!("Failed to fetch earliest offset: {}", e)))?
+        {
+            return Ok(offset);
+        }
+
+        Ok(self.offset_allocator.peek_next_offset(topic_id, partition_id).unwrap_or(0))
+    }
+
+    /// Enforce age and byte retention for one topic partition.
+    pub fn enforce_retention(
+        &self,
+        topic: &Topic,
+        partition_id: u32,
+        cutoff_timestamp_ms: Option<i64>,
+        max_bytes: Option<i64>,
+        batch_size: usize,
+    ) -> Result<TopicRetentionDeletionStats> {
+        if batch_size == 0 {
+            return Err(CommonError::InvalidInput("batch_size must be greater than 0".to_string()));
+        }
+        if partition_id >= topic.partitions {
+            return Err(CommonError::InvalidInput(format!(
+                "Partition {} is outside topic {} partition count {}",
+                partition_id,
+                topic.topic_id.as_str(),
+                topic.partitions
+            )));
+        }
+
+        let partition_lock_key = TopicPartitionKey::new(&topic.topic_id, partition_id);
+        let lock = self
+            .partition_write_locks
+            .entry(partition_lock_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut stats = TopicRetentionDeletionStats::default();
+
+        if let Some(cutoff) = cutoff_timestamp_ms {
+            let entries = self
+                .message_store
+                .retention_entries_before(
+                    &topic.topic_id,
+                    partition_id,
+                    cutoff,
+                    batch_size.saturating_sub(stats.messages_deleted),
+                )
+                .map_err(|e| {
+                    CommonError::Internal(format!("Failed to scan age retention: {}", e))
+                })?;
+            let deleted = self.message_store.delete_retention_entries(entries).map_err(|e| {
+                CommonError::Internal(format!("Failed to delete expired messages: {}", e))
+            })?;
+            self.subtract_retained_bytes(&topic.topic_id, partition_id, deleted.bytes_freed);
+            stats.messages_deleted += deleted.messages_deleted;
+            stats.bytes_freed += deleted.bytes_freed;
+        }
+
+        if let Some(max_bytes) = max_bytes {
+            let max_bytes = max_bytes.max(0) as u64;
+            let mut retained_bytes =
+                self.retained_bytes_for_partition(&topic.topic_id, partition_id)?;
+            while retained_bytes > max_bytes && stats.messages_deleted < batch_size {
+                let remaining = batch_size - stats.messages_deleted;
+                let entries = self
+                    .message_store
+                    .retention_entries_for_partition(&topic.topic_id, partition_id, remaining)
+                    .map_err(|e| {
+                        CommonError::Internal(format!("Failed to scan byte retention: {}", e))
+                    })?;
+                if entries.is_empty() {
+                    self.set_retained_bytes(&topic.topic_id, partition_id, 0);
+                    break;
+                }
+
+                let mut selected_entries = Vec::new();
+                let mut selected_bytes = 0u64;
+                for entry in entries {
+                    selected_bytes = selected_bytes.saturating_add(entry.1.message_bytes);
+                    selected_entries.push(entry);
+                    if retained_bytes.saturating_sub(selected_bytes) <= max_bytes {
+                        break;
+                    }
+                }
+
+                let deleted = self
+                    .message_store
+                    .delete_retention_entries(selected_entries)
+                    .map_err(|e| {
+                        CommonError::Internal(format!("Failed to delete oversized messages: {}", e))
+                    })?;
+                if deleted.messages_deleted == 0 {
+                    break;
+                }
+
+                retained_bytes = retained_bytes.saturating_sub(deleted.bytes_freed);
+                self.subtract_retained_bytes(&topic.topic_id, partition_id, deleted.bytes_freed);
+                stats.messages_deleted += deleted.messages_deleted;
+                stats.bytes_freed += deleted.bytes_freed;
+            }
+        }
+
+        Ok(stats)
     }
 
     // ===== Offset Management Methods =====
@@ -783,27 +1003,48 @@ impl TopicPublisherService {
         for entry in self.route_cache.iter_topics() {
             let topic = entry.value();
             for partition_id in 0..topic.partitions {
-                match self.message_store.fetch_messages(
-                    &topic.topic_id,
-                    partition_id,
-                    0,
-                    usize::MAX,
-                ) {
-                    Ok(msgs) => {
-                        if let Some(last) = msgs.last() {
-                            let next = last.offset + 1;
-                            self.offset_allocator.seed(&topic.topic_id, partition_id, next);
-                            log::info!(
-                                "Restored offset counter for topic={} partition={}: next_offset={}",
-                                topic.topic_id.as_str(),
-                                partition_id,
-                                next,
-                            );
-                        }
+                if let Err(e) = self
+                    .message_store
+                    .rebuild_retention_index_for_partition(&topic.topic_id, partition_id)
+                {
+                    log::warn!(
+                        "Failed to rebuild retention index for topic={} partition={}: {}",
+                        topic.topic_id.as_str(),
+                        partition_id,
+                        e,
+                    );
+                }
+
+                match self.message_store.latest_offset(&topic.topic_id, partition_id) {
+                    Ok(Some(last_offset)) => {
+                        let next = last_offset + 1;
+                        self.offset_allocator.seed(&topic.topic_id, partition_id, next);
+                        log::info!(
+                            "Restored offset counter for topic={} partition={}: next_offset={}",
+                            topic.topic_id.as_str(),
+                            partition_id,
+                            next,
+                        );
                     },
+                    Ok(None) => {},
                     Err(e) => {
                         log::warn!(
                             "Failed to restore offset for topic={} partition={}: {}",
+                            topic.topic_id.as_str(),
+                            partition_id,
+                            e,
+                        );
+                    },
+                }
+
+                match self.message_store.retained_bytes_for_partition(&topic.topic_id, partition_id)
+                {
+                    Ok(bytes) => {
+                        self.set_retained_bytes(&topic.topic_id, partition_id, bytes);
+                    },
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to restore retained bytes for topic={} partition={}: {}",
                             topic.topic_id.as_str(),
                             partition_id,
                             e,
@@ -856,7 +1097,7 @@ mod tests {
     use std::{sync::mpsc, thread};
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, PayloadMode, TableName};
+    use kalamdb_commons::{models::{NamespaceId, PayloadMode, TableName}, KSerializable, StorageKey};
     use kalamdb_store::storage_trait::{KvIterator, Operation, Partition, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::providers::topics::TopicRoute;
@@ -909,6 +1150,20 @@ mod tests {
         }
     }
 
+    fn create_test_topic_with_retention(
+        topic_id: TopicId,
+        table_id: TableId,
+        op: TopicOp,
+        partitions: u32,
+        retention_seconds: Option<i64>,
+        retention_max_bytes: Option<i64>,
+    ) -> Topic {
+        let mut topic = create_test_topic_with_partitions(topic_id, table_id, op, partitions);
+        topic.retention_seconds = retention_seconds;
+        topic.retention_max_bytes = retention_max_bytes;
+        topic
+    }
+
     fn service_with_primary_key(columns: &[&str]) -> TopicPublisherService {
         let backend = Arc::new(InMemoryBackend::new());
         let lookup: Arc<dyn TopicPrimaryKeyLookup> = Arc::new(FixedPrimaryKeyLookup {
@@ -919,6 +1174,55 @@ mod tests {
             Duration::from_secs(60),
             Some(lookup),
         )
+    }
+
+    fn append_retained_message(
+        service: &TopicPublisherService,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: &[u8],
+        timestamp_ms: i64,
+    ) -> u64 {
+        let message = TopicMessage::new(
+            topic_id.clone(),
+            partition_id,
+            offset,
+            payload.to_vec(),
+            None,
+            timestamp_ms,
+            Default::default(),
+        );
+        let message_bytes = service.message_store.put_message_with_retention_index(&message).unwrap();
+        service.add_retained_bytes(topic_id, partition_id, message_bytes);
+        service.offset_allocator.seed(topic_id, partition_id, offset + 1);
+        message_bytes
+    }
+
+    fn put_primary_only_message(
+        backend: &Arc<InMemoryBackend>,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: &[u8],
+        timestamp_ms: i64,
+    ) {
+        let message = TopicMessage::new(
+            topic_id.clone(),
+            partition_id,
+            offset,
+            payload.to_vec(),
+            None,
+            timestamp_ms,
+            Default::default(),
+        );
+        backend
+            .put(
+                &Partition::new("topic_messages"),
+                &message.id().storage_key(),
+                &message.encode().unwrap(),
+            )
+            .unwrap();
     }
 
     struct PausingScanBackend {
@@ -1241,6 +1545,154 @@ mod tests {
         let count = service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
 
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_restore_offset_counters_rebuilds_missing_retention_index() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service = TopicPublisherService::new(backend.clone());
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("users"));
+        let topic_id = TopicId::new("restore_retention_topic");
+
+        let topic = create_test_topic(topic_id.clone(), table_id, TopicOp::Insert);
+        service.add_topic(topic);
+
+        put_primary_only_message(&backend, &topic_id, 0, 0, b"first", 1_000);
+        put_primary_only_message(&backend, &topic_id, 0, 1, b"second", 2_000);
+
+        assert!(
+            service.message_store.retention_entries_for_partition(&topic_id, 0, 10).unwrap().is_empty(),
+            "test precondition: retention index should be missing before restore"
+        );
+
+        service.restore_offset_counters();
+
+        let retention_entries = service.message_store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
+        assert_eq!(retention_entries.len(), 2);
+        assert_eq!(
+            retention_entries.iter().map(|(_, entry)| entry.offset).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 0);
+        assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(1));
+        assert!(service.retained_bytes_for_partition(&topic_id, 0).unwrap() > 0);
+    }
+
+    #[test]
+    fn test_time_retention_advances_earliest_offset_without_rewriting_latest() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service = TopicPublisherService::new(backend);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("users"));
+        let topic_id = TopicId::new("time_retention_topic");
+
+        let topic = create_test_topic_with_retention(
+            topic_id.clone(),
+            table_id,
+            TopicOp::Insert,
+            1,
+            Some(3600),
+            None,
+        );
+        service.add_topic(topic.clone());
+
+        append_retained_message(&service, &topic_id, 0, 0, b"oldest", 1_000);
+        append_retained_message(&service, &topic_id, 0, 1, b"older", 2_000);
+        append_retained_message(&service, &topic_id, 0, 2, b"fresh", 3_000);
+
+        let stats = service.enforce_retention(&topic, 0, Some(2_500), None, 10).unwrap();
+
+        assert_eq!(stats.messages_deleted, 2);
+        assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 2);
+        assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
+        assert_eq!(service.fetch_messages(&topic_id, 0, 2, 10).unwrap().len(), 1);
+
+        let err = service.fetch_messages(&topic_id, 0, 1, 10).unwrap_err();
+        assert!(err.to_string().contains("OffsetOutOfRange"));
+    }
+
+    #[test]
+    fn test_byte_retention_prunes_oldest_messages_first() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service = TopicPublisherService::new(backend);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("users"));
+        let topic_id = TopicId::new("byte_retention_topic");
+
+        let topic = create_test_topic_with_retention(
+            topic_id.clone(),
+            table_id,
+            TopicOp::Insert,
+            1,
+            None,
+            Some(1),
+        );
+        service.add_topic(topic.clone());
+
+        let first_bytes = append_retained_message(&service, &topic_id, 0, 0, b"first", 1_000);
+        let second_bytes = append_retained_message(&service, &topic_id, 0, 1, b"second", 2_000);
+        let third_bytes = append_retained_message(&service, &topic_id, 0, 2, b"third", 3_000);
+
+        let max_bytes = (second_bytes + third_bytes) as i64;
+        let stats = service.enforce_retention(&topic, 0, None, Some(max_bytes), 10).unwrap();
+
+        assert_eq!(stats.messages_deleted, 1);
+        assert_eq!(stats.bytes_freed, first_bytes);
+        assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 1);
+        assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
+        assert_eq!(
+            service.fetch_messages(&topic_id, 0, 1, 10).unwrap().iter().map(|message| message.offset).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
+        assert!(err.to_string().contains("OffsetOutOfRange"));
+    }
+
+    #[test]
+    fn test_byte_retention_can_fully_cleanup_partition() {
+        let backend = Arc::new(InMemoryBackend::new());
+        let service = TopicPublisherService::new(backend);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("users"));
+        let topic_id = TopicId::new("byte_retention_full_cleanup_topic");
+
+        let topic = create_test_topic_with_retention(
+            topic_id.clone(),
+            table_id,
+            TopicOp::Insert,
+            1,
+            None,
+            Some(1),
+        );
+        service.add_topic(topic.clone());
+
+        append_retained_message(&service, &topic_id, 0, 0, b"first", 1_000);
+        append_retained_message(&service, &topic_id, 0, 1, b"second", 2_000);
+        append_retained_message(&service, &topic_id, 0, 2, b"third", 3_000);
+
+        let stats = service.enforce_retention(&topic, 0, None, Some(1), 10).unwrap();
+
+        assert_eq!(stats.messages_deleted, 3);
+        assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 3);
+        assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
+        assert_eq!(service.retained_bytes_for_partition(&topic_id, 0).unwrap(), 0);
+        assert!(service.fetch_messages(&topic_id, 0, 3, 10).unwrap().is_empty());
+        assert!(
+            service
+                .message_store
+                .retention_entries_for_partition(&topic_id, 0, 10)
+                .unwrap()
+                .is_empty()
+        );
+
+        let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
+        assert!(err.to_string().contains("OffsetOutOfRange"));
     }
 
     #[test]

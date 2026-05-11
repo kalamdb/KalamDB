@@ -103,7 +103,19 @@ pub async fn consume_handler(
         Some(committed) => committed,
         None => match &body.start {
             StartPosition::Offset { offset } => *offset,
-            StartPosition::Earliest => 0,
+            StartPosition::Earliest => {
+                match topic_publisher.earliest_available_offset(topic_id, body.partition_id) {
+                    Ok(offset) => offset,
+                    Err(e) => {
+                        return HttpResponse::InternalServerError().json(
+                            TopicErrorResponse::internal_error(&format!(
+                                "Failed to resolve earliest offset: {}",
+                                e
+                            )),
+                        );
+                    },
+                }
+            },
             StartPosition::Latest => {
                 match topic_publisher.latest_offset(topic_id, body.partition_id) {
                     Ok(Some(last_offset)) => last_offset + 1,
@@ -142,6 +154,12 @@ pub async fn consume_handler(
     let messages = match messages_result {
         Ok(msgs) => msgs,
         Err(e) => {
+            if e.to_string().contains("OffsetOutOfRange") {
+                return HttpResponse::BadRequest().json(TopicErrorResponse::new(
+                    format!("Failed to fetch messages: {}", e),
+                    "OFFSET_OUT_OF_RANGE",
+                ));
+            }
             return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
                 &format!("Failed to fetch messages: {}", e),
             ));

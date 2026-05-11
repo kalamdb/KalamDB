@@ -14,9 +14,9 @@
     "preview": "vite preview",
     "setup": "node setup.mjs",
     "preagent": "node scripts/ensure-sdk.mjs",
-    "agent": "NODE_OPTIONS=--preserve-symlinks tsx src/agent.ts",
+    "agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
     "pretest": "node scripts/ensure-sdk.mjs",
-    "test": "tsc -p tsconfig.test.json && NODE_OPTIONS=--preserve-symlinks tsx --test tests/agent.test.ts && playwright test"
+    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts && playwright test"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",

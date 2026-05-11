@@ -56,6 +56,7 @@ pub mod pg_operations;
 // Re-export all types from submodules for convenience
 pub use auth_type::AuthType;
 pub use connection::ConnectionInfo;
+pub use datatypes::KalamDataType;
 pub use ids::*;
 pub use kalam_cell_value::KalamCellValue;
 pub use oauth_provider::OAuthProvider;
@@ -64,7 +65,7 @@ pub use read_context::ReadContext;
 pub use role::Role;
 #[cfg(feature = "rows")]
 pub use rows::{KTableRow, StreamTableRow, SystemTableRow, UserTableRow};
-pub use schemas::{TableAccess, TableName};
+pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
 

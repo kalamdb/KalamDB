@@ -1,5 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse};
 use kalamdb_auth::extract_client_ip_secure;
+use kalamdb_commons::HealthCheckResponse;
 use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
 use serde_json::json;
 
@@ -11,12 +12,12 @@ pub(crate) async fn healthcheck_handler(req: HttpRequest) -> HttpResponse {
         }));
     }
 
-    HttpResponse::Ok().json(json!({
-        "status": "healthy",
-        "version": SERVER_VERSION,
-        "api_version": "v1",
-        "build_date": BUILD_DATE,
-    }))
+    HttpResponse::Ok().json(HealthCheckResponse {
+        status: "healthy".to_string(),
+        version: SERVER_VERSION.to_string(),
+        api_version: "v1".to_string(),
+        build_date: Some(BUILD_DATE.to_string()),
+    })
 }
 
 #[cfg(test)]

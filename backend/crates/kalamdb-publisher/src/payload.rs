@@ -37,8 +37,7 @@ impl PreparedRow {
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
         let key_payload = serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))?;
-        // SAFETY: serde_json::to_vec() always produces valid UTF-8 JSON bytes.
-        let partition_hash = hash_key(unsafe { std::str::from_utf8_unchecked(&key_payload) });
+        let partition_hash = hash_key(&key_payload);
         Ok(Self {
             key_payload,
             json_map,
@@ -56,8 +55,7 @@ impl PreparedRow {
             .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
         let key_payload = serde_json::to_vec(&json_map)
             .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))?;
-        // SAFETY: serde_json::to_vec() always produces valid UTF-8 JSON bytes.
-        let partition_hash = hash_key(unsafe { std::str::from_utf8_unchecked(&key_payload) });
+        let partition_hash = hash_key(&key_payload);
         // Pre-insert _table and serialize for Full/Diff payloads.
         json_map.insert("_table".to_string(), KalamCellValue::text(table_id.to_string()));
         let full_payload = serde_json::to_vec(&json_map)
@@ -160,14 +158,14 @@ pub(crate) fn hash_row(row: &Row) -> u64 {
 }
 
 /// Hash a serialized topic key using the same stable hash as partition selection.
-pub(crate) fn hash_key(key: &str) -> u64 {
+pub(crate) fn hash_key(key: impl AsRef<[u8]>) -> u64 {
     use std::{
         collections::hash_map::DefaultHasher,
         hash::{Hash, Hasher},
     };
 
     let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
+    key.as_ref().hash(&mut hasher);
     hasher.finish()
 }
 

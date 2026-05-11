@@ -133,6 +133,10 @@ pub enum SqlStatementKind {
     ClearTopic(ClearTopicStatement),
     /// ALTER TOPIC <name> ADD SOURCE ...
     AddTopicSource(AddTopicSourceStatement),
+    /// ALTER TOPIC <name> SET RETENTION ...
+    AlterTopicRetention(AlterTopicRetentionStatement),
+    /// ALTER TOPIC <name> CLEAR RETENTION
+    ClearTopicRetention(ClearTopicRetentionStatement),
     /// CONSUME FROM <topic> [GROUP '<id>'] [FROM <pos>] [LIMIT <n>]
     ConsumeTopic(ConsumeStatement),
     /// ACK <topic> GROUP '<id>' [PARTITION <n>] UPTO OFFSET <offset>
@@ -287,6 +291,8 @@ impl SqlStatement {
             | SqlStatementKind::DropTopic(_)
             | SqlStatementKind::ClearTopic(_)
             | SqlStatementKind::AddTopicSource(_)
+            | SqlStatementKind::AlterTopicRetention(_)
+            | SqlStatementKind::ClearTopicRetention(_)
             | SqlStatementKind::ResetConsumerGroup(_)
             | SqlStatementKind::CreateUser(_)
             | SqlStatementKind::AlterUser(_)
@@ -351,6 +357,8 @@ impl SqlStatement {
             SqlStatementKind::DropTopic(_) => "DROP TOPIC",
             SqlStatementKind::ClearTopic(_) => "CLEAR TOPIC",
             SqlStatementKind::AddTopicSource(_) => "ALTER TOPIC ADD SOURCE",
+            SqlStatementKind::AlterTopicRetention(_) => "ALTER TOPIC SET RETENTION",
+            SqlStatementKind::ClearTopicRetention(_) => "ALTER TOPIC CLEAR RETENTION",
             SqlStatementKind::ConsumeTopic(_) => "CONSUME FROM",
             SqlStatementKind::AckTopic(_) => "ACK",
             SqlStatementKind::ResetConsumerGroup(_) => "RESET CONSUMER GROUP",

@@ -93,8 +93,12 @@
 //! ```
 
 pub use crate::websocket_auth::WsAuthCredentials;
+pub use crate::websocket_messages::{
+    BatchControl, BatchStatus, ClientMessage, ChangeTypeRaw as ChangeType, ServerMessage,
+    SubscriptionOptions, SubscriptionRequest,
+};
+pub use crate::websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
 use crate::{
-    ids::SeqId,
     models::{rows::Row, KalamCellValue, UserId},
     schemas::SchemaField,
 };
@@ -107,56 +111,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use datafusion_common::ScalarValue;
 use serde::{Deserialize, Serialize};
-
-/// Wire-format serialization type negotiated during authentication.
-///
-/// The client sends its preferred serialization in the `Authenticate` message.
-/// After a successful auth response (always JSON), all subsequent frames use
-/// the negotiated format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SerializationType {
-    /// JSON text frames (default, backward-compatible).
-    #[default]
-    Json,
-    /// MessagePack binary frames — compact and fast with the same Serde model.
-    #[serde(rename = "msgpack")]
-    MessagePack,
-}
-
-/// Wire-format compression negotiated during authentication.
-///
-/// Applied independently of serialization type. Large payloads may still
-/// benefit from gzip even when using MessagePack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompressionType {
-    /// No compression.
-    None,
-    /// Gzip compression for payloads above the server threshold (default).
-    #[default]
-    Gzip,
-}
-
-/// Protocol options negotiated once per connection during authentication.
-///
-/// Always sent in `ClientMessage::Authenticate` and echoed in `AuthSuccess`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProtocolOptions {
-    /// Serialization format for messages after auth.
-    pub serialization: SerializationType,
-    /// Compression policy.
-    pub compression: CompressionType,
-}
-
-impl Default for ProtocolOptions {
-    fn default() -> Self {
-        Self {
-            serialization: SerializationType::Json,
-            compression: CompressionType::Gzip,
-        }
-    }
-}
 
 /// Type alias for row data in WebSocket messages (column_name -> cell value)
 pub type RowData = HashMap<String, KalamCellValue>;
@@ -229,144 +183,6 @@ pub enum WebSocketMessage {
     /// Only sent when batch_control.status == Ready.
     #[serde(untagged)]
     Notification(Notification),
-}
-
-/// Client-to-server request messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClientMessage {
-    /// Authenticate WebSocket connection
-    ///
-    /// Client sends this immediately after establishing WebSocket connection.
-    /// Server must receive this within 3 seconds or connection will be closed.
-    /// Server responds with AuthSuccess or AuthError.
-    ///
-    /// Supports token-based authentication via the `credentials` field.
-    /// Optionally negotiates wire format via `protocol`.
-    Authenticate {
-        /// Authentication credentials (jwt or future token-based methods)
-        #[serde(flatten)]
-        credentials: WsAuthCredentials,
-        /// Protocol negotiation (serialization + compression).
-        protocol: ProtocolOptions,
-    },
-
-    /// Subscribe to live query updates
-    ///
-    /// Client sends this to register a single subscription.
-    /// Server responds with SubscriptionAck followed by InitialDataBatch.
-    Subscribe {
-        /// Subscription to register
-        subscription: SubscriptionRequest,
-    },
-
-    /// Request next batch of initial data
-    ///
-    /// Client sends this after processing a batch to request the next batch.
-    /// Server responds with InitialDataBatch.
-    NextBatch {
-        /// The subscription ID to fetch the next batch for
-        subscription_id: String,
-        /// The SeqId of the last row received (for pagination)
-        last_seq_id: Option<SeqId>,
-    },
-
-    /// Unsubscribe from live query
-    ///
-    /// Client sends this to stop receiving updates for a subscription.
-    Unsubscribe {
-        /// The subscription ID to unsubscribe from
-        subscription_id: String,
-    },
-
-    /// Application-level keepalive ping.
-    ///
-    /// Browser WebSocket APIs do not expose protocol-level Ping frames, so
-    /// the TypeScript SDK sends this JSON message periodically to prevent
-    /// the server-side heartbeat timeout from firing on idle connections.
-    /// The server updates its last-activity timestamp and discards the message.
-    Ping,
-}
-
-/// Subscription request details
-///
-/// This is a client-only struct representing the subscription request.
-/// Server-side metadata (table_id, filter_expr, projections, etc.) is stored
-/// in SubscriptionState within ConnectionState.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubscriptionRequest {
-    /// Unique subscription identifier (client-generated)
-    pub id: String,
-    /// SQL query for live updates (must be a SELECT statement)
-    pub sql: String,
-    /// Optional subscription options
-    #[serde(default)]
-    pub options: Option<SubscriptionOptions>,
-}
-
-/// Options for live query subscriptions
-///
-/// These options control individual subscription behavior including:
-/// - Initial data loading (batch_size, last_rows)
-/// - Data resumption after reconnection (from)
-///
-/// Used by both SQL SUBSCRIBE TO command and WebSocket subscribe messages.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct SubscriptionOptions {
-    /// Hint for server-side batch sizing during initial data load
-    /// Default: server-configured (typically 1000 rows per batch)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_size: Option<usize>,
-
-    /// Number of last (newest) rows to fetch for initial data
-    /// Default: None (fetch all matching rows)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_rows: Option<u32>,
-
-    /// Resume subscription from a specific sequence ID
-    /// When set, the server will only send changes after this seq_id
-    /// Typically set automatically during reconnection to resume from last received event
-    #[serde(skip_serializing_if = "Option::is_none", alias = "from_seq_id")]
-    pub from: Option<SeqId>,
-}
-
-/// Batch control metadata for paginated initial data loading
-///
-/// Tracks the progress of batched initial data loading to prevent
-/// overwhelming clients with large payloads (e.g., 1MB+).
-///
-/// Note: We don't include total_batches because we can't know it upfront
-/// without counting all rows first (expensive). The `has_more` field is
-/// sufficient for clients to know whether to request more batches.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BatchControl {
-    /// Current batch number (0-indexed)
-    pub batch_num: u32,
-
-    /// Whether more batches are available to fetch
-    pub has_more: bool,
-
-    /// Loading status for the subscription
-    pub status: BatchStatus,
-
-    /// The SeqId of the last row in this batch (used for next request)
-    pub last_seq_id: Option<SeqId>,
-}
-
-/// Status of the initial data loading process
-///
-/// Transitions: Loading → LoadingBatch → Ready
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BatchStatus {
-    /// Initial batch being loaded (batch_num == 0)
-    Loading,
-
-    /// Subsequent batches being loaded (batch_num > 0, has_more == true)
-    LoadingBatch,
-
-    /// All initial data has been loaded, live updates active (has_more == false)
-    Ready,
 }
 
 /// Notification message sent to clients for live query updates
@@ -462,20 +278,6 @@ pub enum Notification {
         /// Error message
         message: String,
     },
-}
-
-/// Type of change that occurred in the database
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ChangeType {
-    /// New row(s) inserted
-    Insert,
-
-    /// Existing row(s) updated
-    Update,
-
-    /// Row(s) deleted
-    Delete,
 }
 
 /// Change notification for live query subscribers
@@ -576,85 +378,6 @@ impl WebSocketMessage {
             subscription_id,
             rows,
             batch_control,
-        }
-    }
-}
-
-impl ClientMessage {
-    /// Create a subscribe message for a single subscription
-    pub fn subscribe(subscription: SubscriptionRequest) -> Self {
-        Self::Subscribe { subscription }
-    }
-
-    /// Create a next batch request message
-    pub fn next_batch(subscription_id: String, last_seq_id: Option<SeqId>) -> Self {
-        Self::NextBatch {
-            subscription_id,
-            last_seq_id,
-        }
-    }
-
-    /// Create an unsubscribe message
-    pub fn unsubscribe(subscription_id: String) -> Self {
-        Self::Unsubscribe { subscription_id }
-    }
-}
-
-impl BatchControl {
-    /// Create a batch control for the first batch (batch_num=0)
-    ///
-    /// # Arguments
-    /// * `has_more` - Whether there are more batches to fetch after this one
-    pub fn first(has_more: bool) -> Self {
-        Self {
-            batch_num: 0,
-            has_more,
-            status: if has_more {
-                BatchStatus::Loading
-            } else {
-                BatchStatus::Ready
-            },
-            last_seq_id: None,
-        }
-    }
-
-    /// Create a batch control for a subsequent batch (batch_num > 0)
-    ///
-    /// # Arguments
-    /// * `batch_num` - The current batch number (0-indexed)
-    /// * `has_more` - Whether there are more batches to fetch after this one
-    pub fn subsequent(batch_num: u32, has_more: bool) -> Self {
-        Self {
-            batch_num,
-            has_more,
-            status: if has_more {
-                BatchStatus::LoadingBatch
-            } else {
-                BatchStatus::Ready
-            },
-            last_seq_id: None,
-        }
-    }
-
-    /// Create batch control with all fields specified
-    pub fn new(batch_num: u32, has_more: bool, last_seq_id: Option<SeqId>) -> Self {
-        let status = if batch_num == 0 {
-            if has_more {
-                BatchStatus::Loading
-            } else {
-                BatchStatus::Ready
-            }
-        } else if has_more {
-            BatchStatus::LoadingBatch
-        } else {
-            BatchStatus::Ready
-        };
-
-        Self {
-            batch_num,
-            has_more,
-            status,
-            last_seq_id,
         }
     }
 }

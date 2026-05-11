@@ -3,6 +3,7 @@
 //! This module defines the data structures for topic messages:
 //! - TopicMessageId: Composite key for message identification
 //! - TopicMessage: Message envelope with payload and metadata
+//! - TopicRetentionIndexKey: Time-ordered key for retention scans
 
 use kalamdb_commons::{
     datatypes::KalamDataType,
@@ -55,6 +56,122 @@ impl StorageKey for TopicMessageId {
         let (topic_str, partition_id, offset): (String, u32, u64) = decode_key(bytes)?;
         Ok(Self::new(TopicId::from(topic_str.as_str()), partition_id, offset))
     }
+}
+
+/// Retention index key: topic_id + partition_id + timestamp_ms + offset.
+///
+/// The primary message log remains offset-keyed for consumption. This secondary
+/// key gives retention jobs a time-ordered view without rewriting offsets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TopicRetentionIndexKey {
+    pub topic_id: TopicId,
+    pub partition_id: u32,
+    pub timestamp_ms: i64,
+    pub offset: u64,
+}
+
+impl TopicRetentionIndexKey {
+    pub fn new(topic_id: TopicId, partition_id: u32, timestamp_ms: i64, offset: u64) -> Self {
+        Self {
+            topic_id,
+            partition_id,
+            timestamp_ms,
+            offset,
+        }
+    }
+
+    pub fn prefix_for_partition(topic_id: &TopicId, partition_id: u32) -> Vec<u8> {
+        encode_prefix(&(topic_id.as_str(), partition_id))
+    }
+
+    pub fn start_key_for_partition(
+        topic_id: &TopicId,
+        partition_id: u32,
+        timestamp_ms: i64,
+        offset: u64,
+    ) -> Vec<u8> {
+        encode_key(&(topic_id.as_str(), partition_id, timestamp_ms, offset))
+    }
+
+    pub fn from_message(message: &TopicMessage) -> Self {
+        Self::new(
+            message.topic_id.clone(),
+            message.partition_id,
+            message.timestamp_ms,
+            message.offset,
+        )
+    }
+}
+
+impl StorageKey for TopicRetentionIndexKey {
+    fn storage_key(&self) -> Vec<u8> {
+        encode_key(&(self.topic_id.as_str(), self.partition_id, self.timestamp_ms, self.offset))
+    }
+
+    fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
+        let (topic_str, partition_id, timestamp_ms, offset): (String, u32, i64, u64) =
+            decode_key(bytes)?;
+        Ok(Self::new(TopicId::from(topic_str.as_str()), partition_id, timestamp_ms, offset))
+    }
+}
+
+/// Retention index entry stored at [`TopicRetentionIndexKey`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TopicRetentionIndexEntry {
+    pub topic_id: TopicId,
+    pub partition_id: u32,
+    pub timestamp_ms: i64,
+    pub offset: u64,
+    pub message_bytes: u64,
+}
+
+impl TopicRetentionIndexEntry {
+    pub fn new(message: &TopicMessage, message_bytes: u64) -> Self {
+        Self {
+            topic_id: message.topic_id.clone(),
+            partition_id: message.partition_id,
+            timestamp_ms: message.timestamp_ms,
+            offset: message.offset,
+            message_bytes,
+        }
+    }
+
+    pub fn new_raw(
+        topic_id: TopicId,
+        partition_id: u32,
+        timestamp_ms: i64,
+        offset: u64,
+        message_bytes: u64,
+    ) -> Self {
+        Self {
+            topic_id,
+            partition_id,
+            timestamp_ms,
+            offset,
+            message_bytes,
+        }
+    }
+
+    pub fn primary_message_id(&self) -> TopicMessageId {
+        TopicMessageId::new(self.topic_id.clone(), self.partition_id, self.offset)
+    }
+
+    pub fn retention_key(&self) -> TopicRetentionIndexKey {
+        TopicRetentionIndexKey::new(
+            self.topic_id.clone(),
+            self.partition_id,
+            self.timestamp_ms,
+            self.offset,
+        )
+    }
+}
+
+impl KSerializable for TopicRetentionIndexEntry {}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TopicRetentionDeletionStats {
+    pub messages_deleted: usize,
+    pub bytes_freed: u64,
 }
 
 /// Topic message envelope with metadata and payload

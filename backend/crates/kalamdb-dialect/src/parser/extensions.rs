@@ -35,8 +35,9 @@ pub use crate::ddl::storage_commands::{
 pub use crate::ddl::subscribe_commands::SubscribeStatement;
 // Topic pub/sub commands
 pub use crate::ddl::topic_commands::{
-    AddTopicSourceStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
-    CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
+    AddTopicSourceStatement, AlterTopicRetentionStatement, ClearTopicRetentionStatement,
+    ClearTopicStatement, ConsumePosition, ConsumeStatement, CreateTopicStatement,
+    DropTopicStatement, ResetConsumerGroupStatement,
 };
 // User commands (CREATE USER, ALTER USER, DROP USER)
 pub use crate::ddl::user_commands::{
@@ -77,6 +78,10 @@ pub enum ExtensionStatement {
     ClearTopic(ClearTopicStatement),
     /// ALTER TOPIC ADD SOURCE command (pub/sub)
     AddTopicSource(AddTopicSourceStatement),
+    /// ALTER TOPIC SET RETENTION command (pub/sub)
+    AlterTopicRetention(AlterTopicRetentionStatement),
+    /// ALTER TOPIC CLEAR RETENTION command (pub/sub)
+    ClearTopicRetention(ClearTopicRetentionStatement),
     /// CONSUME FROM command (pub/sub)
     ConsumeTopic(ConsumeStatement),
     /// RESET CONSUMER GROUP command (pub/sub)
@@ -276,15 +281,39 @@ impl ExtensionStatement {
         ) {
             return result;
         }
-        if let Some(result) = Self::parse_with_prefix(
-            sql,
-            &sql_upper,
-            &["ALTER TOPIC"],
-            crate::ddl::topic_commands::parse_alter_topic_add_source,
-            ExtensionStatement::AddTopicSource,
-            "ALTER TOPIC ADD SOURCE",
-        ) {
-            return result;
+        if sql_upper.starts_with("ALTER TOPIC") {
+            if sql_upper.contains(" SET RETENTION ") {
+                if let Some(result) = Self::parse_with_prefix(
+                    sql,
+                    &sql_upper,
+                    &["ALTER TOPIC"],
+                    crate::ddl::topic_commands::parse_alter_topic_set_retention,
+                    ExtensionStatement::AlterTopicRetention,
+                    "ALTER TOPIC SET RETENTION",
+                ) {
+                    return result;
+                }
+            } else if sql_upper.contains(" CLEAR RETENTION") {
+                if let Some(result) = Self::parse_with_prefix(
+                    sql,
+                    &sql_upper,
+                    &["ALTER TOPIC"],
+                    crate::ddl::topic_commands::parse_alter_topic_clear_retention,
+                    ExtensionStatement::ClearTopicRetention,
+                    "ALTER TOPIC CLEAR RETENTION",
+                ) {
+                    return result;
+                }
+            } else if let Some(result) = Self::parse_with_prefix(
+                sql,
+                &sql_upper,
+                &["ALTER TOPIC"],
+                crate::ddl::topic_commands::parse_alter_topic_add_source,
+                ExtensionStatement::AddTopicSource,
+                "ALTER TOPIC ADD SOURCE",
+            ) {
+                return result;
+            }
         }
         if let Some(result) = Self::parse_with_prefix(
             sql,

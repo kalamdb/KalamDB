@@ -13,6 +13,7 @@ pub mod health_monitor;
 pub mod jobs_manager;
 pub(crate) mod scheduler_common;
 pub mod stream_eviction;
+pub mod topic_retention;
 
 // ============================================================================
 // PHASE 16: LEADER-ONLY JOB EXECUTION (CLUSTER MODE)
@@ -29,6 +30,7 @@ pub use jobs_manager::JobsManager;
 pub use leader_failover::{JobRecoveryAction, LeaderFailoverHandler, RecoveryReport};
 pub use leader_guard::{LeaderOnlyJobGuard, LeadershipStatus};
 pub use stream_eviction::StreamEvictionScheduler;
+pub use topic_retention::TopicRetentionScheduler;
 
 // ============================================================================
 // JobWaker implementation (bridges kalamdb-core trait → JobsManager)

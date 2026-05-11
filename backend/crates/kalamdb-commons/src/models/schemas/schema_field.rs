@@ -1,16 +1,12 @@
-//! Schema field for API response serialization
-//!
-//! This module defines the `SchemaField` struct used in REST API responses
-//! to provide type-safe schema information to clients.
+//! Schema field for API response serialization.
 
+#[cfg(feature = "schema-metadata")]
 use arrow_schema::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    conversions::read_kalam_column_flags_metadata,
-    models::datatypes::KalamDataType,
-    schemas::{ColumnDefinition, FieldFlag, FieldFlags},
-};
+#[cfg(feature = "schema-metadata")]
+use crate::conversions::read_kalam_column_flags_metadata;
+use crate::{models::datatypes::KalamDataType, schemas::{ColumnDefinition, FieldFlag, FieldFlags}};
 
 /// A field in the result schema returned by SQL queries
 ///
@@ -75,6 +71,7 @@ impl SchemaField {
         }
     }
 
+    #[cfg(feature = "schema-metadata")]
     pub fn from_arrow_field(field: &Field, data_type: KalamDataType, index: usize) -> Self {
         let flags = read_kalam_column_flags_metadata(field);
 

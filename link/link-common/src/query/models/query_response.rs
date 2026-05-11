@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    error_detail::ErrorDetail, query_result::QueryResult, response_status::ResponseStatus,
-};
+use super::{error_detail::ErrorDetail, query_result::QueryResult, ResponseStatus};
 use crate::models::KalamCellValue;
 
 /// Contains query results, execution metadata, and optional error information.

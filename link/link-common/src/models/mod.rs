@@ -11,8 +11,6 @@
 // ── Core shared types (defined here) ────────────────────────────────────────
 pub mod file_ref;
 pub mod kalam_cell_value;
-pub mod kalam_data_type;
-pub mod schema_field;
 pub mod utils;
 
 #[cfg(test)]
@@ -20,9 +18,7 @@ mod tests;
 
 pub use file_ref::FileRef;
 pub use kalam_cell_value::{KalamCellValue, RowData};
-pub use kalam_data_type::KalamDataType;
-pub use kalamdb_commons::UserId;
-pub use schema_field::{FieldFlag, FieldFlags, SchemaField};
+pub use kalamdb_commons::{FieldFlag, FieldFlags, KalamDataType, SchemaField, UserId};
 pub use utils::parse_i64;
 
 // ── Auth models ──────────────────────────────────────────────────────────────

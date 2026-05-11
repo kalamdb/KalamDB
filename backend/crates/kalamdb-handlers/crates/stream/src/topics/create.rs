@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TopicId};
+use kalamdb_commons::{
+    models::{NamespaceId, TopicId},
+    Role,
+};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -36,6 +39,21 @@ impl CreateTopicHandler {
 
         Ok(NamespaceId::new(namespace))
     }
+
+    fn resolve_retention_value(
+        sql_value: Option<Option<i64>>,
+        default_value: i64,
+        option_name: &str,
+    ) -> Result<Option<i64>, KalamDbError> {
+        let value = sql_value.unwrap_or(Some(default_value));
+        if matches!(value, Some(v) if v <= 0) {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "{} must be greater than 0 or NULL",
+                option_name
+            )));
+        }
+        Ok(value)
+    }
 }
 
 impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
@@ -65,8 +83,22 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
 
         let mut topic = Topic::new(topic_id.clone(), statement.topic_name.clone());
         topic.partitions = statement.partitions.unwrap_or(1);
-        topic.retention_seconds = Some(7 * 24 * 60 * 60);
-        topic.retention_max_bytes = Some(1024 * 1024 * 1024);
+        if topic.partitions == 0 {
+            return Err(KalamDbError::InvalidOperation(
+                "Topic partitions must be greater than 0".to_string(),
+            ));
+        }
+        let topic_config = &self.app_context.config().topics;
+        topic.retention_seconds = Self::resolve_retention_value(
+            statement.retention_seconds,
+            topic_config.default_retention_seconds,
+            "retention_seconds",
+        )?;
+        topic.retention_max_bytes = Self::resolve_retention_value(
+            statement.retention_max_bytes,
+            topic_config.default_retention_max_bytes,
+            "retention_max_bytes",
+        )?;
 
         topics_provider.create_topic_async(topic.clone()).await?;
         self.app_context.topic_publisher().add_topic(topic.clone());
@@ -84,8 +116,6 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
         _statement: &CreateTopicStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::Role;
-
         match context.user_role() {
             Role::Dba | Role::System => Ok(()),
             _ => Err(KalamDbError::PermissionDenied(

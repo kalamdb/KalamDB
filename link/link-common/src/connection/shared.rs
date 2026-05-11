@@ -22,8 +22,8 @@ use crate::{
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
     models::{ChangeEvent, ConnectionOptions, SubscriptionInfo, SubscriptionOptions},
-    seq_id::SeqId,
     timeouts::KalamLinkTimeouts,
+    SeqId,
 };
 
 mod reconnect;

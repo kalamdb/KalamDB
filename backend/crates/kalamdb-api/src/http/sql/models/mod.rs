@@ -2,10 +2,12 @@
 //!
 //! This module contains type-safe models for SQL API endpoints.
 
+pub use kalamdb_commons::ResponseStatus;
+
 mod parsed_payload;
 mod sql_request;
 mod sql_response;
 
 pub use parsed_payload::{FileError, ParsedMultipartRequest, ParsedSqlPayload};
 pub use sql_request::QueryRequest;
-pub use sql_response::{ErrorCode, ErrorDetail, QueryResult, ResponseStatus, SqlResponse};
+pub use sql_response::{ErrorCode, ErrorDetail, QueryResult, SqlResponse};

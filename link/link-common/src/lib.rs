@@ -22,8 +22,6 @@ pub mod models;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub mod query;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
-pub mod seq_id;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub mod seq_tracking;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub mod subscription;
@@ -76,7 +74,7 @@ pub use query::QueryExecutor;
 #[cfg(feature = "tokio-runtime")]
 pub use query::UploadProgressCallback;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
-pub use seq_id::SeqId;
+pub use kalamdb_commons::ids::SeqId;
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::LiveRowsSubscription;
 #[cfg(feature = "tokio-runtime")]

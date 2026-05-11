@@ -61,7 +61,7 @@ use serde_json::Value as JsonValue;
 ///
 /// Use the typed accessor methods (e.g. [`as_big_int`][Self::as_big_int],
 /// [`as_file`][Self::as_file]) to get values in the correct Rust type
-/// matching the column's [`KalamDataType`][super::kalam_data_type::KalamDataType].
+/// matching the column's [`KalamDataType`][super::KalamDataType].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct KalamCellValue(pub JsonValue);

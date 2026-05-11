@@ -259,6 +259,7 @@ mod tests {
             batch_size: Some(50),
             last_rows: Some(50),
             from: None,
+            auto_fetch_batches: None,
         };
 
         let batch_size = subscription_batch_size(Some(&options));
@@ -273,6 +274,7 @@ mod tests {
             batch_size: Some(50),
             last_rows: Some(51),
             from: None,
+            auto_fetch_batches: None,
         };
 
         let batch_size = subscription_batch_size(Some(&options));
@@ -288,6 +290,7 @@ mod tests {
             batch_size: None,
             last_rows: Some(MAX_ROWS_PER_BATCH as u32 + 1),
             from: None,
+            auto_fetch_batches: None,
         };
 
         let batch_size = subscription_batch_size(Some(&options));
