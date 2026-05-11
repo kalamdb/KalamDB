@@ -5,7 +5,9 @@
 //! server, and coordinating graceful shutdown.
 
 use std::{
+    future::Future,
     net::{SocketAddr, TcpListener},
+    pin::Pin,
     sync::Arc,
 };
 
@@ -51,6 +53,63 @@ fn effective_workers(configured: usize) -> usize {
         num_cpus::get().min(4)
     } else {
         configured
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownSignal {
+    CtrlC,
+    SigTerm,
+}
+
+async fn select_shutdown_signal<CtrlCFut, SigTermFut>(
+    ctrl_c: CtrlCFut,
+    sigterm: SigTermFut,
+) -> std::io::Result<ShutdownSignal>
+where
+    CtrlCFut: Future<Output = std::io::Result<()>>,
+    SigTermFut: Future<Output = std::io::Result<()>>,
+{
+    tokio::select! {
+        result = ctrl_c => {
+            result?;
+            Ok(ShutdownSignal::CtrlC)
+        }
+        result = sigterm => {
+            result?;
+            Ok(ShutdownSignal::SigTerm)
+        }
+    }
+}
+
+type ShutdownSignalFuture = Pin<Box<dyn Future<Output = std::io::Result<ShutdownSignal>> + Send>>;
+
+fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let ctrl_c = tokio::signal::ctrl_c();
+        let mut sigterm = signal(SignalKind::terminate())?;
+        Ok(Box::pin(async move {
+            select_shutdown_signal(ctrl_c, async move {
+                sigterm.recv().await.ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "SIGTERM signal stream closed unexpectedly",
+                    )
+                })
+            })
+            .await
+        }))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let ctrl_c = tokio::signal::ctrl_c();
+        Ok(Box::pin(async move {
+            select_shutdown_signal(ctrl_c, std::future::pending::<std::io::Result<()>>()).await
+        }))
     }
 }
 
@@ -490,6 +549,7 @@ pub async fn run(
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
     let connection_registry_shutdown = components.connection_registry.clone();
+    let shutdown_signal = shutdown_signal_listener();
 
     let http_runtime = HttpRuntimeState::new(
         config,
@@ -555,7 +615,8 @@ pub async fn run(
         app
     })
     // Set backlog BEFORE bind() - this affects the listen queue size
-    .backlog(config.performance.backlog);
+    .backlog(config.performance.backlog)
+    .disable_signals();
 
     // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
     let http_version = if config.server.enable_http2 {
@@ -603,8 +664,26 @@ pub async fn run(
                 log::error!("Server task failed: {}", e);
             }
         }
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl+C, initiating graceful shutdown...");
+        signal = async {
+            match shutdown_signal {
+                Ok(shutdown_signal) => shutdown_signal.await,
+                Err(error) => Err(error),
+            }
+        } => {
+            match signal {
+                Ok(ShutdownSignal::CtrlC) => {
+                    info!("Received Ctrl+C, initiating graceful shutdown...");
+                }
+                Ok(ShutdownSignal::SigTerm) => {
+                    info!("Received SIGTERM, initiating graceful shutdown...");
+                }
+                Err(error) => {
+                    warn!(
+                        "Failed to install shutdown signal handlers ({}), initiating graceful shutdown anyway",
+                        error
+                    );
+                }
+            }
 
             // Stop accepting new HTTP connections
             server_handle.stop(true).await;
@@ -778,7 +857,8 @@ pub async fn run_for_tests(
 
         app
     })
-    .backlog(config.performance.backlog);
+    .backlog(config.performance.backlog)
+    .disable_signals();
 
     let server = server
         .listen(listener)?
@@ -863,7 +943,8 @@ pub async fn run_detached(
 
         app
     })
-    .backlog(config.performance.backlog);
+    .backlog(config.performance.backlog)
+    .disable_signals();
 
     let server = if config.server.enable_http2 {
         server.bind_auto_h2c(&bind_addr)?
@@ -1061,3 +1142,36 @@ async fn create_default_system_user(
 
 //     Ok(())
 // }
+
+#[cfg(test)]
+mod tests {
+    use std::future::{pending, ready};
+
+    use super::{select_shutdown_signal, ShutdownSignal};
+
+    #[test]
+    fn select_shutdown_signal_returns_ctrl_c_when_ctrl_c_resolves_first() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let signal = runtime
+            .block_on(select_shutdown_signal(
+                ready::<std::io::Result<()>>(Ok(())),
+                pending::<std::io::Result<()>>(),
+            ))
+            .expect("ctrl+c future should succeed");
+
+        assert_eq!(signal, ShutdownSignal::CtrlC);
+    }
+
+    #[test]
+    fn select_shutdown_signal_returns_sigterm_when_sigterm_resolves_first() {
+        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+        let signal = runtime
+            .block_on(select_shutdown_signal(
+                pending::<std::io::Result<()>>(),
+                ready::<std::io::Result<()>>(Ok(())),
+            ))
+            .expect("sigterm future should succeed");
+
+        assert_eq!(signal, ShutdownSignal::SigTerm);
+    }
+}
