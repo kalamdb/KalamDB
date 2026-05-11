@@ -858,7 +858,7 @@ pub fn arrow_value_to_scalar(
             Ok(ScalarValue::LargeUtf8(Some(arr.value(row_idx).to_string())))
         },
         DataType::Timestamp(TimeUnit::Millisecond, tz) => {
-            let arr = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let arr = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
             Ok(ScalarValue::TimestampMillisecond(Some(arr.value(row_idx)), tz.clone()))
         },
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
@@ -868,6 +868,10 @@ pub fn arrow_value_to_scalar(
         DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
             let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
             Ok(ScalarValue::TimestampNanosecond(Some(arr.value(row_idx)), tz.clone()))
+        },
+        DataType::Timestamp(TimeUnit::Second, tz) => {
+            let arr = array.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            Ok(ScalarValue::TimestampSecond(Some(arr.value(row_idx)), tz.clone()))
         },
         DataType::Date32 => {
             let arr = array.as_any().downcast_ref::<Date32Array>().unwrap();
@@ -1024,11 +1028,17 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
         ScalarValue::Date32(None) => JsonValue::Null,
         ScalarValue::Date64(Some(d)) => JsonValue::Number((*d).into()),
         ScalarValue::Date64(None) => JsonValue::Null,
-        ScalarValue::TimestampMillisecond(Some(ts), _) => JsonValue::Number((*ts).into()),
+        ScalarValue::TimestampSecond(Some(ts), _) => {
+            JsonValue::Number(checked_unit_to_micros(*ts, 1_000_000, "seconds")?.into())
+        },
+        ScalarValue::TimestampSecond(None, _) => JsonValue::Null,
+        ScalarValue::TimestampMillisecond(Some(ts), _) => {
+            JsonValue::Number(checked_unit_to_micros(*ts, 1_000, "milliseconds")?.into())
+        },
         ScalarValue::TimestampMillisecond(None, _) => JsonValue::Null,
         ScalarValue::TimestampMicrosecond(Some(ts), _) => JsonValue::Number((*ts).into()),
         ScalarValue::TimestampMicrosecond(None, _) => JsonValue::Null,
-        ScalarValue::TimestampNanosecond(Some(ts), _) => JsonValue::Number((*ts).into()),
+        ScalarValue::TimestampNanosecond(Some(ts), _) => JsonValue::Number((ts / 1_000).into()),
         ScalarValue::TimestampNanosecond(None, _) => JsonValue::Null,
         ScalarValue::Decimal128(Some(v), _precision, scale) => {
             // Format decimal with proper scale
@@ -1066,15 +1076,19 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
         ScalarValue::List(list) => list_scalar_value_to_json(list.as_ref())?,
         ScalarValue::LargeList(list) => large_list_scalar_value_to_json(list.as_ref())?,
         ScalarValue::FixedSizeList(list) => fixed_size_list_scalar_value_to_json(list.as_ref())?,
-        // Time types - output as raw microseconds/nanoseconds value (integer)
+        // Time types are serialized as raw microsecond values (integer).
+        ScalarValue::Time32Second(Some(t)) => {
+            JsonValue::Number(checked_unit_to_micros(i64::from(*t), 1_000_000, "seconds")?.into())
+        },
+        ScalarValue::Time32Second(None) => JsonValue::Null,
+        ScalarValue::Time32Millisecond(Some(t)) => {
+            JsonValue::Number(checked_unit_to_micros(i64::from(*t), 1_000, "milliseconds")?.into())
+        },
+        ScalarValue::Time32Millisecond(None) => JsonValue::Null,
         ScalarValue::Time64Microsecond(Some(t)) => JsonValue::Number((*t).into()),
         ScalarValue::Time64Microsecond(None) => JsonValue::Null,
-        ScalarValue::Time64Nanosecond(Some(t)) => JsonValue::Number((*t).into()),
+        ScalarValue::Time64Nanosecond(Some(t)) => JsonValue::Number((t / 1_000).into()),
         ScalarValue::Time64Nanosecond(None) => JsonValue::Null,
-        ScalarValue::Time32Millisecond(Some(t)) => JsonValue::Number((*t).into()),
-        ScalarValue::Time32Millisecond(None) => JsonValue::Null,
-        ScalarValue::Time32Second(Some(t)) => JsonValue::Number((*t).into()),
-        ScalarValue::Time32Second(None) => JsonValue::Null,
         _ => {
             return Err(CommonError::invalid_input(format!(
                 "Unsupported ScalarValue conversion to JSON: {:?}",
@@ -1083,6 +1097,16 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
         },
     };
     Ok(KalamCellValue(json))
+}
+
+#[inline]
+fn checked_unit_to_micros(value: i64, factor: i64, source_unit: &str) -> Result<i64, CommonError> {
+    value.checked_mul(factor).ok_or_else(|| {
+        CommonError::invalid_input(format!(
+            "{} value {} overflows when converted to microseconds",
+            source_unit, value
+        ))
+    })
 }
 
 fn list_scalar_value_to_json(list: &ListArray) -> Result<JsonValue, CommonError> {
@@ -1313,6 +1337,56 @@ mod serialization_tests {
         let json = scalar_value_to_json(&value).unwrap();
         // Timestamp should be raw number (microseconds)
         assert_eq!(json, serde_json::json!(1765741510326539_i64).into());
+    }
+
+    #[test]
+    fn test_timestamp_units_serialize_as_microseconds() {
+        let expected: KalamCellValue = serde_json::json!(1735689600000000_i64).into();
+
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::TimestampSecond(Some(1735689600), None)).unwrap(),
+            expected.clone()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::TimestampMillisecond(Some(1735689600000), None))
+                .unwrap(),
+            expected.clone()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::TimestampMicrosecond(Some(1735689600000000), None))
+                .unwrap(),
+            expected.clone()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::TimestampNanosecond(
+                Some(1735689600000000000),
+                None,
+            ))
+            .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_time_units_serialize_as_microseconds() {
+        let expected: KalamCellValue = serde_json::json!(45_296_123_456_i64).into();
+
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::Time32Second(Some(45_296))).unwrap(),
+            serde_json::json!(45_296_000_000_i64).into()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::Time32Millisecond(Some(45_296_123))).unwrap(),
+            serde_json::json!(45_296_123_000_i64).into()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::Time64Microsecond(Some(45_296_123_456))).unwrap(),
+            expected.clone()
+        );
+        assert_eq!(
+            scalar_value_to_json(&ScalarValue::Time64Nanosecond(Some(45_296_123_456_789))).unwrap(),
+            expected
+        );
     }
 
     #[test]

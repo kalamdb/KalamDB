@@ -518,9 +518,7 @@ impl CLISession {
 
         // Execute the query
         let result = if upload_parts.is_empty() {
-            self.client
-                .execute_query(&sql_to_send, None, None, request_namespace)
-                .await
+            self.client.execute_query(&sql_to_send, None, None, request_namespace).await
         } else {
             let mut parts_for_send = Vec::with_capacity(upload_parts.len());
             for part in upload_parts.iter_mut() {
@@ -1460,11 +1458,13 @@ impl CLISession {
             return;
         }
 
-        let version = info
-            .current_node
-            .as_ref()
-            .and_then(|node| node.version.clone())
-            .or_else(|| info.nodes.iter().find(|node| node.is_self).and_then(|node| node.version.clone()));
+        let version =
+            info.current_node.as_ref().and_then(|node| node.version.clone()).or_else(|| {
+                info.nodes
+                    .iter()
+                    .find(|node| node.is_self)
+                    .and_then(|node| node.version.clone())
+            });
 
         if let Some(version) = version.and_then(Self::normalize_server_field) {
             self.server_version = Some(version);
@@ -2672,7 +2672,10 @@ impl CLISession {
                 Err(KalamLinkError::ServerError {
                     status_code: 403, ..
                 }) => {
-                    println!("{}", "Health endpoints are localhost-only for this connection".yellow());
+                    println!(
+                        "{}",
+                        "Health endpoints are localhost-only for this connection".yellow()
+                    );
                     println!("  {}", "No authenticated SQL fallback was used.".dimmed());
                     println!(
                         "  {}",
@@ -3563,14 +3566,8 @@ mod tests {
     #[test]
     fn test_format_row_returns_compact_json_without_newlines() {
         let mut row = kalam_client::RowData::new();
-        row.insert(
-            "message".to_string(),
-            kalam_client::KalamCellValue::text("hello"),
-        );
-        row.insert(
-            "count".to_string(),
-            kalam_client::KalamCellValue::int(5),
-        );
+        row.insert("message".to_string(), kalam_client::KalamCellValue::text("hello"));
+        row.insert("count".to_string(), kalam_client::KalamCellValue::int(5));
 
         let formatted = CLISession::format_row(&row);
 
@@ -3604,14 +3601,8 @@ mod tests {
             CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""),
             Some("team chat".to_string())
         );
-        assert_eq!(
-            CLISession::parse_namespace_switch("USE billing"),
-            Some("billing".to_string())
-        );
-        assert_eq!(
-            CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"),
-            None
-        );
+        assert_eq!(CLISession::parse_namespace_switch("USE billing"), Some("billing".to_string()));
+        assert_eq!(CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"), None);
     }
 
     #[tokio::test]

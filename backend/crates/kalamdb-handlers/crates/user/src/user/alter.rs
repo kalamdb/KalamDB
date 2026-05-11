@@ -106,13 +106,12 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     let app_ctx = self.app_context.clone();
                     let storage_lookup_id = storage_id.clone();
                     let storage = tokio::task::spawn_blocking(move || {
-                        app_ctx
-                            .system_tables()
-                            .storages()
-                            .get_storage_by_id(&storage_lookup_id)
+                        app_ctx.system_tables().storages().get_storage_by_id(&storage_lookup_id)
                     })
                     .await
-                    .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+                    .map_err(|e| {
+                        KalamDbError::ExecutionError(format!("Task join error: {}", e))
+                    })??;
 
                     if storage.is_none() {
                         return Err(KalamDbError::InvalidOperation(format!(

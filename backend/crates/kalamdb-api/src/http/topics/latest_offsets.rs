@@ -52,15 +52,18 @@ pub async fn latest_offsets_handler(
             continue;
         }
 
-        let last_offset = match topic_publisher.latest_offset(&selector.topic_id, selector.partition_id)
-        {
-            Ok(offset) => offset,
-            Err(error) => {
-                return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
-                    &format!("Failed to resolve latest offset: {}", error),
-                ));
-            },
-        };
+        let last_offset =
+            match topic_publisher.latest_offset(&selector.topic_id, selector.partition_id) {
+                Ok(offset) => offset,
+                Err(error) => {
+                    return HttpResponse::InternalServerError().json(
+                        TopicErrorResponse::internal_error(&format!(
+                            "Failed to resolve latest offset: {}",
+                            error
+                        )),
+                    );
+                },
+            };
 
         offsets.push(TopicPartitionLatestOffset {
             topic_id: selector.topic_id.clone(),

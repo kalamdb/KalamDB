@@ -277,10 +277,7 @@ mod tests {
 
         assert!(result.is_ok(), "CREATE TABLE IF NOT EXISTS failed: {:?}", result);
         if let Ok(ExecutionResult::Success { message }) = result {
-            assert_eq!(
-                message,
-                format!("Table {} already exists (IF NOT EXISTS)", table_id)
-            );
+            assert_eq!(message, format!("Table {} already exists (IF NOT EXISTS)", table_id));
         }
         assert_eq!(after_audit_count, before_audit_count);
     }

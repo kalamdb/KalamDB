@@ -29,10 +29,8 @@ fn wait_for_topic_insert_route(topic: &str, expected_routes: usize) {
                                 .as_str()
                                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
                             {
-                                let route_count = routes_json
-                                    .as_array()
-                                    .map(|routes| routes.len())
-                                    .unwrap_or(0);
+                                let route_count =
+                                    routes_json.as_array().map(|routes| routes.len()).unwrap_or(0);
                                 if route_count >= expected_routes {
                                     std::thread::sleep(Duration::from_millis(100));
                                     return;
@@ -901,7 +899,10 @@ fn test_cli_short_version_command() {
     let output = cmd.output().expect("run -V");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "-V should succeed");
-    assert!(stdout.contains("Commit:"), "short version output should include commit metadata");
+    assert!(
+        stdout.contains("Commit:"),
+        "short version output should include commit metadata"
+    );
 }
 
 #[test]

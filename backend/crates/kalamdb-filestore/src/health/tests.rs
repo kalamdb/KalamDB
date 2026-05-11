@@ -98,7 +98,7 @@ async fn test_health_result_structure() {
     assert!(result.total_bytes.is_none());
     assert!(result.used_bytes.is_none());
     assert!(result.error.is_none());
-    assert!(result.tested_at > 0);
+    assert!((1_000_000_000_000_000..10_000_000_000_000_000).contains(&result.tested_at));
 }
 
 #[tokio::test]

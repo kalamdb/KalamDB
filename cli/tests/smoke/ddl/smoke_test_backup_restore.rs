@@ -117,11 +117,9 @@ fn smoke_backup_database_archive_job_completes() {
 
     let backup_path = tmp_backup_archive_path("kdb_bkp_archive");
 
-    let output = execute_sql_as_root_via_client(&format!(
-        "BACKUP DATABASE TO '{}'",
-        backup_path.display()
-    ))
-    .expect("BACKUP DATABASE archive should succeed");
+    let output =
+        execute_sql_as_root_via_client(&format!("BACKUP DATABASE TO '{}'", backup_path.display()))
+            .expect("BACKUP DATABASE archive should succeed");
 
     let job_id =
         parse_job_id(&output).unwrap_or_else(|| panic!("Could not parse job id from: {}", output));
@@ -130,15 +128,15 @@ fn smoke_backup_database_archive_job_completes() {
         .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
 
     assert_eq!(status, "completed", "Backup archive job did not complete: {}", job_id);
-    assert!(backup_path.is_file(), "Backup archive was not created: {}", backup_path.display());
+    assert!(
+        backup_path.is_file(),
+        "Backup archive was not created: {}",
+        backup_path.display()
+    );
 
     let bytes = std::fs::read(&backup_path).expect("read backup archive");
     assert!(bytes.len() >= 2, "Backup archive should not be empty");
-    assert_eq!(
-        &bytes[..2],
-        &[0x1f, 0x8b],
-        "Backup archive should start with gzip magic bytes"
-    );
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b], "Backup archive should start with gzip magic bytes");
 
     println!("✅  Backup archive verified at {}", backup_path.display());
 
@@ -214,17 +212,19 @@ fn smoke_restore_from_backup_archive_job_completes() {
 
     let backup_path = tmp_backup_archive_path("kdb_restore_archive");
 
-    let bkp_out = execute_sql_as_root_via_client(&format!(
-        "BACKUP DATABASE TO '{}'",
-        backup_path.display()
-    ))
-    .expect("BACKUP DATABASE archive should succeed");
+    let bkp_out =
+        execute_sql_as_root_via_client(&format!("BACKUP DATABASE TO '{}'", backup_path.display()))
+            .expect("BACKUP DATABASE archive should succeed");
 
     let bkp_job_id = parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
     let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
         .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
     assert_eq!(bkp_status, "completed", "Backup archive must complete before restore test");
-    assert!(backup_path.is_file(), "Backup archive was not created: {}", backup_path.display());
+    assert!(
+        backup_path.is_file(),
+        "Backup archive was not created: {}",
+        backup_path.display()
+    );
 
     let restore_out = execute_sql_as_root_via_client(&format!(
         "RESTORE DATABASE FROM '{}'",

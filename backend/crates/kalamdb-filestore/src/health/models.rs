@@ -88,7 +88,7 @@ pub struct StorageHealthResult {
     pub used_bytes: Option<u64>,
     /// Error message if any operation failed.
     pub error: Option<String>,
-    /// Unix timestamp in milliseconds when the health check was performed.
+    /// Unix timestamp in microseconds when the health check was performed.
     pub tested_at: i64,
 }
 
@@ -105,7 +105,7 @@ impl StorageHealthResult {
             total_bytes: None,
             used_bytes: None,
             error: None,
-            tested_at: chrono::Utc::now().timestamp_millis(),
+            tested_at: chrono::Utc::now().timestamp_micros(),
         }
     }
 
@@ -121,7 +121,7 @@ impl StorageHealthResult {
             total_bytes: None,
             used_bytes: None,
             error: Some(error),
-            tested_at: chrono::Utc::now().timestamp_millis(),
+            tested_at: chrono::Utc::now().timestamp_micros(),
         }
     }
 
@@ -144,7 +144,7 @@ impl StorageHealthResult {
             total_bytes: None,
             used_bytes: None,
             error: Some(error),
-            tested_at: chrono::Utc::now().timestamp_millis(),
+            tested_at: chrono::Utc::now().timestamp_micros(),
         }
     }
 

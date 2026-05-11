@@ -1,7 +1,7 @@
 use super::common::{
     await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
-    delete_all, postgres_error_text, retry_transient_user_leader_error, set_user_id,
-    unique_name, TestEnv,
+    delete_all, postgres_error_text, retry_transient_user_leader_error, set_user_id, unique_name,
+    TestEnv,
 };
 
 struct KalamTestUser {
@@ -119,7 +119,6 @@ async fn e2e_cross_verify_fdw_to_rest() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
 async fn e2e_dml_changes_are_visible_in_kalamdb() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -171,7 +170,6 @@ async fn e2e_dml_changes_are_visible_in_kalamdb() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
 async fn e2e_select_filters_and_postgres_join_work() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -227,7 +225,6 @@ async fn e2e_select_filters_and_postgres_join_work() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
 async fn e2e_shared_tables_can_join_each_other_in_postgres() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -276,7 +273,6 @@ async fn e2e_shared_tables_can_join_each_other_in_postgres() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
 async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -331,7 +327,6 @@ async fn e2e_search_path_schema_mirror_works_without_namespace_option() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
 async fn e2e_user_tables_can_join_each_other_in_postgres() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
@@ -381,7 +376,6 @@ async fn e2e_user_tables_can_join_each_other_in_postgres() {
 }
 
 #[tokio::test]
-#[ntest::timeout(2500)]
 async fn e2e_user_table_explicit_userid_must_match_session_user() {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;

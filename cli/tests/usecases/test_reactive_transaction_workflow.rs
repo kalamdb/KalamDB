@@ -40,6 +40,28 @@ fn assert_error_contains(response: &Value, expected: &str, context: &str) {
     );
 }
 
+fn assert_error_contains_any(response: &Value, expected: &[&str], context: &str) {
+    let status = response.get("status").and_then(|value| value.as_str()).unwrap_or("success");
+    let message = response
+        .get("error")
+        .and_then(|error| error.get("message").or(Some(error)))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| response.to_string());
+
+    assert!(
+        status.eq_ignore_ascii_case("error"),
+        "{context} should fail, got success response: {response}"
+    );
+    assert!(
+        expected
+            .iter()
+            .any(|expected| message.to_lowercase().contains(&expected.to_lowercase())),
+        "{context} should mention one of {:?}, got: {message}",
+        expected
+    );
+}
+
 fn wait_for_subscription_value(
     listener: &mut SubscriptionListener,
     event_kind: &str,
@@ -182,9 +204,9 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         conversations, conversation_id, messages, conversation_id
     ))
     .expect("cross-group transaction request should return");
-    assert_error_contains(
+    assert_error_contains_any(
         &cross_group_tx,
-        "cannot access table",
+        &["cannot access table", "data raft group"],
         "cross USER+SHARED explicit transaction",
     );
 

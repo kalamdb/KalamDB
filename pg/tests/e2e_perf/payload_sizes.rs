@@ -1,4 +1,7 @@
-use std::{future::Future, time::Instant};
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 
@@ -196,6 +199,20 @@ where
     BenchStats::from_run_totals(run_totals_ms)
 }
 
+async fn run_benchmark_rounds_with_timeout<F, Fut>(
+    label: &str,
+    timeout_ms: u64,
+    operation: F,
+) -> BenchStats
+where
+    F: FnMut(usize, usize) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    tokio::time::timeout(Duration::from_millis(timeout_ms), run_benchmark_rounds(operation))
+        .await
+        .unwrap_or_else(|_| panic!("{label} benchmark rounds exceeded {timeout_ms} ms"))
+}
+
 async fn seed_rows(
     client: &tokio_postgres::Client,
     qualified_table: &str,
@@ -318,7 +335,7 @@ async fn measure_select_breakdown(
     }
 }
 
-async fn benchmark_insert(label: &str, payload_bytes: usize) -> BenchStats {
+async fn benchmark_insert(label: &str, payload_bytes: usize, rounds_timeout_ms: u64) -> BenchStats {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
     let client: &tokio_postgres::Client = &pg;
@@ -334,19 +351,20 @@ async fn benchmark_insert(label: &str, payload_bytes: usize) -> BenchStats {
         .await
         .expect("prepare insert statement");
 
-    let stats = run_benchmark_rounds(|run_index, iteration| {
-        let id = bench_row_id("insert", run_index, iteration);
-        let payload = benchmark_payload(payload_bytes, bench_seed(run_index, iteration));
-        let insert_stmt = insert_stmt.clone();
+    let stats =
+        run_benchmark_rounds_with_timeout(label, rounds_timeout_ms, |run_index, iteration| {
+            let id = bench_row_id("insert", run_index, iteration);
+            let payload = benchmark_payload(payload_bytes, bench_seed(run_index, iteration));
+            let insert_stmt = insert_stmt.clone();
 
-        async move {
-            client
-                .execute(&insert_stmt, &[&id, &payload, &"inserted", &(iteration as i32)])
-                .await
-                .expect("insert benchmark row");
-        }
-    })
-    .await;
+            async move {
+                client
+                    .execute(&insert_stmt, &[&id, &payload, &"inserted", &(iteration as i32)])
+                    .await
+                    .expect("insert benchmark row");
+            }
+        })
+        .await;
 
     let count = count_rows(&pg, &qualified_table, None).await;
     assert_eq!(
@@ -356,11 +374,11 @@ async fn benchmark_insert(label: &str, payload_bytes: usize) -> BenchStats {
     );
 
     log_benchmark(label, payload_bytes, &stats);
-    pg.disconnect().await;
+    drop(pg);
     stats
 }
 
-async fn benchmark_select(label: &str, payload_bytes: usize) -> BenchStats {
+async fn benchmark_select(label: &str, payload_bytes: usize, rounds_timeout_ms: u64) -> BenchStats {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
     let client: &tokio_postgres::Client = &pg;
@@ -377,19 +395,21 @@ async fn benchmark_select(label: &str, payload_bytes: usize) -> BenchStats {
         .await
         .expect("prepare select statement");
 
-    let stats = run_benchmark_rounds(|run_index, iteration| {
-        let id = bench_row_id("select", run_index, iteration);
-        let select_stmt = select_stmt.clone();
+    let stats =
+        run_benchmark_rounds_with_timeout(label, rounds_timeout_ms, |run_index, iteration| {
+            let id = bench_row_id("select", run_index, iteration);
+            let select_stmt = select_stmt.clone();
 
-        async move {
-            let row = client.query_one(&select_stmt, &[&id]).await.expect("select benchmark row");
-            let selected_id: String = row.get(0);
-            let payload: String = row.get(1);
-            assert_eq!(selected_id, id, "selected row id mismatch");
-            assert_eq!(payload.len(), payload_bytes, "selected payload size mismatch");
-        }
-    })
-    .await;
+            async move {
+                let row =
+                    client.query_one(&select_stmt, &[&id]).await.expect("select benchmark row");
+                let selected_id: String = row.get(0);
+                let payload: String = row.get(1);
+                assert_eq!(selected_id, id, "selected row id mismatch");
+                assert_eq!(payload.len(), payload_bytes, "selected payload size mismatch");
+            }
+        })
+        .await;
 
     log_benchmark(label, payload_bytes, &stats);
 
@@ -405,11 +425,11 @@ async fn benchmark_select(label: &str, payload_bytes: usize) -> BenchStats {
         log_select_breakdown(label, &breakdown);
     }
 
-    pg.disconnect().await;
+    drop(pg);
     stats
 }
 
-async fn benchmark_update(label: &str, payload_bytes: usize) -> BenchStats {
+async fn benchmark_update(label: &str, payload_bytes: usize, rounds_timeout_ms: u64) -> BenchStats {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
     let client: &tokio_postgres::Client = &pg;
@@ -426,21 +446,25 @@ async fn benchmark_update(label: &str, payload_bytes: usize) -> BenchStats {
         .await
         .expect("prepare update statement");
 
-    let stats = run_benchmark_rounds(|run_index, iteration| {
-        let id = bench_row_id("update", run_index, iteration);
-        let next_payload =
-            benchmark_payload(payload_bytes, bench_seed(run_index, iteration) + 10_000);
-        let update_stmt = update_stmt.clone();
+    let stats =
+        run_benchmark_rounds_with_timeout(label, rounds_timeout_ms, |run_index, iteration| {
+            let id = bench_row_id("update", run_index, iteration);
+            let next_payload =
+                benchmark_payload(payload_bytes, bench_seed(run_index, iteration) + 10_000);
+            let update_stmt = update_stmt.clone();
 
-        async move {
-            let rows = client
-                .execute(&update_stmt, &[&next_payload, &"updated", &((iteration + 1) as i32), &id])
-                .await
-                .expect("update benchmark row");
-            assert_eq!(rows, 1, "update should affect exactly one row");
-        }
-    })
-    .await;
+            async move {
+                let rows = client
+                    .execute(
+                        &update_stmt,
+                        &[&next_payload, &"updated", &((iteration + 1) as i32), &id],
+                    )
+                    .await
+                    .expect("update benchmark row");
+                assert_eq!(rows, 1, "update should affect exactly one row");
+            }
+        })
+        .await;
 
     let row = pg
         .query_one(
@@ -460,11 +484,11 @@ async fn benchmark_update(label: &str, payload_bytes: usize) -> BenchStats {
     assert_eq!(version, 1, "updated version mismatch");
 
     log_benchmark(label, payload_bytes, &stats);
-    pg.disconnect().await;
+    drop(pg);
     stats
 }
 
-async fn benchmark_delete(label: &str, payload_bytes: usize) -> BenchStats {
+async fn benchmark_delete(label: &str, payload_bytes: usize, rounds_timeout_ms: u64) -> BenchStats {
     let env = TestEnv::global().await;
     let pg = env.pg_connect().await;
     let client: &tokio_postgres::Client = &pg;
@@ -479,105 +503,95 @@ async fn benchmark_delete(label: &str, payload_bytes: usize) -> BenchStats {
         .await
         .expect("prepare delete statement");
 
-    let stats = run_benchmark_rounds(|run_index, iteration| {
-        let id = bench_row_id("delete", run_index, iteration);
-        let delete_stmt = delete_stmt.clone();
+    let stats =
+        run_benchmark_rounds_with_timeout(label, rounds_timeout_ms, |run_index, iteration| {
+            let id = bench_row_id("delete", run_index, iteration);
+            let delete_stmt = delete_stmt.clone();
 
-        async move {
-            let rows = client.execute(&delete_stmt, &[&id]).await.expect("delete benchmark row");
-            assert_eq!(rows, 1, "delete should affect exactly one row");
-        }
-    })
-    .await;
+            async move {
+                let rows =
+                    client.execute(&delete_stmt, &[&id]).await.expect("delete benchmark row");
+                assert_eq!(rows, 1, "delete should affect exactly one row");
+            }
+        })
+        .await;
 
     let count = count_rows(&pg, &qualified_table, None).await;
     assert_eq!(count, 0, "delete benchmark table should be empty");
 
     log_benchmark(label, payload_bytes, &stats);
-    pg.disconnect().await;
+    drop(pg);
     stats
 }
 
 #[tokio::test]
-#[ntest::timeout(3100)]
 async fn e2e_perf_pglite_insert_small_row() {
-    let stats = benchmark_insert("pglite-style insert small row", SMALL_ROW_BYTES).await;
+    let stats = benchmark_insert("pglite-style insert small row", SMALL_ROW_BYTES, 3100).await;
     assert_benchmark("insert small row", &stats, 42.0, 2.60);
 }
 
 #[tokio::test]
-#[ntest::timeout(3400)]
 async fn e2e_perf_pglite_select_small_row() {
-    let stats = benchmark_select("pglite-style select small row", SMALL_ROW_BYTES).await;
+    let stats = benchmark_select("pglite-style select small row", SMALL_ROW_BYTES, 3400).await;
     assert_benchmark("select small row", &stats, 70.0, 4.40);
 }
 
 #[tokio::test]
-#[ntest::timeout(3800)]
 async fn e2e_perf_pglite_update_small_row() {
-    let stats = benchmark_update("pglite-style update small row", SMALL_ROW_BYTES).await;
+    let stats = benchmark_update("pglite-style update small row", SMALL_ROW_BYTES, 3800).await;
     assert_benchmark("update small row", &stats, 110.0, 6.90);
 }
 
 #[tokio::test]
-#[ntest::timeout(3900)]
 async fn e2e_perf_pglite_delete_small_row() {
-    let stats = benchmark_delete("pglite-style delete small row", SMALL_ROW_BYTES).await;
+    let stats = benchmark_delete("pglite-style delete small row", SMALL_ROW_BYTES, 3900).await;
     assert_benchmark("delete small row", &stats, 105.0, 6.60);
 }
 
 #[tokio::test]
-#[ntest::timeout(3100)]
 async fn e2e_perf_pglite_insert_1kb_row() {
-    let stats = benchmark_insert("pglite-style insert 1kb row", ONE_KB_ROW_BYTES).await;
+    let stats = benchmark_insert("pglite-style insert 1kb row", ONE_KB_ROW_BYTES, 3100).await;
     assert_benchmark("insert 1kb row", &stats, 48.0, 3.00);
 }
 
 #[tokio::test]
-#[ntest::timeout(3900)]
 async fn e2e_perf_pglite_select_1kb_row() {
-    let stats = benchmark_select("pglite-style select 1kb row", ONE_KB_ROW_BYTES).await;
+    let stats = benchmark_select("pglite-style select 1kb row", ONE_KB_ROW_BYTES, 3900).await;
     assert_benchmark("select 1kb row", &stats, 72.0, 4.50);
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
 async fn e2e_perf_pglite_update_1kb_row() {
-    let stats = benchmark_update("pglite-style update 1kb row", ONE_KB_ROW_BYTES).await;
+    let stats = benchmark_update("pglite-style update 1kb row", ONE_KB_ROW_BYTES, 4000).await;
     assert_benchmark("update 1kb row", &stats, 125.0, 7.85);
 }
 
 #[tokio::test]
-#[ntest::timeout(4100)]
 async fn e2e_perf_pglite_delete_1kb_row() {
-    let stats = benchmark_delete("pglite-style delete 1kb row", ONE_KB_ROW_BYTES).await;
+    let stats = benchmark_delete("pglite-style delete 1kb row", ONE_KB_ROW_BYTES, 4100).await;
     assert_benchmark("delete 1kb row", &stats, 108.0, 6.75);
 }
 
 #[tokio::test]
-#[ntest::timeout(3500)]
 async fn e2e_perf_pglite_insert_10kb_row() {
-    let stats = benchmark_insert("pglite-style insert 10kb row", TEN_KB_ROW_BYTES).await;
+    let stats = benchmark_insert("pglite-style insert 10kb row", TEN_KB_ROW_BYTES, 3500).await;
     assert_benchmark("insert 10kb row", &stats, 112.0, 7.00);
 }
 
 #[tokio::test]
-#[ntest::timeout(4300)]
 async fn e2e_perf_pglite_select_10kb_row() {
-    let stats = benchmark_select("pglite-style select 10kb row", TEN_KB_ROW_BYTES).await;
+    let stats = benchmark_select("pglite-style select 10kb row", TEN_KB_ROW_BYTES, 4300).await;
     assert_benchmark("select 10kb row", &stats, 75.0, 4.70);
 }
 
 #[tokio::test]
-#[ntest::timeout(4600)]
 async fn e2e_perf_pglite_update_10kb_row() {
-    let stats = benchmark_update("pglite-style update 10kb row", TEN_KB_ROW_BYTES).await;
+    let stats = benchmark_update("pglite-style update 10kb row", TEN_KB_ROW_BYTES, 4600).await;
     assert_benchmark("update 10kb row", &stats, 190.0, 11.90);
 }
 
 #[tokio::test]
-#[ntest::timeout(4300)]
 async fn e2e_perf_pglite_delete_10kb_row() {
-    let stats = benchmark_delete("pglite-style delete 10kb row", TEN_KB_ROW_BYTES).await;
+    let stats = benchmark_delete("pglite-style delete 10kb row", TEN_KB_ROW_BYTES, 4300).await;
     assert_benchmark("delete 10kb row", &stats, 128.0, 8.00);
 }

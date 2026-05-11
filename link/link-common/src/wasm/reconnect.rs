@@ -241,10 +241,9 @@ pub(crate) async fn resubscribe_all(
                     subscription_id, _e
                 ));
             } else if let Some(on_send) = on_send_cb.as_ref() {
-                if let (Some(cb), Ok(json)) = (
-                    on_send.borrow().as_ref().cloned(),
-                    serde_json::to_string(&subscribe_msg),
-                ) {
+                if let (Some(cb), Ok(json)) =
+                    (on_send.borrow().as_ref().cloned(), serde_json::to_string(&subscribe_msg))
+                {
                     let _ = cb.call1(
                         &wasm_bindgen::JsValue::NULL,
                         &wasm_bindgen::JsValue::from_str(&json),

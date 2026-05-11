@@ -27,15 +27,33 @@ pub fn json_value_to_scalar_for_column(
                 .unwrap_or(0);
             ScalarValue::Int32(Some(num as i32))
         },
-        KalamDataType::BigInt
-        | KalamDataType::Timestamp
-        | KalamDataType::DateTime
-        | KalamDataType::Time => {
+        KalamDataType::BigInt => {
             let num = value
                 .as_i64()
                 .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
                 .unwrap_or(0);
             ScalarValue::Int64(Some(num))
+        },
+        KalamDataType::Timestamp => {
+            let num = value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                .unwrap_or(0);
+            ScalarValue::TimestampMicrosecond(Some(num), None)
+        },
+        KalamDataType::DateTime => {
+            let num = value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                .unwrap_or(0);
+            ScalarValue::TimestampMicrosecond(Some(num), Some("UTC".into()))
+        },
+        KalamDataType::Time => {
+            let num = value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+                .unwrap_or(0);
+            ScalarValue::Time64Microsecond(Some(num))
         },
         KalamDataType::Date => {
             let num = value
@@ -100,11 +118,16 @@ pub fn scalar_to_json_for_column(
         KalamDataType::SmallInt
         | KalamDataType::Int
         | KalamDataType::BigInt
-        | KalamDataType::Timestamp
-        | KalamDataType::DateTime
-        | KalamDataType::Time
         | KalamDataType::Date => {
             let value = extract_i64(scalar).unwrap_or(0);
+            Value::Number(Number::from(value))
+        },
+        KalamDataType::Timestamp | KalamDataType::DateTime => {
+            let value = extract_timestamp_micros(scalar).unwrap_or(0);
+            Value::Number(Number::from(value))
+        },
+        KalamDataType::Time => {
+            let value = extract_time_micros(scalar).unwrap_or(0);
             Value::Number(Number::from(value))
         },
         KalamDataType::Double | KalamDataType::Float => {
@@ -213,6 +236,28 @@ fn extract_i64(scalar: &ScalarValue) -> Option<i64> {
         ScalarValue::TimestampNanosecond(v, _) => *v,
         ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.parse::<i64>().ok(),
         _ => None,
+    }
+}
+
+fn extract_timestamp_micros(scalar: &ScalarValue) -> Option<i64> {
+    match scalar {
+        ScalarValue::TimestampSecond(v, _) => v.and_then(|value| value.checked_mul(1_000_000)),
+        ScalarValue::TimestampMillisecond(v, _) => v.and_then(|value| value.checked_mul(1_000)),
+        ScalarValue::TimestampMicrosecond(v, _) => *v,
+        ScalarValue::TimestampNanosecond(v, _) => v.map(|value| value / 1_000),
+        _ => extract_i64(scalar),
+    }
+}
+
+fn extract_time_micros(scalar: &ScalarValue) -> Option<i64> {
+    match scalar {
+        ScalarValue::Time32Second(v) => v.and_then(|value| i64::from(value).checked_mul(1_000_000)),
+        ScalarValue::Time32Millisecond(v) => {
+            v.and_then(|value| i64::from(value).checked_mul(1_000))
+        },
+        ScalarValue::Time64Microsecond(v) => *v,
+        ScalarValue::Time64Nanosecond(v) => v.map(|value| value / 1_000),
+        _ => extract_i64(scalar),
     }
 }
 
@@ -333,5 +378,51 @@ mod tests {
         let scalar =
             json_value_to_scalar_for_column(&value, &KalamDataType::BigInt).expect("bigint parse");
         assert!(matches!(scalar, ScalarValue::Int64(Some(0))));
+    }
+
+    #[test]
+    fn test_temporal_json_numbers_become_microsecond_scalars() {
+        let timestamp = json!(1_735_689_600_000_000_i64);
+        let time = json!(45_296_123_456_i64);
+
+        let scalar = json_value_to_scalar_for_column(&timestamp, &KalamDataType::Timestamp)
+            .expect("timestamp scalar");
+        assert!(matches!(
+            scalar,
+            ScalarValue::TimestampMicrosecond(Some(1_735_689_600_000_000), None)
+        ));
+
+        let scalar = json_value_to_scalar_for_column(&timestamp, &KalamDataType::DateTime)
+            .expect("datetime scalar");
+        assert!(matches!(
+            scalar,
+            ScalarValue::TimestampMicrosecond(Some(1_735_689_600_000_000), Some(_))
+        ));
+
+        let scalar =
+            json_value_to_scalar_for_column(&time, &KalamDataType::Time).expect("time scalar");
+        assert!(matches!(scalar, ScalarValue::Time64Microsecond(Some(45_296_123_456))));
+    }
+
+    #[test]
+    fn test_timestamp_scalar_json_uses_microseconds() {
+        let value = scalar_to_json_for_column(
+            &ScalarValue::TimestampNanosecond(Some(1735689600000000000), None),
+            &KalamDataType::Timestamp,
+        )
+        .expect("timestamp to json");
+
+        assert_eq!(value, json!(1735689600000000_i64));
+    }
+
+    #[test]
+    fn test_time_scalar_json_uses_microseconds() {
+        let value = scalar_to_json_for_column(
+            &ScalarValue::Time64Nanosecond(Some(45_296_123_456_789)),
+            &KalamDataType::Time,
+        )
+        .expect("time to json");
+
+        assert_eq!(value, json!(45_296_123_456_i64));
     }
 }

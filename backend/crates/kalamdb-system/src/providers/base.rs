@@ -12,7 +12,10 @@
 
 use std::sync::Arc;
 
-use arrow::array::RecordBatch;
+use arrow::{
+    array::RecordBatch,
+    datatypes::{DataType, TimeUnit},
+};
 use async_trait::async_trait;
 use datafusion::{
     catalog::Session,
@@ -20,6 +23,7 @@ use datafusion::{
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
+    scalar::ScalarValue,
 };
 use kalamdb_commons::{
     conversions::json_rows_to_arrow_batch,
@@ -74,9 +78,63 @@ pub fn system_rows_to_batch(
     schema: &arrow::datatypes::SchemaRef,
     rows: Vec<SystemTableRow>,
 ) -> Result<RecordBatch, SystemError> {
-    let rows: Vec<Row> = rows.into_iter().map(|row| row.fields).collect();
+    let mut rows: Vec<Row> = rows.into_iter().map(|row| row.fields).collect();
+    normalize_legacy_system_timestamp_rows(schema, &mut rows).map_err(|e| {
+        SystemError::SerializationError(format!("system row timestamp conversion failed: {e}"))
+    })?;
     json_rows_to_arrow_batch(schema, rows)
         .map_err(|e| SystemError::SerializationError(format!("system rows to batch failed: {e}")))
+}
+
+fn normalize_legacy_system_timestamp_rows(
+    schema: &arrow::datatypes::SchemaRef,
+    rows: &mut [Row],
+) -> Result<(), String> {
+    for row in rows {
+        for field in schema.fields() {
+            let DataType::Timestamp(TimeUnit::Microsecond, timezone) = field.data_type() else {
+                continue;
+            };
+
+            let Some(value) = row.values.get_mut(field.name().as_str()) else {
+                continue;
+            };
+
+            let current = std::mem::replace(value, ScalarValue::Null);
+            *value = match current {
+                ScalarValue::Int64(Some(ms)) => ScalarValue::TimestampMicrosecond(
+                    Some(ms.checked_mul(1_000).ok_or_else(|| {
+                        format!("timestamp value {ms} overflows when converted to microseconds")
+                    })?),
+                    timezone.clone(),
+                ),
+                ScalarValue::TimestampSecond(Some(seconds), _) => {
+                    ScalarValue::TimestampMicrosecond(
+                        Some(seconds.checked_mul(1_000_000).ok_or_else(|| {
+                            format!(
+                            "timestamp value {seconds} overflows when converted to microseconds"
+                        )
+                        })?),
+                        timezone.clone(),
+                    )
+                },
+                ScalarValue::TimestampMillisecond(Some(ms), _) => {
+                    ScalarValue::TimestampMicrosecond(
+                        Some(ms.checked_mul(1_000).ok_or_else(|| {
+                            format!("timestamp value {ms} overflows when converted to microseconds")
+                        })?),
+                        timezone.clone(),
+                    )
+                },
+                ScalarValue::TimestampNanosecond(Some(nanos), _) => {
+                    ScalarValue::TimestampMicrosecond(Some(nanos / 1_000), timezone.clone())
+                },
+                other => other,
+            };
+        }
+    }
+
+    Ok(())
 }
 
 fn scan_limit_for_filters(filters: &FilterRequest, limit: LimitRequest) -> Option<usize> {
@@ -572,21 +630,24 @@ pub fn extract_range_filters(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Mutex,
+        },
     };
 
     use datafusion::{
         arrow::{
-            array::{RecordBatch, StringArray},
-            datatypes::{DataType, Field, Schema},
+            array::{RecordBatch, StringArray, TimestampMicrosecondArray},
+            datatypes::{DataType, Field, Schema, TimeUnit},
         },
         execution::context::SessionContext,
         logical_expr::{col, lit},
         physical_plan::collect,
     };
-    use kalamdb_commons::{KSerializable, StorageKey};
+    use kalamdb_commons::{models::rows::SystemTableRow, KSerializable, StorageKey};
     use kalamdb_store::{test_utils::InMemoryBackend, IndexedEntityStore, StorageBackend};
 
     use super::*;
@@ -817,6 +878,29 @@ mod tests {
             self.limits.lock().unwrap().push(limit);
             Self::build_batch()
         }
+    }
+
+    #[test]
+    fn test_system_rows_to_batch_upconverts_legacy_timestamp_millis() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "created_at",
+            DataType::Timestamp(TimeUnit::Microsecond, None),
+            false,
+        )]));
+        let mut values = BTreeMap::new();
+        values.insert("created_at".to_string(), ScalarValue::Int64(Some(1_735_689_600_000)));
+        let row = SystemTableRow {
+            fields: Row::new(values),
+        };
+
+        let batch = system_rows_to_batch(&schema, vec![row]).expect("system batch");
+        let timestamps = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<TimestampMicrosecondArray>()
+            .expect("timestamp column");
+
+        assert_eq!(timestamps.value(0), 1_735_689_600_000_000);
     }
 
     #[tokio::test]

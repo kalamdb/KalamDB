@@ -40,122 +40,8 @@ fn is_retryable_consumer_poll_error(message: &str) -> bool {
     topic_test_support::is_retryable_consumer_poll_error(message)
 }
 
-fn parse_test_arg(flag: &str) -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    let prefix = format!("{}=", flag);
-
-    for (index, arg) in args.iter().enumerate() {
-        if arg == flag {
-            return args.get(index + 1).cloned();
-        }
-        if let Some(value) = arg.strip_prefix(&prefix) {
-            return Some(value.to_string());
-        }
-    }
-
-    None
-}
-
-fn configured_server_type() -> Option<&'static str> {
-    if let Ok(value) = std::env::var("KALAMDB_SERVER_TYPE") {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "fresh" => return Some("fresh"),
-            "running" => return Some("running"),
-            "cluster" => return Some("cluster"),
-            _ => {},
-        }
-    }
-
-    if let Ok(value) = std::env::var("KALAMDB_AUTO_START_TEST_SERVER") {
-        match value.trim() {
-            "1" => return Some("fresh"),
-            "0" => return Some("running"),
-            _ => {},
-        }
-    }
-
-    None
-}
-
-fn configured_server_targets() -> Vec<String> {
-    let mut targets = Vec::new();
-
-    if let Some(url) = parse_test_arg("--url") {
-        targets.push(url);
-    }
-
-    if let Some(urls) = parse_test_arg("--urls") {
-        targets.extend(
-            urls.split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned),
-        );
-    }
-
-    if let Ok(url) = std::env::var("KALAMDB_SERVER_URL") {
-        if !url.trim().is_empty() {
-            targets.push(url);
-        }
-    }
-
-    if let Ok(urls) = std::env::var("KALAMDB_CLUSTER_URLS") {
-        targets.extend(
-            urls.split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned),
-        );
-    }
-
-    targets
-}
-
-fn is_local_server_target(url: &str) -> bool {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    let host_port = trimmed
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .split('/')
-        .next()
-        .unwrap_or(trimmed);
-
-    let host = if let Some(rest) = host_port.strip_prefix('[') {
-        rest.split(']').next().unwrap_or(rest)
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-
-    matches!(host, "127.0.0.1" | "localhost" | "0.0.0.0" | "::1")
-}
-
-fn should_trust_local_server_config_for_target() -> bool {
-    let targets = configured_server_targets();
-    !targets.is_empty() && targets.iter().all(|target| is_local_server_target(target))
-}
-
-fn should_use_local_visibility_timeout_config() -> bool {
-    match configured_server_type() {
-        Some("fresh") => return true,
-        Some("running") | Some("cluster") => {
-            return should_trust_local_server_config_for_target();
-        },
-        _ => {},
-    }
-
-    // In implicit auto-detect mode we may have attached to an arbitrary running
-    // server, so only trust the repo-local config when the selected target is
-    // explicitly local (including the auto-started fresh-server path, which sets
-    // `KALAMDB_SERVER_URL`).
-    should_trust_local_server_config_for_target()
-}
-
 fn local_visibility_timeout_config_path() -> Option<PathBuf> {
-    if !should_use_local_visibility_timeout_config() {
+    if !common::server_target_is_local() {
         return None;
     }
 
@@ -203,7 +89,35 @@ fn read_visibility_timeout_secs_from_server_toml(path: &Path) -> Option<u64> {
     None
 }
 
-fn configured_topic_visibility_timeout_secs() -> u64 {
+async fn runtime_topic_visibility_timeout_secs() -> Option<u64> {
+    let response = common::execute_sql_via_http_as_root(
+        "SELECT value FROM system.settings WHERE name = 'topics.visibility_timeout_secs'",
+    )
+    .await
+    .ok()?;
+
+    if !response_is_success(&response) {
+        return None;
+    }
+
+    let rows = common::get_rows_as_hashmaps(&response)?;
+    let value = rows.first()?.get("value")?;
+    let value = common::extract_typed_value(value);
+
+    value
+        .as_str()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .or_else(|| value.as_u64())
+        .or_else(|| value.as_i64().and_then(|raw| u64::try_from(raw).ok()))
+}
+
+async fn configured_topic_visibility_timeout_secs() -> u64 {
+    // Query the running server first so test timing matches the actual runtime
+    // configuration across fresh, running, cluster, CI, and Linux builds.
+    if let Some(value) = runtime_topic_visibility_timeout_secs().await {
+        return value;
+    }
+
     for env_key in [
         "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
         "KALAMDB_VISIBILITY_TIMEOUT_SECS",
@@ -222,12 +136,12 @@ fn configured_topic_visibility_timeout_secs() -> u64 {
     default_topic_visibility_timeout_secs()
 }
 
-fn topic_recovery_deadline() -> Duration {
-    Duration::from_secs(configured_topic_visibility_timeout_secs() + 30)
+async fn topic_recovery_deadline() -> Duration {
+    Duration::from_secs(configured_topic_visibility_timeout_secs().await + 30)
 }
 
-fn topic_visibility_timeout_wait() -> Duration {
-    Duration::from_secs(configured_topic_visibility_timeout_secs() + 1)
+async fn topic_visibility_timeout_wait() -> Duration {
+    Duration::from_secs(configured_topic_visibility_timeout_secs().await + 1)
 }
 
 async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {
@@ -317,7 +231,8 @@ fn assert_complete_ids(ids: &[i64], expected_total: usize, context: &str) {
     actual.dedup();
     let expected: Vec<i64> = (0..expected_total as i64).collect();
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "{}: expected complete unique ids 0..{}, got {:?}",
         context,
         expected_total.saturating_sub(1),
@@ -373,10 +288,7 @@ async fn poll_records_raw_until(
                 }
 
                 if config.commit_each_batch {
-                    consumer
-                        .commit_sync()
-                        .await
-                        .expect("commit after poll batch should succeed");
+                    consumer.commit_sync().await.expect("commit after poll batch should succeed");
                 }
             },
             Err(err) => {
@@ -1493,7 +1405,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let claimed_offsets = record_offsets(&claimed_by_a);
     assert_consecutive_offsets(&claimed_offsets, 0, "consumer-a claimed prefix before failure");
 
-    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+    tokio::time::sleep(topic_visibility_timeout_wait().await).await;
 
     let mut consumer_b =
         topic_test_support::build_test_consumer(&topic, &group_id, 60, false).await;
@@ -1502,7 +1414,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         &mut consumer_b,
         RawRecordPollConfig {
             min_records: expected_messages,
-            deadline: topic_recovery_deadline(),
+            deadline: topic_recovery_deadline().await,
             idle_sleep: Duration::from_millis(80),
             per_record_delay: Duration::from_millis(2),
             commit_each_batch: false,
@@ -1612,7 +1524,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
         }
     }
 
-    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+    tokio::time::sleep(topic_visibility_timeout_wait().await).await;
 
     let mut consumer_c =
         topic_test_support::build_test_consumer(&topic, &group_id, 30, false).await;
@@ -1620,7 +1532,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
         &mut consumer_c,
         RawRecordPollConfig {
             min_records: expected_messages,
-            deadline: topic_recovery_deadline(),
+            deadline: topic_recovery_deadline().await,
             idle_sleep: Duration::from_millis(80),
             per_record_delay: Duration::ZERO,
             commit_each_batch: false,
@@ -1696,11 +1608,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
 async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset() {
     let namespace = common::generate_unique_namespace("partial_commit_recovery");
     let table = format!("{}.events", namespace);
-    let topic = format!(
-        "{}.{}",
-        namespace,
-        common::generate_unique_table("partial_commit_topic")
-    );
+    let topic = format!("{}.{}", namespace, common::generate_unique_table("partial_commit_topic"));
     let group_id = format!("partial-commit-group-{}", common::random_string(8));
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace))
@@ -1739,10 +1647,8 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let committed_ids = record_payload_ids(&committed_records, &["id"]);
     assert_consecutive_offsets(&committed_offsets, 0, "committed prefix offsets");
 
-    let initial_commit = consumer_a
-        .commit_sync()
-        .await
-        .expect("initial prefix commit should succeed");
+    let initial_commit =
+        consumer_a.commit_sync().await.expect("initial prefix commit should succeed");
     assert_eq!(
         initial_commit.acknowledged_offset,
         committed_offsets.last().copied().expect("committed prefix should not be empty"),
@@ -1781,7 +1687,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
 
     drop(consumer_a); // crash after claiming the tail without committing it
 
-    tokio::time::sleep(topic_visibility_timeout_wait()).await;
+    tokio::time::sleep(topic_visibility_timeout_wait().await).await;
 
     let mut consumer_b =
         topic_test_support::build_test_consumer(&topic, &group_id, 24, false).await;
@@ -1789,7 +1695,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
         &mut consumer_b,
         RawRecordPollConfig {
             min_records: expected_messages - committed_prefix_len,
-            deadline: topic_recovery_deadline(),
+            deadline: topic_recovery_deadline().await,
             idle_sleep: Duration::from_millis(80),
             per_record_delay: Duration::ZERO,
             commit_each_batch: false,
@@ -1837,10 +1743,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
         "partial commit plus recovery should cover the full id set",
     );
 
-    let recovery_commit = consumer_b
-        .commit_sync()
-        .await
-        .expect("recovery commit should succeed");
+    let recovery_commit = consumer_b.commit_sync().await.expect("recovery commit should succeed");
     assert_eq!(
         recovery_commit.acknowledged_offset,
         (expected_messages - 1) as u64,
@@ -1925,15 +1828,15 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
 
     for record in &records {
         let payload = parse_payload(&record.payload);
-        let id = extract_i64_field(&payload, &["id"]).expect("large payload record should include id");
+        let id =
+            extract_i64_field(&payload, &["id"]).expect("large payload record should include id");
         let payload_text = extract_string_field(&payload, "payload")
             .expect("large payload record should include payload text");
         let declared_size = extract_i64_field(&payload, &["payload_size"])
             .expect("large payload record should include payload_size");
 
         assert_eq!(
-            declared_size,
-            payload_size as i64,
+            declared_size, payload_size as i64,
             "payload_size metadata should match the inserted payload size"
         );
         assert_eq!(

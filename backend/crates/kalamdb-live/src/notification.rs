@@ -505,10 +505,8 @@ impl NotificationService {
 
         // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
         if handle_count <= SHARED_NOTIFY_CHUNK_SIZE {
-            let chunk_handles = all_handles
-                .iter()
-                .map(|entry| entry.value().clone())
-                .collect::<Vec<_>>();
+            let chunk_handles =
+                all_handles.iter().map(|entry| entry.value().clone()).collect::<Vec<_>>();
             return dispatch_chunk(
                 chunk_handles,
                 &new_row,
@@ -706,11 +704,7 @@ fn dispatch_one(
             Ok(true) => {},
             Ok(false) => return Ok(0),
             Err(e) => {
-                log::error!(
-                    "Filter error for subscription_id={}: {}",
-                    handle.subscription_id,
-                    e
-                );
+                log::error!("Filter error for subscription_id={}: {}", handle.subscription_id, e);
                 return Ok(0);
             },
         }
@@ -986,8 +980,7 @@ mod tests {
         let user_id = UserId::new("user-proj-upper");
         let table_id = make_table_id("default", "events");
         let conn_id = ConnectionId::new("c-user-upper");
-        let live_id =
-            LiveQueryId::new(user_id.clone(), conn_id.clone(), "sub_upper".to_string());
+        let live_id = LiveQueryId::new(user_id.clone(), conn_id.clone(), "sub_upper".to_string());
 
         let (tx, mut rx) = mpsc::channel(8);
         let flow = Arc::new(SubscriptionFlowControl::new());

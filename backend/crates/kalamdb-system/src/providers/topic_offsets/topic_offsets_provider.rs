@@ -10,6 +10,7 @@ use datafusion::{
     logical_expr::Expr,
 };
 use kalamdb_commons::{
+    conversions::{row_to_serde_model, serde_model_to_row},
     models::{rows::SystemTableRow, ConsumerGroupId, TopicId},
     SystemTable,
 };
@@ -19,7 +20,6 @@ use super::models::TopicOffset;
 use crate::{
     error::{SystemError, SystemResultExt},
     providers::base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition},
-    system_row_mapper::{model_to_system_row, system_row_to_model},
 };
 
 /// Composite key for topic offsets as a String: "topic_id:group_id:partition_id"
@@ -141,12 +141,12 @@ impl TopicOffsetsTableProvider {
                     group_id.clone(),
                     partition_id,
                     0,
-                    chrono::Utc::now().timestamp_millis(),
+                    chrono::Utc::now().timestamp_micros(),
                 )
             });
 
         // Update offset
-        topic_offset.ack(offset, chrono::Utc::now().timestamp_millis());
+        topic_offset.ack(offset, chrono::Utc::now().timestamp_micros());
 
         // Save back
         let row = Self::encode_offset_row(&topic_offset)?;
@@ -175,7 +175,7 @@ impl TopicOffsetsTableProvider {
             group_id.clone(),
             partition_id,
             next_offset - 1,
-            chrono::Utc::now().timestamp_millis(),
+            chrono::Utc::now().timestamp_micros(),
         );
         let row = Self::encode_offset_row(&topic_offset)?;
         self.store.insert(&key, &row).into_system_error("reset offset error")
@@ -271,11 +271,14 @@ impl TopicOffsetsTableProvider {
     }
 
     fn encode_offset_row(offset: &TopicOffset) -> Result<SystemTableRow, SystemError> {
-        model_to_system_row(offset, &TopicOffset::definition())
+        let fields = serde_model_to_row(offset, &TopicOffset::definition())
+            .map_err(SystemError::SerializationError)?;
+        Ok(SystemTableRow { fields })
     }
 
     fn decode_offset_row(row: &SystemTableRow) -> Result<TopicOffset, SystemError> {
-        system_row_to_model(row, &TopicOffset::definition())
+        row_to_serde_model(&row.fields, &TopicOffset::definition())
+            .map_err(SystemError::SerializationError)
     }
 }
 
@@ -320,7 +323,7 @@ mod tests {
             ConsumerGroupId::new("group_1"),
             0,
             0,                                     // last_acked_offset
-            chrono::Utc::now().timestamp_millis(), // updated_at
+            chrono::Utc::now().timestamp_micros(), // updated_at
         );
 
         // Upsert offset

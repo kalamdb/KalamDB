@@ -6,6 +6,12 @@
 # - Namespace and storage location configuration is stored in system tables (via kalamdb-system)
 # - This file contains only server runtime settings (ports, paths, limits, etc.)
 
+# Maximum lifetime for an open transaction before the server aborts it.
+transaction_timeout_secs = 300
+
+# Maximum in-memory transaction overlay size before new writes are rejected.
+max_transaction_buffer_bytes = 104857600
+
 [server]
 # Server bind address (default: 127.0.0.1)
 host = "0.0.0.0"
@@ -35,6 +41,10 @@ enable_http2 = true
 # API version (default: "v1")
 # Controls the versioned endpoint prefix (e.g., /v1/api/sql)
 api_version = "v1"
+
+# Optional path to the Admin UI static build output.
+# Uncomment to serve the UI bundle directly from the server.
+# ui_path = "./ui/dist"
 
 [storage]
 # Base data directory for all KalamDB storage
@@ -70,6 +80,18 @@ block_cache_size = 2097152
 
 # Maximum number of background compaction/flush jobs (default: 4)
 max_background_jobs = 4
+
+# Maximum number of open files RocksDB may keep open (default: 512)
+max_open_files = 512
+
+# Sync each write to the WAL before returning (default: false)
+sync_writes = false
+
+# Disable WAL for highest throughput at the cost of crash durability (default: false)
+disable_wal = false
+
+# Compact column families during startup (default: false)
+compact_on_startup = false
 
 [storage.rocksdb.cf_profiles.system_meta]
 # Low-write system metadata tables and compatibility partitions.
@@ -223,6 +245,13 @@ service_name = "kalamdb-server"
 # Export timeout in milliseconds
 timeout_ms = 3000
 
+# Optional per-target log level overrides.
+# Example:
+# [logging.targets]
+# datafusion = "info"
+# arrow = "warn"
+# parquet = "warn"
+
 [performance]
 # Request timeout in seconds (default: 30s)
 # Requests exceeding this duration will be terminated
@@ -273,38 +302,36 @@ max_header_size = 16384
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)
 # Prevents query flooding from a single user
-# For testing/development environments with high load, increase to 10000-100000
-max_queries_per_sec = 100
+# The isolated SDK/full-suite server uses this example template, so keep these
+# high enough to avoid test self-throttling on slower CI and Linux builders.
+max_queries_per_sec = 100000
 
 # Maximum WebSocket messages per second per connection (default: 50)
 # Prevents message flooding on WebSocket connections
-# For testing/development environments with high load, increase to 500-1000
-max_messages_per_sec = 50
+max_messages_per_sec = 10000
 
 # Maximum concurrent live query subscriptions per user (default: 10)
 # Limits total active subscriptions to prevent resource exhaustion
-# For testing/development environments, increase to 100-1000
-max_subscriptions_per_user = 10
+max_subscriptions_per_user = 200000
 
 # Maximum authentication requests per IP per second (default: 20)
 # Prevents brute force attacks and login flooding
 # Applies to /auth/login, /auth/refresh, /setup endpoints
-max_auth_requests_per_ip_per_sec = 20
+max_auth_requests_per_ip_per_sec = 200000
 
 # Maximum concurrent connections per IP address (default: 100)
 # Prevents a single IP from exhausting all server connections
-max_connections_per_ip = 100
+max_connections_per_ip = 200000
 
 # Maximum requests per second per IP BEFORE authentication (default: 200)
 # ⚠️ CRITICAL: This is the main rate limit that triggers IP BANS
 # Applied before auth to protect against unauthenticated floods
 # If exceeded repeatedly, IP will be banned for ban_duration_seconds
-# For testing/development with high request rates, set to 100000+
-max_requests_per_ip_per_sec = 200
+max_requests_per_ip_per_sec = 200000
 
 # Maximum request body size in bytes (default: 10MB)
 # Prevents memory exhaustion from huge request payloads
-request_body_limit_bytes = 10485760
+request_body_limit_bytes = 104857600
 
 # Duration in seconds to ban abusive IPs (default: 300 = 5 minutes)
 # IPs that violate max_requests_per_ip_per_sec 10+ times are banned
@@ -404,6 +431,10 @@ auth_timeout_secs = 3
 heartbeat_interval_secs = 5
 
 [authentication]
+# Optional root password for remote root access.
+# Prefer KALAMDB_ROOT_PASSWORD in production.
+# root_password = "change-me"
+
 # Bcrypt cost factor for password hashing (default: 12, range: 10-14)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
@@ -412,14 +443,18 @@ bcrypt_cost = 12
 # Minimum password length (default: 8)
 min_password_length = 8
 
-# Maximum password length (default: 72, bcrypt limit)
-# Note: Passwords longer than 72 bytes are truncated by bcrypt
+# Maximum accepted password length for local validation.
+# Bcrypt still only uses the first 72 bytes of the password material.
 max_password_length = 72
 
-# Disable common password checking (default: false)
-# If true, allows passwords like "password", "123456", etc.
-# WARNING: Only disable for testing/development environments!
-disable_common_password_check = false
+# JWT expiry in hours (default: 24)
+jwt_expiry_hours = 24
+
+# Whether auth cookies require HTTPS (default: true)
+cookie_secure = true
+
+# Enforce uppercase/lowercase/digit/special password complexity (default: false)
+enforce_password_complexity = false
 
 # JWT configuration (for JWT Bearer token authentication)
 # Secret key for JWT signature validation (minimum 32 characters recommended)
@@ -439,8 +474,8 @@ allow_remote_setup = false
 # Multiple issuers (comma-separated): "https://accounts.google.com,https://securetoken.google.com/my-app"
 jwt_trusted_issuers = ""
 
-# Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
-auto_create_users_from_provider = false
+# Optional pre-shared token required by pg_kalam gRPC connections.
+# pg_auth_token = "change-me"
 
 # ============================================================================
 # OAuth / OIDC Provider Configuration
@@ -500,6 +535,29 @@ auto_create_users_from_provider = false
 # # client_id must match the Firebase project ID (aud claim in the token)
 # client_id = "YOUR_PROJECT_ID"
 
+[user_management]
+# Days to keep a soft-deleted user before permanent purge (default: 30)
+deletion_grace_period_days = 30
+
+# Cron schedule for the background cleanup job (default: daily at 02:00)
+cleanup_job_schedule = "0 2 * * *"
+
+[files]
+# Maximum size for a single uploaded FILE value (default: 25MB)
+max_size_bytes = 26214400
+
+# Maximum number of uploaded files accepted in one request (default: 20)
+max_files_per_request = 20
+
+# Maximum number of files stored in one subdirectory before rotation (default: 5000)
+max_files_per_folder = 5000
+
+# Temporary staging directory for uploads before durable placement
+staging_path = "./data/tmp"
+
+# Allowed MIME types for FILE uploads. Empty list allows any MIME type.
+allowed_mime_types = []
+
 [shutdown]
 # Timeout settings for graceful shutdown
 
@@ -546,6 +604,12 @@ sql_plan_cache_max_entries = 200
 # Time-to-idle TTL for SQL cached plans in seconds (default: 900 = 15 minutes)
 # Unused plans are evicted automatically after this idle period
 sql_plan_cache_ttl_seconds = 900
+
+[topics]
+# Visibility timeout for topic consumer claims (seconds).
+# Keep this lower in the example template so local and CI topic-recovery tests
+# exercise redelivery promptly without inflating test timeouts.
+visibility_timeout_secs = 10
 
 # ============================================================================
 # RPC TLS / mTLS Configuration
@@ -620,13 +684,25 @@ sql_plan_cache_ttl_seconds = 900
 # # Raft election timeout range [min, max] in milliseconds (default: [150, 300])
 # election_timeout_ms = [150, 300]
 # 
-# # Maximum entries per Raft snapshot (default: 10000)
-# snapshot_threshold = 10000
+# # Snapshot policy (default: "LogsSinceLast(1000)")
+# # Supported values:
+# #   - "LogsSinceLast(1000)"
+# #   - "Never"
+# snapshot_policy = "LogsSinceLast(1000)"
 # 
-# # Minimum number of nodes that must acknowledge writes (default: 1)
-# # Set to 2 or 3 for strong consistency in a 3-node cluster
-# # This ensures data is replicated to multiple nodes before acknowledging success
-# min_replication_nodes = 3
+# # Number of snapshots to retain on disk (default: 3)
+# max_snapshots_to_keep = 3
+# 
+# # Timeout waiting for learner catchup or replication progress (default: 5000ms)
+# replication_timeout_ms = 5000
+# 
+# # Minimum interval between reconnect attempts to an unreachable peer (default: 3000ms)
+# reconnect_interval_ms = 3000
+# 
+# # Optional peer startup wait tuning.
+# # peer_wait_max_retries = 60
+# # peer_wait_initial_delay_ms = 500
+# # peer_wait_max_delay_ms = 2000
 # 
 # # Peer nodes (list all OTHER nodes in the cluster)
 # [[cluster.peers]]
@@ -657,7 +733,10 @@ sql_plan_cache_ttl_seconds = 900
 # api_addr = "http://node1.example.com:8080"
 # user_shards = 32
 # shared_shards = 1
-# min_replication_nodes = 3
+# snapshot_policy = "LogsSinceLast(1000)"
+# max_snapshots_to_keep = 3
+# replication_timeout_ms = 5000
+# reconnect_interval_ms = 3000
 # 
 # [[cluster.peers]]
 # node_id = 2

@@ -47,6 +47,24 @@ impl ShowExportHandler {
         created_at_millis.saturating_mul(1_000)
     }
 
+    fn extract_parameter(job: &Job, key: &str) -> Option<String> {
+        let parameters = job.parameters.as_ref()?;
+        match parameters {
+            serde_json::Value::Object(_) => parameters
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned),
+            serde_json::Value::String(raw_json) => serde_json::from_str::<serde_json::Value>(
+                raw_json,
+            )
+            .ok()?
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
+            _ => None,
+        }
+    }
+
     /// Build a download URI for a completed export.
     fn build_download_url(user_id: &str, export_id: &str) -> String {
         format!("/v1/exports/{}/{}", user_id, export_id)
@@ -54,9 +72,7 @@ impl ShowExportHandler {
 
     /// Extract export_id from job parameters JSON
     fn extract_export_id(job: &Job) -> Option<String> {
-        job.parameters
-            .as_ref()
-            .and_then(|v| v.get("export_id").and_then(|e| e.as_str().map(String::from)))
+        Self::extract_parameter(job, "export_id")
     }
 }
 
@@ -84,14 +100,7 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
         // Filter to only this user's exports (check parameters JSON)
         let user_jobs: Vec<&Job> = all_jobs
             .iter()
-            .filter(|job| {
-                job.parameters
-                    .as_ref()
-                    .and_then(|p| p.get("user_id"))
-                    .and_then(|v| v.as_str())
-                    .map(|uid| uid == user_id)
-                    .unwrap_or(false)
-            })
+            .filter(|job| Self::extract_parameter(job, "user_id").as_deref() == Some(&user_id))
             .collect();
 
         // Build result schema
@@ -164,6 +173,16 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use arrow::array::StringArray;
+    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_core::sql::context::ExecutionContext;
+    use kalamdb_jobs::init_job_manager;
+    use kalamdb_sql::ddl::ShowExportStatement;
+    use kalamdb_system::{providers::jobs::models::Job, JobStatus, JobType};
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -184,5 +203,139 @@ mod tests {
         let url = ShowExportHandler::build_download_url("alice", "export-123");
 
         assert_eq!(url, "/v1/exports/alice/export-123");
+    }
+
+    #[tokio::test]
+    async fn show_export_returns_completed_job_for_current_user() {
+        use kalamdb_commons::models::{Role, UserId};
+        use kalamdb_core::app_context::AppContext;
+
+        let app_context = AppContext::new_test();
+        init_job_manager(&app_context);
+
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        app_context
+            .system_tables()
+            .jobs()
+            .create_job(Job {
+                job_id: JobId::new("UE-test-show-export"),
+                job_type: JobType::UserExport,
+                status: JobStatus::Completed,
+                leader_status: None,
+                parameters: Some(json!({
+                    "user_id": "alice",
+                    "export_id": "export-alice-1"
+                })),
+                message: Some("done".to_string()),
+                exception_trace: None,
+                idempotency_key: None,
+                retry_count: 0,
+                max_retries: 3,
+                memory_used: None,
+                cpu_used: None,
+                created_at: now_ms,
+                updated_at: now_ms,
+                started_at: Some(now_ms),
+                finished_at: Some(now_ms),
+                node_id: NodeId::from(1u64),
+                leader_node_id: None,
+                queue: None,
+                priority: None,
+            })
+            .expect("insert export job");
+
+        let handler = ShowExportHandler::new(Arc::clone(&app_context));
+        let exec_ctx = ExecutionContext::new(
+            UserId::from("alice"),
+            Role::User,
+            Arc::new(app_context.session_factory().create_session()),
+        );
+
+        let result = handler.execute(ShowExportStatement, vec![], &exec_ctx).await;
+        assert!(result.is_ok(), "SHOW EXPORT should succeed: {result:?}");
+
+        let ExecutionResult::Rows {
+            batches, row_count, ..
+        } = result.expect("SHOW EXPORT result")
+        else {
+            panic!("Expected SHOW EXPORT to return rows");
+        };
+
+        assert_eq!(row_count, 1);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 1);
+
+        let job_ids = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("job_id column should be Utf8");
+        assert_eq!(job_ids.value(0), "UE-test-show-export");
+    }
+
+    #[tokio::test]
+    async fn show_export_accepts_stringified_job_parameters() {
+        use kalamdb_commons::models::{Role, UserId};
+        use kalamdb_core::app_context::AppContext;
+
+        let app_context = AppContext::new_test();
+        init_job_manager(&app_context);
+
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        app_context
+            .system_tables()
+            .jobs()
+            .create_job(Job {
+                job_id: JobId::new("UE-test-show-export-stringified"),
+                job_type: JobType::UserExport,
+                status: JobStatus::Completed,
+                leader_status: None,
+                parameters: Some(serde_json::Value::String(
+                    r#"{"user_id":"alice","export_id":"export-alice-2"}"#.to_string(),
+                )),
+                message: Some("done".to_string()),
+                exception_trace: None,
+                idempotency_key: None,
+                retry_count: 0,
+                max_retries: 3,
+                memory_used: None,
+                cpu_used: None,
+                created_at: now_ms,
+                updated_at: now_ms,
+                started_at: Some(now_ms),
+                finished_at: Some(now_ms),
+                node_id: NodeId::from(1u64),
+                leader_node_id: None,
+                queue: None,
+                priority: None,
+            })
+            .expect("insert export job");
+
+        let handler = ShowExportHandler::new(Arc::clone(&app_context));
+        let exec_ctx = ExecutionContext::new(
+            UserId::from("alice"),
+            Role::User,
+            Arc::new(app_context.session_factory().create_session()),
+        );
+
+        let result = handler.execute(ShowExportStatement, vec![], &exec_ctx).await;
+        assert!(result.is_ok(), "SHOW EXPORT should succeed: {result:?}");
+
+        let ExecutionResult::Rows {
+            batches, row_count, ..
+        } = result.expect("SHOW EXPORT result")
+        else {
+            panic!("Expected SHOW EXPORT to return rows");
+        };
+
+        assert_eq!(row_count, 1);
+        assert_eq!(batches[0].num_rows(), 1);
+
+        let download_urls = batches[0]
+            .column(4)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("download_url column should be Utf8");
+        assert_eq!(download_urls.value(0), "/v1/exports/alice/export-alice-2");
     }
 }

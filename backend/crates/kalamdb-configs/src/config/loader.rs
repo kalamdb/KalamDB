@@ -259,6 +259,40 @@ mod tests {
     }
 
     #[test]
+    fn test_server_example_config_stays_in_sync() {
+        let example = include_str!("../../../../server.example.toml");
+
+        let mut config: ServerConfig = toml::from_str(example).expect("parse server.example.toml");
+        config.finalize().expect("validate server.example.toml");
+
+        for required_snippet in [
+            "transaction_timeout_secs",
+            "max_transaction_buffer_bytes",
+            "[user_management]",
+            "[files]",
+            "[topics]",
+            "visibility_timeout_secs",
+        ] {
+            assert!(
+                example.contains(required_snippet),
+                "server.example.toml should include {required_snippet}"
+            );
+        }
+
+        for stale_snippet in [
+            "disable_common_password_check",
+            "auto_create_users_from_provider",
+            "min_replication_nodes",
+            "snapshot_threshold",
+        ] {
+            assert!(
+                !example.contains(stale_snippet),
+                "server.example.toml should not mention stale key {stale_snippet}"
+            );
+        }
+    }
+
+    #[test]
     fn test_invalid_port() {
         let mut config = ServerConfig::default();
         config.server.port = 0;

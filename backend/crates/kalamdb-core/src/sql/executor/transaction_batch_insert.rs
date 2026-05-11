@@ -295,7 +295,7 @@ fn prepare_statement_default(
             Ok(PreparedDefaultValue::Constant(value.clone()))
         },
         FastInsertDefaultTemplate::CurrentTimestamp => Ok(PreparedDefaultValue::Constant(
-            ScalarValue::TimestampMillisecond(Some(Utc::now().timestamp_millis()), None),
+            ScalarValue::TimestampMicrosecond(Some(Utc::now().timestamp_micros()), None),
         )),
         FastInsertDefaultTemplate::CurrentUser => {
             let user_id = exec_ctx.user_id();

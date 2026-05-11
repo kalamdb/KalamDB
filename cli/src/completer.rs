@@ -174,10 +174,8 @@ impl AutoCompleter {
     pub fn new() -> Self {
         let keywords = SQL_KEYWORDS.iter().map(|s| s.to_string()).collect::<Vec<String>>();
 
-        let meta_commands = META_COMMAND_COMPLETIONS
-            .iter()
-            .map(|command| (*command).to_string())
-            .collect();
+        let meta_commands =
+            META_COMMAND_COMPLETIONS.iter().map(|command| (*command).to_string()).collect();
 
         Self {
             keywords,
@@ -484,8 +482,7 @@ mod tests {
         assert!(as_completions.iter().any(|c| c.replacement == "\\as"));
 
         let live_line = "\\li";
-        let live_completions =
-            completer.get_styled_completions("\\li", live_line, live_line.len());
+        let live_completions = completer.get_styled_completions("\\li", live_line, live_line.len());
         assert!(live_completions.iter().any(|c| c.replacement == "\\live"));
     }
 

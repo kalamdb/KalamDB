@@ -81,10 +81,7 @@ fn test_cli_watch_schema_rejects_invalid_table_selector() {
         .arg("invalid_table");
 
     let output = cmd.output().expect("run cli");
-    assert!(
-        !output.status.success(),
-        "watch-schema should fail with invalid table selector"
-    );
+    assert!(!output.status.success(), "watch-schema should fail with invalid table selector");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

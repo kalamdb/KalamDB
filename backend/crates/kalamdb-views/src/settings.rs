@@ -489,6 +489,20 @@ impl VirtualView for SettingsView {
                 ]
             );
 
+            // Topic Settings
+            add_settings!(
+                names,
+                values,
+                descriptions,
+                categories,
+                [(
+                    "topics.visibility_timeout_secs",
+                    config.topics.visibility_timeout_secs,
+                    "Visibility timeout for pending consumer claims (seconds)",
+                    "topics"
+                ),]
+            );
+
             // WebSocket Settings
             add_settings!(
                 names,
@@ -758,5 +772,28 @@ mod tests {
 
         // Should have multiple settings rows
         assert!(batch.num_rows() > 10);
+
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .expect("name column should be StringArray");
+        let values = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .expect("value column should be StringArray");
+
+        let topic_timeout_row =
+            (0..batch.num_rows()).find(|idx| names.value(*idx) == "topics.visibility_timeout_secs");
+
+        let Some(topic_timeout_row) = topic_timeout_row else {
+            panic!("system.settings should expose topics.visibility_timeout_secs");
+        };
+
+        assert_eq!(
+            values.value(topic_timeout_row),
+            ServerConfig::default().topics.visibility_timeout_secs.to_string()
+        );
     }
 }

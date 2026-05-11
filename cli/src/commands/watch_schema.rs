@@ -81,11 +81,12 @@ async fn watch_schema_loop(session: &mut CLISession, config: &WatchSchemaConfig)
         let changed_count = extract_changed_count(&response)?;
 
         if changed_count > 0 {
-            let label = if changed_count == 1 { "change" } else { "changes" };
-            println!(
-                "Detected {} schema {} since {}",
-                changed_count, label, last_seen
-            );
+            let label = if changed_count == 1 {
+                "change"
+            } else {
+                "changes"
+            };
+            println!("Detected {} schema {} since {}", changed_count, label, last_seen);
             println!("Running: {}", config.run_command);
             run_shell_command(&config.run_command).await?;
         }
@@ -266,11 +267,8 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_filters_one_namespace() {
-        let query = build_schema_change_query(
-            &["chat".to_string()],
-            &[],
-            "2026-05-05T11:05:27.741Z",
-        );
+        let query =
+            build_schema_change_query(&["chat".to_string()], &[], "2026-05-05T11:05:27.741Z");
 
         assert_eq!(
             query,
@@ -291,11 +289,8 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_escapes_namespace_literals() {
-        let query = build_schema_change_query(
-            &["team's".to_string()],
-            &[],
-            "2026-05-05T11:05:27.741Z",
-        );
+        let query =
+            build_schema_change_query(&["team's".to_string()], &[], "2026-05-05T11:05:27.741Z");
 
         assert!(query.contains("namespace_id = 'team''s'"));
     }
