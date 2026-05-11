@@ -2,7 +2,10 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+static SUBSCRIPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
@@ -139,7 +142,11 @@ impl KalamClient {
             return Err(JsValue::from_str("Not connected to server. Call connect() first."));
         }
 
-        let subscription_id = format!("sub-{:x}", subscription_hash(&sql));
+        let subscription_id = format!(
+            "sub-{:x}-{}",
+            subscription_hash(&sql),
+            SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::Relaxed),
+        );
         let (subscribe_promise, subscribe_resolve, subscribe_reject) = create_promise();
 
         self.subscription_state.borrow_mut().insert(
