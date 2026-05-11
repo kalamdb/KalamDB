@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "label": "dart sdk tests (0)",
-  "message": "failed",
-  "color": "red"
+  "label": "dart sdk tests (167)",
+  "message": "167/167 passed",
+  "color": "brightgreen"
 }
