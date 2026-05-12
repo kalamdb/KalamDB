@@ -45,7 +45,7 @@ async fn test_user_table_pk_index_update() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
@@ -57,7 +57,6 @@ async fn test_user_table_pk_index_update() {
             )"#,
                 ns
             ),
-            "test_user",
         )
         .await;
     assert_eq!(
@@ -356,7 +355,7 @@ async fn test_user_table_pk_index_select() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.records (
                 id INT PRIMARY KEY,
@@ -367,7 +366,6 @@ async fn test_user_table_pk_index_select() {
             )"#,
                 ns
             ),
-            "select_user",
         )
         .await;
     assert_eq!(
@@ -474,7 +472,7 @@ async fn test_user_table_pk_index_delete() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.items (
                 id INT PRIMARY KEY,
@@ -485,7 +483,6 @@ async fn test_user_table_pk_index_delete() {
             )"#,
                 ns
             ),
-            "delete_user",
         )
         .await;
     assert_eq!(
@@ -608,7 +605,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
@@ -620,7 +617,6 @@ async fn test_user_table_pk_index_update_after_flush() {
             )"#,
                 ns
             ),
-            "flush_user",
         )
         .await;
     assert_eq!(
@@ -888,7 +884,7 @@ async fn test_user_table_pk_index_isolation() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_data (
                 id INT PRIMARY KEY,
@@ -899,7 +895,6 @@ async fn test_user_table_pk_index_isolation() {
             )"#,
                 ns
             ),
-            "alice",
         )
         .await;
     assert_eq!(

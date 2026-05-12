@@ -197,6 +197,9 @@ impl HandlerRegistry {
             })?;
 
             // Step 3: Check authorization (fail-fast)
+            statement
+                .check_authorization(context.user_role())
+                .map_err(KalamDbError::PermissionDenied)?;
             handler.check_authorization(&statement, context).await?;
 
             // Step 4: Execute statement (session is in context, no need to pass separately)
@@ -360,8 +363,8 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(KalamDbError::Unauthorized(_)) => {},
-            _ => panic!("Expected Unauthorized error"),
+            Err(KalamDbError::PermissionDenied(_)) => {},
+            _ => panic!("Expected PermissionDenied error"),
         }
     }
 }

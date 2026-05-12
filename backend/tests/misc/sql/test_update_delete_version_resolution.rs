@@ -27,7 +27,7 @@ async fn test_update_in_fast_storage() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_fast").await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_fast.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
@@ -37,7 +37,6 @@ async fn test_update_in_fast_storage() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
     assert_eq!(
@@ -102,7 +101,7 @@ async fn test_update_in_parquet() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_parquet").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_parquet.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
@@ -111,7 +110,6 @@ async fn test_update_in_parquet() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -182,7 +180,7 @@ async fn test_full_workflow_insert_flush_update() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_workflow").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_workflow.users (
                 user_id TEXT PRIMARY KEY,
                 name TEXT,
@@ -191,12 +189,11 @@ async fn test_full_workflow_insert_flush_update() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_workflow.orders (
                 id TEXT PRIMARY KEY,
                 customer TEXT,
@@ -206,7 +203,6 @@ async fn test_full_workflow_insert_flush_update() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -261,7 +257,7 @@ async fn test_multi_version_query() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_multivers").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_multivers.counters (
                 id TEXT PRIMARY KEY,
                 value INT
@@ -269,7 +265,6 @@ async fn test_multi_version_query() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -343,7 +338,7 @@ async fn test_delete_excludes_record() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.users (
                 id TEXT PRIMARY KEY,
@@ -355,7 +350,6 @@ async fn test_delete_excludes_record() {
             )"#,
                 namespace
             ),
-            "user1",
         )
         .await;
 
@@ -405,7 +399,7 @@ async fn test_delete_in_parquet() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_delpq").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_delpq.accounts (
                 id TEXT PRIMARY KEY,
                 email TEXT,
@@ -414,7 +408,6 @@ async fn test_delete_in_parquet() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -465,7 +458,7 @@ async fn test_concurrent_updates() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_concur").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_concur.shared_counter (
                 id TEXT PRIMARY KEY,
                 count INT
@@ -473,7 +466,6 @@ async fn test_concurrent_updates() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -545,7 +537,7 @@ async fn test_nanosecond_collision_handling() {
     // Setup
     fixtures::create_namespace(&server, "test_uv_nano").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_uv_nano.rapid_updates (
                 id TEXT PRIMARY KEY,
                 iteration INT
@@ -553,7 +545,6 @@ async fn test_nanosecond_collision_handling() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -610,7 +601,7 @@ async fn test_query_performance_with_multiple_versions() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.{} (
                     id TEXT PRIMARY KEY,
@@ -621,7 +612,6 @@ async fn test_query_performance_with_multiple_versions() {
                 )"#,
                 namespace, table
             ),
-            "user1",
         )
         .await;
 

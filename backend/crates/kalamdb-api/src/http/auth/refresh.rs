@@ -58,7 +58,13 @@ pub async fn refresh_handler(
         ));
     }
 
-    let user_id = kalamdb_commons::UserId::new(&claims.sub);
+    let user_id = match kalamdb_commons::UserId::try_new(claims.sub.clone()) {
+        Ok(user_id) => user_id,
+        Err(_) => {
+            return HttpResponse::Unauthorized()
+                .json(AuthErrorResponse::new("unauthorized", "Invalid credentials"));
+        },
+    };
 
     // Verify user still exists and is active by user_id
     let user = match user_repo.get_user_by_id(&user_id).await {

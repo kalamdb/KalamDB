@@ -12,6 +12,13 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
     server.create_user(username, "TestPass123!", role).await
 }
 
+fn assert_user_denial_message(message: &str) {
+    assert!(
+        message.contains("Admin privileges") || message.contains("Regular users"),
+        "Error message should mention authorization requirements: {message}"
+    );
+}
+
 #[actix_web::test]
 async fn test_explain_command_admin_allowed() {
     let server = TestServer::new_shared().await;
@@ -55,11 +62,7 @@ async fn test_explain_command_user_denied() {
 
     assert_eq!(resp.status, ResponseStatus::Error, "EXPLAIN should be denied for User role");
 
-    assert!(
-        resp.error.as_ref().unwrap().message.contains("Admin privileges"),
-        "Error message should mention admin privileges: {:?}",
-        resp.error
-    );
+    assert_user_denial_message(&resp.error.as_ref().unwrap().message);
 }
 
 #[actix_web::test]
@@ -90,11 +93,7 @@ async fn test_set_command_user_denied() {
 
     assert_eq!(resp.status, ResponseStatus::Error, "SET should be denied for User role");
 
-    assert!(
-        resp.error.as_ref().unwrap().message.contains("Admin privileges"),
-        "Error message should mention admin privileges: {:?}",
-        resp.error
-    );
+    assert_user_denial_message(&resp.error.as_ref().unwrap().message);
 }
 
 #[actix_web::test]
@@ -128,11 +127,7 @@ async fn test_show_all_user_denied() {
 
     assert_eq!(resp.status, ResponseStatus::Error, "SHOW ALL should be denied for User role");
 
-    assert!(
-        resp.error.as_ref().unwrap().message.contains("Admin privileges"),
-        "Error message should mention admin privileges: {:?}",
-        resp.error
-    );
+    assert_user_denial_message(&resp.error.as_ref().unwrap().message);
 }
 
 #[actix_web::test]
@@ -179,11 +174,7 @@ async fn test_show_columns_user_denied() {
         "SHOW COLUMNS should be denied for User role"
     );
 
-    assert!(
-        resp.error.as_ref().unwrap().message.contains("Admin privileges"),
-        "Error message should mention admin privileges: {:?}",
-        resp.error
-    );
+    assert_user_denial_message(&resp.error.as_ref().unwrap().message);
 }
 
 #[actix_web::test]
@@ -226,11 +217,7 @@ async fn test_describe_datafusion_style_user_denied() {
 
     assert_eq!(resp.status, ResponseStatus::Error, "DESCRIBE should be denied for User role");
 
-    assert!(
-        resp.error.as_ref().unwrap().message.contains("Admin privileges"),
-        "Error message should mention admin privileges: {:?}",
-        resp.error
-    );
+    assert_user_denial_message(&resp.error.as_ref().unwrap().message);
 }
 
 #[actix_web::test]

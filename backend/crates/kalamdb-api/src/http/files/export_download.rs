@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use actix_web::{get, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
+use kalamdb_commons::models::UserId;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_session::{is_admin_role, AuthSession};
 
@@ -27,27 +28,20 @@ pub async fn download_export(
     app_context: web::Data<Arc<AppContext>>,
 ) -> impl Responder {
     let session: AuthSession = extractor.into();
-    let (user_id, export_id) = path.into_inner();
+    let (user_id_raw, export_id) = path.into_inner();
 
-    // Authorization: only the owning user or admins can download
-    if session.user_id().as_str() != user_id && !is_admin_role(session.role()) {
-        return HttpResponse::Forbidden().json(SqlResponse::error(
-            ErrorCode::PermissionDenied,
-            "You can only download your own exports",
-            0.0,
-        ));
-    }
+    let user_id = match UserId::try_new(user_id_raw) {
+        Ok(user_id) => user_id,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                ErrorCode::InvalidInput,
+                "Invalid export path",
+                0.0,
+            ));
+        },
+    };
 
-    // Security: validate path components
-    if user_id.contains("..")
-        || user_id.contains('/')
-        || user_id.contains('\\')
-        || user_id.contains('\0')
-        || export_id.contains("..")
-        || export_id.contains('/')
-        || export_id.contains('\\')
-        || export_id.contains('\0')
-    {
+    if !is_safe_export_id(&export_id) {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
             "Invalid export path",
@@ -55,9 +49,18 @@ pub async fn download_export(
         ));
     }
 
+    // Authorization: only the owning user or admins can download
+    if session.user_id() != &user_id && !is_admin_role(session.role()) {
+        return HttpResponse::Forbidden().json(SqlResponse::error(
+            ErrorCode::PermissionDenied,
+            "You can only download your own exports",
+            0.0,
+        ));
+    }
+
     // Build file path
     let exports_dir = app_context.config().storage.exports_dir();
-    let zip_path = exports_dir.join(&user_id).join(format!("{}.zip", export_id));
+    let zip_path = exports_dir.join(user_id.as_str()).join(format!("{}.zip", export_id));
 
     if !zip_path.exists() {
         return HttpResponse::NotFound().json(serde_json::json!({
@@ -85,5 +88,41 @@ pub async fn download_export(
                 "code": "INTERNAL_ERROR",
             }))
         },
+    }
+}
+
+fn is_safe_export_id(export_id: &str) -> bool {
+    !export_id.is_empty()
+        && export_id.len() <= 160
+        && export_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_safe_export_id;
+
+    #[test]
+    fn export_id_accepts_generated_shape() {
+        assert!(is_safe_export_id("export-alice_1-20260101-120000"));
+    }
+
+    #[test]
+    fn export_id_rejects_path_and_header_injection() {
+        for value in [
+            "",
+            "../escape",
+            "export/alice",
+            "export\\alice",
+            "export\nalice",
+            "export\ralice",
+            "export;DROP",
+            "export'quote",
+            "export.zip",
+            "éxport",
+        ] {
+            assert!(!is_safe_export_id(value), "expected rejection for {value:?}");
+        }
     }
 }

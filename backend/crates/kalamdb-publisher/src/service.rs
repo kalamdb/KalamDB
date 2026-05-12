@@ -886,10 +886,8 @@ impl TopicPublisherService {
                     }
                 }
 
-                let deleted = self
-                    .message_store
-                    .delete_retention_entries(selected_entries)
-                    .map_err(|e| {
+                let deleted =
+                    self.message_store.delete_retention_entries(selected_entries).map_err(|e| {
                         CommonError::Internal(format!("Failed to delete oversized messages: {}", e))
                     })?;
                 if deleted.messages_deleted == 0 {
@@ -1097,7 +1095,10 @@ mod tests {
     use std::{sync::mpsc, thread};
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::{models::{NamespaceId, PayloadMode, TableName}, KSerializable, StorageKey};
+    use kalamdb_commons::{
+        models::{NamespaceId, PayloadMode, TableName},
+        KSerializable, StorageKey,
+    };
     use kalamdb_store::storage_trait::{KvIterator, Operation, Partition, StorageBackend};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_system::providers::topics::TopicRoute;
@@ -1193,7 +1194,8 @@ mod tests {
             timestamp_ms,
             Default::default(),
         );
-        let message_bytes = service.message_store.put_message_with_retention_index(&message).unwrap();
+        let message_bytes =
+            service.message_store.put_message_with_retention_index(&message).unwrap();
         service.add_retained_bytes(topic_id, partition_id, message_bytes);
         service.offset_allocator.seed(topic_id, partition_id, offset + 1);
         message_bytes
@@ -1563,13 +1565,18 @@ mod tests {
         put_primary_only_message(&backend, &topic_id, 0, 1, b"second", 2_000);
 
         assert!(
-            service.message_store.retention_entries_for_partition(&topic_id, 0, 10).unwrap().is_empty(),
+            service
+                .message_store
+                .retention_entries_for_partition(&topic_id, 0, 10)
+                .unwrap()
+                .is_empty(),
             "test precondition: retention index should be missing before restore"
         );
 
         service.restore_offset_counters();
 
-        let retention_entries = service.message_store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
+        let retention_entries =
+            service.message_store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
         assert_eq!(retention_entries.len(), 2);
         assert_eq!(
             retention_entries.iter().map(|(_, entry)| entry.offset).collect::<Vec<_>>(),
@@ -1645,7 +1652,12 @@ mod tests {
         assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 1);
         assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
         assert_eq!(
-            service.fetch_messages(&topic_id, 0, 1, 10).unwrap().iter().map(|message| message.offset).collect::<Vec<_>>(),
+            service
+                .fetch_messages(&topic_id, 0, 1, 10)
+                .unwrap()
+                .iter()
+                .map(|message| message.offset)
+                .collect::<Vec<_>>(),
             vec![1, 2]
         );
 
@@ -1683,13 +1695,11 @@ mod tests {
         assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
         assert_eq!(service.retained_bytes_for_partition(&topic_id, 0).unwrap(), 0);
         assert!(service.fetch_messages(&topic_id, 0, 3, 10).unwrap().is_empty());
-        assert!(
-            service
-                .message_store
-                .retention_entries_for_partition(&topic_id, 0, 10)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(service
+            .message_store
+            .retention_entries_for_partition(&topic_id, 0, 10)
+            .unwrap()
+            .is_empty());
 
         let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
         assert!(err.to_string().contains("OffsetOutOfRange"));

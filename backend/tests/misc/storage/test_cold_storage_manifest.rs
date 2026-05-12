@@ -39,7 +39,7 @@ async fn test_user_table_cold_storage_uses_manifest() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.items (
                 id INT PRIMARY KEY,
@@ -51,7 +51,6 @@ async fn test_user_table_cold_storage_uses_manifest() {
             )"#,
                 ns
             ),
-            &user,
         )
         .await;
     assert_eq!(
@@ -241,7 +240,7 @@ async fn test_manifest_tracks_multiple_flush_segments() {
     // Setup
     fixtures::create_namespace(&server, "multi_flush_ns").await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE multi_flush_ns.events (
                 id INT PRIMARY KEY,
                 event_type TEXT,
@@ -250,7 +249,6 @@ async fn test_manifest_tracks_multiple_flush_segments() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "multi_user",
         )
         .await;
     assert_eq!(
@@ -348,7 +346,7 @@ async fn test_cold_storage_version_resolution_after_update() {
     // Setup
     fixtures::create_namespace(&server, "version_res_ns").await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE version_res_ns.records (
                 id INT PRIMARY KEY,
                 status TEXT,
@@ -357,7 +355,6 @@ async fn test_cold_storage_version_resolution_after_update() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "version_user",
         )
         .await;
     assert_eq!(
@@ -464,7 +461,7 @@ async fn test_cold_storage_delete_creates_tombstone() {
     // Setup
     fixtures::create_namespace(&server, "delete_cold_ns").await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE delete_cold_ns.entries (
                 id INT PRIMARY KEY,
                 data TEXT
@@ -472,7 +469,6 @@ async fn test_cold_storage_delete_creates_tombstone() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "delete_cold_user",
         )
         .await;
     assert_eq!(

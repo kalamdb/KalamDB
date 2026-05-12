@@ -69,6 +69,29 @@ fn batch_requires_request_id(prepared_statements: &[PreparedApiExecutionStatemen
     })
 }
 
+fn reject_unauthorized_prepared_statements(
+    prepared_statements: &[PreparedApiExecutionStatement],
+    exec_ctx: &ExecutionContext,
+    start_time: Instant,
+) -> Option<HttpResponse> {
+    for statement in prepared_statements {
+        let Some(classified) = statement.prepared_statement.classified_statement.as_ref() else {
+            continue;
+        };
+
+        if let Err(message) = classified.check_authorization(exec_ctx.user_role()) {
+            return Some(HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
+                ErrorCode::PermissionDenied,
+                &message,
+                took_ms(start_time),
+                exec_ctx.is_admin(),
+            )));
+        }
+    }
+
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -147,6 +170,12 @@ pub async fn execute_sql_v1(
             Ok(stmts) => stmts,
             Err(resp) => return resp,
         };
+
+    if let Some(resp) =
+        reject_unauthorized_prepared_statements(&prepared_statements, &exec_ctx, start_time)
+    {
+        return resp;
+    }
 
     if exec_ctx.request_id().is_none() && batch_requires_request_id(&prepared_statements) {
         exec_ctx = exec_ctx.with_request_id(Uuid::now_v7().to_string());

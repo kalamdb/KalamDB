@@ -44,7 +44,7 @@ async fn test_alter_table_add_column_after_flush() {
         ns
     );
 
-    let resp = server.execute_sql_as_user(&create_table_sql, "user1").await;
+    let resp = server.execute_sql(&create_table_sql).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to create table: {:?}", resp.error);
 
     // Step 2: Insert initial rows (before alter)
@@ -75,7 +75,7 @@ async fn test_alter_table_add_column_after_flush() {
     // Step 4: Alter table to add new column
     let alter_sql = format!(r#"ALTER TABLE {}.messages ADD COLUMN priority INT"#, ns);
 
-    let resp = server.execute_sql_as_user(&alter_sql, "user1").await;
+    let resp = server.execute_sql(&alter_sql).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
@@ -205,7 +205,7 @@ async fn test_multiple_alter_operations_with_flushes() {
         ns
     );
 
-    server.execute_sql_as_user(&create_sql, "user1").await;
+    server.execute_sql(&create_sql).await;
 
     // First batch of data
     server
@@ -224,7 +224,7 @@ async fn test_multiple_alter_operations_with_flushes() {
 
     // First ALTER
     server
-        .execute_sql_as_user(&format!("ALTER TABLE {}.events ADD COLUMN user_id TEXT", ns), "user1")
+        .execute_sql(&format!("ALTER TABLE {}.events ADD COLUMN user_id TEXT", ns))
         .await;
 
     // Second batch with first new column
@@ -248,9 +248,8 @@ async fn test_multiple_alter_operations_with_flushes() {
 
     // Second ALTER
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!("ALTER TABLE {}.events ADD COLUMN timestamp BIGINT", ns),
-            "user1",
         )
         .await;
 

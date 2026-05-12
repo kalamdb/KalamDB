@@ -58,9 +58,14 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
     async fn check_authorization(
         &self,
         _statement: &ShowNamespacesStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // SHOW NAMESPACES allowed for all authenticated users
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -79,7 +84,7 @@ mod tests {
     }
 
     fn create_test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), Role::User, create_test_session_simple())
+        ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session_simple())
     }
 
     #[tokio::test]
@@ -88,11 +93,16 @@ mod tests {
         let handler = ShowNamespacesHandler::new(app_ctx);
         let stmt = ShowNamespacesStatement {};
 
-        // All users can show namespaces
+        // Elevated users can show namespaces
         let ctx = create_test_context();
         let result = handler.check_authorization(&stmt, &ctx).await;
 
         assert!(result.is_ok());
+
+        let user_ctx =
+            ExecutionContext::new(UserId::new("user"), Role::User, create_test_session_simple());
+        let result = handler.check_authorization(&stmt, &user_ctx).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

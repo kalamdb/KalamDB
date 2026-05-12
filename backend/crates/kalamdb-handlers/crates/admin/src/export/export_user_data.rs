@@ -68,9 +68,14 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
     async fn check_authorization(
         &self,
         _statement: &ExportUserDataStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Any authenticated user can export their own data
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }

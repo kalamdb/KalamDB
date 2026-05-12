@@ -84,9 +84,14 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
     async fn check_authorization(
         &self,
         _statement: &UseNamespaceStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // All users can switch namespaces (they still need table-level permissions)
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -99,7 +104,7 @@ mod tests {
     use super::*;
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session_simple())
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
     }
 
     #[tokio::test]

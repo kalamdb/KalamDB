@@ -291,7 +291,7 @@ mod tests {
         // User role CANNOT create tables (DML only)
         let user_ctx = create_test_context(Role::User);
         let result = handler.check_authorization(&stmt, &user_ctx).await;
-        assert!(result.is_ok(), "User role should be able to create USER tables");
+        assert!(result.is_err(), "User role should NOT be able to create USER tables");
 
         // User role CANNOT create SHARED tables
         let stmt_shared = create_test_statement(TableType::Shared);

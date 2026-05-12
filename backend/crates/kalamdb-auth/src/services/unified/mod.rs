@@ -103,13 +103,16 @@ async fn authenticate_header(
     connection_info: &kalamdb_commons::models::ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
-    if auth_header.starts_with("Basic ") {
+    let mut parts = auth_header.splitn(2, ' ');
+    let scheme = parts.next().unwrap_or_default().trim();
+    let token = parts.next().unwrap_or_default().trim();
+
+    if scheme.eq_ignore_ascii_case("Basic") {
         Err(AuthError::InvalidCredentials(
             "Basic authentication is not supported. Use Bearer token or login endpoint."
                 .to_string(),
         ))
-    } else if auth_header.starts_with("Bearer") {
-        let token = auth_header.strip_prefix("Bearer").unwrap_or("").trim();
+    } else if scheme.eq_ignore_ascii_case("Bearer") {
         if token.is_empty() {
             return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
         }
@@ -206,6 +209,12 @@ mod tests {
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Header(format!("Bearer {}", token));
         assert_eq!(extract_user_id_for_audit(&request), UserId::from("bearer_user"));
+
+        let request = AuthRequest::Header(format!("bearer {}", token));
+        assert_eq!(extract_user_id_for_audit(&request), UserId::from("bearer_user"));
+
+        let request = AuthRequest::Header(format!("Bearerish {}", token));
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
     }
 
     #[cfg(feature = "websocket")]

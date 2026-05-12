@@ -53,6 +53,8 @@ pub use error::{KalamLinkError, Result};
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, MessageDirection};
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+pub use kalamdb_commons::ids::SeqId;
+#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub use kalamdb_commons::Role;
 pub use kalamdb_commons::UserId;
 pub use models::{
@@ -73,8 +75,6 @@ pub use query::AuthRefreshCallback;
 pub use query::QueryExecutor;
 #[cfg(feature = "tokio-runtime")]
 pub use query::UploadProgressCallback;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
-pub use kalamdb_commons::ids::SeqId;
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::LiveRowsSubscription;
 #[cfg(feature = "tokio-runtime")]

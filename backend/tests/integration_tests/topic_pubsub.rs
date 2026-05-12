@@ -824,7 +824,10 @@ async fn test_consume_user_role_forbidden() {
         result
             .error
             .as_ref()
-            .map(|e| e.message.contains("service, dba, or system"))
+            .map(|e| {
+                e.message.contains("service, dba, or system")
+                    || e.message.contains("Regular users may only execute SELECT and DML statements")
+            })
             .unwrap_or(false),
         "Error message should mention required roles: {:?}",
         result.error
@@ -2152,10 +2155,10 @@ async fn test_clear_topic_user_role_forbidden() {
             .as_ref()
             .map(|e| {
                 let msg = e.message.as_str();
-                msg.contains("DBA") && msg.contains("System")
+                (msg.contains("DBA") && msg.contains("System")) || msg.contains("Regular users")
             })
             .unwrap_or(false),
-        "Error should mention DBA/System role requirement"
+        "Error should mention authorization requirement"
     );
 }
 

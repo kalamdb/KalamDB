@@ -118,7 +118,7 @@ fn smoke_export_user_data_job_completes() {
 
     // ── Setup ────────────────────────────────────────────────────────────
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
@@ -193,7 +193,7 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
 
     // Setup
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
@@ -314,7 +314,7 @@ fn smoke_export_download_zip_is_valid() {
 
     // Setup
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
@@ -438,9 +438,9 @@ fn smoke_export_download_forbidden_for_other_user() {
     let table = generate_unique_table("exp_auth_tbl");
     let full_table = format!("{}.{}", namespace, table);
 
-    // Create both users and a shared table for user A to export from
+    // Create export-capable owner A and regular user B for download-boundary checks.
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         user_a, pass_a
     ))
     .expect("CREATE USER A failed");
@@ -536,7 +536,7 @@ fn smoke_show_export_empty_for_new_user() {
     let fresh_pass = "FreshUser123!";
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'service'",
         fresh_user, fresh_pass
     ))
     .expect("CREATE USER failed");

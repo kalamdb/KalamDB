@@ -22,7 +22,7 @@ async fn test_update_complex_predicate_and() {
     // Setup
     fixtures::create_namespace(&server, "test_dml_and").await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_dml_and.products (
                 id TEXT PRIMARY KEY,
                 category TEXT,
@@ -33,7 +33,6 @@ async fn test_update_complex_predicate_and() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
     assert_eq!(
@@ -95,7 +94,7 @@ async fn test_update_complex_predicate_or() {
     // Setup
     fixtures::create_namespace(&server, "test_dml_or").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_dml_or.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
@@ -105,7 +104,6 @@ async fn test_update_complex_predicate_or() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -160,7 +158,7 @@ async fn test_delete_complex_predicate() {
     // Setup
     fixtures::create_namespace(&server, "test_dml_del").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_dml_del.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
@@ -170,7 +168,6 @@ async fn test_delete_complex_predicate() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -225,7 +222,7 @@ async fn test_update_across_flush_boundary() {
     // Setup
     fixtures::create_namespace(&server, "test_dml_upflush").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_dml_upflush.orders (
                 id TEXT PRIMARY KEY,
                 customer TEXT,
@@ -235,7 +232,6 @@ async fn test_update_across_flush_boundary() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 
@@ -294,7 +290,7 @@ async fn test_delete_across_flush_boundary() {
     // Setup
     fixtures::create_namespace(&server, "test_dml_delflush").await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             r#"CREATE TABLE test_dml_delflush.logs (
                 id TEXT PRIMARY KEY,
                 level TEXT,
@@ -303,7 +299,6 @@ async fn test_delete_across_flush_boundary() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-            "user1",
         )
         .await;
 

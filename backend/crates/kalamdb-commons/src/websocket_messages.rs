@@ -179,9 +179,7 @@ pub enum ServerMessage {
         protocol: ProtocolOptions,
     },
     /// Authentication failed response (browser clients only).
-    AuthError {
-        message: String,
-    },
+    AuthError { message: String },
     /// Acknowledgement of successful subscription registration.
     SubscriptionAck {
         subscription_id: String,
@@ -224,9 +222,7 @@ pub enum ClientMessage {
         protocol: ProtocolOptions,
     },
     /// Subscribe to live query updates.
-    Subscribe {
-        subscription: SubscriptionRequest,
-    },
+    Subscribe { subscription: SubscriptionRequest },
     /// Request next batch of initial data.
     NextBatch {
         subscription_id: String,
@@ -234,9 +230,7 @@ pub enum ClientMessage {
         last_seq_id: Option<SeqId>,
     },
     /// Unsubscribe from live query.
-    Unsubscribe {
-        subscription_id: String,
-    },
+    Unsubscribe { subscription_id: String },
     /// Application-level keepalive ping.
     Ping,
 }

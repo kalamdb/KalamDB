@@ -104,9 +104,14 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
     async fn check_authorization(
         &self,
         _statement: &ShowTableStatsStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // SHOW STATS allowed for all authenticated users
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }

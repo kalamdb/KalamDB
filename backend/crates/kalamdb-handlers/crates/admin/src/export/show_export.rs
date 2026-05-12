@@ -50,17 +50,16 @@ impl ShowExportHandler {
     fn extract_parameter(job: &Job, key: &str) -> Option<String> {
         let parameters = job.parameters.as_ref()?;
         match parameters {
-            serde_json::Value::Object(_) => parameters
-                .get(key)
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned),
-            serde_json::Value::String(raw_json) => serde_json::from_str::<serde_json::Value>(
-                raw_json,
-            )
-            .ok()?
-            .get(key)
-            .and_then(|value| value.as_str())
-            .map(ToOwned::to_owned),
+            serde_json::Value::Object(_) => {
+                parameters.get(key).and_then(|value| value.as_str()).map(ToOwned::to_owned)
+            },
+            serde_json::Value::String(raw_json) => {
+                serde_json::from_str::<serde_json::Value>(raw_json)
+                    .ok()?
+                    .get(key)
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned)
+            },
             _ => None,
         }
     }
@@ -164,9 +163,14 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
     async fn check_authorization(
         &self,
         _statement: &ShowExportStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Any authenticated user can view their own exports
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -247,7 +251,7 @@ mod tests {
         let handler = ShowExportHandler::new(Arc::clone(&app_context));
         let exec_ctx = ExecutionContext::new(
             UserId::from("alice"),
-            Role::User,
+            Role::Service,
             Arc::new(app_context.session_factory().create_session()),
         );
 
@@ -314,7 +318,7 @@ mod tests {
         let handler = ShowExportHandler::new(Arc::clone(&app_context));
         let exec_ctx = ExecutionContext::new(
             UserId::from("alice"),
-            Role::User,
+            Role::Service,
             Arc::new(app_context.session_factory().create_session()),
         );
 

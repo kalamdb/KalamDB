@@ -7,8 +7,11 @@ use super::types::AuthRequest;
 pub fn extract_user_id_for_audit(request: &AuthRequest) -> UserId {
     match request {
         AuthRequest::Header(header) => {
-            if header.starts_with("Bearer ") {
-                extract_jwt_sub_unsafe(header.strip_prefix("Bearer ").unwrap_or(""))
+            let mut parts = header.splitn(2, ' ');
+            let scheme = parts.next().unwrap_or_default().trim();
+            let token = parts.next().unwrap_or_default().trim();
+            if scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty() {
+                extract_jwt_sub_unsafe(token)
             } else {
                 UserId::anonymous()
             }

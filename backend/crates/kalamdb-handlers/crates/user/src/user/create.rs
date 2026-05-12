@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kalamdb_auth::security::password::{
-    hash_password, validate_password_with_policy, PasswordPolicy,
+    hash_password, validate_password_characters, validate_password_with_policy, PasswordPolicy,
 };
 use kalamdb_commons::{AuthType, UserId};
 use kalamdb_core::{
@@ -42,7 +42,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         // Duplicate check (provider enforces via user_id but we do early check for clearer error)
         let app_ctx = self.app_context.clone();
-        let user_id = UserId::new(&statement.username);
+        let user_id = UserId::try_new(statement.username.clone())
+            .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
         let check_id = user_id.clone();
         let existing = tokio::task::spawn_blocking(move || {
             app_ctx.system_tables().users().get_user_by_id(&check_id)
@@ -85,12 +86,15 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                         "Password required for WITH PASSWORD".to_string(),
                     )
                 })?;
-                // Enforce password complexity if enabled in config
-                if self.enforce_complexity
-                    || self.app_context.config().auth.enforce_password_complexity
-                {
+                let enforce_complexity = self.enforce_complexity
+                    || self.app_context.config().auth.enforce_password_complexity;
+
+                if enforce_complexity {
                     let policy = PasswordPolicy::default().with_enforced_complexity(true);
                     validate_password_with_policy(&raw, &policy)
+                        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
+                } else {
+                    validate_password_characters(&raw)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
                 let bcrypt_cost = self.app_context.config().auth.bcrypt_cost;

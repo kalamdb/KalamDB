@@ -66,9 +66,14 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
     async fn check_authorization(
         &self,
         _statement: &DescribeTableStatement,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // DESCRIBE TABLE allowed for all authenticated users who can access the table
+        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+            return Err(KalamDbError::PermissionDenied(
+                "Regular users may only execute SELECT and DML statements".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }

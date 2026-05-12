@@ -50,7 +50,7 @@ async fn test_01_combined_data_count_and_select() {
         namespace, table_name
     );
 
-    let response = server.execute_sql_as_user(&create_sql, user_id).await;
+    let response = server.execute_sql(&create_sql).await;
     assert_eq!(response.status, ResponseStatus::Success, "Failed to create table");
 
     // Insert first batch of 10 rows (these will be flushed to Parquet)
@@ -211,7 +211,7 @@ async fn test_02_combined_data_aggregations() {
         ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
-    server.execute_sql_as_user(&create_sql, user_id).await;
+    server.execute_sql(&create_sql).await;
 
     // Insert 20 rows for flush
     println!("Inserting 20 rows (to be flushed)...");
@@ -338,7 +338,7 @@ async fn test_03_combined_data_filtering() {
         ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
-    server.execute_sql_as_user(&create_sql, user_id).await;
+    server.execute_sql(&create_sql).await;
 
     // Insert 15 rows with mixed categories (to be flushed)
     println!("Inserting 15 rows with mixed data (to be flushed)...");
@@ -499,7 +499,7 @@ async fn test_04_combined_data_integrity_verification() {
         ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
-    server.execute_sql_as_user(&create_sql, user_id).await;
+    server.execute_sql(&create_sql).await;
 
     // Create a known dataset
     let mut expected_data: HashMap<i64, (String, f64)> = HashMap::new();
@@ -619,7 +619,7 @@ async fn test_05_multiple_flush_cycles() {
         ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
-    server.execute_sql_as_user(&create_sql, user_id).await;
+    server.execute_sql(&create_sql).await;
 
     let mut total_inserted = 0;
     let mut total_flushed = 0;
@@ -689,7 +689,7 @@ async fn test_06_soft_delete_operations() {
         ) WITH (TYPE = 'USER')",
         namespace, table_name
     );
-    server.execute_sql_as_user(&create_sql, user_id).await;
+    server.execute_sql(&create_sql).await;
 
     // Insert test tasks
     println!("Inserting 5 tasks...");

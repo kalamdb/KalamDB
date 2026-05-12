@@ -197,9 +197,18 @@ mod tests {
     use std::collections::BTreeMap;
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::{models::{rows::Row, NamespaceId, PayloadMode, TableId, TableName, TopicOp}, JobId, NodeId};
+    use kalamdb_commons::{
+        models::{rows::Row, NamespaceId, PayloadMode, TableId, TableName, TopicOp},
+        JobId, NodeId,
+    };
     use kalamdb_core::test_helpers::test_app_context_simple;
-    use kalamdb_system::{providers::{jobs::models::Job, topics::{models::Topic, TopicRoute}}, JobStatus};
+    use kalamdb_system::{
+        providers::{
+            jobs::models::Job,
+            topics::{models::Topic, TopicRoute},
+        },
+        JobStatus,
+    };
 
     use super::*;
 
@@ -256,7 +265,12 @@ mod tests {
             partition_key_expr: None,
         });
 
-        app_ctx.system_tables().topics().create_topic_async(topic.clone()).await.unwrap();
+        app_ctx
+            .system_tables()
+            .topics()
+            .create_topic_async(topic.clone())
+            .await
+            .unwrap();
         app_ctx.topic_publisher().add_topic(topic.clone());
         (topic, table_id)
     }
@@ -329,11 +343,15 @@ mod tests {
     async fn test_execute_enforces_byte_retention_and_reports_progress() {
         let app_ctx = test_app_context_simple();
         let executor = TopicRetentionExecutor::new();
-        let (topic, table_id) = setup_topic_with_route(&app_ctx, "retained.topic", None, Some(1)).await;
+        let (topic, table_id) =
+            setup_topic_with_route(&app_ctx, "retained.topic", None, Some(1)).await;
 
         for idx in 0..3 {
             let row = create_test_row(idx, &format!("payload_{}", idx));
-            app_ctx.topic_publisher().publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+            app_ctx
+                .topic_publisher()
+                .publish_message(&table_id, TopicOp::Insert, &row, None)
+                .unwrap();
         }
 
         let params = TopicRetentionParams {
@@ -358,9 +376,16 @@ mod tests {
             other => panic!("expected completed decision, got {:?}", other),
         }
 
-        assert_eq!(app_ctx.topic_publisher().earliest_available_offset(&topic.topic_id, 0).unwrap(), 3);
+        assert_eq!(
+            app_ctx.topic_publisher().earliest_available_offset(&topic.topic_id, 0).unwrap(),
+            3
+        );
         assert_eq!(app_ctx.topic_publisher().latest_offset(&topic.topic_id, 0).unwrap(), Some(2));
-        assert!(app_ctx.topic_publisher().fetch_messages(&topic.topic_id, 0, 3, 10).unwrap().is_empty());
+        assert!(app_ctx
+            .topic_publisher()
+            .fetch_messages(&topic.topic_id, 0, 3, 10)
+            .unwrap()
+            .is_empty());
 
         let err = app_ctx.topic_publisher().fetch_messages(&topic.topic_id, 0, 0, 10).unwrap_err();
         assert!(err.to_string().contains("OffsetOutOfRange"));

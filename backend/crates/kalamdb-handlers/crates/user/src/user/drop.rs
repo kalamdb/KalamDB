@@ -32,7 +32,8 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let app_ctx = self.app_context.clone();
-        let user_id = UserId::new(&statement.username);
+        let user_id = UserId::try_new(statement.username.clone())
+            .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
         let existing = tokio::task::spawn_blocking(move || {
             app_ctx.system_tables().users().get_user_by_id(&user_id)
         })
