@@ -80,7 +80,20 @@ impl LiveRowsMaterializer {
                 rows,
                 old_rows,
             } => {
-                self.remove_rows(&old_rows);
+                let mut stale: Vec<RowData> = Vec::new();
+                for old in old_rows {
+                    let mut replaced = false;
+                    for new in &rows {
+                        if rows_match_on_key_columns(&old, new, &self.key_columns) {
+                            replaced = true;
+                            break;
+                        }
+                    }
+                    if !replaced {
+                        stale.push(old);
+                    }
+                }
+                self.remove_rows(&stale);
                 self.upsert_rows(rows);
                 Some(LiveRowsEvent::Rows {
                     subscription_id,

@@ -14,16 +14,17 @@ import type {
   RawSqlLiveQueryOptions,
   SingleLiveQueryContext,
 } from '../types.js';
+import { liveQuerySignature } from '../internal/signature.js';
 import { useMutationActions } from './useMutationState.js';
 
-const emptySnapshot: LiveQueryControllerSnapshot<never> = {
+const initialSnapshot: LiveQueryControllerSnapshot<unknown> = {
   rows: [],
   loading: true,
   connected: false,
-  status: 'idle',
+  status: 'loading',
 };
 
-type OrmLiveCompiler = typeof import('@kalamdb/orm');
+type OrmModule = typeof import('@kalamdb/orm');
 
 export function useLiveQuery<TTable extends Table>(
   options: DrizzleLiveQueryOptions<TTable>,
@@ -37,53 +38,54 @@ export function useLiveQuery(
 export function useLiveQuery<TSelected>(
   options: RawSqlLiveQueryOptions<TSelected>,
 ): TSelected;
-export function useLiveQuery(options: DrizzleLiveQueryOptions<Table, unknown> | RawSqlLiveQueryOptions<unknown>) {
+export function useLiveQuery(
+  options: DrizzleLiveQueryOptions<Table, unknown> | RawSqlLiveQueryOptions<unknown>,
+) {
   const client = useKalamClient(options.client);
   const controllerRef = useRef<LiveQueryController<unknown> | null>(null);
-  const [snapshot, setSnapshot] = useState<LiveQueryControllerSnapshot<unknown>>(emptySnapshot);
+  const [snapshot, setSnapshot] = useState<LiveQueryControllerSnapshot<unknown>>(initialSnapshot);
   const mutation = useMutationActions(client);
+  const signature = liveQuerySignature(options);
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => Promise<void>) | null = null;
+
+    setSnapshot((current) => ({
+      ...current,
+      loading: true,
+      connected: false,
+      status: current.rows.length > 0 ? 'reconnecting' : 'loading',
+      error: undefined,
+    }));
 
     async function start() {
-      setSnapshot((current) => ({
-        ...current,
-        loading: true,
-        connected: false,
-        status: current.rows.length > 0 ? 'reconnecting' : 'loading',
-        error: undefined,
-      }));
-
       try {
         const descriptor = await resolveDescriptor(options);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         const controller = createController(client, descriptor);
         controllerRef.current = controller;
-        const unsubscribe = controller.subscribe((next) => {
-          if (!cancelled) {
-            setSnapshot(next);
-          }
+        unsubscribe = controller.subscribe((next) => {
+          if (!cancelled) setSnapshot(next);
         });
 
         await controller.start();
         if (cancelled) {
-          await unsubscribe();
+          const detach = unsubscribe;
+          unsubscribe = null;
+          await detach?.();
           await controller.dispose();
         }
       } catch (error) {
-        if (!cancelled) {
-          setSnapshot({
-            rows: [],
-            loading: false,
-            connected: false,
-            status: 'error',
-            error: toError(error),
-          });
-        }
+        if (cancelled) return;
+        setSnapshot({
+          rows: [],
+          loading: false,
+          connected: false,
+          status: 'error',
+          error: toError(error),
+        });
       }
     }
 
@@ -93,17 +95,14 @@ export function useLiveQuery(options: DrizzleLiveQueryOptions<Table, unknown> | 
       cancelled = true;
       const controller = controllerRef.current;
       controllerRef.current = null;
-      void controller?.dispose();
+      const detach = unsubscribe;
+      unsubscribe = null;
+      void (async () => {
+        try { await detach?.(); } catch { /* swallow: teardown */ }
+        try { await controller?.dispose(); } catch { /* swallow: teardown */ }
+      })();
     };
-  }, [
-    client,
-    options.limit,
-    options.getKey,
-    liveDepsKey(options.deps),
-    isRawSqlOptions(options) ? options.query : options.table,
-    isRawSqlOptions(options) ? undefined : options.where,
-    isRawSqlOptions(options) ? undefined : options.orderBy,
-  ]);
+  }, [client, signature]);
 
   const refetch = useCallback(async () => {
     await controllerRef.current?.refetch();
@@ -121,40 +120,37 @@ export function useLiveQuery(options: DrizzleLiveQueryOptions<Table, unknown> | 
     insert: mutation.insert,
     update: mutation.update,
     remove: mutation.remove,
+    clearError: mutation.clearError,
     refetch,
   }), [mutation, refetch, snapshot]);
 
   return options.select ? options.select(context as never) : context;
 }
 
-function liveDepsKey(deps: readonly unknown[] | undefined): string {
-  return deps?.map((value) => String(value)).join('\u001f') ?? '';
-}
-
 async function resolveDescriptor(
   options: DrizzleLiveQueryOptions<Table, unknown> | RawSqlLiveQueryOptions<unknown>,
 ): Promise<LiveQueryDescriptor<unknown>> {
-  if (isRawSqlOptions(options)) {
-    if ('table' in options) {
-      throw new Error('LiveQuery accepts either query or table, not both.');
-    }
-
-    return createRawSqlLiveDescriptor(options.query, {
-      limit: options.limit,
-      getKey: options.getKey,
-    }) as LiveQueryDescriptor<unknown>;
-  }
-
-  if ('query' in options) {
+  const hasQuery = 'query' in options && typeof options.query === 'string';
+  const hasTable = 'table' in options;
+  if (hasQuery && hasTable) {
     throw new Error('LiveQuery accepts either query or table, not both.');
   }
 
+  if (hasQuery) {
+    const sql = options as RawSqlLiveQueryOptions<unknown>;
+    return createRawSqlLiveDescriptor(sql.query, {
+      limit: sql.limit,
+      getKey: sql.getKey,
+    }) as LiveQueryDescriptor<unknown>;
+  }
+
+  const drizzle = options as DrizzleLiveQueryOptions<Table, unknown>;
   const orm = await loadOrm();
-  return orm.compileLiveTableDescriptor(options.table, {
-    where: options.where?.(options.table),
-    orderBy: options.orderBy?.(options.table),
-    limit: options.limit,
-    getKey: options.getKey,
+  return orm.compileLiveTableDescriptor(drizzle.table, {
+    where: drizzle.where?.(drizzle.table),
+    orderBy: drizzle.orderBy?.(drizzle.table),
+    limit: drizzle.limit,
+    getKey: drizzle.getKey,
   }) as LiveQueryDescriptor<unknown>;
 }
 
@@ -165,22 +161,15 @@ function createController(
   if ('createLiveQueryController' in client && typeof client.createLiveQueryController === 'function') {
     return client.createLiveQueryController(descriptor) as LiveQueryController<unknown>;
   }
-
   throw new Error('@kalamdb/client is missing createLiveQueryController(). Rebuild or update @kalamdb/client.');
 }
 
-async function loadOrm(): Promise<OrmLiveCompiler> {
+async function loadOrm(): Promise<OrmModule> {
   try {
     return await import('@kalamdb/orm');
   } catch (error) {
     throw new Error(`Typed live queries require @kalamdb/orm and drizzle-orm to be installed. ${String(error)}`);
   }
-}
-
-function isRawSqlOptions(
-  options: DrizzleLiveQueryOptions<Table, unknown> | RawSqlLiveQueryOptions<unknown>,
-): options is RawSqlLiveQueryOptions<unknown> {
-  return 'query' in options && typeof options.query === 'string';
 }
 
 function toError(error: unknown): Error {

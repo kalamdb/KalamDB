@@ -23,6 +23,7 @@ export type {
   MutationState,
   RawSqlLiveQueryOptions,
   RawSqlLiveQueryProps,
+  RowKey,
   SingleLiveQueryContext,
   UseLiveQueriesOptions,
   UseLiveQueryOptions,

@@ -1,0 +1,167 @@
+name: React SDK e2e
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'link/sdks/typescript/react-old/**'
+      - 'link/sdks/typescript/client/**'
+      - 'link/sdks/typescript/orm/**'
+      - 'link/link-common/**'
+      - 'link/kalam-client/**'
+      - 'link/kalam-consumer-wasm/**'
+      - '.github/workflows/react-e2e.yml'
+  pull_request:
+    paths:
+      - 'link/sdks/typescript/react-old/**'
+      - 'link/sdks/typescript/client/**'
+      - 'link/sdks/typescript/orm/**'
+      - 'link/link-common/**'
+      - 'link/kalam-client/**'
+      - 'link/kalam-consumer-wasm/**'
+      - '.github/workflows/react-e2e.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+  WASM_PACK_VERSION: "0.14.0"
+  KALAMDB_URL: "http://127.0.0.1:8080"
+
+jobs:
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KALAMDB_USER: "root"
+      KALAMDB_PASSWORD: "kalamdb-ci-test-password"
+      KALAMDB_ROOT_PASSWORD: "kalamdb-ci-test-password"
+      KALAMDB_JWT_SECRET: "sdk-test-secret-key-minimum-32-characters-long"
+      KALAMDB_SERVER_WORK_DIR: ${{ github.workspace }}/.kalam-data
+      KALAMDB_SERVER_LOG: ${{ github.workspace }}/kalam-server.log
+      KALAMDB_SERVER_PID_FILE: ${{ github.workspace }}/kalam-server.pid
+      KALAMDB_SERVER_BIN: ${{ github.workspace }}/release-server/kalamdb-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-react-e2e-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install wasm-pack
+        run: |
+          curl -sSL https://github.com/rustwasm/wasm-pack/releases/download/v${{ env.WASM_PACK_VERSION }}/wasm-pack-v${{ env.WASM_PACK_VERSION }}-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C /tmp/
+          sudo mv /tmp/wasm-pack-v${{ env.WASM_PACK_VERSION }}-x86_64-unknown-linux-musl/wasm-pack /usr/local/bin/
+
+      - name: Resolve latest release server asset
+        id: latest_server
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
+          python3 scripts/resolve-latest-release-asset.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT" \
+            --token "$GITHUB_TOKEN" \
+            --asset-pattern '^kalamdb-server-.*-linux-x86_64\.tar\.gz$'
+
+      - name: Download release server
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/download-release-server.sh \
+            "${{ steps.latest_server.outputs.asset_name }}" \
+            "${{ steps.latest_server.outputs.asset_api_url }}" \
+            "${{ env.KALAMDB_SERVER_BIN }}"
+          chmod +x "${{ env.KALAMDB_SERVER_BIN }}"
+
+      - name: Start KalamDB server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$KALAMDB_SERVER_WORK_DIR"
+          bash scripts/start-sdk-test-server.sh
+          for i in $(seq 1 60); do
+            if curl -sf "$KALAMDB_URL/v1/api/healthcheck" > /dev/null 2>&1; then
+              echo "Server up"; break
+            fi
+            sleep 1
+          done
+
+      - name: Build @kalamdb/client (WASM)
+        working-directory: link/sdks/typescript/client
+        run: |
+          npm install
+          npm run build
+
+      - name: Build @kalamdb/orm
+        working-directory: link/sdks/typescript/orm
+        run: |
+          npm install
+          npm run build
+
+      - name: Build + typecheck + jsdom tests
+        working-directory: link/sdks/typescript/react-old
+        run: |
+          npm install
+          npm test
+
+      - name: Install Playwright browser
+        working-directory: link/sdks/typescript/react-old
+        run: npx playwright install --with-deps chromium
+
+      - name: Install e2e test app
+        working-directory: link/sdks/typescript/react-old/tests/e2e/app
+        run: npm install
+
+      - name: Run Playwright e2e
+        working-directory: link/sdks/typescript/react-old
+        env:
+          KALAM_URL: ${{ env.KALAMDB_URL }}
+          KALAM_USER: ${{ env.KALAMDB_USER }}
+          KALAM_PASSWORD: ${{ env.KALAMDB_PASSWORD }}
+          VITE_KALAMDB_URL: ${{ env.KALAMDB_URL }}
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: link/sdks/typescript/react-old/playwright-report
+          retention-days: 7
+
+      - name: Server log on failure
+        if: failure()
+        run: tail -300 "$KALAMDB_SERVER_LOG" || true
