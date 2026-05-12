@@ -14,7 +14,7 @@ const projectDir = resolve(__dirname, '..');
 const sdkDir = resolve(projectDir, '../../link/sdks/typescript');
 const clientDir = resolve(sdkDir, 'client');
 const ormDir = resolve(sdkDir, 'orm');
-const reactDir = resolve(sdkDir, 'react-old');
+const reactDir = resolve(sdkDir, 'react');
 
 function run(cmd, args, cwd) {
   const result = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' });

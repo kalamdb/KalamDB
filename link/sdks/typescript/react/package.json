@@ -28,13 +28,17 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE.txt",
+    "NOTICE"
   ],
   "sideEffects": false,
   "scripts": {
     "clean": "node -e \"const fs=require('fs');try{fs.rmSync('dist',{recursive:true,force:true})}catch{}\"",
+    "ensure:linked-orm": "node -e \"const fs=require('fs');process.exit(fs.existsSync('node_modules/@kalamdb/orm/dist/index.js')&&fs.existsSync('../orm/node_modules/drizzle-orm')&&fs.existsSync('../orm/node_modules/@kalamdb/client/dist/src/index.js')?0:1)\" || (npm --prefix ../orm install --no-audit --no-fund && npm --prefix ../orm run build && npm install --no-package-lock --no-save ../orm)",
     "build": "npm run clean && tsc",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "pretest": "npm run ensure:linked-orm",
     "test": "npm run build && npm run typecheck && vitest run --environment jsdom",
     "test:e2e": "npm --prefix tests/e2e/app install && npm run build && playwright test",
     "test:e2e:install": "playwright install chromium",

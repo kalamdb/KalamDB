@@ -5,7 +5,7 @@ This folder contains the publishable TypeScript SDK packages:
 - `client/` for `@kalamdb/client`: auth, SQL, FILE columns, live queries, subscriptions, and typed cell values.
 - `consumer/` for `@kalamdb/consumer`: topic polling, acknowledgements, and the agent/worker runtime.
 - `orm/` for `@kalamdb/orm`: Drizzle ORM driver, KalamDB table helpers, FILE/BYTES/EMBEDDING columns, live table helpers, and schema generation.
-- `react-old/` for `@kalamdb/react`: React provider, typed/raw live-query hooks, multi-query orchestration, mutation state, and component wrappers for KalamDB live queries.
+- `react/` for `@kalamdb/react`: React provider, typed/raw live-query hooks, multi-query orchestration, mutation state, and component wrappers for KalamDB live queries.
 
 Use each package directory as the source of truth for its build, test, and publish workflow. The packages are intentionally split so UI code can depend on `@kalamdb/client`, `@kalamdb/orm`, and `@kalamdb/react`, while worker processes add `@kalamdb/consumer` only when they need topic consumption.
 
@@ -22,7 +22,7 @@ Use each package directory as the source of truth for its build, test, and publi
 ```bash
 cd link/sdks/typescript/client && npm run build:ts
 cd link/sdks/typescript/orm && npm run build
-cd link/sdks/typescript/react-old && npm run build
+cd link/sdks/typescript/react && npm run build
 cd link/sdks/typescript/consumer && npm run build:ts
 ```
 
