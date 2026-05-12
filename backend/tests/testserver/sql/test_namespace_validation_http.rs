@@ -63,12 +63,12 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
         assert_eq!(retry.status, ResponseStatus::Success);
     }
 
-    // USER table namespace validation (real auth required).
+    // USER table namespace validation (elevated auth required).
     {
         let workspace_ns = unique_namespace("workspace");
         let user = unique_table("user123");
         let password = "UserPass123!";
-        let auth = create_user_auth_header(server, &user, password, &Role::User).await?;
+        let auth = create_user_auth_header(server, &user, password, &Role::Service).await?;
 
         let sql = format!(
             r#"CREATE TABLE {}.notes (

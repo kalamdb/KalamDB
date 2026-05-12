@@ -40,6 +40,9 @@ impl std::fmt::Display for UserIdValidationError {
 impl std::error::Error for UserIdValidationError {}
 
 impl UserId {
+    /// Maximum user ID length accepted from external input.
+    pub const MAX_LENGTH: usize = 128;
+
     /// Creates a new UserId from a string.
     ///
     /// # Panics
@@ -58,10 +61,12 @@ impl UserId {
     /// Creates a new UserId from a string, returning an error if validation fails.
     ///
     /// # Security
-    /// Validates that the ID does not contain path traversal characters:
+    /// Validates that the ID does not contain path traversal characters and only uses
+    /// the canonical safe alphabet:
     /// - `..` (parent directory)
     /// - `/` or `\` (directory separators)
     /// - Null bytes (`\0`)
+    /// - ASCII letters, digits, `_`, and `-`
     ///
     /// This prevents path traversal attacks when user IDs are used in storage paths.
     pub fn try_new(id: impl Into<String>) -> Result<Self, UserIdValidationError> {
@@ -72,6 +77,17 @@ impl UserId {
 
     /// Validates a user ID string for security.
     fn validate_id(id: &str) -> Result<(), UserIdValidationError> {
+        // Check for empty or oversized IDs first.
+        if id.is_empty() {
+            return Err(UserIdValidationError("User ID cannot be empty".to_string()));
+        }
+        if id.len() > Self::MAX_LENGTH {
+            return Err(UserIdValidationError(format!(
+                "User ID cannot exceed {} characters",
+                Self::MAX_LENGTH
+            )));
+        }
+
         // Check for path traversal patterns
         if id.contains("..") {
             return Err(UserIdValidationError(
@@ -91,10 +107,17 @@ impl UserId {
         if id.contains('\0') {
             return Err(UserIdValidationError("User ID cannot contain null bytes".to_string()));
         }
-        // Check for empty ID
-        if id.is_empty() {
-            return Err(UserIdValidationError("User ID cannot be empty".to_string()));
+
+        if !id.is_ascii()
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(UserIdValidationError(
+                "User ID can only contain ASCII letters, digits, '_' and '-'".to_string(),
+            ));
         }
+
         Ok(())
     }
 
@@ -265,6 +288,35 @@ mod tests {
         let user = UserId::try_new("");
         assert!(user.is_err());
         assert!(user.unwrap_err().0.contains("empty"));
+    }
+
+    #[test]
+    fn test_user_id_too_long_blocked() {
+        let user = UserId::try_new("a".repeat(UserId::MAX_LENGTH + 1));
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("cannot exceed"));
+    }
+
+    #[test]
+    fn test_user_id_with_disallowed_ascii_characters_blocked() {
+        for invalid in [
+            "user name",
+            "user\nname",
+            "user\tname",
+            "user'name",
+            "user;drop",
+        ] {
+            let user = UserId::try_new(invalid);
+            assert!(user.is_err(), "expected '{}' to be rejected", invalid.escape_debug());
+            assert!(user.unwrap_err().0.contains("ASCII letters"));
+        }
+    }
+
+    #[test]
+    fn test_user_id_with_hidden_unicode_blocked() {
+        let user = UserId::try_new("user\u{200B}hidden");
+        assert!(user.is_err());
+        assert!(user.unwrap_err().0.contains("ASCII letters"));
     }
 
     #[test]

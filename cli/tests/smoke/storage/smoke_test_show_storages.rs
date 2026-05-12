@@ -138,17 +138,16 @@ fn smoke_show_storages_user_access() {
     ))
     .expect("create test user");
 
-    // Regular user SHOULD be able to run SHOW STORAGES (read-only operation)
+    // Regular users are limited to SELECT and DML; storage metadata commands require elevation.
     let sql = "SHOW STORAGES";
     let result = execute_sql_via_client_as_json(&test_user, test_password, sql);
 
-    assert!(result.is_ok(), "Regular user should be able to run SHOW STORAGES");
-
-    let json: JsonValue =
-        serde_json::from_str(&result.unwrap()).expect("Should parse JSON response");
-
-    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
-    assert!(!rows.is_empty(), "User should see at least the local storage");
+    let error = result.expect_err("Regular user should not be able to run SHOW STORAGES");
+    let message = error.to_string().to_ascii_lowercase();
+    assert!(
+        message.contains("permission") || message.contains("regular users"),
+        "expected authorization failure, got: {message}"
+    );
 }
 
 // Helper struct for cleanup on drop

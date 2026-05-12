@@ -88,6 +88,38 @@ fn parse_file_ref(value: &JsonValue) -> anyhow::Result<FileRef> {
     Ok(serde_json::from_value(value.clone())?)
 }
 
+async fn uploaded_file_download_url(
+    server: &super::test_support::http_server::HttpTestServer,
+    auth_header: &str,
+    namespace: &str,
+    table_name: &str,
+    id: i64,
+    query_user_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let select_sql = format!("SELECT doc FROM {}.{} WHERE id = {}", namespace, table_name, id);
+    let resp = server.execute_sql_with_auth(&select_sql, auth_header).await?;
+    assert_eq!(resp.status, LinkResponseStatus::Success, "SELECT doc failed");
+    let rows = resp.rows_as_maps();
+    let file_value = rows.get(0).and_then(|row| row.get("doc")).expect("doc should be present");
+    let file_ref = parse_file_ref(file_value)?;
+    let stored_name = file_ref.stored_name();
+
+    let mut url = format!(
+        "{}/v1/files/{}/{}/{}/{}",
+        server.base_url(),
+        namespace,
+        table_name,
+        file_ref.sub,
+        stored_name
+    );
+    if let Some(user_id) = query_user_id {
+        url.push_str("?user_id=");
+        url.push_str(user_id);
+    }
+
+    Ok(url)
+}
+
 async fn execute_sql_multipart(
     server: &super::test_support::http_server::HttpTestServer,
     auth_header: &str,
@@ -468,6 +500,185 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         let _ = server
             .execute_sql(&format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name))
             .await?;
+
+        Ok(())
+    }
+    .await;
+
+    server.shutdown().await;
+    result
+}
+
+#[tokio::test]
+#[ntest::timeout(60000)]
+#[serial]
+async fn test_file_download_rejects_invalid_user_id_query() -> anyhow::Result<()> {
+    let server = start_http_test_server().await?;
+    let result = async {
+        let namespace = format!("test_files_{}", unique_suffix());
+        let table_name = format!("query_guard_{}", unique_suffix());
+
+        let resp = server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+
+        let resp = server
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, doc FILE) WITH (TYPE='USER')",
+                namespace, table_name
+            ))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
+
+        let (alice_auth, alice_id) =
+            create_user_auth_header_with_id(&server, "alice", "test123", &Role::User).await?;
+        let insert_sql =
+            format!("INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))", namespace, table_name);
+        let upload = execute_sql_multipart(
+            &server,
+            &alice_auth,
+            &insert_sql,
+            vec![("doc", "safe.txt", b"safe", "text/plain")],
+        )
+        .await?;
+        assert_eq!(upload.status, ResponseStatus::Success);
+
+        let valid_url = uploaded_file_download_url(
+            &server,
+            &alice_auth,
+            &namespace,
+            &table_name,
+            1,
+            Some(&alice_id),
+        )
+        .await?;
+        let client = reqwest::Client::new();
+        let valid = client
+            .get(&valid_url)
+            .header("Authorization", alice_auth.clone())
+            .send()
+            .await?;
+        assert_eq!(valid.status(), reqwest::StatusCode::OK);
+
+        let invalid_url = valid_url.replace(&format!("user_id={}", alice_id), "user_id=..%2Froot");
+        let invalid = client.get(&invalid_url).header("Authorization", alice_auth).send().await?;
+        assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        Ok(())
+    }
+    .await;
+
+    server.shutdown().await;
+    result
+}
+
+#[tokio::test]
+#[ntest::timeout(60000)]
+#[serial]
+async fn test_multibyte_file_upload_and_owner_download() -> anyhow::Result<()> {
+    let server = start_http_test_server().await?;
+    let result = async {
+        let namespace = format!("test_files_{}", unique_suffix());
+        let table_name = format!("multibyte_{}", unique_suffix());
+        let content = "hello from KalamDB: مرحبا, こんにちは, Здравствуйте";
+
+        let resp = server
+            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+
+        let resp = server
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, doc FILE) WITH (TYPE='USER')",
+                namespace, table_name
+            ))
+            .await?;
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE TABLE failed");
+
+        let (alice_auth, _alice_id) =
+            create_user_auth_header_with_id(&server, "alice", "test123", &Role::User).await?;
+        let insert_sql =
+            format!("INSERT INTO {}.{} (id, doc) VALUES (1, FILE(\"doc\"))", namespace, table_name);
+        let upload = execute_sql_multipart(
+            &server,
+            &alice_auth,
+            &insert_sql,
+            vec![(
+                "doc",
+                "résumé-مرحبا-こんにちは.txt",
+                content.as_bytes(),
+                "text/plain; charset=utf-8",
+            )],
+        )
+        .await?;
+        assert_eq!(upload.status, ResponseStatus::Success);
+
+        let download_url =
+            uploaded_file_download_url(&server, &alice_auth, &namespace, &table_name, 1, None)
+                .await?;
+        let response = reqwest::Client::new()
+            .get(&download_url)
+            .header("Authorization", alice_auth)
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response.bytes().await?;
+        assert_eq!(body.as_ref(), content.as_bytes());
+
+        Ok(())
+    }
+    .await;
+
+    server.shutdown().await;
+    result
+}
+
+#[tokio::test]
+#[ntest::timeout(60000)]
+#[serial]
+async fn test_export_download_path_validation_and_owner_boundary() -> anyhow::Result<()> {
+    let server = start_http_test_server().await?;
+    let result = async {
+        let (alice_auth, alice_id) =
+            create_user_auth_header_with_id(&server, "alice", "test123", &Role::User).await?;
+        let (bob_auth, _bob_id) =
+            create_user_auth_header_with_id(&server, "bob", "test123", &Role::User).await?;
+        let root_auth = server.bearer_auth_header("root")?;
+
+        let export_id = format!("export-{}-20260101-120000", alice_id);
+        let export_dir = server.app_context().config().storage.exports_dir().join(&alice_id);
+        std::fs::create_dir_all(&export_dir)?;
+        let export_path = export_dir.join(format!("{}.zip", export_id));
+        std::fs::write(&export_path, b"zip-bytes")?;
+
+        let client = reqwest::Client::new();
+        let download_url = format!("{}/v1/exports/{}/{}", server.base_url(), alice_id, export_id);
+
+        let owner = client
+            .get(&download_url)
+            .header("Authorization", alice_auth.clone())
+            .send()
+            .await?;
+        assert_eq!(owner.status(), reqwest::StatusCode::OK);
+        assert_eq!(owner.bytes().await?.as_ref(), b"zip-bytes");
+
+        let other_user = client.get(&download_url).header("Authorization", bob_auth).send().await?;
+        assert_eq!(other_user.status(), reqwest::StatusCode::FORBIDDEN);
+
+        let invalid_user = client
+            .get(format!("{}/v1/exports/bad%27user/{}", server.base_url(), export_id))
+            .header("Authorization", root_auth.clone())
+            .send()
+            .await?;
+        assert_eq!(invalid_user.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let invalid_export = client
+            .get(format!("{}/v1/exports/{}/export%0ASet-Cookie", server.base_url(), alice_id))
+            .header("Authorization", alice_auth)
+            .send()
+            .await?;
+        assert_eq!(invalid_export.status(), reqwest::StatusCode::BAD_REQUEST);
 
         Ok(())
     }

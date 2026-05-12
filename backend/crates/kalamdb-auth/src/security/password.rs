@@ -123,6 +123,37 @@ impl PasswordPolicy {
     }
 }
 
+/// Reject characters that are hard to see, easy to smuggle through transport layers,
+/// or can be interpreted inconsistently across boundaries.
+pub fn validate_password_characters(password: &str) -> AuthResult<()> {
+    if password.chars().any(is_forbidden_password_char) {
+        return Err(AuthError::WeakPassword(
+            "Password cannot contain control or invisible formatting characters".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_forbidden_password_char(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{00AD}'
+                | '\u{200B}'
+                | '\u{200C}'
+                | '\u{200D}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{2060}'
+                | '\u{FEFF}'
+        )
+        || ('\u{202A}'..='\u{202E}').contains(&ch)
+        || ('\u{2066}'..='\u{2069}').contains(&ch)
+}
+
 /// Validate password meets security requirements.
 pub fn validate_password_with_config(password: &str, skip_common_check: bool) -> AuthResult<()> {
     let policy = PasswordPolicy::default().skip_common_password_check(skip_common_check);
@@ -160,6 +191,8 @@ pub fn validate_password_with_policy(password: &str, policy: &PasswordPolicy) ->
             policy.max_length
         )));
     }
+
+    validate_password_characters(password)?;
 
     if !policy.skip_common_check && is_common_password(password) {
         return Err(AuthError::WeakPassword("Password is too common".to_string()));

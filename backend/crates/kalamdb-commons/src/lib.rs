@@ -61,10 +61,10 @@ pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod system_tables; // System table enumeration (SystemTable, StoragePartition)
 #[cfg(feature = "full")]
 pub mod websocket;
-pub mod websocket_messages;
-pub mod websocket_protocol;
 #[cfg(feature = "websocket-auth")]
 pub mod websocket_auth;
+pub mod websocket_messages;
+pub mod websocket_protocol;
 
 // Allow procedural macros to refer to this crate by name.
 extern crate self as kalamdb_commons;
@@ -91,24 +91,24 @@ pub use models::{
     schemas,
     AuditLogId,
     AuthType,
+    FieldFlag,
+    FieldFlags,
     JobId,
-    LiveQueryId,
     KalamDataType,
+    LiveQueryId,
     ManifestId,
     NamespaceId,
     NodeId,
     OAuthProvider,
     OperationKind,
     Role,
+    SchemaField,
     StorageId,
     TableId,
     TransactionId,
     TransactionOrigin,
     TransactionState,
     UserId,
-    FieldFlag,
-    FieldFlags,
-    SchemaField,
 };
 pub use schemas::{TableAccess, TableName, TableType};
 #[cfg(feature = "serialization")]
@@ -121,12 +121,12 @@ pub use websocket::{
     ChangeNotification, ChangeType as WsChangeType, Notification, SharedChangePayload,
     WebSocketMessage, WireNotification,
 };
-pub use websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
+#[cfg(feature = "websocket-auth")]
+pub use websocket_auth::WsAuthCredentials;
+#[cfg(feature = "websocket-auth")]
+pub use websocket_messages::ClientMessage;
 pub use websocket_messages::{
     BatchControl, BatchStatus, ChangeTypeRaw, ServerMessage, SubscriptionOptions,
     SubscriptionRequest,
 };
-#[cfg(feature = "websocket-auth")]
-pub use websocket_messages::ClientMessage;
-#[cfg(feature = "websocket-auth")]
-pub use websocket_auth::WsAuthCredentials;
+pub use websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};

@@ -783,6 +783,21 @@ impl SqlStatement {
             return Ok(());
         }
 
+        if matches!(role, Role::User)
+            && !matches!(
+                &self.kind,
+                SqlStatementKind::Select
+                    | SqlStatementKind::Insert(_)
+                    | SqlStatementKind::Update(_)
+                    | SqlStatementKind::Delete(_)
+            )
+        {
+            return Err(format!(
+                "Regular users may only execute SELECT and DML statements; '{}' requires an elevated role",
+                self.name()
+            ));
+        }
+
         match &self.kind {
             // Storage and global operations require admin privileges
             SqlStatementKind::CreateStorage(_)
@@ -954,5 +969,32 @@ mod tests {
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Update(_)));
         assert_eq!(stmt.as_str(), sql);
+    }
+
+    #[test]
+    fn regular_user_authorization_allows_only_select_and_dml() {
+        let namespace = NamespaceId::new("default");
+
+        for sql in [
+            "SELECT 1",
+            "INSERT INTO default.tasks (id) VALUES (1)",
+            "UPDATE default.tasks SET id = 2 WHERE id = 1",
+            "DELETE FROM default.tasks WHERE id = 1",
+        ] {
+            let stmt = SqlStatement::classify_and_parse(sql, &namespace, Role::User)
+                .expect("DML/query should classify for regular users");
+            assert!(stmt.check_authorization(Role::User).is_ok(), "{sql}");
+        }
+
+        for sql in [
+            "SHOW NAMESPACES",
+            "CREATE TABLE default.tasks (id BIGINT PRIMARY KEY) WITH (TYPE='USER')",
+            "BEGIN",
+            "EXPORT USER DATA",
+        ] {
+            let stmt = SqlStatement::classify_and_parse(sql, &namespace, Role::User)
+                .expect("statement should classify before central authorization check");
+            assert!(stmt.check_authorization(Role::User).is_err(), "{sql}");
+        }
     }
 }

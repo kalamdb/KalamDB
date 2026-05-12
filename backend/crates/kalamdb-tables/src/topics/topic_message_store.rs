@@ -378,7 +378,8 @@ impl TopicMessageStore {
             let msg_id = message.id();
             let key_encoded = msg_id.storage_key();
             let value_encoded = message.encode()?;
-            let retention_entry = TopicRetentionIndexEntry::new(&message, value_encoded.len() as u64);
+            let retention_entry =
+                TopicRetentionIndexEntry::new(&message, value_encoded.len() as u64);
             entries.push((retention_entry, key_encoded, value_encoded));
         }
 

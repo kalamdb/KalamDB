@@ -22,6 +22,62 @@ use kalamdb_system::{FileRef, FileSubfolderState};
 
 use super::models::{ErrorCode, FileError, ParsedMultipartRequest, ParsedSqlPayload, QueryRequest};
 
+const MAX_FILE_PART_SIZE: usize = 100 * 1024 * 1024; // 100MB absolute max per file field
+const MAX_MULTIPART_BUFFERED_BYTES: usize = 100 * 1024 * 1024; // cap chunked multipart memory use
+const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = 1024 * 1024; // SQL and params fields
+const MAX_NAMESPACE_FIELD_SIZE: usize = 4096;
+
+fn account_multipart_bytes(
+    total_buffered_bytes: &mut usize,
+    chunk_len: usize,
+) -> Result<(), FileError> {
+    let next_total = total_buffered_bytes
+        .checked_add(chunk_len)
+        .ok_or_else(|| FileError::new(ErrorCode::FileTooLarge, "Multipart request is too large"))?;
+
+    if next_total > MAX_MULTIPART_BUFFERED_BYTES {
+        return Err(FileError::new(
+            ErrorCode::FileTooLarge,
+            format!(
+                "Multipart request exceeds maximum buffered size of {} bytes",
+                MAX_MULTIPART_BUFFERED_BYTES
+            ),
+        ));
+    }
+
+    *total_buffered_bytes = next_total;
+    Ok(())
+}
+
+fn append_limited_field_chunk(
+    data: &mut BytesMut,
+    chunk: &[u8],
+    field_name: &str,
+    field_limit: usize,
+    total_buffered_bytes: &mut usize,
+) -> Result<(), FileError> {
+    let next_len = data.len().checked_add(chunk.len()).ok_or_else(|| {
+        FileError::new(
+            ErrorCode::FileTooLarge,
+            format!("Multipart field '{}' is too large", field_name),
+        )
+    })?;
+
+    if next_len > field_limit {
+        return Err(FileError::new(
+            ErrorCode::FileTooLarge,
+            format!(
+                "Multipart field '{}' exceeds maximum size of {} bytes",
+                field_name, field_limit
+            ),
+        ));
+    }
+
+    account_multipart_bytes(total_buffered_bytes, chunk.len())?;
+    data.extend_from_slice(chunk);
+    Ok(())
+}
+
 /// Parse a multipart form request containing SQL and files
 pub async fn parse_multipart_request(
     mut payload: Multipart,
@@ -36,6 +92,7 @@ pub async fn parse_multipart_request(
     let mut namespace_id: Option<NamespaceId> = None;
     let mut files: HashMap<String, (String, Bytes, Option<String>)> = HashMap::new();
     let mut file_count = 0;
+    let mut total_buffered_bytes = 0usize;
 
     while let Some(field_result) = payload.next().await {
         let mut field = match field_result {
@@ -58,7 +115,13 @@ pub async fn parse_multipart_request(
             let mut data = BytesMut::new();
             while let Some(chunk) = field.next().await {
                 match chunk {
-                    Ok(bytes) => data.extend_from_slice(&bytes),
+                    Ok(bytes) => append_limited_field_chunk(
+                        &mut data,
+                        &bytes,
+                        "sql",
+                        MAX_MULTIPART_TEXT_FIELD_SIZE,
+                        &mut total_buffered_bytes,
+                    )?,
                     Err(e) => {
                         return Err(FileError::new(
                             ErrorCode::InvalidInput,
@@ -71,16 +134,40 @@ pub async fn parse_multipart_request(
         } else if field_name == "params" {
             let mut data = BytesMut::new();
             while let Some(chunk) = field.next().await {
-                if let Ok(bytes) = chunk {
-                    data.extend_from_slice(&bytes);
+                match chunk {
+                    Ok(bytes) => append_limited_field_chunk(
+                        &mut data,
+                        &bytes,
+                        "params",
+                        MAX_MULTIPART_TEXT_FIELD_SIZE,
+                        &mut total_buffered_bytes,
+                    )?,
+                    Err(e) => {
+                        return Err(FileError::new(
+                            ErrorCode::InvalidInput,
+                            format!("Failed to read params field: {}", e),
+                        ));
+                    },
                 }
             }
             params_json = Some(String::from_utf8_lossy(&data).to_string());
         } else if field_name == "namespace_id" {
             let mut data = BytesMut::new();
             while let Some(chunk) = field.next().await {
-                if let Ok(bytes) = chunk {
-                    data.extend_from_slice(&bytes);
+                match chunk {
+                    Ok(bytes) => append_limited_field_chunk(
+                        &mut data,
+                        &bytes,
+                        "namespace_id",
+                        MAX_NAMESPACE_FIELD_SIZE,
+                        &mut total_buffered_bytes,
+                    )?,
+                    Err(e) => {
+                        return Err(FileError::new(
+                            ErrorCode::InvalidInput,
+                            format!("Failed to read namespace_id field: {}", e),
+                        ));
+                    },
                 }
             }
             namespace_id = Some(NamespaceId::new(String::from_utf8_lossy(&data).as_ref()));
@@ -103,7 +190,13 @@ pub async fn parse_multipart_request(
             while let Some(chunk) = field.next().await {
                 match chunk {
                     Ok(bytes) => {
-                        if data.len() + bytes.len() > max_file_size {
+                        let next_len = data.len().checked_add(bytes.len()).ok_or_else(|| {
+                            FileError::new(
+                                ErrorCode::FileTooLarge,
+                                format!("File '{}' is too large", original_name),
+                            )
+                        })?;
+                        if next_len > max_file_size {
                             return Err(FileError::new(
                                 ErrorCode::FileTooLarge,
                                 format!(
@@ -112,12 +205,13 @@ pub async fn parse_multipart_request(
                                 ),
                             ));
                         }
-                        if data.len() + bytes.len() > MAX_FILE_PART_SIZE {
+                        if next_len > MAX_FILE_PART_SIZE {
                             return Err(FileError::new(
                                 ErrorCode::FileTooLarge,
                                 "File exceeds absolute maximum size",
                             ));
                         }
+                        account_multipart_bytes(&mut total_buffered_bytes, bytes.len())?;
                         data.extend_from_slice(&bytes);
                     },
                     Err(e) => {
@@ -347,6 +441,45 @@ pub fn extract_table_from_sql(sql: &str, default_namespace: &str) -> Option<Tabl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_append_limited_field_chunk_rejects_oversized_text_field() {
+        let mut data = BytesMut::new();
+        let mut total_buffered_bytes = 0usize;
+        let chunk = vec![b'a'; MAX_MULTIPART_TEXT_FIELD_SIZE + 1];
+
+        let err = append_limited_field_chunk(
+            &mut data,
+            &chunk,
+            "sql",
+            MAX_MULTIPART_TEXT_FIELD_SIZE,
+            &mut total_buffered_bytes,
+        )
+        .expect_err("oversized SQL multipart field should be rejected");
+
+        assert_eq!(err.code, ErrorCode::FileTooLarge);
+        assert!(data.is_empty());
+        assert_eq!(total_buffered_bytes, 0);
+    }
+
+    #[test]
+    fn test_append_limited_field_chunk_rejects_total_buffer_growth() {
+        let mut data = BytesMut::new();
+        let mut total_buffered_bytes = MAX_MULTIPART_BUFFERED_BYTES;
+
+        let err = append_limited_field_chunk(
+            &mut data,
+            b"a",
+            "params",
+            MAX_MULTIPART_TEXT_FIELD_SIZE,
+            &mut total_buffered_bytes,
+        )
+        .expect_err("multipart total buffered size should be capped");
+
+        assert_eq!(err.code, ErrorCode::FileTooLarge);
+        assert!(data.is_empty());
+        assert_eq!(total_buffered_bytes, MAX_MULTIPART_BUFFERED_BYTES);
+    }
 
     #[test]
     fn test_extract_file_placeholders() {

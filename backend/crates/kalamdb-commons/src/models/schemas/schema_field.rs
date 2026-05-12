@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "schema-metadata")]
 use crate::conversions::read_kalam_column_flags_metadata;
-use crate::{models::datatypes::KalamDataType, schemas::{ColumnDefinition, FieldFlag, FieldFlags}};
+use crate::{
+    models::datatypes::KalamDataType,
+    schemas::{ColumnDefinition, FieldFlag, FieldFlags},
+};
 
 /// A field in the result schema returned by SQL queries
 ///

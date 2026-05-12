@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'link/sdks/typescript/react-old/**'
+      - 'link/sdks/typescript/react/**'
       - 'link/sdks/typescript/client/**'
       - 'link/sdks/typescript/orm/**'
       - 'link/link-common/**'
@@ -13,7 +13,7 @@ on:
       - '.github/workflows/react-e2e.yml'
   pull_request:
     paths:
-      - 'link/sdks/typescript/react-old/**'
+      - 'link/sdks/typescript/react/**'
       - 'link/sdks/typescript/client/**'
       - 'link/sdks/typescript/orm/**'
       - 'link/link-common/**'
@@ -132,21 +132,21 @@ jobs:
           npm run build
 
       - name: Build + typecheck + jsdom tests
-        working-directory: link/sdks/typescript/react-old
+        working-directory: link/sdks/typescript/react
         run: |
           npm install
           npm test
 
       - name: Install Playwright browser
-        working-directory: link/sdks/typescript/react-old
+        working-directory: link/sdks/typescript/react
         run: npx playwright install --with-deps chromium
 
       - name: Install e2e test app
-        working-directory: link/sdks/typescript/react-old/tests/e2e/app
+        working-directory: link/sdks/typescript/react/tests/e2e/app
         run: npm install
 
       - name: Run Playwright e2e
-        working-directory: link/sdks/typescript/react-old
+        working-directory: link/sdks/typescript/react
         env:
           KALAM_URL: ${{ env.KALAMDB_URL }}
           KALAM_USER: ${{ env.KALAMDB_USER }}
@@ -159,7 +159,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: link/sdks/typescript/react-old/playwright-report
+          path: link/sdks/typescript/react/playwright-report
           retention-days: 7
 
       - name: Server log on failure

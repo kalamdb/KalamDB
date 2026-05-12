@@ -268,7 +268,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd link/sdks/typescript/react-old
+          cd link/sdks/typescript/react
           npm install
           npm run build
 

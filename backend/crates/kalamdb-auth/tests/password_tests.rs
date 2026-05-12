@@ -8,8 +8,8 @@
 //! - Edge cases and security requirements
 
 use kalamdb_auth::security::password::{
-    hash_password, validate_password, verify_password, BCRYPT_COST, MAX_PASSWORD_LENGTH,
-    MIN_PASSWORD_LENGTH,
+    hash_password, validate_password, validate_password_characters, verify_password, BCRYPT_COST,
+    MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH,
 };
 
 /// Test basic password hashing functionality
@@ -254,6 +254,34 @@ fn test_password_validation_edge_cases() {
     let numbers_only = "98765432101234";
     let result = validate_password(numbers_only);
     assert!(result.is_ok(), "Long number sequence should be valid");
+}
+
+/// Test that control and invisible formatting characters are rejected.
+#[test]
+fn test_password_control_and_invisible_characters_rejected() {
+    let invalid_passwords = [
+        "Line\nBreak123!",
+        "Tab\tCharacter123!",
+        "Hidden\u{200B}Format123!",
+        "Bidi\u{2066}Mask123!",
+    ];
+
+    for password in invalid_passwords {
+        let result = validate_password_characters(password);
+        assert!(result.is_err(), "'{}' should be rejected", password.escape_debug());
+
+        if let Err(error) = result {
+            assert!(error.to_string().contains("control or invisible"));
+        }
+    }
+}
+
+/// Test that SQL-looking punctuation remains valid password data.
+#[test]
+fn test_sql_like_password_characters_are_allowed() {
+    let password = "Quote'\";Comment--123!";
+    let result = validate_password(password);
+    assert!(result.is_ok(), "SQL-looking punctuation should remain valid password data");
 }
 
 /// Test that common password check is case-insensitive

@@ -241,3 +241,20 @@ async fn test_complexity_alter_user_valid_password_succeeds() {
 
     assert!(result.is_ok(), "ALTER USER with complex password should succeed: {:?}", result);
 }
+
+#[tokio::test]
+async fn test_complexity_disabled_still_rejects_hidden_password_characters() {
+    let (executor, app_context, session_ctx) = setup_executor(false).await;
+    let admin_id = create_admin_user(&app_context).await;
+    let exec_ctx = ExecutionContext::new(admin_id.clone(), Role::System, session_ctx.clone());
+
+    let result = executor
+        .execute(
+            "CREATE USER 'hidden_pw' WITH PASSWORD 'Hidden\u{200B}Pass1!' ROLE user",
+            &exec_ctx,
+            Vec::new(),
+        )
+        .await;
+
+    assert_complexity_error(result, "control or invisible");
+}

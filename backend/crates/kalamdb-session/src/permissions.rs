@@ -52,7 +52,7 @@ pub fn can_create_table(role: Role, table_type: TableType) -> bool {
         Role::Service => {
             matches!(table_type, TableType::User | TableType::Shared | TableType::Stream)
         },
-        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::User => false,
         Role::Anonymous => false,
     }
 }
@@ -80,7 +80,7 @@ pub fn can_alter_table(role: Role, table_type: TableType, _is_owner: bool) -> bo
         Role::Service => {
             matches!(table_type, TableType::Shared | TableType::User | TableType::Stream)
         },
-        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::User => false,
         Role::Anonymous => false,
     }
 }
@@ -112,7 +112,7 @@ pub fn is_system_role(role: Role) -> bool {
 /// Helper for CREATE TABLE: allow USER/SERVICE to downgrade shared to user table.
 #[inline]
 pub fn can_downgrade_shared_to_user(role: Role) -> bool {
-    matches!(role, Role::User | Role::Service)
+    matches!(role, Role::Service)
 }
 
 /// Check if a role can access a user table.
@@ -365,6 +365,22 @@ mod tests {
         assert!(can_write_shared_table(TableAccess::Public, Role::Dba));
         assert!(can_write_shared_table(TableAccess::Public, Role::Service));
         assert!(!can_write_shared_table(TableAccess::Public, Role::User));
+    }
+
+    #[test]
+    fn test_regular_user_cannot_run_table_ddl() {
+        for table_type in [
+            TableType::User,
+            TableType::Shared,
+            TableType::Stream,
+            TableType::System,
+        ] {
+            assert!(!can_create_table(Role::User, table_type));
+            assert!(!can_alter_table(Role::User, table_type, true));
+            assert!(!can_delete_table(Role::User, table_type, true));
+        }
+        assert!(!can_create_view(Role::User));
+        assert!(!can_downgrade_shared_to_user(Role::User));
     }
 
     #[test]

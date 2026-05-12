@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kalamdb_auth::security::password::{
-    hash_password, validate_password_with_policy, PasswordPolicy,
+    hash_password, validate_password_characters, validate_password_with_policy, PasswordPolicy,
 };
 use kalamdb_commons::UserId;
 use kalamdb_core::{
@@ -40,7 +40,8 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let app_ctx = self.app_context.clone();
-        let user_id = UserId::new(&statement.username);
+        let user_id = UserId::try_new(statement.username.clone())
+            .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
         let existing = tokio::task::spawn_blocking(move || {
             app_ctx.system_tables().users().get_user_by_id(&user_id)
         })
@@ -61,12 +62,15 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                         "Only admins can change other users' passwords".to_string(),
                     ));
                 }
-                // Enforce password complexity if enabled in config
-                if self.enforce_complexity
-                    || self.app_context.config().auth.enforce_password_complexity
-                {
+                let enforce_complexity = self.enforce_complexity
+                    || self.app_context.config().auth.enforce_password_complexity;
+
+                if enforce_complexity {
                     let policy = PasswordPolicy::default().with_enforced_complexity(true);
                     validate_password_with_policy(new_pw, &policy)
+                        .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
+                } else {
+                    validate_password_characters(new_pw)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
                 updated.password_hash =

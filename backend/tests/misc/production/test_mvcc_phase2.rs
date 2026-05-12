@@ -33,7 +33,7 @@ async fn test_create_table_without_pk_rejected() {
 
     // Try to create table without PRIMARY KEY specification
     let response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.invalid_table (
                 id TEXT,
@@ -45,7 +45,6 @@ async fn test_create_table_without_pk_rejected() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
@@ -82,7 +81,7 @@ async fn test_create_table_auto_adds_system_columns() {
 
     // Create table with user-defined PK
     let response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.products (
                 id TEXT PRIMARY KEY,
@@ -94,7 +93,6 @@ async fn test_create_table_auto_adds_system_columns() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
@@ -174,7 +172,7 @@ async fn test_insert_storage_key_format() {
 
     // Create user table
     let resp = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_data (
                 id TEXT PRIMARY KEY,
@@ -185,7 +183,6 @@ async fn test_insert_storage_key_format() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
     assert_eq!(
@@ -292,7 +289,7 @@ async fn test_user_table_row_structure() {
     );
 
     let resp = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_records (
                 record_id TEXT PRIMARY KEY,
@@ -304,7 +301,6 @@ async fn test_user_table_row_structure() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
     assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
@@ -461,7 +457,7 @@ async fn test_insert_duplicate_pk_rejected() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.unique_items (
                 item_id TEXT PRIMARY KEY,
@@ -472,7 +468,6 @@ async fn test_insert_duplicate_pk_rejected() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
@@ -573,7 +568,7 @@ async fn test_incremental_sync_seq_threshold() {
     );
 
     let resp = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.sync_records (
                 id TEXT PRIMARY KEY,
@@ -584,7 +579,6 @@ async fn test_incremental_sync_seq_threshold() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
     assert_eq!(resp.status, ResponseStatus::Success, "Table creation failed: {:?}", resp.error);
@@ -664,7 +658,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.user_notes (
                 note_id TEXT PRIMARY KEY,
@@ -675,7 +669,6 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
@@ -755,7 +748,7 @@ async fn test_rocksdb_range_scan_efficiency() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.versioned_data (
                 id TEXT PRIMARY KEY,
@@ -766,7 +759,6 @@ async fn test_rocksdb_range_scan_efficiency() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 

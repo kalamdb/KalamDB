@@ -198,24 +198,24 @@ async fn test_role_based_auth_e2e() {
     assert_eq!(response.status, ResponseStatus::Success, "DBA should be able to create table");
     println!("✅ DBA user created table");
 
-    // Regular user creates user table (should succeed)
+    // Regular user creates user table (should fail; regular users are DML/query only)
     // For user tables, TableType must be USER
     let user_table_sql = format!(
         "CREATE TABLE {}.test_table (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')",
         user_user.user_id.as_str()
     );
     let response = server.execute_sql_as_user(&user_table_sql, user_user.user_id.as_str()).await;
-    if response.status != ResponseStatus::Success {
-        eprintln!("❌ CREATE TABLE (user table) failed: {:?}", response.error);
+    if response.status != ResponseStatus::Error {
+        eprintln!("❌ CREATE TABLE (user table) unexpectedly succeeded: {:?}", response);
         eprintln!("   SQL: {}", user_table_sql);
         eprintln!("   User ID: {}", user_user.user_id.as_str());
     }
     assert_eq!(
         response.status,
-        ResponseStatus::Success,
-        "Regular user should be able to create user table"
+        ResponseStatus::Error,
+        "Regular user should not be able to create user table"
     );
-    println!("✅ Regular user created user table");
+    println!("✅ Regular user correctly denied user table creation");
 
     // Service user creates user table (should succeed)
     let service_table_sql = format!(

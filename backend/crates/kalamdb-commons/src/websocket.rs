@@ -94,7 +94,7 @@
 
 pub use crate::websocket_auth::WsAuthCredentials;
 pub use crate::websocket_messages::{
-    BatchControl, BatchStatus, ClientMessage, ChangeTypeRaw as ChangeType, ServerMessage,
+    BatchControl, BatchStatus, ChangeTypeRaw as ChangeType, ClientMessage, ServerMessage,
     SubscriptionOptions, SubscriptionRequest,
 };
 pub use crate::websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};

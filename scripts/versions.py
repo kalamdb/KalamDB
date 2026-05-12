@@ -105,7 +105,7 @@ DART_PUBSPEC = ROOT / "link" / "sdks" / "dart" / "pubspec.yaml"
 TS_CLIENT_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "client" / "package.json"
 TS_CONSUMER_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "consumer" / "package.json"
 TS_ORM_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "orm" / "package.json"
-TS_REACT_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "react-old" / "package.json"
+TS_REACT_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "react" / "package.json"
 
 WORKSPACE_VERSION_PATTERNS = (
     re.compile(r"(?m)^\s*version\.workspace\s*=\s*true\s*$"),

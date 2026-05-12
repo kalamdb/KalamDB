@@ -5,9 +5,9 @@
 use std::fmt;
 
 use kalamdb_commons::{
-    ResponseStatus,
     models::{datatypes::KalamDataType, KalamCellValue},
     schemas::SchemaField,
+    ResponseStatus,
 };
 use serde::{Deserialize, Serialize, Serializer};
 

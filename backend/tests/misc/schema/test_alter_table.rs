@@ -23,7 +23,7 @@ async fn test_alter_table_add_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.products (
                 id TEXT PRIMARY KEY,
@@ -35,7 +35,6 @@ async fn test_alter_table_add_column() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
     assert_eq!(create_response.status, ResponseStatus::Success);
@@ -54,9 +53,8 @@ async fn test_alter_table_add_column() {
 
     // ALTER TABLE: ADD COLUMN
     let alter_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.products ADD COLUMN stock INT"#, ns),
-            "user1",
         )
         .await;
 
@@ -114,7 +112,7 @@ async fn test_alter_table_drop_column() {
     assert!(server.namespace_exists(&ns).await, "Namespace should exist after creation");
 
     let create_resp = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.inventory (
                 id TEXT PRIMARY KEY,
@@ -127,7 +125,6 @@ async fn test_alter_table_drop_column() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
     assert_eq!(
@@ -151,9 +148,8 @@ async fn test_alter_table_drop_column() {
 
     // ALTER TABLE: DROP COLUMN
     let alter_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.inventory DROP COLUMN warehouse"#, ns),
-            "user1",
         )
         .await;
 
@@ -195,7 +191,7 @@ async fn test_alter_table_rename_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.customers (
                 id TEXT PRIMARY KEY,
@@ -207,7 +203,6 @@ async fn test_alter_table_rename_column() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
@@ -225,9 +220,8 @@ async fn test_alter_table_rename_column() {
 
     // ALTER TABLE: RENAME COLUMN
     let alter_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#, ns),
-            "user1",
         )
         .await;
 
@@ -243,7 +237,7 @@ async fn test_alter_table_rename_column() {
     // For now, verify that the schema metadata was updated by checking DESCRIBE TABLE.
 
     let describe_response = server
-        .execute_sql_as_user(&format!("DESCRIBE TABLE {}.customers", ns), "user1")
+        .execute_sql(&format!("DESCRIBE TABLE {}.customers", ns))
         .await;
 
     assert_eq!(
@@ -285,7 +279,7 @@ async fn test_alter_table_modify_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.metrics (
                 id TEXT PRIMARY KEY,
@@ -297,15 +291,13 @@ async fn test_alter_table_modify_column() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
     // ALTER TABLE: MODIFY COLUMN (change type)
     let alter_response = server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.metrics MODIFY COLUMN value BIGINT"#, ns),
-            "user1",
         )
         .await;
 
@@ -351,7 +343,7 @@ async fn test_alter_table_schema_versioning() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(
                 r#"CREATE TABLE {}.versioned (
                 id TEXT PRIMARY KEY,
@@ -362,22 +354,19 @@ async fn test_alter_table_schema_versioning() {
             )"#,
                 ns
             ),
-            "user1",
         )
         .await;
 
     // Perform multiple ALTER operations
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col2 INT"#, ns),
-            "user1",
         )
         .await;
 
     server
-        .execute_sql_as_user(
+        .execute_sql(
             &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col3 TEXT"#, ns),
-            "user1",
         )
         .await;
 

@@ -1,8 +1,7 @@
 use super::{LiveRowsConfig, LiveRowsEvent};
 use crate::{
     models::{ChangeEvent, KalamCellValue, RowData},
-    seq_tracking,
-    SeqId,
+    seq_tracking, SeqId,
 };
 
 /// Stateful reducer that materializes the current row set from change events.

@@ -28,7 +28,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
         "CREATE TABLE {}.notes (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
-    let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
+    let resp = server.execute_sql(&create).await;
     println!("create user table resp = {:?}", resp);
     assert_eq!(resp.status, ResponseStatus::Success, "create user table resp: {:?}", resp);
 
@@ -66,8 +66,8 @@ async fn test_service_role_user_table_reads_are_subject_scoped() {
         "CREATE TABLE {}.orders (id INT PRIMARY KEY, content TEXT) WITH (TYPE = 'USER')",
         ns
     );
-    let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
-    assert_eq!(resp.status, ResponseStatus::Success, "user should be able to create table");
+    let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
+    assert_eq!(resp.status, ResponseStatus::Success, "service should be able to create table");
 
     let insert_alice = format!("INSERT INTO {}.orders (id, content) VALUES (1, 'alice note')", ns);
     let insert_bob = format!("INSERT INTO {}.orders (id, content) VALUES (2, 'bob note')", ns);

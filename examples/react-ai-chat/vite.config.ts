@@ -17,7 +17,7 @@ export default defineConfig({
       { find: /^react-dom$/, replacement: path.join(appNodeModules, 'react-dom/index.js') },
       { find: '@kalamdb/client', replacement: new URL('../../link/sdks/typescript/client/dist/src/index.js', import.meta.url).pathname },
       { find: '@kalamdb/orm', replacement: new URL('../../link/sdks/typescript/orm/dist/index.js', import.meta.url).pathname },
-      { find: '@kalamdb/react', replacement: new URL('../../link/sdks/typescript/react-old/dist/index.js', import.meta.url).pathname },
+      { find: '@kalamdb/react', replacement: new URL('../../link/sdks/typescript/react/dist/index.js', import.meta.url).pathname },
     ],
   },
   server: {

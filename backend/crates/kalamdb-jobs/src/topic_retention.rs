@@ -93,7 +93,10 @@ impl TopicRetentionScheduler {
 
 #[cfg(test)]
 mod tests {
-    use std::{panic::{catch_unwind, AssertUnwindSafe}, sync::Arc};
+    use std::{
+        panic::{catch_unwind, AssertUnwindSafe},
+        sync::Arc,
+    };
 
     use kalamdb_commons::models::TopicId;
     use kalamdb_core::test_helpers::test_app_context;
@@ -118,23 +121,23 @@ mod tests {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
         ));
 
-        let mut retained_topic = Topic::new(
-            retained_topic_id.clone(),
-            retained_topic_id.as_str().to_string(),
-        );
+        let mut retained_topic =
+            Topic::new(retained_topic_id.clone(), retained_topic_id.as_str().to_string());
         retained_topic.retention_seconds = Some(60);
 
-        let disabled_topic = Topic::new(
-            disabled_topic_id.clone(),
-            disabled_topic_id.as_str().to_string(),
-        );
+        let disabled_topic =
+            Topic::new(disabled_topic_id.clone(), disabled_topic_id.as_str().to_string());
 
         app_ctx.system_tables().topics().create_topic(retained_topic).unwrap();
         app_ctx.system_tables().topics().create_topic(disabled_topic).unwrap();
 
         let jobs_manager = app_ctx.job_manager();
-        TopicRetentionScheduler::check_and_schedule(&app_ctx, &jobs_manager).await.unwrap();
-        TopicRetentionScheduler::check_and_schedule(&app_ctx, &jobs_manager).await.unwrap();
+        TopicRetentionScheduler::check_and_schedule(&app_ctx, &jobs_manager)
+            .await
+            .unwrap();
+        TopicRetentionScheduler::check_and_schedule(&app_ctx, &jobs_manager)
+            .await
+            .unwrap();
 
         let jobs: Vec<_> = app_ctx
             .system_tables()
@@ -144,14 +147,17 @@ mod tests {
             .into_iter()
             .filter(|job| {
                 job.job_type == JobType::TopicRetention
-                    && job
-                        .idempotency_key
-                        .as_deref()
-                        .is_some_and(|key| key.starts_with(&format!("TR:{}:", retained_topic_id.as_str())))
+                    && job.idempotency_key.as_deref().is_some_and(|key| {
+                        key.starts_with(&format!("TR:{}:", retained_topic_id.as_str()))
+                    })
             })
             .collect();
 
-        assert_eq!(jobs.len(), 1, "scheduler should create one idempotent job for the retained topic only");
+        assert_eq!(
+            jobs.len(),
+            1,
+            "scheduler should create one idempotent job for the retained topic only"
+        );
         assert!(
             jobs[0]
                 .idempotency_key

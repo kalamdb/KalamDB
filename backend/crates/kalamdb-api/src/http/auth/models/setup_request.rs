@@ -60,4 +60,28 @@ mod tests {
 
         assert!(error.to_string().contains("unknown field"));
     }
+
+    #[test]
+    fn rejects_invalid_user_identifier() {
+        let error = serde_json::from_value::<ServerSetupRequest>(serde_json::json!({
+            "user": "../admin",
+            "password": "SetupPass123!",
+            "root_password": "RootPass123!",
+        }))
+        .expect_err("setup should reject invalid user IDs");
+
+        assert!(error.to_string().contains("User ID"));
+    }
+
+    #[test]
+    fn rejects_hidden_characters_in_passwords() {
+        let error = serde_json::from_value::<ServerSetupRequest>(serde_json::json!({
+            "user": "admin",
+            "password": "SetupPass123!",
+            "root_password": "Root\u{200B}Pass123!",
+        }))
+        .expect_err("setup should reject hidden password characters");
+
+        assert!(error.to_string().contains("control or invisible"));
+    }
 }

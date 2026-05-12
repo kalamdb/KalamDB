@@ -121,14 +121,11 @@ async fn test_flush_policy_and_parquet_output_over_http() {
         {
             let table = "messages";
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, content TEXT) WITH \
-                         (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:25')",
-                        ns, table
-                    ),
-                    &auth_a,
-                )
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, content TEXT) WITH \
+                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:25')",
+                    ns, table
+                ))
                 .await?;
             anyhow::ensure!(
                 resp.status == ResponseStatus::Success,
@@ -171,14 +168,11 @@ async fn test_flush_policy_and_parquet_output_over_http() {
         {
             let table = "events";
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH \
-                         (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100,interval:30')",
-                        ns, table
-                    ),
-                    &auth_a,
-                )
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH \
+                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100,interval:30')",
+                    ns, table
+                ))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success);
 
@@ -215,14 +209,11 @@ async fn test_flush_policy_and_parquet_output_over_http() {
         {
             let table = "inbox";
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, body TEXT) WITH (TYPE='USER', \
-                         STORAGE_ID='local', FLUSH_POLICY='rows:20')",
-                        ns, table
-                    ),
-                    &auth_a,
-                )
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, body TEXT) WITH (TYPE='USER', \
+                     STORAGE_ID='local', FLUSH_POLICY='rows:20')",
+                    ns, table
+                ))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success);
 
@@ -309,14 +300,11 @@ async fn test_flush_policy_and_parquet_output_over_http() {
         {
             let table = "drop_cleanup";
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, body TEXT) WITH (TYPE='USER', \
-                         STORAGE_ID='local', FLUSH_POLICY='rows:2')",
-                        ns, table
-                    ),
-                    &auth_a,
-                )
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, body TEXT) WITH (TYPE='USER', \
+                     STORAGE_ID='local', FLUSH_POLICY='rows:2')",
+                    ns, table
+                ))
                 .await?;
             anyhow::ensure!(resp.status == ResponseStatus::Success);
 
@@ -507,14 +495,11 @@ async fn test_automatic_user_flush_waits_for_row_limit_and_writes_only_user_file
             create_user_auth_header_with_id(server, &user_b, "UserPass123!", &Role::User).await?;
 
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH (TYPE='USER', \
-                     STORAGE_ID='local', FLUSH_POLICY='rows:5')",
-                    ns, table
-                ),
-                &auth_a,
-            )
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH (TYPE='USER', \
+                 STORAGE_ID='local', FLUSH_POLICY='rows:5')",
+                ns, table
+            ))
             .await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,

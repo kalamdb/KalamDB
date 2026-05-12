@@ -18,7 +18,7 @@
 
 - Shared client SDK: `link/sdks/typescript/client/`
 - Drizzle ORM SDK: `link/sdks/typescript/orm/`
-- React SDK package: `link/sdks/typescript/react-old/`
+- React SDK package: `link/sdks/typescript/react/`
 - Admin UI integration: `ui/src/`
 - Standalone example app: `examples/react-ai-chat/`
 - Repo SDK docs: `docs/sdk/sdk.md`
@@ -30,8 +30,8 @@
 
 **Purpose**: Create the new React SDK package surface and local repo wiring needed by every story.
 
-- [X] T001 Create the new React package metadata in `link/sdks/typescript/react-old/package.json`, `link/sdks/typescript/react-old/tsconfig.json`, and `link/sdks/typescript/react-old/README.md`
-- [X] T002 Create the React package scaffold in `link/sdks/typescript/react-old/src/index.ts`, `link/sdks/typescript/react-old/src/types.ts`, `link/sdks/typescript/react-old/tests/test-utils.tsx`, and `link/sdks/typescript/react-old/example/.gitkeep`
+- [X] T001 Create the new React package metadata in `link/sdks/typescript/react/package.json`, `link/sdks/typescript/react/tsconfig.json`, and `link/sdks/typescript/react/README.md`
+- [X] T002 Create the React package scaffold in `link/sdks/typescript/react/src/index.ts`, `link/sdks/typescript/react/src/types.ts`, `link/sdks/typescript/react/tests/test-utils.tsx`, and `link/sdks/typescript/react/example/.gitkeep`
 - [X] T003 [P] Add `@kalamdb/react` to the SDK package overview in `link/sdks/typescript/README.md`
 - [X] T004 [P] Wire local `@kalamdb/react` consumption and build-path resolution in `ui/package.json`, `ui/tsconfig.json`, and `ui/vite.config.ts`
 
@@ -48,8 +48,8 @@
 - [X] T005 Create shared live descriptor and projection contracts in `link/sdks/typescript/client/src/live/descriptor.ts`, `link/sdks/typescript/client/src/live/projection.ts`, and `link/sdks/typescript/client/src/index.ts`
 - [X] T006 Integrate shared live controller lifecycle, reconnect, and refetch support in `link/sdks/typescript/client/src/live/controller.ts`, `link/sdks/typescript/client/src/client.ts`, `link/sdks/typescript/client/src/types.ts`, and `link/sdks/typescript/client/src/helpers/subscription_helpers.ts`
 - [X] T007 [P] Extend Drizzle live descriptor compilation and typed row-key extraction in `link/sdks/typescript/orm/src/live.ts`, `link/sdks/typescript/orm/src/sql.ts`, and `link/sdks/typescript/orm/src/index.ts`
-- [X] T008 [P] Create shared React provider and mutation plumbing in `link/sdks/typescript/react-old/src/context.tsx`, `link/sdks/typescript/react-old/src/hooks/useMutationState.ts`, `link/sdks/typescript/react-old/src/types.ts`, and `link/sdks/typescript/react-old/src/index.ts`
-- [X] T009 [P] Add foundational shared-core coverage in `link/sdks/typescript/client/tests/live-controller.test.mjs`, `link/sdks/typescript/orm/tests/live-descriptor.test.mjs`, and `link/sdks/typescript/react-old/tests/test-utils.tsx`
+- [X] T008 [P] Create shared React provider and mutation plumbing in `link/sdks/typescript/react/src/context.tsx`, `link/sdks/typescript/react/src/hooks/useMutationState.ts`, `link/sdks/typescript/react/src/types.ts`, and `link/sdks/typescript/react/src/index.ts`
+- [X] T009 [P] Add foundational shared-core coverage in `link/sdks/typescript/client/tests/live-controller.test.mjs`, `link/sdks/typescript/orm/tests/live-descriptor.test.mjs`, and `link/sdks/typescript/react/tests/test-utils.tsx`
 
 **Checkpoint**: Shared live-query controller, descriptor compilation, provider wiring, and base mutation state are ready for story-level API work.
 
@@ -63,15 +63,15 @@
 
 ### Tests for User Story 1
 
-- [X] T010 [P] [US1] Add typed single-query hook and component tests in `link/sdks/typescript/react-old/tests/live-query.test.tsx`
+- [X] T010 [P] [US1] Add typed single-query hook and component tests in `link/sdks/typescript/react/tests/live-query.test.tsx`
 - [X] T011 [P] [US1] Add typed single-query shared-core coverage in `link/sdks/typescript/client/tests/live-query-typed.test.mjs` and `link/sdks/typescript/orm/tests/live-typed-query.test.mjs`
 
 ### Implementation for User Story 1
 
-- [X] T012 [US1] Implement typed `useLiveQuery` loading, reconnect, and refetch behavior in `link/sdks/typescript/react-old/src/hooks/useLiveQuery.ts`
-- [X] T013 [US1] Implement the `LiveQuery` wrapper and typed render-context exports in `link/sdks/typescript/react-old/src/components/LiveQuery.tsx` and `link/sdks/typescript/react-old/src/index.ts`
-- [X] T014 [US1] Add typed mutation action builders and row-key tracking in `link/sdks/typescript/react-old/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react-old/src/hooks/useMutationState.ts`
-- [X] T015 [US1] Create the typed single-query example in `link/sdks/typescript/react-old/example/messages-pane.tsx`
+- [X] T012 [US1] Implement typed `useLiveQuery` loading, reconnect, and refetch behavior in `link/sdks/typescript/react/src/hooks/useLiveQuery.ts`
+- [X] T013 [US1] Implement the `LiveQuery` wrapper and typed render-context exports in `link/sdks/typescript/react/src/components/LiveQuery.tsx` and `link/sdks/typescript/react/src/index.ts`
+- [X] T014 [US1] Add typed mutation action builders and row-key tracking in `link/sdks/typescript/react/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react/src/hooks/useMutationState.ts`
+- [X] T015 [US1] Create the typed single-query example in `link/sdks/typescript/react/example/messages-pane.tsx`
 
 **Checkpoint**: Typed single-query screens are independently usable and form the MVP for the new package.
 
@@ -85,15 +85,15 @@
 
 ### Tests for User Story 2
 
-- [X] T016 [P] [US2] Add raw-SQL hook and component tests in `link/sdks/typescript/react-old/tests/sql-mode.test.tsx`
+- [X] T016 [P] [US2] Add raw-SQL hook and component tests in `link/sdks/typescript/react/tests/sql-mode.test.tsx`
 - [X] T017 [P] [US2] Add raw-SQL descriptor normalization coverage in `link/sdks/typescript/client/tests/live-sql-descriptor.test.mjs`
 
 ### Implementation for User Story 2
 
 - [X] T018 [US2] Implement raw-SQL live query normalization and query-shape validation in `link/sdks/typescript/client/src/live/descriptor.ts` and `link/sdks/typescript/client/src/live/projection.ts`
-- [X] T019 [US2] Implement raw-SQL `useLiveQuery` support in `link/sdks/typescript/react-old/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react-old/src/types.ts`
-- [X] T020 [US2] Add raw-SQL key-strategy and mutation routing behavior in `link/sdks/typescript/react-old/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react-old/src/hooks/useMutationState.ts`
-- [X] T021 [US2] Create the raw-SQL example in `link/sdks/typescript/react-old/example/sql-messages-pane.tsx`
+- [X] T019 [US2] Implement raw-SQL `useLiveQuery` support in `link/sdks/typescript/react/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react/src/types.ts`
+- [X] T020 [US2] Add raw-SQL key-strategy and mutation routing behavior in `link/sdks/typescript/react/src/hooks/useLiveQuery.ts` and `link/sdks/typescript/react/src/hooks/useMutationState.ts`
+- [X] T021 [US2] Create the raw-SQL example in `link/sdks/typescript/react/example/sql-messages-pane.tsx`
 
 **Checkpoint**: SQL-first single-query screens work for the v1 live-compatible subset without breaking the typed single-query API.
 
@@ -107,14 +107,14 @@
 
 ### Tests for User Story 3
 
-- [X] T022 [P] [US3] Add multi-query hook and component tests in `link/sdks/typescript/react-old/tests/live-queries.test.tsx`
+- [X] T022 [P] [US3] Add multi-query hook and component tests in `link/sdks/typescript/react/tests/live-queries.test.tsx`
 - [X] T023 [P] [US3] Add Admin UI multi-query integration coverage in `ui/src/components/live-data/ReactLiveQueryDemo.test.tsx`
 
 ### Implementation for User Story 3
 
-- [X] T024 [US3] Implement `useLiveQueries` controller orchestration in `link/sdks/typescript/react-old/src/hooks/useLiveQueries.ts`
-- [X] T025 [US3] Implement `LiveQueries` and typed multi-query context exports in `link/sdks/typescript/react-old/src/components/LiveQueries.tsx`, `link/sdks/typescript/react-old/src/types.ts`, and `link/sdks/typescript/react-old/src/index.ts`
-- [X] T026 [US3] Add aggregate loading/connection/error state and target-aware mutation routing in `link/sdks/typescript/react-old/src/hooks/useLiveQueries.ts` and `link/sdks/typescript/react-old/src/hooks/useMutationState.ts`
+- [X] T024 [US3] Implement `useLiveQueries` controller orchestration in `link/sdks/typescript/react/src/hooks/useLiveQueries.ts`
+- [X] T025 [US3] Implement `LiveQueries` and typed multi-query context exports in `link/sdks/typescript/react/src/components/LiveQueries.tsx`, `link/sdks/typescript/react/src/types.ts`, and `link/sdks/typescript/react/src/index.ts`
+- [X] T026 [US3] Add aggregate loading/connection/error state and target-aware mutation routing in `link/sdks/typescript/react/src/hooks/useLiveQueries.ts` and `link/sdks/typescript/react/src/hooks/useMutationState.ts`
 - [X] T027 [US3] Create the generic Admin UI live-data pilot in `ui/src/components/live-data/ReactLiveQueryDemo.tsx` and integrate it with `ui/src/pages/LiveQueries.tsx`
 
 **Checkpoint**: Multi-query composition is independently usable for collaborative screens and the Admin UI has a real consumer path.
@@ -129,15 +129,15 @@
 
 ### Tests for User Story 4
 
-- [X] T028 [P] [US4] Add assistant workflow and derived-selection tests in `link/sdks/typescript/react-old/tests/assistant-workflow.test.tsx`
+- [X] T028 [P] [US4] Add assistant workflow and derived-selection tests in `link/sdks/typescript/react/tests/assistant-workflow.test.tsx`
 - [X] T029 [P] [US4] Add Admin UI assistant workflow coverage in `ui/src/components/assistant/AssistantWorkflowDemo.test.tsx`
 
 ### Implementation for User Story 4
 
-- [X] T030 [US4] Implement derived selection support in `link/sdks/typescript/react-old/src/hooks/useLiveSelection.ts`, `link/sdks/typescript/react-old/src/hooks/useLiveQueries.ts`, and `link/sdks/typescript/react-old/src/types.ts`
-- [X] T031 [US4] Export selection helpers and assistant-friendly hook typings in `link/sdks/typescript/react-old/src/index.ts` and `link/sdks/typescript/react-old/src/types.ts`
+- [X] T030 [US4] Implement derived selection support in `link/sdks/typescript/react/src/hooks/useLiveSelection.ts`, `link/sdks/typescript/react/src/hooks/useLiveQueries.ts`, and `link/sdks/typescript/react/src/types.ts`
+- [X] T031 [US4] Export selection helpers and assistant-friendly hook typings in `link/sdks/typescript/react/src/index.ts` and `link/sdks/typescript/react/src/types.ts`
 - [X] T032 [US4] Create the assistant workflow Admin UI demo in `ui/src/components/assistant/AssistantWorkflowDemo.tsx` and surface it from `ui/src/pages/LiveQueries.tsx`
-- [X] T033 [US4] Create the assistant workflow example in `link/sdks/typescript/react-old/example/assistant-workspace.tsx`
+- [X] T033 [US4] Create the assistant workflow example in `link/sdks/typescript/react/example/assistant-workspace.tsx`
 
 **Checkpoint**: Assistant-style multi-query screens are independently usable with low-boilerplate derived state and human-in-the-loop approvals.
 
@@ -170,12 +170,12 @@
 
 **Purpose**: Finish docs, examples, external SDK sync, and focused validation across the package and Admin UI surfaces.
 
-- [X] T041 [P] Update SDK package docs in `link/sdks/typescript/react-old/README.md`, `link/sdks/typescript/client/README.md`, `link/sdks/typescript/orm/README.md`, and `link/sdks/typescript/README.md`
+- [X] T041 [P] Update SDK package docs in `link/sdks/typescript/react/README.md`, `link/sdks/typescript/client/README.md`, `link/sdks/typescript/orm/README.md`, and `link/sdks/typescript/README.md`
 - [X] T042 [P] Update repo SDK docs and quickstart references in `docs/sdk/sdk.md` and `specs/030-react-live-queries/quickstart.md`
 - [X] T043 [P] Sync external SDK docs in `../KalamSite/content/sdk/react-live-query.md`, `../KalamSite/content/sdk/react-assistant-workflow.md`, and `../KalamSite/content/sdk/react-ai-chat-example.md`
-- [X] T044 Run focused package validation for `link/sdks/typescript/client`, `link/sdks/typescript/orm`, and `link/sdks/typescript/react-old`, then fix touched files until the package test/build commands pass and the supported raw-SQL subset behavior is exercised explicitly
+- [X] T044 Run focused package validation for `link/sdks/typescript/client`, `link/sdks/typescript/orm`, and `link/sdks/typescript/react`, then fix touched files until the package test/build commands pass and the supported raw-SQL subset behavior is exercised explicitly
 - [X] T045 Run Admin UI and `examples/react-ai-chat` validation for `ui/package.json` and `examples/react-ai-chat/package.json`, record whether committed updates stay within the 2-second target and whether mutation-state indicators remain correct across the tested create/update/delete flows, then fix touched files until those checks pass
-- [X] T046 [P] Time a docs-first single-query onboarding run from `link/sdks/typescript/react-old/example/`, `examples/react-ai-chat/`, `ui/src/lib/kalam-client.ts`, and `specs/030-react-live-queries/quickstart.md`, and confirm the published examples cover typed single-query, SQL subset, multi-query, assistant workflow, and standalone chat-app validation flows
+- [X] T046 [P] Time a docs-first single-query onboarding run from `link/sdks/typescript/react/example/`, `examples/react-ai-chat/`, `ui/src/lib/kalam-client.ts`, and `specs/030-react-live-queries/quickstart.md`, and confirm the published examples cover typed single-query, SQL subset, multi-query, assistant workflow, and standalone chat-app validation flows
 
 ---
 
@@ -225,15 +225,15 @@
 ```bash
 # After T005-T006 define the shared controller contract, these can run in parallel:
 Task: "Extend Drizzle live descriptor compilation and typed row-key extraction in link/sdks/typescript/orm/src/live.ts, link/sdks/typescript/orm/src/sql.ts, and link/sdks/typescript/orm/src/index.ts"
-Task: "Create shared React provider and mutation plumbing in link/sdks/typescript/react-old/src/context.tsx, link/sdks/typescript/react-old/src/hooks/useMutationState.ts, link/sdks/typescript/react-old/src/types.ts, and link/sdks/typescript/react-old/src/index.ts"
-Task: "Add foundational shared-core coverage in link/sdks/typescript/client/tests/live-controller.test.mjs, link/sdks/typescript/orm/tests/live-descriptor.test.mjs, and link/sdks/typescript/react-old/tests/test-utils.tsx"
+Task: "Create shared React provider and mutation plumbing in link/sdks/typescript/react/src/context.tsx, link/sdks/typescript/react/src/hooks/useMutationState.ts, link/sdks/typescript/react/src/types.ts, and link/sdks/typescript/react/src/index.ts"
+Task: "Add foundational shared-core coverage in link/sdks/typescript/client/tests/live-controller.test.mjs, link/sdks/typescript/orm/tests/live-descriptor.test.mjs, and link/sdks/typescript/react/tests/test-utils.tsx"
 ```
 
 ## Parallel Example: User Story 3
 
 ```bash
 # These test tasks can run together before the multi-query implementation work:
-Task: "Add multi-query hook and component tests in link/sdks/typescript/react-old/tests/live-queries.test.tsx"
+Task: "Add multi-query hook and component tests in link/sdks/typescript/react/tests/live-queries.test.tsx"
 Task: "Add Admin UI multi-query integration coverage in ui/src/components/live-data/ReactLiveQueryDemo.test.tsx"
 ```
 
@@ -249,7 +249,7 @@ Task: "Implement conversation history loading, multi-file message send, typing i
 
 ```bash
 # These documentation tasks can run in parallel before final validation:
-Task: "Update SDK package docs in link/sdks/typescript/react-old/README.md, link/sdks/typescript/client/README.md, link/sdks/typescript/orm/README.md, and link/sdks/typescript/README.md"
+Task: "Update SDK package docs in link/sdks/typescript/react/README.md, link/sdks/typescript/client/README.md, link/sdks/typescript/orm/README.md, and link/sdks/typescript/README.md"
 Task: "Update repo SDK docs and quickstart references in docs/sdk/sdk.md and specs/030-react-live-queries/quickstart.md"
 Task: "Sync external SDK docs in ../KalamSite/content/sdk/react-live-query.md, ../KalamSite/content/sdk/react-assistant-workflow.md, and ../KalamSite/content/sdk/react-ai-chat-example.md"
 ```

@@ -34,7 +34,7 @@ async fn test_column_id_stability_across_schema_changes() {
         ns
     );
 
-    let resp = server.execute_sql_as_user(&create_sql, "user1").await;
+    let resp = server.execute_sql(&create_sql).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to create table: {:?}", resp.error);
 
     // Step 2: Get initial schema and verify column_ids
@@ -57,7 +57,7 @@ async fn test_column_id_stability_across_schema_changes() {
 
     // Step 3: ADD COLUMN - should get next_column_id (4)
     let alter_add = format!(r#"ALTER TABLE {}.products ADD COLUMN stock INT"#, ns);
-    let resp = server.execute_sql_as_user(&alter_add, "user1").await;
+    let resp = server.execute_sql(&alter_add).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to add column: {:?}", resp.error);
 
     let schema_v2 = get_table_schema(&server, &ns, "products").await;
@@ -92,7 +92,7 @@ async fn test_column_id_stability_across_schema_changes() {
 
     // Step 4: DROP COLUMN - removed column's ID should NOT be reused
     let alter_drop = format!(r#"ALTER TABLE {}.products DROP COLUMN stock"#, ns);
-    let resp = server.execute_sql_as_user(&alter_drop, "user1").await;
+    let resp = server.execute_sql(&alter_drop).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to drop column: {:?}", resp.error);
 
     let schema_v3 = get_table_schema(&server, &ns, "products").await;
@@ -106,7 +106,7 @@ async fn test_column_id_stability_across_schema_changes() {
 
     // Step 5: Add another column - should NOT reuse the dropped column's ID
     let alter_add2 = format!(r#"ALTER TABLE {}.products ADD COLUMN category TEXT"#, ns);
-    let resp = server.execute_sql_as_user(&alter_add2, "user1").await;
+    let resp = server.execute_sql(&alter_add2).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to add category: {:?}", resp.error);
 
     let schema_v4 = get_table_schema(&server, &ns, "products").await;
@@ -122,7 +122,7 @@ async fn test_column_id_stability_across_schema_changes() {
 
     // Step 6: RENAME COLUMN - column_id should stay the same
     let alter_rename = format!(r#"ALTER TABLE {}.products RENAME COLUMN name TO product_name"#, ns);
-    let resp = server.execute_sql_as_user(&alter_rename, "user1").await;
+    let resp = server.execute_sql(&alter_rename).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
@@ -170,7 +170,7 @@ async fn test_column_stats_use_column_id() {
         ns
     );
 
-    let resp = server.execute_sql_as_user(&create_sql, "user1").await;
+    let resp = server.execute_sql(&create_sql).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to create table: {:?}", resp.error);
 
     // Get schema and column_ids before flush
@@ -203,7 +203,7 @@ async fn test_column_stats_use_column_id() {
 
     // Step 4: RENAME column and verify data is still accessible
     let alter_rename = format!(r#"ALTER TABLE {}.metrics RENAME COLUMN value TO metric_value"#, ns);
-    let resp = server.execute_sql_as_user(&alter_rename, "user1").await;
+    let resp = server.execute_sql(&alter_rename).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
@@ -287,7 +287,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
         ns
     );
 
-    let resp = server.execute_sql_as_user(&create_sql, "user1").await;
+    let resp = server.execute_sql(&create_sql).await;
     assert_eq!(resp.status, ResponseStatus::Success, "Failed to create table: {:?}", resp.error);
     println!("✅ Created table with columns: id, username, email");
 
@@ -319,7 +319,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
 
     // ========== Step 4: ALTER TABLE ADD COLUMN ==========
     let alter_add1 = format!(r#"ALTER TABLE {}.users ADD COLUMN age INT"#, ns);
-    let resp = server.execute_sql_as_user(&alter_add1, "user1").await;
+    let resp = server.execute_sql(&alter_add1).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
@@ -350,7 +350,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
 
     // ========== Step 6: Add another column ==========
     let alter_add2 = format!(r#"ALTER TABLE {}.users ADD COLUMN status TEXT"#, ns);
-    let resp = server.execute_sql_as_user(&alter_add2, "user1").await;
+    let resp = server.execute_sql(&alter_add2).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,
@@ -361,7 +361,7 @@ async fn test_full_lifecycle_with_alter_and_flush() {
 
     // ========== Step 7: Drop a previous column ==========
     let alter_drop = format!(r#"ALTER TABLE {}.users DROP COLUMN email"#, ns);
-    let resp = server.execute_sql_as_user(&alter_drop, "user1").await;
+    let resp = server.execute_sql(&alter_drop).await;
     assert_eq!(
         resp.status,
         ResponseStatus::Success,

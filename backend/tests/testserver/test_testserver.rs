@@ -12,6 +12,7 @@ mod files;
 mod flush;
 mod manifest;
 mod observability;
+mod security;
 mod sql;
 mod storage;
 mod stress;
