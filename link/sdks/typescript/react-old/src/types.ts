@@ -12,10 +12,16 @@ export interface KalamProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Identifier for a row's primary key. Drizzle/KalamDB primary keys may be
+ * either text (e.g. UUIDs, room IDs) or numeric. Mutation APIs accept both.
+ */
+export type RowKey = string | number;
+
 export interface MutationState {
   inserting: boolean;
-  updating: Set<string>;
-  deleting: Set<string>;
+  updating: Set<RowKey>;
+  deleting: Set<RowKey>;
   error?: Error;
 }
 
@@ -27,21 +33,27 @@ export type InsertAction = {
 };
 
 export type UpdateAction = {
-  <TTable extends Table>(table: TTable, rowKey: string): {
+  <TTable extends Table>(table: TTable, rowKey: RowKey): {
     set: (patch: Partial<InferInsertModel<TTable>>) => Promise<void>;
   };
-  (tableName: string, rowKey: string, patch: Record<string, unknown>): Promise<void>;
+  (tableName: string, rowKey: RowKey, patch: Record<string, unknown>): Promise<void>;
 };
 
 export type RemoveAction = {
-  <TTable extends Table>(table: TTable, rowKey: string): Promise<void>;
-  (tableName: string, rowKey: string): Promise<void>;
+  <TTable extends Table>(table: TTable, rowKey: RowKey): Promise<void>;
+  (tableName: string, rowKey: RowKey): Promise<void>;
 };
 
 export interface MutationActions {
   insert: InsertAction;
   update: UpdateAction;
   remove: RemoveAction;
+  /**
+   * Clear the most recent mutation error from state. In-flight `updating` /
+   * `deleting` tracking is preserved (a failed mutation never affects unrelated
+   * pending ones).
+   */
+  clearError: () => void;
 }
 
 export interface SingleLiveQueryContext<TRow> extends MutationActions {
@@ -94,6 +106,7 @@ export interface DrizzleLiveQueryDefinition<TTable extends Table = Table>
   orderBy?: (table: TTable) => SQLWrapper | SQLWrapper[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LiveQueriesDefinition = Record<string, DrizzleLiveQueryDefinition<any>>;
 
 export type InferLiveQueryRow<TDefinition> =

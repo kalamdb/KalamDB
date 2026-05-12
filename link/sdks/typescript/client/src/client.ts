@@ -895,7 +895,8 @@ export class KalamDBClient {
       })
       .join(', ');
 
-    return this.query(`UPDATE ${tableName} SET ${setClauses} WHERE id = ${rowId}`);
+    const idLiteral = typeof rowId === 'number' ? String(rowId) : `'${String(rowId).replace(/'/g, "''")}'`;
+    return this.query(`UPDATE ${tableName} SET ${setClauses} WHERE id = ${idLiteral}`);
   }
 
   /**

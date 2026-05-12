@@ -1,163 +1,202 @@
 import { useCallback, useMemo, useReducer, type Dispatch } from 'react';
 import type { KalamDBClient } from '@kalamdb/client';
 import { getTableColumns, type Table } from 'drizzle-orm';
-import type { InsertAction, MutationActions, MutationState, RemoveAction, UpdateAction } from '../types.js';
+import type {
+  InsertAction,
+  MutationActions,
+  MutationState,
+  RemoveAction,
+  RowKey,
+  UpdateAction,
+} from '../types.js';
 
 export type MutationAction =
   | { type: 'insert:start' }
   | { type: 'insert:finish' }
-  | { type: 'update:start'; rowKey: string }
-  | { type: 'update:finish'; rowKey: string }
-  | { type: 'delete:start'; rowKey: string }
-  | { type: 'delete:finish'; rowKey: string }
-  | { type: 'error'; error: Error };
+  | { type: 'update:start'; rowKey: RowKey }
+  | { type: 'update:finish'; rowKey: RowKey }
+  | { type: 'delete:start'; rowKey: RowKey }
+  | { type: 'delete:finish'; rowKey: RowKey }
+  | { type: 'error'; error: Error }
+  | { type: 'clear-error' };
 
-const initialMutationState: MutationState = {
-  inserting: false,
-  updating: new Set<string>(),
-  deleting: new Set<string>(),
+interface ReducerState {
+  insertingCount: number;
+  updating: Set<RowKey>;
+  deleting: Set<RowKey>;
+  error?: Error;
+}
+
+const KALAM_TABLE_CONFIG = Symbol.for('kalamdb.orm.tableConfig');
+const DRIZZLE_NAME = Symbol.for('drizzle:Name');
+const DRIZZLE_BASE_NAME = Symbol.for('drizzle:BaseName');
+
+const INITIAL: ReducerState = {
+  insertingCount: 0,
+  updating: new Set<RowKey>(),
+  deleting: new Set<RowKey>(),
 };
 
-const kalamTableConfigSymbol = Symbol.for('kalamdb.orm.tableConfig');
-const drizzleNameSymbol = Symbol.for('drizzle:Name');
-const drizzleBaseNameSymbol = Symbol.for('drizzle:BaseName');
+function toPublic(state: ReducerState): MutationState {
+  return {
+    inserting: state.insertingCount > 0,
+    updating: state.updating,
+    deleting: state.deleting,
+    error: state.error,
+  };
+}
 
 export function useMutationState(): [MutationState, Dispatch<MutationAction>] {
-  return useReducer(mutationReducer, initialMutationState);
+  const [state, dispatch] = useReducer(reducer, INITIAL);
+  const publicState = useMemo(() => toPublic(state), [state]);
+  return [publicState, dispatch];
 }
 
 export function useMutationActions(client: KalamDBClient): MutationState & MutationActions {
-  const [state, dispatch] = useMutationState();
+  const [state, dispatch] = useReducer(reducer, INITIAL);
 
   const runInsert = useCallback(async (target: string | Table, row: Record<string, unknown>) => {
     dispatch({ type: 'insert:start' });
     try {
       await client.insert(resolveMutationTableName(target), normalizeMutationPayload(target, row));
-      dispatch({ type: 'insert:finish' });
     } catch (error) {
       dispatch({ type: 'error', error: toError(error) });
       throw error;
+    } finally {
+      dispatch({ type: 'insert:finish' });
     }
   }, [client]);
 
-  const runUpdate = useCallback(async (target: string | Table, rowKey: string, patch: Record<string, unknown>) => {
+  const runUpdate = useCallback(async (target: string | Table, rowKey: RowKey, patch: Record<string, unknown>) => {
     dispatch({ type: 'update:start', rowKey });
     try {
       await client.update(resolveMutationTableName(target), rowKey, normalizeMutationPayload(target, patch));
-      dispatch({ type: 'update:finish', rowKey });
     } catch (error) {
       dispatch({ type: 'error', error: toError(error) });
       throw error;
+    } finally {
+      dispatch({ type: 'update:finish', rowKey });
     }
   }, [client]);
 
-  const runDelete = useCallback(async (target: string | Table, rowKey: string) => {
+  const runDelete = useCallback(async (target: string | Table, rowKey: RowKey) => {
     dispatch({ type: 'delete:start', rowKey });
     try {
       await client.delete(resolveMutationTableName(target), rowKey);
-      dispatch({ type: 'delete:finish', rowKey });
     } catch (error) {
       dispatch({ type: 'error', error: toError(error) });
       throw error;
+    } finally {
+      dispatch({ type: 'delete:finish', rowKey });
     }
   }, [client]);
 
   const insert = useMemo(() => ((target: string | Table, row?: Record<string, unknown>) => {
-    if (row !== undefined) {
-      return runInsert(target, row);
-    }
-
-    return {
-      values: (value: Record<string, unknown>) => runInsert(target, value),
-    };
+    if (row !== undefined) return runInsert(target, row);
+    return { values: (value: Record<string, unknown>) => runInsert(target, value) };
   }) as InsertAction, [runInsert]);
 
-  const update = useMemo(() => ((target: string | Table, rowKey: string, patch?: Record<string, unknown>) => {
-    if (patch !== undefined) {
-      return runUpdate(target, rowKey, patch);
-    }
-
-    return {
-      set: (value: Record<string, unknown>) => runUpdate(target, rowKey, value),
-    };
+  const update = useMemo(() => ((target: string | Table, rowKey: RowKey, patch?: Record<string, unknown>) => {
+    if (patch !== undefined) return runUpdate(target, rowKey, patch);
+    return { set: (value: Record<string, unknown>) => runUpdate(target, rowKey, value) };
   }) as UpdateAction, [runUpdate]);
 
-  const remove = useMemo(() => ((target: string | Table, rowKey: string) => runDelete(target, rowKey)) as RemoveAction, [runDelete]);
+  const remove = useMemo(
+    () => ((target: string | Table, rowKey: RowKey) => runDelete(target, rowKey)) as RemoveAction,
+    [runDelete],
+  );
+
+  const clearError = useCallback(() => dispatch({ type: 'clear-error' }), []);
+
+  const publicState = useMemo(() => toPublic(state), [state]);
 
   return useMemo(() => ({
-    ...state,
+    ...publicState,
     insert,
     update,
     remove,
-  }), [insert, remove, state, update]);
+    clearError,
+  }), [clearError, insert, publicState, remove, update]);
 }
 
+/**
+ * Resolve the wire-format KalamDB table name from a mutation target.
+ * Prefers `@kalamdb/orm`'s `qualifiedName` (set by `kTable.user(...)`) so
+ * `schema.table` is preserved; falls back to Drizzle's name symbols for raw
+ * `pgTable` usage.
+ */
 export function resolveMutationTableName(target: string | Table): string {
-  if (typeof target === 'string') {
-    return target;
-  }
+  if (typeof target === 'string') return target;
 
-  const tableObject = target as unknown as Record<PropertyKey, unknown>;
-  const kalamConfig = tableObject[kalamTableConfigSymbol] as { qualifiedName?: string } | undefined;
-  if (kalamConfig?.qualifiedName) {
-    return kalamConfig.qualifiedName;
-  }
+  const obj = target as unknown as Record<PropertyKey, unknown>;
+  const kalam = obj[KALAM_TABLE_CONFIG] as { qualifiedName?: string } | undefined;
+  if (kalam?.qualifiedName) return kalam.qualifiedName;
 
-  const drizzleName = tableObject[drizzleNameSymbol] ?? tableObject[drizzleBaseNameSymbol];
-  if (typeof drizzleName === 'string' && drizzleName.length > 0) {
-    return drizzleName;
-  }
+  const drizzle = obj[DRIZZLE_NAME] ?? obj[DRIZZLE_BASE_NAME];
+  if (typeof drizzle === 'string' && drizzle.length > 0) return drizzle;
 
   throw new Error('Unable to resolve KalamDB table name from the provided mutation target.');
 }
 
-function normalizeMutationPayload(target: string | Table, payload: Record<string, unknown>): Record<string, unknown> {
-  if (typeof target === 'string') {
-    return payload;
-  }
+/**
+ * Translate a Drizzle-shaped payload to the wire format:
+ * - Maps camelCase JS keys → snake_case DB column names via `getTableColumns`.
+ * - Applies each column's `mapToDriverValue` encoder (e.g. custom types,
+ *   JSON serializers) for non-null values. Mirrors Drizzle's own encoder
+ *   pipeline so user-defined `customType` round-trips correctly.
+ */
+function normalizeMutationPayload(
+  target: string | Table,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof target === 'string') return payload;
 
-  const columns = getTableColumns(target) as Record<string, { name?: string }>;
+  const columns = getTableColumns(target) as Record<
+    string,
+    { name?: string; mapToDriverValue?: (value: unknown) => unknown }
+  >;
   return Object.fromEntries(
     Object.entries(payload).map(([key, value]) => {
-      const columnName = columns[key]?.name;
-      return [columnName ?? key, value];
+      const column = columns[key];
+      const columnName = column?.name ?? key;
+      const encoded = value != null && typeof column?.mapToDriverValue === 'function'
+        ? column.mapToDriverValue(value)
+        : value;
+      return [columnName, encoded];
     }),
   );
 }
 
-function mutationReducer(state: MutationState, action: MutationAction): MutationState {
+function reducer(state: ReducerState, action: MutationAction): ReducerState {
   switch (action.type) {
     case 'insert:start':
-      return { ...state, inserting: true, error: undefined };
+      return { ...state, insertingCount: state.insertingCount + 1, error: undefined };
     case 'insert:finish':
-      return { ...state, inserting: false };
+      return { ...state, insertingCount: Math.max(0, state.insertingCount - 1) };
     case 'update:start':
-      return { ...state, updating: addKey(state.updating, action.rowKey), error: undefined };
+      return { ...state, updating: withKey(state.updating, action.rowKey), error: undefined };
     case 'update:finish':
-      return { ...state, updating: removeKey(state.updating, action.rowKey) };
+      return { ...state, updating: withoutKey(state.updating, action.rowKey) };
     case 'delete:start':
-      return { ...state, deleting: addKey(state.deleting, action.rowKey), error: undefined };
+      return { ...state, deleting: withKey(state.deleting, action.rowKey), error: undefined };
     case 'delete:finish':
-      return { ...state, deleting: removeKey(state.deleting, action.rowKey) };
+      return { ...state, deleting: withoutKey(state.deleting, action.rowKey) };
     case 'error':
-      return {
-        inserting: false,
-        updating: new Set<string>(),
-        deleting: new Set<string>(),
-        error: action.error,
-      };
+      return { ...state, error: action.error };
+    case 'clear-error':
+      return state.error ? { ...state, error: undefined } : state;
   }
 }
 
-function addKey(values: Set<string>, rowKey: string): Set<string> {
+function withKey(values: Set<RowKey>, key: RowKey): Set<RowKey> {
   const next = new Set(values);
-  next.add(rowKey);
+  next.add(key);
   return next;
 }
 
-function removeKey(values: Set<string>, rowKey: string): Set<string> {
+function withoutKey(values: Set<RowKey>, key: RowKey): Set<RowKey> {
   const next = new Set(values);
-  next.delete(rowKey);
+  next.delete(key);
   return next;
 }
 

@@ -4,7 +4,6 @@ import type {
   LiveQueryController,
   LiveQueryControllerSnapshot,
   LiveQueryDescriptor,
-  RowData,
 } from '@kalamdb/client';
 import type { Table } from 'drizzle-orm';
 import { useKalamClient } from '../context.js';
@@ -15,16 +14,17 @@ import type {
   SingleLiveQueryContext,
   UseLiveQueriesOptions,
 } from '../types.js';
+import { liveQueriesSignature } from '../internal/signature.js';
 import { useMutationActions } from './useMutationState.js';
 
-type OrmLiveCompiler = typeof import('@kalamdb/orm');
+type OrmModule = typeof import('@kalamdb/orm');
 type SnapshotMap = Record<string, LiveQueryControllerSnapshot<unknown>>;
 
-const idleSnapshot: LiveQueryControllerSnapshot<unknown> = {
+const initialSnapshot: LiveQueryControllerSnapshot<unknown> = {
   rows: [],
   loading: true,
   connected: false,
-  status: 'idle',
+  status: 'loading',
 };
 
 export function useLiveQueries<TQueries extends LiveQueriesDefinition>(
@@ -45,80 +45,84 @@ export function useLiveQueries<TQueries extends LiveQueriesDefinition, TSelected
   useEffect(() => {
     let cancelled = false;
     const entries = Object.entries(options.queries);
+    // Install new controller map BEFORE awaiting anything so a racing cleanup
+    // (StrictMode rapid mount/unmount) tears down the right generation.
+    const previousControllers = controllersRef.current;
+    const controllers = new Map<string, LiveQueryController<unknown>>();
+    controllersRef.current = controllers;
 
     setSnapshots((current) => initialSnapshots(options.queries, current));
 
     async function start() {
-      await disposeControllers(controllersRef.current);
-      const controllers = new Map<string, LiveQueryController<unknown>>();
-      controllersRef.current = controllers;
+      try { await disposeControllers(previousControllers); } catch { /* swallow */ }
 
+      let orm: OrmModule;
       try {
-        const orm = await loadOrm();
+        orm = await loadOrm();
+      } catch (error) {
+        if (cancelled) return;
+        markAllFailed(setSnapshots, entries, toError(error));
+        return;
+      }
 
-        await Promise.all(entries.map(async ([name, definition]) => {
+      // Each query gets its own try/catch so one failure does not erase the
+      // snapshots of its siblings.
+      await Promise.all(entries.map(async ([name, definition]) => {
+        try {
           const descriptor = compileDescriptor(orm, definition);
-          if (cancelled) {
-            return;
-          }
+          if (cancelled) return;
 
           const controller = createController(client, descriptor);
+          if (cancelled) { await controller.dispose(); return; }
           controllers.set(name, controller);
-          controller.subscribe((snapshot) => {
-            if (!cancelled) {
-              setSnapshots((current) => ({ ...current, [name]: snapshot }));
-            }
+
+          const unsubscribe = controller.subscribe((snapshot) => {
+            if (cancelled) return;
+            setSnapshots((current) => ({ ...current, [name]: snapshot }));
           });
-          await controller.start();
-        }));
-      } catch (error) {
-        if (!cancelled) {
-          const failed = toError(error);
-          setSnapshots((current) => Object.fromEntries(
-            entries.map(([name]) => [
-              name,
-              {
-                ...(current[name] ?? idleSnapshot),
-                loading: false,
-                connected: false,
-                status: 'error',
-                error: failed,
-              } satisfies LiveQueryControllerSnapshot<unknown>,
-            ]),
-          ));
+
+          try {
+            await controller.start();
+          } catch (startError) {
+            try { await unsubscribe(); } catch { /* swallow */ }
+            throw startError;
+          }
+        } catch (perQueryError) {
+          if (cancelled) return;
+          markOneFailed(setSnapshots, name, toError(perQueryError));
         }
-      }
+      }));
     }
 
     void start();
 
     return () => {
       cancelled = true;
-      const controllers = controllersRef.current;
+      const toDispose = controllersRef.current;
       controllersRef.current = new Map();
-      void disposeControllers(controllers);
+      void disposeControllers(toDispose);
     };
   }, [client, querySignature]);
 
   const refetch = useCallback(async () => {
-    await Promise.all([...controllersRef.current.values()].map((controller) => controller.refetch()));
+    await Promise.all([...controllersRef.current.values()].map((c) => c.refetch()));
   }, []);
 
   const context = useMemo(() => {
     const entries = Object.entries(options.queries);
     const queryContexts = Object.fromEntries(entries.map(([name]) => [
       name,
-      singleContext(snapshots[name] ?? idleSnapshot, mutation, refetch),
+      buildSingleContext(snapshots[name] ?? initialSnapshot, mutation, refetch),
     ]));
 
-    const querySnapshots = entries.map(([name]) => snapshots[name] ?? idleSnapshot);
-    const aggregateError = mutation.error ?? querySnapshots.find((snapshot) => snapshot.error)?.error;
+    const querySnapshots = entries.map(([name]) => snapshots[name] ?? initialSnapshot);
+    const aggregateError = mutation.error ?? querySnapshots.find((s) => s.error)?.error;
 
     return {
       ...queryContexts,
       state: {
-        loading: querySnapshots.length > 0 && querySnapshots.some((snapshot) => snapshot.loading),
-        connected: querySnapshots.length > 0 && querySnapshots.every((snapshot) => snapshot.connected),
+        loading: querySnapshots.length > 0 && querySnapshots.some((s) => s.loading),
+        connected: querySnapshots.length > 0 && querySnapshots.every((s) => s.connected),
         inserting: mutation.inserting,
         updating: mutation.updating,
         deleting: mutation.deleting,
@@ -127,14 +131,15 @@ export function useLiveQueries<TQueries extends LiveQueriesDefinition, TSelected
       insert: mutation.insert,
       update: mutation.update,
       remove: mutation.remove,
+      clearError: mutation.clearError,
       refetch,
     } as MultiLiveQueryContext<TQueries>;
-  }, [mutation, options.queries, refetch, snapshots]);
+  }, [mutation, querySignature, refetch, snapshots]);
 
   return options.select ? options.select(context) : context;
 }
 
-function singleContext(
+function buildSingleContext(
   snapshot: LiveQueryControllerSnapshot<unknown>,
   mutation: ReturnType<typeof useMutationActions>,
   refetch: () => Promise<void>,
@@ -151,6 +156,7 @@ function singleContext(
     insert: mutation.insert,
     update: mutation.update,
     remove: mutation.remove,
+    clearError: mutation.clearError,
     refetch,
   };
 }
@@ -159,7 +165,7 @@ function initialSnapshots(queries: LiveQueriesDefinition, current: SnapshotMap =
   return Object.fromEntries(Object.keys(queries).map((name) => [
     name,
     {
-      ...(current[name] ?? idleSnapshot),
+      ...(current[name] ?? initialSnapshot),
       loading: true,
       connected: false,
       status: current[name]?.rows.length ? 'reconnecting' : 'loading',
@@ -168,13 +174,49 @@ function initialSnapshots(queries: LiveQueriesDefinition, current: SnapshotMap =
   ]));
 }
 
+function markOneFailed(
+  setSnapshots: React.Dispatch<React.SetStateAction<SnapshotMap>>,
+  name: string,
+  error: Error,
+): void {
+  setSnapshots((current) => ({
+    ...current,
+    [name]: {
+      ...(current[name] ?? initialSnapshot),
+      loading: false,
+      connected: false,
+      status: 'error',
+      error,
+    } satisfies LiveQueryControllerSnapshot<unknown>,
+  }));
+}
+
+function markAllFailed(
+  setSnapshots: React.Dispatch<React.SetStateAction<SnapshotMap>>,
+  entries: Array<[string, unknown]>,
+  error: Error,
+): void {
+  setSnapshots((current) => Object.fromEntries(
+    entries.map(([name]) => [
+      name,
+      {
+        ...(current[name] ?? initialSnapshot),
+        loading: false,
+        connected: false,
+        status: 'error',
+        error,
+      } satisfies LiveQueryControllerSnapshot<unknown>,
+    ]),
+  ));
+}
+
 async function disposeControllers(controllers: Map<string, LiveQueryController<unknown>>): Promise<void> {
-  await Promise.all([...controllers.values()].map((controller) => controller.dispose()));
+  await Promise.all([...controllers.values()].map((c) => c.dispose().catch(() => undefined)));
   controllers.clear();
 }
 
 function compileDescriptor(
-  orm: OrmLiveCompiler,
+  orm: OrmModule,
   definition: DrizzleLiveQueryDefinition<Table>,
 ): LiveQueryDescriptor<unknown> {
   return orm.compileLiveTableDescriptor(definition.table, {
@@ -192,41 +234,15 @@ function createController(
   if ('createLiveQueryController' in client && typeof client.createLiveQueryController === 'function') {
     return client.createLiveQueryController(descriptor) as LiveQueryController<unknown>;
   }
-
   throw new Error('@kalamdb/client is missing createLiveQueryController(). Rebuild or update @kalamdb/client.');
 }
 
-async function loadOrm(): Promise<OrmLiveCompiler> {
+async function loadOrm(): Promise<OrmModule> {
   try {
     return await import('@kalamdb/orm');
   } catch (error) {
     throw new Error(`Typed live queries require @kalamdb/orm and drizzle-orm to be installed. ${String(error)}`);
   }
-}
-
-function liveQueriesSignature(queries: LiveQueriesDefinition, deps: readonly unknown[] | undefined): string {
-  return Object.entries(queries).map(([name, definition]) => [
-    name,
-    tableName(definition.table),
-    definition.limit ?? '',
-    getKeyName(definition.getKey),
-    liveDepsKey(definition.deps),
-  ].join(':')).concat(liveDepsKey(deps)).join('|');
-}
-
-function tableName(table: Table): string {
-  const tableObject = table as unknown as Record<PropertyKey, unknown>;
-  const kalamConfig = tableObject[Symbol.for('kalamdb.orm.tableConfig')] as { qualifiedName?: string } | undefined;
-  const drizzleName = tableObject[Symbol.for('drizzle:Name')] ?? tableObject[Symbol.for('drizzle:BaseName')];
-  return kalamConfig?.qualifiedName ?? (typeof drizzleName === 'string' ? drizzleName : String(table));
-}
-
-function getKeyName(getKey: unknown): string {
-  return Array.isArray(getKey) ? getKey.join(',') : String(getKey ?? '');
-}
-
-function liveDepsKey(deps: readonly unknown[] | undefined): string {
-  return deps?.map((value) => String(value)).join('\u001f') ?? '';
 }
 
 function toError(error: unknown): Error {
