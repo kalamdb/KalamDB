@@ -5012,9 +5012,6 @@ cli/tests/smoke/storage/smoke_test_storage_templates.rs:463:fn assert_table_stor
 cli/tests/smoke/storage/smoke_test_storage_templates.rs:493:fn assert_manifest_path_contains(namespace: &str, table_name: &str, expected_subpath: &str) {
 cli/tests/smoke/storage/smoke_test_storage_templates.rs:538:fn query_rows(sql: &str) -> Vec<JsonValue> {
 cli/tests/smoke/storage/smoke_test_storage_templates.rs:585:fn rows_as_debug_string(rows: &[JsonValue]) -> String {
-backend/tests/misc/system/test_user_cleanup_job.rs:14:async fn test_user_cleanup_job_scheduled_on_drop() -> Result<()> {
-backend/tests/misc/system/test_user_cleanup_job.rs:72:async fn test_user_cleanup_job_removes_data() -> Result<()> {
-backend/tests/misc/system/test_user_cleanup_job.rs:139:async fn test_user_cleanup_job_cascade_parameter() -> Result<()> {
 backend/crates/kalamdb-system/src/providers/jobs/jobs_provider.rs:51:    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 backend/crates/kalamdb-system/src/providers/jobs/jobs_provider.rs:64:    pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
 backend/crates/kalamdb-system/src/providers/jobs/jobs_provider.rs:77:    pub fn create_job(&self, job: Job) -> Result<String, SystemError> {
@@ -5481,9 +5478,6 @@ backend/crates/kalamdb-commons/src/models/ids/connection_id.rs:22:    pub fn fro
 backend/crates/kalamdb-commons/src/models/ids/connection_id.rs:31:    pub fn as_str(&self) -> &str {
 backend/crates/kalamdb-commons/src/models/ids/connection_id.rs:37:    pub fn as_bytes(&self) -> &[u8] {
 backend/crates/kalamdb-commons/src/models/ids/connection_id.rs:43:    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-backend/tests/misc/system/test_topic_cleanup_job.rs:15:async fn test_topic_cleanup_job_scheduled_on_drop() -> Result<()> {
-backend/tests/misc/system/test_topic_cleanup_job.rs:62:async fn test_topic_cleanup_job_removes_offsets() -> Result<()> {
-backend/tests/misc/system/test_topic_cleanup_job.rs:119:async fn test_topic_cleanup_job_idempotent() -> Result<()> {
 backend/crates/kalamdb-commons/src/models/ids/table_id.rs:30:    pub fn new(namespace_id: NamespaceId, table_name: TableName) -> Self {
 backend/crates/kalamdb-commons/src/models/ids/table_id.rs:39:    pub fn namespace_id(&self) -> &NamespaceId {
 backend/crates/kalamdb-commons/src/models/ids/table_id.rs:45:    pub fn table_name(&self) -> &TableName {
@@ -8154,16 +8148,6 @@ backend/crates/kalamdb-api/src/ws/events/subscription.rs:24:pub async fn handle_
 backend/crates/kalamdb-api/src/ui/embedded.rs:29:pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
 backend/crates/kalamdb-api/src/ui/embedded.rs:76:pub fn configure_embedded_ui(cfg: &mut web::ServiceConfig, runtime_config: UiRuntimeConfig) {
 backend/crates/kalamdb-api/src/ui/embedded.rs:90:pub fn is_ui_embedded() -> bool {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:44:    fn validate(&self) -> Result<(), KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:61:    pub fn new() -> Self {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:70:    fn job_type(&self) -> JobType {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:74:    fn name(&self) -> &'static str {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:78:    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:135:    async fn cancel(&self, ctx: &JobContext<Self::Params>) -> Result<(), KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:143:    fn default() -> Self {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:154:    fn test_executor_properties() {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:161:    fn test_params_validation_success() {
-backend/crates/kalamdb-jobs/src/executors/retention.rs:171:    fn test_params_validation_zero_hours() {
 backend/crates/kalamdb-core/src/sql/executor/helpers/ast_parsing.rs:15:pub fn expr_to_scalar(expr: &Expr) -> Result<ScalarValue, &'static str> {
 backend/crates/kalamdb-core/src/sql/executor/helpers/ast_parsing.rs:41:pub fn sql_value_to_scalar(value: &Value) -> Result<ScalarValue, &'static str> {
 backend/crates/kalamdb-core/src/sql/executor/helpers/ast_parsing.rs:62:pub fn strip_nested_expr(expr: &Expr) -> &Expr {
@@ -8267,13 +8251,6 @@ backend/crates/kalamdb-handlers/crates/ddl/src/storage/show.rs:63:    fn init_ap
 backend/crates/kalamdb-handlers/crates/ddl/src/storage/show.rs:67:    fn create_test_context() -> ExecutionContext {
 backend/crates/kalamdb-handlers/crates/ddl/src/storage/show.rs:72:    async fn test_show_storages_authorization() {
 backend/crates/kalamdb-handlers/crates/ddl/src/storage/show.rs:85:    async fn test_show_storages_success() {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:42:    fn validate(&self) -> Result<(), KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:57:    pub fn new() -> Self {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:66:    fn job_type(&self) -> JobType {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:70:    fn name(&self) -> &'static str {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:74:    async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:114:    fn default() -> Self {
-backend/crates/kalamdb-jobs/src/executors/user_cleanup.rs:124:    fn test_executor_properties() {
 backend/crates/kalamdb-core/src/sql/executor/handlers/mod.rs:84:    fn execute<'a>(
 backend/crates/kalamdb-core/src/sql/executor/handlers/mod.rs:103:    fn check_authorization<'a>(
 backend/crates/kalamdb-handlers/crates/ddl/src/namespace/drop.rs:23:    pub fn new(app_context: Arc<AppContext>) -> Self {
@@ -9095,17 +9072,6 @@ backend/crates/kalamdb-jobs/src/executors/stream_eviction.rs:421:    async fn te
 backend/crates/kalamdb-jobs/src/executors/stream_eviction.rs:478:    async fn test_pre_validate_skips_when_no_expired_rows() {
 backend/crates/kalamdb-jobs/src/executors/stream_eviction.rs:504:    async fn test_pre_validate_detects_expired_rows() {
 backend/crates/kalamdb-core/src/sql/context/execution_result.rs:40:    pub fn affected_rows(&self) -> usize {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:41:    fn validate(&self) -> Result<(), KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:56:    pub fn new() -> Self {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:65:    fn job_type(&self) -> JobType {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:69:    fn name(&self) -> &'static str {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:73:    async fn execute(&self, _ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:80:    async fn execute_leader(
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:149:    async fn cancel(&self, ctx: &JobContext<Self::Params>) -> Result<(), KalamDbError> {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:158:    fn default() -> Self {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:168:    fn test_topic_cleanup_params_validation() {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:185:    fn test_topic_cleanup_params_serialization() {
-backend/crates/kalamdb-jobs/src/executors/topic_cleanup.rs:199:    fn test_executor_properties() {
 backend/crates/kalamdb-views/src/transactions.rs:38:fn transactions_schema() -> SchemaRef {
 backend/crates/kalamdb-views/src/transactions.rs:55:    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 backend/crates/kalamdb-views/src/transactions.rs:63:    pub fn new() -> Self {

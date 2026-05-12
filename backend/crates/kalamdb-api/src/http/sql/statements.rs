@@ -185,9 +185,10 @@ pub(super) fn split_and_prepare_statements(
     }
 
     let raw_statements = kalamdb_sql::split_statements(sql).map_err(|err| {
+        let message = err.to_string();
         HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::BatchParseError,
-            &format!("Failed to parse SQL batch: {}", err),
+            &message,
             took_ms(start_time),
             exec_ctx.is_admin(),
         ))

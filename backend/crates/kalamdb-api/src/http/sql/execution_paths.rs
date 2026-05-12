@@ -170,7 +170,8 @@ fn build_sql_error_response(
 
 fn build_kalamdb_error_response(err: &KalamDbError, took: f64, is_admin: bool) -> HttpResponse {
     let (status, code, preserve_message) = classify_sql_error(err);
-    build_sql_error_response(status, code, &err.to_string(), None, took, is_admin, preserve_message)
+    let message = err.user_message();
+    build_sql_error_response(status, code, message.as_ref(), None, took, is_admin, preserve_message)
 }
 
 fn build_statement_error_response(
@@ -182,10 +183,11 @@ fn build_statement_error_response(
 ) -> HttpResponse {
     if let Some(kalamdb_err) = err.downcast_ref::<KalamDbError>() {
         let (status, code, preserve_message) = classify_sql_error(kalamdb_err);
+        let message = kalamdb_err.statement_failure_message(statement_index);
         return build_sql_error_response(
             status,
             code,
-            &format!("Statement {} failed: {}", statement_index, kalamdb_err),
+            &message,
             Some(sql),
             took,
             is_admin,
@@ -195,10 +197,11 @@ fn build_statement_error_response(
 
     let err_msg = err.to_string();
     if is_leader_routing_error_message(&err_msg.to_lowercase()) {
+        let message = format!("Statement {statement_index} failed: {err_msg}");
         return build_sql_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::NotLeader,
-            &format!("Statement {} failed: {}", statement_index, err_msg),
+            &message,
             Some(sql),
             took,
             is_admin,
@@ -206,10 +209,11 @@ fn build_statement_error_response(
         );
     }
 
+    let message = format!("Statement {statement_index} failed: {err_msg}");
     build_sql_error_response(
         StatusCode::BAD_REQUEST,
         ErrorCode::SqlExecutionError,
-        &format!("Statement {} failed: {}", statement_index, err),
+        &message,
         Some(sql),
         took,
         is_admin,
@@ -370,9 +374,10 @@ pub(super) async fn execute_file_upload_path(
             ));
         },
         Err(err) => {
+            let message = err.to_string();
             return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                 ErrorCode::InvalidSql,
-                &format!("Failed to parse SQL statement after FILE() substitution: {}", err),
+                &message,
                 took_ms(start_time),
                 exec_ctx.is_admin(),
             ));

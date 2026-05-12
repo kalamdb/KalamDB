@@ -4,18 +4,12 @@
   "private": true,
   "description": "Compact chat example showing user-table inserts, topic fan-out, and a runConsumer worker",
   "scripts": {
-    "presetup": "node scripts/ensure-sdk.mjs",
-    "pregenerate:schema": "node scripts/ensure-sdk.mjs",
     "generate:schema": "node scripts/generate-schema.mjs",
-    "predev": "node scripts/ensure-sdk.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/ensure-sdk.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "setup": "node setup.mjs",
-    "preagent": "node scripts/ensure-sdk.mjs",
     "agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
-    "pretest": "node scripts/ensure-sdk.mjs",
     "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts && playwright test"
   },
   "dependencies": {

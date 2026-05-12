@@ -67,7 +67,8 @@ pub use models::{
     ChangeEvent, ClusterHealthResponse, ClusterNodeHealth, ConnectionOptions, ErrorDetail,
     HealthCheckResponse, HttpVersion, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest,
     QueryResponse, QueryResult, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
-    SetupUserInfo, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
+    SetupUserInfo, SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
+    SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
 };
 #[cfg(feature = "tokio-runtime")]
 pub use query::AuthRefreshCallback;

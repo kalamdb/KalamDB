@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::UserId, Role};
+use kalamdb_commons::{models::UserId, Role, SqlSubscriptionRow};
 use kalamdb_core::sql::{
     context::ExecutionContext,
     executor::{PreparedExecutionStatement, ScalarValue, SqlExecutor},
@@ -60,18 +60,12 @@ pub fn execution_result_to_query_result(
             subscription_id,
             channel,
             select_query,
-        } => {
-            let sub_data = serde_json::json!({
-                "status": "active",
-                "ws_url": channel,
-                "subscription": {
-                    "id": subscription_id,
-                    "sql": select_query
-                },
-                "message": "WebSocket subscription created. Connect to ws_url to receive updates."
-            });
-            Ok(QueryResult::subscription(sub_data))
-        },
+        } => Ok(QueryResult::subscription(SqlSubscriptionRow::new(
+            subscription_id,
+            channel,
+            select_query,
+            "Subscription created. Connect to ws_url to receive updates.",
+        ))),
         ExecutionResult::JobKilled { job_id, status } => {
             Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
         },

@@ -199,7 +199,7 @@ pub async fn handle_subscribe(
                 kalamdb_live::error::LiveError::InvalidOperation(_) => WsErrorCode::Unsupported,
                 _ => WsErrorCode::SubscriptionFailed,
             };
-            let message = e.to_string();
+            let message = e.user_message();
             // Use warn for "expected" client errors (table gone, bad SQL) to avoid
             // flooding logs during benchmark teardown; keep error for server-side issues.
             match &code {
@@ -216,8 +216,14 @@ pub async fn handle_subscribe(
                     );
                 },
             }
-            let _ =
-                send_error(session, &subscription_id, code, &message, compression_enabled).await;
+            let _ = send_error(
+                session,
+                &subscription_id,
+                code,
+                message.as_ref(),
+                compression_enabled,
+            )
+            .await;
             Ok(())
         },
     }

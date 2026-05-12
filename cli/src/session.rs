@@ -24,8 +24,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, AuthRefreshCallback, ClusterHealthResponse, ClusterNodeHealth, ConnectionOptions,
-    KalamLinkClient, KalamLinkError, KalamLinkTimeouts, SeqId, SubscriptionConfig,
-    SubscriptionOptions, TimestampFormatter, UploadProgress, UploadProgressCallback,
+    KalamLinkClient, KalamLinkError, KalamLinkTimeouts, SeqId, SqlSubscriptionDescriptor,
+    SqlSubscriptionStatus, SubscriptionConfig, SubscriptionOptions, TimestampFormatter,
+    UploadProgress, UploadProgressCallback,
 };
 use rustyline::{
     completion::Completer, error::ReadlineError, highlight::Highlighter, hint::Hinter,
@@ -948,9 +949,19 @@ impl CLISession {
             Some(m) => m,
             None => return Ok(None),
         };
-        let status = row_map.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let status = row_map
+            .get("status")
+            .ok_or_else(|| CLIError::ParseError("Missing subscription status in server response".into()))
+            .and_then(|value| {
+                serde_json::from_value::<SqlSubscriptionStatus>(value.clone().into_inner())
+                    .map_err(|_| {
+                        CLIError::ParseError(
+                            "Subscription status has an invalid format".into(),
+                        )
+                    })
+            })?;
 
-        if status != "subscription_required" {
+        if status != SqlSubscriptionStatus::SubscriptionRequired {
             return Ok(None);
         }
 
@@ -962,47 +973,25 @@ impl CLISession {
             CLIError::ParseError("Missing subscription metadata in server response".into())
         })?;
 
-        let subscription_obj = subscription_value.as_object().ok_or_else(|| {
-            CLIError::ParseError("Subscription metadata must be a JSON object".into())
-        })?;
+        let subscription = serde_json::from_value::<SqlSubscriptionDescriptor>(
+            subscription_value.clone().into_inner(),
+        )
+        .map_err(|_| CLIError::ParseError("Subscription metadata must be a JSON object".into()))?;
 
-        let sql = subscription_obj.get("sql").and_then(|v| v.as_str()).ok_or_else(|| {
-            CLIError::ParseError("Subscription metadata does not include SQL query".into())
-        })?;
+        if subscription.sql.is_empty() {
+            return Err(CLIError::ParseError(
+                "Subscription metadata does not include SQL query".into(),
+            ));
+        }
 
-        // Extract or generate subscription ID
-        let sub_id = subscription_obj
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                format!(
-                    "sub_{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-                )
-            });
-
-        let mut config = SubscriptionConfig::new(sub_id, sql);
+        let mut config = SubscriptionConfig::new(subscription.id, subscription.sql);
 
         if let Some(url) = ws_url {
             config.ws_url = Some(url);
         }
 
-        if let Some(options_obj) = subscription_obj.get("options").and_then(|v| v.as_object()) {
-            let options = SubscriptionOptions::default();
-            let mut has_options = false;
-
-            if let Some(_last_rows) = options_obj.get("last_rows").and_then(|v| v.as_u64()) {
-                // Deprecated: batch streaming configured server-side
-                has_options = true;
-            }
-
-            if has_options {
-                config.options = Some(options);
-            }
+        if let Some(options) = subscription.options {
+            config.options = Some(options);
         }
 
         Ok(Some((config, message)))
@@ -3582,6 +3571,46 @@ mod tests {
         let options = options.expect("options should parse");
         assert_eq!(options.batch_size, Some(10));
         assert_eq!(options.from, Some(SeqId::from(99)));
+    }
+
+    #[test]
+    fn test_extract_subscription_config_uses_shared_subscription_types() {
+        let response: kalam_client::QueryResponse = serde_json::from_value(json!({
+            "status": "success",
+            "results": [{
+                "schema": [
+                    {"name": "status", "data_type": "Text", "index": 0},
+                    {"name": "ws_url", "data_type": "Text", "index": 1},
+                    {"name": "subscription", "data_type": "Json", "index": 2},
+                    {"name": "message", "data_type": "Text", "index": 3}
+                ],
+                "rows": [[
+                    "subscription_required",
+                    "ws://localhost:8080/v1/ws",
+                    {
+                        "id": "sub-1",
+                        "sql": "SELECT * FROM chat.messages",
+                        "options": {"last_rows": 10}
+                    },
+                    "Subscription created. Connect to ws_url to receive updates."
+                ]],
+                "row_count": 1
+            }]
+        }))
+        .expect("subscription response should deserialize");
+
+        let (config, message) = CLISession::extract_subscription_config(&response)
+            .expect("subscription config extraction should succeed")
+            .expect("subscription response should produce a config");
+
+        assert_eq!(config.id, "sub-1");
+        assert_eq!(config.sql, "SELECT * FROM chat.messages");
+        assert_eq!(config.ws_url.as_deref(), Some("ws://localhost:8080/v1/ws"));
+        assert_eq!(config.options.and_then(|options| options.last_rows), Some(10));
+        assert_eq!(
+            message.as_deref(),
+            Some("Subscription created. Connect to ws_url to receive updates.")
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Error types for the KalamDB live query subsystem.
 
+use std::borrow::Cow;
+
 use kalamdb_sql::parser::query_parser::QueryParseError;
 use thiserror::Error;
 
@@ -34,9 +36,40 @@ pub enum LiveError {
     Other(String),
 }
 
+impl LiveError {
+    pub fn user_message(&self) -> Cow<'_, str> {
+        match self {
+            Self::InvalidSql(message)
+            | Self::InvalidOperation(message)
+            | Self::NotFound(message)
+            | Self::TableNotFound(message)
+            | Self::PermissionDenied(message)
+            | Self::SerializationError(message)
+            | Self::ExecutionError(message)
+            | Self::Other(message) => Cow::Borrowed(message),
+        }
+    }
+}
+
 impl From<QueryParseError> for LiveError {
     fn from(err: QueryParseError) -> Self {
-        LiveError::InvalidSql(err.to_string())
+        LiveError::InvalidSql(err.into_user_message())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_parse_error_conversion_keeps_raw_message() {
+        let live_error =
+            LiveError::from(QueryParseError::InvalidSql("Only SELECT is supported".to_string()));
+
+        match live_error {
+            LiveError::InvalidSql(message) => assert_eq!(message, "Only SELECT is supported"),
+            other => panic!("expected invalid SQL error, got {other:?}"),
+        }
     }
 }
 

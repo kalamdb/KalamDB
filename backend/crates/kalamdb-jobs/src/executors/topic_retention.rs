@@ -27,12 +27,124 @@ use async_trait::async_trait;
 use kalamdb_commons::models::TopicId;
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
 use kalamdb_system::JobType;
+use kalamdb_tables::TopicMessageStore;
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 
 fn default_batch_size() -> usize {
     10000
+}
+
+fn retention_cutoff_time(retention_seconds: Option<i64>) -> Option<i64> {
+    retention_seconds.filter(|seconds| *seconds > 0).map(|seconds| {
+        chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_sub(seconds.saturating_mul(1000))
+    })
+}
+
+fn retention_max_bytes_limit(retention_max_bytes: Option<i64>) -> Option<u64> {
+    retention_max_bytes.filter(|bytes| *bytes > 0).map(|bytes| bytes as u64)
+}
+
+fn retention_partitions(
+    topic_id: &TopicId,
+    topic_partitions: u32,
+    requested_partition: Option<u32>,
+) -> Result<Vec<u32>, KalamDbError> {
+    match requested_partition {
+        Some(partition_id) => {
+            if partition_id >= topic_partitions {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "partition_id {} is outside topic {} partition count {}",
+                    partition_id,
+                    topic_id.as_str(),
+                    topic_partitions
+                )));
+            }
+
+            Ok(vec![partition_id])
+        },
+        None => Ok((0..topic_partitions).collect()),
+    }
+}
+
+fn partition_needs_retention_cleanup(
+    message_store: &TopicMessageStore,
+    topic_id: &TopicId,
+    partition_id: u32,
+    cutoff_time: Option<i64>,
+    max_bytes: Option<u64>,
+) -> Result<bool, KalamDbError> {
+    if let Some(cutoff) = cutoff_time {
+        let expired_entries = message_store
+            .retention_entries_before(topic_id, partition_id, cutoff, 1)
+            .map_err(|err| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan age retention for topic {} partition {}: {}",
+                    topic_id.as_str(),
+                    partition_id,
+                    err
+                ))
+            })?;
+
+        if !expired_entries.is_empty() {
+            return Ok(true);
+        }
+    }
+
+    if let Some(max_bytes) = max_bytes {
+        let retained_bytes = message_store
+            .retained_bytes_for_partition(topic_id, partition_id)
+            .map_err(|err| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to read retained bytes for topic {} partition {}: {}",
+                    topic_id.as_str(),
+                    partition_id,
+                    err
+                ))
+            })?;
+
+        if retained_bytes > max_bytes {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+async fn topic_has_pending_retention_cleanup(
+    app_ctx: &Arc<AppContext>,
+    topic_id: TopicId,
+    partitions: Vec<u32>,
+    cutoff_time: Option<i64>,
+    max_bytes: Option<u64>,
+) -> Result<bool, KalamDbError> {
+    let message_store = app_ctx.topic_publisher().message_store();
+
+    tokio::task::spawn_blocking(move || {
+        for partition_id in partitions {
+            if partition_needs_retention_cleanup(
+                message_store.as_ref(),
+                &topic_id,
+                partition_id,
+                cutoff_time,
+                max_bytes,
+            )? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    })
+    .await
+    .map_err(|err| {
+        KalamDbError::InvalidOperation(format!(
+            "Topic retention pre-validation task panicked: {}",
+            err
+        ))
+    })?
 }
 
 /// Typed parameters for topic retention operations
@@ -98,12 +210,8 @@ impl JobExecutor for TopicRetentionExecutor {
                 },
             };
 
-        let cutoff_time = topic.retention_seconds.filter(|seconds| *seconds > 0).map(|seconds| {
-            chrono::Utc::now()
-                .timestamp_millis()
-                .saturating_sub(seconds.saturating_mul(1000))
-        });
-        let max_bytes = topic.retention_max_bytes.filter(|bytes| *bytes > 0);
+        let cutoff_time = retention_cutoff_time(topic.retention_seconds);
+        let max_bytes = retention_max_bytes_limit(topic.retention_max_bytes);
 
         if cutoff_time.is_none() && max_bytes.is_none() {
             return Ok(JobDecision::Skipped {
@@ -111,20 +219,7 @@ impl JobExecutor for TopicRetentionExecutor {
             });
         }
 
-        let partitions: Vec<u32> = match params.partition_id {
-            Some(partition_id) => {
-                if partition_id >= topic.partitions {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "partition_id {} is outside topic {} partition count {}",
-                        partition_id,
-                        topic_id.as_str(),
-                        topic.partitions
-                    )));
-                }
-                vec![partition_id]
-            },
-            None => (0..topic.partitions).collect(),
-        };
+        let partitions = retention_partitions(topic_id, topic.partitions, params.partition_id)?;
 
         let topic_publisher = ctx.app_ctx.topic_publisher();
         let mut messages_deleted = 0usize;
@@ -132,7 +227,13 @@ impl JobExecutor for TopicRetentionExecutor {
 
         for partition_id in partitions {
             let stats = topic_publisher
-                .enforce_retention(&topic, partition_id, cutoff_time, max_bytes, params.batch_size)
+                .enforce_retention(
+                    &topic,
+                    partition_id,
+                    cutoff_time,
+                    max_bytes.map(|bytes| bytes as i64),
+                    params.batch_size,
+                )
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to enforce retention for topic {} partition {}: {}",
@@ -168,15 +269,24 @@ impl JobExecutor for TopicRetentionExecutor {
             return Ok(false);
         };
 
-        if params.partition_id.is_some_and(|partition_id| partition_id >= topic.partitions) {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "partition_id is outside topic {} partition count {}",
-                params.topic_id.as_str(),
-                topic.partitions
-            )));
+        let cutoff_time = retention_cutoff_time(topic.retention_seconds);
+        let max_bytes = retention_max_bytes_limit(topic.retention_max_bytes);
+
+        if cutoff_time.is_none() && max_bytes.is_none() {
+            return Ok(false);
         }
 
-        Ok(topic.retention_seconds.is_some() || topic.retention_max_bytes.is_some())
+        let partitions =
+            retention_partitions(&params.topic_id, topic.partitions, params.partition_id)?;
+
+        topic_has_pending_retention_cleanup(
+            app_ctx,
+            params.topic_id.clone(),
+            partitions,
+            cutoff_time,
+            max_bytes,
+        )
+        .await
     }
 
     async fn cancel(&self, ctx: &JobContext<Self::Params>) -> Result<(), KalamDbError> {
@@ -337,6 +447,52 @@ mod tests {
 
         let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
         assert!(!should_run);
+    }
+
+    #[tokio::test]
+    async fn test_pre_validate_skips_topic_without_pending_retention_cleanup() {
+        let app_ctx = test_app_context_simple();
+        let executor = TopicRetentionExecutor::new();
+        let (topic, table_id) =
+            setup_topic_with_route(&app_ctx, "within.limit.topic", None, Some(10_000)).await;
+
+        let row = create_test_row(1, "small-payload");
+        app_ctx
+            .topic_publisher()
+            .publish_message(&table_id, TopicOp::Insert, &row, None)
+            .unwrap();
+
+        let params = TopicRetentionParams {
+            topic_id: topic.topic_id.clone(),
+            partition_id: Some(0),
+            batch_size: 100,
+        };
+
+        let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
+        assert!(!should_run);
+    }
+
+    #[tokio::test]
+    async fn test_pre_validate_detects_topic_over_byte_limit() {
+        let app_ctx = test_app_context_simple();
+        let executor = TopicRetentionExecutor::new();
+        let (topic, table_id) =
+            setup_topic_with_route(&app_ctx, "over.limit.topic", None, Some(1)).await;
+
+        let row = create_test_row(1, "small-payload");
+        app_ctx
+            .topic_publisher()
+            .publish_message(&table_id, TopicOp::Insert, &row, None)
+            .unwrap();
+
+        let params = TopicRetentionParams {
+            topic_id: topic.topic_id.clone(),
+            partition_id: Some(0),
+            batch_size: 100,
+        };
+
+        let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
+        assert!(should_run);
     }
 
     #[tokio::test]

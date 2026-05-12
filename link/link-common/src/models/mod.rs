@@ -39,7 +39,8 @@ pub use crate::consumer::models::{AckResponse, ConsumeMessage, ConsumeRequest, C
 // ── Query models ─────────────────────────────────────────────────────────────
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub use crate::query::models::{
-    ErrorDetail, QueryRequest, QueryResponse, QueryResult, ResponseStatus, UploadProgress,
+    ErrorDetail, QueryRequest, QueryResponse, QueryResult, ResponseStatus,
+    SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus, UploadProgress,
 };
 // ── Subscription models ──────────────────────────────────────────────────────
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]

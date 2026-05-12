@@ -108,6 +108,12 @@ function getNodeProcess(): NodeProcessShim | undefined {
   return runtime.process;
 }
 
+function isNodeRuntime(): boolean {
+  return Boolean(getNodeProcess()?.versions?.node);
+}
+
+const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.meta.url).href;
+
 /* ================================================================== */
 /*  KalamDBClient                                                     */
 /* ================================================================== */
@@ -302,6 +308,10 @@ export class KalamDBClient {
     if (this.initialized) return;
 
     try {
+      if (!this.wasmUrl && !isNodeRuntime()) {
+        this.wasmUrl = BUNDLED_BROWSER_WASM_URL;
+      }
+
       await this.ensureNodeRuntimeCompat();
       this.log(LogLevel.Debug, 'init', 'Starting WASM initialization...');
 
@@ -1554,8 +1564,7 @@ export class KalamDBClient {
   }
 
   private async ensureNodeRuntimeCompat(): Promise<void> {
-    const isNodeRuntime = Boolean(getNodeProcess()?.versions?.node);
-    if (!isNodeRuntime) {
+    if (!isNodeRuntime()) {
       return;
     }
 

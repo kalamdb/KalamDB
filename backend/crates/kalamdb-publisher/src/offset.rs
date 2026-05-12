@@ -83,6 +83,20 @@ impl OffsetAllocator {
     pub fn clear(&self) {
         self.counters.clear();
     }
+
+    /// Clear all counters for a single topic.
+    pub fn clear_topic(&self, topic_id: &TopicId) {
+        let keys: Vec<_> = self
+            .counters
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for key in keys {
+            self.counters.remove(&key);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -553,9 +553,10 @@ export interface ClientOptions {
   disableCompression?: boolean;
   /**
    * Explicit URL or buffer for the WASM file.
-  * - Browser: string URL like '/wasm/kalam_client_bg.wasm'
+  * - Browser: string URL when you need to override the SDK's bundled default
    * - Node.js: BufferSource (fs.readFileSync result)
-   * Required in bundled environments where import.meta.url doesn't resolve.
+   * Usually optional. The SDK resolves its packaged WASM automatically in
+   * browsers and reads the bundled file directly in Node.js.
    */
   wasmUrl?: string | BufferSource;
   /**

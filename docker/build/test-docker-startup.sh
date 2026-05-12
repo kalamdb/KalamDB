@@ -28,7 +28,7 @@ fi
 docker run -d \
     --name "$CONTAINER_NAME" \
     -e KALAMDB_SERVER_HOST=0.0.0.0 \
-    -e KALAMDB_ROOT_PASSWORD=testpass123 \
+    -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
     -e KALAMDB_LOG_LEVEL=info \
     -e KALAMDB_JWT_SECRET="$JWT_SECRET" \
     ${DOCKER_PLATFORM:+--platform "$DOCKER_PLATFORM"} \

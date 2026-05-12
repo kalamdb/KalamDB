@@ -89,7 +89,7 @@ main() {
     
     log_info "Starting container..."
     # Set root password for testing
-    ROOT_PASSWORD="testpass123"
+    ROOT_PASSWORD="kalamdb123"
     DOCKER_RUN_ARGS=(
         -d
         --name "$CONTAINER_NAME"

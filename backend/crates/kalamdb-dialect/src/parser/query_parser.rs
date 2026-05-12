@@ -3,6 +3,8 @@
 //! Uses sqlparser-rs for safe SQL parsing to prevent SQL injection attacks
 //! and ensure proper handling of edge cases.
 
+use std::fmt;
+
 use kalamdb_commons::constants::SystemColumnNames;
 use sqlparser::ast::{
     Expr, GroupByExpr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
@@ -19,12 +21,30 @@ pub enum QueryParseError {
     InvalidSql(String),
 }
 
-impl std::fmt::Display for QueryParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl QueryParseError {
+    pub fn user_message(&self) -> &str {
         match self {
-            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            Self::InvalidSql(msg) => write!(f, "Invalid SQL: {}", msg),
+            Self::ParseError(message) | Self::InvalidSql(message) => message,
         }
+    }
+
+    pub fn into_user_message(self) -> String {
+        match self {
+            Self::ParseError(message) | Self::InvalidSql(message) => message,
+        }
+    }
+
+    fn display_label(&self) -> &'static str {
+        match self {
+            Self::ParseError(_) => "Parse error",
+            Self::InvalidSql(_) => "Invalid SQL",
+        }
+    }
+}
+
+impl fmt::Display for QueryParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.display_label(), self.user_message())
     }
 }
 
@@ -47,7 +67,7 @@ impl QueryParser {
     ) -> Result<SubscriptionQueryAnalysis, QueryParseError> {
         let dialect = KalamDbDialect::default();
         let statements = parse_sql_statements(query, &dialect)
-            .map_err(|e| QueryParseError::ParseError(format!("Failed to parse SQL: {}", e)))?;
+            .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Empty SQL statement".to_string()));
@@ -240,7 +260,7 @@ impl QueryParser {
         // Wrap in a dummy SELECT to parse the expression
         let dummy_query = format!("SELECT * FROM dummy WHERE {}", expr_str);
         let statements = parse_sql_statements(&dummy_query, &dialect).map_err(|e| {
-            QueryParseError::ParseError(format!("Failed to parse expression: {}", e))
+            QueryParseError::ParseError(e.to_string())
         })?;
 
         if statements.is_empty() {

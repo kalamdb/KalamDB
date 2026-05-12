@@ -37,11 +37,6 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
   second: '2-digit',
 });
 
-function resolveBrowserWasmUrl(): string {
-  const base = '/wasm/kalam_client_bg.wasm';
-  return import.meta.env.DEV ? `${base}?t=${Date.now()}` : base;
-}
-
 function createAuthedClient() {
   return createClient({
     url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:8080',
@@ -50,7 +45,6 @@ function createAuthedClient() {
       import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
     ),
     disableCompression: true,
-    wasmUrl: resolveBrowserWasmUrl(),
   });
 }
 

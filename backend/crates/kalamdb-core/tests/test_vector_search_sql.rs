@@ -23,8 +23,7 @@ use kalamdb_core::{
 use kalamdb_jobs::{
     executors::{
         BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor, JobRegistry,
-        RestoreExecutor, RetentionExecutor, StreamEvictionExecutor, UserCleanupExecutor,
-        VectorIndexExecutor,
+        RestoreExecutor, StreamEvictionExecutor, VectorIndexExecutor,
     },
     JobsManager,
 };
@@ -45,9 +44,7 @@ fn init_job_manager(app_context: &Arc<AppContext>) {
     let registry = Arc::new(JobRegistry::new());
     registry.register(Arc::new(FlushExecutor::new()));
     registry.register(Arc::new(CleanupExecutor::new()));
-    registry.register(Arc::new(RetentionExecutor::new()));
     registry.register(Arc::new(StreamEvictionExecutor::new()));
-    registry.register(Arc::new(UserCleanupExecutor::new()));
     registry.register(Arc::new(CompactExecutor::new()));
     registry.register(Arc::new(BackupExecutor::new()));
     registry.register(Arc::new(RestoreExecutor::new()));

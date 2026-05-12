@@ -15,6 +15,8 @@ npm run dev
 
 Open the Vite URL, usually `http://127.0.0.1:5176`.
 
+The example is package-driven. It expects the KalamDB SDKs to be present in `node_modules`, either via local filesystem dependencies such as `file:../../link/sdks/typescript/...` or from npm versions like `latest`.
+
 `npm run setup` clears the example topics if they already exist, runs `kalam --file chat-app.sql`, creates the tables and topics, seeds the default conversation, and writes `.env.local` with `VITE_KALAMDB_DEMO_MODE=false`.
 
 If you need non-default credentials, set `KALAMDB_URL`, `KALAMDB_USER`, and `KALAMDB_PASSWORD` before running the script.
@@ -45,4 +47,6 @@ npm run build
 npm test
 ```
 
-The package scripts build the local TypeScript SDKs first if their `dist` folders are missing.
+## Windows Notes
+
+The example scripts are Node-based and avoid bash-only helpers, so `npm install`, `npm run setup`, `npm run agent`, `npm run dev`, `npm run build`, and `npm test` work on Windows as long as Node.js and npm are installed.

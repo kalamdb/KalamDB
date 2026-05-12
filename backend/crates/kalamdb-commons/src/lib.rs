@@ -72,6 +72,7 @@ extern crate self as kalamdb_commons;
 // Re-export commonly used types at crate root
 pub use api_models::{
     ClusterHealthResponse, ClusterNodeHealth, HealthCheckResponse, ResponseStatus,
+    SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
 };
 pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
 #[cfg(feature = "conversions")]
