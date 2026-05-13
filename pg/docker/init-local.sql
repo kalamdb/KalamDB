@@ -10,5 +10,5 @@ CREATE SERVER IF NOT EXISTS kalam_server
 	FOREIGN DATA WRAPPER pg_kalam
 	OPTIONS (
 		host 'host.docker.internal',
-		port '9188'
+		port '2910'
 	);

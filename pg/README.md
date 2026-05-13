@@ -165,7 +165,7 @@ CREATE SERVER kalam_server
   FOREIGN DATA WRAPPER pg_kalam
   OPTIONS (
     host '127.0.0.1',
-    port '9188',
+    port '2910',
     auth_mode 'account_login',
     login_user 'pg_dba',
     login_password '<dba-password>'
@@ -179,7 +179,7 @@ CREATE SERVER kalam_server
   FOREIGN DATA WRAPPER pg_kalam
   OPTIONS (
     host '127.0.0.1',
-    port '9188',
+    port '2910',
     auth_mode 'static_header',
     auth_header 'Bearer <your-kalamdb-token-or-shared-secret>'
   );
@@ -305,7 +305,7 @@ docker compose up -d
 
 This compose stack starts:
 
-- `kalamdb` on host ports `8088` and `9188`
+- `kalamdb` on host ports `2900` and `2910`
 - `postgres` with the `pg_kalam` extension image on host port `5433`
 
 On first startup, `pg/docker/init.sql` automatically runs:
@@ -400,7 +400,7 @@ docker build -f docker/build/Dockerfile -t kalamdb:local .
 docker run -d \
   --name kalamdb \
   -p 2900:2900 \
-  -p 9188:2910 \
+  -p 2910:2910 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_JWT_SECRET="replace-with-a-32-char-secret" \
   -e KALAMDB_ALLOW_REMOTE_SETUP=true \
@@ -448,7 +448,7 @@ CREATE SERVER kalam_server
   FOREIGN DATA WRAPPER pg_kalam
   OPTIONS (
     host 'host.docker.internal',
-    port '9188',
+    port '2910',
     auth_mode 'account_login',
     login_user 'pg_dba',
     login_password '<dba-password>'
@@ -462,7 +462,7 @@ CREATE SERVER kalam_server
   FOREIGN DATA WRAPPER pg_kalam
   OPTIONS (
     host 'host.docker.internal',
-    port '9188',
+    port '2910',
     auth_mode 'static_header',
     auth_header 'Bearer <your-kalamdb-token-or-shared-secret>'
   );

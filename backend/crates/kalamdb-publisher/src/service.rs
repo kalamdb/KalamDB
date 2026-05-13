@@ -1783,7 +1783,8 @@ mod tests {
         let topic_id = TopicId::new("group_claim_topic");
         let group_id = ConsumerGroupId::new("test_group");
 
-        let topic = create_test_topic(topic_id.clone(), table_id.clone(), TopicOp::Insert);
+        let topic =
+            create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
         service.add_topic(topic);
 
         for idx in 0..10 {
@@ -1994,7 +1995,8 @@ mod tests {
         let topic_id = TopicId::new("partial_ack_topic");
         let group_id = ConsumerGroupId::new("partial_ack_group");
 
-        let topic = create_test_topic(topic_id.clone(), table_id.clone(), TopicOp::Insert);
+        let topic =
+            create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
         service.add_topic(topic);
 
         for idx in 0..20 {

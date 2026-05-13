@@ -391,7 +391,7 @@ fn proxy_host_port(base_url: &str) -> (String, u16) {
     let address = base_url.trim_start_matches("http://").trim_start_matches("https://");
     let mut parts = address.split(':');
     let host = parts.next().unwrap_or("127.0.0.1").to_string();
-    let port = parts.next().and_then(|value| value.parse::<u16>().ok()).unwrap_or(9188);
+    let port = parts.next().and_then(|value| value.parse::<u16>().ok()).unwrap_or(2910);
     (host, port)
 }
 

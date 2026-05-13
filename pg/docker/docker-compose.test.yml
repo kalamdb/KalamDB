@@ -14,8 +14,8 @@ services:
     image: ${KALAMDB_IMAGE:-jamals86/kalamdb:latest}
     container_name: kalamdb-e2e
     ports:
-      - "${KALAMDB_TEST_HTTP_PORT:-18088}:2900"
-      - "${KALAMDB_TEST_RPC_PORT:-19188}:2910"
+      - "${KALAMDB_TEST_HTTP_PORT:-2900}:2900"
+      - "${KALAMDB_TEST_RPC_PORT:-2910}:2910"
     environment:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       RUST_LOG: "${RUST_LOG:-warn}"
@@ -24,7 +24,7 @@ services:
       KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       # Pre-shared token for pg_kalam FDW gRPC auth (must match auth_header in init-test.sql).
       KALAMDB_PG_AUTH_TOKEN: "Bearer e2e-pg-shared-secret-token-for-testing"
-      # Enable cluster mode so the gRPC service starts on port 9188 (required by pg_kalam FDW).
+      # Enable cluster mode so the gRPC service starts on port 2910 (required by pg_kalam FDW).
       # rpc_addr uses the service hostname so validation passes; the server binds 0.0.0.0:2910.
       KALAMDB_NODE_ID: "1"
       KALAMDB_CLUSTER_RPC_ADDR: "kalamdb:2910"

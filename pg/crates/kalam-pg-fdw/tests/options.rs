@@ -37,7 +37,7 @@ fn rejects_missing_port() {
 fn parses_tls_server_options() {
     let options = BTreeMap::from([
         ("host".to_string(), "kalam.example.com".to_string()),
-        ("port".to_string(), "9188".to_string()),
+        ("port".to_string(), "2910".to_string()),
         (
             "ca_cert".to_string(),
             "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----".to_string(),
@@ -55,7 +55,7 @@ fn parses_tls_server_options() {
     let parsed = ServerOptions::parse(&options).expect("parse TLS server options");
     let remote = parsed.remote.as_ref().expect("remote config");
     assert_eq!(remote.host, "kalam.example.com");
-    assert_eq!(remote.port, 9188);
+    assert_eq!(remote.port, 2910);
     assert!(remote.tls_enabled());
     assert!(remote.ca_cert.is_some());
     assert!(remote.client_cert.is_some());

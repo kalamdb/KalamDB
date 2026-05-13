@@ -9,6 +9,6 @@ CREATE SERVER IF NOT EXISTS kalam_server
     FOREIGN DATA WRAPPER pg_kalam
     OPTIONS (
         host 'kalamdb',
-        port '9188',
+        port '2910',
         auth_header 'Bearer e2e-pg-shared-secret-token-for-testing'
     );
