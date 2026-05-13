@@ -39,9 +39,8 @@ async fn test_user_table_cold_storage_uses_manifest() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.items (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.items (
                 id INT PRIMARY KEY,
                 name TEXT,
                 value INT
@@ -49,9 +48,8 @@ async fn test_user_table_cold_storage_uses_manifest() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,

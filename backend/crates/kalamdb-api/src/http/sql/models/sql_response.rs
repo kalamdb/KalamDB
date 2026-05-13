@@ -456,11 +456,13 @@ mod tests {
         let rows = result.rows.as_ref().expect("subscription result should include a row");
         assert_eq!(rows[0][0].as_str(), Some("subscription_required"));
         assert_eq!(rows[0][1].as_str(), Some("ws://localhost:2900/v1/ws"));
-        assert_eq!(rows[0][3].as_str(), Some("Subscription created. Connect to ws_url to receive updates."));
+        assert_eq!(
+            rows[0][3].as_str(),
+            Some("Subscription created. Connect to ws_url to receive updates.")
+        );
 
-        let subscription = rows[0][2]
-            .as_object()
-            .expect("subscription column should be a JSON object");
+        let subscription =
+            rows[0][2].as_object().expect("subscription column should be a JSON object");
         assert_eq!(subscription.get("id").and_then(|value| value.as_str()), Some("sub-1"));
         assert_eq!(
             subscription.get("sql").and_then(|value| value.as_str()),
@@ -529,10 +531,7 @@ mod tests {
 
         let error = response.error.expect("error response should include an error payload");
         assert_eq!(error.code, ErrorCode::SqlExecutionError);
-        assert_eq!(
-            error.message,
-            "SQL statement failed. Review the statement and try again.",
-        );
+        assert_eq!(error.message, "SQL statement failed. Review the statement and try again.",);
         assert!(error.details.is_none());
     }
 

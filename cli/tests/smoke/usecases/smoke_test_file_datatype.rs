@@ -237,12 +237,23 @@ async fn execute_sql_via_http_as_for_url(
         };
 
         for url in urls {
-            let response = client
+            let response = match client
                 .post(format!("{}/v1/api/sql", url))
                 .bearer_auth(token)
                 .json(&serde_json::json!({ "sql": sql }))
                 .send()
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let message = error.to_string();
+                    if is_cluster_mode() && is_retryable_cluster_error_for_sql(sql, &message) {
+                        last_error = Some(message);
+                        continue;
+                    }
+                    return Err(error.into());
+                },
+            };
 
             let status = response.status();
             let body_text = response.text().await?;
@@ -320,7 +331,7 @@ async fn execute_multipart_sql_with_cluster_retry(
         }
 
         for base_url in urls {
-            let response = client
+            let response = match client
                 .execute(build_multipart_sql_request(
                     client,
                     &base_url,
@@ -328,7 +339,18 @@ async fn execute_multipart_sql_with_cluster_retry(
                     content_type,
                     body.to_vec(),
                 )?)
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let message = error.to_string();
+                    if is_cluster_mode() && is_retryable_cluster_error_for_sql("", &message) {
+                        last_error = Some(message);
+                        continue;
+                    }
+                    return Err(error.into());
+                },
+            };
 
             let status = response.status();
             let response_content_type = response

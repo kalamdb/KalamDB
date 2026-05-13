@@ -154,7 +154,7 @@ impl Default for RemoteServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 50051,
+            port: 2910,
             timeout_ms: 0,
             auth_mode: RemoteAuthMode::None,
             auth_header: None,

@@ -6,6 +6,7 @@
 
 use std::io::Cursor;
 
+use kalamdb_observability::SERVER_VERSION;
 use openraft::{Entry, RaftTypeConfig};
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +109,7 @@ impl KalamNode {
             rpc_addr: rpc_addr.into(),
             api_addr: api_addr.into(),
             hostname: Self::detect_hostname(),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            version: Some(SERVER_VERSION.to_string()),
             memory_mb: Self::detect_memory_mb(),
             os: Some(std::env::consts::OS.to_string()),
             arch: Some(std::env::consts::ARCH.to_string()),

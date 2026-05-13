@@ -457,3 +457,69 @@ fn cluster_test_smoke_write_routing() {
 
     println!("\n  ✅ Write routing test completed\n");
 }
+
+/// Test: mixed Meta + data batches route each statement to the owning Raft group leader.
+#[test]
+fn cluster_test_mixed_statement_batch_routes_per_group() {
+    if !require_cluster_running() {
+        return;
+    }
+
+    println!("\n=== TEST: Mixed Statement Batch Routing ===\n");
+
+    let urls = cluster_urls();
+    let namespace = generate_unique_namespace("mixed_batch_route");
+    let user = format!("mixed_user_{}", namespace);
+    let password = "test_password_123";
+
+    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP USER {}", user));
+
+    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
+    execute_on_node(
+        &urls[0],
+        &format!(
+            "CREATE SHARED TABLE {}.mixed_shared (id BIGINT PRIMARY KEY, value STRING)",
+            namespace
+        ),
+    )
+    .expect("Failed to create shared table");
+
+    if !wait_for_table_on_all_nodes(&namespace, "mixed_shared", 10000) {
+        panic!("Table mixed_shared did not replicate to all nodes");
+    }
+
+    let follower_url = leader_url()
+        .and_then(|leader| urls.iter().find(|url| **url != leader).cloned())
+        .or_else(|| urls.get(1).cloned())
+        .unwrap_or_else(|| urls[0].clone());
+
+    let batch = format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'; \
+         INSERT INTO {}.mixed_shared (id, value) VALUES (1, 'initial'); \
+         UPDATE {}.mixed_shared SET value = 'updated' WHERE id = 1",
+        user, password, namespace, namespace
+    );
+
+    execute_on_node_raw(&follower_url, &batch)
+        .unwrap_or_else(|err| panic!("Mixed batch failed from {}: {}", follower_url, err));
+
+    let user_query = format!("SELECT user_id FROM system.users WHERE user_id = '{}'", user);
+    let user_visible = urls.iter().all(
+        |url| matches!(execute_on_node(url, &user_query), Ok(result) if result.contains(&user)),
+    );
+    assert!(user_visible, "Created user was not visible from every cluster node");
+
+    let rows = fetch_normalized_rows(
+        &urls[0],
+        &format!("SELECT id, value FROM {}.mixed_shared ORDER BY id", namespace),
+    )
+    .expect("Failed to read mixed batch data");
+    assert_eq!(rows, vec!["1|updated".to_string()]);
+
+    let _ = execute_on_node(&urls[0], &format!("DROP USER {}", user));
+    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+
+    println!("\n  ✅ Mixed statement batch routed per group\n");
+}

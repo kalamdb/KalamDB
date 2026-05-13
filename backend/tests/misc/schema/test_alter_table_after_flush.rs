@@ -248,9 +248,7 @@ async fn test_multiple_alter_operations_with_flushes() {
 
     // Second ALTER
     server
-        .execute_sql(
-            &format!("ALTER TABLE {}.events ADD COLUMN timestamp BIGINT", ns),
-        )
+        .execute_sql(&format!("ALTER TABLE {}.events ADD COLUMN timestamp BIGINT", ns))
         .await;
 
     // Third batch with both new columns

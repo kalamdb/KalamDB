@@ -1,8 +1,4 @@
-use std::{
-    io::{self, IsTerminal, Write},
-    net::IpAddr,
-    time::Duration,
-};
+use std::{io::IsTerminal, net::IpAddr, time::Duration};
 
 use colored::Colorize;
 use kalam_cli::{
@@ -16,6 +12,7 @@ use kalam_client::{
 use url::Url;
 
 use crate::args::Cli;
+use crate::terminal_input::{prompt_line, prompt_password};
 
 /// Build timeouts configuration from CLI arguments
 fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
@@ -257,11 +254,8 @@ pub async fn create_session(
         println!();
 
         // Get DBA user
-        print!("Enter the user for your DBA account: ");
-        io::stdout().flush().map_err(|e| e.to_string())?;
-        let mut username = String::new();
-        io::stdin().read_line(&mut username).map_err(|e| e.to_string())?;
-        let username = username.trim().to_string();
+        let username =
+            prompt_line("Enter the user for your DBA account: ").map_err(|e| e.to_string())?;
         if username.is_empty() {
             return Err("User cannot be empty".to_string());
         }
@@ -270,15 +264,14 @@ pub async fn create_session(
         }
 
         // Get DBA password
-        let password = rpassword::prompt_password("Enter password for your DBA account: ")
-            .map_err(|e| e.to_string())?;
+        let password =
+            prompt_password("Enter password for your DBA account: ").map_err(|e| e.to_string())?;
         if password.is_empty() {
             return Err("Password cannot be empty".to_string());
         }
 
         // Confirm password
-        let password_confirm =
-            rpassword::prompt_password("Confirm password: ").map_err(|e| e.to_string())?;
+        let password_confirm = prompt_password("Confirm password: ").map_err(|e| e.to_string())?;
         if password != password_confirm {
             return Err("Passwords do not match".to_string());
         }
@@ -286,25 +279,21 @@ pub async fn create_session(
         // Get root password
         println!();
         println!("Now set the root password (for system administration):");
-        let root_password =
-            rpassword::prompt_password("Enter root password: ").map_err(|e| e.to_string())?;
+        let root_password = prompt_password("Enter root password: ").map_err(|e| e.to_string())?;
         if root_password.is_empty() {
             return Err("Root password cannot be empty".to_string());
         }
 
         // Confirm root password
         let root_password_confirm =
-            rpassword::prompt_password("Confirm root password: ").map_err(|e| e.to_string())?;
+            prompt_password("Confirm root password: ").map_err(|e| e.to_string())?;
         if root_password != root_password_confirm {
             return Err("Root passwords do not match".to_string());
         }
 
         // Optional email
-        print!("Enter email (optional, press Enter to skip): ");
-        io::stdout().flush().map_err(|e| e.to_string())?;
-        let mut email = String::new();
-        io::stdin().read_line(&mut email).map_err(|e| e.to_string())?;
-        let email = email.trim().to_string();
+        let email = prompt_line("Enter email (optional, press Enter to skip): ")
+            .map_err(|e| e.to_string())?;
         let email = if email.is_empty() { None } else { Some(email) };
 
         println!();
@@ -448,22 +437,15 @@ pub async fn create_session(
         println!();
 
         // Prompt for user
-        print!("User: ");
-        io::stdout()
-            .flush()
-            .map_err(|e| CLIError::FileError(format!("Failed to flush stdout: {}", e)))?;
-        let mut username = String::new();
-        io::stdin()
-            .read_line(&mut username)
+        let username = prompt_line("User: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read user: {}", e)))?;
-        let username = username.trim().to_string();
 
         if username.is_empty() {
             return Err(CLIError::ConfigurationError("User cannot be empty".to_string()));
         }
 
         // Prompt for password
-        let password = rpassword::prompt_password("Password: ")
+        let password = prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
 
         // Try to login with provided credentials
@@ -472,10 +454,8 @@ pub async fn create_session(
                 let authenticated_user = login_response.user.id.to_string();
 
                 // Ask if user wants to save credentials
-                print!("\nSave credentials for future use? (y/N): ");
-                io::stdout().flush().ok();
-                let mut save_choice = String::new();
-                io::stdin().read_line(&mut save_choice).ok();
+                let save_choice =
+                    prompt_line("\nSave credentials for future use? (y/N): ").unwrap_or_default();
 
                 if save_choice.trim().eq_ignore_ascii_case("y")
                     || save_choice.trim().eq_ignore_ascii_case("yes")
@@ -575,7 +555,7 @@ pub async fn create_session(
         } else if std::io::stdin().is_terminal() {
             println!();
             println!("User: {}", username);
-            rpassword::prompt_password("Password: ")
+            prompt_password("Password: ")
                 .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
         } else {
             // Non-interactive mode without password - use empty password

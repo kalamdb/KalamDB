@@ -43,8 +43,8 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
 
         let topic_name = topic.expect("checked is_some").name;
 
-        let (offsets_deleted, messages_deleted) =
-            clear_topic_data(&self.app_context, &topic_id).map_err(|e| {
+        let (offsets_deleted, messages_deleted) = clear_topic_data(&self.app_context, &topic_id)
+            .map_err(|e| {
                 KalamDbError::ExecutionError(format!(
                     "Failed to clean up dropped topic '{}' ({}): {}",
                     topic_name,
@@ -66,9 +66,7 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
         Ok(ExecutionResult::Success {
             message: format!(
                 "Dropped topic '{}' - {} consumer group offsets deleted, {} messages deleted",
-                topic_name,
-                offsets_deleted,
-                messages_deleted
+                topic_name, offsets_deleted, messages_deleted
             ),
         })
     }

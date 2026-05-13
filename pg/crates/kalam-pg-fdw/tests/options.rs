@@ -7,19 +7,19 @@ use kalam_pg_fdw::ServerOptions;
 fn parses_remote_server_options() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
     ]);
 
     let parsed = ServerOptions::parse(&options).expect("parse remote server options");
 
     assert_eq!(parsed.remote.as_ref().expect("remote config").host, "127.0.0.1");
-    assert_eq!(parsed.remote.as_ref().expect("remote config").port, 50051);
+    assert_eq!(parsed.remote.as_ref().expect("remote config").port, 2910);
     assert_eq!(parsed.remote.as_ref().expect("remote config").auth_mode, RemoteAuthMode::None);
 }
 
 #[test]
 fn rejects_missing_host() {
-    let options = BTreeMap::from([("port".to_string(), "50051".to_string())]);
+    let options = BTreeMap::from([("port".to_string(), "2910".to_string())]);
 
     let err = ServerOptions::parse(&options).expect_err("missing host should fail");
     assert!(err.to_string().contains("host"));
@@ -67,7 +67,7 @@ fn parses_tls_server_options() {
 fn rejects_client_cert_without_key() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         (
             "client_cert".to_string(),
             "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----".to_string(),
@@ -83,7 +83,7 @@ fn rejects_client_cert_without_key() {
 fn rejects_client_key_without_cert() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         (
             "client_key".to_string(),
             "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----".to_string(),
@@ -99,20 +99,20 @@ fn rejects_client_key_without_cert() {
 fn non_tls_uses_http_scheme() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
     ]);
 
     let parsed = ServerOptions::parse(&options).expect("parse non-TLS options");
     let remote = parsed.remote.as_ref().expect("remote config");
     assert!(!remote.tls_enabled());
-    assert_eq!(remote.endpoint_uri(), "http://127.0.0.1:50051");
+    assert_eq!(remote.endpoint_uri(), "http://127.0.0.1:2910");
 }
 
 #[test]
 fn legacy_auth_header_defaults_to_static_header_mode() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         ("auth_header".to_string(), "Bearer legacy-secret".to_string()),
     ]);
 
@@ -126,7 +126,7 @@ fn legacy_auth_header_defaults_to_static_header_mode() {
 fn parses_account_login_server_options() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         ("auth_mode".to_string(), "account_login".to_string()),
         ("login_user".to_string(), "pg_dba".to_string()),
         ("login_password".to_string(), "super-secret".to_string()),
@@ -143,7 +143,7 @@ fn parses_account_login_server_options() {
 fn account_login_requires_login_user() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         ("auth_mode".to_string(), "account_login".to_string()),
         ("login_password".to_string(), "super-secret".to_string()),
     ]);
@@ -157,7 +157,7 @@ fn account_login_requires_login_user() {
 fn static_header_rejects_account_login_fields() {
     let options = BTreeMap::from([
         ("host".to_string(), "127.0.0.1".to_string()),
-        ("port".to_string(), "50051".to_string()),
+        ("port".to_string(), "2910".to_string()),
         ("auth_mode".to_string(), "static_header".to_string()),
         ("auth_header".to_string(), "Bearer legacy-secret".to_string()),
         ("login_user".to_string(), "pg_dba".to_string()),

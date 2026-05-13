@@ -2,23 +2,23 @@
 
 ## Overview
 
-KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
+KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](../../backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
 
-- **Multi-group layout**: 1 unified metadata group, 32 user-data shards, 1 shared-data shard by default. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](backend/crates/kalamdb-sharding/src/lib.rs), and group ID decoding accepts the configured user/shared shard ranges.
+- **Multi-group layout**: 1 unified metadata group, 32 user-data shards, 1 shared-data shard by default. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](../../backend/crates/kalamdb-sharding/src/lib.rs), and group ID decoding accepts the configured user/shared shard ranges.
 - **Command path**: Handler → `CommandExecutor` (`DirectExecutor` in standalone or `RaftExecutor` in cluster) → `RaftManager` → `RaftGroup` → OpenRaft log → State machine → Applier → storage/provider.
-- **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](backend/crates/kalamdb-raft/src/manager/config.rs).
-- **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
-- **Storage**: Combined in-memory log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](backend/crates/kalamdb-raft/src/storage/raft_store.rs); snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
+- **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
+- **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
+- **Storage**: Combined in-memory log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs); snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
 
 ## Topology & Sharding
 
 - Group IDs encode role and shard: `Meta`, `DataUserShard(n)`, `DataSharedShard(n)`. Numeric IDs are stable for OpenRaft membership and RPC routing.
-- User data routing: `hash(user_id) % user_shards` (default 32). Shared tables currently always use shard 0. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](backend/crates/kalamdb-sharding/src/lib.rs).
+- User data routing: `hash(user_id) % user_shards` (default 32). Shared tables currently always use shard 0. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](../../backend/crates/kalamdb-sharding/src/lib.rs).
 - Table-level helpers: `ShardRouter::route_table` / `table_shard_id` hash `TableId` when table-scoped routing is needed.
 
 ## Command Flow (Cluster Mode)
 
-1. Handlers call the `CommandExecutor` interface. `RaftExecutor` (cluster) serializes Raft commands/responses with FlexBuffers and picks the target group (user shard, shared shard, or metadata group) in [backend/crates/kalamdb-raft/src/executor/raft.rs](backend/crates/kalamdb-raft/src/executor/raft.rs).
+1. Handlers call the `CommandExecutor` interface. `RaftExecutor` (cluster) serializes Raft commands/responses with FlexBuffers and picks the target group (user shard, shared shard, or metadata group) in [backend/crates/kalamdb-raft/src/executor/raft.rs](../../backend/crates/kalamdb-raft/src/executor/raft.rs).
 2. `RaftManager` proposes to the correct `RaftGroup`:
    - `propose_*` APIs forward to the leader if the local node is a follower via `propose_with_forward`.
    - In `ReplicationMode::All`, leaders wait for every member to apply the committed log before returning.
@@ -29,6 +29,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 ## SQL DML & Commit Ordering
 
 - SQL autocommit DML for user/shared tables is staged through the transaction mutation path and committed through the appropriate data Raft group. Direct local SQL provider writes are no longer the normal HTTP SQL write path in cluster mode.
+- Multi-statement SQL batches keep the existing prepared-statement execution path. When a batch has no bind parameters or explicit transaction control and every statement resolves to a known Raft group, the HTTP SQL layer routes each statement to its owning group leader. This lets mixed metadata/data batches use the Meta group for DDL/user commands and the target data group for DML without adding a SQL rewrite pass to the hot path.
 - State machines derive `_commit_seq` deterministically from `(group_id, log_index)` via `commit_seq_from_log_position`. Appliers receive that value and stamp inserted, updated, deleted, and transaction-batch rows with the replicated commit order.
 - `CommitSequenceTracker::observe_committed` advances the local high-watermark after persisted apply, so every node observes the same commit sequence for the same Raft entry.
 - `_seq` remains the only client-visible live-query resume cursor. `_commit_seq` is internal state-machine metadata used for deterministic visibility and follower-side snapshot gating.
@@ -43,8 +44,9 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 ## Network Layer
 
-- Service surface: `RaftRpc` (vote, append_entries, install_snapshot) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](backend/crates/kalamdb-raft/src/network/service.rs).
-- Client side: each `RaftNetworkFactory` produces `RaftNetwork` clients per group, but all groups in a `RaftManager` share one node-level tonic channel pool keyed by peer `NodeId` ([backend/crates/kalamdb-raft/src/network/network.rs](backend/crates/kalamdb-raft/src/network/network.rs)). This keeps the multi-Raft topology from opening one persistent HTTP/2 transport per `(group, peer)` pair.
+- Service surface: `RaftRpc` (vote, append_entries, install_snapshot) and `ClientProposal` (follower→leader proposal forwarding) defined in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs).
+- Client side: each `RaftNetworkFactory` produces `RaftNetwork` clients per group, but all Raft consensus groups in a `RaftManager` share one node-level tonic channel pool keyed by peer `NodeId` ([backend/crates/kalamdb-raft/src/network/network.rs](../../backend/crates/kalamdb-raft/src/network/network.rs)). This keeps the multi-Raft topology from opening one persistent HTTP/2 transport per `(group, peer)` pair.
+- Non-Raft cluster RPCs (`ForwardSql`, `Ping`, and `GetNodeInfo`) use a separate node-level tonic channel pool, also keyed by peer `NodeId`. This keeps long-running follower→leader SQL forwarding from sharing an HTTP/2 transport with Raft heartbeats, append entries, votes, and snapshots.
 - RPC call construction is centralized in the network layer: OpenRaft RPCs use a typed `RaftRpcKind` plus shared encode/send/decode helpers, follower proposal forwarding uses `RaftNetworkFactory::send_client_proposal`, and non-Raft cluster messages use `ClusterClient` shared request/metadata/error handling. This keeps channel reuse, auth metadata, and serde boundaries consistent across inter-node calls.
 - Serialization boundaries are intentionally layered: tonic/prost frames the gRPC messages, MessagePack encodes OpenRaft request/response payloads, FlexBuffers encodes committed Raft commands and apply responses, and follower SQL forwarding returns already-serialized HTTP JSON bytes from the leader so followers do not deserialize and reserialize result bodies.
 - Server startup: `start_rpc_server` binds to the advertised RPC port and serves the Raft gRPC server; invoked by `RaftExecutor::start` before starting groups.
@@ -52,7 +54,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 ## Raft Manager Lifecycle
 
-Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](backend/crates/kalamdb-raft/src/manager/raft_manager.rs).
+Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](../../backend/crates/kalamdb-raft/src/manager/raft_manager.rs).
 
 - **Construction**: Creates 1 meta group + N user shards + M shared shards (defaults 32/1). Each group is a `RaftGroup` wrapping its own storage and network factory; the manager injects a shared channel pool into every factory so peer transports are reused across groups.
 - **Start**: Registers configured peers with every group, starts the RPC server, then starts all Raft groups with OpenRaft configs (heartbeat/election timeouts from `RaftManagerConfig`).
@@ -63,7 +65,7 @@ Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](backend
 
 ## Raft Groups
 
-Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](backend/crates/kalamdb-raft/src/manager/raft_group.rs).
+Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](../../backend/crates/kalamdb-raft/src/manager/raft_group.rs).
 
 - Wraps an OpenRaft `Raft` instance plus combined storage and network factory for a single group.
 - Key operations: `start`, `initialize`, `add_learner`, `wait_for_learner_catchup`, `promote_learner`, `change_membership`, `propose`, `propose_with_all_replicas`, and `propose_with_forward`.
@@ -72,26 +74,26 @@ Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](backend/crate
 
 ## Storage & Snapshots
 
-Implemented by `KalamRaftStorage` in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](backend/crates/kalamdb-raft/src/storage/raft_store.rs).
+Implemented by `KalamRaftStorage` in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs).
 
 - Combined `RaftStorage` (log + state machine) with in-memory BTreeMap log, vote/commit tracking, and snapshot retention. Snapshot builder captures state machine bytes plus membership metadata; snapshots are served to lagging replicas and purge earlier logs.
-- OpenRaft RPC/snapshot serialization continues to use bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
+- OpenRaft RPC/snapshot serialization continues to use bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](../../backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
 - State machine apply runs on every node; apply errors are logged and surfaced via response payloads when possible.
 - **Current limitation**: log/state storage is in-memory; durability relies on higher layers persisting real data via appliers. Crash restart currently depends on application-level recovery.
 
 ## State Machines & Appliers
 
-All state machines live under [backend/crates/kalamdb-raft/src/state_machine](backend/crates/kalamdb-raft/src/state_machine).
+All state machines live under [backend/crates/kalamdb-raft/src/state_machine](../../backend/crates/kalamdb-raft/src/state_machine).
 
 - **MetaStateMachine**: namespaces, tables, storages, users, and jobs; caches snapshot data and drives metadata appliers.
-- **UserDataStateMachine**: per-user tables; routes persistence through `UserDataApplier` ([user_data.rs](backend/crates/kalamdb-raft/src/state_machine/user_data.rs)).
-- **SharedDataStateMachine**: shared tables; uses `SharedDataApplier` ([shared_data.rs](backend/crates/kalamdb-raft/src/state_machine/shared_data.rs)).
+- **UserDataStateMachine**: per-user tables; routes persistence through `UserDataApplier` ([user_data.rs](../../backend/crates/kalamdb-raft/src/state_machine/user_data.rs)).
+- **SharedDataStateMachine**: shared tables; uses `SharedDataApplier` ([shared_data.rs](../../backend/crates/kalamdb-raft/src/state_machine/shared_data.rs)).
 - Every state machine tracks `last_applied_index` for idempotency and produces snapshots capturing its cached state; row data persistence is delegated to appliers so followers apply real writes too.
-- Applier traits and no-op defaults live in [backend/crates/kalamdb-raft/src/applier](backend/crates/kalamdb-raft/src/applier/mod.rs).
+- Applier traits and no-op defaults live in [backend/crates/kalamdb-raft/src/applier](../../backend/crates/kalamdb-raft/src/applier/mod.rs).
 
 ## Command Types
 
-Defined in [backend/crates/kalamdb-raft/src/commands](backend/crates/kalamdb-raft/src/commands/mod.rs) and split per group:
+Defined in [backend/crates/kalamdb-raft/src/commands](../../backend/crates/kalamdb-raft/src/commands/mod.rs) and split per group:
 - Meta: namespaces/tables/storage metadata, user accounts, login events, locks, and jobs.
 - UserData: per-user DML plus live-query registrations.
 - SharedData: shared-table DML.
@@ -101,7 +103,7 @@ Responses are serialized FlexBuffers payloads returned after apply.
 
 - Peer registry: `RaftManager::register_peer` plumbs peer addresses into every `RaftGroup` so OpenRaft can dial peers via the network factory.
 - Leader discovery: `current_leader` is per-group; followers respond to forwarded proposals with leader hints. HTTP SQL write forwarding uses the target data group directly when possible. `RaftExecutor::get_cluster_info` aggregates OpenRaft metrics for UI/diagnostics.
-- Shard mapping: user shard via user_id hash; shared shard fixed to 0. Default counts exposed as `DEFAULT_USER_DATA_SHARDS` and `DEFAULT_SHARED_DATA_SHARDS` in [backend/crates/kalamdb-raft/src/manager/config.rs](backend/crates/kalamdb-raft/src/manager/config.rs).
+- Shard mapping: user shard via user_id hash; shared shard fixed to 0. Default counts exposed as `DEFAULT_USER_DATA_SHARDS` and `DEFAULT_SHARED_DATA_SHARDS` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
 
 ## Operational Notes & Limitations
 
@@ -137,9 +139,9 @@ Responses are serialized FlexBuffers payloads returned after apply.
 
 ## At-a-Glance Module Map
 
-- Manager & groups: [backend/crates/kalamdb-raft/src/manager](backend/crates/kalamdb-raft/src/manager)
-- Network transport: [backend/crates/kalamdb-raft/src/network](backend/crates/kalamdb-raft/src/network)
-- Executor abstraction: [backend/crates/kalamdb-raft/src/executor](backend/crates/kalamdb-raft/src/executor)
-- State machines & appliers: [backend/crates/kalamdb-raft/src/state_machine](backend/crates/kalamdb-raft/src/state_machine) and [backend/crates/kalamdb-raft/src/applier](backend/crates/kalamdb-raft/src/applier)
-- Storage adapter: [backend/crates/kalamdb-raft/src/storage](backend/crates/kalamdb-raft/src/storage)
-- Command types: [backend/crates/kalamdb-raft/src/commands](backend/crates/kalamdb-raft/src/commands)
+- Manager & groups: [backend/crates/kalamdb-raft/src/manager](../../backend/crates/kalamdb-raft/src/manager)
+- Network transport: [backend/crates/kalamdb-raft/src/network](../../backend/crates/kalamdb-raft/src/network)
+- Executor abstraction: [backend/crates/kalamdb-raft/src/executor](../../backend/crates/kalamdb-raft/src/executor)
+- State machines & appliers: [backend/crates/kalamdb-raft/src/state_machine](../../backend/crates/kalamdb-raft/src/state_machine) and [backend/crates/kalamdb-raft/src/applier](../../backend/crates/kalamdb-raft/src/applier)
+- Storage adapter: [backend/crates/kalamdb-raft/src/storage](../../backend/crates/kalamdb-raft/src/storage)
+- Command types: [backend/crates/kalamdb-raft/src/commands](../../backend/crates/kalamdb-raft/src/commands)

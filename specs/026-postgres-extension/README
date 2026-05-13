@@ -172,7 +172,7 @@ CREATE EXTENSION pg_kalam;
 CREATE SERVER kalam_server FOREIGN DATA WRAPPER pg_kalam
   OPTIONS (
     host '127.0.0.1',
-    port '50051'
+    port '2910'
   );
 ```
 

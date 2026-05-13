@@ -19,7 +19,10 @@ mod common;
 mod cluster_common {
     use std::{
         collections::HashMap,
-        sync::{Mutex, OnceLock},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex, OnceLock,
+        },
         time::Duration,
     };
 
@@ -27,6 +30,61 @@ mod cluster_common {
     use serde_json::Value;
 
     use crate::common::*;
+
+    struct ClusterHelperStats {
+        calls: AtomicU64,
+        attempts: AtomicU64,
+        retryable_errors: AtomicU64,
+        total_micros: AtomicU64,
+    }
+
+    impl ClusterHelperStats {
+        const fn new() -> Self {
+            Self {
+                calls: AtomicU64::new(0),
+                attempts: AtomicU64::new(0),
+                retryable_errors: AtomicU64::new(0),
+                total_micros: AtomicU64::new(0),
+            }
+        }
+    }
+
+    static CLUSTER_HELPER_STATS: ClusterHelperStats = ClusterHelperStats::new();
+
+    fn cluster_helper_timing_enabled() -> bool {
+        std::env::var("KALAMDB_TRACE_CLUSTER_HELPERS")
+            .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    }
+
+    fn record_cluster_helper_timing(
+        op: &str,
+        sql: &str,
+        elapsed: Duration,
+        attempts: u64,
+        retryable_errors: u64,
+    ) {
+        CLUSTER_HELPER_STATS.calls.fetch_add(1, Ordering::Relaxed);
+        CLUSTER_HELPER_STATS.attempts.fetch_add(attempts, Ordering::Relaxed);
+        CLUSTER_HELPER_STATS
+            .retryable_errors
+            .fetch_add(retryable_errors, Ordering::Relaxed);
+        CLUSTER_HELPER_STATS
+            .total_micros
+            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+
+        if cluster_helper_timing_enabled() || retryable_errors > 0 {
+            let first_line = sql.lines().next().unwrap_or(sql).trim();
+            eprintln!(
+                "[cluster-helper] op={} attempts={} retryable={} took_ms={:.3} sql={}",
+                op,
+                attempts,
+                retryable_errors,
+                elapsed.as_secs_f64() * 1000.0,
+                first_line
+            );
+        }
+    }
 
     /// Get cluster node URLs from environment or use defaults
     pub fn cluster_urls() -> Vec<String> {
@@ -50,41 +108,25 @@ mod cluster_common {
         })
     }
 
-    /// Per-URL client cache for cluster helpers.
+    /// Client cache for cluster helpers.
     ///
     /// Reusing a `KalamLinkClient` per URL avoids spawning a fresh reqwest connection pool
     /// on every `execute_on_node` call. Each `KalamLinkClient` owns an `Arc<reqwest::Client>`;
     /// cloning is cheap and all clones share the same pool.
-    fn cached_cluster_client(base_url: &str) -> KalamLinkClient {
+    fn cached_cluster_client(base_url: &str, username: &str, password: &str) -> KalamLinkClient {
         static CLIENT_CACHE: OnceLock<Mutex<HashMap<String, KalamLinkClient>>> = OnceLock::new();
         let cache = CLIENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let cache_key = format!("{}\n{}\n{}", base_url, username, password);
         if let Ok(mut guard) = cache.lock() {
-            if let Some(client) = guard.get(base_url) {
+            if let Some(client) = guard.get(&cache_key) {
                 return client.clone();
             }
-            let client = build_cluster_client(base_url);
-            guard.insert(base_url.to_string(), client.clone());
+            let client = build_cluster_client_with_auth(base_url, username, password);
+            guard.insert(cache_key, client.clone());
             return client;
         }
         // Fallback if lock poisoned
-        build_cluster_client(base_url)
-    }
-
-    fn build_cluster_client(base_url: &str) -> KalamLinkClient {
-        client_for_user_on_url_with_timeouts(
-            base_url,
-            default_username(),
-            default_password(),
-            KalamLinkTimeouts::builder()
-                .connection_timeout_secs(5)
-                .receive_timeout_secs(30)
-                .send_timeout_secs(10)
-                .subscribe_timeout_secs(10)
-                .auth_timeout_secs(10)
-                .initial_data_timeout(Duration::from_secs(30))
-                .build(),
-        )
-        .expect("Failed to build cluster client")
+        build_cluster_client_with_auth(base_url, username, password)
     }
 
     fn build_cluster_client_with_auth(
@@ -110,7 +152,7 @@ mod cluster_common {
 
     /// Create a client connected to a specific cluster node
     pub fn create_cluster_client(base_url: &str) -> KalamLinkClient {
-        cached_cluster_client(base_url)
+        cached_cluster_client(base_url, &default_username(), &default_password())
     }
 
     /// Create a client connected to a specific cluster node with custom credentials
@@ -119,8 +161,7 @@ mod cluster_common {
         username: &str,
         password: &str,
     ) -> KalamLinkClient {
-        // Custom-auth clients are not pooled (credentials may differ per call).
-        build_cluster_client_with_auth(base_url, username, password)
+        cached_cluster_client(base_url, username, password)
     }
 
     /// Execute a query on a specific cluster node and return the count
@@ -345,12 +386,16 @@ mod cluster_common {
         sql: &str,
         enforce_leader: bool,
     ) -> Result<String, String> {
+        let started_at = std::time::Instant::now();
         let sql = sql.to_string();
         let mut last_err: Option<String> = None;
+        let mut attempts = 0u64;
+        let mut retryable_errors = 0u64;
 
         for _ in 0..5 {
             let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
             for url in urls.iter().cloned() {
+                attempts += 1;
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime().block_on(async move {
@@ -360,14 +405,23 @@ mod cluster_common {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
                             if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                retryable_errors += 1;
                                 last_err = Some(err_msg);
                                 continue;
                             }
+                            record_cluster_helper_timing(
+                                "execute_on_node",
+                                &sql,
+                                started_at.elapsed(),
+                                attempts,
+                                retryable_errors,
+                            );
                             return Err(err_msg);
                         }
                         if is_truncated_read_response(&response, &sql) {
                             if let Some(leader) = leader_url() {
                                 if url != leader {
+                                    retryable_errors += 1;
                                     last_err = Some(format!(
                                         "Truncated read response from follower {}",
                                         url
@@ -377,21 +431,43 @@ mod cluster_common {
                             }
                         }
                         wait_for_cluster_after_sql(&sql);
+                        record_cluster_helper_timing(
+                            "execute_on_node",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Ok(serde_json::to_string_pretty(&response)
                             .unwrap_or_else(|_| format!("{:?}", response)));
                     },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
+                            retryable_errors += 1;
                             last_err = Some(msg);
                             continue;
                         }
+                        record_cluster_helper_timing(
+                            "execute_on_node",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Err(msg);
                     },
                 }
             }
         }
 
+        record_cluster_helper_timing(
+            "execute_on_node",
+            &sql,
+            started_at.elapsed(),
+            attempts,
+            retryable_errors,
+        );
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
     }
 
@@ -415,12 +491,16 @@ mod cluster_common {
         sql: &str,
         enforce_leader: bool,
     ) -> Result<QueryResponse, String> {
+        let started_at = std::time::Instant::now();
         let sql = sql.to_string();
         let mut last_err: Option<String> = None;
+        let mut attempts = 0u64;
+        let mut retryable_errors = 0u64;
 
         for _ in 0..5 {
             let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
             for url in urls.iter().cloned() {
+                attempts += 1;
                 let client = create_cluster_client(&url);
                 let sql_value = sql.clone();
                 match cluster_runtime().block_on(async move {
@@ -430,14 +510,23 @@ mod cluster_common {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
                             if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                retryable_errors += 1;
                                 last_err = Some(err_msg);
                                 continue;
                             }
+                            record_cluster_helper_timing(
+                                "execute_on_node_response",
+                                &sql,
+                                started_at.elapsed(),
+                                attempts,
+                                retryable_errors,
+                            );
                             return Err(err_msg);
                         }
                         if is_truncated_read_response(&response, &sql) {
                             if let Some(leader) = leader_url() {
                                 if url != leader {
+                                    retryable_errors += 1;
                                     last_err = Some(format!(
                                         "Truncated read response from follower {}",
                                         url
@@ -447,20 +536,42 @@ mod cluster_common {
                             }
                         }
                         wait_for_cluster_after_sql(&sql);
+                        record_cluster_helper_timing(
+                            "execute_on_node_response",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Ok(response);
                     },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
+                            retryable_errors += 1;
                             last_err = Some(msg);
                             continue;
                         }
+                        record_cluster_helper_timing(
+                            "execute_on_node_response",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Err(msg);
                     },
                 }
             }
         }
 
+        record_cluster_helper_timing(
+            "execute_on_node_response",
+            &sql,
+            started_at.elapsed(),
+            attempts,
+            retryable_errors,
+        );
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
     }
 
@@ -492,12 +603,16 @@ mod cluster_common {
         sql: &str,
         enforce_leader: bool,
     ) -> Result<String, String> {
+        let started_at = std::time::Instant::now();
         let sql = sql.to_string();
         let mut last_err: Option<String> = None;
+        let mut attempts = 0u64;
+        let mut retryable_errors = 0u64;
 
         for _ in 0..5 {
             let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
             for url in urls.iter().cloned() {
+                attempts += 1;
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime().block_on(async move {
@@ -507,27 +622,57 @@ mod cluster_common {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
                             if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                retryable_errors += 1;
                                 last_err = Some(err_msg);
                                 continue;
                             }
+                            record_cluster_helper_timing(
+                                "execute_on_node_as_user",
+                                &sql,
+                                started_at.elapsed(),
+                                attempts,
+                                retryable_errors,
+                            );
                             return Err(err_msg);
                         }
                         wait_for_cluster_after_sql(&sql);
+                        record_cluster_helper_timing(
+                            "execute_on_node_as_user",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Ok(serde_json::to_string_pretty(&response)
                             .unwrap_or_else(|_| format!("{:?}", response)));
                     },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
+                            retryable_errors += 1;
                             last_err = Some(msg);
                             continue;
                         }
+                        record_cluster_helper_timing(
+                            "execute_on_node_as_user",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Err(msg);
                     },
                 }
             }
         }
 
+        record_cluster_helper_timing(
+            "execute_on_node_as_user",
+            &sql,
+            started_at.elapsed(),
+            attempts,
+            retryable_errors,
+        );
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
     }
 
@@ -560,12 +705,16 @@ mod cluster_common {
         sql: &str,
         enforce_leader: bool,
     ) -> Result<QueryResponse, String> {
+        let started_at = std::time::Instant::now();
         let sql = sql.to_string();
         let mut last_err: Option<String> = None;
+        let mut attempts = 0u64;
+        let mut retryable_errors = 0u64;
 
         for _ in 0..5 {
             let urls = ordered_urls_for_query(base_url, &sql, enforce_leader);
             for url in urls.iter().cloned() {
+                attempts += 1;
                 let client = create_cluster_client_with_auth(&url, username, password);
                 let sql_value = sql.clone();
                 match cluster_runtime().block_on(async move {
@@ -575,26 +724,56 @@ mod cluster_common {
                         if !response.success() {
                             let err_msg = response_error_message(&response);
                             if is_retryable_cluster_error_for_sql(&sql, &err_msg) {
+                                retryable_errors += 1;
                                 last_err = Some(err_msg);
                                 continue;
                             }
+                            record_cluster_helper_timing(
+                                "execute_on_node_as_user_response",
+                                &sql,
+                                started_at.elapsed(),
+                                attempts,
+                                retryable_errors,
+                            );
                             return Err(err_msg);
                         }
                         wait_for_cluster_after_sql(&sql);
+                        record_cluster_helper_timing(
+                            "execute_on_node_as_user_response",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Ok(response);
                     },
                     Err(e) => {
                         let msg = e.to_string();
                         if is_retryable_cluster_error_for_sql(&sql, &msg) {
+                            retryable_errors += 1;
                             last_err = Some(msg);
                             continue;
                         }
+                        record_cluster_helper_timing(
+                            "execute_on_node_as_user_response",
+                            &sql,
+                            started_at.elapsed(),
+                            attempts,
+                            retryable_errors,
+                        );
                         return Err(msg);
                     },
                 }
             }
         }
 
+        record_cluster_helper_timing(
+            "execute_on_node_as_user_response",
+            &sql,
+            started_at.elapsed(),
+            attempts,
+            retryable_errors,
+        );
         Err(last_err.unwrap_or_else(|| "All cluster nodes failed".to_string()))
     }
 
@@ -647,11 +826,7 @@ mod cluster_common {
 
     /// Check if a cluster node is healthy
     pub fn is_node_healthy(base_url: &str) -> bool {
-        let client = create_cluster_client(base_url);
-        cluster_runtime()
-            .block_on(async move { client.execute_query("SELECT 1", None, None, None).await })
-            .map(|response| response.success())
-            .unwrap_or(false)
+        crate::common::is_cluster_url_reachable(base_url)
     }
 
     /// Require cluster to be running (skip test if not available)
@@ -682,9 +857,10 @@ mod cluster_common {
             return false;
         }
 
-        // Check if at least one node is reachable
-        let any_healthy = urls.iter().any(|url| is_node_healthy(url));
-        if !any_healthy {
+        static CLUSTER_REACHABILITY_CHECK: OnceLock<bool> = OnceLock::new();
+        let reachable =
+            *CLUSTER_REACHABILITY_CHECK.get_or_init(|| urls.iter().any(|url| is_node_healthy(url)));
+        if !reachable {
             if cluster_requested {
                 panic!(
                     "Cluster tests were requested, but no configured cluster node is reachable: \

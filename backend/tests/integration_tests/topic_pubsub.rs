@@ -827,7 +827,8 @@ async fn test_consume_user_role_forbidden() {
             .as_ref()
             .map(|e| {
                 e.message.contains("service, dba, or system")
-                    || e.message.contains("Regular users may only execute SELECT and DML statements")
+                    || e.message
+                        .contains("Regular users may only execute SELECT and DML statements")
             })
             .unwrap_or(false),
         "Error message should mention required roles: {:?}",
@@ -2107,8 +2108,7 @@ async fn test_clear_topic() {
         "CLEAR TOPIC should succeed: {:?}",
         clear_result.error
     );
-    assert_topic_offset_state(&server, "test_clear_ns.messages_topic", "clear_offsets", None)
-        .await;
+    assert_topic_offset_state(&server, "test_clear_ns.messages_topic", "clear_offsets", None).await;
     assert!(
         server
             .app_context
@@ -2244,8 +2244,7 @@ async fn test_drop_topic_cleans_up_data_immediately() {
             chrono::Utc::now().timestamp_millis(),
         ))
         .expect("Failed to seed topic offset before DROP TOPIC");
-    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", Some(1))
-        .await;
+    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", Some(1)).await;
 
     // Drop the topic
     let drop_result = server.execute_sql("DROP TOPIC test_drop_ns.events_topic").await;

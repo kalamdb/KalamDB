@@ -204,7 +204,7 @@ CREATE EXTENSION pg_kalam;
 
 -- Example: user table "messages" in namespace "app"
 CREATE SERVER kalam_server FOREIGN DATA WRAPPER pg_kalam
-  OPTIONS (host 'localhost', port '50051');
+  OPTIONS (host 'localhost', port '2910');
 
 CREATE FOREIGN TABLE kalam_messages (
   id        BIGINT,

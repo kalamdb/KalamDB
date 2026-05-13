@@ -45,9 +45,8 @@ async fn test_user_table_pk_index_update() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.user_items (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
                 name TEXT,
                 value INT
@@ -55,9 +54,8 @@ async fn test_user_table_pk_index_update() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -355,18 +353,16 @@ async fn test_user_table_pk_index_select() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.records (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.records (
                 id INT PRIMARY KEY,
                 data TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -472,18 +468,16 @@ async fn test_user_table_pk_index_delete() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.items (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.items (
                 id INT PRIMARY KEY,
                 description TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -605,9 +599,8 @@ async fn test_user_table_pk_index_update_after_flush() {
     // Setup namespace and user table
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.user_items (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.user_items (
                 id INT PRIMARY KEY,
                 name TEXT,
                 value INT
@@ -615,9 +608,8 @@ async fn test_user_table_pk_index_update_after_flush() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,
@@ -884,18 +876,16 @@ async fn test_user_table_pk_index_isolation() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.user_data (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.user_data (
                 id INT PRIMARY KEY,
                 secret TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_response.status,

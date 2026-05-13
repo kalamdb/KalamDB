@@ -1,7 +1,4 @@
-use std::{
-    io::{self, Write},
-    time::Duration,
-};
+use std::time::Duration;
 
 use kalam_cli::{CLIError, FileCredentialStore, Result};
 use kalam_client::{
@@ -10,6 +7,7 @@ use kalam_client::{
 };
 
 use crate::args::Cli;
+use crate::terminal_input::{prompt_line, prompt_password};
 
 pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore) -> Result<bool> {
     if cli.list_instances {
@@ -104,19 +102,14 @@ pub async fn login_and_store_credentials(
     let user = if let Some(user) = &cli.user {
         user.clone()
     } else {
-        print!("User: ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| CLIError::FileError(format!("Failed to read user: {}", e)))?;
-        input.trim().to_string()
+        prompt_line("User: ")
+            .map_err(|e| CLIError::FileError(format!("Failed to read user: {}", e)))?
     };
 
     let password = if let Some(pass) = &cli.password {
         pass.clone()
     } else {
-        rpassword::prompt_password("Password: ")
+        prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
     };
 

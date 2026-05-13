@@ -12,7 +12,7 @@ use std::{
 use async_trait::async_trait;
 use dashmap::DashMap;
 use kalamdb_commons::models::{NodeId, UserId};
-use kalamdb_observability::collect_runtime_metrics;
+use kalamdb_observability::{collect_runtime_metrics, SERVER_VERSION};
 use kalamdb_pg::KalamPgService;
 use kalamdb_sharding::ShardRouter;
 use openraft::ServerState;
@@ -426,10 +426,14 @@ impl CommandExecutor for RaftExecutor {
                     .as_ref()
                     .and_then(|p| p.hostname.clone())
                     .or_else(|| node.hostname.clone()),
-                version: peer_cache_entry
-                    .as_ref()
-                    .and_then(|p| p.version.clone())
-                    .or_else(|| node.version.clone()),
+                version: if is_self {
+                    Some(SERVER_VERSION.to_string())
+                } else {
+                    peer_cache_entry
+                        .as_ref()
+                        .and_then(|p| p.version.clone())
+                        .or_else(|| node.version.clone())
+                },
                 memory_mb: if is_self {
                     Some(local_runtime.system_total_memory_mb)
                 } else {

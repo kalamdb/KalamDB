@@ -338,9 +338,8 @@ async fn test_delete_excludes_record() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.users (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.users (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 active BOOLEAN
@@ -348,9 +347,8 @@ async fn test_delete_excludes_record() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                namespace
-            ),
-        )
+            namespace
+        ))
         .await;
 
     // Insert records
@@ -601,18 +599,16 @@ async fn test_query_performance_with_multiple_versions() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.{} (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.{} (
                     id TEXT PRIMARY KEY,
                     version INT
                 ) WITH (
                     TYPE = 'USER',
                     STORAGE_ID = 'local'
                 )"#,
-                namespace, table
-            ),
-        )
+            namespace, table
+        ))
         .await;
 
     // Insert initial version

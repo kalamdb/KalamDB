@@ -254,14 +254,12 @@ async fn test_delete_with_where_clause() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
+        .execute_sql(&format!(
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
                  title TEXT,\n                priority INT\n            ) WITH (\n                \
                  TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
-                namespace
-            ),
-        )
+            namespace
+        ))
         .await;
 
     // Insert tasks with different priorities
@@ -326,14 +324,12 @@ async fn test_count_excludes_deleted_rows() {
     // Setup
     fixtures::create_namespace(&server, &namespace).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
+        .execute_sql(&format!(
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
                  title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
                  STORAGE_ID = 'local'\n            )",
-                namespace
-            ),
-        )
+            namespace
+        ))
         .await;
 
     // Insert 5 tasks
