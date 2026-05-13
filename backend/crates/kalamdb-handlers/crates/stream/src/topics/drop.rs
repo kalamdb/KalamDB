@@ -9,8 +9,9 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_sql::ddl::DropTopicStatement;
+
+use super::cleanup::clear_topic_data;
 
 pub struct DropTopicHandler {
     app_context: Arc<AppContext>,
@@ -41,37 +42,33 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
         }
 
         let topic_name = topic.expect("checked is_some").name;
+
+        let (offsets_deleted, messages_deleted) =
+            clear_topic_data(&self.app_context, &topic_id).map_err(|e| {
+                KalamDbError::ExecutionError(format!(
+                    "Failed to clean up dropped topic '{}' ({}): {}",
+                    topic_name,
+                    topic_id.as_str(),
+                    e
+                ))
+            })?;
+
         topics_provider.delete_topic_async(&topic_id).await?;
         self.app_context.topic_publisher().remove_topic(&topic_id);
 
-        use kalamdb_jobs::executors::topic_cleanup::TopicCleanupParams;
-        use kalamdb_system::JobType;
-
-        let cleanup_params = TopicCleanupParams {
-            topic_id: topic_id.clone(),
-            topic_name: topic_name.clone(),
-        };
-        let params_json = serde_json::to_value(&cleanup_params).map_err(|e| {
-            KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e))
-        })?;
-
-        let job_id = self
-            .app_context
-            .job_manager()
-            .create_job(
-                JobType::TopicCleanup,
-                params_json,
-                Some(format!("drop_topic:{}", topic_id.as_str())),
-                None,
-            )
-            .await?;
-
-        log::info!("Dropped topic '{}' and scheduled cleanup job [{}]", topic_name, job_id);
+        log::info!(
+            "Dropped topic '{}' - {} consumer group offsets deleted, {} messages deleted",
+            topic_name,
+            offsets_deleted,
+            messages_deleted
+        );
 
         Ok(ExecutionResult::Success {
             message: format!(
-                "Dropped topic '{}' and scheduled cleanup job [{}]",
-                topic_name, job_id
+                "Dropped topic '{}' - {} consumer group offsets deleted, {} messages deleted",
+                topic_name,
+                offsets_deleted,
+                messages_deleted
             ),
         })
     }

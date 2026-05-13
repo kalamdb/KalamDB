@@ -114,6 +114,7 @@ fn expect_rejected(result: Result<String, Box<dyn std::error::Error>>, context: 
                 || msg.contains("forbidden")
                 || msg.contains("invalid")
                 || msg.contains("constraint")
+                || msg.contains("system table")
                 || msg.contains("access denied"),
             "Expected rejection error for {}: {}",
             context,

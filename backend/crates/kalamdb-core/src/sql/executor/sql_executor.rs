@@ -225,14 +225,34 @@ impl SqlExecutor {
             || msg.contains("unique index")
     }
 
-    /// Classify a DataFusionError into a KalamDbError with a single `to_string()`
-    /// call, avoiding redundant allocations on the error path.
+    fn datafusion_user_message(e: &datafusion::error::DataFusionError) -> String {
+        match e {
+            datafusion::error::DataFusionError::SQL(parser_error, _) => parser_error.to_string(),
+            datafusion::error::DataFusionError::SchemaError(schema_error, _) => {
+                schema_error.to_string()
+            },
+            datafusion::error::DataFusionError::Plan(message)
+            | datafusion::error::DataFusionError::Execution(message)
+            | datafusion::error::DataFusionError::Internal(message)
+            | datafusion::error::DataFusionError::ResourcesExhausted(message)
+            | datafusion::error::DataFusionError::NotImplemented(message) => message.clone(),
+            datafusion::error::DataFusionError::Context(context, source) => {
+                format!("{context}: {}", Self::datafusion_user_message(source))
+            },
+            datafusion::error::DataFusionError::ArrowError(error, _) => error.to_string(),
+            datafusion::error::DataFusionError::External(error) => error.to_string(),
+            _ => e.to_string(),
+        }
+    }
+
+    /// Classify a DataFusionError into a KalamDbError while preserving the
+    /// underlying user-facing parser/planner/execution message when available.
     fn classify_datafusion_error(e: &datafusion::error::DataFusionError) -> KalamDbError {
         if let Some(not_leader) = Self::try_not_leader_error(e) {
             return not_leader;
         }
 
-        let error_msg = e.to_string();
+        let error_msg = Self::datafusion_user_message(e);
         let lower = error_msg.to_lowercase();
 
         if Self::is_table_not_found_msg(&lower) {

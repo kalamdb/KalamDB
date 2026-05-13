@@ -28,7 +28,7 @@ fi
 docker run -d \
     --name "$CONTAINER_NAME" \
     -e KALAMDB_SERVER_HOST=0.0.0.0 \
-    -e KALAMDB_ROOT_PASSWORD=testpass123 \
+    -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
     -e KALAMDB_LOG_LEVEL=info \
     -e KALAMDB_JWT_SECRET="$JWT_SECRET" \
     ${DOCKER_PLATFORM:+--platform "$DOCKER_PLATFORM"} \
@@ -45,7 +45,7 @@ while true; do
         exit 1
     fi
 
-    if docker exec "$CONTAINER_NAME" /usr/local/bin/busybox wget -q -O /dev/null http://127.0.0.1:8080/health >/dev/null 2>&1; then
+    if docker exec "$CONTAINER_NAME" /bin/busybox wget -q -O /dev/null http://127.0.0.1:8080/health >/dev/null 2>&1; then
         echo "Docker startup test passed in ${ELAPSED}s"
         break
     fi

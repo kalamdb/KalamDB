@@ -73,14 +73,11 @@ pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
     let job_registry = Arc::new(JobRegistry::new());
     job_registry.register(Arc::new(FlushExecutor::new()));
     job_registry.register(Arc::new(CleanupExecutor::new()));
-    job_registry.register(Arc::new(RetentionExecutor::new()));
     job_registry.register(Arc::new(StreamEvictionExecutor::new()));
-    job_registry.register(Arc::new(UserCleanupExecutor::new()));
     job_registry.register(Arc::new(CompactExecutor::new()));
     job_registry.register(Arc::new(BackupExecutor::new()));
     job_registry.register(Arc::new(RestoreExecutor::new()));
     job_registry.register(Arc::new(VectorIndexExecutor::new()));
-    job_registry.register(Arc::new(TopicCleanupExecutor::new()));
     job_registry.register(Arc::new(TopicRetentionExecutor::new()));
     job_registry.register(Arc::new(UserExportExecutor::new()));
 

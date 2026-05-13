@@ -471,7 +471,7 @@ fn cluster_test_node_rejoin_user_management() {
 
     // Step 2: Create user while node3 is down
     println!("\nStep 2: Creating user while node3 is down...");
-    execute_on_node(leader_url, &format!("CREATE USER {} WITH PASSWORD 'testpass123'", test_user))
+    execute_on_node(leader_url, &format!("CREATE USER {} WITH PASSWORD 'kalamdb123'", test_user))
         .expect("Failed to create user");
     println!("  ✓ Created user: {}", test_user);
 
@@ -508,7 +508,7 @@ fn cluster_test_node_rejoin_user_management() {
     let auth_result = execute_on_node_as_user(
         stopped_url,
         &test_user,
-        "testpass123",
+        "kalamdb123",
         "SELECT 1 AS authenticated",
     );
     assert!(auth_result.is_ok(), "User should be able to authenticate on node3");

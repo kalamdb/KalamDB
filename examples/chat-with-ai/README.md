@@ -23,7 +23,7 @@ From this folder:
 npm install
 ```
 
-The npm scripts build the local KalamDB TypeScript SDK packages if their generated `dist` output is missing.
+This example is package-driven. It expects the KalamDB SDKs to be installed in `node_modules`, either from local filesystem dependencies such as `file:../../link/sdks/typescript/...` or from npm versions like `latest`.
 
 Start a KalamDB server. The fastest Docker option is:
 
@@ -117,6 +117,10 @@ You should see your user row, live agent progress, and then a final `AI reply:` 
 - [chat-app.sql](chat-app.sql): USER table, STREAM table, and namespace setup
 - [setup.mjs](setup.mjs): cross-platform local bootstrap script using the `kalam` CLI
 - [tests/chat.spec.mjs](tests/chat.spec.mjs): browser end-to-end test
+
+## Windows Notes
+
+The example scripts are Node-based and avoid bash-only helpers, so `npm install`, `npm run setup`, `npm run agent`, `npm run dev`, and `npm test` work on Windows as long as Node.js, npm, and Playwright's browser dependencies are installed.
 
 ## Credentials
 

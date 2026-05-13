@@ -25,6 +25,7 @@ use kalamdb_commons::{
 };
 use kalamdb_core::app_context::AppContext;
 use kalamdb_store::EntityStore;
+use kalamdb_system::providers::topic_offsets::models::TopicOffset;
 use kalamdb_tables::TopicMessage;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -2077,8 +2078,47 @@ async fn test_clear_topic() {
         clear_result.error
     );
 
-    // Give the cleanup job time to execute
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    let topic_id = TopicId::new("test_clear_ns.messages_topic");
+    server
+        .app_context
+        .system_tables()
+        .topic_offsets()
+        .upsert_offset(TopicOffset::new(
+            topic_id.clone(),
+            ConsumerGroupId::new("clear_offsets"),
+            0,
+            2,
+            chrono::Utc::now().timestamp_millis(),
+        ))
+        .expect("Failed to seed topic offset before CLEAR TOPIC");
+    let stored_offsets_before = assert_topic_offset_state(
+        &server,
+        "test_clear_ns.messages_topic",
+        "clear_offsets",
+        Some(2),
+    )
+    .await;
+    assert!(stored_offsets_before.is_some(), "Seeded offset row should exist before clear");
+
+    let clear_result = server.execute_sql("CLEAR TOPIC test_clear_ns.messages_topic").await;
+    assert_eq!(
+        clear_result.status,
+        ResponseStatus::Success,
+        "CLEAR TOPIC should succeed: {:?}",
+        clear_result.error
+    );
+    assert_topic_offset_state(&server, "test_clear_ns.messages_topic", "clear_offsets", None)
+        .await;
+    assert!(
+        server
+            .app_context
+            .topic_publisher()
+            .message_store()
+            .fetch_messages(&topic_id, 0, 0, 10)
+            .expect("Failed to read topic messages after CLEAR TOPIC")
+            .is_empty(),
+        "CLEAR TOPIC should delete persisted topic messages immediately"
+    );
 
     // Verify messages are cleared by consuming again
     let verify_result = server
@@ -2162,10 +2202,10 @@ async fn test_clear_topic_user_role_forbidden() {
     );
 }
 
-/// Test DROP TOPIC schedules cleanup job
+/// Test DROP TOPIC cleans up topic data immediately
 #[tokio::test]
 #[ntest::timeout(15000)]
-async fn test_drop_topic_schedules_cleanup_job() {
+async fn test_drop_topic_cleans_up_data_immediately() {
     let server = TestServer::new_shared().await;
 
     // Setup: Create namespace, table, and topic
@@ -2191,7 +2231,23 @@ async fn test_drop_topic_schedules_cleanup_job() {
     // Give CDC some time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    // Drop the topic (should schedule cleanup job)
+    let topic_id = TopicId::new("test_drop_ns.events_topic");
+    server
+        .app_context
+        .system_tables()
+        .topic_offsets()
+        .upsert_offset(TopicOffset::new(
+            topic_id.clone(),
+            ConsumerGroupId::new("drop_offsets"),
+            0,
+            1,
+            chrono::Utc::now().timestamp_millis(),
+        ))
+        .expect("Failed to seed topic offset before DROP TOPIC");
+    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", Some(1))
+        .await;
+
+    // Drop the topic
     let drop_result = server.execute_sql("DROP TOPIC test_drop_ns.events_topic").await;
     assert_eq!(
         drop_result.status,
@@ -2204,13 +2260,21 @@ async fn test_drop_topic_schedules_cleanup_job() {
             .results
             .first()
             .and_then(|r| r.message.as_ref())
-            .map(|msg| msg.contains("cleanup job"))
+            .map(|msg| msg.contains("Dropped topic '") && !msg.contains("cleanup job"))
             .unwrap_or(false),
-        "DROP TOPIC should mention cleanup job in message"
+        "DROP TOPIC should report direct cleanup instead of a cleanup job"
     );
-
-    // Give the cleanup job time to execute
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", None).await;
+    assert!(
+        server
+            .app_context
+            .topic_publisher()
+            .message_store()
+            .fetch_messages(&topic_id, 0, 0, 10)
+            .expect("Failed to read topic messages after DROP TOPIC")
+            .is_empty(),
+        "DROP TOPIC should delete persisted topic messages immediately"
+    );
 
     // Verify topic is gone
     let topic_check = server.execute_sql("DROP TOPIC test_drop_ns.events_topic").await;

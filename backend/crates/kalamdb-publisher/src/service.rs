@@ -318,8 +318,8 @@ impl TopicPublisherService {
 
     /// Remove a topic from the cache.
     pub fn remove_topic(&self, topic_id: &TopicId) {
+        self.clear_topic_runtime_state(topic_id);
         self.route_cache.remove_topic(topic_id);
-        self.retained_bytes.retain(|key, _| key.topic_id != *topic_id);
     }
 
     /// Update a topic in the cache (removes old routes, adds new ones).
@@ -334,6 +334,56 @@ impl TopicPublisherService {
         self.group_claim_state.clear();
         self.partition_write_locks.clear();
         self.retained_bytes.clear();
+    }
+
+    /// Delete all persisted and in-memory state for a topic's message log.
+    ///
+    /// Returns `(offsets_deleted, messages_deleted)`.
+    pub fn clear_topic_data(&self, topic_id: &TopicId) -> Result<(usize, usize)> {
+        let offsets_deleted = self.offset_store.delete_topic_offsets(topic_id).map_err(|e| {
+            CommonError::Internal(format!("Failed to delete topic offsets: {}", e))
+        })?;
+        let messages_deleted = self.message_store.delete_topic_messages(topic_id).map_err(|e| {
+            CommonError::Internal(format!("Failed to delete topic messages: {}", e))
+        })?;
+
+        self.clear_topic_runtime_state(topic_id);
+
+        Ok((offsets_deleted, messages_deleted))
+    }
+
+    fn clear_topic_runtime_state(&self, topic_id: &TopicId) {
+        self.offset_allocator.clear_topic(topic_id);
+
+        let claim_keys: Vec<_> = self
+            .group_claim_state
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in claim_keys {
+            self.group_claim_state.remove(&key);
+        }
+
+        let lock_keys: Vec<_> = self
+            .partition_write_locks
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in lock_keys {
+            self.partition_write_locks.remove(&key);
+        }
+
+        let retained_keys: Vec<_> = self
+            .retained_bytes
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in retained_keys {
+            self.retained_bytes.remove(&key);
+        }
     }
 
     fn add_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {

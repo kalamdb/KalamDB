@@ -68,8 +68,8 @@ use kalamdb_commons::models::UserId;
 - WASM for browser-based client library
 
 **Job Management System** (Phase 9 + Phase 8.5 Complete):
-- **UnifiedJobManager**: Typed JobIds (FL/CL/RT/SE/UC/CO/BK/RS), idempotency, retry logic (3× default with exponential backoff)
-- **8 Job Executors**: FlushExecutor (complete), CleanupExecutor (✅), RetentionExecutor (✅), StreamEvictionExecutor (✅), UserCleanupExecutor (✅), CompactExecutor (placeholder), BackupExecutor (placeholder), RestoreExecutor (placeholder)
+- **UnifiedJobManager**: Typed JobIds across active and legacy-compatible job types, with idempotency and retry logic (3× default with exponential backoff)
+- **Registered Job Executors**: FlushExecutor, CleanupExecutor, StreamEvictionExecutor, CompactExecutor, BackupExecutor, RestoreExecutor, VectorIndexExecutor, TopicRetentionExecutor, and UserExportExecutor. Legacy RT/UC/TC job types remain only for historical `system.jobs` decoding.
 - **Status Transitions**: New → Queued → Running → Completed/Failed/Retrying/Cancelled
 - **Crash Recovery**: Marks Running jobs as Failed on server restart
 - **Idempotency Keys**: Format "{job_type}:{namespace}:{table}:{date}" prevents duplicate jobs

@@ -16,7 +16,7 @@
 //!
 //! - **Flush jobs**: Safe to re-run (idempotent)
 //! - **Cleanup jobs**: Safe to re-run (idempotent)
-//! - **Retention jobs**: Safe to re-run (idempotent)
+//! - **Topic retention jobs**: Safe to re-run (idempotent)
 //! - **Compact jobs**: Safe to re-run (idempotent)
 //! - **Backup jobs**: May need special handling (check partial backups)
 //! - **Restore jobs**: Should be failed and require manual restart
@@ -211,12 +211,22 @@ impl LeaderFailoverHandler {
             JobType::Flush
             | JobType::VectorIndex
             | JobType::Cleanup
-            | JobType::Retention
             | JobType::Compact
             | JobType::StreamEviction
-            | JobType::UserCleanup
             | JobType::JobCleanup
-            | JobType::ManifestEviction => JobRecoveryAction::Requeue,
+            | JobType::ManifestEviction
+            | JobType::TopicRetention => JobRecoveryAction::Requeue,
+
+            // Retired legacy job types are kept in JobType for historical row decoding only.
+            JobType::Retention | JobType::UserCleanup | JobType::TopicCleanup => {
+                JobRecoveryAction::Fail {
+                    reason: format!(
+                        "Legacy retired job type {} was running on offline node {}. Failing job instead of requeueing.",
+                        job.job_type,
+                        job.node_id
+                    ),
+                }
+            },
 
             // May have partial results - fail and require manual restart
             JobType::Backup => JobRecoveryAction::Fail {

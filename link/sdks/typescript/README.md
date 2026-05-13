@@ -30,7 +30,7 @@ Full package builds also compile/copy the package-specific WASM artifacts.
 
 ## React AI Chat Validation App
 
-Use [../../../examples/react-ai-chat](../../../examples/react-ai-chat) to try the React SDK in a browser app with real UI composition: conversation sidebar, history loading, multi-file sends, typing, streamed assistant activity, tool calls, and human approvals.
+Use `examples/react-ai-chat` to try the React SDK in a browser app with real UI composition: conversation sidebar, history loading, multi-file sends, typing, streamed assistant activity, tool calls, and human approvals.
 
 ```bash
 cd examples/react-ai-chat
@@ -43,4 +43,4 @@ The app uses demo mode by default and can be switched to a server-backed KalamDB
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../LICENSE.txt](../../../LICENSE.txt) and [../../../NOTICE](../../../NOTICE).
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See the packaged `LICENSE.txt` and `NOTICE` files in each SDK package.

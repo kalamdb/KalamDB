@@ -6,6 +6,7 @@ RUN mkdir -p /runtime/usr/local/bin /runtime/data/rocksdb /runtime/data/storage 
 
 COPY backend/server.example.toml /runtime/config/server.toml
 RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /runtime/config/server.toml
+RUN sed -i 's|format = "compact"|format = "json"|g' /runtime/config/server.toml
 
 
 # ---------- Stage 2: binary prep ----------

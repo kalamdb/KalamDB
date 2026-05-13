@@ -102,7 +102,8 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Default: runs all workspace tests via cargo nextest, with CLI e2e tests enabled"
-    echo "         using feature: kalam-cli/e2e-tests"
+    echo "         using feature: kalam-cli/e2e-tests. Untargeted full runs also execute"
+    echo "         TypeScript SDK, example, React Playwright, UI, and Dart test suites."
     echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
@@ -425,6 +426,16 @@ if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
     fi
 fi
 
+RUN_SUPPLEMENTARY_SUITES=false
+SUPPLEMENTARY_MODE="skipped (targeted/package-scoped Rust run)"
+if [ -z "$TEST_FILTER" ] \
+    && [ -z "$TEST_LIST_FILE" ] \
+    && [ -z "$TEST_TARGET" ] \
+    && [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
+    RUN_SUPPLEMENTARY_SUITES=true
+    SUPPLEMENTARY_MODE="TypeScript SDKs, examples, React Playwright, UI, and Dart"
+fi
+
 # Display configuration
 echo "================================================"
 echo "Running KalamDB Tests (cargo nextest)"
@@ -461,6 +472,7 @@ if [ -n "$TEST_JOBS" ]; then
     echo "Jobs:            $TEST_JOBS"
 fi
 echo "Mode:            $FEATURE_MODE"
+echo "Supplementary:   $SUPPLEMENTARY_MODE"
 echo "================================================"
 echo ""
 
@@ -490,12 +502,99 @@ else
     unset KALAMDB_ROOT_PASSWORD
 fi
 
+TEST_ROOT_PASSWORD="${ROOT_PASSWORD:-kalamdb123}"
+export KALAMDB_ADMIN_USER="${KALAMDB_ADMIN_USER:-admin}"
+export KALAMDB_ADMIN_PASSWORD="${KALAMDB_ADMIN_PASSWORD:-$TEST_ROOT_PASSWORD}"
+export KALAMDB_URL="${KALAMDB_URL:-$KALAMDB_SERVER_URL}"
+export KALAMDB_USER="${KALAMDB_USER:-root}"
+export KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-$TEST_ROOT_PASSWORD}"
+export KALAM_URL="${KALAM_URL:-$KALAMDB_URL}"
+export KALAM_USER="${KALAM_USER:-$KALAMDB_USER}"
+export KALAM_PASS="${KALAM_PASS:-$KALAMDB_PASSWORD}"
+
 # Ensure nextest is available
 if ! cargo nextest --version >/dev/null 2>&1; then
     echo "Error: cargo-nextest is not installed."
     echo "Install it with: cargo install cargo-nextest"
     exit 1
 fi
+
+step() {
+    echo ""
+    echo "==> $*"
+}
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Error: missing required command '$1'"
+        exit 1
+    }
+}
+
+npm_install_dir() {
+    if [ -f package-lock.json ]; then
+        npm ci --no-audit --no-fund
+    else
+        npm install --no-audit --no-fund --no-package-lock
+    fi
+}
+
+ensure_playwright_browser() {
+    local install_script="$1"
+
+    if [ -n "$install_script" ]; then
+        npm run "$install_script"
+        return
+    fi
+
+    if compgen -G "playwright.config.*" >/dev/null; then
+        npx playwright install chromium
+    fi
+}
+
+run_npm_suite() {
+    local rel_dir="$1"
+    local label="$2"
+    local script_name="$3"
+    local playwright_install_script="${4:-}"
+
+    step "$label"
+    (
+        cd "$REPO_ROOT/$rel_dir"
+        npm_install_dir
+        ensure_playwright_browser "$playwright_install_script"
+        npm run "$script_name"
+    )
+}
+
+run_supplementary_suites() {
+    step "Checking supplementary suite toolchain"
+    require_cmd node
+    require_cmd npm
+    require_cmd flutter
+
+    run_npm_suite "link/sdks/typescript/client" "Running TypeScript client SDK tests" "test"
+    run_npm_suite "link/sdks/typescript/consumer" "Running TypeScript consumer SDK tests" "test"
+    run_npm_suite "link/sdks/typescript/orm" "Running TypeScript ORM SDK tests" "test"
+    run_npm_suite "link/sdks/typescript/react" "Running TypeScript React SDK unit tests" "test"
+    run_npm_suite \
+        "link/sdks/typescript/react" \
+        "Running TypeScript React SDK Playwright tests" \
+        "test:e2e" \
+        "test:e2e:install"
+
+    run_npm_suite "examples/chat-with-ai" "Running chat-with-ai example tests" "test"
+    run_npm_suite "examples/react-ai-chat" "Running react-ai-chat example tests" "test"
+    run_npm_suite "examples/simple-typescript" "Running simple-typescript Playwright tests" "test"
+    run_npm_suite "examples/summarizer-agent" "Running summarizer-agent example tests" "test"
+    run_npm_suite "ui" "Running admin UI tests" "test:ci"
+
+    step "Running Dart SDK tests"
+    (
+        cd "$REPO_ROOT/link/sdks/dart"
+        ./test.sh
+    )
+}
 
 build_test_cmd() {
     local test_filter="$1"
@@ -607,4 +706,8 @@ if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"
 else
     run_single_test "$TEST_FILTER"
+fi
+
+if [ "$RUN_SUPPLEMENTARY_SUITES" = true ]; then
+    run_supplementary_suites
 fi

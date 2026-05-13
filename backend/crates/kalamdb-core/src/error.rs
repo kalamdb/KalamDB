@@ -23,6 +23,8 @@
 //! }
 //! ```
 
+use std::borrow::Cow;
+
 use thiserror::Error;
 
 /// Main error type for KalamDB.
@@ -259,12 +261,7 @@ impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
 
 impl From<kalamdb_sql::parser::query_parser::QueryParseError> for KalamDbError {
     fn from(err: kalamdb_sql::parser::query_parser::QueryParseError) -> Self {
-        match err {
-            kalamdb_sql::parser::query_parser::QueryParseError::ParseError(msg)
-            | kalamdb_sql::parser::query_parser::QueryParseError::InvalidSql(msg) => {
-                KalamDbError::InvalidSql(msg)
-            },
-        }
+        KalamDbError::InvalidSql(err.into_user_message())
     }
 }
 
@@ -589,6 +586,40 @@ impl BackupError {
 }
 
 impl KalamDbError {
+    pub fn user_message(&self) -> Cow<'_, str> {
+        match self {
+            KalamDbError::ConfigError(message)
+            | KalamDbError::SchemaError(message)
+            | KalamDbError::CatalogError(message)
+            | KalamDbError::SerializationError(message)
+            | KalamDbError::InvalidSql(message)
+            | KalamDbError::NotFound(message)
+            | KalamDbError::TableNotFound(message)
+            | KalamDbError::NamespaceNotFound(message)
+            | KalamDbError::AlreadyExists(message)
+            | KalamDbError::InvalidOperation(message)
+            | KalamDbError::InvalidSchemaEvolution(message)
+            | KalamDbError::SystemColumnViolation(message)
+            | KalamDbError::ConstraintViolation(message)
+            | KalamDbError::Conflict(message)
+            | KalamDbError::PermissionDenied(message)
+            | KalamDbError::Unauthorized(message)
+            | KalamDbError::IdempotentConflict(message)
+            | KalamDbError::ExecutionError(message)
+            | KalamDbError::Other(message) => Cow::Borrowed(message),
+            KalamDbError::IoMessage { message, .. }
+            | KalamDbError::ParameterBindingError { message } => Cow::Borrowed(message),
+            KalamDbError::SchemaVersionNotFound { table, version } => {
+                Cow::Owned(format!("Schema version not found: table={table}, version={version}"))
+            },
+            _ => Cow::Owned(self.to_string()),
+        }
+    }
+
+    pub fn statement_failure_message(&self, statement_index: usize) -> String {
+        format!("Statement {statement_index} failed: {}", self.user_message())
+    }
+
     /// Create a table not found error
     pub fn table_not_found<S: Into<String>>(table: S) -> Self {
         KalamDbError::TableNotFound(table.into())
@@ -765,5 +796,24 @@ mod tests {
             actual: "def456".to_string(),
         };
         assert_eq!(err.to_string(), "Checksum mismatch: expected=abc123, actual=def456");
+    }
+
+    #[test]
+    fn test_user_message_prefers_inner_sql_detail() {
+        let err = KalamDbError::ExecutionError("Expected: end of statement".to_string());
+
+        assert_eq!(err.user_message(), "Expected: end of statement");
+    }
+
+    #[test]
+    fn test_statement_failure_message_uses_user_message() {
+        let err = KalamDbError::InvalidSql(
+            "Subscription query supports only SELECT ... FROM ... [WHERE ...].".to_string(),
+        );
+
+        assert_eq!(
+            err.statement_failure_message(2),
+            "Statement 2 failed: Subscription query supports only SELECT ... FROM ... [WHERE ...].",
+        );
     }
 }

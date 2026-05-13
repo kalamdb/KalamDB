@@ -17,7 +17,7 @@ If you are running KalamDB locally from this repo, a common local default is:
 For server setup and auth flows, see:
 
 - [README.md](README.md)
-- [../../../docs/getting-started/authentication.md](../../../docs/getting-started/authentication.md)
+- https://kalamdb.org/docs/getting-started/authentication
 
 ## Installation
 
@@ -133,5 +133,5 @@ main().catch(console.error);
 ## Next Steps
 
 - Full SDK docs: [README.md](README.md)
-- SQL reference: [../../../docs/reference/sql.md](../../../docs/reference/sql.md)
-- Workspace examples: [../../../examples](../../../examples)
+- SQL reference: https://kalamdb.org/docs/reference/sql
+- Workspace examples: https://github.com/kalamstack/KalamDB/tree/main/examples

@@ -22,7 +22,7 @@ export default defineConfig({
     env: {
       VITE_KALAMDB_URL: KALAM_URL,
       VITE_KALAM_USER: process.env.KALAM_USER ?? "root",
-      VITE_KALAM_PASSWORD: process.env.KALAM_PASSWORD ?? "testpass123",
+      VITE_KALAM_PASSWORD: process.env.KALAM_PASSWORD ?? "kalamdb123",
     },
   },
 });

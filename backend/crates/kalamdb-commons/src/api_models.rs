@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::websocket_messages::SubscriptionOptions;
+
 /// Health check response from the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckResponse {
@@ -68,6 +70,73 @@ impl std::fmt::Display for ResponseStatus {
         match self {
             ResponseStatus::Success => write!(f, "success"),
             ResponseStatus::Error => write!(f, "error"),
+        }
+    }
+}
+
+/// Status values returned by `SUBSCRIBE TO` over the SQL HTTP API.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SqlSubscriptionStatus {
+    SubscriptionRequired,
+    Active,
+}
+
+impl SqlSubscriptionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SqlSubscriptionStatus::SubscriptionRequired => "subscription_required",
+            SqlSubscriptionStatus::Active => "active",
+        }
+    }
+}
+
+impl std::fmt::Display for SqlSubscriptionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Nested subscription metadata returned by `SUBSCRIBE TO` over SQL HTTP.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SqlSubscriptionDescriptor {
+    pub id: String,
+    pub sql: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<SubscriptionOptions>,
+}
+
+impl SqlSubscriptionDescriptor {
+    pub fn new(id: impl Into<String>, sql: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            sql: sql.into(),
+            options: None,
+        }
+    }
+}
+
+/// Single-row payload returned for `SUBSCRIBE TO` via `/v1/api/sql`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SqlSubscriptionRow {
+    pub status: SqlSubscriptionStatus,
+    pub ws_url: String,
+    pub subscription: SqlSubscriptionDescriptor,
+    pub message: String,
+}
+
+impl SqlSubscriptionRow {
+    pub fn new(
+        subscription_id: impl Into<String>,
+        ws_url: impl Into<String>,
+        sql: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            status: SqlSubscriptionStatus::SubscriptionRequired,
+            ws_url: ws_url.into(),
+            subscription: SqlSubscriptionDescriptor::new(subscription_id, sql),
+            message: message.into(),
         }
     }
 }

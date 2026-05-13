@@ -4327,11 +4327,9 @@ dependencies = [
  "kalamdb-core",
  "kalamdb-dialect",
  "kalamdb-handlers-support",
- "kalamdb-jobs",
  "kalamdb-system",
  "kalamdb-tables",
  "log",
- "serde_json",
 ]
 
 [[package]]

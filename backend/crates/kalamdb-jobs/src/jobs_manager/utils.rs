@@ -21,15 +21,7 @@ pub(crate) use log_job;
 impl JobsManager {
     /// Generate typed JobId with prefix
     ///
-    /// Prefixes:
-    /// - FL: Flush jobs
-    /// - CL: Cleanup jobs
-    /// - RT: Retention jobs
-    /// - SE: Stream eviction jobs
-    /// - UC: User cleanup jobs
-    /// - CO: Compaction jobs (future)
-    /// - BK: Backup jobs (future)
-    /// - RS: Restore jobs (future)
+    /// Prefixes come from `JobType::short_prefix()`.
     pub(crate) fn generate_job_id(&self, job_type: &JobType) -> JobId {
         let prefix = job_type.short_prefix();
 

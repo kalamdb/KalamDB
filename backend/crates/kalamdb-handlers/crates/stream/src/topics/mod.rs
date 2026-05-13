@@ -1,6 +1,7 @@
 mod ack;
 mod add_source;
 mod clear;
+mod cleanup;
 mod consume;
 mod create;
 mod drop;

@@ -272,7 +272,7 @@ fn smoke_test_cluster_user_operations() {
 
     // Create all users
     for user in &users {
-        let sql = format!("CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'", user);
+        let sql = format!("CREATE USER {} WITH PASSWORD 'kalamdb123' ROLE 'user'", user);
         execute_sql_as_root_via_client(&sql)
             .unwrap_or_else(|e| panic!("Failed to create user {}: {}", user, e));
         println!("  ✓ Created user: {}", user);
@@ -332,13 +332,13 @@ fn smoke_test_cluster_user_data_partitioning() {
     let user2 = format!("partition_user_b_{}", rand::random::<u16>());
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD 'kalamdb123' ROLE 'user'",
         user1
     ))
     .expect("Failed to create user1");
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD 'kalamdb123' ROLE 'user'",
         user2
     ))
     .expect("Failed to create user2");
@@ -348,7 +348,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     // Insert data as user1
     execute_sql_via_client_as(
         &user1,
-        "testpass123",
+        "kalamdb123",
         &format!("INSERT INTO {}.user_notes (note) VALUES ('User1 private note')", namespace),
     )
     .expect("Failed to insert as user1");
@@ -357,7 +357,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     // Insert data as user2
     execute_sql_via_client_as(
         &user2,
-        "testpass123",
+        "kalamdb123",
         &format!("INSERT INTO {}.user_notes (note) VALUES ('User2 private note')", namespace),
     )
     .expect("Failed to insert as user2");
@@ -366,7 +366,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     // User1 should only see their own data
     let user1_data = execute_sql_via_client_as(
         &user1,
-        "testpass123",
+        "kalamdb123",
         &format!("SELECT * FROM {}.user_notes", namespace),
     )
     .expect("Failed to query as user1");
@@ -378,7 +378,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     // User2 should only see their own data
     let user2_data = execute_sql_via_client_as(
         &user2,
-        "testpass123",
+        "kalamdb123",
         &format!("SELECT * FROM {}.user_notes", namespace),
     )
     .expect("Failed to query as user2");
@@ -441,7 +441,7 @@ fn smoke_test_cluster_shared_table_consistency() {
     // Create a test user
     let user = format!("shared_reader_{}", rand::random::<u16>());
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD 'testpass123' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD 'kalamdb123' ROLE 'user'",
         user
     ))
     .expect("Failed to create test user");
@@ -449,7 +449,7 @@ fn smoke_test_cluster_shared_table_consistency() {
     // User should be able to read shared data
     let user_data = execute_sql_via_client_as(
         &user,
-        "testpass123",
+        "kalamdb123",
         &format!("SELECT * FROM {}.global_config WHERE config_key = 'app_version'", namespace),
     )
     .expect("Failed to query as user");

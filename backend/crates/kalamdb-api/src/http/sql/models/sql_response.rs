@@ -7,7 +7,7 @@ use std::fmt;
 use kalamdb_commons::{
     models::{datatypes::KalamDataType, KalamCellValue},
     schemas::SchemaField,
-    ResponseStatus,
+    ResponseStatus, SqlSubscriptionRow,
 };
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -106,11 +106,17 @@ impl ErrorCode {
     #[inline]
     fn public_message(&self) -> Option<&'static str> {
         match self {
-            ErrorCode::BatchParseError => Some("Failed to parse SQL batch"),
-            ErrorCode::SqlExecutionError => Some("SQL statement failed"),
-            ErrorCode::InvalidSql => Some("SQL statement is invalid or not allowed"),
+            ErrorCode::BatchParseError => {
+                Some("Failed to parse SQL batch. Review the SQL and try again.")
+            },
+            ErrorCode::SqlExecutionError => {
+                Some("SQL statement failed. Review the statement and try again.")
+            },
+            ErrorCode::InvalidSql => {
+                Some("SQL statement is invalid or not allowed. Review the SQL and try again.")
+            },
             ErrorCode::TableNotFound => Some("Requested table is not available"),
-            ErrorCode::InternalError => Some("SQL request failed"),
+            ErrorCode::InternalError => Some("SQL request failed. Retry the request."),
             _ => None,
         }
     }
@@ -357,7 +363,7 @@ impl QueryResult {
     /// Create a result for a SUBSCRIBE TO statement
     ///
     /// Returns subscription metadata as a single row result
-    pub fn subscription(subscription_data: serde_json::Value) -> Self {
+    pub fn subscription(subscription_data: SqlSubscriptionRow) -> Self {
         let schema = vec![
             SchemaField::new("status", KalamDataType::Text, 0),
             SchemaField::new("ws_url", KalamDataType::Text, 1),
@@ -365,21 +371,15 @@ impl QueryResult {
             SchemaField::new("message", KalamDataType::Text, 3),
         ];
 
-        // Extract values in schema order
-        let row = if let serde_json::Value::Object(map) = subscription_data {
-            vec![
-                KalamCellValue::from(map.get("status").cloned().unwrap_or(serde_json::Value::Null)),
-                KalamCellValue::from(map.get("ws_url").cloned().unwrap_or(serde_json::Value::Null)),
-                KalamCellValue::from(
-                    map.get("subscription").cloned().unwrap_or(serde_json::Value::Null),
-                ),
-                KalamCellValue::from(
-                    map.get("message").cloned().unwrap_or(serde_json::Value::Null),
-                ),
-            ]
-        } else {
-            vec![KalamCellValue::null(); 4]
-        };
+        let row = vec![
+            KalamCellValue::text(subscription_data.status.as_str()),
+            KalamCellValue::text(subscription_data.ws_url),
+            KalamCellValue::from(
+                serde_json::to_value(subscription_data.subscription)
+                    .expect("SQL subscription descriptor should serialize"),
+            ),
+            KalamCellValue::text(subscription_data.message),
+        ];
 
         Self {
             schema,
@@ -445,6 +445,30 @@ mod tests {
     }
 
     #[test]
+    fn test_subscription_result_uses_shared_row_type() {
+        let result = QueryResult::subscription(SqlSubscriptionRow::new(
+            "sub-1",
+            "ws://localhost:8080/v1/ws",
+            "SELECT * FROM chat.messages",
+            "Subscription created. Connect to ws_url to receive updates.",
+        ));
+
+        let rows = result.rows.as_ref().expect("subscription result should include a row");
+        assert_eq!(rows[0][0].as_str(), Some("subscription_required"));
+        assert_eq!(rows[0][1].as_str(), Some("ws://localhost:8080/v1/ws"));
+        assert_eq!(rows[0][3].as_str(), Some("Subscription created. Connect to ws_url to receive updates."));
+
+        let subscription = rows[0][2]
+            .as_object()
+            .expect("subscription column should be a JSON object");
+        assert_eq!(subscription.get("id").and_then(|value| value.as_str()), Some("sub-1"));
+        assert_eq!(
+            subscription.get("sql").and_then(|value| value.as_str()),
+            Some("SELECT * FROM chat.messages")
+        );
+    }
+
+    #[test]
     fn test_column_names() {
         let schema = vec![
             SchemaField::new("id", KalamDataType::BigInt, 0),
@@ -505,7 +529,10 @@ mod tests {
 
         let error = response.error.expect("error response should include an error payload");
         assert_eq!(error.code, ErrorCode::SqlExecutionError);
-        assert_eq!(error.message, "SQL statement failed");
+        assert_eq!(
+            error.message,
+            "SQL statement failed. Review the statement and try again.",
+        );
         assert!(error.details.is_none());
     }
 

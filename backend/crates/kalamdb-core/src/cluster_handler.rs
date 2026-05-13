@@ -194,8 +194,7 @@ impl CoreClusterHandler {
                 rows: None,
                 row_count: 1,
                 message: Some(format!(
-                    "Subscription {} on channel {} for query: {}",
-                    subscription_id, channel, select_query
+                    "Subscription {subscription_id} created. Connect to {channel} to receive updates for query: {select_query}"
                 )),
                 as_user: as_user.to_string(),
             }),
@@ -350,10 +349,11 @@ impl ClusterMessageHandler for CoreClusterHandler {
                 ));
             },
             Err(e) => {
+                let message = e.to_string();
                 return Ok(Self::error_payload(
                     400,
                     "BATCH_PARSE_ERROR",
-                    &format!("Failed to parse SQL batch: {}", e),
+                    &message,
                     started_at,
                 ));
             },
@@ -409,7 +409,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
                         return Ok(Self::error_payload(
                             400,
                             "SQL_EXECUTION_ERROR",
-                            &format!("Statement {} failed: {}", idx + 1, e),
+                            &e.statement_failure_message(idx + 1),
                             started_at,
                         ));
                     },
@@ -461,7 +461,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     return Ok(Self::error_payload(
                         400,
                         "SQL_EXECUTION_ERROR",
-                        &format!("Statement {} failed: {}", idx + 1, e),
+                        &e.statement_failure_message(idx + 1),
                         started_at,
                     ));
                 },

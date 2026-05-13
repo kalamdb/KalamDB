@@ -13,6 +13,7 @@ pub enum JobType {
     JobCleanup,
     Backup,
     Restore,
+    // Legacy retired job types kept for deserializing historical system.jobs rows.
     Retention,
     StreamEviction,
     UserCleanup,
@@ -53,10 +54,12 @@ impl JobType {
     /// - CL: Cleanup
     /// - BK: Backup
     /// - RS: Restore
-    /// - RT: Retention
+    /// - RT: Legacy Retention
     /// - SE: StreamEviction
-    /// - UC: UserCleanup
+    /// - UC: Legacy UserCleanup
+    /// - TC: Legacy TopicCleanup
     /// - ME: ManifestEviction
+    /// - TR: TopicRetention
     /// - UN: Unknown
     pub fn short_prefix(&self) -> &'static str {
         match self {

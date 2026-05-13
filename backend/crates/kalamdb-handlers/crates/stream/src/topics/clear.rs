@@ -8,8 +8,9 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_sql::ddl::ClearTopicStatement;
+
+use super::cleanup::clear_topic_data;
 
 pub struct ClearTopicHandler {
     app_context: Arc<AppContext>,
@@ -41,37 +42,31 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
 
         let topic_name = topic.expect("checked is_some").name;
 
-        use kalamdb_jobs::executors::topic_cleanup::TopicCleanupParams;
-        use kalamdb_system::JobType;
-
-        let cleanup_params = TopicCleanupParams {
-            topic_id: topic_id.clone(),
-            topic_name: topic_name.clone(),
-        };
-        let params_json = serde_json::to_value(&cleanup_params).map_err(|e| {
-            KalamDbError::SerializationError(format!("Failed to serialize job params: {}", e))
-        })?;
-
-        let job_id = self
-            .app_context
-            .job_manager()
-            .create_job(
-                JobType::TopicCleanup,
-                params_json,
-                Some(format!("clear_topic:{}", topic_id.as_str())),
-                None,
-            )
-            .await?;
+        let (offsets_deleted, messages_deleted) =
+            clear_topic_data(&self.app_context, topic_id).map_err(|e| {
+                KalamDbError::ExecutionError(format!(
+                    "Failed to clear topic '{}' ({}): {}",
+                    topic_name,
+                    topic_id.as_str(),
+                    e
+                ))
+            })?;
 
         log::info!(
-            "Scheduled topic cleanup job [{}] for topic '{}' ({})",
-            job_id,
+            "Cleared topic '{}' ({}) - {} consumer group offsets deleted, {} messages deleted",
             topic_name,
-            topic_id.as_str()
+            topic_id.as_str(),
+            offsets_deleted,
+            messages_deleted
         );
 
         Ok(ExecutionResult::Success {
-            message: format!("Scheduled cleanup job [{}] for topic '{}'", job_id, topic_name),
+            message: format!(
+                "Cleared topic '{}' - {} consumer group offsets deleted, {} messages deleted",
+                topic_name,
+                offsets_deleted,
+                messages_deleted
+            ),
         })
     }
 

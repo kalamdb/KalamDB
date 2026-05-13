@@ -29,6 +29,8 @@ For React apps, install `@kalamdb/react` on top of this package. It wraps the sa
 npm i @kalamdb/client
 ```
 
+The browser build loads the packaged KalamDB WASM automatically. Most apps do not need to pass a custom `wasmUrl`.
+
 ## Why `live()` First
 
 Most UIs do not want `subscription_ack`, `initial_data_batch`, `change`, and `error` frames. They want the latest rows.
@@ -311,4 +313,4 @@ Full docs: [kalamdb.org/docs/sdk/typescript](https://kalamdb.org/docs/sdk/typesc
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../LICENSE.txt](../../../../LICENSE.txt) and [../../../../NOTICE](../../../../NOTICE).
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See the packaged `LICENSE.txt` and `NOTICE` files.

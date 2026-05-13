@@ -128,7 +128,7 @@ Rows remain authoritative from KalamDB live streams. Mutation state is local UI 
 
 ## React AI Chat Example
 
-The repository includes a standalone validation app at [../../../../examples/react-ai-chat](../../../../examples/react-ai-chat). It demonstrates conversation navigation, history loading, multi-file messages, typing state, streamed assistant activity, tool calls, and human approvals using `@kalamdb/react`.
+The repository includes a standalone validation app in `examples/react-ai-chat`. It demonstrates conversation navigation, history loading, multi-file messages, typing state, streamed assistant activity, tool calls, and human approvals using `@kalamdb/react`.
 
 ```bash
 cd examples/react-ai-chat
@@ -141,4 +141,4 @@ The example defaults to demo mode so the React components are immediately usable
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../../LICENSE.txt](../../../../LICENSE.txt) and [../../../../NOTICE](../../../../NOTICE).
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See the packaged `LICENSE.txt` and `NOTICE` files.

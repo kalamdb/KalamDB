@@ -5,15 +5,10 @@
   "type": "module",
   "description": "KalamDB React live-query AI chat example with conversations, files, typing, tools, and approvals",
   "scripts": {
-    "presetup": "node scripts/ensure-sdk.mjs",
     "setup": "node setup.mjs",
-    "predev": "node scripts/ensure-sdk.mjs",
     "dev": "vite --host 127.0.0.1",
-    "pretest": "node scripts/ensure-sdk.mjs",
-    "prebuild": "node scripts/ensure-sdk.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "preagent": "node scripts/ensure-sdk.mjs",
     "agent": "tsx src/agent/index.ts",
     "test": "tsc && tsx --test tests/agent.test.ts && node --test tests/chat.spec.mjs"
   },
@@ -29,12 +24,12 @@
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^25.7.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.12"
   }
 }
