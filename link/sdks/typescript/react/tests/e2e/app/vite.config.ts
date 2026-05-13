@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
-const kalamUrl = process.env.VITE_KALAMDB_URL ?? "http://127.0.0.1:8080";
+const kalamUrl = process.env.VITE_KALAMDB_URL ?? "http://127.0.0.1:2900";
 
 export default defineConfig({
   plugins: [react()],

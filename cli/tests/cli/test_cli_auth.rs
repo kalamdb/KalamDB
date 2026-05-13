@@ -215,7 +215,7 @@ fn test_cli_credentials_with_server_url() {
         "cloud_jwt_token".to_string(),
         "alice".to_string(),
         "2025-12-31T23:59:59Z".to_string(),
-        Some("https://db.example.com:8080".to_string()),
+        Some("https://db.example.com:2900".to_string()),
     );
 
     store.set_credentials(&creds).expect("Failed to store credentials");
@@ -226,7 +226,7 @@ fn test_cli_credentials_with_server_url() {
         .expect("Failed to get credentials")
         .expect("Credentials should exist");
 
-    assert_eq!(retrieved.get_server_url(), "https://db.example.com:8080");
+    assert_eq!(retrieved.get_server_url(), "https://db.example.com:2900");
 
     println!("✓ Credentials with custom server URL work correctly");
 }

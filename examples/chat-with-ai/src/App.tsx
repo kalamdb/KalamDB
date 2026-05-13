@@ -39,7 +39,7 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 
 function createAuthedClient() {
   return createClient({
-    url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:8080',
+    url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:2900',
     authProvider: async () => Auth.basic(
       CHAT_USERNAME,
       import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',

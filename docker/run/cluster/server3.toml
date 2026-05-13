@@ -2,7 +2,7 @@
 
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 2900
 
 [storage]
 data_path = "/data"
@@ -16,15 +16,15 @@ data_path = "/data"
 [cluster]
 cluster_id = "docker-cluster"
 node_id = 3
-rpc_addr = "kalamdb-node3:9090"
-api_addr = "http://kalamdb-node3:8080"
+rpc_addr = "kalamdb-node3:2910"
+api_addr = "http://kalamdb-node3:2900"
 
 [[cluster.peers]]
 node_id = 1
-rpc_addr = "kalamdb-node1:9090"
-api_addr = "http://kalamdb-node1:8080"
+rpc_addr = "kalamdb-node1:2910"
+api_addr = "http://kalamdb-node1:2900"
 
 [[cluster.peers]]
 node_id = 2
-rpc_addr = "kalamdb-node2:9090"
-api_addr = "http://kalamdb-node2:8080"
+rpc_addr = "kalamdb-node2:2910"
+api_addr = "http://kalamdb-node2:2900"

@@ -1,6 +1,6 @@
 {
   "version": "0.4.2-rc1",
-  "server_url": "http://127.0.0.1:8080",
+  "server_url": "http://127.0.0.1:2900",
   "timestamp": "2026-04-11T16:19:37.174065+00:00",
   "config": {
     "iterations": 100,

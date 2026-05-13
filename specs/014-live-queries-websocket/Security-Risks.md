@@ -1905,7 +1905,7 @@ fn extract_client_ip_secure(req: &HttpRequest, config: &ProxyConfig) -> Connecti
 28. Clean up unnecessary unsafe impls
 29. Limit version disclosure
 
-> **IMPORTANT**: When implementing security fixes, ensure they don't break localhost development and CI/CD test suites. Many tests run against `localhost:8080` without TLS or with default credentials.
+> **IMPORTANT**: When implementing security fixes, ensure they don't break localhost development and CI/CD test suites. Many tests run against `localhost:2900` without TLS or with default credentials.
 
 ### Environment-Aware Security Configuration
 
@@ -2664,7 +2664,7 @@ Before deploying KalamDB to production, complete the following security hardenin
 
 ### Network Security
 
-- [ ] **Firewall**: Only expose port 8080 (or configured port) if needed externally
+- [ ] **Firewall**: Only expose port 2900 (or configured port) if needed externally
 - [ ] **Reverse Proxy**: Deploy behind nginx/traefik for additional protection
 - [ ] **IP Whitelisting**: Consider restricting access to known IP ranges
 - [ ] **Load Balancer**: Configure health checks and connection limits

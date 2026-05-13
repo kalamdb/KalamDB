@@ -20,7 +20,7 @@ npm install @kalamdb/orm drizzle-orm
 import { KalamProvider, LiveQuery } from '@kalamdb/react';
 import { createClient } from '@kalamdb/client';
 
-const client = createClient({ url: 'http://localhost:8080' });
+const client = createClient({ url: 'http://localhost:2900' });
 
 export function App() {
   return (

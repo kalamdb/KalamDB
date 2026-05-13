@@ -562,7 +562,7 @@ fn test_cli_parse_missing_documented_flags_without_server() {
         "--host",
         "127.0.0.1",
         "--port",
-        "8080",
+        "2900",
         "--loading-threshold-ms",
         "350",
         "--update-credentials",
@@ -581,7 +581,7 @@ fn test_cli_parse_missing_documented_flags_without_server() {
     .expect("args should parse");
 
     assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
-    assert_eq!(cli.port, 8080);
+    assert_eq!(cli.port, 2900);
     assert_eq!(cli.loading_threshold_ms, Some(350));
     assert!(cli.update_credentials);
     assert!(cli.consume);

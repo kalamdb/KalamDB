@@ -250,14 +250,14 @@ cd backend && cargo build --release
 ./target/release/kalamdb-server
 
 # Test flush job (in separate terminal)
-curl -X POST http://127.0.0.1:8080/v1/api/sql \
+curl -X POST http://127.0.0.1:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -H "X-USER-ID: user123" \
     -d '{"sql":"STORAGE FLUSH TABLE namespace1.files;"}'
 
 # Verify job status
-curl -X POST http://127.0.0.1:8080/v1/api/sql \
+curl -X POST http://127.0.0.1:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d '{"sql":"SELECT * FROM system.jobs;"}'

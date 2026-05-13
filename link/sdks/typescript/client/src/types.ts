@@ -485,13 +485,13 @@ export interface SubscriptionInfo {
  * @example
  * ```typescript
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'admin'),
  * });
  * ```
  */
 export interface ClientOptions {
-  /** Server URL (e.g., 'http://localhost:8080') */
+  /** Server URL (e.g., 'http://localhost:2900') */
   url: string;
   /**
    * Authentication provider callback.
@@ -596,7 +596,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * const client = createClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onConnect: () => console.log('Connected!'),
    * });
@@ -610,7 +610,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * const client = createClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onDisconnect: (reason) => console.log('Disconnected:', reason.message),
    * });
@@ -624,7 +624,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * const client = createClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onError: (err) => console.error('Error:', err.message, 'recoverable:', err.recoverable),
    * });
@@ -639,7 +639,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * const client = createClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onReceive: (msg) => console.log('[RECV]', msg),
    * });
@@ -654,7 +654,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * const client = createClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onSend: (msg) => console.log('[SEND]', msg),
    * });

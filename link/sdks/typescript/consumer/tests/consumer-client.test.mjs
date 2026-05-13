@@ -54,7 +54,7 @@ test('consumeBatch maps options to the topic HTTP API and decodes payloads', asy
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('jwt-123'),
     });
 
@@ -80,7 +80,7 @@ test('consumeBatch maps options to the topic HTTP API and decodes payloads', asy
   assert.deepEqual(batch.messages[0].value, payload);
 
     const request = calls[0];
-    assert.equal(request.url, 'http://127.0.0.1:8080/v1/api/topics/consume');
+    assert.equal(request.url, 'http://127.0.0.1:2900/v1/api/topics/consume');
     assert.equal(readHeader(request.options.headers, 'Authorization'), 'Bearer jwt-123');
     assert.deepEqual(JSON.parse(request.options.body), {
       topic_id: 'orders',
@@ -112,7 +112,7 @@ test('consumeBatch accepts user_id in consume responses', async () => {
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('jwt-123'),
     });
 
@@ -150,7 +150,7 @@ test('ack exchanges basic auth once and reuses the cached JWT for later requests
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.basic('worker', 'secret'),
     });
 
@@ -215,7 +215,7 @@ test('consumer run preserves the latest cursor after an empty poll', async () =>
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('jwt-123'),
     });
 
@@ -309,7 +309,7 @@ test('consumer run supports manual and auto acknowledgments', async () => {
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('jwt-123'),
     });
 
@@ -382,7 +382,7 @@ test('consumeBatch rejects consume responses missing user metadata', async () =>
 
   try {
     const client = createConsumerClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('jwt-123'),
     });
 

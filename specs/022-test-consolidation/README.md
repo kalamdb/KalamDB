@@ -137,8 +137,8 @@ Move into appropriate backend categories (auth, tables, storage, flushing, subsc
 | Mode     | Command Example |
 |----------|-----------------|
 | test     | `cargo test -p kalamdb-server --test <name> -- --runtime test` |
-| single   | `cargo test -p kalamdb-server --test <name> -- --runtime single --urls http://localhost:8080` |
-| cluster  | `cargo test -p kalamdb-server --test <name> -- --runtime cluster --urls http://localhost:8081,http://localhost:8082,http://localhost:8083` |
+| single   | `cargo test -p kalamdb-server --test <name> -- --runtime single --urls http://localhost:2900` |
+| cluster  | `cargo test -p kalamdb-server --test <name> -- --runtime cluster --urls http://localhost:2901,http://localhost:2902,http://localhost:2903` |
 
 Notes:
 - `--urls` is **required** for `single` and `cluster`.

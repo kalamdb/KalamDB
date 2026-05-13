@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 // ── Config ────────────────────────────────────────────────────────────────
-const KALAMDB_URL = "http://127.0.0.1:8080";
+const KALAMDB_URL = "http://127.0.0.1:2900";
 const KALAMDB_ROOT_PASSWORD = process.env.KALAMDB_ROOT_PASSWORD ?? "kalamdb123";
 const FIREBASE_WEB_API_KEY = "AIzaSyBotd5joGFObcOpBW733IcEbRGfB1oD5Ik";
 const FIREBASE_PROJECT_ID = "masky-bb320";

@@ -1,6 +1,6 @@
 {
   "version": "0.4.1-beta",
-  "server_url": "http://localhost:8080",
+  "server_url": "http://localhost:2900",
   "timestamp": "2026-03-13T13:18:45.937744+00:00",
   "config": {
     "iterations": 100,

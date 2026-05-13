@@ -140,11 +140,11 @@ flutter test
 
 ### Live server integration tests
 
-Requires a running KalamDB instance (default: `http://localhost:8080`, user `admin`, pass `kalamdb123`):
+Requires a running KalamDB instance (default: `http://localhost:2900`, user `admin`, pass `kalamdb123`):
 
 ```bash
 KALAM_INTEGRATION_TEST=1 \
-KALAM_URL=http://localhost:8080 \
+KALAM_URL=http://localhost:2900 \
 KALAM_USER=admin \
 KALAM_PASS=kalamdb123 \
 flutter test test/live_server_test.dart

@@ -26,7 +26,7 @@ Example Caddyfile:
 kalamdb.example.com {
   encode gzip
 
-  reverse_proxy 127.0.0.1:8080 {
+  reverse_proxy 127.0.0.1:2900 {
     header_up X-Forwarded-For {remote_host}
     header_up X-Real-IP {remote_host}
     header_up X-Forwarded-Proto https
@@ -45,7 +45,7 @@ server {
   ssl_certificate_key /etc/letsencrypt/live/kalamdb.example.com/privkey.pem;
 
   location / {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:2900;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Real-IP $remote_addr;
@@ -76,8 +76,8 @@ In `backend/server.toml`:
 [cluster]
 cluster_id = "prod-cluster"
 node_id = 1
-rpc_addr = "0.0.0.0:9090"
-api_addr = "http://node1.example.com:8080"
+rpc_addr = "0.0.0.0:2910"
+api_addr = "http://node1.example.com:2900"
 
 [cluster.rpc_tls]
 enabled = true
@@ -87,8 +87,8 @@ node_key_path = "/etc/kalamdb/certs/node1.key"
 
 [[cluster.peers]]
 node_id = 2
-rpc_addr = "node2.example.com:9090"
-api_addr = "http://node2.example.com:8080"
+rpc_addr = "node2.example.com:2910"
+api_addr = "http://node2.example.com:2900"
 rpc_server_name = "node2.cluster.local"
 ```
 

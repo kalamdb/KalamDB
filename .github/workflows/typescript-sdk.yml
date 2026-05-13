@@ -135,7 +135,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [client, consumer, orm]
+        package: [client, consumer, orm, react]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -165,10 +165,10 @@ jobs:
           shared-key: sdk-tests-typescript
           cache-on-failure: true
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install wasm-pack
         shell: bash
@@ -189,7 +189,7 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          KALAMDB_URL: "http://localhost:8080"
+          KALAMDB_URL: "http://localhost:2900"
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
@@ -380,7 +380,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup Rust

@@ -296,7 +296,7 @@ impl Benchmark for SubscriberScaleBench {
                 && std::env::var("KALAMDB_ALLOW_SINGLE_WS_TARGET").ok().as_deref() != Some("1")
             {
                 return Err(format!(
-                    "Single WS target ({}) would require about {} WebSocket connections at {} subscriptions per connection, which is likely capped by local ephemeral ports on this host near {}. Use --urls with multiple endpoints (example: --urls http://127.0.0.1:8080,http://127.0.0.2:8080,http://127.0.0.3:8080,http://127.0.0.4:8080), or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run.",
+                    "Single WS target ({}) would require about {} WebSocket connections at {} subscriptions per connection, which is likely capped by local ephemeral ports on this host near {}. Use --urls with multiple endpoints (example: --urls http://127.0.0.1:2900,http://127.0.0.2:2900,http://127.0.0.3:2900,http://127.0.0.4:2900), or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run.",
                     ws_targets[0],
                     required_ws_connections,
                     subscriptions_per_ws,

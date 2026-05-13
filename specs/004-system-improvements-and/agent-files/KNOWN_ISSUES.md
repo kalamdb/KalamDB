@@ -145,13 +145,13 @@ SELECT queries on USER tables return 0 rows even when data exists:
 
 ```bash
 # Data exists in RocksDB:
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "X-USER-ID: test_user" \
   -d '{"sql": "INSERT INTO app.messages (content) VALUES ('\''Hello'\'')"}'
 # ✅ Success
 
 # But SELECT returns 0 rows:
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "X-USER-ID: test_user" \
   -d '{"sql": "SELECT * FROM app.messages"}'
 # ❌ Returns: {"rows": [], "row_count": 0}

@@ -38,12 +38,12 @@ cargo build --release
 # [INFO] Loading namespaces from conf/namespaces.json
 # [INFO] Loading storage locations from conf/storage_locations.json
 # [INFO] Registering system tables: users, live_queries, storage_locations, jobs
-# [INFO] Starting HTTP server on 0.0.0.0:8080
-# [INFO] WebSocket endpoint available at ws://0.0.0.0:8080/ws
+# [INFO] Starting HTTP server on 0.0.0.0:2900
+# [INFO] WebSocket endpoint available at ws://0.0.0.0:2900/ws
 # [INFO] KalamDB ready to accept connections
 ```
 
-Server is now running on `http://localhost:8080`
+Server is now running on `http://localhost:2900`
 
 ---
 
@@ -52,7 +52,7 @@ Server is now running on `http://localhost:8080`
 Create a namespace to organize tables.
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE NAMESPACE app;"
@@ -98,7 +98,7 @@ Output:
 Create a user table with auto-increment ID and flush policy.
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE USER TABLE app.messages (id BIGINT AUTO_INCREMENT, text STRING, conversation_id STRING, created_at TIMESTAMP) LOCATION '\''/data/${user_id}/messages'\'' FLUSH POLICY ROW_LIMIT 1000;"
@@ -157,7 +157,7 @@ TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidXNlcjEyMyJ9.xxx"
 
 **Insert first message**:
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -181,7 +181,7 @@ curl -X POST http://localhost:8080/api/sql \
 **Insert more messages**:
 ```bash
 # Insert multiple messages at once
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -196,7 +196,7 @@ curl -X POST http://localhost:8080/api/sql \
 Query the inserted messages.
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -256,7 +256,7 @@ Connect to WebSocket endpoint and subscribe to real-time updates.
 
 ```bash
 # Connect with authentication
-wscat -c "ws://localhost:8080/ws?token=$TOKEN"
+wscat -c "ws://localhost:2900/ws?token=$TOKEN"
 
 # After connection, send subscription message:
 {"type":"subscribe","subscriptions":[{"query_id":"messages","sql":"SELECT * FROM app.messages WHERE conversation_id = 'conv123'","options":{"last_rows":10}}]}
@@ -294,7 +294,7 @@ wscat -c "ws://localhost:8080/ws?token=$TOKEN"
   
   <script>
     const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidXNlcjEyMyJ9.xxx';
-    const ws = new WebSocket(`ws://localhost:8080/ws?token=${token}`);
+    const ws = new WebSocket(`ws://localhost:2900/ws?token=${token}`);
     
     ws.onopen = () => {
       console.log('Connected to KalamDB');
@@ -349,7 +349,7 @@ wscat -c "ws://localhost:8080/ws?token=$TOKEN"
 With WebSocket still connected, insert a new message in another terminal.
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -386,7 +386,7 @@ curl -X POST http://localhost:8080/api/sql \
 Update an existing message:
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -431,7 +431,7 @@ curl -X POST http://localhost:8080/api/sql \
 Delete a message (sets `_deleted = true`):
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -466,7 +466,7 @@ curl -X POST http://localhost:8080/api/sql \
 Check active subscriptions:
 
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -531,7 +531,7 @@ Save as `test_kalamdb.sh`:
 set -e
 
 TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoidXNlcjEyMyJ9.xxx"
-BASE_URL="http://localhost:8080"
+BASE_URL="http://localhost:2900"
 
 echo "=== Testing KalamDB ==="
 
@@ -560,7 +560,7 @@ Run with: `bash test_kalamdb.sh`
 ## Troubleshooting
 
 ### Server won't start
-- Check port 8080 is not in use: `lsof -i :8080`
+- Check port 2900 is not in use: `lsof -i :2900`
 - Check RocksDB directory permissions: `ls -la /tmp/kalamdb`
 - Check logs for detailed error messages
 
@@ -572,7 +572,7 @@ Run with: `bash test_kalamdb.sh`
 ### WebSocket connection fails
 - Verify server is running
 - Check firewall allows WebSocket connections
-- Try query parameter auth: `ws://localhost:8080/ws?token=<token>`
+- Try query parameter auth: `ws://localhost:2900/ws?token=<token>`
 
 ### No live notifications received
 - Verify subscription query matches inserted data

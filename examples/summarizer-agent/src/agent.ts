@@ -25,7 +25,7 @@ function readConfig(): AgentConfig {
   loadEnv({ path: resolve(__dirname, '../.env'), quiet: true });
 
   return {
-    url: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+    url: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     user: process.env.KALAMDB_USER ?? 'root',
     password: process.env.KALAMDB_PASSWORD ?? 'kalamdb123',
     topic: process.env.KALAMDB_TOPIC ?? 'blog.summarizer',

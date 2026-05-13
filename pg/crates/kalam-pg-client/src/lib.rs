@@ -348,7 +348,7 @@ impl RemoteKalamClient {
 
         if let Some(api_port) = leader_api_port {
             let mapped_port = match api_port {
-                8080 => Some(9188),
+                2900 => Some(2910),
                 _ => api_port.checked_add(1000),
             };
 

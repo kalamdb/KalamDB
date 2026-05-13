@@ -22,7 +22,7 @@
 
 ### Prerequisites
 - Rust 1.75+ (stable toolchain)
-- KalamDB server running (default: http://localhost:8080)
+- KalamDB server running (default: http://localhost:2900)
 
 ### Build from Source
 
@@ -57,14 +57,14 @@ chmod +x kalam-cli-macos
 ### First Connection
 
 ```bash
-# Connect with default settings (localhost:8080, user: system)
+# Connect with default settings (localhost:2900, user: system)
 kalam-cli
 
 # Connect with specific host and user
-kalam-cli -u jamal -h http://localhost:8080
+kalam-cli -u jamal -h http://localhost:2900
 
 # Connect with JWT authentication
-kalam-cli -u jamal -h http://localhost:8080 --token eyJhbGc...
+kalam-cli -u jamal -h http://localhost:2900 --token eyJhbGc...
 
 # Connect with API key
 kalam-cli -u jamal --apikey your-api-key
@@ -246,7 +246,7 @@ kalam> SHOW TABLE STATS chat.messages;
 
 -- Show current configuration
 \config
-Host: http://localhost:8080
+Host: http://localhost:2900
 User: jamal
 Auth: JWT (expires: 2025-10-22)
 Output: Table
@@ -337,7 +337,7 @@ kalam> INSERT INTO messages (id, content)
 
 ```toml
 [connection]
-host = "http://localhost:8080"
+host = "http://localhost:2900"
 user = "jamal"
 token = "eyJhbGc..."  # Optional: JWT token
 
@@ -435,7 +435,7 @@ kalam> SUBSCRIBE TO ai.conversations WHERE agent_id = 'gpt-4';
 kalam-cli --json <<< "SELECT * FROM messages" > backup.json
 
 # Import data (using separate script or API)
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "X-USER-ID: jamal" \
   -d '{"sql": "INSERT INTO messages ..."}'
 ```
@@ -448,7 +448,7 @@ curl -X POST http://localhost:8080/api/sql \
 
 ```bash
 # Test server connectivity
-curl http://localhost:8080/v1/health
+curl http://localhost:2900/v1/health
 
 # Check CLI version
 kalam-cli --version
@@ -464,7 +464,7 @@ RUST_LOG=debug kalam-cli
 kalam-cli --token <your-token>
 
 # Try localhost bypass (if enabled on server)
-kalam-cli -h http://localhost:8080
+kalam-cli -h http://localhost:2900
 ```
 
 ### Subscription Issues

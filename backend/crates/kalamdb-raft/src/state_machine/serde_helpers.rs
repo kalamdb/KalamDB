@@ -60,7 +60,7 @@ mod tests {
 
         use crate::storage::{KalamNode, KalamTypeConfig};
 
-        let node = KalamNode::new("127.0.0.1:9081", "http://127.0.0.1:8081");
+        let node = KalamNode::new("127.0.0.1:2911", "http://127.0.0.1:2901");
         let mut nodes = BTreeMap::new();
         nodes.insert(1u64, node);
         let membership: Membership<u64, KalamNode> = nodes.into();
@@ -90,8 +90,8 @@ mod tests {
 
         use crate::storage::{KalamNode, KalamTypeConfig};
 
-        let node1 = KalamNode::new("127.0.0.1:9081", "http://127.0.0.1:8081");
-        let node2 = KalamNode::new("127.0.0.1:9082", "http://127.0.0.1:8082");
+        let node1 = KalamNode::new("127.0.0.1:2911", "http://127.0.0.1:2901");
+        let node2 = KalamNode::new("127.0.0.1:2912", "http://127.0.0.1:2902");
         let mut nodes = BTreeMap::new();
         nodes.insert(1u64, node1);
         nodes.insert(2u64, node2);

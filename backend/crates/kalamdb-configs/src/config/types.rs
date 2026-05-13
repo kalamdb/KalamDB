@@ -1142,7 +1142,7 @@ impl Default for ServerConfig {
         ServerConfig {
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
-                port: 8080,
+                port: 2900,
                 public_origin: None,
                 workers: 0,
                 api_version: default_api_version(),

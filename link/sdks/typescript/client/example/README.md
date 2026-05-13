@@ -55,7 +55,7 @@ This starts a static server and opens the page.
 
 ### 5) Use the UI
 
-- Confirm **Server URL** is `http://localhost:8080`
+- Confirm **Server URL** is `http://localhost:2900`
 - For local dev, use:
   - **Username**: `root`
   - **Password**: *(empty)*

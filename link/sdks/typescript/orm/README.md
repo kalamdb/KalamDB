@@ -19,7 +19,7 @@ import { drizzle } from 'drizzle-orm/pg-proxy';
 import { messages } from './schema';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
 });
 
@@ -65,7 +65,7 @@ Pass `{ systemColumns: true }` when your app needs typed `_seq`/`_deleted` field
 
 ```bash
 kalamdb-orm \
-  --url http://localhost:8080 \
+  --url http://localhost:2900 \
   --user admin \
   --password AdminPass123! \
   --namespace app \
@@ -90,7 +90,7 @@ Add a generator script to your app:
 ```json
 {
   "scripts": {
-    "schema:gen": "kalamdb-orm --url http://localhost:8080 --user admin --password AdminPass123! --namespace app --out src/db/schema.ts"
+    "schema:gen": "kalamdb-orm --url http://localhost:2900 --user admin --password AdminPass123! --namespace app --out src/db/schema.ts"
   }
 }
 ```

@@ -132,7 +132,7 @@ The current implementation in `execute_sql_v1` needs to be completed. The execut
 3. Start server: `cargo run --bin kalamdb-server`
 4. Run backend integration tests: `cargo test --test test_*`
 5. Run CLI integration tests: `cd cli && cargo test --test test_cli_integration`
-6. Manual CLI testing: `cargo run --bin kalam -- -u http://localhost:8080 --command "CREATE NAMESPACE test"`
+6. Manual CLI testing: `cargo run --bin kalam -- -u http://localhost:2900 --command "CREATE NAMESPACE test"`
 
 ## Benefits
 

@@ -10,7 +10,7 @@ Get a working query + realtime flow running with the current `@kalamdb/client` A
 
 If you are running KalamDB locally from this repo, a common local default is:
 
-- URL: `http://localhost:8080`
+- URL: `http://localhost:2900`
 - user: `admin`
 - password: `kalamdb123`
 
@@ -33,7 +33,7 @@ The current TypeScript SDK requires `authProvider`.
 import { Auth, createClient } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'kalamdb123'),
 });
 ```
@@ -103,7 +103,7 @@ import { Auth, createClient } from '@kalamdb/client';
 
 async function main() {
   const client = createClient({
-    url: 'http://localhost:8080',
+    url: 'http://localhost:2900',
     authProvider: async () => Auth.basic('admin', 'kalamdb123'),
   });
 

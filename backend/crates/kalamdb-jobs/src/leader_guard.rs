@@ -298,8 +298,8 @@ mod tests {
                         NodeRole::Follower
                     },
                     status: NodeStatus::Active,
-                    rpc_addr: "127.0.0.1:9081".to_string(),
-                    api_addr: "http://127.0.0.1:8081".to_string(),
+                    rpc_addr: "127.0.0.1:2911".to_string(),
+                    api_addr: "http://127.0.0.1:2901".to_string(),
                     is_self: true,
                     is_leader: self.is_leader.load(Ordering::SeqCst),
                     groups_leading: if self.is_leader.load(Ordering::SeqCst) {

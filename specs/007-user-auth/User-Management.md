@@ -1539,7 +1539,7 @@ providers = "google,github,azure"
 # [oauth.google]
 # client_id = "..."
 # client_secret = "..."
-# redirect_uri = "http://localhost:8080/auth/callback/google"
+# redirect_uri = "http://localhost:2900/auth/callback/google"
 ```
 
 ---

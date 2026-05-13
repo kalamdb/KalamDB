@@ -4,7 +4,7 @@
 # ==========================================================================
 #
 # Runs Rust e2e tests against a locally running pgrx PostgreSQL (port 28816)
-# and a locally running KalamDB server (default http://127.0.0.1:8080).
+# and a locally running KalamDB server (default http://127.0.0.1:2900).
 # No Docker is started — both services must already be running.
 #
 # Usage (from repo root OR from pg/):
@@ -23,7 +23,7 @@
 # before running tests so the local test environment stays in sync.
 #
 # Environment variables (all optional):
-#   KALAMDB_SERVER_URL    KalamDB HTTP base URL  (default: http://127.0.0.1:8080)
+#   KALAMDB_SERVER_URL    KalamDB HTTP base URL  (default: http://127.0.0.1:2900)
 #   KALAMDB_GRPC_HOST     KalamDB gRPC host       (default: inferred from server URL)
 #   KALAMDB_GRPC_PORT     KalamDB gRPC port       (default: inferred from server URL)
 #   KALAMDB_PG_HOST       Postgres host           (default: 127.0.0.1)
@@ -81,7 +81,7 @@ infer_kalamdb_grpc_target() {
     local authority="${server_url#*://}"
     local host=""
     local http_port=""
-    local grpc_port="9188"
+    local grpc_port="2910"
 
     authority="${authority%%/*}"
     authority="${authority##*@}"
@@ -99,16 +99,16 @@ infer_kalamdb_grpc_target() {
     fi
 
     case "$http_port" in
-        8080) grpc_port="9188" ;;
-        8081) grpc_port="9081" ;;
-        8082) grpc_port="9082" ;;
-        8083) grpc_port="9083" ;;
+        2900) grpc_port="2910" ;;
+        2901) grpc_port="2911" ;;
+        2902) grpc_port="2912" ;;
+        2903) grpc_port="2913" ;;
     esac
 
     printf '%s %s\n' "$host" "$grpc_port"
 }
 
-KALAMDB_SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:8080}"
+KALAMDB_SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:2900}"
 read -r DEFAULT_KALAMDB_GRPC_HOST DEFAULT_KALAMDB_GRPC_PORT < <(infer_kalamdb_grpc_target "$KALAMDB_SERVER_URL")
 KALAMDB_GRPC_HOST="${KALAMDB_GRPC_HOST:-$DEFAULT_KALAMDB_GRPC_HOST}"
 KALAMDB_GRPC_PORT="${KALAMDB_GRPC_PORT:-$DEFAULT_KALAMDB_GRPC_PORT}"

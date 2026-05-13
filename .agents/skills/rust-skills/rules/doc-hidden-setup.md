@@ -131,7 +131,7 @@ For examples that shouldn't run in tests:
 /// ```no_run
 /// # use my_crate::Server;
 /// // This would actually start a server - don't run in tests
-/// let server = Server::bind("0.0.0.0:8080").await?;
+/// let server = Server::bind("0.0.0.0:2900").await?;
 /// server.run().await?;
 /// # Ok::<(), my_crate::Error>(())
 /// ```

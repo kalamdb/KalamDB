@@ -356,7 +356,7 @@ JSON Response
 
 ### Send AI Message
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer $JWT" \
   -d '{"sql": "INSERT INTO userId.messages (msgId, conversationId, conversationType, from, timestamp, content) VALUES (123, '\''conv_ai'\'', '\''ai'\'', '\''user_john'\'', 1699000000, '\''Hello AI'\'')"}'
 ```
@@ -364,7 +364,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 ### Send Group Message with Media
 ```bash
 # 1. Upload media
-curl -X POST http://localhost:8080/api/v1/media/upload \
+curl -X POST http://localhost:2900/api/v1/media/upload \
   -H "Authorization: Bearer $JWT" \
   -F "file=@image.jpg" \
   -F "conversationId=conv_group" \
@@ -372,7 +372,7 @@ curl -X POST http://localhost:8080/api/v1/media/upload \
 # Returns: {"contentRef": "shared/conversations/conv_group/media-789.jpg"}
 
 # 2. Insert message with contentRef
-curl -X POST http://localhost:8080/api/v1/messages \
+curl -X POST http://localhost:2900/api/v1/messages \
   -H "Authorization: Bearer $JWT" \
   -d '{
     "conversationId": "conv_group",
@@ -385,14 +385,14 @@ curl -X POST http://localhost:8080/api/v1/messages \
 
 ### Query Messages
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer $JWT" \
   -d '{"sql": "SELECT * FROM userId.messages WHERE conversationId = '\''conv_123'\'' LIMIT 100"}'
 ```
 
 ### Delete Conversation
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer $JWT" \
   -d '{"sql": "DELETE FROM userId.conversations WHERE conversationId = '\''conv_old'\''"}'
 ```

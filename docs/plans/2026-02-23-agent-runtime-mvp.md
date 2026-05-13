@@ -190,7 +190,7 @@ git commit -m "fix(example): make summarizer setup idempotent and reliable"
 **Step 1: Start backend server**
 
 Run: `cd backend && cargo run`
-Expected: server healthy at `http://127.0.0.1:8080`.
+Expected: server healthy at `http://127.0.0.1:2900`.
 
 **Step 2: Bootstrap and start agent**
 

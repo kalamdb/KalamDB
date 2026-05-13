@@ -589,7 +589,7 @@ fn normalize_ws_url(raw: &str) -> Option<String> {
 }
 
 fn http_to_ws_url(base_url: &str) -> String {
-    normalize_ws_url(base_url).unwrap_or_else(|| "ws://localhost:8080/v1/ws".to_string())
+    normalize_ws_url(base_url).unwrap_or_else(|| "ws://localhost:2900/v1/ws".to_string())
 }
 
 /// Convert a kalam-link `QueryResponse` into the legacy `SqlResponse` used by benchmarks.

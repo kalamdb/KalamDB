@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./run-chat-realtime.sh
-#   ./run-chat-realtime.sh --url http://127.0.0.1:8080 --minutes 10 --users 1000 --realtime-convs 150
+#   ./run-chat-realtime.sh --url http://127.0.0.1:2900 --minutes 10 --users 1000 --realtime-convs 150
 #   ./run-chat-realtime.sh --messages-per-minute 20
 #   ./run-chat-realtime.sh --messages-per-minute 0
 
@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-URL="${KALAMDB_URL:-http://127.0.0.1:8080}"
+URL="${KALAMDB_URL:-http://127.0.0.1:2900}"
 MINUTES="${KALAMDB_BENCH_CHAT_MINUTES:-5}"
 USER_COUNT="${KALAMDB_BENCH_CHAT_USERS:-1000}"
 REALTIME_CONVS="${KALAMDB_BENCH_CHAT_REALTIME_CONVS:-100}"

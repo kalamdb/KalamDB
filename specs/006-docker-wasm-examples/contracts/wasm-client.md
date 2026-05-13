@@ -17,7 +17,7 @@ class KalamClient {
 ```
 
 **Parameters**:
-- `url`: KalamDB server WebSocket URL (e.g., `ws://localhost:8080`)
+- `url`: KalamDB server WebSocket URL (e.g., `ws://localhost:2900`)
 - `apiKey`: User's API key for authentication
 
 **Throws**:
@@ -27,7 +27,7 @@ class KalamClient {
 **Example**:
 ```typescript
 const client = new KalamClient(
-  'ws://localhost:8080',
+  'ws://localhost:2900',
   '550e8400-e29b-41d4-a716-446655440000'
 );
 ```
@@ -270,7 +270,7 @@ import { KalamClient } from 'kalam-link';
 async function setupTodoApp() {
   // Initialize client
   const client = new KalamClient(
-    'ws://localhost:8080',
+    'ws://localhost:2900',
     process.env.KALAMDB_API_KEY!
   );
 

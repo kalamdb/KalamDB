@@ -308,7 +308,7 @@ struct ClientState {
 /// using the original credentials on the next request.
 ///
 /// Example:
-///     client = KalamClient("http://localhost:8080", Auth.basic("admin", "pass"))
+///     client = KalamClient("http://localhost:2900", Auth.basic("admin", "pass"))
 ///     result = await client.query("SELECT * FROM app.users")
 ///     await client.disconnect()
 #[pyclass]
@@ -325,7 +325,7 @@ impl KalamClient {
     /// `await client.connect()`) triggers the login handshake.
     ///
     /// Args:
-    ///     url: The KalamDB server URL (e.g. "http://localhost:8080")
+    ///     url: The KalamDB server URL (e.g. "http://localhost:2900")
     ///     auth: Auth credentials from Auth.basic() or Auth.jwt()
     ///     options: Optional dict of client settings:
     ///         - timeout_seconds (float): per-request timeout (default 30)

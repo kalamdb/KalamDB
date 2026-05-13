@@ -21,8 +21,8 @@ services:
     image: ${KALAMDB_IMAGE:-jamals86/kalamdb:latest}
     container_name: kalamdb
     ports:
-      - "${KALAMDB_HTTP_PORT:-8088}:8080"
-      - "${KALAMDB_RPC_PORT:-9188}:9188"
+      - "${KALAMDB_HTTP_PORT:-8088}:2900"
+      - "${KALAMDB_RPC_PORT:-9188}:2910"
     environment:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       RUST_LOG: "${RUST_LOG:-info}"
@@ -30,16 +30,16 @@ services:
       KALAMDB_ALLOW_REMOTE_SETUP: "true"
       KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       # Enable cluster mode so the gRPC/PG service starts on 9188.
-      # Use hostname not 0.0.0.0 so validation passes; server binds 0.0.0.0:9188.
+      # Use hostname not 0.0.0.0 so validation passes; server binds 0.0.0.0:2910.
       KALAMDB_NODE_ID: "1"
-      KALAMDB_CLUSTER_RPC_ADDR: "kalamdb:9188"
-      KALAMDB_CLUSTER_API_ADDR: "http://kalamdb:8080"
+      KALAMDB_CLUSTER_RPC_ADDR: "kalamdb:2910"
+      KALAMDB_CLUSTER_API_ADDR: "http://kalamdb:2900"
     volumes:
       - kalamdb_data:/data
     restart: unless-stopped
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/v1/api/healthcheck"]
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2900/v1/api/healthcheck"]
       interval: 10s
       timeout: 5s
       start_period: 10s

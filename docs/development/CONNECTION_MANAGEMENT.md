@@ -250,7 +250,7 @@ sudo sysctl -w net.ipv4.tcp_tw_reuse=1       # Reuse TIME_WAIT sockets
 #!/bin/bash
 # Test server connection capacity
 
-SERVER_URL="http://127.0.0.1:8080"
+SERVER_URL="http://127.0.0.1:2900"
 CONCURRENT_CONNECTIONS=100
 
 echo "Testing with $CONCURRENT_CONNECTIONS concurrent connections..."
@@ -268,12 +268,12 @@ Watch connection states in real-time:
 
 ```bash
 # macOS
-netstat -an | grep :8080 | wc -l           # Total connections
-netstat -an | grep :8080 | grep ESTABLISHED | wc -l  # Active
-netstat -an | grep :8080 | grep TIME_WAIT | wc -l    # Waiting for reuse
+netstat -an | grep :2900 | wc -l           # Total connections
+netstat -an | grep :2900 | grep ESTABLISHED | wc -l  # Active
+netstat -an | grep :2900 | grep TIME_WAIT | wc -l    # Waiting for reuse
 
 # Linux
-ss -tan state established '( dport = :8080 or sport = :8080 )' | wc -l
+ss -tan state established '( dport = :2900 or sport = :2900 )' | wc -l
 ```
 
 ## Comparison with Other Systems

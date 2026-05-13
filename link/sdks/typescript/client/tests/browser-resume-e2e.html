@@ -97,7 +97,7 @@
     import { Auth, LogLevel, createClient } from '../dist/src/index.js';
 
     const params = new URLSearchParams(window.location.search);
-    const backendUrl = params.get('backend') ?? 'http://127.0.0.1:8082';
+    const backendUrl = params.get('backend') ?? 'http://127.0.0.1:2902';
     const user = params.get('user') ?? 'root';
     const password = params.get('password') ?? '';
     const namespace = `browser_resume_${Date.now()}`;

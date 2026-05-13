@@ -46,9 +46,9 @@ impl RaftTypeConfig for KalamTypeConfig {
 /// Using `skip_serializing_if` causes deserialization to fail with `UnexpectedEnd`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct KalamNode {
-    /// gRPC address for Raft communication (e.g., "127.0.0.1:9188")
+    /// gRPC address for Raft communication (e.g., "127.0.0.1:2910")
     pub rpc_addr: String,
-    /// HTTP address for client requests (e.g., "127.0.0.1:8080")
+    /// HTTP address for client requests (e.g., "127.0.0.1:2900")
     pub api_addr: String,
     /// Machine hostname (e.g., "node-1.kalamdb.local")
     #[serde(default)]
@@ -178,22 +178,22 @@ mod tests {
 
     #[test]
     fn test_kalam_node_display() {
-        let node = KalamNode::new("127.0.0.1:9188", "127.0.0.1:8080");
-        assert_eq!(format!("{}", node), "127.0.0.1:9188|127.0.0.1:8080");
+        let node = KalamNode::new("127.0.0.1:2910", "127.0.0.1:2900");
+        assert_eq!(format!("{}", node), "127.0.0.1:2910|127.0.0.1:2900");
     }
 
     #[test]
     fn test_kalam_node_display_with_hostname() {
         let node = KalamNode::with_metadata(
-            "127.0.0.1:9188",
-            "127.0.0.1:8080",
+            "127.0.0.1:2910",
+            "127.0.0.1:2900",
             Some("node-1".to_string()),
             Some("0.1.0".to_string()),
             Some(16384),
             Some("linux".to_string()),
             Some("x86_64".to_string()),
         );
-        assert_eq!(format!("{}", node), "127.0.0.1:9188|127.0.0.1:8080|node-1");
+        assert_eq!(format!("{}", node), "127.0.0.1:2910|127.0.0.1:2900|node-1");
     }
 
     #[test]
@@ -207,9 +207,9 @@ mod tests {
 
     #[test]
     fn test_kalam_node_with_auto_metadata() {
-        let node = KalamNode::with_auto_metadata("127.0.0.1:9188", "127.0.0.1:8080");
-        assert_eq!(node.rpc_addr, "127.0.0.1:9188");
-        assert_eq!(node.api_addr, "127.0.0.1:8080");
+        let node = KalamNode::with_auto_metadata("127.0.0.1:2910", "127.0.0.1:2900");
+        assert_eq!(node.rpc_addr, "127.0.0.1:2910");
+        assert_eq!(node.api_addr, "127.0.0.1:2900");
         // These should be auto-detected
         assert!(node.version.is_some());
         assert!(node.os.is_some());

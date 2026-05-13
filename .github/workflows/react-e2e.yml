@@ -29,7 +29,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.92.0"
   WASM_PACK_VERSION: "0.14.0"
-  KALAMDB_URL: "http://127.0.0.1:8080"
+  KALAMDB_URL: "http://127.0.0.1:2900"
 
 jobs:
   e2e:
@@ -57,7 +57,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -45,7 +45,7 @@ log_warn() {
 
 container_get() {
     local path="$1"
-    docker exec "$CONTAINER_NAME" /bin/busybox wget -qO- "http://127.0.0.1:8080${path}"
+    docker exec "$CONTAINER_NAME" /bin/busybox wget -qO- "http://127.0.0.1:2900${path}"
 }
 
 cleanup() {
@@ -93,7 +93,7 @@ main() {
     DOCKER_RUN_ARGS=(
         -d
         --name "$CONTAINER_NAME"
-        -p "$TEST_PORT:8080"
+        -p "$TEST_PORT:2900"
         -e KALAMDB_SERVER_HOST=0.0.0.0
         -e KALAMDB_LOG_LEVEL=info
         -e KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD"
@@ -126,7 +126,7 @@ main() {
             exit 1
         fi
         
-        if docker exec "$CONTAINER_NAME" /bin/busybox wget -q -O /dev/null "http://127.0.0.1:8080/health" > /dev/null 2>&1; then
+        if docker exec "$CONTAINER_NAME" /bin/busybox wget -q -O /dev/null "http://127.0.0.1:2900/health" > /dev/null 2>&1; then
             log_info "Server is ready! (took ${ELAPSED}s)"
             break
         fi
@@ -248,7 +248,7 @@ main() {
     # Test 7: Packaged CLI can talk to the packaged server
     log_info "Test 7: Testing packaged CLI against the running server..."
     CLI_QUERY_OUTPUT=$(docker exec "$CONTAINER_NAME" /usr/local/bin/kalam-cli \
-        -u http://127.0.0.1:8080 \
+        -u http://127.0.0.1:2900 \
         --token "$TOKEN" \
         --command "SELECT 1 AS packaged_cli_test" 2>&1 || echo "FAILED")
 

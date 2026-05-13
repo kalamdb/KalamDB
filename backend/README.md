@@ -42,7 +42,7 @@ cp server.example.toml server.toml
 cargo run
 ```
 
-The server will start on `http://127.0.0.1:8080` by default.
+The server will start on `http://127.0.0.1:2900` by default.
 
 ## New Features (Phase 006)
 
@@ -62,7 +62,7 @@ cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"
 Use the API key with the `X-API-KEY` header:
 
 ```bash
-curl -X POST http://localhost:8080/sql \
+curl -X POST http://localhost:2900/sql \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: 550e8400-e29b-41d4-a716-446655440000" \
   -d '{"query": "SELECT * FROM todos"}'
@@ -110,13 +110,21 @@ Override any server.toml setting with environment variables:
 ```bash
 KALAMDB_SERVER_PORT=9000 \
 KALAMDB_LOG_LEVEL=debug \
+KALAMDB_LOG_FORMAT=json \
 cargo run
 ```
 
-**Format**: `KALAMDB_` + uppercase path with `_` separator
+Common environment overrides:
 - `KALAMDB_SERVER_PORT` → `[server].port`
 - `KALAMDB_LOG_LEVEL` → `[logging].level`
-- `KALAMDB_DATA_DIR` → `[storage].data_dir`
+- `KALAMDB_LOG_FORMAT` → `[logging].format`
+- `KALAMDB_LOGS_DIR` → `[logging].logs_path`
+- `KALAMDB_LOG_TO_CONSOLE` → `[logging].log_to_console`
+- `KALAMDB_DATA_DIR` → `[storage].data_path`
+
+For the full logging and traceability guide, including Docker and OTLP examples, see:
+
+- `https://kalamdb.org/docs/server/configurations/logging`
 
 ### Client SDKs
 

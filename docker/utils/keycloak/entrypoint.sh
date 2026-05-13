@@ -13,7 +13,7 @@ sleep 20
 echo "Disabling SSL requirement on master realm..."
 for i in $(seq 1 10); do
   /opt/keycloak/bin/kcadm.sh config credentials \
-    --server http://localhost:8080 \
+    --server http://localhost:2900 \
     --realm master \
     --user "${KC_BOOTSTRAP_ADMIN_USERNAME:-${KEYCLOAK_ADMIN:-admin}}" \
     --password "${KC_BOOTSTRAP_ADMIN_PASSWORD:-${KEYCLOAK_ADMIN_PASSWORD:-admin}}" 2>&1 && break

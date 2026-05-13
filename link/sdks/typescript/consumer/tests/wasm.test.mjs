@@ -17,7 +17,7 @@ test('consumer package ships a dedicated low-level wasm module', async () => {
 
   await init({ module_or_path: wasmBuffer });
 
-  const client = new KalamConsumerClient('http://127.0.0.1:8080');
+  const client = new KalamConsumerClient('http://127.0.0.1:2900');
   assert.equal(typeof client.consume, 'function');
   assert.equal(typeof client.ack, 'function');
   assert.equal(typeof client.connect, 'undefined');

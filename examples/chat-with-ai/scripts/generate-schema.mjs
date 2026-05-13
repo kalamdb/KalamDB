@@ -18,7 +18,7 @@ loadEnv({ path: resolve(projectDir, '.env'), quiet: true });
 const ormCli = resolve(projectDir, 'node_modules/@kalamdb/orm/dist/cli.js');
 const outFile = resolve(projectDir, 'src/schema.generated.ts');
 
-const url = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
+const url = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const user = process.env.KALAMDB_USER ?? 'admin';
 const password = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 

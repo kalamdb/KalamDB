@@ -28,7 +28,7 @@ This example is package-driven. It expects the KalamDB SDKs to be installed in `
 Start a KalamDB server. The fastest Docker option is:
 
 ```bash
-docker run -d --name kalamdb -p 8080:8080 -e KALAMDB_SERVER_HOST=0.0.0.0 -e KALAMDB_ROOT_PASSWORD=kalamdb123 -e KALAMDB_JWT_SECRET=local-dev-secret-please-change-32chars -v kalamdb_data:/data jamals86/kalamdb:latest
+docker run -d --name kalamdb -p 2900:2900 -e KALAMDB_SERVER_HOST=0.0.0.0 -e KALAMDB_ROOT_PASSWORD=kalamdb123 -e KALAMDB_JWT_SECRET=local-dev-secret-please-change-32chars -v kalamdb_data:/data jamals86/kalamdb:latest
 ```
 
 Then prepare the demo schema and environment file:
@@ -146,7 +146,7 @@ The test starts the agent, opens browser tabs, sends an ask message, and verifie
 If setup cannot reach KalamDB, check the server health endpoint:
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:2900/health
 ```
 
 If the agent is running but no reply appears, rerun setup so the topic route exists:

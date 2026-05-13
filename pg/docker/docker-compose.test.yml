@@ -14,8 +14,8 @@ services:
     image: ${KALAMDB_IMAGE:-jamals86/kalamdb:latest}
     container_name: kalamdb-e2e
     ports:
-      - "${KALAMDB_TEST_HTTP_PORT:-18088}:8080"
-      - "${KALAMDB_TEST_RPC_PORT:-19188}:9188"
+      - "${KALAMDB_TEST_HTTP_PORT:-18088}:2900"
+      - "${KALAMDB_TEST_RPC_PORT:-19188}:2910"
     environment:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       RUST_LOG: "${RUST_LOG:-warn}"
@@ -25,17 +25,17 @@ services:
       # Pre-shared token for pg_kalam FDW gRPC auth (must match auth_header in init-test.sql).
       KALAMDB_PG_AUTH_TOKEN: "Bearer e2e-pg-shared-secret-token-for-testing"
       # Enable cluster mode so the gRPC service starts on port 9188 (required by pg_kalam FDW).
-      # rpc_addr uses the service hostname so validation passes; the server binds 0.0.0.0:9188.
+      # rpc_addr uses the service hostname so validation passes; the server binds 0.0.0.0:2910.
       KALAMDB_NODE_ID: "1"
-      KALAMDB_CLUSTER_RPC_ADDR: "kalamdb:9188"
-      KALAMDB_CLUSTER_API_ADDR: "http://kalamdb:8080"
+      KALAMDB_CLUSTER_RPC_ADDR: "kalamdb:2910"
+      KALAMDB_CLUSTER_API_ADDR: "http://kalamdb:2900"
     user: "0:0"
     tmpfs:
       - /data
     restart: "no"
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2900/health"]
       interval: 5s
       timeout: 3s
       start_period: 8s

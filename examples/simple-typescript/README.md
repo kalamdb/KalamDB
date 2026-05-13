@@ -21,7 +21,7 @@ It stays intentionally small so the SDK usage is obvious:
 
 ## Quick start
 
-1. Make sure KalamDB is running on `http://127.0.0.1:8080`.
+1. Make sure KalamDB is running on `http://127.0.0.1:2900`.
 2. Run `npm install`.
 3. Run `npm run setup`.
 4. Run `npm run dev`.
@@ -64,7 +64,7 @@ npm test
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `VITE_KALAMDB_URL` | Yes | - | WebSocket URL (e.g., `ws://localhost:8080`) |
+| `VITE_KALAMDB_URL` | Yes | - | WebSocket URL (e.g., `ws://localhost:2900`) |
 | `VITE_KALAMDB_API_KEY` | Yes | - | API key from `kalam user create` |
 
 ### localStorage Keys
@@ -127,7 +127,7 @@ All styles are in `src/styles/App.css` using CSS variables:
 
 ### "Cannot connect to KalamDB"
 
-- ✅ Check server is running: `curl http://localhost:8080/health`
+- ✅ Check server is running: `curl http://localhost:2900/health`
 - ✅ Verify `VITE_KALAMDB_URL` matches server address
 - ✅ Check firewall isn't blocking WebSocket connections
 

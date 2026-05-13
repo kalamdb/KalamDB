@@ -1,6 +1,6 @@
 # KalamDB WebSocket Protocol
 
-**Endpoint**: `ws://<host>:8080/v1/ws`  
+**Endpoint**: `ws://<host>:2900/v1/ws`  
 **Transport**: RFC 6455 WebSocket  
 **Message encoding**: JSON text frames, plus optional gzip-compressed binary frames for large server messages
 

@@ -46,7 +46,7 @@ cargo test --test smoke -- --nocapture
 ```
 
 **Environment Variables:**
-- `KALAMDB_SERVER_URL` - Server URL (default: `http://127.0.0.1:8080`)
+- `KALAMDB_SERVER_URL` - Server URL (default: `http://127.0.0.1:2900`)
 - `KALAMDB_ROOT_PASSWORD` - Root password (default: `""`)
 
 ### Cluster Test Shortcuts

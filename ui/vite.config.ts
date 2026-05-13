@@ -39,7 +39,7 @@ const cleanupPlugin = () => ({
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, "");
-  const backendOrigin = normalizeOrigin(env.VITE_API_URL || "http://localhost:8080");
+  const backendOrigin = normalizeOrigin(env.VITE_API_URL || "http://localhost:2900");
   const backendWebSocketOrigin = toWebSocketOrigin(backendOrigin);
 
   return {

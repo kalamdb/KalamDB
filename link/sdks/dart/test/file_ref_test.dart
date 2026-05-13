@@ -5,7 +5,7 @@ import 'package:kalam_link/kalam_link.dart';
 import 'package:kalam_link/src/generated/frb_generated.dart';
 
 const _fileRefDownloadUrl =
-    'http://localhost:8080/v1/files/app/users/f0001/12345-avatar.png';
+    'http://localhost:2900/v1/files/app/users/f0001/12345-avatar.png';
 const _fileRefRelativeUrl = '/v1/files/app/users/f0001/12345-avatar.png';
 const _fileRefStoredName = '12345-avatar.png';
 const _fileRefRelativePath = 'f0001/12345-avatar.png';
@@ -33,7 +33,7 @@ void main() {
       final ref = KalamFileRef.fromJson(sampleJson);
       expect(ref, isNotNull);
       expect(ref!.name, 'avatar.png');
-      expect(ref.getDownloadUrl('http://localhost:8080', 'app', 'users'),
+      expect(ref.getDownloadUrl('http://localhost:2900', 'app', 'users'),
           _fileRefDownloadUrl);
       expect(ref.relativeUrl('app', 'users'), _fileRefRelativeUrl);
       expect(ref.storedName(), _fileRefStoredName);
@@ -42,7 +42,7 @@ void main() {
 
     test('cell value asFileUrl uses the shared helper path', () {
       final cell = KalamCellValue(jsonDecode(sampleJson));
-      expect(cell.asFileUrl('http://localhost:8080', 'app', 'users'),
+      expect(cell.asFileUrl('http://localhost:2900', 'app', 'users'),
           _fileRefDownloadUrl);
     });
   });
@@ -62,7 +62,7 @@ class _FileRefRustApi implements RustLibApi {
     required String table,
   }) {
     expect(fileRefJson, contains('"id":"12345"'));
-    expect(baseUrl, 'http://localhost:8080');
+    expect(baseUrl, 'http://localhost:2900');
     expect(namespace, 'app');
     expect(table, 'users');
     return _fileRefDownloadUrl;

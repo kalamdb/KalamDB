@@ -67,7 +67,7 @@ async fn fetch_transaction_rows_at(
 
 fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
     let http_port = match grpc_port {
-        9188 => 8080,
+        2910 => 2900,
         _ => grpc_port.saturating_sub(1000),
     };
     format!("http://{host}:{http_port}")

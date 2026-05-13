@@ -145,7 +145,7 @@ cargo run --bin kalamdb-server
 
 Default endpoints:
 
-- HTTP API: `http://127.0.0.1:8080`
+- HTTP API: `http://127.0.0.1:2900`
 - PostgreSQL extension gRPC target: configure the host and port you expose for KalamDB
 
 If you need a containerized KalamDB server instead of a local Rust process, use one of the Docker options below.
@@ -399,15 +399,15 @@ docker build -f docker/build/Dockerfile -t kalamdb:local .
 ```bash
 docker run -d \
   --name kalamdb \
-  -p 8080:8080 \
-  -p 9188:9188 \
+  -p 2900:2900 \
+  -p 9188:2910 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_JWT_SECRET="replace-with-a-32-char-secret" \
   -e KALAMDB_ALLOW_REMOTE_SETUP=true \
   -e KALAMDB_SECURITY_TRUSTED_PROXY_RANGES="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" \
   -e KALAMDB_NODE_ID=1 \
-  -e KALAMDB_CLUSTER_RPC_ADDR=0.0.0.0:9188 \
-  -e KALAMDB_CLUSTER_API_ADDR=http://127.0.0.1:8080 \
+  -e KALAMDB_CLUSTER_RPC_ADDR=0.0.0.0:2910 \
+  -e KALAMDB_CLUSTER_API_ADDR=http://127.0.0.1:2900 \
   -v kalamdb_data:/data \
   kalamdb:local
 ```
@@ -415,7 +415,7 @@ docker run -d \
 Verify the container is healthy:
 
 ```bash
-curl http://127.0.0.1:8080/v1/api/healthcheck
+curl http://127.0.0.1:2900/v1/api/healthcheck
 ```
 
 If PostgreSQL runs in Docker on the same host, use `host.docker.internal` as the FDW `host` value when the PostgreSQL container connects back to a KalamDB server running on macOS.

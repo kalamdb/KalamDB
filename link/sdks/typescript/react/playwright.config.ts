@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const KALAM_URL = process.env.KALAM_URL ?? "http://127.0.0.1:8080";
+const KALAM_URL = process.env.KALAM_URL ?? "http://127.0.0.1:2900";
 
 export default defineConfig({
   testDir: "./tests/e2e/specs",

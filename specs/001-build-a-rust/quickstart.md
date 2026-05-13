@@ -45,7 +45,7 @@ Create a configuration file at `backend/config.toml`:
 
 [server]
 host = "127.0.0.1"
-port = 8080
+port = 2900
 
 [storage]
 backend = "local"  # Options: "local" or "s3"
@@ -93,14 +93,14 @@ You should see output indicating the server is running:
 [INFO] KalamDb server starting...
 [INFO] RocksDB initialized at ./data/rocksdb
 [INFO] Storage backend: Local (path: ./data)
-[INFO] Server listening on http://127.0.0.1:8080
-[INFO] WebSocket endpoint: ws://127.0.0.1:8080/api/v1/ws
+[INFO] Server listening on http://127.0.0.1:2900
+[INFO] WebSocket endpoint: ws://127.0.0.1:2900/api/v1/ws
 ```
 
 **Test the Server:**
 
 ```bash
-curl http://localhost:8080/api/v1/health
+curl http://localhost:2900/api/v1/health
 ```
 
 Expected response:
@@ -130,8 +130,8 @@ npm install
 Create a `.env` file in the `frontend` directory:
 
 ```env
-VITE_API_URL=http://localhost:8080
-VITE_WS_URL=ws://localhost:8080
+VITE_API_URL=http://localhost:2900
+VITE_WS_URL=ws://localhost:2900
 ```
 
 ### 3.3 Start the Development Server
@@ -176,7 +176,7 @@ Copy this token and paste it into the admin UI login form (or use it in API requ
 Send a message using `curl`:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/messages \
+curl -X POST http://localhost:2900/api/v1/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-jwt-token>" \
   -d '{
@@ -220,7 +220,7 @@ You should see the message appear in the message list!
 Retrieve messages for a conversation:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/messages?conversationId=conv_quickstart&limit=10" \
+curl -X GET "http://localhost:2900/api/v1/messages?conversationId=conv_quickstart&limit=10" \
   -H "Authorization: Bearer <your-jwt-token>"
 ```
 
@@ -260,7 +260,7 @@ ORDER BY last_message DESC;
 Or via API:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-jwt-token>" \
   -d '{
@@ -276,7 +276,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 
 ```javascript
 const token = "your-jwt-token";
-const ws = new WebSocket(`ws://localhost:8080/api/v1/ws?token=${token}`);
+const ws = new WebSocket(`ws://localhost:2900/api/v1/ws?token=${token}`);
 
 ws.onopen = () => {
   console.log("Connected to KalamDb");
@@ -396,10 +396,10 @@ For production deployments, enable TLS for both HTTP and WebSocket connections. 
 
 ### Server won't start
 
-**Error:** `Failed to bind to address 127.0.0.1:8080`
+**Error:** `Failed to bind to address 127.0.0.1:2900`
 
-**Solution:** Port 8080 is already in use. Either:
-- Stop the process using port 8080
+**Solution:** Port 2900 is already in use. Either:
+- Stop the process using port 2900
 - Change the port in `config.toml` and `.env`
 
 ---
@@ -427,7 +427,7 @@ For production deployments, enable TLS for both HTTP and WebSocket connections. 
 
 ### WebSocket connection failed
 
-**Error:** `WebSocket connection to 'ws://localhost:8080/api/v1/ws' failed`
+**Error:** `WebSocket connection to 'ws://localhost:2900/api/v1/ws' failed`
 
 **Solution:**
 - Ensure the backend server is running

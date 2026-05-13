@@ -67,9 +67,9 @@ If you do not want Docker, use one of the documented local install paths:
 
 Typical local source setup uses:
 
-- API endpoint: `http://localhost:8080`
-- Admin UI: `http://localhost:8080/ui`
-- SQL Studio directly: `http://localhost:8080/ui/sql`
+- API endpoint: `http://localhost:2900`
+- Admin UI: `http://localhost:2900/ui`
+- SQL Studio directly: `http://localhost:2900/ui/sql`
 
 ### First 5-minute flow
 
@@ -84,7 +84,7 @@ Typical local source setup uses:
 The built-in Admin UI is the fastest way to inspect data while developing with the Dart SDK.
 
 - Admin UI guide: [https://kalamdb.org/docs/getting-started/admin-ui](https://kalamdb.org/docs/getting-started/admin-ui)
-- SQL Studio directly: `http://localhost:8080/ui/sql` for local source runs, or `http://localhost:8088/ui/sql` for the default Docker Compose setup
+- SQL Studio directly: `http://localhost:2900/ui/sql` for local source runs, or `http://localhost:8088/ui/sql` for the default Docker Compose setup
 
 Use SQL Studio to:
 

@@ -669,7 +669,7 @@ mod tests {
     fn test_network_factory_creation() {
         let factory = RaftNetworkFactory::new(GroupId::Meta);
 
-        factory.register_node(NodeId::from(1), KalamNode::new("127.0.0.1:9000", "127.0.0.1:8080"));
+        factory.register_node(NodeId::from(1), KalamNode::new("127.0.0.1:9000", "127.0.0.1:2900"));
 
         let nodes = factory.nodes.read();
         assert!(nodes.contains_key(&NodeId::from(1)));

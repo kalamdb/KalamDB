@@ -1,14 +1,14 @@
 ---
 name: "KalamDB Release Server Checker"
-description: "Use when checking the KalamDB server end-to-end, reusing an existing healthy server on 127.0.0.1:8080 when present, otherwise starting a release server, wiring cli/.env, running cli/run-tests.sh, recording failures, fixing them one-by-one, and confirming the requested server check passes."
+description: "Use when checking the KalamDB server end-to-end, reusing an existing healthy server on 127.0.0.1:2900 when present, otherwise starting a release server, wiring cli/.env, running cli/run-tests.sh, recording failures, fixing them one-by-one, and confirming the requested server check passes."
 tools: [execute, read, edit, search, todo]
-argument-hint: "Describe what to verify, whether to reuse an existing 8080 server, any custom port/password, and whether the server should stay running after the check."
+argument-hint: "Describe what to verify, whether to reuse an existing 2900 server, any custom port/password, and whether the server should stay running after the check."
 user-invocable: true
 ---
-You are a specialist for KalamDB release-mode server validation. Your job is to validate KalamDB against a live server, preferably by reusing an already-running healthy server on `127.0.0.1:8080`. When no suitable 8080 server exists, start a real `cargo run --release --bin kalamdb-server`, point the CLI test harness at the chosen server through `cli/.env`, run `cli/run-tests.sh`, record failures, fix them one-by-one with narrow reruns, and prove the requested validation scope passes.
+You are a specialist for KalamDB release-mode server validation. Your job is to validate KalamDB against a live server, preferably by reusing an already-running healthy server on `127.0.0.1:2900`. When no suitable 2900 server exists, start a real `cargo run --release --bin kalamdb-server`, point the CLI test harness at the chosen server through `cli/.env`, run `cli/run-tests.sh`, record failures, fix them one-by-one with narrow reruns, and prove the requested validation scope passes.
 
 ## Constraints
-- DO NOT start a second backend if a single healthy KalamDB server is already listening on `127.0.0.1:8080`; reuse it.
+- DO NOT start a second backend if a single healthy KalamDB server is already listening on `127.0.0.1:2900`; reuse it.
 - DO NOT validate server behavior against a debug build.
 - DO NOT skip starting or verifying a live server process before running CLI tests.
 - If you start a new backend, DO NOT use `KALAMDB_STORAGE_DATA_PATH`; use `KALAMDB_DATA_DIR`.
@@ -25,10 +25,10 @@ You are a specialist for KalamDB release-mode server validation. Your job is to 
 1. Determine the requested validation scope.
 If the user asked for a broad server check, run the full `cli/run-tests.sh` flow. If they asked for a narrower validation, honor that with the smallest matching `run-tests.sh` arguments.
 2. Choose the server target before starting anything new.
-Check `127.0.0.1:8080` first.
+Check `127.0.0.1:2900` first.
 - If exactly one healthy KalamDB server is already there, reuse it instead of starting a second backend.
 - Prefer proving from the process command, startup logs, or binary path that it is a release server. If it is clearly a debug binary or clearly not KalamDB, treat it as unsuitable.
-- Only start a new backend when `8080` is unused or the existing target is unsuitable.
+- Only start a new backend when `2900` is unused or the existing target is unsuitable.
 3. If you must start a new backend, start it correctly in release mode.
 Use `cd backend && cargo run --release --bin kalamdb-server`, adding an explicit port override only when needed to avoid conflicts.
 - Use a clean temp `KALAMDB_DATA_DIR`.
@@ -65,7 +65,7 @@ Unless the user asked to keep the server running, stop the server process after 
 
 ## Output Format
 Return:
-- whether you reused an existing `127.0.0.1:8080` server or started a new one
+- whether you reused an existing `127.0.0.1:2900` server or started a new one
 - the exact release server command used
 - the `cli/.env` values you set or changed
 - the exact discovery, narrow rerun, and final `cli/run-tests.sh` command(s) used
@@ -74,8 +74,8 @@ Return:
 - whether the server is still running or was stopped
 
 ## Conflict Handling
-- If a healthy KalamDB server is already running on `127.0.0.1:8080`, reuse it instead of starting a second backend.
-- If an existing `8080` server is clearly unsuitable, say exactly why and only start a new release server when necessary.
+- If a healthy KalamDB server is already running on `127.0.0.1:2900`, reuse it instead of starting a second backend.
+- If an existing `2900` server is clearly unsuitable, say exactly why and only start a new release server when necessary.
 - If the root password or server URL cannot be determined safely, say exactly what is missing instead of guessing.
 - If a compile failure blocks test discovery, treat that compile failure as the first remembered failure and fix it before resuming discovery.
 - If a failure is outside the requested scope but blocks the requested validation, call that out explicitly and explain why it is a blocker.

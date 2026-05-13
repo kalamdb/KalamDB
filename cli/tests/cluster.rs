@@ -8,7 +8,7 @@
 //!
 //! Environment variables:
 //!   KALAMDB_CLUSTER_URLS - Comma-separated list of cluster node URLs
-//!     Default: http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083
+//!     Default: http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903
 //!
 //!   KALAMDB_ROOT_PASSWORD - Root password for authentication
 //!     Required for authenticated cluster access

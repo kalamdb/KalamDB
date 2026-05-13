@@ -85,7 +85,7 @@ Updated `.env` and `.env.example`:
 
 ```bash
 # .env
-VITE_KALAMDB_URL=http://localhost:8080
+VITE_KALAMDB_URL=http://localhost:2900
 VITE_KALAMDB_API_KEY=test-api-key-12345
 
 # .env.example (with documentation)
@@ -120,12 +120,12 @@ Verified WebSocket authentication with system user:
 1. **Server Startup**:
    ```
    [INFO] System user updated with test API key: test-api-key-12345
-   [INFO] Starting HTTP server on 127.0.0.1:8080
+   [INFO] Starting HTTP server on 127.0.0.1:2900
    ```
 
 2. **HTTP Authentication Test**:
    ```bash
-   curl -X POST http://localhost:8080/v1/api/sql \
+   curl -X POST http://localhost:2900/v1/api/sql \
      -H "Content-Type: application/json" \
      -H "X-API-KEY: test-api-key-12345" \
      -d '{"sql": "SELECT * FROM system.users WHERE user_id = 'system'"}'
@@ -133,7 +133,7 @@ Verified WebSocket authentication with system user:
    ✅ Returns system user record
 
 3. **WebSocket Authentication**:
-   - WASM client connects with: `ws://localhost:8080/v1/ws?api_key=test-api-key-12345`
+   - WASM client connects with: `ws://localhost:2900/v1/ws?api_key=test-api-key-12345`
    - Server validates API key via query parameter
    - WebSocket connection succeeds (previously rejected with "invalid API key")
 

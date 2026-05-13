@@ -87,12 +87,12 @@ impl Connection<Authenticated> {
 
 // Bug: forgot to authenticate
 let conn = Connection::new();
-let conn = conn.connect("server:8080")?;
+let conn = conn.connect("server:2900")?;
 conn.send(b"data");  // Compile error! send() not available on Connection<Connected>
 
 // Correct usage
 let conn = Connection::new();
-let conn = conn.connect("server:8080")?;
+let conn = conn.connect("server:2900")?;
 let mut conn = conn.authenticate("secret")?;
 conn.send(b"data")?;  // Works - type is Connection<Authenticated>
 ```

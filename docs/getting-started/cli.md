@@ -6,7 +6,7 @@ Binary name: `kalam` (from the `cli` crate).
 
 ## Quickstart (first 5 minutes)
 
-1) Start the server (default is `http://localhost:8080`)
+1) Start the server (default is `http://localhost:2900`)
 
 ```bash
 cd backend
@@ -50,14 +50,14 @@ cargo build --release
 ### Connect
 
 ```bash
-# Default – uses stored credentials/config, otherwise http://localhost:8080
+# Default – uses stored credentials/config, otherwise http://localhost:2900
 kalam
 
 # Explicit URL
-kalam --url http://localhost:8080
+kalam --url http://localhost:2900
 
 # Host/port alternative (note: if you use --host without --port, the default port is 3000)
-kalam --host localhost --port 8080
+kalam --host localhost --port 2900
 
 # User/password login
 kalam --user alice --password Secret123!
@@ -180,7 +180,7 @@ KalamDB uses Multi-Raft groups. A request does not have to land on the leader no
 Example:
 
 ```bash
-kalam --url http://node-2:8080 --command "INSERT INTO app.messages (id, body) VALUES (101, 'hello')"
+kalam --url http://node-2:2900 --command "INSERT INTO app.messages (id, body) VALUES (101, 'hello')"
 ```
 
 Assume the authenticated or effective user for that request is `user-42`, and `user-42` hashes to user data group `DataUserShard(7)`.
@@ -253,14 +253,14 @@ kalam --instance prod \
 You can upload files directly from the CLI using the `file()` helper in `INSERT` or `UPDATE` statements.
 
 ```bash
-KalamDB[cluster] root@0.0.0.0:8080 ❯ INSERT INTO chat.uploads (id, name, attachment)
+KalamDB[cluster] root@0.0.0.0:2900 ❯ INSERT INTO chat.uploads (id, name, attachment)
   VALUES ('doc2', 'CLI Doc', file('/Users/user/document1.pdf', 'text/plain'));
 Inserted 1 row(s)
 Query OK, 1 rows affected
 ```
 
 ```bash
-KalamDB[cluster] root@0.0.0.0:8080 ❯ UPDATE chat.uploads
+KalamDB[cluster] root@0.0.0.0:2900 ❯ UPDATE chat.uploads
   SET attachment = file('/Users/user/document1.pdf', 'text/plain')
   WHERE id = 'doc2';
 ```
@@ -281,7 +281,7 @@ Fast end-to-end checks that your server and CLI are wired correctly. The suite c
 
 Requirements:
 
-- Server running at http://localhost:8080
+- Server running at http://localhost:2900
 
 Run options:
 
@@ -312,7 +312,7 @@ cargo test -p kalam-cli smoke_user_table_rls_isolation -- --nocapture
 
 Notes:
 
-- Default server URL for tests is http://localhost:8080.
+- Default server URL for tests is http://localhost:2900.
 
 ---
 
@@ -488,13 +488,13 @@ kalam> \metrics
 
 ```bash
 # Use interactive health check
-kalam --url http://localhost:8080
+kalam --url http://localhost:2900
 
 # inside kalam
 \health
 
 # Verbose mode for debugging
-kalam --verbose --url http://localhost:8080
+kalam --verbose --url http://localhost:2900
 ```
 
 ### Authentication Failures

@@ -53,7 +53,7 @@ function parseBigIntMode(value: string | undefined): 'string' | 'bigint' | 'numb
   throw new Error(`Unsupported --bigint-mode: ${value}. Expected string, bigint, or number.`);
 }
 
-const url = getArg('url') || process.env.KALAMDB_URL || 'http://localhost:8080';
+const url = getArg('url') || process.env.KALAMDB_URL || 'http://localhost:2900';
 const user = getArg('user') || process.env.KALAMDB_USER || 'admin';
 const password = getArg('password') || process.env.KALAMDB_PASSWORD;
 const out = getArg('out') || 'schema.ts';
@@ -67,7 +67,7 @@ if (!password) {
   console.error('Usage: kalamdb-orm --url <url> --user <user> --password <pass> --out <file>');
   console.error('');
   console.error('Options:');
-  console.error('  --url <url>          KalamDB server URL (default: http://localhost:8080)');
+  console.error('  --url <url>          KalamDB server URL (default: http://localhost:2900)');
   console.error('  --user <user>        Username (default: admin)');
   console.error('  --password <pass>    Password (required)');
   console.error('  --out <file>         Output file (default: schema.ts)');

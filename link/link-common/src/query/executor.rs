@@ -666,11 +666,11 @@ mod tests {
     #[test]
     fn extract_leader_url_handles_optional_url_hint() {
         let url = super::QueryExecutor::extract_leader_url(
-            "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:8083\")",
+            "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:2903\")",
         )
         .expect("leader hint should parse");
 
-        assert_eq!(url, "http://127.0.0.1:8083");
+        assert_eq!(url, "http://127.0.0.1:2903");
     }
 
     #[test]
@@ -680,13 +680,13 @@ mod tests {
             "results": [],
             "error": {
                 "code": "SQL_EXECUTION_ERROR",
-                "message": "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:8083\")"
+                "message": "Statement 1 failed: Not leader for shard. Leader: Some(\"http://127.0.0.1:2903\")"
             }
         }"#;
 
         let url = super::QueryExecutor::leader_url_from_error_text(error_text)
             .expect("structured query error should yield leader URL");
 
-        assert_eq!(url, "http://127.0.0.1:8083");
+        assert_eq!(url, "http://127.0.0.1:2903");
     }
 }

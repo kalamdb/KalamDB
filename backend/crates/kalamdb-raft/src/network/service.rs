@@ -414,7 +414,7 @@ impl raft_server::Raft for RaftService {
 /// Spawns a tokio task that listens for incoming Raft RPCs on the configured address.
 /// This must be called after creating the RaftManager to enable inter-node communication.
 ///
-/// The `advertise_addr` is typically a hostname:port like "kalamdb-node1:9090".
+/// The `advertise_addr` is typically a hostname:port like "kalamdb-node1:2910".
 /// This function binds to the advertised address when possible; if the address
 /// is not a valid socket address (e.g., hostname), it falls back to
 /// "0.0.0.0:PORT" to listen on all interfaces.
@@ -431,7 +431,7 @@ pub async fn start_rpc_server(
     cluster_handler: Arc<dyn super::cluster_handler::ClusterMessageHandler>,
     pg_service: Option<Arc<KalamPgService>>,
 ) -> Result<(), crate::RaftError> {
-    // Extract port from advertise_addr (e.g., "kalamdb-node1:9090" -> 9090)
+    // Extract port from advertise_addr (e.g., "kalamdb-node1:2910" -> 9090)
     let port = advertise_addr.rsplit(':').next().ok_or_else(|| {
         crate::RaftError::Internal(format!(
             "Invalid advertise address '{}': missing port",

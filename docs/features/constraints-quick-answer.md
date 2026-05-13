@@ -30,7 +30,7 @@ Run this to verify it works:
 cd backend && cargo run
 
 # Test your query (in another terminal)
-curl -u admin:kalamdb123 -X POST http://localhost:8080/sql \
+curl -u admin:kalamdb123 -X POST http://localhost:2900/sql \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE TABLE IF NOT EXISTS playing_with_neon(id BIGINT PRIMARY KEY, name TEXT NOT NULL, value REAL)"

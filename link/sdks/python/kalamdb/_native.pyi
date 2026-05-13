@@ -40,7 +40,7 @@ class KalamClient:
 
         from kalamdb import KalamClient, Auth
 
-        client = KalamClient("http://localhost:8080", Auth.basic("admin", "pass"))
+        client = KalamClient("http://localhost:2900", Auth.basic("admin", "pass"))
         rows = await client.query_rows("SELECT * FROM app.users")
         await client.disconnect()
     """
@@ -54,7 +54,7 @@ class KalamClient:
         """Create a new KalamDB client.
 
         Args:
-            url: Server URL (e.g. "http://localhost:8080")
+            url: Server URL (e.g. "http://localhost:2900")
             auth: Auth credentials from Auth.basic() or Auth.jwt()
             options: Optional client settings:
                 - timeout_seconds (float): per-request timeout (default 30)

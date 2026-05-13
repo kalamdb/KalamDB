@@ -1130,7 +1130,7 @@ mod tests {
     #[test]
     fn build_html_renders_full_description_details_and_exact_time_tooltips() {
         let config = Config {
-            urls: vec!["http://127.0.0.1:8080".to_string()],
+            urls: vec!["http://127.0.0.1:2900".to_string()],
             user: "admin".to_string(),
             password: "kalamdb123".to_string(),
             iterations: 1,
@@ -1183,7 +1183,7 @@ mod tests {
       #[test]
       fn build_html_renders_verdict_and_previous_run_summary_cards() {
         let config = Config {
-          urls: vec!["http://127.0.0.1:8080".to_string()],
+          urls: vec!["http://127.0.0.1:2900".to_string()],
           user: "admin".to_string(),
           password: "kalamdb123".to_string(),
           iterations: 1,

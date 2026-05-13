@@ -19,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const sdkPath = join(__dirname, '..');
 
-const HTTP_URL = 'http://localhost:8080';
+const HTTP_URL = 'http://localhost:2900';
 const USERNAME = 'root';
 const PASSWORD = 'admin123';
 

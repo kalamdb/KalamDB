@@ -111,7 +111,7 @@ cargo run --bin kalamdb-server
 import { createClient, Auth } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.jwt('<user-token>'),
 });
 
@@ -152,7 +152,7 @@ import { createClient, Auth } from '@kalamdb/client';
 import { runConsumer } from '@kalamdb/consumer';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('root', 'kalamdb123'),
 });
 

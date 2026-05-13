@@ -6,7 +6,7 @@
  * import { createClient, Auth } from '@kalamdb/client';
  *
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'admin'),
  * });
  *

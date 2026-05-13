@@ -101,7 +101,7 @@ CREATE TABLE support.inbox (
 import { Auth, createClient } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('alice', 'Secret123!'),
 });
 
@@ -156,7 +156,7 @@ When you want offline resume or a durable checkpoint, persist the last `SeqId` y
 import { Auth, SeqId, createClient } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.jwt(await getFreshToken()),
 });
 
@@ -277,7 +277,7 @@ const authProvider: AuthProvider = async () => {
 };
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider,
 });
 ```

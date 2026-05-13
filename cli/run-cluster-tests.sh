@@ -26,7 +26,7 @@ show_help() {
     echo "Examples:"
     echo "  $0"
     echo "  $0 --followers --nocapture"
-    echo "  $0 --url http://127.0.0.1:8081 --followers --nocapture"
+    echo "  $0 --url http://127.0.0.1:2901 --followers --nocapture"
     echo "  $0 --test cluster_test_ws_follower_receives_leader_changes --nocapture"
 }
 

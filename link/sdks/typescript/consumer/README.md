@@ -31,7 +31,7 @@ import { Auth } from '@kalamdb/client';
 import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
 
 const client = createConsumerClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('support-worker', 'Secret123!'),
 });
 
@@ -74,7 +74,7 @@ import { Auth } from '@kalamdb/client';
 import { createConsumerClient } from '@kalamdb/consumer';
 
 const client = createConsumerClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.jwt(await getWorkerToken()),
 });
 

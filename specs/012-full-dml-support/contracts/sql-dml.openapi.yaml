@@ -9,7 +9,7 @@ servers:
   - url: https://{host}/api
     variables:
       host:
-        default: localhost:8080
+        default: localhost:2900
 paths:
   /v1/sql:
     post:

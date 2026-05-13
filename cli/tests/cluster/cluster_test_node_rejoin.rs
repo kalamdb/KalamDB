@@ -119,8 +119,8 @@ fn cluster_test_node_rejoin_system_metadata() {
 
     // Use node3 as the one we'll stop (not the leader)
     let stopped_node = "kalamdb-node3";
-    let stopped_url = &urls[2]; // http://127.0.0.1:8083
-    let leader_url = &urls[0]; // http://127.0.0.1:8081
+    let stopped_url = &urls[2]; // http://127.0.0.1:2903
+    let leader_url = &urls[0]; // http://127.0.0.1:2901
 
     // Setup: Create initial namespace
     let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));

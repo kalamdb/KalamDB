@@ -179,7 +179,7 @@ pub struct CLIConfiguration {
 }
 
 pub struct ConnectionConfig {
-    pub host: String,          // Default: http://localhost:8080
+    pub host: String,          // Default: http://localhost:2900
     pub user: String,          // Default: system
     pub token: Option<String>, // JWT token
     pub apikey: Option<String>, // API key

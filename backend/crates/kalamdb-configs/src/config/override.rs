@@ -22,8 +22,10 @@ impl ServerConfig {
     /// - KALAMDB_SERVER_PUBLIC_ORIGIN: Override server.public_origin (empty keeps Admin UI
     ///   browser-origin fallback)
     /// - KALAMDB_LOG_LEVEL: Override logging.level
+    /// - KALAMDB_LOG_FORMAT: Override logging.format ("compact" | "json")
     /// - KALAMDB_LOGS_DIR: Override logging.logs_path
     /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
+    /// - KALAMDB_SLOW_QUERY_THRESHOLD_MS: Override logging.slow_query_threshold_ms
     /// - KALAMDB_OTLP_ENABLED: Override logging.otlp.enabled
     /// - KALAMDB_OTLP_ENDPOINT: Override logging.otlp.endpoint
     /// - KALAMDB_OTLP_PROTOCOL: Override logging.otlp.protocol ("grpc" | "http")
@@ -94,6 +96,11 @@ impl ServerConfig {
             self.logging.level = level;
         }
 
+        // Log format
+        if let Ok(format) = env::var("KALAMDB_LOG_FORMAT") {
+            self.logging.format = format;
+        }
+
         let topic_visibility_timeout = env::var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS")
             .or_else(|_| env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS"));
         if let Ok(val) = topic_visibility_timeout {
@@ -138,6 +145,13 @@ impl ServerConfig {
         if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
             self.logging.log_to_console =
                 val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+
+        // Slow query threshold
+        if let Ok(val) = env::var("KALAMDB_SLOW_QUERY_THRESHOLD_MS") {
+            self.logging.slow_query_threshold_ms = val.parse().map_err(|_| {
+                anyhow::anyhow!("Invalid KALAMDB_SLOW_QUERY_THRESHOLD_MS value: {}", val)
+            })?;
         }
 
         // OTLP tracing settings
@@ -266,8 +280,8 @@ impl ServerConfig {
             let cluster = self.cluster.get_or_insert_with(|| ClusterConfig {
                 cluster_id: cluster_id.clone().unwrap_or_else(|| "cluster".to_string()),
                 node_id: parsed_node_id,
-                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "127.0.0.1:9188".to_string()),
-                api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:8080".to_string()),
+                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "127.0.0.1:2910".to_string()),
+                api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:2900".to_string()),
                 peers: Vec::new(),
                 user_shards: 12,
                 shared_shards: 1,
@@ -385,12 +399,12 @@ mod tests {
     #[test]
     fn test_env_override_server_port() {
         let _guard = acquire_env_lock();
-        env::set_var("KALAMDB_SERVER_PORT", "9090");
+        env::set_var("KALAMDB_SERVER_PORT", "3900");
 
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
 
-        assert_eq!(config.server.port, 9090);
+        assert_eq!(config.server.port, 3900);
 
         env::remove_var("KALAMDB_SERVER_PORT");
     }

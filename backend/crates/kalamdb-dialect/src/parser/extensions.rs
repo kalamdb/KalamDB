@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_parse_cluster_join() {
-        let sql = "CLUSTER JOIN 2 10.0.0.2:9188 http://10.0.0.2:8080";
+        let sql = "CLUSTER JOIN 2 10.0.0.2:2910 http://10.0.0.2:2900";
         let result = ExtensionStatement::parse(sql);
 
         match result.unwrap() {
@@ -571,8 +571,8 @@ mod tests {
                 api_addr,
             } => {
                 assert_eq!(node_id, 2);
-                assert_eq!(rpc_addr, "10.0.0.2:9188");
-                assert_eq!(api_addr, "http://10.0.0.2:8080");
+                assert_eq!(rpc_addr, "10.0.0.2:2910");
+                assert_eq!(api_addr, "http://10.0.0.2:2900");
             },
             other => panic!("unexpected statement: {:?}", other),
         }

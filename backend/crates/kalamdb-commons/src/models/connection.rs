@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_localhost_ipv4_with_port() {
-        let conn = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+        let conn = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
         assert!(conn.is_localhost());
     }
 
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn test_localhost_ipv6_with_brackets() {
-        let conn = ConnectionInfo::new(Some("[::1]:8080".to_string()));
+        let conn = ConnectionInfo::new(Some("[::1]:2900".to_string()));
         assert!(conn.is_localhost());
     }
 

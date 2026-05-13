@@ -25,7 +25,7 @@
  * @example
  * ```typescript
  * const fileRef = FileRef.from(row.avatar);
- * const url = fileRef.getDownloadUrl('http://localhost:8080', 'default', 'users');
+ * const url = fileRef.getDownloadUrl('http://localhost:2900', 'default', 'users');
  * ```
  */
 
@@ -169,15 +169,15 @@ export class FileRef implements FileRefData {
   /**
    * Generate download URL for this file
    *
-   * @param baseUrl - KalamDB server URL (e.g., 'http://localhost:8080')
+   * @param baseUrl - KalamDB server URL (e.g., 'http://localhost:2900')
    * @param namespace - Table namespace
    * @param table - Table name
    * @returns Full download URL
    *
    * @example
    * ```typescript
-   * const url = fileRef.getDownloadUrl('http://localhost:8080', 'default', 'users');
-   * // Returns: http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg
+   * const url = fileRef.getDownloadUrl('http://localhost:2900', 'default', 'users');
+   * // Returns: http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg
    * ```
    */
   getDownloadUrl(baseUrl: string, namespace: string, table: string): string {
@@ -364,7 +364,7 @@ export function parseFileRefs(values: unknown[]): FileRef[] {
  * Context needed to generate file URLs without repeating server/table info.
  */
 export interface FileRefContext {
-  /** KalamDB server base URL (e.g., 'http://localhost:8080') */
+  /** KalamDB server base URL (e.g., 'http://localhost:2900') */
   baseUrl: string;
   /** Namespace of the table (e.g., 'default') */
   namespace: string;
@@ -405,7 +405,7 @@ export class BoundFileRef extends FileRef {
    * @example
    * ```typescript
    * const url = row.file('avatar')?.downloadUrl();
-   * // → 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg'
+   * // → 'http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg'
    * ```
    */
   downloadUrl(): string {
@@ -545,7 +545,7 @@ export class KalamRow<T extends Record<string, unknown> = Record<string, unknown
  *
  * @example
  * ```typescript
- * const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+ * const ctx = { baseUrl: 'http://localhost:2900', namespace: 'default', table: 'users' };
  * const rows = wrapRows<User>(queryResults, ctx);
  * const avatar = rows[0].file('avatar');
  * ```

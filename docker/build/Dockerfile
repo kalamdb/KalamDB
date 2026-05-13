@@ -274,11 +274,11 @@ ENV MIMALLOC_ALLOW_THP=0
 WORKDIR /data
 
 # Expose default port
-EXPOSE 8080
+EXPOSE 2900
 
 # Health check using curl
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:8080/health || exit 1
+    CMD curl -sf http://localhost:2900/health || exit 1
 
 # Default command
 CMD ["/usr/local/bin/kalamdb-server", "/config/server.toml"]

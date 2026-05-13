@@ -332,7 +332,7 @@ The extension passes cert material as inline PEM strings in `CREATE SERVER`:
 CREATE SERVER kalam_remote
   FOREIGN DATA WRAPPER kalam_fdw
   OPTIONS (
-    endpoint    'https://kalam.example.com:9188',
+    endpoint    'https://kalam.example.com:2910',
     ca_cert     '-----BEGIN CERTIFICATE-----\nMIIBxT...\n-----END CERTIFICATE-----',
     client_cert '-----BEGIN CERTIFICATE-----\nMIICpD...\n-----END CERTIFICATE-----',
     client_key  '-----BEGIN PRIVATE KEY-----\nMIIEv...\n-----END PRIVATE KEY-----'

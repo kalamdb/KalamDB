@@ -148,15 +148,15 @@ System table providers (users, storage_locations, live_queries, jobs) have place
 
 ## 🚀 Server Status
 
-**Running:** ✅ Yes (http://localhost:8080)
+**Running:** ✅ Yes (http://localhost:2900)
 
 **Startup Logs:**
 ```
 [INFO] System schema created in DataFusion (catalog: kalam)
 [INFO] System tables registered with DataFusion (system.users, system.storage_locations, system.live_queries, system.jobs)
 [INFO] SqlExecutor initialized
-[INFO] Starting HTTP server on 127.0.0.1:8080
-[INFO] listening on: 127.0.0.1:8080
+[INFO] Starting HTTP server on 127.0.0.1:2900
+[INFO] listening on: 127.0.0.1:2900
 ```
 
 ---

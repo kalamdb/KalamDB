@@ -16,7 +16,7 @@ services:
     image: jamals86/kalamdb:latest
     container_name: kalamdb
     ports:
-      - "${KALAMDB_PORT:-8088}:8080"
+      - "${KALAMDB_PORT:-8088}:2900"
     
     volumes:
       # Persistent data storage
@@ -45,7 +45,7 @@ services:
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:8080/v1/api/healthcheck"]
+      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:2900/v1/api/healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s

@@ -62,22 +62,22 @@ struct BorrowedQueryRequest<'a> {
 ///
 /// // Basic Auth (username/password)
 /// const client = new KalamClient(
-///   "http://localhost:8080",
+///   "http://localhost:2900",
 ///   "username",
 ///   "password"
 /// );
 ///
 /// // JWT Token Auth
 /// const jwtClient = KalamClient.withJwt(
-///   "http://localhost:8080",
+///   "http://localhost:2900",
 ///   "eyJhbGciOiJIUzI1NiIs..."
 /// );
 ///
 /// // Anonymous (localhost bypass)
-/// const anonClient = KalamClient.anonymous("http://localhost:8080");
+/// const anonClient = KalamClient.anonymous("http://localhost:2900");
 ///
 /// // Dynamic async auth provider (e.g. refresh token flow)
-/// const dynClient = KalamClient.anonymous("http://localhost:8080");
+/// const dynClient = KalamClient.anonymous("http://localhost:2900");
 /// dynClient.setAuthProvider(async () => {
 ///   const token = await myApp.getOrRefreshToken();
 ///   return { jwt: { token } };
@@ -812,7 +812,7 @@ impl KalamClient {
     /// Create a new KalamDB client with HTTP Basic Authentication (T042, T043, T044)
     ///
     /// # Arguments
-    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:2900")
     /// * `username` - Username for authentication (required)
     /// * `password` - Password for authentication (required)
     ///
@@ -843,7 +843,7 @@ impl KalamClient {
     /// Create a new KalamDB client with JWT Token Authentication
     ///
     /// # Arguments
-    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:2900")
     /// * `token` - JWT token for authentication (required)
     ///
     /// # Errors
@@ -852,7 +852,7 @@ impl KalamClient {
     /// # Example (JavaScript)
     /// ```js
     /// const client = KalamClient.withJwt(
-    ///   "http://localhost:8080",
+    ///   "http://localhost:2900",
     ///   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
     /// );
     /// await client.connect();
@@ -879,14 +879,14 @@ impl KalamClient {
     /// unauthenticated access, or for development/testing scenarios.
     ///
     /// # Arguments
-    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
+    /// * `url` - KalamDB server URL (required, e.g., "http://localhost:2900")
     ///
     /// # Errors
     /// Returns JsValue error if url is empty
     ///
     /// # Example (JavaScript)
     /// ```js
-    /// const client = KalamClient.anonymous("http://localhost:8080");
+    /// const client = KalamClient.anonymous("http://localhost:2900");
     /// await client.connect();
     /// ```
     #[wasm_bindgen(js_name = anonymous)]
@@ -1893,7 +1893,7 @@ impl KalamClient {
     ///
     /// # Example (JavaScript)
     /// ```js
-    /// const client = new KalamClient("http://localhost:8080", "user", "pass");
+    /// const client = new KalamClient("http://localhost:2900", "user", "pass");
     /// const response = await client.login();
     /// console.log(response.access_token, response.refresh_token);
     /// await client.connect(); // Now uses JWT for WebSocket
@@ -1939,7 +1939,7 @@ impl KalamClient {
     ///
     /// # Example (JavaScript)
     /// ```js
-    /// const client = new KalamClient("http://localhost:8080", "user", "pass");
+    /// const client = new KalamClient("http://localhost:2900", "user", "pass");
     /// const loginResp = await client.login();
     /// // Later, when access_token expires:
     /// const refreshResp = await client.refresh_access_token(loginResp.refresh_token);

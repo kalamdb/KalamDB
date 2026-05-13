@@ -480,7 +480,7 @@ cargo build --release
 cp config.example.toml config.toml
 
 # Edit configuration with your settings
-# Default server: http://127.0.0.1:8080
+# Default server: http://127.0.0.1:2900
 ```
 
 ### Running Tests

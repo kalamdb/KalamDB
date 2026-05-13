@@ -311,14 +311,14 @@ mod tests {
         let cli = Cli::try_parse_from([
             "kalam",
             "-u",
-            "http://127.0.0.1:8080",
+            "http://127.0.0.1:2900",
             "-c",
             "SELECT 1",
             "-v",
         ])
         .expect("short flags should parse");
 
-        assert_eq!(cli.url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(cli.url.as_deref(), Some("http://127.0.0.1:2900"));
         assert_eq!(cli.command.as_deref(), Some("SELECT 1"));
         assert!(cli.verbose);
     }
@@ -330,14 +330,14 @@ mod tests {
             "-H",
             "127.0.0.1",
             "-p",
-            "8080",
+            "2900",
             "-f",
             "./queries.sql",
         ])
         .expect("short flags should parse");
 
         assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
-        assert_eq!(cli.port, 8080);
+        assert_eq!(cli.port, 2900);
         assert_eq!(cli.file.as_deref(), Some(Path::new("./queries.sql")));
     }
 }

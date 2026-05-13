@@ -84,7 +84,7 @@ In another Node project inside this repo, depend on the local package:
 import { createClient, Auth } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
 });
 
@@ -115,7 +115,7 @@ import { createClient, Auth } from '@kalamdb/client';
 import { approvals, messages, toolCalls, typing } from './schema.generated';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
 });
 
@@ -166,7 +166,7 @@ import { createClient, Auth, type AuthProvider } from '@kalamdb/client';
 const authProvider: AuthProvider = async () => Auth.basic('admin', 'AdminPass123!');
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider,
 });
 ```
@@ -409,7 +409,7 @@ interface BatchControl {
     import { Auth, createClient } from '/path/to/dist/index.js';
     
     const client = createClient({
-      url: 'http://localhost:8080',
+      url: 'http://localhost:2900',
       authProvider: async () => Auth.basic('admin', 'AdminPass123!')
     });
     
@@ -440,7 +440,7 @@ import WebSocket from 'ws';
 import { createClient, Auth } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'AdminPass123!')
 });
 
@@ -455,7 +455,7 @@ import { createClient, Auth, ServerMessage } from '@kalamdb/client';
 
 async function main() {
   const client = createClient({
-    url: 'http://localhost:8080',
+    url: 'http://localhost:2900',
     authProvider: async () => Auth.basic('admin', 'AdminPass123!')
   });
   

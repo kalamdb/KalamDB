@@ -27,7 +27,7 @@ function parseArgs() {
 }
 
 const args = parseArgs();
-const url = args.url ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
+const url = args.url ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const user = args.user ?? process.env.KALAMDB_USER ?? 'admin';
 const password = args.password ?? process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 const sqlFile = resolve(__dirname, 'setup.sql');

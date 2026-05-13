@@ -219,7 +219,7 @@ The backend needs to:
 ### SUBSCRIBE TO is Fully Supported! ✅
 The backend **DOES support** `SUBSCRIBE TO` syntax:
 ```bash
-$ curl -X POST http://localhost:8080/v1/api/sql \
+$ curl -X POST http://localhost:2900/v1/api/sql \
   -H "X-USER-ID: test_user" \
   -d '{"sql":"SUBSCRIBE TO test_cli.messages"}'
 
@@ -232,7 +232,7 @@ $ curl -X POST http://localhost:8080/v1/api/sql \
         "id":"sub-22ecf95b-...",
         "sql":"SELECT * FROM test_cli.messages"
       },
-      "ws_url":"ws://localhost:8080/v1/ws",
+      "ws_url":"ws://localhost:2900/v1/ws",
       "message":"Connect to WebSocket..."
     }]
   }]

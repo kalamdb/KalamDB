@@ -1188,7 +1188,7 @@ impl CLISession {
 
         // Fetch cluster info to populate cluster_name for prompt
         // NOTE: Do NOT update server_host here — keep it as the address the user connected to,
-        // not the server's internal listening address (e.g. 0.0.0.0:8080).
+        // not the server's internal listening address (e.g. 0.0.0.0:2900).
         if let Some(cluster_info) = self.fetch_cluster_info().await {
             self.adopt_cluster_metadata(&cluster_info);
         }
@@ -3349,7 +3349,7 @@ mod tests {
                                 "node_id": 0,
                                 "role": "leader",
                                 "status": "active",
-                                "api_addr": "http://127.0.0.1:8080",
+                                "api_addr": "http://127.0.0.1:2900",
                                 "is_self": true,
                                 "is_leader": true,
                                 "replication_lag": null,
@@ -3588,7 +3588,7 @@ mod tests {
                 ],
                 "rows": [[
                     "subscription_required",
-                    "ws://localhost:8080/v1/ws",
+                    "ws://localhost:2900/v1/ws",
                     {
                         "id": "sub-1",
                         "sql": "SELECT * FROM chat.messages",
@@ -3607,7 +3607,7 @@ mod tests {
 
         assert_eq!(config.id, "sub-1");
         assert_eq!(config.sql, "SELECT * FROM chat.messages");
-        assert_eq!(config.ws_url.as_deref(), Some("ws://localhost:8080/v1/ws"));
+        assert_eq!(config.ws_url.as_deref(), Some("ws://localhost:2900/v1/ws"));
         assert_eq!(config.options.and_then(|options| options.last_rows), Some(10));
         assert_eq!(
             message.as_deref(),

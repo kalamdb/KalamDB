@@ -1013,7 +1013,7 @@ fn url_reachable(url: &str) -> bool {
         .trim_start_matches("https://")
         .split('/')
         .next()
-        .unwrap_or("127.0.0.1:8080");
+        .unwrap_or("127.0.0.1:2900");
     host_port_reachable(host_port)
 }
 
@@ -1407,9 +1407,9 @@ fn configured_cluster_urls_from_env() -> Vec<String> {
         .filter(|urls: &Vec<String>| !urls.is_empty())
         .unwrap_or_else(|| {
             vec![
-                "http://127.0.0.1:8081".to_string(),
-                "http://127.0.0.1:8082".to_string(),
-                "http://127.0.0.1:8083".to_string(),
+                "http://127.0.0.1:2901".to_string(),
+                "http://127.0.0.1:2902".to_string(),
+                "http://127.0.0.1:2903".to_string(),
             ]
         })
 }
@@ -1693,7 +1693,7 @@ pub fn test_context() -> &'static TestContext {
 
         let mut server_url = parse_test_arg("--url")
             .or_else(|| std::env::var("KALAMDB_SERVER_URL").ok())
-            .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
+            .unwrap_or_else(|| "http://127.0.0.1:2900".to_string());
         // ── Branch by server type ─────────────────────────────────
         match server_type {
             Some(ServerType::Running) => {
@@ -1801,7 +1801,7 @@ pub fn test_context() -> &'static TestContext {
         }
 
         // For Cluster mode, defer the reachability check until after cluster URL
-        // resolution so we check the actual cluster node, not the default 8080.
+        // resolution so we check the actual cluster node, not the default 2900.
         if !matches!(server_type, Some(ServerType::Cluster)) {
             ensure_server_ready_sync(&server_url);
         }
@@ -1832,7 +1832,7 @@ pub fn test_context() -> &'static TestContext {
             Some(ServerType::Cluster) => {
                 // Cluster mode: probe cluster URLs to find healthy nodes
                 let cluster_default =
-                    "http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083";
+                    "http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903";
                 let configured_cluster_urls: Vec<String> =
                     explicit_cluster_urls.clone().unwrap_or_else(|| {
                         cluster_default
@@ -1929,7 +1929,7 @@ pub fn test_context() -> &'static TestContext {
 /// Get the server URL for tests.
 ///
 /// Configure via `KALAMDB_SERVER_URL` environment variable.
-/// Default: `http://127.0.0.1:8080`
+/// Default: `http://127.0.0.1:2900`
 ///
 /// # Examples
 ///
@@ -2602,7 +2602,7 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
         .trim_start_matches("https://")
         .split('/')
         .next()
-        .unwrap_or("127.0.0.1:8080");
+        .unwrap_or("127.0.0.1:2900");
 
     if !host_port_reachable(host_port) {
         return None;
@@ -2869,7 +2869,7 @@ pub fn is_cluster_mode() -> bool {
 
 pub fn server_host_port() -> String {
     let trimmed = server_url().trim_start_matches("http://").trim_start_matches("https://");
-    trimmed.split('/').next().unwrap_or("127.0.0.1:8080").to_string()
+    trimmed.split('/').next().unwrap_or("127.0.0.1:2900").to_string()
 }
 
 pub fn websocket_url() -> String {

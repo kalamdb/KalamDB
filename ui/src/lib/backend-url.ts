@@ -24,14 +24,14 @@ function resolveConfiguredOrigin(): string | null {
 
 function resolveDefaultOrigin(): string {
   if (import.meta.env.DEV) {
-    return "http://localhost:8080";
+    return "http://localhost:2900";
   }
 
   if (typeof window !== "undefined") {
     return trimTrailingSlashes(window.location.origin);
   }
 
-  return "http://localhost:8080";
+  return "http://localhost:2900";
 }
 
 export function getBackendOrigin(): string {

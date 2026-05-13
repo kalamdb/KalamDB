@@ -2,9 +2,15 @@
 # KalamDB CLI Installer
 # Usage: curl -fsSL https://kalamdb.com/install.sh | bash
 #
+# Flags:
+#   --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
+#   --pre-release       Install the latest GitHub prerelease
+#   --help              Show usage
+#
 # Environment variables:
 #   KALAM_INSTALL_DIR  - Installation directory (default: $HOME/.kalam/bin)
 #   KALAM_VERSION      - Specific version to install (default: latest)
+#   KALAM_PRE_RELEASE  - Set to 1 to install the latest prerelease
 #   KALAM_NO_MODIFY_PATH - Set to 1 to skip PATH modification
 
 set -euo pipefail
@@ -15,6 +21,7 @@ BINARY_NAME="kalam"
 ARTIFACT_PREFIX="kalamcli"
 INSTALL_DIR="${KALAM_INSTALL_DIR:-$HOME/.kalam/bin}"
 VERSION="${KALAM_VERSION:-}"
+PRE_RELEASE="${KALAM_PRE_RELEASE:-0}"
 NO_MODIFY_PATH="${KALAM_NO_MODIFY_PATH:-0}"
 
 # ── Colors & helpers ────────────────────────────────────────────────────────
@@ -30,6 +37,57 @@ ok()    { printf "${GREEN}✔${NC} %s\n" "$*"; }
 warn()  { printf "${YELLOW}⚠${NC} %s\n" "$*"; }
 err()   { printf "${RED}✘${NC} %b\n" "$*" >&2; }
 fatal() { err "$@"; exit 1; }
+
+print_usage() {
+    cat <<EOF
+KalamDB CLI Installer
+
+Usage:
+  install.sh [--version <version>] [--pre-release] [--help]
+
+Options:
+  --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
+  --pre-release        Install the latest GitHub prerelease
+  --help               Show this help message
+
+Environment variables:
+  KALAM_INSTALL_DIR      Installation directory (default: $HOME/.kalam/bin)
+  KALAM_VERSION          Specific version to install (same as --version)
+  KALAM_PRE_RELEASE      Set to 1 to install the latest prerelease
+  KALAM_NO_MODIFY_PATH   Set to 1 to skip PATH modification
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --version)
+                [[ $# -ge 2 ]] || fatal "Missing value for --version"
+                VERSION="$2"
+                shift 2
+                ;;
+            --version=*)
+                VERSION="${1#*=}"
+                shift
+                ;;
+            --pre-release)
+                PRE_RELEASE="1"
+                shift
+                ;;
+            --help|-h)
+                print_usage
+                exit 0
+                ;;
+            *)
+                fatal "Unknown argument: $1\n\n$(print_usage)"
+                ;;
+        esac
+    done
+}
+
+extract_tag_name() {
+    sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' | head -1
+}
 
 # ── Detect platform ────────────────────────────────────────────────────────
 detect_platform() {
@@ -72,27 +130,56 @@ check_deps() {
 # ── Resolve latest version from GitHub ──────────────────────────────────────
 resolve_version() {
     if [[ -n "$VERSION" ]]; then
+        VERSION="${VERSION#v}"
         info "Using requested version: $VERSION"
         return
     fi
 
-    info "Fetching latest release version…"
-
+    local response=""
     local tag_name=""
 
-    # 1) Try the /releases/latest endpoint first
-    local releases_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-    local response
-    response="$(curl -fsSL "$releases_url" 2>/dev/null)" && \
-        tag_name="$(echo "$response" | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+    if [[ "$PRE_RELEASE" == "1" ]]; then
+        info "Fetching latest prerelease version…"
 
-    # 2) Fall back to the first tag if no release exists yet
-    if [[ -z "$tag_name" ]]; then
-        local tags_url="https://api.github.com/repos/${GITHUB_REPO}/tags"
-        response="$(curl -fsSL "$tags_url" 2>/dev/null)" || {
+        local prerelease_url="https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20"
+        response="$(curl -fsSL "$prerelease_url" 2>/dev/null)" || {
             fatal "Could not reach GitHub API. Check your internet connection or set KALAM_VERSION."
         }
-        tag_name="$(echo "$response" | grep '"name"' | head -1 | sed -E 's/.*"name": *"([^"]+)".*/\1/')"
+
+        tag_name="$(printf '%s\n' "$response" | awk '
+            /"tag_name":/ {
+                if (match($0, /"tag_name": *"[^"]+"/)) {
+                    current_tag = substr($0, RSTART + 12, RLENGTH - 13)
+                    gsub(/"/, "", current_tag)
+                }
+            }
+            /"prerelease": true/ {
+                if (current_tag != "") {
+                    print current_tag
+                    exit
+                }
+            }
+        ')"
+
+        if [[ -z "$tag_name" ]]; then
+            fatal "Could not determine latest prerelease version. Set KALAM_VERSION explicitly."
+        fi
+    else
+        info "Fetching latest release version…"
+
+        # 1) Try the /releases/latest endpoint first
+        local releases_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+        response="$(curl -fsSL "$releases_url" 2>/dev/null)" && \
+            tag_name="$(printf '%s\n' "$response" | extract_tag_name)"
+
+        # 2) Fall back to the first tag if no release exists yet
+        if [[ -z "$tag_name" ]]; then
+            local tags_url="https://api.github.com/repos/${GITHUB_REPO}/tags"
+            response="$(curl -fsSL "$tags_url" 2>/dev/null)" || {
+                fatal "Could not reach GitHub API. Check your internet connection or set KALAM_VERSION."
+            }
+            tag_name="$(echo "$response" | grep '"name"' | head -1 | sed -E 's/.*"name": *"([^"]+)".*/\1/')"
+        fi
     fi
 
     if [[ -z "$tag_name" ]]; then
@@ -248,6 +335,7 @@ configure_path() {
 main() {
     printf "\n${BOLD}  KalamDB CLI Installer${NC}\n\n"
 
+    parse_args "$@"
     check_deps
     detect_platform
     info "Detected platform: ${BOLD}${PLATFORM}${NC}"

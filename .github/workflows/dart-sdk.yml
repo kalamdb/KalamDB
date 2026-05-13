@@ -176,7 +176,7 @@ jobs:
           KALAMDB_SERVER_LOG="$PWD/dart-sdk-server.log" \
           KALAMDB_SERVER_PID_FILE="$SERVER_WORK_DIR/server.pid" \
           KALAMDB_SERVER_WAIT_SECONDS="120" \
-          KALAMDB_URL="http://localhost:8080" \
+          KALAMDB_URL="http://localhost:2900" \
           bash scripts/start-sdk-test-server.sh
           echo "SERVER_PID=$(cat "$SERVER_WORK_DIR/server.pid")" >> "$GITHUB_ENV"
 
@@ -186,7 +186,7 @@ jobs:
         shell: bash
         working-directory: link/sdks/dart
         env:
-          KALAMDB_URL: "http://localhost:8080"
+          KALAMDB_URL: "http://localhost:2900"
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"

@@ -22,7 +22,7 @@
 //! 2. Keycloak must be running (docker/utils/docker-compose.yml)
 //! 3. Server must be started with:
 //!    ```sh
-//!    KALAMDB_JWT_TRUSTED_ISSUERS="kalamdb,http://localhost:8081/realms/kalamdb" \
+//!    KALAMDB_JWT_TRUSTED_ISSUERS="kalamdb,http://localhost:2901/realms/kalamdb" \
 //!    cargo run
 //!    ```
 //!
@@ -32,7 +32,7 @@
 //!
 //! | Variable                     | Default                                       |
 //! |------------------------------|-----------------------------------------------|
-//! | `KEYCLOAK_URL`               | `http://localhost:8081`                        |
+//! | `KEYCLOAK_URL`               | `http://localhost:2901`                        |
 //! | `KEYCLOAK_REALM`             | `kalamdb`                                     |
 //! | `KEYCLOAK_CLIENT_ID`         | `kalamdb-api`                                 |
 //! | `KEYCLOAK_TEST_USER`         | `kalamdb-user`                                |
@@ -50,7 +50,7 @@ use crate::common::*;
 // ---------------------------------------------------------------------------
 
 fn keycloak_url() -> String {
-    std::env::var("KEYCLOAK_URL").unwrap_or_else(|_| "http://localhost:8081".to_string())
+    std::env::var("KEYCLOAK_URL").unwrap_or_else(|_| "http://localhost:2901".to_string())
 }
 
 fn keycloak_realm() -> String {
@@ -276,7 +276,7 @@ fn test_keycloak_realm_configured() {
 ///
 /// Server must be started with:
 /// ```sh
-/// KALAMDB_JWT_TRUSTED_ISSUERS="kalamdb,http://localhost:8081/realms/kalamdb" \
+/// KALAMDB_JWT_TRUSTED_ISSUERS="kalamdb,http://localhost:2901/realms/kalamdb" \
 /// cargo run
 /// ```
 #[test]

@@ -26,7 +26,7 @@ use tokio_netem::{
 ///
 /// Typical usage:
 /// ```ignore
-/// let proxy = TcpDisconnectProxy::start("http://127.0.0.1:8080").await;
+/// let proxy = TcpDisconnectProxy::start("http://127.0.0.1:2900").await;
 /// // point your client at proxy.base_url()
 /// proxy.pause();                           // reject new connections
 /// proxy.drop_active_connections().await;   // kill existing sockets
@@ -364,6 +364,6 @@ fn extract_host_port(base_url: &str) -> String {
         .trim_start_matches("https://")
         .split('/')
         .next()
-        .unwrap_or("127.0.0.1:8080")
+        .unwrap_or("127.0.0.1:2900")
         .to_string()
 }

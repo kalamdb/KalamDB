@@ -83,7 +83,7 @@ kalamdb-store = { path = "../kalamdb-store" }  # Added for table stores
 - Fixed test fixture `setup_test_executor()` to initialize with 5 args (lines 247-273)
 
 #### 4. `backend/tests/quickstart.sh`
-- Updated default port from 3000 to 8080
+- Updated default port from 3000 to 2900
 
 ---
 
@@ -96,14 +96,14 @@ kalamdb-store = { path = "../kalamdb-store" }  # Added for table stores
 [2025-10-19 23:36:02.035] Table stores initialized (user, shared, stream)
 [2025-10-19 23:36:02.035] Table services initialized (user, shared, stream)
 [2025-10-19 23:36:02.035] SqlExecutor initialized
-[2025-10-19 23:36:02.035] Starting HTTP server on 127.0.0.1:8080
+[2025-10-19 23:36:02.035] Starting HTTP server on 127.0.0.1:2900
 ```
 
 ### Manual API Tests
 
 #### Test 1: CREATE TABLE (Shared) ✅
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -d '{"sql": "CREATE TABLE messages (msg_id VARCHAR, content TEXT, timestamp TIMESTAMP)"}'
 ```
 **Result**:
@@ -121,7 +121,7 @@ curl -X POST http://localhost:8080/api/sql \
 
 #### Test 2: SELECT FROM system.users ⚠️
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -d '{"sql": "SELECT * FROM system.users LIMIT 5"}'
 ```
 **Result**:
@@ -137,7 +137,7 @@ curl -X POST http://localhost:8080/api/sql \
 
 #### Test 3: INSERT INTO messages ⚠️
 ```bash
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -d '{"sql": "INSERT INTO messages VALUES ('\''msg1'\'', '\''Hello'\'', NOW())"}'
 ```
 **Result**:

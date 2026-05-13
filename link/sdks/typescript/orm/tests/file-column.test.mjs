@@ -47,14 +47,14 @@ describe('FILE column type', () => {
   it('generates download URL', () => {
     const ref = FileRef.from(sampleJson);
     assert.ok(ref);
-    const url = ref.getDownloadUrl('http://localhost:8080', 'app', 'users');
-    assert.equal(url, 'http://localhost:8080/v1/files/app/users/f0001/12345-avatar.png');
+    const url = ref.getDownloadUrl('http://localhost:2900', 'app', 'users');
+    assert.equal(url, 'http://localhost:2900/v1/files/app/users/f0001/12345-avatar.png');
   });
 
   it('strips trailing slash from base URL', () => {
     const ref = FileRef.from(sampleJson);
     assert.ok(ref);
-    const url = ref.getDownloadUrl('http://localhost:8080/', 'app', 'users');
-    assert.equal(url, 'http://localhost:8080/v1/files/app/users/f0001/12345-avatar.png');
+    const url = ref.getDownloadUrl('http://localhost:2900/', 'app', 'users');
+    assert.equal(url, 'http://localhost:2900/v1/files/app/users/f0001/12345-avatar.png');
   });
 });

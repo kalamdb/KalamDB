@@ -375,14 +375,14 @@ cargo test message            # Tests matching "message"
 **Example API Usage** (after server is running):
 ```bash
 # Insert a message using SQL INSERT
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "INSERT INTO messages (conversation_id, from, timestamp, content, metadata) VALUES ('\''conv_123'\'', '\''user_alice'\'', 1699000000000000, '\''Hello, world!'\'', '\''{}'\'')"
   }'
 
 # Query messages using SQL SELECT
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT * FROM messages WHERE conversation_id = '\''conv_123'\'' ORDER BY timestamp DESC LIMIT 50"

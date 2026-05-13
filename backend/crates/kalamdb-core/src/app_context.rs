@@ -866,7 +866,7 @@ impl AppContext {
         // This uses the same code path as production (unified Raft mode)
         let raft_config = kalamdb_raft::manager::RaftManagerConfig::for_single_node(
             "kalamdb-test".to_string(),
-            "127.0.0.1:8080".to_string(),
+            "127.0.0.1:2900".to_string(),
         );
         let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
         let server_start_time = Instant::now();
@@ -1119,7 +1119,7 @@ impl AppContext {
     /// * `user_id` - The user ID to get the leader address for
     ///
     /// # Returns
-    /// * `Some(String)` - The leader's API address (e.g., "192.168.1.100:8080")
+    /// * `Some(String)` - The leader's API address (e.g., "192.168.1.100:2900")
     /// * `None` - If leader is unknown or address not available
     pub async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
         let cluster_info = self.executor.get_cluster_info();

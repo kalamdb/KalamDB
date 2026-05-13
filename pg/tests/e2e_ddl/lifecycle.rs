@@ -6,7 +6,7 @@ use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
 fn kalamdb_server_url() -> String {
     std::env::var("KALAMDB_SERVER_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+        .unwrap_or_else(|_| "http://127.0.0.1:2900".to_string())
         .trim_end_matches('/')
         .to_string()
 }
