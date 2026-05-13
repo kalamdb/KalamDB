@@ -182,6 +182,7 @@ The container starts with:
 
 - data under `/data`
 - config under `/config/server.toml`
+- JSON file logging enabled in Docker configs so `system.server_logs` can return rows
 - server command `kalamdb-server /config/server.toml`
 
 The single-node compose file already mounts a persistent volume for `/data`. To provide your own config, mount a custom `server.toml` over `/config/server.toml`.

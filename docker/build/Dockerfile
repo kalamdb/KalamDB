@@ -255,6 +255,7 @@ RUN ln -s /usr/local/bin/kalam-cli /usr/local/bin/kalam
 # Copy default server configuration (from backend example) and normalize data path
 COPY --chown=kalamdb:kalamdb backend/server.example.toml /config/server.toml
 RUN sed -i 's|data_path = "\./data"|data_path = "/data"|g' /config/server.toml
+RUN sed -i 's|format = "compact"|format = "json"|g' /config/server.toml
 
 # Switch to non-root user
 USER kalamdb

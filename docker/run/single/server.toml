@@ -2,11 +2,17 @@
 # Only required sections are included.
 
 [server]
-host = "127.0.0.1"
+host = "0.0.0.0"
 port = 8080
 
 [storage]
 data_path = "/data"
+
+[logging]
+level = "info"
+logs_path = "/data/logs"
+log_to_console = true
+format = "json"
 
 [rate_limit]
 # For Docker testing/development, use high rate limits to prevent IP bans

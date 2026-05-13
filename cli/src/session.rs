@@ -949,17 +949,23 @@ impl CLISession {
             Some(m) => m,
             None => return Ok(None),
         };
-        let status = row_map
-            .get("status")
-            .ok_or_else(|| CLIError::ParseError("Missing subscription status in server response".into()))
-            .and_then(|value| {
-                serde_json::from_value::<SqlSubscriptionStatus>(value.clone().into_inner())
-                    .map_err(|_| {
-                        CLIError::ParseError(
-                            "Subscription status has an invalid format".into(),
-                        )
-                    })
-            })?;
+
+        let Some(subscription_value) = row_map.get("subscription") else {
+            return Ok(None);
+        };
+
+        let Some(status_value) = row_map.get("status") else {
+            return Ok(None);
+        };
+
+        let status = serde_json::from_value::<SqlSubscriptionStatus>(
+            status_value.clone().into_inner(),
+        )
+        .map_err(|_| {
+            CLIError::ParseError(
+                "Subscription status has an invalid format".into(),
+            )
+        })?;
 
         if status != SqlSubscriptionStatus::SubscriptionRequired {
             return Ok(None);
@@ -968,10 +974,6 @@ impl CLISession {
         let message = row_map.get("message").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let ws_url = row_map.get("ws_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-        let subscription_value = row_map.get("subscription").ok_or_else(|| {
-            CLIError::ParseError("Missing subscription metadata in server response".into())
-        })?;
 
         let subscription = serde_json::from_value::<SqlSubscriptionDescriptor>(
             subscription_value.clone().into_inner(),
