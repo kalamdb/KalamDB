@@ -23,6 +23,7 @@ use kalam_cli::{CLIConfiguration, CLIError, FileCredentialStore, Result};
 mod args;
 mod commands;
 mod connect;
+mod terminal_input;
 
 use args::Cli;
 use commands::{
@@ -31,6 +32,7 @@ use commands::{
     watch_schema::handle_watch_schema,
 };
 use connect::create_session;
+use terminal_input::prompt_password;
 
 #[tokio::main]
 async fn main() {
@@ -51,7 +53,7 @@ async fn run() -> Result<()> {
     let is_interactive_mode = cli.command.is_none() && cli.file.is_none();
     if cli.password.as_deref() == Some("") && is_interactive_mode && std::io::stdin().is_terminal()
     {
-        let password = rpassword::prompt_password("Password: ")
+        let password = prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
         cli.password = Some(password);
     }
