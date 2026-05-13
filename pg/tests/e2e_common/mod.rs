@@ -73,7 +73,7 @@ fn pg_connection_config() -> (String, u16) {
 
 const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:2900";
 const DEFAULT_KALAMDB_GRPC_HOST: &str = "127.0.0.1";
-const DEFAULT_KALAMDB_GRPC_PORT: u16 = 9188;
+const DEFAULT_KALAMDB_GRPC_PORT: u16 = 2910;
 
 const DEFAULT_KALAMDB_USER: &str = "root";
 const DEFAULT_KALAMDB_PASSWORD: &str = "kalamdb123";
