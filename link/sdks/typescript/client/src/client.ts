@@ -133,7 +133,7 @@ const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.
  * import { createClient, Auth } from '@kalamdb/client';
  *
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('alice', 'password123'),
  * });
  *
@@ -193,7 +193,7 @@ export class KalamDBClient {
   * import { KalamDBClient, Auth } from '@kalamdb/client';
    *
    * const client = new KalamDBClient({
-   *   url: 'http://localhost:8080',
+   *   url: 'http://localhost:2900',
    *   authProvider: async () => Auth.basic('admin', 'secret'),
    * });
    * ```
@@ -959,7 +959,7 @@ export class KalamDBClient {
    * for (const row of rows) {
    *   console.log(row['name'].asString());
    *   console.log(row['age'].asInt());
-   *   const url = row['avatar'].asFileUrl('http://localhost:8080', 'default', 'users');
+   *   const url = row['avatar'].asFileUrl('http://localhost:2900', 'default', 'users');
    * }
    * ```
    */
@@ -1643,7 +1643,7 @@ export class KalamDBClient {
  * import { createClient, Auth } from '@kalamdb/client';
  *
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'admin'),
  * });
  * ```

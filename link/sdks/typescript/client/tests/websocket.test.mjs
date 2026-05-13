@@ -9,7 +9,7 @@
  * 2. Initial data is received when subscribing
  * 3. Live changes are received after subscribing
  * 
- * Requires: Server running on localhost:8080 with root/root credentials
+ * Requires: Server running on localhost:2900 with root/root credentials
  */
 
 import { fileURLToPath } from 'url';
@@ -27,7 +27,7 @@ const __dirname = dirname(__filename);
 const sdkPath = join(__dirname, '..');
 const USERNAME = 'root';
 const PASSWORD = 'root';
-const HTTP_URL = 'http://localhost:8080';
+const HTTP_URL = 'http://localhost:2900';
 
 // Test configuration - use unique namespace to avoid conflicts
 const TEST_NAMESPACE = 'test_ws_' + Date.now();

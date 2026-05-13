@@ -213,7 +213,7 @@ mod tests {
         let auth = AuthProvider::basic_auth("alice".to_string(), "secret123".to_string());
 
         let client = reqwest::Client::new();
-        let request = client.get("http://localhost:8080");
+        let request = client.get("http://localhost:2900");
         let result = auth.apply_to_request(request);
         assert!(result.is_err());
     }

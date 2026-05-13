@@ -81,7 +81,7 @@ Client:
 
 ```bash
 # Test healthcheck endpoint
-curl http://localhost:8080/v1/api/healthcheck | jq .
+curl http://localhost:2900/v1/api/healthcheck | jq .
 
 # Test CLI display
 ./target/debug/kalam

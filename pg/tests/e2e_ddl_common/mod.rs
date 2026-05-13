@@ -3,7 +3,7 @@
 // Shared helpers for DDL propagation e2e tests using pgrx-managed PostgreSQL.
 //
 // Unlike e2e_common (Docker-based), this targets the local pgrx PG16 on port
-// 28816 and a locally running KalamDB server on port 8080 (HTTP) / 9188 (gRPC).
+// 28816 and a locally running KalamDB server on port 2900 (HTTP) / 9188 (gRPC).
 //
 // Prerequisites (run once):
 //   1. KalamDB server running:  cd backend && cargo run
@@ -39,7 +39,7 @@ const PG_PORT: u16 = 28816;
 const PG_HOST: &str = "127.0.0.1";
 
 /// KalamDB HTTP API (local server by default, overridable via KALAMDB_SERVER_URL).
-const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:8080";
+const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:2900";
 const DEFAULT_KALAMDB_GRPC_HOST: &str = "127.0.0.1";
 const DEFAULT_KALAMDB_GRPC_PORT: u16 = 9188;
 const DEFAULT_KALAMDB_USER: &str = "root";

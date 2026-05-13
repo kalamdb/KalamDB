@@ -448,14 +448,14 @@ mod tests {
     fn test_subscription_result_uses_shared_row_type() {
         let result = QueryResult::subscription(SqlSubscriptionRow::new(
             "sub-1",
-            "ws://localhost:8080/v1/ws",
+            "ws://localhost:2900/v1/ws",
             "SELECT * FROM chat.messages",
             "Subscription created. Connect to ws_url to receive updates.",
         ));
 
         let rows = result.rows.as_ref().expect("subscription result should include a row");
         assert_eq!(rows[0][0].as_str(), Some("subscription_required"));
-        assert_eq!(rows[0][1].as_str(), Some("ws://localhost:8080/v1/ws"));
+        assert_eq!(rows[0][1].as_str(), Some("ws://localhost:2900/v1/ws"));
         assert_eq!(rows[0][3].as_str(), Some("Subscription created. Connect to ws_url to receive updates."));
 
         let subscription = rows[0][2]

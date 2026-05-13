@@ -182,7 +182,7 @@ Future<KalamClient> buildClient() async {
 
   return KalamClient(
     host: 'your-kalamdb-host',
-    port: 8080,
+    port: 2900,
     token: idToken,
   );
 }

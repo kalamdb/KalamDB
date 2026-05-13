@@ -1,6 +1,6 @@
 import { createClient, Auth } from '@kalamdb/client';
 
-export const URL = process.env.KALAMDB_TEST_URL || 'http://localhost:8080';
+export const URL = process.env.KALAMDB_TEST_URL || 'http://localhost:2900';
 export const USER = process.env.KALAMDB_TEST_USER || 'admin';
 export const PASS = process.env.KALAMDB_TEST_PASSWORD || 'kalamdb123';
 

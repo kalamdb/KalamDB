@@ -29,7 +29,7 @@ use std::fmt;
 /// `kalamdb-core` / `kalamdb-api` (the consumers) can reference the same type.
 #[derive(Debug, Clone)]
 pub struct NotLeaderError {
-    /// API address of the current leader (e.g., "http://127.0.0.1:8081").
+    /// API address of the current leader (e.g., "http://127.0.0.1:2901").
     /// `None` when the leader is unknown (election in progress).
     pub leader_addr: Option<String>,
 }

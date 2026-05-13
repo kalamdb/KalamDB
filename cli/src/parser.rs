@@ -540,13 +540,13 @@ mod tests {
     #[test]
     fn test_parse_cluster_join() {
         let parser = CommandParser::new();
-        let cmd = parser.parse("\\cluster join 2 10.0.0.2:9188 http://10.0.0.2:8080").unwrap();
+        let cmd = parser.parse("\\cluster join 2 10.0.0.2:2910 http://10.0.0.2:2900").unwrap();
         assert_eq!(
             cmd,
             Command::ClusterJoin {
                 node_id: 2,
-                rpc_addr: "10.0.0.2:9188".to_string(),
-                api_addr: "http://10.0.0.2:8080".to_string(),
+                rpc_addr: "10.0.0.2:2910".to_string(),
+                api_addr: "http://10.0.0.2:2900".to_string(),
             }
         );
     }

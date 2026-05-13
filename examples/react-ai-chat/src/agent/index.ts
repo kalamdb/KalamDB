@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(__dirname, '../../.env.local'), quiet: true });
 loadEnv({ path: resolve(__dirname, '../../.env'), quiet: true });
 
-const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
+const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const KALAMDB_USER = process.env.KALAMDB_USER ?? 'admin';
 const KALAMDB_PASSWORD = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 const MESSAGE_TOPIC = 'react_ai_chat.agent_messages';

@@ -71,7 +71,7 @@ fn pg_connection_config() -> (String, u16) {
     (host, port)
 }
 
-const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:8080";
+const DEFAULT_KALAMDB_SERVER_URL: &str = "http://127.0.0.1:2900";
 const DEFAULT_KALAMDB_GRPC_HOST: &str = "127.0.0.1";
 const DEFAULT_KALAMDB_GRPC_PORT: u16 = 9188;
 
@@ -759,7 +759,7 @@ fn grpc_target_from_api_addr(api_addr: &str) -> Option<(String, u16)> {
     let (host, http_port) = authority.rsplit_once(':')?;
     let http_port = http_port.parse::<u16>().ok()?;
     let grpc_port = match http_port {
-        8080 => 9188,
+        2900 => 2910,
         _ => http_port.checked_add(1000)?,
     };
     Some((host.to_string(), grpc_port))
@@ -1139,7 +1139,7 @@ pub fn kalamdb_pid() -> u32 {
         .next()
         .and_then(|authority| authority.rsplit_once(':'))
         .and_then(|(_, port)| port.parse::<u16>().ok())
-        .unwrap_or(8080);
+        .unwrap_or(2900);
     let port_arg = format!("-iTCP:{port}");
     let output = Command::new("lsof")
         .args(["-nP", port_arg.as_str(), "-sTCP:LISTEN", "-t"])

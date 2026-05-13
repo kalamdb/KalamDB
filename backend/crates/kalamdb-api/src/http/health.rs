@@ -42,7 +42,7 @@ mod tests {
     #[actix_rt::test]
     async fn healthcheck_allows_localhost_peer() {
         let request = TestRequest::default()
-            .peer_addr(SocketAddr::from(([127, 0, 0, 1], 8080)))
+            .peer_addr(SocketAddr::from(([127, 0, 0, 1], 2900)))
             .to_http_request();
 
         let (status, body) = execute_healthcheck(request).await;
@@ -53,7 +53,7 @@ mod tests {
     #[actix_rt::test]
     async fn healthcheck_rejects_remote_peer() {
         let request = TestRequest::default()
-            .peer_addr(SocketAddr::from(([198, 51, 100, 8], 8080)))
+            .peer_addr(SocketAddr::from(([198, 51, 100, 8], 2900)))
             .to_http_request();
 
         let (status, body) = execute_healthcheck(request).await;
@@ -65,7 +65,7 @@ mod tests {
     async fn healthcheck_rejects_spoofed_localhost_proxy_header() {
         let request = TestRequest::default()
             .insert_header(("X-Forwarded-For", "127.0.0.1"))
-            .peer_addr(SocketAddr::from(([198, 51, 100, 8], 8080)))
+            .peer_addr(SocketAddr::from(([198, 51, 100, 8], 2900)))
             .to_http_request();
 
         let (status, body) = execute_healthcheck(request).await;

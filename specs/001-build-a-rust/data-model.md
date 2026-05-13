@@ -1096,7 +1096,7 @@ SQL Query --> Parser/Validator --> Query Planner --> Execution Engine --> Result
 ```toml
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 2900
 jwt_secret = "your-secret-key"
 
 [message]

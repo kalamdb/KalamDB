@@ -17,7 +17,7 @@ import asyncio
 from kalamdb import KalamClient, Auth
 
 async def main():
-    async with KalamClient("http://localhost:8080", Auth.basic("admin", "password")) as client:
+    async with KalamClient("http://localhost:2900", Auth.basic("admin", "password")) as client:
         # Run a SQL query
         rows = await client.query_rows("SELECT * FROM app.users LIMIT 10")
         for row in rows:

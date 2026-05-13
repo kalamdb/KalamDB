@@ -87,7 +87,7 @@ payload = {
 }
 
 resp = requests.post(
-  "http://localhost:8080/v1/api/sql",
+  "http://localhost:2900/v1/api/sql",
   auth=("user1", "pass"),
   json=payload,
   timeout=30,
@@ -100,7 +100,7 @@ resp.raise_for_status()
 ```python
 # Retrieve all documents
 resp = requests.post(
-  "http://localhost:8080/v1/api/sql",
+  "http://localhost:2900/v1/api/sql",
   auth=("user1", "pass"),
   json={"sql": "SELECT doc_id, title, embedding FROM app.documents"},
   timeout=30,
@@ -171,7 +171,7 @@ import numpy as np
 # Initialize
 model = SentenceTransformer('bert-base-nli-mean-tokens')  # 768 dimensions
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2900"
 AUTH = ("admin", "secret")
 
 def exec_sql(sql: str, params=None):
@@ -268,7 +268,7 @@ import { createClient, Auth } from '@kalamdb/client';
 
 const openai = new OpenAIApi(new Configuration({ apiKey: process.env.OPENAI_API_KEY }));
 const kalam = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   auth: Auth.basic('chatbot', 'key')
 });
 await kalam.connect();
@@ -388,7 +388,7 @@ import numpy as np
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2900"
 AUTH = ("shop", "key")
 
 def exec_sql(sql: str, params=None):
@@ -488,7 +488,7 @@ import numpy as np
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2900"
 AUTH = ("media", "key")
 
 def exec_sql(sql: str, params=None):
@@ -571,7 +571,7 @@ import numpy as np
 # 1. Initialize
 model = SentenceTransformer('all-MiniLM-L6-v2')  # 384 dimensions
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2900"
 AUTH = ("user", "pass")
 
 def exec_sql(sql: str, params=None):
@@ -631,7 +631,7 @@ Use the TypeScript SDK to execute SQL and pass embeddings as arrays of numbers.
 import { createClient, Auth } from '@kalamdb/client';
 
 const client = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   auth: Auth.basic('user', 'pass')
 });
 

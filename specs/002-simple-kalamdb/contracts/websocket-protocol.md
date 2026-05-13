@@ -10,7 +10,7 @@ KalamDB provides real-time data streaming via WebSocket connections. Clients can
 
 ## Connection
 
-**URL**: `ws://localhost:8080/ws` (development)  
+**URL**: `ws://localhost:2900/ws` (development)  
 **Protocol**: Standard WebSocket (RFC 6455)  
 **Authentication**: JWT token in initial handshake (Authorization header or query parameter)
 
@@ -18,14 +18,14 @@ KalamDB provides real-time data streaming via WebSocket connections. Clients can
 
 ```javascript
 // Browser JavaScript
-const ws = new WebSocket('ws://localhost:8080/ws');
+const ws = new WebSocket('ws://localhost:2900/ws');
 
 // With authentication (query parameter)
 const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
-const ws = new WebSocket(`ws://localhost:8080/ws?token=${token}`);
+const ws = new WebSocket(`ws://localhost:2900/ws?token=${token}`);
 
 // With authentication (will be extracted from Authorization header in upgrade request)
-const ws = new WebSocket('ws://localhost:8080/ws', {
+const ws = new WebSocket('ws://localhost:2900/ws', {
   headers: {
     'Authorization': `Bearer ${token}`
   }
@@ -384,7 +384,7 @@ class KalamDBClient {
 }
 
 // Usage
-const client = new KalamDBClient('ws://localhost:8080/ws', 'YOUR_JWT_TOKEN');
+const client = new KalamDBClient('ws://localhost:2900/ws', 'YOUR_JWT_TOKEN');
 
 client.subscribe(
   'messages',
@@ -408,7 +408,7 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() {
-    let url = "ws://localhost:8080/ws?token=YOUR_JWT_TOKEN";
+    let url = "ws://localhost:2900/ws?token=YOUR_JWT_TOKEN";
     let (ws_stream, _) = connect_async(url).await.unwrap();
     let (mut write, mut read) = ws_stream.split();
     

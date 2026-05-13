@@ -50,7 +50,7 @@ When you first start KalamDB server or use the CLI, a **system user** is automat
 cargo run --bin kalamdb-server
 
 # Output:
-# [INFO] KalamDB server starting on http://127.0.0.1:8080
+# [INFO] KalamDB server starting on http://127.0.0.1:2900
 # [INFO] System user 'system' created with ID: sys_system
 # [INFO] System user accessible from localhost without password
 ```
@@ -264,7 +264,7 @@ WHERE username = 'alice';
 **Example (curl)**:
 ```bash
 # Login with HTTP Basic Auth
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Authorization: Basic $(echo -n 'alice:SecurePass123!' | base64)" \
   -H "Content-Type: application/json"
 
@@ -305,7 +305,7 @@ curl -X POST http://localhost:8080/v1/auth/login \
 
 ```bash
 # Login with username/password in request body
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "username": "alice",
@@ -325,7 +325,7 @@ curl -X POST http://localhost:8080/v1/auth/login \
 
 ```bash
 # Validate JWT token and retrieve user context
-curl -X POST http://localhost:8080/v1/auth/validate \
+curl -X POST http://localhost:2900/v1/auth/validate \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -H "Content-Type: application/json"
 
@@ -341,7 +341,7 @@ curl -X POST http://localhost:8080/v1/auth/validate \
 
 ```bash
 # Execute SQL query with JWT token
-curl -X POST http://localhost:8080/v1/sql \
+curl -X POST http://localhost:2900/v1/sql \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -417,7 +417,7 @@ CREATE USER 'john_doe'
 **Example (Google OAuth Token Validation)**:
 ```bash
 # Login with Google OAuth token
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "google",
@@ -637,7 +637,7 @@ cargo run --bin kalam
 
 # Output:
 # KalamDB CLI v0.1.0
-# Connected to: http://127.0.0.1:8080
+# Connected to: http://127.0.0.1:2900
 # Authenticated as: system (role: system)
 
 kalam> SELECT CURRENT_USER();
@@ -682,7 +682,7 @@ The CLI stores credentials in `~/.kalam/credentials.toml`:
 
 [[connections]]
 name = "localhost"
-url = "http://127.0.0.1:8080"
+url = "http://127.0.0.1:2900"
 user = "system"
 auth_type = "internal"  # No password needed
 
@@ -703,7 +703,7 @@ auth_type = "password"
 ```typescript
 // 1. Login and obtain JWT token
 async function login(username: string, password: string): Promise<string> {
-  const response = await fetch('http://localhost:8080/v1/auth/login', {
+  const response = await fetch('http://localhost:2900/v1/auth/login', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -722,7 +722,7 @@ async function login(username: string, password: string): Promise<string> {
 
 // 2. Execute SQL query with JWT token
 async function executeQuery(token: string, query: string): Promise<any> {
-  const response = await fetch('http://localhost:8080/v1/sql', {
+  const response = await fetch('http://localhost:2900/v1/sql', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -762,7 +762,7 @@ async function main() {
 import requests
 import json
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2900"
 
 # 1. Login and obtain JWT token
 def login(username: str, password: str) -> str:
@@ -821,7 +821,7 @@ struct QueryRequest {
 
 async fn login(client: &Client, username: &str, password: &str) -> Result<String, Box<dyn std::error::Error>> {
     let response = client
-        .post("http://localhost:8080/v1/auth/login")
+        .post("http://localhost:2900/v1/auth/login")
         .json(&LoginRequest {
             username: username.to_string(),
             password: password.to_string(),
@@ -835,7 +835,7 @@ async fn login(client: &Client, username: &str, password: &str) -> Result<String
 
 async fn execute_query(client: &Client, token: &str, query: &str) -> Result<String, Box<dyn std::error::Error>> {
     let response = client
-        .post("http://localhost:8080/v1/sql")
+        .post("http://localhost:2900/v1/sql")
         .bearer_auth(token)
         .json(&QueryRequest {
             query: query.to_string(),
@@ -897,7 +897,7 @@ ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
 **Solution**:
 ```bash
 # Re-authenticate to obtain new token
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "alice", "password": "SecurePass123!"}'
 ```
@@ -920,12 +920,12 @@ curl -X POST http://localhost:8080/v1/auth/login \
 **Solution**:
 ```bash
 # ❌ WRONG: No Authorization header
-curl -X POST http://localhost:8080/v1/sql \
+curl -X POST http://localhost:2900/v1/sql \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM app.messages"}'
 
 # ✅ CORRECT: Include Authorization header
-curl -X POST http://localhost:8080/v1/sql \
+curl -X POST http://localhost:2900/v1/sql \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM app.messages"}'
@@ -988,13 +988,13 @@ SELECT * FROM bob.messages;
 **Example**:
 ```bash
 # ❌ WRONG: Missing password field
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "alice"}'
 # Error (400): Invalid request format
 
 # ✅ CORRECT: Include all required fields
-curl -X POST http://localhost:8080/v1/auth/login \
+curl -X POST http://localhost:2900/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "alice", "password": "SecurePass123!"}'
 ```
@@ -1119,7 +1119,7 @@ level = "debug"  # Enable detailed auth logs
 
 2. **Test Authentication**:
    ```bash
-   curl -X POST http://localhost:8080/v1/auth/login \
+   curl -X POST http://localhost:2900/v1/auth/login \
      -H "Content-Type: application/json" \
      -d '{"username": "your_username", "password": "YourSecurePass123!"}'
    ```

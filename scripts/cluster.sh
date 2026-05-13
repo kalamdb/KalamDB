@@ -33,8 +33,8 @@
 #
 # Prerequisites (local mode):
 #   - Rust toolchain installed (cargo, rustc)
-#   - Port 8081, 8082, 8083 available (HTTP)
-#   - Port 9081, 9082, 9083 available (Raft RPC)
+#   - Port 2901, 2902, 2903 available (HTTP)
+#   - Port 2911, 2912, 2913 available (Raft RPC)
 #
 # Prerequisites (docker mode):
 #   - Docker and Docker Compose installed
@@ -66,16 +66,16 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Node configuration
-NODE1_HTTP=8081
-NODE1_RPC=9081
+NODE1_HTTP=2901
+NODE1_RPC=2911
 NODE1_ID=1
 
-NODE2_HTTP=8082
-NODE2_RPC=9082
+NODE2_HTTP=2902
+NODE2_RPC=2912
 NODE2_ID=2
 
-NODE3_HTTP=8083
-NODE3_RPC=9083
+NODE3_HTTP=2903
+NODE3_RPC=2913
 NODE3_ID=3
 
 # Cluster bootstrap always provisions the root account up front.
@@ -224,7 +224,7 @@ docker_show_status() {
     
     # Check each node
     for node in 1 2 3; do
-        port=$((8080 + node))
+        port=$((2900 + node))
         container="kalamdb-node${node}"
         
         # Check if container is running
@@ -476,7 +476,7 @@ stop_node() {
     local node_id=$1
     local data_dir="$CLUSTER_DATA_DIR/node$node_id"
     local pid_file="$data_dir/server.pid"
-    local http_port=$((8080 + node_id))
+    local http_port=$((2900 + node_id))
     local rpc_port=$((9080 + node_id))
     local listener_pids=""
 
@@ -647,7 +647,7 @@ show_status() {
     for node_id in 1 2 3; do
         local data_dir="$CLUSTER_DATA_DIR/node$node_id"
         local pid_file="$data_dir/server.pid"
-        local http_port=$((8080 + node_id))
+        local http_port=$((2900 + node_id))
 
         echo -n "  Node $node_id: "
         if [ -f "$pid_file" ]; then

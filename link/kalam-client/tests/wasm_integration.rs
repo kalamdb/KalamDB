@@ -11,7 +11,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 fn create_test_client() -> KalamClient {
     KalamClient::new(
-        "http://localhost:8080".to_string(),
+        "http://localhost:2900".to_string(),
         "testuser".to_string(),
         "testpass".to_string(),
     )
@@ -26,7 +26,7 @@ fn js_error_text(err: JsValue) -> String {
 #[wasm_bindgen_test]
 fn test_client_creation_valid() {
     let client = KalamClient::new(
-        "http://localhost:8080".to_string(),
+        "http://localhost:2900".to_string(),
         "testuser".to_string(),
         "testpass".to_string(),
     );
@@ -42,7 +42,7 @@ fn test_client_creation_empty_url() {
 #[wasm_bindgen_test]
 fn test_client_creation_empty_username() {
     let client = KalamClient::new(
-        "http://localhost:8080".to_string(),
+        "http://localhost:2900".to_string(),
         "".to_string(),
         "testpass".to_string(),
     );
@@ -52,7 +52,7 @@ fn test_client_creation_empty_username() {
 #[wasm_bindgen_test]
 fn test_client_creation_empty_password() {
     let client = KalamClient::new(
-        "http://localhost:8080".to_string(),
+        "http://localhost:2900".to_string(),
         "testuser".to_string(),
         "".to_string(),
     );

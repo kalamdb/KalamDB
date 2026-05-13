@@ -7,7 +7,7 @@
 #   ./run-connection-scale.sh 200000 15    # 200K with 15 loopback IPs
 #
 # Environment overrides (all optional):
-#   KALAMDB_URL                       Server URL (default: http://127.0.0.1:8080)
+#   KALAMDB_URL                       Server URL (default: http://127.0.0.1:2900)
 #   KALAMDB_USER / KALAMDB_PASSWORD   Auth credentials
 #   KALAMDB_BENCH_CONNECTION_SCALE_CONNECT_BATCH       (default: 500)
 #   KALAMDB_BENCH_CONNECTION_SCALE_CONNECT_WAVE_SIZE   (default: 250)

@@ -1,6 +1,6 @@
 /**
  * Integration tests for KalamDB TypeScript SDK
- * Requires running KalamDB server on localhost:8080
+ * Requires running KalamDB server on localhost:2900
  * Run with: node --test tests/integration.test.js
  */
 
@@ -16,7 +16,7 @@ if (SKIP_INTEGRATION) {
   process.exit(0);
 }
 
-const SERVER_URL = process.env.KALAMDB_URL || 'http://localhost:8080';
+const SERVER_URL = process.env.KALAMDB_URL || 'http://localhost:2900';
 const USERNAME = process.env.KALAMDB_USER || 'admin';
 const PASSWORD = process.env.KALAMDB_PASSWORD || 'kalamdb123';
 

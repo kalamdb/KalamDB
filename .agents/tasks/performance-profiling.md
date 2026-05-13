@@ -25,7 +25,7 @@ Iteratively identify and fix INSERT hot-path bottlenecks using Jaeger distribute
 
 ### Step 1: Run Benchmark
 ```bash
-cd cli && KALAMDB_SERVER_URL="http://127.0.0.1:8080" KALAMDB_ROOT_PASSWORD="kalamdb123" \
+cd cli && KALAMDB_SERVER_URL="http://127.0.0.1:2900" KALAMDB_ROOT_PASSWORD="kalamdb123" \
   cargo test --features e2e-tests --test smoke smoke_test_insert_throughput_summary -- --nocapture
 ```
 
@@ -91,7 +91,7 @@ Common fixes:
 ### Step 6: Rebuild & Re-run
 ```bash
 # Kill server
-lsof -i :8080 -t | xargs kill
+lsof -i :2900 -t | xargs kill
 
 # Rebuild (incremental)
 cd backend && cargo build --bin kalamdb-server
@@ -100,7 +100,7 @@ cd backend && cargo build --bin kalamdb-server
 cargo run --bin kalamdb-server &
 
 # Wait for startup
-sleep 10 && curl -s http://127.0.0.1:8080/health
+sleep 10 && curl -s http://127.0.0.1:2900/health
 
 # Re-run benchmark (Step 1)
 ```

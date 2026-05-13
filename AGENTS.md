@@ -152,7 +152,7 @@ backend/crates/
 ## Workflows & Commands (Documented)
 
 - Backend build: `cd backend && cargo build`
-- Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:8080`)
+- Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:2900`)
 - Backend run (explicit binary): `cd backend && cargo run --bin kalamdb-server`
 - Full test sweep: `cd /path/to/KalamDB && ./scripts/test-all.sh` (start the backend server first)
 - Backend config bootstrap: `cd backend && cp server.example.toml server.toml`

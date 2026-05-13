@@ -20,11 +20,11 @@ impl BenchmarkSuite {
 #[command(name = "kalamdb-bench", about = "KalamDB benchmark & report generator")]
 pub struct Config {
     /// KalamDB server URLs (comma-separated).
-    /// Example: --urls http://127.0.0.1:8080,http://127.0.0.2:8080
+    /// Example: --urls http://127.0.0.1:2900,http://127.0.0.2:2900
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "http://localhost:8080",
+        default_value = "http://localhost:2900",
         env = "KALAMDB_URLS"
     )]
     pub urls: Vec<String>,

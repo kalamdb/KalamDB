@@ -23,7 +23,7 @@
 //!
 //! ```rust,ignore
 //! // Single-node mode (no [cluster] config):
-//! let config = RaftManagerConfig::for_single_node("127.0.0.1:8080".to_string());
+//! let config = RaftManagerConfig::for_single_node("127.0.0.1:2900".to_string());
 //! let manager = RaftManager::new(config);
 //! let executor = RaftExecutor::new(manager, std::time::Instant::now());
 //!

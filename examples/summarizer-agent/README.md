@@ -16,7 +16,7 @@ Use `change.data` as the blog row inside `onChange()`. This example routes chang
 
 ## Quick start
 
-1. Make sure KalamDB is running on `http://127.0.0.1:8080`.
+1. Make sure KalamDB is running on `http://127.0.0.1:2900`.
 2. Run `npm install`.
 3. Run `npm run setup`.
 4. Run `npm run start`.

@@ -36,7 +36,7 @@ cd backend
 cargo run --bin kalamdb-server
 ```
 
-Server starts on `http://localhost:8080`
+Server starts on `http://localhost:2900`
 
 ### 2. Create User with Auto-Generated API Key
 
@@ -70,13 +70,13 @@ kalam-cli user create --name "demo-user" --role "user"
 
 ```bash
 # With API key (works remotely)
-curl -X POST http://localhost:8080/sql \
+curl -X POST http://localhost:2900/sql \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: 550e8400-e29b-41d4-a716-446655440000" \
   -d '{"query": "SELECT * FROM todos"}'
 
 # Without API key (only works from localhost)
-curl -X POST http://127.0.0.1:8080/sql \
+curl -X POST http://127.0.0.1:2900/sql \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM todos"}'
 ```
@@ -149,10 +149,10 @@ services:
     image: kalamdb:latest
     container_name: kalamdb
     ports:
-      - "8080:8080"
+      - "2900:2900"
     environment:
       # Override config.toml values
-      KALAMDB_SERVER_PORT: "8080"
+      KALAMDB_SERVER_PORT: "2900"
       KALAMDB_DATA_DIR: "/data"
       KALAMDB_LOG_LEVEL: "info"
     volumes:
@@ -187,10 +187,10 @@ docker exec -it kalamdb kalam-cli user create --name "docker-user" --role "user"
 docker-compose logs -f kalamdb
 
 # Test health check
-curl http://localhost:8080/health
+curl http://localhost:2900/health
 
 # Test with API key
-curl -X POST http://localhost:8080/sql \
+curl -X POST http://localhost:2900/sql \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: 750a9500-b19c-31e4-b827-556755550111" \
   -d '{"query": "SELECT 1"}'
@@ -199,7 +199,7 @@ curl -X POST http://localhost:8080/sql \
 ### 5. Environment Variable Overrides
 
 **Supported variables** (all optional, with defaults):
-- `KALAMDB_SERVER_PORT` (default: 8080)
+- `KALAMDB_SERVER_PORT` (default: 2900)
 - `KALAMDB_DATA_DIR` (default: /data)
 - `KALAMDB_LOG_LEVEL` (default: info) - Options: debug, info, warn, error
 - `KALAMDB_MAX_CONNECTIONS` (default: 100)
@@ -262,7 +262,7 @@ import init, { KalamClient } from './pkg/kalam_link.js';
 await init(); // Initialize WASM
 
 const client = new KalamClient(
-  'ws://localhost:8080',
+  'ws://localhost:2900',
   '550e8400-e29b-41d4-a716-446655440000'
 );
 
@@ -378,7 +378,7 @@ npm install
 
 **Create .env file**:
 ```bash
-echo "VITE_KALAMDB_URL=ws://localhost:8080" > .env
+echo "VITE_KALAMDB_URL=ws://localhost:2900" > .env
 echo "VITE_KALAMDB_API_KEY=550e8400-e29b-41d4-a716-446655440000" >> .env
 ```
 
@@ -435,7 +435,7 @@ npm test
 docker-compose logs kalamdb
 
 # Common issues:
-# - Port 8080 already in use: Change KALAMDB_SERVER_PORT
+# - Port 2900 already in use: Change KALAMDB_SERVER_PORT
 # - Volume permission errors: Check Docker volume permissions
 ```
 
@@ -470,7 +470,7 @@ wasm-pack build --target web
 **Connection fails**:
 ```bash
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2900/health
 
 # Check API key is correct
 echo $VITE_KALAMDB_API_KEY

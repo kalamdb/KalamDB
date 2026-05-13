@@ -10,8 +10,8 @@
 # Server bind address (default: 127.0.0.1)
 host = "0.0.0.0"
 
-# Server port (default: 8080)
-port = 8080
+# Server port (default: 2900)
+port = 2900
 
 # Public origin used by the Admin UI for both /v1/api and /v1/ws traffic.
 # Set this when browsers reach KalamDB through a public hostname or reverse proxy.
@@ -389,7 +389,7 @@ jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
 # Example for Google OAuth: ["https://accounts.google.com"]
 # Example for GitHub OAuth: ["https://github.com"]
 # Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
-jwt_trusted_issuers = "http://localhost:8081/realms/kalamdb,https://securetoken.google.com/masky-bb320"
+jwt_trusted_issuers = "http://localhost:2901/realms/kalamdb,https://securetoken.google.com/masky-bb320"
 
 # Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
 auto_create_users_from_provider = true
@@ -472,10 +472,10 @@ max_parameter_size_bytes = 524288
 node_id = 1
 
 # RPC address for Raft inter-node communication
-rpc_addr = "0.0.0.0:9188"
+rpc_addr = "0.0.0.0:2910"
 
 # API address advertised to peers/clients
-api_addr = "0.0.0.0:8080"
+api_addr = "0.0.0.0:2900"
 # #
 # # Optional mTLS for inter-node gRPC (Raft + cluster RPC)
 # # [cluster.rpc_tls]
@@ -548,12 +548,12 @@ max_snapshots_to_keep = 1
 # Lower values speed up ack-failure-recovery smoke tests.
 visibility_timeout_secs = 10
 # # node_id = 2
-# # rpc_addr = "10.0.0.2:9188"
-# # api_addr = "http://10.0.0.2:8080"
+# # rpc_addr = "10.0.0.2:2910"
+# # api_addr = "http://10.0.0.2:2900"
 # # rpc_server_name = "node2.cluster.local"
 # #
 # # [[cluster.peers]]
 # # node_id = 3
-# # rpc_addr = "10.0.0.3:9188"
-# # api_addr = "http://10.0.0.3:8080"
+# # rpc_addr = "10.0.0.3:2910"
+# # api_addr = "http://10.0.0.3:2900"
 # # rpc_server_name = "node3.cluster.local"

@@ -109,7 +109,7 @@ function createFakeWasmClient({ subscribeError, disconnectError, failOnConcurren
 
 test('multiple subscriptions on one client share one websocket connection', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -135,7 +135,7 @@ test('multiple subscriptions on one client share one websocket connection', asyn
 
 test('basic auth bootstrap connects only the post-login JWT websocket client', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.basic('fixture-user', 'fixture-pass'),
   });
 
@@ -164,7 +164,7 @@ test('basic auth bootstrap connects only the post-login JWT websocket client', a
 
 test('concurrent subscription registration is serialized per client', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -188,7 +188,7 @@ test('concurrent subscription registration is serialized per client', async () =
 
 test('failed subscriptions do not leak local subscription state', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -211,7 +211,7 @@ test('failed subscriptions do not leak local subscription state', async () => {
 
 test('getSubscriptions trusts wasm empty snapshots over stale local metadata', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -229,7 +229,7 @@ test('getSubscriptions trusts wasm empty snapshots over stale local metadata', a
 
 test('disconnect clears local subscription metadata even when wasm disconnect fails', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -250,7 +250,7 @@ test('disconnect clears local subscription metadata even when wasm disconnect fa
 
 test('liveEvents normalizes websocket rows into RowData cells', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -279,7 +279,7 @@ test('liveEvents normalizes websocket rows into RowData cells', async () => {
 
 test('live delegates materialized rows to the Rust/WASM layer', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -353,7 +353,7 @@ test('live delegates materialized rows to the Rust/WASM layer', async () => {
 
 test('parallel subscribe storms connect once and keep sibling subscriptions isolated', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -424,7 +424,7 @@ test('parallel subscribe storms connect once and keep sibling subscriptions isol
 // ---------------------------------------------------------------------------
 test('change events are delivered only to the matching subscription (cross-subscription isolation)', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 
@@ -476,7 +476,7 @@ test('change events are delivered only to the matching subscription (cross-subsc
 
 test('same SQL subscribed twice keeps events isolated by subscription_id', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('fixture-token'),
   });
 

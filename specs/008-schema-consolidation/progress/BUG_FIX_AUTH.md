@@ -60,11 +60,11 @@ user_id = Some(user.id.clone());
 cargo run --bin kalamdb-server
 
 # Test with CLI (auto-authenticates as root for localhost)
-cargo run --bin kalam -- -u http://localhost:8080 --command "CREATE NAMESPACE app"
+cargo run --bin kalam -- -u http://localhost:2900 --command "CREATE NAMESPACE app"
 # Output: Namespace 'app' created successfully ✓
 
 # Verify namespace was created
-cargo run --bin kalam -- -u http://localhost:8080 --command "SHOW NAMESPACES"
+cargo run --bin kalam -- -u http://localhost:2900 --command "SHOW NAMESPACES"
 # Output: Shows 'app' in the list ✓
 ```
 

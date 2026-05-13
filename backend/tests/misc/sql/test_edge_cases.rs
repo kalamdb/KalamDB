@@ -38,7 +38,7 @@ fn bearer_auth_header(username: &str, user_id: &str, role: Role) -> String {
 async fn test_empty_credentials_401() {
     let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // Bearer without token
     let auth_request = AuthRequest::Header("Bearer".to_string());
@@ -51,7 +51,7 @@ async fn test_empty_credentials_401() {
 async fn test_malformed_bearer_auth_400() {
     let server = TestServer::new_shared().await;
     let user_repo = server.users_repo();
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // Test missing "Bearer " prefix
     let auth_request = AuthRequest::Header("token_without_prefix".to_string());
@@ -88,7 +88,7 @@ async fn test_concurrent_auth_no_race_conditions() {
         let username = username.clone();
 
         let handle = tokio::spawn(async move {
-            let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 8080 + i)));
+            let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 2900 + i)));
             let secret = kalamdb_configs::defaults::default_auth_jwt_secret();
             let (token, _claims) = kalamdb_auth::providers::jwt_auth::create_and_sign_token(
                 &UserId::new(&username),
@@ -135,7 +135,7 @@ async fn test_deleted_user_denied() {
         .expect("Failed to delete user");
 
     let user_repo = server.users_repo();
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // Try to authenticate with deleted user
     let auth_header = bearer_auth_header("deleted_user", "deleted_user", Role::User);
@@ -165,7 +165,7 @@ async fn test_role_change_applies_next_request() {
     server.create_user("role_change_user", "TestPass123", Role::User).await;
 
     let user_repo = server.users_repo();
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // First authentication
     let auth_header = bearer_auth_header("role_change_user", "role_change_user", Role::User);
@@ -206,7 +206,7 @@ async fn test_maximum_password_length() {
     server.create_user("max_pass_user", &max_password, Role::User).await;
 
     let user_repo = server.users_repo();
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // Try to authenticate via credential flow
     let auth_request = AuthRequest::Credentials {

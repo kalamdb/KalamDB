@@ -1,4 +1,4 @@
-const KALAM_URL = process.env.KALAM_URL ?? 'http://127.0.0.1:8080';
+const KALAM_URL = process.env.KALAM_URL ?? 'http://127.0.0.1:2900';
 const KALAM_USER = process.env.KALAM_USER ?? 'root';
 const KALAM_PASSWORD = process.env.KALAM_PASSWORD ?? 'kalamdb123';
 

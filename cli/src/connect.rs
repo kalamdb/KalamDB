@@ -156,16 +156,16 @@ pub async fn create_session(
             })? {
                 let creds_url = creds.get_server_url();
                 // If credentials have a valid URL (starts with http), use it
-                // Otherwise use default localhost:8080
+                // Otherwise use default localhost:2900
                 if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
                     creds_url.to_string()
                 } else {
-                    // Default to localhost:8080
-                    "http://localhost:8080".to_string()
+                    // Default to localhost:2900
+                    "http://localhost:2900".to_string()
                 }
             } else {
-                // Default to localhost:8080 (credentials store URL per-instance)
-                "http://localhost:8080".to_string()
+                // Default to localhost:2900 (credentials store URL per-instance)
+                "http://localhost:2900".to_string()
             }
         },
     };
@@ -922,7 +922,7 @@ pub async fn create_session(
         };
 
         format!(
-            "Connection failed: {}\n\nPossible issues:\n  • Server is not running on {}\n  • URL/port is incorrect\n  • Network connectivity issue\n\nTry:\n  • Check if server is running: curl {}/v1/api/healthcheck\n  • Verify the server URL with --url (example: http://127.0.0.1:8080)",
+            "Connection failed: {}\n\nPossible issues:\n  • Server is not running on {}\n  • URL/port is incorrect\n  • Network connectivity issue\n\nTry:\n  • Check if server is running: curl {}/v1/api/healthcheck\n  • Verify the server URL with --url (example: http://127.0.0.1:2900)",
             error_details, server_url, server_url
         )
     }
@@ -1084,16 +1084,16 @@ mod tests {
 
     #[test]
     fn test_is_localhost_url_accepts_loopback_hosts() {
-        assert!(is_localhost_url("http://localhost:8080"));
+        assert!(is_localhost_url("http://localhost:2900"));
         assert!(is_localhost_url("https://127.0.0.1:8443"));
-        assert!(is_localhost_url("http://[::1]:8080"));
-        assert!(!is_localhost_url("http://0.0.0.0:8080"));
+        assert!(is_localhost_url("http://[::1]:2900"));
+        assert!(!is_localhost_url("http://0.0.0.0:2900"));
     }
 
     #[test]
     fn test_is_localhost_url_rejects_spoofed_hosts() {
-        assert!(!is_localhost_url("http://localhost.evil.com:8080"));
-        assert!(!is_localhost_url("http://evil-localhost.example:8080"));
+        assert!(!is_localhost_url("http://localhost.evil.com:2900"));
+        assert!(!is_localhost_url("http://evil-localhost.example:2900"));
         assert!(!is_localhost_url("http://example.com/?target=localhost"));
         assert!(!is_localhost_url("not-a-url"));
     }
@@ -1101,8 +1101,8 @@ mod tests {
     #[test]
     fn test_normalize_and_validate_server_url_accepts_http_https() {
         assert_eq!(
-            normalize_and_validate_server_url("http://localhost:8080/").unwrap(),
-            "http://localhost:8080"
+            normalize_and_validate_server_url("http://localhost:2900/").unwrap(),
+            "http://localhost:2900"
         );
         assert_eq!(
             normalize_and_validate_server_url("https://db.example.com/base/").unwrap(),
@@ -1113,17 +1113,17 @@ mod tests {
             "https://kalam.masky.app"
         );
         assert_eq!(
-            normalize_and_validate_server_url("localhost:8080").unwrap(),
-            "http://localhost:8080"
+            normalize_and_validate_server_url("localhost:2900").unwrap(),
+            "http://localhost:2900"
         );
     }
 
     #[test]
     fn test_normalize_and_validate_server_url_rejects_sensitive_or_invalid_parts() {
-        assert!(normalize_and_validate_server_url("ftp://localhost:8080").is_err());
-        assert!(normalize_and_validate_server_url("http://user:pass@localhost:8080").is_err());
-        assert!(normalize_and_validate_server_url("http://localhost:8080?token=secret").is_err());
-        assert!(normalize_and_validate_server_url("http://localhost:8080/#fragment").is_err());
+        assert!(normalize_and_validate_server_url("ftp://localhost:2900").is_err());
+        assert!(normalize_and_validate_server_url("http://user:pass@localhost:2900").is_err());
+        assert!(normalize_and_validate_server_url("http://localhost:2900?token=secret").is_err());
+        assert!(normalize_and_validate_server_url("http://localhost:2900/#fragment").is_err());
     }
 
     #[test]

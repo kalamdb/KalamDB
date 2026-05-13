@@ -324,21 +324,21 @@ cargo test test_alter_namespace_end_to_end
 cargo run --bin kalamdb
 
 # In another terminal, test via curl
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <dba-token>" \
   -d '{
     "sql": "CREATE NAMESPACE test"
   }'
 
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <dba-token>" \
   -d '{
     "sql": "ALTER NAMESPACE test RENAME TO test_renamed"
   }'
 
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <dba-token>" \
   -d '{

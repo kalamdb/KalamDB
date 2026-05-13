@@ -110,7 +110,7 @@ main() {
     log_info "========================================="
     log_info ""
     log_info "To run the image:"
-    log_info "  docker run -p 8080:8080 $IMAGE_TAG"
+    log_info "  docker run -p 2900:2900 $IMAGE_TAG"
     log_info ""
     log_info "To push to registry:"
     log_info "  docker tag $IMAGE_TAG your-registry/$IMAGE_TAG"

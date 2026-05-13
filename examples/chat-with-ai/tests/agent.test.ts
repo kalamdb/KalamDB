@@ -5,7 +5,7 @@ import { Auth, createClient, type KalamDBClient } from '@kalamdb/client';
 import { createConsumerClient, runConsumer, type ConsumerClientLike } from '@kalamdb/consumer';
 import { buildReply } from '../src/agent.js';
 
-const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
+const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const user = process.env.KALAMDB_USER ?? 'admin';
 const password = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 

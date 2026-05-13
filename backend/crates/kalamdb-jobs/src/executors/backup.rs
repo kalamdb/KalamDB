@@ -399,7 +399,7 @@ mod tests {
         fs::write(source_root.join("rocksdb/CURRENT"), "manifest").expect("rocksdb file");
         fs::write(source_root.join("storage/app/messages/part-1.parquet"), "parquet")
             .expect("storage file");
-        fs::write(source_root.join("server.toml"), "port = 8080\n").expect("config file");
+        fs::write(source_root.join("server.toml"), "port = 2900\n").expect("config file");
 
         let archive_path = temp_dir.path().join("backup.tar.gz");
         BackupExecutor::create_tar_gz_archive(&source_root, &archive_path)
@@ -423,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(extract_root.join("server.toml")).expect("read config file"),
-            "port = 8080\n"
+            "port = 2900\n"
         );
     }
 

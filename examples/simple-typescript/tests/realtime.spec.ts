@@ -11,7 +11,7 @@ test.beforeAll(() => {
     stdio: 'inherit',
     env: {
       ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     },
   });
 });

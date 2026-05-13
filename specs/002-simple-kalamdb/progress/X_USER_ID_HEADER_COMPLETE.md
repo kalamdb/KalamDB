@@ -79,7 +79,7 @@ if sql_upper.contains("USER TABLE") {
 
 ```bash
 # Test without X-USER-ID header (should fail)
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -d '{"sql": "CREATE USER TABLE app.files (id INT, name VARCHAR)"}'
 
@@ -89,7 +89,7 @@ curl -X POST http://localhost:8080/api/sql \
 
 ```bash
 # Test with X-USER-ID header (should succeed)
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "X-USER-ID: user123" \
   -d '{"sql": "CREATE USER TABLE app.files (id INT, name VARCHAR)"}'

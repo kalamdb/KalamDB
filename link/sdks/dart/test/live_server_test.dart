@@ -44,7 +44,7 @@ Future<KalamClient> _connectJwtClient({
   await _sdkInitialized;
 
   final serverUrl = _requireEnvAny(['KALAMDB_URL', 'KALAM_URL'],
-      defaultValue: 'http://localhost:8080');
+      defaultValue: 'http://localhost:2900');
   final adminUser =
       _requireEnvAny(['KALAMDB_USER', 'KALAM_USER'], defaultValue: 'admin');
   final adminPass = _requireEnvAny(['KALAMDB_PASSWORD', 'KALAM_PASS'],

@@ -86,7 +86,7 @@ function createReadmeWasmClient() {
 
 test('README live resume example passes options and exposes typed checkpoints', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('readme-token'),
   });
 
@@ -143,7 +143,7 @@ test('README live resume example passes options and exposes typed checkpoints', 
 
 test('README executeAsUser example wraps SQL for tenant-safe writes', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('readme-token'),
   });
 
@@ -184,7 +184,7 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
 
   try {
     const client = createClient({
-      url: 'http://127.0.0.1:8080',
+      url: 'http://127.0.0.1:2900',
       authProvider: async () => Auth.jwt('readme-token'),
     });
 
@@ -202,7 +202,7 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
       ['att_1'],
     );
 
-    assert.equal(fetchCall.url, 'http://127.0.0.1:8080/v1/api/sql');
+    assert.equal(fetchCall.url, 'http://127.0.0.1:2900/v1/api/sql');
     assert.equal(fetchCall.options.method, 'POST');
     assert.equal(fetchCall.options.headers.Authorization, 'Bearer token-123');
     assert.equal(fetchCall.options.body.get('sql'), 'INSERT INTO support.attachments (id, file_data) VALUES ($1, FILE("upload"))');

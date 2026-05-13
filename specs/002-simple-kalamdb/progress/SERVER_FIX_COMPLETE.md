@@ -42,21 +42,21 @@ Failed to register system.users table: Plan("failed to resolve schema: system")
 ## 🚀 Server Status: RUNNING
 
 ```
-[2025-10-19 22:59:38.888] [INFO] - Starting HTTP server on 127.0.0.1:8080
+[2025-10-19 22:59:38.888] [INFO] - Starting HTTP server on 127.0.0.1:2900
 [2025-10-19 22:59:38.888] [INFO] - Endpoints: POST /api/sql, GET /ws
 [2025-10-19 22:59:38.888] [INFO] - starting 10 workers
-[2025-10-19 22:59:38.888] [INFO] - listening on: 127.0.0.1:8080
+[2025-10-19 22:59:38.888] [INFO] - listening on: 127.0.0.1:2900
 ```
 
 **Configuration:**
 - Host: 127.0.0.1
-- Port: 8080 (configured in backend/config.toml)
+- Port: 2900 (configured in backend/config.toml)
 - Workers: 10
 - Database: /tmp/kalamdb_data
 
 **Endpoints:**
-- REST API: http://localhost:8080/api/sql
-- WebSocket: ws://localhost:8080/ws
+- REST API: http://localhost:2900/api/sql
+- WebSocket: ws://localhost:2900/ws
 
 ---
 
@@ -187,7 +187,7 @@ system_schema.register_table("users".to_string(), users_provider.clone()).unwrap
 - **Estimated Time:** 15 minutes
 
 **4. Update Quickstart Guide**
-- Update port references (3000 → 8080)
+- Update port references (3000 → 2900)
 - Update system table query examples based on fix chosen
 - **Estimated Time:** 15 minutes
 
@@ -280,7 +280,7 @@ system_schema.register_table("users".to_string(), users_provider.clone()).unwrap
    - Server now starts successfully
 
 2. **backend/tests/quickstart.sh**
-   - Updated default port: 3000 → 8080
+   - Updated default port: 3000 → 2900
    - Matches config.toml configuration
 
 ---

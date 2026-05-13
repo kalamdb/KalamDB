@@ -1,6 +1,6 @@
 {
   "version": "0.3.0-alpha2",
-  "server_url": "http://localhost:8080",
+  "server_url": "http://localhost:2900",
   "timestamp": "2026-02-24T14:49:59.419732+00:00",
   "config": {
     "iterations": 100,
@@ -636,7 +636,7 @@
       "stddev_us": 0.0,
       "ops_per_sec": 0.0,
       "success": false,
-      "error": "Iteration 0 failed: Single WS target (ws://localhost:8080/v1/ws) is likely capped by local ephemeral ports near ~32K. Use --urls with multiple endpoints (example: --urls http://127.0.0.1:8080,http://127.0.0.2:8080,http://127.0.0.3:8080,http://127.0.0.4:8080), or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run."
+      "error": "Iteration 0 failed: Single WS target (ws://localhost:2900/v1/ws) is likely capped by local ephemeral ports near ~32K. Use --urls with multiple endpoints (example: --urls http://127.0.0.1:2900,http://127.0.0.2:2900,http://127.0.0.3:2900,http://127.0.0.4:2900), or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run."
     }
   ],
   "summary": {

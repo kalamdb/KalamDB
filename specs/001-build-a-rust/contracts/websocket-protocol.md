@@ -4,7 +4,7 @@
 
 KalamDb uses WebSocket connections for real-time message streaming. Clients can subscribe to messages for specific conversations or all conversations for a user, and receive messages as they are stored in the system.
 
-**Endpoint:** `ws://localhost:8080/api/v1/ws` (or `wss://` for TLS)
+**Endpoint:** `ws://localhost:2900/api/v1/ws` (or `wss://` for TLS)
 
 ## Authentication
 
@@ -340,7 +340,7 @@ ws.onmessage = (event) => {
 ws.onclose = () => {
   setTimeout(() => {
     // Reconnect
-    const newWs = new WebSocket('ws://localhost:8080/api/v1/ws?token=' + token);
+    const newWs = new WebSocket('ws://localhost:2900/api/v1/ws?token=' + token);
     newWs.onopen = () => {
       newWs.send(JSON.stringify({
         type: 'subscribe',
@@ -477,7 +477,7 @@ class KalamDbClient {
 }
 
 // Usage
-const client = new KalamDbClient('ws://localhost:8080/api/v1/ws', 'your-jwt-token');
+const client = new KalamDbClient('ws://localhost:2900/api/v1/ws', 'your-jwt-token');
 client.onMessage = (msg) => {
   console.log('Message received:', msg.content);
 };
@@ -491,7 +491,7 @@ client.subscribe('conv_abc123');
 
 The admin UI uses a special WebSocket endpoint for real-time metrics streaming:
 
-**Endpoint:** `ws://localhost:8080/api/admin/ws/metrics`
+**Endpoint:** `ws://localhost:2900/api/admin/ws/metrics`
 
 **Authentication:** JWT token with admin privileges required
 

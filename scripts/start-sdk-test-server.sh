@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVER_URL="${KALAMDB_URL:-http://localhost:8080}"
+SERVER_URL="${KALAMDB_URL:-http://localhost:2900}"
 SERVER_BIN="${KALAMDB_SERVER_BIN:-}"
 WORK_DIR="${KALAMDB_SERVER_WORK_DIR:-}"
 SERVER_LOG="${KALAMDB_SERVER_LOG:-}"

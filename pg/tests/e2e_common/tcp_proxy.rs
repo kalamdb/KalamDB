@@ -243,6 +243,6 @@ fn extract_host_port(base_url: &str) -> String {
         .trim_start_matches("https://")
         .split('/')
         .next()
-        .unwrap_or("127.0.0.1:9188")
+        .unwrap_or("127.0.0.1:2910")
         .to_string()
 }

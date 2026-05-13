@@ -11,7 +11,7 @@
 
 - Q: What is the exact schema definition for the TODO table? → A: `id (auto-increment), title (text), completed (boolean), created_at (timestamp)`
 - Q: How should the app handle sync conflicts between localStorage and KalamDB? → A: KalamDB is always source of truth. Subscription protocol returns insert/update/delete changes. App cannot add new TODOs unless WebSocket is connected to KalamDB server. LocalStorage serves only as read cache for fast initial display.
-- Q: What should happen when Docker container starts with missing environment variables? → A: Container starts with documented default values (e.g., port 8080, data dir /data/kalamdb, log level INFO)
+- Q: What should happen when Docker container starts with missing environment variables? → A: Container starts with documented default values (e.g., port 2900, data dir /data/kalamdb, log level INFO)
 - Q: How should the app display WebSocket connection status to users? → A: Status badge with text (e.g., "Connected" / "Disconnected") and color coding, plus disabled button state when disconnected
 - Q: How should setup.sh validate KalamDB server accessibility? → A: Use kalam-cli to run a simple query (e.g., query system table). SQL statements are loaded from todo-app.sql file via kalam-cli.
 - Q: What parameters does kalam-link WASM client require? → A: KalamDB server URL and user's API key are required parameters for initialization. The WASM library cannot function without these. CLI tools work on localhost without API key for development.
@@ -100,7 +100,7 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - What happens when API key is invalid or missing in X-API-KEY header? (Return 401 Unauthorized with clear error message)
 - How does the system handle queries that try to show deleted rows? (By default exclude deleted rows; optionally support INCLUDE DELETED clause for admin/recovery scenarios)
 - What happens when the same API key is used by multiple concurrent requests? (All requests are authorized independently)
-- What happens when Docker container starts without required environment variables? (Uses documented defaults: port 8080, data dir /data/kalamdb, log level INFO)
+- What happens when Docker container starts without required environment variables? (Uses documented defaults: port 2900, data dir /data/kalamdb, log level INFO)
 - How does the system handle WASM module loading failures in older browsers? (Display browser compatibility error)
 - What happens when subscription connection is lost while TODOs are being modified? (Disable add/delete buttons, show "Disconnected" status badge with red color)
 - How does setup.sh handle partial table creation (e.g., some tables exist, others don't)? (CREATE IF NOT EXISTS ensures idempotent behavior)

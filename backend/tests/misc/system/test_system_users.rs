@@ -76,7 +76,7 @@ async fn test_system_user_localhost_no_password() {
         .uri("/v1/api/sql")
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
-        .peer_addr(SocketAddr::from(([127, 0, 0, 1], 8080)))
+        .peer_addr(SocketAddr::from(([127, 0, 0, 1], 2900)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
@@ -134,7 +134,7 @@ async fn test_system_user_remote_denied_by_default() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
-        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 2900)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
@@ -189,7 +189,7 @@ async fn test_system_user_remote_with_password() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
-        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 2900)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))
@@ -245,7 +245,7 @@ async fn test_system_user_remote_no_password_denied() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Remote IP
         .insert_header(("Content-Type", "application/json"))
-        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 8080)))
+        .peer_addr(SocketAddr::from(([192, 168, 1, 100], 2900)))
         .set_json(serde_json::json!({
             "sql": "SELECT * FROM system.users LIMIT 1"
         }))

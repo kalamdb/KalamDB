@@ -108,13 +108,13 @@ Suggested limits for future:
 
 ```bash
 # With API key
-curl -X POST http://localhost:8080/sql \
+curl -X POST http://localhost:2900/sql \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: 550e8400-e29b-41d4-a716-446655440000" \
   -d '{"query": "SELECT * FROM todos"}'
 
 # Localhost (no API key needed)
-curl -X POST http://127.0.0.1:8080/sql \
+curl -X POST http://127.0.0.1:2900/sql \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT * FROM todos"}'
 ```
@@ -122,7 +122,7 @@ curl -X POST http://127.0.0.1:8080/sql \
 ### JavaScript/TypeScript
 
 ```typescript
-const response = await fetch('http://localhost:8080/sql', {
+const response = await fetch('http://localhost:2900/sql', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',

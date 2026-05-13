@@ -29,7 +29,7 @@ docker pull jamals86/kalamdb:latest
 
 docker run -d \
   --name kalamdb \
-  -p 8080:8080 \
+  -p 2900:2900 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
@@ -40,14 +40,14 @@ docker run -d \
 ### ✅ Check health
 
 ```bash
-curl http://localhost:8080/health
-curl http://localhost:8080/v1/api/healthcheck
+curl http://localhost:2900/health
+curl http://localhost:2900/v1/api/healthcheck
 ```
 
 ### 🔑 Login
 
 ```bash
-curl -X POST http://localhost:8080/v1/api/auth/login \
+curl -X POST http://localhost:2900/v1/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"root","password":"kalamdb123"}'
 ```
@@ -55,7 +55,7 @@ curl -X POST http://localhost:8080/v1/api/auth/login \
 ### 🧪 Run your first SQL query
 
 ```bash
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"sql":"SELECT 1 AS ok"}'
@@ -93,9 +93,9 @@ docker compose up -d
 
 Cluster endpoints:
 
-- Node 1: `http://localhost:8081`
-- Node 2: `http://localhost:8082`
-- Node 3: `http://localhost:8083`
+- Node 1: `http://localhost:2901`
+- Node 2: `http://localhost:2902`
+- Node 3: `http://localhost:2903`
 
 ### 🌐 One-line startup from the repo
 
@@ -117,9 +117,9 @@ curl -sSL https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/c
 
 If the Admin UI is enabled in your image and config, open:
 
-- Single container run: `http://localhost:8080`
+- Single container run: `http://localhost:2900`
 - Single-node compose: `http://localhost:8088`
-- Cluster node 1: `http://localhost:8081`
+- Cluster node 1: `http://localhost:2901`
 
 Useful API endpoints:
 
@@ -187,13 +187,13 @@ These are the most useful environment variables for setup and day-to-day use.
 | `KALAMDB_ROOT_PASSWORD` | Root user password for initial login | `kalamdb123` |
 | `KALAMDB_JWT_SECRET` | JWT signing secret, should be at least 32 chars | `super-secret-value` |
 | `KALAMDB_LOG_LEVEL` | Logging level | `info` |
-| `KALAMDB_PORT` | Host port override in single-node compose | `8080` |
+| `KALAMDB_PORT` | Host port override in single-node compose | `2900` |
 | `KALAMDB_ALLOW_REMOTE_SETUP` | Allow initial remote setup in Docker-based development flows | `true` |
 | `KALAMDB_CLUSTER_ID` | Cluster identifier for multi-node deployments | `docker-cluster` |
 | `KALAMDB_NODE_ID` | Node id in cluster setups | `1` |
-| `KALAMDB_CLUSTER_RPC_ADDR` | Raft RPC address for a node | `kalamdb-node1:9090` |
-| `KALAMDB_CLUSTER_API_ADDR` | Public API address for a node | `http://kalamdb-node1:8080` |
-| `KALAMDB_CLUSTER_PEERS` | Cluster peer list for Docker cluster compose | `2@node2:9090@http://node2:8080;3@node3:9090@http://node3:8080` |
+| `KALAMDB_CLUSTER_RPC_ADDR` | Raft RPC address for a node | `kalamdb-node1:2910` |
+| `KALAMDB_CLUSTER_API_ADDR` | Public API address for a node | `http://kalamdb-node1:2900` |
+| `KALAMDB_CLUSTER_PEERS` | Cluster peer list for Docker cluster compose | `2@node2:2910@http://node2:2900;3@node3:2910@http://node3:2900` |
 
 ### 🔐 Security note
 
@@ -212,7 +212,7 @@ Run with a named volume:
 ```bash
 docker run -d \
   --name kalamdb \
-  -p 8080:8080 \
+  -p 2900:2900 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
@@ -240,7 +240,7 @@ docker logs kalamdb
 
 Make sure:
 
-- port `8080` is published
+- port `2900` is published
 - `KALAMDB_SERVER_HOST=0.0.0.0`
 - your JWT secret is set when binding beyond localhost
 

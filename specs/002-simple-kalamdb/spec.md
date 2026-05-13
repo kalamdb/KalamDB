@@ -2590,7 +2590,7 @@ SELECT * FROM system.cluster_nodes;
 ### REST API Usage
 ```bash
 # Single SQL command via REST API
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
@@ -2613,7 +2613,7 @@ curl -X POST http://localhost:8080/api/sql \
 }
 
 # Multiple SQL commands in one request
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:2900/api/sql \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE USER TABLE messages (message_id BIGINT, content STRING) LOCATION '\''/data/users/${user_id}/messages/'\''; INSERT INTO messages (content) VALUES ('\''Hello'\''); SELECT * FROM messages;"
@@ -2630,7 +2630,7 @@ curl -X POST http://localhost:8080/api/sql \
 }
 
 # WebSocket subscription with multiple queries
-# Connect to: ws://localhost:8080/ws
+# Connect to: ws://localhost:2900/ws
 # Send subscription message:
 {
   "subscriptions": [

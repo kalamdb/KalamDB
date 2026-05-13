@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ── Configuration ──────────────────────────────────────────────────────
-export KALAMDB_URL="${KALAMDB_URL:-http://localhost:8080}"
+export KALAMDB_URL="${KALAMDB_URL:-http://localhost:2900}"
 export KALAMDB_USER="${KALAMDB_USER:-admin}"
 export KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 

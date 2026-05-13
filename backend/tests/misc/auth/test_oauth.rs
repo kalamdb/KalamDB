@@ -90,7 +90,7 @@ async fn test_oauth_user_password_rejected() {
     use kalamdb_auth::{authenticate, AuthRequest};
     let user_repo = server.users_repo();
 
-    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
 
     // Attempt credential auth (login flow)
     let auth_request = AuthRequest::Credentials {

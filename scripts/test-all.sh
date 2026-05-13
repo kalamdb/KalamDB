@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USE_NO_FAIL_FAST=false
-SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:8080}"
+SERVER_URL="${KALAMDB_SERVER_URL:-http://127.0.0.1:2900}"
 TMP_DIR="${TMPDIR:-/tmp}"
 
 usage() {
@@ -12,7 +12,7 @@ usage() {
 Usage: ./scripts/test-all.sh [options]
 
 Options:
-  --server-url <url>   KalamDB server URL to target (default: http://127.0.0.1:8080)
+  --server-url <url>   KalamDB server URL to target (default: http://127.0.0.1:2900)
   --no-fail-fast       Pass --no-fail-fast to nextest-based suites
   --fail-fast          Force fail-fast mode (default)
   -h, --help           Show this help

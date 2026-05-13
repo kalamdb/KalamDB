@@ -22,32 +22,32 @@ import {
 
 // Test: Constructor with Auth.basic
 const client1 = new KalamDBClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('user', 'pass'),
 });
 
 // Test: Constructor with Auth.jwt
 const client2 = new KalamDBClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.jwt('eyJhbGci...'),
 });
 
 // Test: Factory function
 const client3 = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'admin'),
 });
 
 // Test: Factory function with wsLazyConnect
 const client4 = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'admin'),
   wsLazyConnect: true,
 });
 
 // Test: wsLazyConnect defaults to true — connection is managed internally
 const client5 = createClient({
-  url: 'http://localhost:8080',
+  url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'admin'),
   wsLazyConnect: false,
 });
@@ -58,7 +58,7 @@ const authType: 'basic' | 'jwt' | null = client1.getAuthType();
 // Test: Async methods return promises
 async function testMethods() {
   const client = createClient({
-    url: 'http://localhost:8080',
+    url: 'http://localhost:2900',
     authProvider: async () => Auth.basic('user', 'pass'),
   });
 

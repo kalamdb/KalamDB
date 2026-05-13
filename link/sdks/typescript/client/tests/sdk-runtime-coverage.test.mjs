@@ -229,7 +229,7 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
 
 test('queryRows wraps named_rows into KalamRow with typed cell access', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -252,7 +252,7 @@ test('queryRows wraps named_rows into KalamRow with typed cell access', async ()
 
 test('query serializes concurrent WASM calls per client', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient({ failOnConcurrentQuery: true });
@@ -271,7 +271,7 @@ test('query serializes concurrent WASM calls per client', async () => {
 
 test('liveEvents opens the low-level SQL event stream', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -304,7 +304,7 @@ test('liveEvents opens the low-level SQL event stream', async () => {
 
 test('liveTable delegates to live using SELECT * sugar', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -332,7 +332,7 @@ test('liveTable delegates to live using SELECT * sugar', async () => {
 
 test('live passes key columns through to Rust materialization', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -368,7 +368,7 @@ test('login refresh and reconnect helpers delegate to wasm client', async () => 
   const originalFetch = globalThis.fetch;
   const originalWithJwt = WasmKalamClient.withJwt;
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.basic('alice', 'secret'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -417,7 +417,7 @@ test('login refresh and reconnect helpers delegate to wasm client', async () => 
 
 test('connect delegates to wasm client and marks the client connected', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -432,7 +432,7 @@ test('connect delegates to wasm client and marks the client connected', async ()
 
 test('live uses subscribe fallback when getKey is provided and handles updates/deletes/errors', async () => {
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();
@@ -505,7 +505,7 @@ test('live uses subscribe fallback when getKey is provided and handles updates/d
 test('log listener receives messages at configured level and parse errors are logged', async () => {
   const entries = [];
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
     logLevel: LogLevel.Debug,
     logListener: (entry) => entries.push(entry),
@@ -539,7 +539,7 @@ test('live reports default onError fields for live-row errors', async () => {
   const errors = [];
   const snapshots = [];
   const client = createClient({
-    url: 'http://127.0.0.1:8080',
+    url: 'http://127.0.0.1:2900',
     authProvider: async () => Auth.jwt('coverage-token'),
   });
   const fakeWasmClient = createRuntimeCoverageWasmClient();

@@ -110,7 +110,7 @@ pub enum KalamDbError {
     /// (if known) to help with request redirection.
     #[error("Not leader for shard. Leader: {leader_addr:?}")]
     NotLeader {
-        /// API address of the current leader (e.g., "192.168.1.100:8080")
+        /// API address of the current leader (e.g., "192.168.1.100:2900")
         /// May be None if leader is unknown (during election)
         leader_addr: Option<String>,
     },

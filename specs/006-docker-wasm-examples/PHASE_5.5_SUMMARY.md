@@ -162,7 +162,7 @@ GET /v1/ws HTTP/1.1
    - File: `backend/crates/kalamdb-api/src/handlers/ws_handler.rs`
 
 2. **Update WASM Client** (Client-Side)
-   - Pass API key in WebSocket URL: `ws://localhost:8080/v1/ws?api_key=xxx`
+   - Pass API key in WebSocket URL: `ws://localhost:2900/v1/ws?api_key=xxx`
    - File: `link/src/wasm.rs` line ~72
 
 3. **Complete TypeScript Tests** (T063AB-T063AQ)

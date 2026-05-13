@@ -1,6 +1,6 @@
 # KalamDB API Reference
 
-**Base URL**: `http://<host>:8080`  
+**Base URL**: `http://<host>:2900`  
 **Version prefix**: `/v1`
 
 This reference is aligned with the current route + handler implementations.
@@ -285,7 +285,7 @@ Response shape:
       "node_id": 1,
       "role": "Leader",
       "status": "Active",
-      "api_addr": "127.0.0.1:8080",
+      "api_addr": "127.0.0.1:2900",
       "is_self": true,
       "is_leader": true,
       "replication_lag": 0,

@@ -220,7 +220,7 @@ All modules are well-organized, properly documented, and follow Rust best practi
 
 **✅ Best Practices**:
 - Handles both IPv4 and IPv6 loopback addresses
-- Port-aware detection (handles "127.0.0.1:8080" format)
+- Port-aware detection (handles "127.0.0.1:2900" format)
 - Test coverage for all address formats
 
 **Recommendation**: ✅ **No changes needed**. Code is production-ready.

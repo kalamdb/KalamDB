@@ -19,7 +19,7 @@ cd cli
 ./run-tests.sh --url http://localhost:3000 --test smoke --nocapture
 
 # Test with authentication
-./run-tests.sh --url http://localhost:8080 --password "your-password" --test smoke --nocapture
+./run-tests.sh --url http://localhost:2900 --password "your-password" --test smoke --nocapture
 ```
 
 **Windows PowerShell:**
@@ -33,7 +33,7 @@ cd cli
 .\run-tests.ps1 -Url "http://localhost:3000" -Test "smoke" -NoCapture
 
 # Test with authentication
-.\run-tests.ps1 -Url "http://localhost:8080" -Password "your-password" -Test "smoke" -NoCapture
+.\run-tests.ps1 -Url "http://localhost:2900" -Password "your-password" -Test "smoke" -NoCapture
 ```
 
 ### Using Environment Variables
@@ -62,7 +62,7 @@ cargo test --test smoke -- --nocapture
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KALAMDB_SERVER_URL` | Full server URL including protocol and port | `http://127.0.0.1:8080` |
+| `KALAMDB_SERVER_URL` | Full server URL including protocol and port | `http://127.0.0.1:2900` |
 | `KALAMDB_ROOT_PASSWORD` | Root user password for authentication | `""` (empty) |
 
 ### Script Options
@@ -103,13 +103,13 @@ When running a 3-node cluster:
 
 ```bash
 # Test node 1 (port 8081)
-./run-tests.sh --url http://127.0.0.1:8081 --test smoke
+./run-tests.sh --url http://127.0.0.1:2901 --test smoke
 
 # Test node 2 (port 8082)
-./run-tests.sh --url http://127.0.0.1:8082 --test smoke
+./run-tests.sh --url http://127.0.0.1:2902 --test smoke
 
 # Test node 3 (port 8083)
-./run-tests.sh --url http://127.0.0.1:8083 --test smoke
+./run-tests.sh --url http://127.0.0.1:2903 --test smoke
 ```
 
 ### 3. Testing With Authentication
@@ -155,7 +155,7 @@ pub fn server_url() -> &'static str {
     SERVER_URL
         .get_or_init(|| {
             std::env::var("KALAMDB_SERVER_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string())
+                .unwrap_or_else(|_| "http://127.0.0.1:2900".to_string())
         })
         .as_str()
 }
@@ -195,7 +195,7 @@ If tests fail with connection errors:
 
 1. **Check server is running:**
    ```bash
-   curl http://localhost:8080/health
+   curl http://localhost:2900/health
    ```
 
 2. **Verify port matches:**

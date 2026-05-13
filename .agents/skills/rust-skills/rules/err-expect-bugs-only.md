@@ -114,14 +114,14 @@ let port: u16 = input.parse().expect("Invalid port");
 let port: u16 = input.parse().map_err(|_| ConfigError::InvalidPort)?;
 
 // Do: Provide default
-let port: u16 = input.parse().unwrap_or(8080);
+let port: u16 = input.parse().unwrap_or(2900);
 
 // Do: Handle explicitly
 let port: u16 = match input.parse() {
     Ok(p) => p,
     Err(_) => {
         log::warn!("Invalid port '{}', using default", input);
-        8080
+        2900
     }
 };
 ```

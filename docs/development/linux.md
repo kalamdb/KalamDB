@@ -291,7 +291,7 @@ cargo run
 ```
 INFO  kalamdb_server > KalamDB Server starting...
 INFO  kalamdb_server > Storage path: ./data
-INFO  kalamdb_server > Server listening on http://127.0.0.1:8080
+INFO  kalamdb_server > Server listening on http://127.0.0.1:2900
 ```
 
 ---
@@ -473,7 +473,7 @@ git clone https://github.com/kalamstack/KalamDB.git
 ### Fedora / RHEL
 
 - **SELinux:** May need to configure if enabled (`sudo setenforce 0` for testing)
-- **Firewall:** Open port 8080 if testing from other machines: `sudo firewall-cmd --add-port=8080/tcp`
+- **Firewall:** Open port 2900 if testing from other machines: `sudo firewall-cmd --add-port=2900/tcp`
 
 ### Arch Linux
 

@@ -303,8 +303,8 @@ mod tests {
             shard: None,
         };
         assert_eq!(
-            fr.download_url("http://localhost:8080", "default", "users"),
-            "http://localhost:8080/v1/files/default/users/f0001/123-t.png"
+            fr.download_url("http://localhost:2900", "default", "users"),
+            "http://localhost:2900/v1/files/default/users/f0001/123-t.png"
         );
         assert_eq!(fr.relative_url("default", "users"), "/v1/files/default/users/f0001/123-t.png");
     }

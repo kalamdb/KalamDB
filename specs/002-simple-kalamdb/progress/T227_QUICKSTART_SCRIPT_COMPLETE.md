@@ -102,13 +102,13 @@ cd backend
 ### With Custom Configuration
 ```bash
 # Custom server URL
-KALAMDB_URL=http://localhost:8080 ./tests/quickstart.sh
+KALAMDB_URL=http://localhost:2900 ./tests/quickstart.sh
 
 # Custom JWT token
 TEST_JWT_TOKEN=my-custom-token ./tests/quickstart.sh
 
 # Both
-KALAMDB_URL=http://localhost:8080 TEST_JWT_TOKEN=my-token ./tests/quickstart.sh
+KALAMDB_URL=http://localhost:2900 TEST_JWT_TOKEN=my-token ./tests/quickstart.sh
 ```
 
 ### Prerequisites

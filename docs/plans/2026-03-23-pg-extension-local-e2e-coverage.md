@@ -30,7 +30,7 @@ Expected: FAIL because the helper still assumes Docker ports/bootstrap.
 
 **Step 3: Write minimal implementation**
 
-Refactor the shared e2e helper to target local PostgreSQL on port `28816` and local KalamDB on ports `8080` and `9188`, including extension/server bootstrap assertions.
+Refactor the shared e2e helper to target local PostgreSQL on port `28816` and local KalamDB on ports `2900` and `2910`, including extension/server bootstrap assertions.
 
 **Step 4: Run test to verify it passes**
 

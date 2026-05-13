@@ -57,7 +57,7 @@ cargo run
 Default local server URL:
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:2900
 ```
 
 ## 2. Make Sure CLI Tests Pass
@@ -90,7 +90,7 @@ cd cli
 cargo nextest run --features e2e-tests
 
 # Point the CLI suite at a custom running server
-KALAMDB_SERVER_URL=http://127.0.0.1:8080 \
+KALAMDB_SERVER_URL=http://127.0.0.1:2900 \
 KALAMDB_ROOT_PASSWORD=kalamdb123 \
 ./run-tests.sh --test smoke
 ```
@@ -323,7 +323,7 @@ cd ../link/sdks/dart
 Environment variables for live Dart SDK tests:
 
 ```bash
-KALAMDB_URL=http://localhost:8080
+KALAMDB_URL=http://localhost:2900
 KALAMDB_USER=admin
 KALAMDB_PASSWORD=kalamdb123
 KALAMDB_ROOT_PASSWORD=kalamdb123

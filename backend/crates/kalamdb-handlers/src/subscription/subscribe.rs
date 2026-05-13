@@ -50,7 +50,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
             Uuid::new_v4().simple()
         );
         // Channel placeholder (could read from server.toml later)
-        let channel = "ws://localhost:8080/ws".to_string();
+        let channel = "ws://localhost:2900/ws".to_string();
 
         // Update select_query to use effective namespace if needed
         let select_query = if effective_namespace.as_str() != statement.namespace.as_str() {

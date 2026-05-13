@@ -24,7 +24,7 @@ Modified the KalamDB specification to use **SQL-ONLY** for all data operations. 
 
 **BEFORE**:
 ```bash
-curl -X POST http://localhost:8080/api/v1/messages \
+curl -X POST http://localhost:2900/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "conversation_id": "conv_123",
@@ -36,7 +36,7 @@ curl -X POST http://localhost:8080/api/v1/messages \
 
 **AFTER**:
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "INSERT INTO messages (conversation_id, from, timestamp, content, metadata) VALUES ('\''conv_123'\'', '\''user_alice'\'', 1699000000000000, '\''Hello, world!'\'', '\''{}'\'')"
@@ -47,7 +47,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 
 **BEFORE**:
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "conversation_id": "conv_123",
@@ -57,7 +57,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 
 **AFTER**:
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT * FROM messages WHERE conversation_id = '\''conv_123'\'' ORDER BY timestamp DESC LIMIT 50"

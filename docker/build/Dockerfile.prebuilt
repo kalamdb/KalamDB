@@ -91,9 +91,9 @@ WORKDIR /data
 
 VOLUME ["/data"]
 
-EXPOSE 8080
+EXPOSE 2900
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+    CMD ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2900/health"]
 
 CMD ["/usr/local/bin/kalamdb-server", "/config/server.toml"]

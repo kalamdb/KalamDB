@@ -1,6 +1,6 @@
 [server]
 host = "127.0.0.1"
-port = 8080
+port = 2900
 workers = 0
 enable_http2 = true
 
@@ -152,8 +152,8 @@ max_parameter_size_bytes = 524288
 
 [cluster]
 node_id = 1
-rpc_addr = "127.0.0.1:9188"
-api_addr = "127.0.0.1:8080"
+rpc_addr = "127.0.0.1:2910"
+api_addr = "127.0.0.1:2900"
 user_shards = 8
 shared_shards = 1
 max_snapshots_to_keep = 1

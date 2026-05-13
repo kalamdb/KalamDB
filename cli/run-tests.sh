@@ -121,7 +121,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Examples:"
     echo "  $0 --test smoke --nocapture"
     echo "  $0 --url http://localhost:3000 --password mypass"
-    echo "  $0 --cluster-urls http://127.0.0.1:8081,http://127.0.0.1:8082,http://127.0.0.1:8083 --server-type cluster"
+    echo "  $0 --cluster-urls http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903 --server-type cluster"
     echo "  $0 --package kalam-cli --test-target cluster"
     echo "  $0 --package kalam-cli --package kalam-link"
     echo "  $0 --test-list failed-tests.txt"
@@ -146,7 +146,7 @@ if [ -z "$SERVER_URL" ]; then
     if [ "$SERVER_TYPE" = "cluster" ] && [ -n "$CLUSTER_URLS" ]; then
         SERVER_URL="${CLUSTER_URLS%%,*}"
     else
-        SERVER_URL="http://127.0.0.1:8080"
+        SERVER_URL="http://127.0.0.1:2900"
     fi
 fi
 

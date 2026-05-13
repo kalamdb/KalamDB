@@ -13,7 +13,7 @@ function readRuntimeConfig() {
   loadEnv({ path: path.join(exampleRoot, '.env.local'), quiet: true });
 
   return {
-    serverUrl: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+    serverUrl: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     user: process.env.KALAMDB_USER ?? 'root',
     password: process.env.KALAMDB_PASSWORD ?? 'kalamdb123',
   };
@@ -93,7 +93,7 @@ test('agent writes summaries back into blog.blogs', async () => {
     stdio: 'inherit',
     env: {
       ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     },
   });
 
@@ -133,7 +133,7 @@ test('agent resumes the same group without replaying completed messages', async 
     stdio: 'inherit',
     env: {
       ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     },
   });
 

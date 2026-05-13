@@ -81,7 +81,7 @@ impl Default for Connection {
     fn default() -> Self {
         Connection {
             host: "localhost".to_string(),
-            port: 8080,
+            port: 2900,
             timeout: Duration::from_secs(30),
         }
     }

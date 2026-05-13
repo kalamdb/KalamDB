@@ -3,13 +3,13 @@
 # Inserts 100K rows and monitors memory at each stage
 set -e
 
-SERVER="http://localhost:8080"
+SERVER="http://localhost:2900"
 API="$SERVER/v1/api"
 
 # Get server PID
-PID=$(lsof -i :8080 -t 2>/dev/null | head -1)
+PID=$(lsof -i :2900 -t 2>/dev/null | head -1)
 if [ -z "$PID" ]; then
-    echo "ERROR: No KalamDB server running on port 8080"
+    echo "ERROR: No KalamDB server running on port 2900"
     exit 1
 fi
 echo "Server PID: $PID"

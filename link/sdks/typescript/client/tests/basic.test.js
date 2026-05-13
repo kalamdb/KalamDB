@@ -17,26 +17,26 @@ test('KalamDBClient - constructor validation', async (t) => {
 
   await t.test('should throw error for empty username', () => {
     assert.throws(
-      () => new KalamDBClient('http://localhost:8080', '', 'pass'),
+      () => new KalamDBClient('http://localhost:2900', '', 'pass'),
       /username parameter is required/
     );
   });
 
   await t.test('should throw error for empty password', () => {
     assert.throws(
-      () => new KalamDBClient('http://localhost:8080', 'user', ''),
+      () => new KalamDBClient('http://localhost:2900', 'user', ''),
       /password parameter is required/
     );
   });
 
   await t.test('should create client with valid parameters', () => {
-    const client = new KalamDBClient('http://localhost:8080', 'user', 'pass');
+    const client = new KalamDBClient('http://localhost:2900', 'user', 'pass');
     assert.ok(client instanceof KalamDBClient);
   });
 });
 
 test('KalamDBClient - connection state', async (t) => {
-  const client = new KalamDBClient('http://localhost:8080', 'testuser', 'testpass');
+  const client = new KalamDBClient('http://localhost:2900', 'testuser', 'testpass');
 
   await t.test('should be disconnected initially', () => {
     assert.strictEqual(client.isConnected(), false);

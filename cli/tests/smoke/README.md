@@ -8,7 +8,7 @@ This directory contains comprehensive smoke tests for KalamDB features documente
 
 ### Server URL and Authentication
 
-By default, tests connect to `http://127.0.0.1:8080` with an empty root password. You can configure these via environment variables:
+By default, tests connect to `http://127.0.0.1:2900` with an empty root password. You can configure these via environment variables:
 
 ```bash
 # Custom server URL (different port, host, or protocol)
@@ -34,11 +34,11 @@ KALAMDB_ROOT_PASSWORD="mypassword123" \
 cargo test --test smoke -- --nocapture
 
 # Test against cluster node
-KALAMDB_SERVER_URL="http://127.0.0.1:8081" cargo test --test smoke -- --nocapture
+KALAMDB_SERVER_URL="http://127.0.0.1:2901" cargo test --test smoke -- --nocapture
 ```
 
 **Environment Variables:**
-- `KALAMDB_SERVER_URL` - Full server URL including protocol and port (default: `http://127.0.0.1:8080`)
+- `KALAMDB_SERVER_URL` - Full server URL including protocol and port (default: `http://127.0.0.1:2900`)
 - `KALAMDB_ROOT_PASSWORD` - Root user password (default: empty string `""`)
 
 ## New Test Files (November 2025)
@@ -100,7 +100,7 @@ Tests advanced DML operations:
 
 **1. Start the KalamDB server:**
 ```bash
-# Default configuration (port 8080)
+# Default configuration (port 2900)
 cd backend
 cargo run --release --bin kalamdb-server
 
@@ -237,7 +237,7 @@ cargo test --test smoke --no-run
 ### Server connection issues
 ```bash
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2900/health
 
 # Check server logs
 tail -f backend/logs/app.log

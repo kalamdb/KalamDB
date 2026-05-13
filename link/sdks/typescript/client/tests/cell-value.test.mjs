@@ -291,7 +291,7 @@ describe('wrapRowMap()', () => {
 
 describe('KalamRow.cell()', () => {
   it('returns KalamCellValue for each column', () => {
-    const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+    const ctx = { baseUrl: 'http://localhost:2900', namespace: 'default', table: 'users' };
     const row = new KalamRow({ id: 1, name: 'Alice', score: 95.5 }, ctx);
 
     assert.equal(row.cell('id').asInt(), 1);
@@ -308,7 +308,7 @@ describe('KalamRow.cell()', () => {
 
 describe('KalamRow.typedData', () => {
   it('returns all cells as KalamCellValue (RowData)', () => {
-    const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+    const ctx = { baseUrl: 'http://localhost:2900', namespace: 'default', table: 'users' };
     const row = new KalamRow({ id: 1, name: 'Alice', active: true }, ctx);
 
     const td = row.typedData;
@@ -328,7 +328,7 @@ describe('KalamRow.typedData', () => {
 
 describe('KalamRow — unified query & subscribe access pattern', () => {
   it('cell() works the same whether data is raw or pre-wrapped', () => {
-    const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+    const ctx = { baseUrl: 'http://localhost:2900', namespace: 'default', table: 'users' };
 
     // Simulating query path (raw values)
     const queryRow = new KalamRow({ name: 'Alice', age: 30 }, ctx);
@@ -346,7 +346,7 @@ describe('KalamRow — unified query & subscribe access pattern', () => {
 
 describe('KalamRow.file()', () => {
   it('returns a context-bound file ref with correct download paths', () => {
-    const ctx = { baseUrl: 'http://localhost:8080', namespace: 'default', table: 'users' };
+    const ctx = { baseUrl: 'http://localhost:2900', namespace: 'default', table: 'users' };
     const row = new KalamRow({
       avatar: {
         id: '12345',
@@ -360,7 +360,7 @@ describe('KalamRow.file()', () => {
 
     const ref = row.file('avatar');
     assert.ok(ref !== null);
-    assert.equal(ref.downloadUrl(), 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg');
+    assert.equal(ref.downloadUrl(), 'http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg');
     assert.equal(ref.relativeUrl(), '/v1/files/default/users/f0001/12345-photo.jpg');
   });
 });
@@ -407,8 +407,8 @@ describe('KalamCellValue.asFileUrl()', () => {
       mime: 'image/jpeg',
       sha256: 'abc123',
     };
-    const url = KalamCellValue.from(fileData).asFileUrl('http://localhost:8080', 'default', 'users');
-    assert.equal(url, 'http://localhost:8080/v1/files/default/users/f0001/12345-photo.jpg');
+    const url = KalamCellValue.from(fileData).asFileUrl('http://localhost:2900', 'default', 'users');
+    assert.equal(url, 'http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg');
   });
 
   it('returns null for non-file values', () => {

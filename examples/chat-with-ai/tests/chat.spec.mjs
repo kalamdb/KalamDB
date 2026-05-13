@@ -7,7 +7,7 @@ import { Auth, createClient } from '@kalamdb/client';
 import { test, expect } from '@playwright/test';
 
 const exampleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080';
+const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const room = process.env.CHAT_TEST_ROOM ?? 'playwright-room-fallback';
 const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
@@ -329,7 +329,7 @@ test.beforeAll(async () => {
     stdio: 'inherit',
     env: {
       ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:8080',
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
     },
   });
 

@@ -11,8 +11,8 @@ fn test_localhost_detection_127_0_0_1() {
 
 #[test]
 fn test_localhost_detection_127_0_0_1_with_port() {
-    let conn = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
-    assert!(conn.is_localhost(), "127.0.0.1:8080 should be detected as localhost");
+    let conn = ConnectionInfo::new(Some("127.0.0.1:2900".to_string()));
+    assert!(conn.is_localhost(), "127.0.0.1:2900 should be detected as localhost");
 }
 
 #[test]
@@ -29,8 +29,8 @@ fn test_localhost_detection_ipv6_with_brackets() {
 
 #[test]
 fn test_localhost_detection_ipv6_with_port() {
-    let conn = ConnectionInfo::new(Some("[::1]:8080".to_string()));
-    assert!(conn.is_localhost(), "[::1]:8080 should be detected as localhost");
+    let conn = ConnectionInfo::new(Some("[::1]:2900".to_string()));
+    assert!(conn.is_localhost(), "[::1]:2900 should be detected as localhost");
 }
 
 #[test]
@@ -54,8 +54,8 @@ fn test_localhost_detection_localhost_name() {
 
 #[test]
 fn test_localhost_detection_localhost_with_port() {
-    let conn = ConnectionInfo::new(Some("localhost:8080".to_string()));
-    assert!(conn.is_localhost(), "localhost:8080 should be detected as localhost");
+    let conn = ConnectionInfo::new(Some("localhost:2900".to_string()));
+    assert!(conn.is_localhost(), "localhost:2900 should be detected as localhost");
 }
 
 #[test]

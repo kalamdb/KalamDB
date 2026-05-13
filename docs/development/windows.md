@@ -217,7 +217,7 @@ cargo run
 ```
 INFO  kalamdb_server > KalamDB Server starting...
 INFO  kalamdb_server > Storage path: ./data
-INFO  kalamdb_server > Server listening on http://127.0.0.1:8080
+INFO  kalamdb_server > Server listening on http://127.0.0.1:2900
 ```
 
 ---

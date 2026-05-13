@@ -118,13 +118,13 @@ export function buildAuthHeader(auth: AuthCredentials | null | undefined): strin
  * 
  * // Basic Auth
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.basic('admin', 'admin')
  * });
  * 
  * // JWT Token
  * const jwtClient = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider: async () => Auth.jwt('eyJhbGciOiJIUzI1NiIs...')
  * });
  * 
@@ -171,7 +171,7 @@ export const Auth = {
  * };
  *
  * const client = createClient({
- *   url: 'http://localhost:8080',
+ *   url: 'http://localhost:2900',
  *   authProvider,
  * });
  * ```

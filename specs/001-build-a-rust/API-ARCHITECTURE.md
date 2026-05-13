@@ -273,7 +273,7 @@ admin_query_rate_limit:
 
 ```typescript
 const queryKalamDB = async (sql: string) => {
-  const response = await fetch('http://localhost:8080/api/v1/query', {
+  const response = await fetch('http://localhost:2900/api/v1/query', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${jwtToken}`,
@@ -303,7 +303,7 @@ import requests
 
 def query_kalamdb(sql: str, token: str):
     response = requests.post(
-        'http://localhost:8080/api/v1/query',
+        'http://localhost:2900/api/v1/query',
         headers={
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
@@ -329,13 +329,13 @@ result = query_kalamdb(
 
 ```bash
 # Query messages
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM userId.messages WHERE conversationId = '\''conv_123'\'' LIMIT 10"}'
 
 # Delete conversation
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"sql": "DELETE FROM userId.conversations WHERE conversationId = '\''conv_old'\''"}'

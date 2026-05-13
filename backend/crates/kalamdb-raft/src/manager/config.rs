@@ -84,8 +84,8 @@ impl Default for RaftManagerConfig {
         Self {
             cluster_id: "kalamdb".to_string(),
             node_id: NodeId::new(1),
-            rpc_addr: "127.0.0.1:9188".to_string(),
-            api_addr: "127.0.0.1:8080".to_string(),
+            rpc_addr: "127.0.0.1:2910".to_string(),
+            api_addr: "127.0.0.1:2900".to_string(),
             peers: vec![],
             rpc_tls: kalamdb_configs::RpcTlsConfig::default(),
             user_shards: DEFAULT_USER_DATA_SHARDS,
@@ -212,7 +212,7 @@ mod tests {
         let peer_config = kalamdb_configs::PeerConfig {
             node_id: 2,
             rpc_addr: "127.0.0.1:9101".to_string(),
-            api_addr: "127.0.0.1:8081".to_string(),
+            api_addr: "127.0.0.1:2901".to_string(),
             rpc_server_name: Some("node2.cluster.local".to_string()),
         };
 
@@ -220,7 +220,7 @@ mod tests {
 
         assert_eq!(peer.node_id, NodeId::new(2));
         assert_eq!(peer.rpc_addr, "127.0.0.1:9101");
-        assert_eq!(peer.api_addr, "127.0.0.1:8081");
+        assert_eq!(peer.api_addr, "127.0.0.1:2901");
         assert_eq!(peer.rpc_server_name.as_deref(), Some("node2.cluster.local"));
     }
 }

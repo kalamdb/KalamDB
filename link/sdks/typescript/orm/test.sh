@@ -6,7 +6,7 @@ echo "🧪 Testing KalamDB TypeScript ORM SDK..."
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-export KALAMDB_TEST_URL="${KALAMDB_TEST_URL:-${KALAMDB_URL:-http://localhost:8080}}"
+export KALAMDB_TEST_URL="${KALAMDB_TEST_URL:-${KALAMDB_URL:-http://localhost:2900}}"
 export KALAMDB_TEST_USER="${KALAMDB_TEST_USER:-${KALAMDB_USER:-admin}}"
 export KALAMDB_TEST_PASSWORD="${KALAMDB_TEST_PASSWORD:-${KALAMDB_PASSWORD:-kalamdb123}}"
 

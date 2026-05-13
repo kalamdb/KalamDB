@@ -21,7 +21,7 @@ async fn test_single_node_cluster_startup() {
     let config = RaftManagerConfig {
         node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9000".to_string(),
-        api_addr: "127.0.0.1:8080".to_string(),
+        api_addr: "127.0.0.1:2900".to_string(),
         peers: vec![],
         ..Default::default()
     };
@@ -64,7 +64,7 @@ async fn test_raft_executor_with_cluster() {
     let config = RaftManagerConfig {
         node_id: NodeId::new(1),
         rpc_addr: "127.0.0.1:9001".to_string(),
-        api_addr: "127.0.0.1:8081".to_string(),
+        api_addr: "127.0.0.1:2901".to_string(),
         peers: vec![],
         ..Default::default()
     };

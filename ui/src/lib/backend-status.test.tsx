@@ -26,8 +26,8 @@ vi.mock("./api", () => ({
 }));
 
 vi.mock("./backend-url", () => ({
-  getApiBaseUrl: () => "http://localhost:8080/v1/api",
-  getBackendOrigin: () => "http://localhost:8080",
+  getApiBaseUrl: () => "http://localhost:2900/v1/api",
+  getBackendOrigin: () => "http://localhost:2900",
 }));
 
 vi.mock("./kalam-client", () => ({

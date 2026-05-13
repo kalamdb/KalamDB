@@ -41,7 +41,7 @@
 //! ```json
 //! {
 //!   "status": "subscription_required",
-//!   "ws_url": "ws://localhost:8080/ws",
+//!   "ws_url": "ws://localhost:2900/ws",
 //!   "subscription": {
 //!     "id": "auto-generated-id",
 //!     "sql": "SELECT * FROM app.messages WHERE user_id = CURRENT_USER()",

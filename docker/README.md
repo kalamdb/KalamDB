@@ -36,7 +36,7 @@ docker pull jamals86/kalamdb:latest
 
 docker run -d \
   --name kalamdb \
-  -p 8080:8080 \
+  -p 2900:2900 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET="replace-with-a-32-char-secret" \
@@ -47,13 +47,13 @@ docker run -d \
 Verify the server is healthy:
 
 ```bash
-curl http://localhost:8080/health
-curl http://localhost:8080/v1/api/healthcheck
+curl http://localhost:2900/health
+curl http://localhost:2900/v1/api/healthcheck
 ```
 
 ### Run with Docker Compose
 
-The single-node compose file maps container port `8080` to host port `8088` by default.
+The single-node compose file maps container port `2900` to host port `2900` by default.
 
 ```bash
 cd docker/run/single
@@ -66,7 +66,7 @@ Open the server at `http://localhost:8088`.
 To change the host port:
 
 ```bash
-KALAMDB_PORT=8080 docker compose up -d
+KALAMDB_PORT=2900 docker compose up -d
 ```
 
 ### Start a 3-node cluster
@@ -79,9 +79,9 @@ docker compose up -d
 
 Default node endpoints:
 
-- Node 1: `http://localhost:8081`
-- Node 2: `http://localhost:8082`
-- Node 3: `http://localhost:8083`
+- Node 1: `http://localhost:2901`
+- Node 2: `http://localhost:2902`
+- Node 3: `http://localhost:2903`
 
 ## Build the Image Locally
 
@@ -145,7 +145,7 @@ docker build -f docker/build/Dockerfile -t kalamdb:source-build .
 If you set `KALAMDB_ROOT_PASSWORD`, you can authenticate immediately after startup.
 
 ```bash
-curl -X POST http://localhost:8080/v1/api/auth/login \
+curl -X POST http://localhost:2900/v1/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"root","password":"kalamdb123"}'
 ```
@@ -153,7 +153,7 @@ curl -X POST http://localhost:8080/v1/api/auth/login \
 Then run a SQL request with the returned bearer token:
 
 ```bash
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"sql":"SELECT 1 AS ok"}'

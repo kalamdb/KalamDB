@@ -223,7 +223,7 @@ cd link/sdks/typescript
 
 ### 2. Create Table
 ```bash
-curl -X POST http://localhost:8080/v1/api/sql \
+curl -X POST http://localhost:2900/v1/api/sql \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: test-api-key-12345" \
   -H "X-USER-ID: system" \

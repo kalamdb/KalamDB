@@ -5,7 +5,7 @@
 # Prerequisites:
 #   1. pgrx PG installed: cargo pgrx init --pg<major> download
 #   2. KalamDB server running locally with the gRPC endpoint exported via
-#      KALAMDB_GRPC_HOST/KALAMDB_GRPC_PORT (defaults: 127.0.0.1:9188)
+#      KALAMDB_GRPC_HOST/KALAMDB_GRPC_PORT (defaults: 127.0.0.1:2910)
 #
 # Usage:
 #   ./pg/scripts/pgrx-test-setup.sh          # Full setup (start PG + install extension + create DB + server)

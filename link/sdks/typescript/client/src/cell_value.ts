@@ -15,7 +15,7 @@
  * const age    = row.age.asInt();        // number | null
  * const active = row.active.asBool();   // boolean | null
  * const avatar = row.avatar.asFile();   // FileRef | null
- * const url    = row.avatar.asFileUrl('http://localhost:8080', 'default', 'users');
+ * const url    = row.avatar.asFileUrl('http://localhost:2900', 'default', 'users');
  * ```
  *
  * ## FILE columns
@@ -506,7 +506,7 @@ export class KalamCellValue {
    * ```typescript
    * const fileRef = row.avatar.asFile();
    * if (fileRef) {
-   *   const url = fileRef.getDownloadUrl('http://localhost:8080', 'default', 'users');
+   *   const url = fileRef.getDownloadUrl('http://localhost:2900', 'default', 'users');
    *   console.log(fileRef.name, fileRef.formatSize(), fileRef.isImage());
    * }
    * ```
@@ -522,13 +522,13 @@ export class KalamCellValue {
    * Returns `null` if the cell is null, not a valid file reference, or the
    * file ref does not produce a URL.
    *
-   * @param baseUrl   - Server base URL (e.g. `"http://localhost:8080"`)
+   * @param baseUrl   - Server base URL (e.g. `"http://localhost:2900"`)
    * @param namespace - Namespace of the table (e.g. `"default"`)
    * @param table     - Table name (e.g. `"users"`)
    *
    * @example
    * ```typescript
-   * const url = row.avatar.asFileUrl('http://localhost:8080', 'default', 'users');
+   * const url = row.avatar.asFileUrl('http://localhost:2900', 'default', 'users');
    * img.src = url ?? '/placeholder.png';
    * ```
    */

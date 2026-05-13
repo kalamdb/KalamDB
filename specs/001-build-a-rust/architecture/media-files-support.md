@@ -340,7 +340,7 @@ signed_url_expiration = 3600  # 1 hour
 ### Upload Image
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/messages/upload \
+curl -X POST http://localhost:2900/api/v1/messages/upload \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -F "conversationId=conv_abc123" \
   -F "file=@vacation-photo.jpg"
@@ -349,7 +349,7 @@ curl -X POST http://localhost:8080/api/v1/messages/upload \
 ### Submit Message with Image
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/messages \
+curl -X POST http://localhost:2900/api/v1/messages \
   -H "Authorization: Bearer $JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -372,7 +372,7 @@ curl -X POST http://localhost:8080/api/v1/messages \
 ### Get Signed URL for Media
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/messages/1234567890123456/content" \
+curl -X GET "http://localhost:2900/api/v1/messages/1234567890123456/content" \
   -H "Authorization: Bearer $JWT_TOKEN"
 ```
 

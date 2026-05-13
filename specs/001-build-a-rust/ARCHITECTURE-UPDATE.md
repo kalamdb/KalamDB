@@ -225,7 +225,7 @@ UPDATE userId.conversations SET lastMsgId = 999 WHERE conversationId = 'conv_123
 
 ```bash
 # Client sends SQL query
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt>" \
   -d '{"sql": "INSERT INTO userId.messages (msgId, conversationId, conversationType, from, timestamp, content) VALUES (123, '\''conv_ai'\'', '\''ai'\'', '\''user_john'\'', 1699000000, '\''Hello AI'\'')"}'
 
@@ -240,7 +240,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 
 ```bash
 # Step 1: Upload media
-curl -X POST http://localhost:8080/api/v1/media/upload \
+curl -X POST http://localhost:2900/api/v1/media/upload \
   -H "Authorization: Bearer <jwt>" \
   -F "file=@image.jpg" \
   -F "conversationId=conv_group_123" \
@@ -249,7 +249,7 @@ curl -X POST http://localhost:8080/api/v1/media/upload \
 # Response: {"contentRef": "shared/conversations/conv_group_123/media-789.jpg"}
 
 # Step 2: Insert message with contentRef (via convenience endpoint)
-curl -X POST http://localhost:8080/api/v1/messages \
+curl -X POST http://localhost:2900/api/v1/messages \
   -H "Authorization: Bearer <jwt>" \
   -d '{
     "conversationId": "conv_group_123",
@@ -269,7 +269,7 @@ curl -X POST http://localhost:8080/api/v1/messages \
 ### 3. Query Messages
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt>" \
   -d '{"sql": "SELECT * FROM userId.messages WHERE conversationId = '\''conv_123'\'' LIMIT 100"}'
 
@@ -284,7 +284,7 @@ curl -X POST http://localhost:8080/api/v1/query \
 ### 4. Delete Conversation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt>" \
   -d '{"sql": "DELETE FROM userId.conversations WHERE conversationId = '\''conv_old'\''"}'
 
@@ -351,7 +351,7 @@ POST /api/v1/query
 ```toml
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 2900
 jwt_secret = "your-secret-key"
 
 [message]

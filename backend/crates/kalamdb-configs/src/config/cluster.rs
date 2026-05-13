@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 /// [cluster]
 /// cluster_id = "cluster"
 /// node_id = 1
-/// rpc_addr = "127.0.0.1:9188"
-/// api_addr = "127.0.0.1:8080"
+/// rpc_addr = "127.0.0.1:2910"
+/// api_addr = "127.0.0.1:2900"
 /// user_shards = 12
 /// shared_shards = 1
 /// heartbeat_interval_ms = 50
@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// [[cluster.peers]]
 /// node_id = 2
-/// rpc_addr = "10.0.0.2:9188"
-/// api_addr = "http://10.0.0.2:8080"
+/// rpc_addr = "10.0.0.2:2910"
+/// api_addr = "http://10.0.0.2:2900"
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClusterConfig {
@@ -47,12 +47,12 @@ pub struct ClusterConfig {
     /// RPC address advertised to peer nodes for Raft inter-node communication.
     ///
     /// This must be a reachable host/IP for other nodes, not a wildcard bind address.
-    /// Examples: "127.0.0.1:9188" for local tests, "kalamdb-node1:9188" in Docker,
-    /// or "10.0.0.1:9188" on a private network.
+    /// Examples: "127.0.0.1:2910" for local tests, "kalamdb-node1:2910" in Docker,
+    /// or "10.0.0.1:2910" on a private network.
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: String,
 
-    /// API address advertised to other nodes and clients (e.g., "127.0.0.1:8080")
+    /// API address advertised to other nodes and clients (e.g., "127.0.0.1:2900")
     /// This should match the server.host:server.port
     #[serde(default = "default_api_addr")]
     pub api_addr: String,
@@ -133,9 +133,9 @@ pub struct ClusterConfig {
 pub struct PeerConfig {
     /// Peer's unique node ID (must be >= 1)
     pub node_id: u64,
-    /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:9188")
+    /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:2910")
     pub rpc_addr: String,
-    /// Peer's API address for client requests (e.g., "10.0.0.2:8080")
+    /// Peer's API address for client requests (e.g., "10.0.0.2:2900")
     pub api_addr: String,
     /// Optional TLS server name override for this peer's RPC endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,11 +149,11 @@ fn default_cluster_id() -> String {
 }
 
 fn default_rpc_addr() -> String {
-    "127.0.0.1:9188".to_string()
+    "127.0.0.1:2910".to_string()
 }
 
 fn default_api_addr() -> String {
-    "0.0.0.0:8080".to_string()
+    "0.0.0.0:2900".to_string()
 }
 
 fn default_user_shards() -> u32 {
@@ -318,12 +318,12 @@ mod tests {
         ClusterConfig {
             cluster_id: "test-cluster".to_string(),
             node_id: 1,
-            rpc_addr: "127.0.0.1:9188".to_string(),
-            api_addr: "127.0.0.1:8080".to_string(),
+            rpc_addr: "127.0.0.1:2910".to_string(),
+            api_addr: "127.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
                 node_id: 2,
-                rpc_addr: "127.0.0.2:9188".to_string(),
-                api_addr: "127.0.0.2:8080".to_string(),
+                rpc_addr: "127.0.0.2:2910".to_string(),
+                api_addr: "127.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             user_shards: 12,
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn test_validate_allows_wildcard_rpc_addr_without_peers() {
         let mut config = valid_config();
-        config.rpc_addr = "0.0.0.0:9188".to_string();
+        config.rpc_addr = "0.0.0.0:2910".to_string();
         config.peers.clear();
         assert!(config.validate().is_ok());
     }
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_validate_rejects_wildcard_rpc_addr_with_peers() {
         let mut config = valid_config();
-        config.rpc_addr = "0.0.0.0:9188".to_string();
+        config.rpc_addr = "0.0.0.0:2910".to_string();
 
         let err = config
             .validate()

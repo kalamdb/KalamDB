@@ -16,7 +16,7 @@ import 'package:kalam_link/kalam_link.dart';
 
 Future<void> main() async {
   final serverUrl =
-      Platform.environment['KALAM_URL'] ?? 'http://localhost:8080';
+      Platform.environment['KALAM_URL'] ?? 'http://localhost:2900';
   final adminUser = Platform.environment['KALAM_USER'] ?? 'admin';
   final adminPass = Platform.environment['KALAM_PASS'] ?? 'kalamdb123';
   const namespace = 'sdk_examples';

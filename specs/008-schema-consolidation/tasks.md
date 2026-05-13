@@ -762,7 +762,7 @@
 
 - All smoke tests live under `cli/tests/smoke/` as separate files with `smoke_test_*.rs` naming
 - Tests can be filtered by the group name `smoke` via the CLI integration runner (to be added)
-- Tests assume a reachable KalamDB server (configurable via env; default: `http://127.0.0.1:8080`)
+- Tests assume a reachable KalamDB server (configurable via env; default: `http://127.0.0.1:2900`)
 
 ### Smoke Tests Coverage
 
@@ -829,7 +829,7 @@
   - Comprehensive documentation at lines 438-495
   - Run instructions: `./run_integration_tests.sh smoke` or `cargo test -p kalam-cli smoke`
   - Individual test examples with correct function names
-  - Requirements clearly stated (server at localhost:8080, subscription limitations)
+  - Requirements clearly stated (server at localhost:2900, subscription limitations)
 - [X] T607 (US6) Wire `smoke` group into CI (optional) for PR validation without running full suites ✅ **DEFERRED**
   - Deferred to future CI/CD setup work (not blocking for this feature)
 - [X] T608 (US6) Ensure tests are idempotent and isolated (unique namespace per run; cleanup on success/failure) ✅ **COMPLETE** (2025-11-03)

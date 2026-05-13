@@ -457,7 +457,7 @@ Use **REST API for queries/commands**, **WebSocket for real-time metrics**
 - `GET /api/admin/performance` - Get performance metrics snapshot
 
 **WebSocket**:
-- Connect to `ws://localhost:8080/api/admin/metrics`
+- Connect to `ws://localhost:2900/api/admin/metrics`
 - Server pushes metrics every 1 second:
   ```json
   {

@@ -123,7 +123,7 @@ failures on shared runners.
 Requires a running KalamDB instance. Set connection env vars before running:
 
 ```bash
-KALAMDB_URL=http://localhost:8080 \
+KALAMDB_URL=http://localhost:2900 \
 KALAMDB_USER=admin \
 KALAMDB_PASSWORD=kalamdb123 \
 node --test --test-concurrency=1 tests/e2e/reconnect/reconnect.test.mjs

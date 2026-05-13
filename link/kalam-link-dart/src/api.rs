@@ -331,12 +331,12 @@ mod tests {
         assert_eq!(
             dart_file_ref_download_url(
                 file_ref_json.clone(),
-                "http://localhost:8080/".to_string(),
+                "http://localhost:2900/".to_string(),
                 "app".to_string(),
                 "users".to_string(),
             )
             .unwrap(),
-            "http://localhost:8080/v1/files/app/users/f0001/12345-my-avatar.png"
+            "http://localhost:2900/v1/files/app/users/f0001/12345-my-avatar.png"
         );
         assert_eq!(
             dart_file_ref_relative_url(

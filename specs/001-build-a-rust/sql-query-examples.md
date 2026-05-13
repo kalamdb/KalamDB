@@ -569,7 +569,7 @@ GROUP BY conversation_type;
 
 ```bash
 # Query messages
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -577,7 +577,7 @@ curl -X POST http://localhost:8080/api/v1/query \
   }'
 
 # Delete conversation
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -585,7 +585,7 @@ curl -X POST http://localhost:8080/api/v1/query \
   }'
 
 # Insert conversation
-curl -X POST http://localhost:8080/api/v1/query \
+curl -X POST http://localhost:2900/api/v1/query \
   -H "Authorization: Bearer <jwt-token>" \
   -H "Content-Type: application/json" \
   -d '{

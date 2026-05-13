@@ -139,10 +139,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install cargo-license
         shell: bash
@@ -236,10 +236,10 @@ jobs:
           shared-key: wasm-build
           cache-on-failure: true
 
-      - name: Setup Node 22
+      - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install wasm-pack
         shell: bash
@@ -961,7 +961,7 @@ jobs:
 
           echo "Waiting for server to start..."
           for i in {1..60}; do
-            if curl -s http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
+            if curl -s http://localhost:2900/v1/api/healthcheck > /dev/null 2>&1; then
               echo "Server is ready!"
               break
             fi
@@ -973,7 +973,7 @@ jobs:
             sleep 1
           done
 
-          if ! curl -s http://localhost:8080/v1/api/healthcheck > /dev/null 2>&1; then
+          if ! curl -s http://localhost:2900/v1/api/healthcheck > /dev/null 2>&1; then
             echo "Server failed to start within 60 seconds"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
@@ -1186,7 +1186,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..60}; do
-            if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:2900/health > /dev/null 2>&1; then
               echo "✅ Server is ready (${i}s)"
               exit 0
             fi
@@ -1207,7 +1207,7 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          KALAMDB_SERVER_URL: "http://localhost:8080"
+          KALAMDB_SERVER_URL: "http://localhost:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
         run: |
           set -euo pipefail
@@ -1223,7 +1223,7 @@ jobs:
       - name: Validate packaged CLI binary
         shell: bash
         env:
-          KALAMDB_SERVER_URL: "http://localhost:8080"
+          KALAMDB_SERVER_URL: "http://localhost:2900"
         run: |
           set -euo pipefail
           ./kalamcli \
@@ -1360,7 +1360,7 @@ jobs:
           sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "pg-native-test-secret-key-minimum-32-characters-long"|g' server.toml
-          printf '\n[cluster]\ncluster_id = "pg-native-tests"\nnode_id = 1\nrpc_addr = "127.0.0.1:9188"\napi_addr = "http://127.0.0.1:8080"\nuser_shards = 1\nshared_shards = 1\n' >> server.toml
+          printf '\n[cluster]\ncluster_id = "pg-native-tests"\nnode_id = 1\nrpc_addr = "127.0.0.1:2910"\napi_addr = "http://127.0.0.1:2900"\nuser_shards = 1\nshared_shards = 1\n' >> server.toml
 
       - name: Start server
         shell: bash
@@ -1369,8 +1369,8 @@ jobs:
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
           KALAMDB_JWT_SECRET: "pg-native-test-secret-key-minimum-32-characters-long"
           KALAMDB_NODE_ID: "1"
-          KALAMDB_CLUSTER_RPC_ADDR: "127.0.0.1:9188"
-          KALAMDB_CLUSTER_API_ADDR: "http://127.0.0.1:8080"
+          KALAMDB_CLUSTER_RPC_ADDR: "127.0.0.1:2910"
+          KALAMDB_CLUSTER_API_ADDR: "http://127.0.0.1:2900"
         run: |
           set -euo pipefail
           mkdir -p test-data/rocksdb test-data/storage test-data/logs
@@ -1378,7 +1378,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> "$GITHUB_ENV"
           for i in {1..60}; do
-            if curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            if curl -sf http://127.0.0.1:2900/health >/dev/null 2>&1; then
               echo "✅ Server is ready (${i}s)"
               exit 0
             fi
@@ -1407,7 +1407,7 @@ jobs:
         continue-on-error: true
         shell: bash
         env:
-          KALAMDB_SERVER_URL: "http://127.0.0.1:8080"
+          KALAMDB_SERVER_URL: "http://127.0.0.1:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
         run: |
           set -euo pipefail
@@ -1423,7 +1423,7 @@ jobs:
       - name: Run native PG extension e2e tests
         shell: bash
         env:
-          KALAMDB_SERVER_URL: "http://127.0.0.1:8080"
+          KALAMDB_SERVER_URL: "http://127.0.0.1:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
         run: |
           set -euo pipefail
@@ -1992,7 +1992,7 @@ jobs:
 
           KALAMDB_READY=false
           for i in {1..90}; do
-            if docker exec "$KALAMDB_CONTAINER_ID" /bin/busybox wget -q -O /dev/null http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            if docker exec "$KALAMDB_CONTAINER_ID" /bin/busybox wget -q -O /dev/null http://127.0.0.1:2900/health >/dev/null 2>&1; then
               KALAMDB_READY=true
               break
             fi

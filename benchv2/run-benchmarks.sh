@@ -16,7 +16,7 @@ BENCH_DATA_DIR="$SCRIPT_DIR/data"
 cd "$SCRIPT_DIR"
 
 # Default values (can be overridden via args or env vars)
-URLS="${KALAMDB_URLS:-${KALAMDB_URL:-http://127.0.0.1:8080}}"
+URLS="${KALAMDB_URLS:-${KALAMDB_URL:-http://127.0.0.1:2900}}"
 USER="${KALAMDB_USER:-admin}"
 PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 MAX_SUBSCRIBERS="${KALAMDB_MAX_SUBSCRIBERS:-}"

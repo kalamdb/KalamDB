@@ -72,7 +72,7 @@ async function runTests() {
   try {
     const { KalamClient } = await import(join(wasmOutPath, 'kalam_client.js'));
     
-    const client = new KalamClient('http://localhost:8080', 'admin', 'secret');
+    const client = new KalamClient('http://localhost:2900', 'admin', 'secret');
     
     if (client) {
       console.log('  ✓ KalamClient instance created');
@@ -211,7 +211,7 @@ async function runTests() {
 
     // Should throw with empty user
     try {
-      new KalamClient('http://localhost:8080', '', 'secret');
+      new KalamClient('http://localhost:2900', '', 'secret');
       console.log('  ✗ Empty user should throw error');
       failed++;
     } catch (error) {

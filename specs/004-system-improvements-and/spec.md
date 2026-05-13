@@ -248,7 +248,7 @@ Database developers, administrators, and users need an interactive command-line 
 
 **Acceptance Scenarios**:
 
-1. **Given** a user has KalamDB server running, **When** they execute `kalam-cli -u jamal -h http://localhost:8080 --token <jwt>`, **Then** the CLI connects successfully and displays a welcome prompt with user and server information
+1. **Given** a user has KalamDB server running, **When** they execute `kalam-cli -u jamal -h http://localhost:2900 --token <jwt>`, **Then** the CLI connects successfully and displays a welcome prompt with user and server information
 2. **Given** the CLI is connected, **When** a user types a SQL query like `SELECT * FROM messages LIMIT 10;`, **Then** the query executes and results are displayed in formatted table output
 3. **Given** the CLI supports multiple output formats, **When** a user launches with `--json` flag or `--csv` flag, **Then** query results are formatted in the specified format instead of tables
 4. **Given** a user wants to see available tables, **When** they execute `SHOW TABLES;`, **Then** all tables accessible to the user are listed in tabular format
@@ -907,7 +907,7 @@ Developers and operators need reliable server startup, better CLI user experienc
 **Integration Tests** (backend/tests/integration/test_operational_improvements.rs):
 
 1. **test_clear_cache_command**: Execute queries to populate caches, run CLEAR CACHE, verify caches emptied and subsequent queries slower
-2. **test_port_already_in_use**: Start server on port 8080, attempt second server on same port, verify graceful error before RocksDB initialization
+2. **test_port_already_in_use**: Start server on port 2900, attempt second server on same port, verify graceful error before RocksDB initialization
 3. **test_cli_progress_indicator**: Execute long-running query, verify progress indicator appears and updates elapsed time
 4. **test_cli_table_autocomplete**: Type "SELECT * FROM me" + TAB, verify auto-completion suggests "messages" table
 5. **test_select_column_order_preserved**: Execute SELECT with specific column order, verify CLI output preserves exact order

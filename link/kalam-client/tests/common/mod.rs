@@ -61,7 +61,7 @@ fn url_reachable(url: &str) -> bool {
         .trim_start_matches("https://")
         .split('/')
         .next()
-        .unwrap_or("127.0.0.1:8080");
+        .unwrap_or("127.0.0.1:2900");
     std::net::TcpStream::connect(host_port).map(|_| true).unwrap_or(false)
 }
 
@@ -349,7 +349,7 @@ pub fn server_url() -> &'static str {
                 }
             }
 
-            let default_url = "http://localhost:8080".to_string();
+            let default_url = "http://localhost:2900".to_string();
             if url_reachable(&default_url) {
                 return default_url;
             }

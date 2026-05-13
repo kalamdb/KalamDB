@@ -31,7 +31,7 @@ This document defines the public API contract for the `kalam-link` library, whic
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let client = KalamLinkClient::builder()
-///         .host("http://localhost:8080")?
+///         .host("http://localhost:2900")?
 ///         .user("jamal")
 ///         .auth(Auth::jwt("eyJhbGc...")?)
 ///         .build()?;
@@ -194,7 +194,7 @@ impl KalamLinkClient {
 ///
 /// ```rust
 /// let client = KalamLinkClient::builder()
-///     .host("http://localhost:8080")?
+///     .host("http://localhost:2900")?
 ///     .user("jamal")
 ///     .auth(Auth::jwt("token")?)
 ///     .timeout(Duration::from_secs(30))
@@ -209,7 +209,7 @@ impl KalamLinkClientBuilder {
     ///
     /// # Examples
     /// ```rust
-    /// .host("http://localhost:8080")?
+    /// .host("http://localhost:2900")?
     /// .host("https://kalamdb.example.com")?
     /// ```
     pub fn host(self, url: impl TryInto<Url>) -> Result<Self>;
@@ -637,7 +637,7 @@ use kalam_link::{KalamLinkClient, Auth};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = KalamLinkClient::builder()
-        .host("http://localhost:8080")?
+        .host("http://localhost:2900")?
         .user("jamal")
         .auth(Auth::jwt("eyJhbGc...")?)
         .build()?;

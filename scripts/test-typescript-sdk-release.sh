@@ -4,14 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORK_DIR="${TS_SDK_RELEASE_TMP_DIR:-$ROOT_DIR/ts-sdk-release}"
-SERVER_URL="${KALAMDB_URL:-http://localhost:8080}"
+SERVER_URL="${KALAMDB_URL:-http://localhost:2900}"
 SERVER_USER="${KALAMDB_USER:-admin}"
 SERVER_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
 ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
 JWT_SECRET="sdk-test-secret-key-minimum-32-characters-long"
 SERVER_LOG="${TS_SDK_SERVER_LOG:-$ROOT_DIR/ts-sdk-server.log}"
 TEST_OUTPUT="${TS_SDK_TEST_OUTPUT:-$ROOT_DIR/ts-sdk-test-output.txt}"
-PACKAGES_RAW="${TS_SDK_PACKAGES:-client consumer orm}"
+PACKAGES_RAW="${TS_SDK_PACKAGES:-client consumer orm react}"
 SERVER_BIN="${KALAMDB_SERVER_BIN:-}"
 SKIP_SERVER_START="${KALAMDB_SKIP_SERVER_START:-false}"
 SKIP_AUTH_SETUP="${KALAMDB_SKIP_AUTH_SETUP:-false}"
@@ -185,6 +185,11 @@ run_selected_package() {
             KALAMDB_TEST_USER="$SERVER_USER" \
             KALAMDB_TEST_PASSWORD="$SERVER_PASSWORD" \
             bash ./test.sh
+            ;;
+        react)
+            echo "Running @kalamdb/react tests..."
+            cd "$ROOT_DIR/link/sdks/typescript/react"
+            npm test
             ;;
         *)
             echo "Unknown TypeScript SDK package: $package" >&2

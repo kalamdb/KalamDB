@@ -97,7 +97,7 @@ pub async fn login_and_store_credentials(
         cli.host
             .as_ref()
             .map(|h| format!("http://{}:{}", h, cli.port))
-            .unwrap_or_else(|| "http://localhost:8080".to_string())
+            .unwrap_or_else(|| "http://localhost:2900".to_string())
     });
 
     // Prompt for credentials

@@ -24,8 +24,8 @@ services:
     container_name: kalamdb-node1
     hostname: kalamdb-node1
     ports:
-      - "8081:8080"    # HTTP API
-      - "9091:9090"    # Raft gRPC
+      - "8081:2900"    # HTTP API
+      - "9091:2910"    # Raft gRPC
     volumes:
       - node1_data:/data
       - shared_storage:/data/storage
@@ -35,9 +35,9 @@ services:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
       KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE1:-1}"
-      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE1:-kalamdb-node1:9090}"
-      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE1:-http://kalamdb-node1:8080}"
-      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE1:-2@kalamdb-node2:9090@http://kalamdb-node2:8080;3@kalamdb-node3:9090@http://kalamdb-node3:8080}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE1:-kalamdb-node1:2910}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE1:-http://kalamdb-node1:2900}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE1:-2@kalamdb-node2:2910@http://kalamdb-node2:2900;3@kalamdb-node3:2910@http://kalamdb-node3:2900}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
       # TESTING ONLY: allow any browser origin so the sample Admin UI works out of the box.
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:8080/v1/api/healthcheck"]
+      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:2900/v1/api/healthcheck"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -62,8 +62,8 @@ services:
     container_name: kalamdb-node2
     hostname: kalamdb-node2
     ports:
-      - "8082:8080"    # HTTP API
-      - "9092:9090"    # Raft gRPC
+      - "8082:2900"    # HTTP API
+      - "9092:2910"    # Raft gRPC
     volumes:
       - node2_data:/data
       - shared_storage:/data/storage
@@ -73,9 +73,9 @@ services:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
       KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE2:-2}"
-      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE2:-kalamdb-node2:9090}"
-      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE2:-http://kalamdb-node2:8080}"
-      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE2:-1@kalamdb-node1:9090@http://kalamdb-node1:8080;3@kalamdb-node3:9090@http://kalamdb-node3:8080}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE2:-kalamdb-node2:2910}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE2:-http://kalamdb-node2:2900}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE2:-1@kalamdb-node1:2910@http://kalamdb-node1:2900;3@kalamdb-node3:2910@http://kalamdb-node3:2900}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
       # TESTING ONLY: allow any browser origin so the sample Admin UI works out of the box.
@@ -89,7 +89,7 @@ services:
     restart: unless-stopped
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:8080/v1/api/healthcheck"]
+      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:2900/v1/api/healthcheck"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -103,8 +103,8 @@ services:
     container_name: kalamdb-node3
     hostname: kalamdb-node3
     ports:
-      - "8083:8080"    # HTTP API
-      - "9093:9090"    # Raft gRPC
+      - "8083:2900"    # HTTP API
+      - "9093:2910"    # Raft gRPC
     volumes:
       - node3_data:/data
       - shared_storage:/data/storage
@@ -114,9 +114,9 @@ services:
       KALAMDB_SERVER_HOST: "0.0.0.0"
       KALAMDB_CLUSTER_ID: "${KALAMDB_CLUSTER_ID:-docker-cluster}"
       KALAMDB_NODE_ID: "${KALAMDB_NODE_ID_NODE3:-3}"
-      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE3:-kalamdb-node3:9090}"
-      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE3:-http://kalamdb-node3:8080}"
-      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE3:-1@kalamdb-node1:9090@http://kalamdb-node1:8080;2@kalamdb-node2:9090@http://kalamdb-node2:8080}"
+      KALAMDB_CLUSTER_RPC_ADDR: "${KALAMDB_CLUSTER_RPC_ADDR_NODE3:-kalamdb-node3:2910}"
+      KALAMDB_CLUSTER_API_ADDR: "${KALAMDB_CLUSTER_API_ADDR_NODE3:-http://kalamdb-node3:2900}"
+      KALAMDB_CLUSTER_PEERS: "${KALAMDB_CLUSTER_PEERS_NODE3:-1@kalamdb-node1:2910@http://kalamdb-node1:2900;2@kalamdb-node2:2910@http://kalamdb-node2:2900}"
       KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
       KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-kalamdb-docker-dev-secret-please-change-32chars}"
       # TESTING ONLY: allow any browser origin so the sample Admin UI works out of the box.
@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
     command: ["/usr/local/bin/kalamdb-server", "/config/server.toml"]
     healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:8080/v1/api/healthcheck"]
+      test: ["CMD", "/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:2900/v1/api/healthcheck"]
       interval: 10s
       timeout: 5s
       start_period: 30s
