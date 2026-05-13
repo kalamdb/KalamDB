@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use bytes::Bytes;
@@ -16,12 +20,16 @@ use kalamdb_core::{
         SqlImpersonationService,
     },
 };
+use kalamdb_raft::GroupId;
 use kalamdb_sql::classifier::SqlStatementKind;
 use kalamdb_system::FileSubfolderState;
 
 use super::{
     file_utils::{stage_and_finalize_files, substitute_file_placeholders},
-    forward::handle_not_leader_error,
+    forward::{
+        forward_sql_to_group_leader_raw, forwarded_sql_response_to_http, handle_not_leader_error,
+        prepared_statement_target_group, should_route_batch_statements_individually,
+    },
     helpers::{
         cleanup_files, execute_single_statement, execute_single_statement_raw,
         execution_result_to_query_result, stream_sql_rows_response,
@@ -172,6 +180,138 @@ fn build_kalamdb_error_response(err: &KalamDbError, took: f64, is_admin: bool) -
     let (status, code, preserve_message) = classify_sql_error(err);
     let message = err.user_message();
     build_sql_error_response(status, code, message.as_ref(), None, took, is_admin, preserve_message)
+}
+
+fn push_or_accumulate_batch_result(
+    result: QueryResult,
+    is_batch: bool,
+    total_inserted: &mut usize,
+    total_updated: &mut usize,
+    total_deleted: &mut usize,
+    results: &mut Vec<QueryResult>,
+) {
+    if is_batch {
+        if let Some(message) = result.message.as_deref() {
+            if message.contains("Inserted") {
+                *total_inserted += result.row_count;
+                return;
+            }
+            if message.contains("Updated") {
+                *total_updated += result.row_count;
+                return;
+            }
+            if message.contains("Deleted") {
+                *total_deleted += result.row_count;
+                return;
+            }
+        }
+    }
+
+    results.push(result);
+}
+
+fn statement_mutates_meta(
+    statement: &PreparedApiExecutionStatement,
+    app_context: &AppContext,
+    routing_user_id: &kalamdb_commons::models::UserId,
+) -> bool {
+    let target_group = prepared_statement_target_group(statement, app_context, routing_user_id);
+    if target_group != Some(GroupId::Meta) {
+        return false;
+    }
+
+    statement
+        .prepared_statement
+        .classified_statement
+        .as_ref()
+        .is_some_and(|classified| classified.is_write_operation())
+}
+
+fn is_transient_forwarded_metadata_error(response: &SqlResponse) -> bool {
+    let Some(error) = response.error.as_ref() else {
+        return false;
+    };
+
+    if !matches!(error.code, ErrorCode::SqlExecutionError | ErrorCode::TableNotFound) {
+        return false;
+    }
+
+    let mut message = error.message.to_ascii_lowercase();
+    if let Some(details) = error.details.as_deref() {
+        message.push(' ');
+        message.push_str(&details.to_ascii_lowercase());
+    }
+
+    message.contains("table") && message.contains("not found")
+        || message.contains("relation") && message.contains("does not exist")
+        || message.contains("unknown table")
+        || message.contains("namespace") && message.contains("not found")
+        || message.contains("schema") && message.contains("not found")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_batch_statement_to_group(
+    target_group: GroupId,
+    statement: &PreparedApiExecutionStatement,
+    http_req: &HttpRequest,
+    req_for_forward: &QueryRequest,
+    app_context: &AppContext,
+    request_id: Option<&str>,
+    start_time: Instant,
+    retry_metadata_lag: bool,
+) -> Result<SqlResponse, HttpResponse> {
+    const MAX_ATTEMPTS: u32 = 5;
+    const INITIAL_BACKOFF_MS: u64 = 5;
+
+    let request = QueryRequest {
+        sql: statement.prepared_statement.sql.clone(),
+        params: None,
+        namespace_id: req_for_forward.namespace_id.clone(),
+    };
+
+    for attempt in 0..MAX_ATTEMPTS {
+        let response = forward_sql_to_group_leader_raw(
+            target_group,
+            http_req,
+            &request,
+            app_context,
+            request_id,
+            start_time,
+        )
+        .await?;
+
+        let status =
+            StatusCode::from_u16(response.status_code as u16).unwrap_or(StatusCode::BAD_GATEWAY);
+        let parsed = serde_json::from_slice::<SqlResponse>(&response.body);
+
+        if status.is_success() {
+            return parsed.map_err(|err| {
+                HttpResponse::BadGateway().json(SqlResponse::error(
+                    ErrorCode::ForwardFailed,
+                    &format!("Failed to decode forwarded SQL response: {}", err),
+                    took_ms(start_time),
+                ))
+            });
+        }
+
+        if retry_metadata_lag && attempt + 1 < MAX_ATTEMPTS {
+            if let Ok(parsed_response) = parsed.as_ref() {
+                if is_transient_forwarded_metadata_error(parsed_response) {
+                    let backoff_ms = INITIAL_BACKOFF_MS * (1 << attempt);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+            }
+        }
+
+        return Err(forwarded_sql_response_to_http(response, start_time));
+    }
+
+    Err(HttpResponse::GatewayTimeout().json(SqlResponse::error(
+        ErrorCode::ForwardFailed,
+        "Timed out waiting for forwarded SQL metadata visibility",
+        took_ms(start_time),
+    )))
 }
 
 fn build_statement_error_response(
@@ -454,10 +594,17 @@ pub(super) async fn execute_batch_path(
 ) -> HttpResponse {
     let is_batch = prepared_statements.len() > 1;
     let stmt_count = prepared_statements.len();
+    let route_statements_individually = should_route_batch_statements_individually(
+        prepared_statements,
+        &req_for_forward.params,
+        app_context.as_ref(),
+        exec_ctx.user_id(),
+    );
     let mut results = Vec::with_capacity(stmt_count);
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
     let mut total_deleted = 0usize;
+    let mut meta_changed_in_batch = false;
     let mut params_remaining = Some(params);
     let mut request_transaction_state =
         match RequestTransactionState::from_execution_context(exec_ctx) {
@@ -576,6 +723,58 @@ pub(super) async fn execute_batch_path(
             }
         }
 
+        let routing_user_id = execute_as_user.as_ref().unwrap_or_else(|| exec_ctx.user_id());
+
+        if route_statements_individually {
+            if let Some(target_group) =
+                prepared_statement_target_group(stmt, app_context.as_ref(), routing_user_id)
+            {
+                if !app_context.executor().is_leader(target_group).await {
+                    match forward_batch_statement_to_group(
+                        target_group,
+                        stmt,
+                        http_req,
+                        req_for_forward,
+                        app_context.as_ref(),
+                        exec_ctx.request_id(),
+                        start_time,
+                        meta_changed_in_batch,
+                    )
+                    .await
+                    {
+                        Ok(forwarded_response) => {
+                            for result in forwarded_response.results {
+                                push_or_accumulate_batch_result(
+                                    result,
+                                    is_batch,
+                                    &mut total_inserted,
+                                    &mut total_updated,
+                                    &mut total_deleted,
+                                    &mut results,
+                                );
+                            }
+
+                            if statement_mutates_meta(stmt, app_context.as_ref(), routing_user_id) {
+                                meta_changed_in_batch = true;
+                            }
+
+                            if let Some(state) = request_transaction_state.as_mut() {
+                                state.sync_from_coordinator(app_context);
+                            }
+                            idx += 1;
+                            continue;
+                        },
+                        Err(response) => {
+                            if let Some(state) = request_transaction_state.as_mut() {
+                                let _ = state.rollback_if_active(app_context);
+                            }
+                            return response;
+                        },
+                    }
+                }
+            }
+        }
+
         let stmt_start = Instant::now();
         let effective_username =
             resolve_result_username(authorized_username, stmt.execute_as_username.as_deref());
@@ -678,34 +877,18 @@ pub(super) async fn execute_batch_path(
                     },
                 };
 
-                if is_batch {
-                    if let Some(ref msg) = result.message {
-                        if msg.contains("Inserted") {
-                            total_inserted += result.row_count;
-                            if let Some(state) = request_transaction_state.as_mut() {
-                                state.sync_from_coordinator(app_context);
-                            }
-                            idx += 1;
-                            continue;
-                        } else if msg.contains("Updated") {
-                            total_updated += result.row_count;
-                            if let Some(state) = request_transaction_state.as_mut() {
-                                state.sync_from_coordinator(app_context);
-                            }
-                            idx += 1;
-                            continue;
-                        } else if msg.contains("Deleted") {
-                            total_deleted += result.row_count;
-                            if let Some(state) = request_transaction_state.as_mut() {
-                                state.sync_from_coordinator(app_context);
-                            }
-                            idx += 1;
-                            continue;
-                        }
-                    }
+                if statement_mutates_meta(stmt, app_context.as_ref(), routing_user_id) {
+                    meta_changed_in_batch = true;
                 }
 
-                results.push(result);
+                push_or_accumulate_batch_result(
+                    result,
+                    is_batch,
+                    &mut total_inserted,
+                    &mut total_updated,
+                    &mut total_deleted,
+                    &mut results,
+                );
             },
             Err(err) => {
                 if let Some(state) = request_transaction_state.as_mut() {

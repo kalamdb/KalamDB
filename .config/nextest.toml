@@ -119,6 +119,96 @@ filter = 'test(test_connection_timeout_option)'
 # handles here; keep it isolated from subprocess-heavy tests.
 test-group = "stateful-heavy"
 
+[[profile.default.overrides]]
+filter = 'test(test_rapid_connect_disconnect)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_concurrent_websocket_subscriptions)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_test_leader_read_shared_table)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_table_identity_updates)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_all_datatypes_user_shared_stream)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_table_identity_mixed_operations)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_ws_follower_receives_leader_changes)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_table_identity_user_tables)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_security_regular_user_cannot_impersonate_privileged_users_in_batch)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_as_user_chat_delete_flow)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_insert_returning_seq_multi_row)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_rpc_login_nonexistent_user_matches_wrong_password_response)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_security_private_shared_table_blocked_in_batch)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_security_system_tables_blocked_in_batch)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_storage_custom_templates)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_storage_check_dba_access)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_storage_check_authorization)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_topic_consume_update_events)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(test_topic_consume_offset_persistence)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(smoke_export_download_forbidden_for_other_user)'
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_leader_only_flush_jobs)'
+# Uses system.jobs queries — must not race with other tests' flush jobs or background scheduler.
+test-group = "stateful-heavy"
+
+[[profile.default.overrides]]
+filter = 'test(cluster_test_jobs_table_consistency)'
+# Queries global system.jobs count — must not race with concurrent tests creating jobs.
+test-group = "stateful-heavy"
+
 [profile.ci]
 # Store test results in JUnit format
 junit.path = "junit.xml"

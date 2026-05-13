@@ -23,9 +23,8 @@ async fn test_alter_table_add_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     let create_response = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.products (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.products (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 price INT
@@ -33,9 +32,8 @@ async fn test_alter_table_add_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(create_response.status, ResponseStatus::Success);
 
@@ -53,9 +51,7 @@ async fn test_alter_table_add_column() {
 
     // ALTER TABLE: ADD COLUMN
     let alter_response = server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.products ADD COLUMN stock INT"#, ns),
-        )
+        .execute_sql(&format!(r#"ALTER TABLE {}.products ADD COLUMN stock INT"#, ns))
         .await;
 
     assert_eq!(
@@ -112,9 +108,8 @@ async fn test_alter_table_drop_column() {
     assert!(server.namespace_exists(&ns).await, "Namespace should exist after creation");
 
     let create_resp = server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.inventory (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.inventory (
                 id TEXT PRIMARY KEY,
                 item TEXT,
                 quantity INT,
@@ -123,9 +118,8 @@ async fn test_alter_table_drop_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
     assert_eq!(
         create_resp.status,
@@ -148,9 +142,7 @@ async fn test_alter_table_drop_column() {
 
     // ALTER TABLE: DROP COLUMN
     let alter_response = server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.inventory DROP COLUMN warehouse"#, ns),
-        )
+        .execute_sql(&format!(r#"ALTER TABLE {}.inventory DROP COLUMN warehouse"#, ns))
         .await;
 
     assert_eq!(
@@ -191,9 +183,8 @@ async fn test_alter_table_rename_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.customers (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.customers (
                 id TEXT PRIMARY KEY,
                 customer_name TEXT,
                 email TEXT
@@ -201,9 +192,8 @@ async fn test_alter_table_rename_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert data
@@ -220,9 +210,10 @@ async fn test_alter_table_rename_column() {
 
     // ALTER TABLE: RENAME COLUMN
     let alter_response = server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#, ns),
-        )
+        .execute_sql(&format!(
+            r#"ALTER TABLE {}.customers RENAME COLUMN customer_name TO name"#,
+            ns
+        ))
         .await;
 
     assert_eq!(
@@ -236,9 +227,7 @@ async fn test_alter_table_rename_column() {
     // Full schema evolution support (column aliasing during scan) is not yet implemented.
     // For now, verify that the schema metadata was updated by checking DESCRIBE TABLE.
 
-    let describe_response = server
-        .execute_sql(&format!("DESCRIBE TABLE {}.customers", ns))
-        .await;
+    let describe_response = server.execute_sql(&format!("DESCRIBE TABLE {}.customers", ns)).await;
 
     assert_eq!(
         describe_response.status,
@@ -279,9 +268,8 @@ async fn test_alter_table_modify_column() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.metrics (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.metrics (
                 id TEXT PRIMARY KEY,
                 value INT,
                 description TEXT
@@ -289,16 +277,13 @@ async fn test_alter_table_modify_column() {
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // ALTER TABLE: MODIFY COLUMN (change type)
     let alter_response = server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.metrics MODIFY COLUMN value BIGINT"#, ns),
-        )
+        .execute_sql(&format!(r#"ALTER TABLE {}.metrics MODIFY COLUMN value BIGINT"#, ns))
         .await;
 
     assert_eq!(
@@ -343,31 +328,25 @@ async fn test_alter_table_schema_versioning() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                r#"CREATE TABLE {}.versioned (
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.versioned (
                 id TEXT PRIMARY KEY,
                 col1 TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )"#,
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Perform multiple ALTER operations
     server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col2 INT"#, ns),
-        )
+        .execute_sql(&format!(r#"ALTER TABLE {}.versioned ADD COLUMN col2 INT"#, ns))
         .await;
 
     server
-        .execute_sql(
-            &format!(r#"ALTER TABLE {}.versioned ADD COLUMN col3 TEXT"#, ns),
-        )
+        .execute_sql(&format!(r#"ALTER TABLE {}.versioned ADD COLUMN col3 TEXT"#, ns))
         .await;
 
     // Query should work with all columns (schema evolution tracked internally)

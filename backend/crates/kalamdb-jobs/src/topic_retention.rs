@@ -100,14 +100,12 @@ mod tests {
     };
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, PayloadMode, TableId, TableName, TopicId, TopicOp},
+    use kalamdb_commons::models::{
+        rows::Row, NamespaceId, PayloadMode, TableId, TableName, TopicId, TopicOp,
     };
     use kalamdb_core::test_helpers::test_app_context;
     use kalamdb_system::{
-        providers::{
-            topics::{models::Topic, TopicRoute},
-        },
+        providers::topics::{models::Topic, TopicRoute},
         JobType,
     };
 
@@ -117,10 +115,7 @@ mod tests {
     fn create_test_row(id: i32, payload: &str) -> Row {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int32(Some(id)));
-        values.insert(
-            "payload".to_string(),
-            ScalarValue::Utf8(Some(payload.to_string())),
-        );
+        values.insert("payload".to_string(), ScalarValue::Utf8(Some(payload.to_string())));
         Row { values }
     }
 
@@ -131,10 +126,8 @@ mod tests {
         retention_seconds: Option<i64>,
         retention_max_bytes: Option<i64>,
     ) -> TableId {
-        let table_id = TableId::new(
-            NamespaceId::new("topic_retention_jobs"),
-            TableName::new(table_name),
-        );
+        let table_id =
+            TableId::new(NamespaceId::new("topic_retention_jobs"), TableName::new(table_name));
         let mut topic = Topic::new(topic_id.clone(), topic_id.as_str().to_string());
         topic.partitions = 1;
         topic.retention_seconds = retention_seconds;
@@ -168,8 +161,7 @@ mod tests {
         let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         let retained_topic_id = TopicId::new(&format!("topic.scheduler.retained.{unique}"));
-        let within_limit_topic_id =
-            TopicId::new(&format!("topic.scheduler.within.limit.{unique}"));
+        let within_limit_topic_id = TopicId::new(&format!("topic.scheduler.within.limit.{unique}"));
         let disabled_topic_id = TopicId::new(&format!("topic.scheduler.disabled.{unique}"));
 
         let retained_table_id = create_topic_with_route(
@@ -243,18 +235,12 @@ mod tests {
             "topic retention job should use the TR:<topic_id>:<hour> idempotency format"
         );
         assert!(
-            !app_ctx
-                .system_tables()
-                .jobs()
-                .list_jobs()
-                .unwrap()
-                .into_iter()
-                .any(|job| {
-                    job.job_type == JobType::TopicRetention
-                        && job.idempotency_key.as_deref().is_some_and(|key| {
-                            key.starts_with(&format!("TR:{}:", within_limit_topic_id.as_str()))
-                        })
-                }),
+            !app_ctx.system_tables().jobs().list_jobs().unwrap().into_iter().any(|job| {
+                job.job_type == JobType::TopicRetention
+                    && job.idempotency_key.as_deref().is_some_and(|key| {
+                        key.starts_with(&format!("TR:{}:", within_limit_topic_id.as_str()))
+                    })
+            }),
             "scheduler should skip retained topics that are already within limits"
         );
     }

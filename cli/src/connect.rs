@@ -1,8 +1,4 @@
-use std::{
-    io::IsTerminal,
-    net::IpAddr,
-    time::Duration,
-};
+use std::{io::IsTerminal, net::IpAddr, time::Duration};
 
 use colored::Colorize;
 use kalam_cli::{
@@ -258,8 +254,8 @@ pub async fn create_session(
         println!();
 
         // Get DBA user
-        let username = prompt_line("Enter the user for your DBA account: ")
-            .map_err(|e| e.to_string())?;
+        let username =
+            prompt_line("Enter the user for your DBA account: ").map_err(|e| e.to_string())?;
         if username.is_empty() {
             return Err("User cannot be empty".to_string());
         }
@@ -268,8 +264,8 @@ pub async fn create_session(
         }
 
         // Get DBA password
-        let password = prompt_password("Enter password for your DBA account: ")
-            .map_err(|e| e.to_string())?;
+        let password =
+            prompt_password("Enter password for your DBA account: ").map_err(|e| e.to_string())?;
         if password.is_empty() {
             return Err("Password cannot be empty".to_string());
         }
@@ -458,8 +454,8 @@ pub async fn create_session(
                 let authenticated_user = login_response.user.id.to_string();
 
                 // Ask if user wants to save credentials
-                let save_choice = prompt_line("\nSave credentials for future use? (y/N): ")
-                    .unwrap_or_default();
+                let save_choice =
+                    prompt_line("\nSave credentials for future use? (y/N): ").unwrap_or_default();
 
                 if save_choice.trim().eq_ignore_ascii_case("y")
                     || save_choice.trim().eq_ignore_ascii_case("yes")

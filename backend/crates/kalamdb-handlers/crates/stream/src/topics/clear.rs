@@ -42,8 +42,8 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
 
         let topic_name = topic.expect("checked is_some").name;
 
-        let (offsets_deleted, messages_deleted) =
-            clear_topic_data(&self.app_context, topic_id).map_err(|e| {
+        let (offsets_deleted, messages_deleted) = clear_topic_data(&self.app_context, topic_id)
+            .map_err(|e| {
                 KalamDbError::ExecutionError(format!(
                     "Failed to clear topic '{}' ({}): {}",
                     topic_name,
@@ -63,9 +63,7 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
         Ok(ExecutionResult::Success {
             message: format!(
                 "Cleared topic '{}' - {} consumer group offsets deleted, {} messages deleted",
-                topic_name,
-                offsets_deleted,
-                messages_deleted
+                topic_name, offsets_deleted, messages_deleted
             ),
         })
     }

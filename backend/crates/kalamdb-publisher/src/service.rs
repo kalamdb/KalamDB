@@ -340,9 +340,10 @@ impl TopicPublisherService {
     ///
     /// Returns `(offsets_deleted, messages_deleted)`.
     pub fn clear_topic_data(&self, topic_id: &TopicId) -> Result<(usize, usize)> {
-        let offsets_deleted = self.offset_store.delete_topic_offsets(topic_id).map_err(|e| {
-            CommonError::Internal(format!("Failed to delete topic offsets: {}", e))
-        })?;
+        let offsets_deleted = self
+            .offset_store
+            .delete_topic_offsets(topic_id)
+            .map_err(|e| CommonError::Internal(format!("Failed to delete topic offsets: {}", e)))?;
         let messages_deleted = self.message_store.delete_topic_messages(topic_id).map_err(|e| {
             CommonError::Internal(format!("Failed to delete topic messages: {}", e))
         })?;
@@ -1783,8 +1784,12 @@ mod tests {
         let topic_id = TopicId::new("group_claim_topic");
         let group_id = ConsumerGroupId::new("test_group");
 
-        let topic =
-            create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
         service.add_topic(topic);
 
         for idx in 0..10 {
@@ -1995,8 +2000,12 @@ mod tests {
         let topic_id = TopicId::new("partial_ack_topic");
         let group_id = ConsumerGroupId::new("partial_ack_group");
 
-        let topic =
-            create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+        let topic = create_test_topic_with_partitions(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+        );
         service.add_topic(topic);
 
         for idx in 0..20 {

@@ -8,7 +8,9 @@ use kalamdb_commons::{
     schemas::TableType,
 };
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
-use kalamdb_raft::{ClusterClient, ForwardSqlRequest, GroupId, RaftExecutor, ShardRouter};
+use kalamdb_raft::{
+    ClusterClient, ForwardSqlRequest, ForwardSqlResponse, GroupId, RaftExecutor, ShardRouter,
+};
 use kalamdb_sql::classifier::SqlStatementKind;
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
@@ -58,6 +60,21 @@ enum ForwardTarget {
     Leader,
     GroupLeader(GroupId),
     Node(NodeId),
+}
+
+fn is_transaction_control(statement: &PreparedApiExecutionStatement) -> bool {
+    statement
+        .prepared_statement
+        .classified_statement
+        .as_ref()
+        .is_some_and(|classified| {
+            matches!(
+                classified.kind(),
+                SqlStatementKind::BeginTransaction
+                    | SqlStatementKind::CommitTransaction
+                    | SqlStatementKind::RollbackTransaction
+            )
+        })
 }
 
 fn data_group_for_table_type(
@@ -127,23 +144,58 @@ pub(crate) fn prepared_statement_target_group(
     }
 }
 
-async fn forward_sql_grpc(
+pub(crate) fn should_route_batch_statements_individually(
+    prepared_statements: &[PreparedApiExecutionStatement],
+    params_json: &Option<Vec<JsonValue>>,
+    app_context: &AppContext,
+    user_id: &UserId,
+) -> bool {
+    if prepared_statements.len() <= 1
+        || params_json.as_ref().is_some_and(|params| !params.is_empty())
+        || prepared_statements.iter().any(is_transaction_control)
+    {
+        return false;
+    }
+
+    if prepared_statements
+        .iter()
+        .any(|statement| statement.execute_as_username.is_some())
+    {
+        return true;
+    }
+
+    let mut targets = prepared_statements
+        .iter()
+        .map(|statement| prepared_statement_target_group(statement, app_context, user_id));
+
+    let Some(Some(first_target)) = targets.next() else {
+        return false;
+    };
+
+    targets.all(|target| target.is_some())
+        && prepared_statements.iter().any(|statement| {
+            prepared_statement_target_group(statement, app_context, user_id)
+                .is_some_and(|target| target != first_target)
+        })
+}
+
+async fn forward_sql_grpc_response(
     target: ForwardTarget,
     http_req: &HttpRequest,
     req: &QueryRequest,
     app_context: &AppContext,
     request_id: Option<&str>,
     start_time: Instant,
-) -> Option<HttpResponse> {
+) -> Result<ForwardSqlResponse, HttpResponse> {
     let client = match cluster_client_for(app_context) {
         Ok(c) => c,
-        Err(resp) => return Some(resp),
+        Err(resp) => return Err(resp),
     };
 
     let params = match parse_forward_params(&req.params) {
         Ok(v) => v,
         Err(e) => {
-            return Some(HttpResponse::BadRequest().json(SqlResponse::error(
+            return Err(HttpResponse::BadRequest().json(SqlResponse::error(
                 ErrorCode::InvalidParameter,
                 &e,
                 start_time.elapsed().as_secs_f64() * 1000.0,
@@ -172,7 +224,7 @@ async fn forward_sql_grpc(
         Ok(resp) => resp,
         Err(err) => {
             log::warn!("Failed to forward SQL over gRPC: {}", err);
-            return Some(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
+            return Err(HttpResponse::ServiceUnavailable().json(SqlResponse::error(
                 ErrorCode::ForwardFailed,
                 "Failed to forward request to cluster leader",
                 start_time.elapsed().as_secs_f64() * 1000.0,
@@ -180,17 +232,62 @@ async fn forward_sql_grpc(
         },
     };
 
+    Ok(response)
+}
+
+pub(crate) fn forwarded_sql_response_to_http(
+    response: ForwardSqlResponse,
+    start_time: Instant,
+) -> HttpResponse {
     if !response.error.is_empty() && response.body.is_empty() {
-        return Some(HttpResponse::BadGateway().json(SqlResponse::error(
+        return HttpResponse::BadGateway().json(SqlResponse::error(
             ErrorCode::ForwardFailed,
             &response.error,
             start_time.elapsed().as_secs_f64() * 1000.0,
-        )));
+        ));
     }
 
     let status = actix_web::http::StatusCode::from_u16(response.status_code as u16)
         .unwrap_or(actix_web::http::StatusCode::BAD_GATEWAY);
-    Some(HttpResponse::build(status).content_type("application/json").body(response.body))
+    HttpResponse::build(status).content_type("application/json").body(response.body)
+}
+
+pub(crate) async fn forward_sql_to_group_leader_raw(
+    group_id: GroupId,
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &AppContext,
+    request_id: Option<&str>,
+    start_time: Instant,
+) -> Result<ForwardSqlResponse, HttpResponse> {
+    forward_sql_grpc_response(
+        ForwardTarget::GroupLeader(group_id),
+        http_req,
+        req,
+        app_context,
+        request_id,
+        start_time,
+    )
+    .await
+}
+
+async fn forward_sql_grpc(
+    target: ForwardTarget,
+    http_req: &HttpRequest,
+    req: &QueryRequest,
+    app_context: &AppContext,
+    request_id: Option<&str>,
+    start_time: Instant,
+) -> Option<HttpResponse> {
+    let response =
+        match forward_sql_grpc_response(target, http_req, req, app_context, request_id, start_time)
+            .await
+        {
+            Ok(response) => response,
+            Err(response) => return Some(response),
+        };
+
+    Some(forwarded_sql_response_to_http(response, start_time))
 }
 
 /// Forwards leader-routed operations to the appropriate leader node in cluster mode.
@@ -206,6 +303,15 @@ pub async fn forward_sql_if_follower(
 ) -> Option<HttpResponse> {
     let start_time = Instant::now();
     let executor = app_context.executor();
+
+    if should_route_batch_statements_individually(
+        prepared_statements,
+        params_json,
+        app_context.as_ref(),
+        user_id,
+    ) {
+        return None;
+    }
 
     let write_targets: Vec<GroupId> = prepared_statements
         .iter()

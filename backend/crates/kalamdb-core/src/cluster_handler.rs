@@ -350,12 +350,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
             },
             Err(e) => {
                 let message = e.to_string();
-                return Ok(Self::error_payload(
-                    400,
-                    "BATCH_PARSE_ERROR",
-                    &message,
-                    started_at,
-                ));
+                return Ok(Self::error_payload(400, "BATCH_PARSE_ERROR", &message, started_at));
             },
         };
 

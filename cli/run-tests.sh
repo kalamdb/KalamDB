@@ -35,6 +35,7 @@ if [ "${KALAMDB_ROOT_PASSWORD+x}" = "x" ]; then
     ROOT_PASSWORD_SET=true
 fi
 TEST_JOBS="${KALAMDB_TEST_JOBS:-}"
+TEST_JOBS_AUTO=false
 TEST_FILTER=""
 TEST_LIST_FILE=""
 TEST_TARGET=""
@@ -110,6 +111,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --cluster-urls <URLS>    Comma-separated cluster node URLs"
     echo "  --server-type <TYPE>     Server mode: fresh | running | cluster"
     echo "  -j, --jobs <N>           Override nextest process concurrency"
+        echo "                           Cluster mode defaults to KALAMDB_CLUSTER_TEST_JOBS or 4"
     echo "  -P, --package <CRATE>    Limit the run to one package (repeatable)"
     echo "  -p, --password <PASS>    Root/admin password"
     echo "  -t, --test <FILTER>      Test filter (e.g., 'smoke', 'smoke_test_core')"
@@ -159,21 +161,49 @@ detect_cluster_urls_from_health() {
         return 1
     fi
 
-    curl -fsS --max-time 2 "${base_url%/}/v1/api/cluster/health" 2>/dev/null | python3 -c '
+    curl -fsS --max-time 2 "${base_url%/}/v1/api/cluster/health" 2>/dev/null | python3 - "$base_url" <<'PY'
 import json
 import sys
+from urllib.parse import urlparse
+
+
+def normalize_api_addr(api_addr: str, base_url: str) -> str:
+    raw = api_addr.strip()
+    if not raw:
+        return ""
+
+    base = urlparse(base_url.strip())
+    base_scheme = base.scheme or "http"
+    base_host = base.hostname or "127.0.0.1"
+
+    parsed = urlparse(raw if "://" in raw else f"{base_scheme}://{raw}")
+    host = parsed.hostname or ""
+    if host in {"0.0.0.0", "::", "[::]"}:
+        host = base_host
+
+    if not host:
+        return ""
+
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+
+    scheme = parsed.scheme or base_scheme
+    return f"{scheme}://{host}:{port}"
 
 try:
     payload = json.load(sys.stdin)
 except Exception:
     raise SystemExit(1)
 
+base_url = sys.argv[1].strip() if len(sys.argv) > 1 else ""
+
 if not payload.get("is_cluster_mode"):
     raise SystemExit(1)
 
 urls = []
 for node in payload.get("nodes") or []:
-    api_addr = str(node.get("api_addr") or "").strip()
+    api_addr = normalize_api_addr(str(node.get("api_addr") or ""), base_url)
     if api_addr and api_addr not in urls:
         urls.append(api_addr)
 
@@ -181,7 +211,7 @@ if len(urls) <= 1:
     raise SystemExit(1)
 
 print(",".join(urls))
-'
+PY
 }
 
 autodetect_cluster_mode() {
@@ -203,6 +233,11 @@ autodetect_cluster_mode() {
 }
 
 autodetect_cluster_mode
+
+if [ "$SERVER_TYPE" = "cluster" ] && [ -z "$TEST_JOBS" ]; then
+    TEST_JOBS="${KALAMDB_CLUSTER_TEST_JOBS:-4}"
+    TEST_JOBS_AUTO=true
+fi
 
 parse_host_port_from_url() {
     local url="$1"
@@ -289,10 +324,36 @@ validate_cluster_health() {
 import json
 import sys
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 target_url = sys.argv[1].rstrip("/")
 cluster_urls_arg = sys.argv[2].strip() if len(sys.argv) > 2 else ""
+
+
+def normalize_cluster_url(raw_url, fallback_url):
+    raw = raw_url.strip()
+    if not raw:
+        return ""
+
+    fallback = urlparse(fallback_url)
+    fallback_scheme = fallback.scheme or "http"
+    fallback_host = fallback.hostname or "127.0.0.1"
+
+    parsed = urlparse(raw if "://" in raw else f"{fallback_scheme}://{raw}")
+    host = parsed.hostname or ""
+    if host in {"0.0.0.0", "::", "[::]"}:
+        host = fallback_host
+
+    if not host:
+        return ""
+
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+
+    scheme = parsed.scheme or fallback_scheme
+    return f"{scheme}://{host}:{port}"
 
 
 def fetch_health(base_url):
@@ -311,10 +372,11 @@ if not target_payload.get("is_cluster_mode"):
     raise SystemExit(0)
 
 cluster_urls = [url.strip() for url in cluster_urls_arg.split(",") if url.strip()]
+cluster_urls = [normalized for url in cluster_urls if (normalized := normalize_cluster_url(url, target_url))]
 if not cluster_urls:
     seen = set()
     for node in target_payload.get("nodes") or []:
-        api_addr = str(node.get("api_addr") or "").strip()
+        api_addr = normalize_cluster_url(str(node.get("api_addr") or ""), target_url)
         if api_addr and api_addr not in seen:
             seen.add(api_addr)
             cluster_urls.append(api_addr)
@@ -469,7 +531,11 @@ if [ -n "$TEST_LIST_FILE" ]; then
     echo "Test List:       $TEST_LIST_FILE"
 fi
 if [ -n "$TEST_JOBS" ]; then
-    echo "Jobs:            $TEST_JOBS"
+    if [ "$TEST_JOBS_AUTO" = true ]; then
+        echo "Jobs:            $TEST_JOBS (cluster default)"
+    else
+        echo "Jobs:            $TEST_JOBS"
+    fi
 fi
 echo "Mode:            $FEATURE_MODE"
 echo "Supplementary:   $SUPPLEMENTARY_MODE"
@@ -600,8 +666,16 @@ build_test_cmd() {
     local test_filter="$1"
     TEST_CMD=(
         cargo nextest run
-        --all-targets
     )
+
+    local filter_targets_smoke=false
+    if [ -n "$test_filter" ] && [[ "$test_filter" == smoke* ]]; then
+        filter_targets_smoke=true
+    fi
+
+    if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = false ]; then
+        TEST_CMD+=(--all-targets)
+    fi
 
     if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
         local package
@@ -632,7 +706,7 @@ build_test_cmd() {
     fi
 
     if [ -n "$test_filter" ]; then
-        if [ -z "$TEST_TARGET" ] && [[ "$test_filter" == smoke* ]]; then
+        if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = true ]; then
             TEST_CMD+=(--test smoke)
             if [[ "$test_filter" != "smoke" ]]; then
                 TEST_CMD+=("$test_filter")

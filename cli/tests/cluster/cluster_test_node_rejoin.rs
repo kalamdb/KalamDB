@@ -505,12 +505,8 @@ fn cluster_test_node_rejoin_user_management() {
     println!("  ✓ Node3 has user: {}", test_user);
 
     // Verify user can authenticate on node3
-    let auth_result = execute_on_node_as_user(
-        stopped_url,
-        &test_user,
-        "kalamdb123",
-        "SELECT 1 AS authenticated",
-    );
+    let auth_result =
+        execute_on_node_as_user(stopped_url, &test_user, "kalamdb123", "SELECT 1 AS authenticated");
     assert!(auth_result.is_ok(), "User should be able to authenticate on node3");
     println!("  ✓ User can authenticate on node3");
 

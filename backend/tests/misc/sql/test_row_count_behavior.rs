@@ -48,18 +48,16 @@ async fn test_update_returns_correct_row_count() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.users (id TEXT PRIMARY KEY,
+        .execute_sql(&format!(
+            "CREATE TABLE {}.users (id TEXT PRIMARY KEY,
                 name TEXT,
                 email TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )",
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert test data
@@ -115,17 +113,15 @@ async fn test_update_same_values_returns_zero() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.users (id TEXT PRIMARY KEY,
+        .execute_sql(&format!(
+            "CREATE TABLE {}.users (id TEXT PRIMARY KEY,
                 name TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )",
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert test data
@@ -157,17 +153,15 @@ async fn test_delete_returns_correct_row_count() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
+        .execute_sql(&format!(
+            "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )",
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert test data
@@ -215,17 +209,15 @@ async fn test_delete_already_deleted_returns_zero() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
+        .execute_sql(&format!(
+            "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
                 title TEXT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )",
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert test data
@@ -305,17 +297,15 @@ async fn test_delete_multiple_rows_count() {
     // Setup
     fixtures::create_namespace(&server, &ns).await;
     server
-        .execute_sql(
-            &format!(
-                "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
+        .execute_sql(&format!(
+            "CREATE TABLE {}.tasks (id TEXT PRIMARY KEY,
                 priority INT
             ) WITH (
                 TYPE = 'USER',
                 STORAGE_ID = 'local'
             )",
-                ns
-            ),
-        )
+            ns
+        ))
         .await;
 
     // Insert 5 tasks with priority 1

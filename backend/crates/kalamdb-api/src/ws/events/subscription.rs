@@ -216,14 +216,9 @@ pub async fn handle_subscribe(
                     );
                 },
             }
-            let _ = send_error(
-                session,
-                &subscription_id,
-                code,
-                message.as_ref(),
-                compression_enabled,
-            )
-            .await;
+            let _ =
+                send_error(session, &subscription_id, code, message.as_ref(), compression_enabled)
+                    .await;
             Ok(())
         },
     }

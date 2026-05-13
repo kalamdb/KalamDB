@@ -99,6 +99,10 @@ pub struct RaftManager {
     /// Shared data shards (configurable, default 1)
     shared_data_shards: Vec<Arc<RaftGroup<SharedDataStateMachine>>>,
 
+    /// Dedicated transport for non-Raft cluster RPCs such as SQL forwarding
+    /// and diagnostics. Raft groups keep their own shared consensus pool.
+    cluster_network_factory: RaftNetworkFactory,
+
     /// Whether the manager has been started
     started: RwLock<bool>,
 
@@ -175,6 +179,7 @@ impl RaftManager {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
         let channel_pool = RaftNetworkFactory::new_channel_pool();
+        let cluster_network_factory = RaftNetworkFactory::new(GroupId::Meta);
 
         // Create unified meta group
         let meta = Arc::new(RaftGroup::new_with_channel_pool(
@@ -210,6 +215,7 @@ impl RaftManager {
             meta,
             user_data_shards,
             shared_data_shards,
+            cluster_network_factory,
             started: RwLock::new(false),
             config,
             runtime_peers: RwLock::new(HashMap::new()),
@@ -233,6 +239,7 @@ impl RaftManager {
         let user_shards_count = config.user_shards;
         let shared_shards_count = config.shared_shards;
         let channel_pool = RaftNetworkFactory::new_channel_pool();
+        let cluster_network_factory = RaftNetworkFactory::new(GroupId::Meta);
 
         // Ensure the raft_data partition exists
         let partition = Partition::new(RAFT_PARTITION_NAME);
@@ -298,6 +305,7 @@ impl RaftManager {
             node_id: config.node_id,
             user_data_shards,
             shared_data_shards,
+            cluster_network_factory,
             started: RwLock::new(false),
             config,
             runtime_peers: RwLock::new(HashMap::new()),
@@ -386,6 +394,8 @@ impl RaftManager {
 
         // Register this node for leader forwarding (covers self-forward when leader detection
         // lags).
+        self.cluster_network_factory
+            .configure_rpc_tls(&self.config.rpc_tls, &self.config.peers)?;
         self.register_peer(
             self.node_id,
             self.config.rpc_addr.clone(),
@@ -1317,6 +1327,9 @@ impl RaftManager {
 
         self.runtime_peers.write().insert(node_id, node.clone());
 
+        // Register with non-Raft cluster RPC transport (SQL forwarding, ping, diagnostics).
+        self.cluster_network_factory.register_node(node_id, node.clone());
+
         // Register with unified meta group
         self.meta.register_peer(node_id, node.clone());
 
@@ -1331,25 +1344,26 @@ impl RaftManager {
 
     /// Get a gRPC channel to a specific peer node.
     ///
-    /// Uses the Meta group's network factory channel pool (all groups share
-    /// the same `rpc_addr` per node, so one channel per node is sufficient).
+    /// Uses a dedicated non-Raft cluster RPC channel pool so SQL forwarding and
+    /// diagnostics cannot block Raft consensus traffic on the shared consensus
+    /// HTTP/2 transport.
     ///
     /// Returns `None` if the node is not registered.
     pub fn get_peer_channel(&self, node_id: NodeId) -> Option<tonic::transport::Channel> {
-        if let Some(channel) = self.meta.network_factory().get_or_create_channel(node_id) {
+        if let Some(channel) = self.cluster_network_factory.get_or_create_channel(node_id) {
             return Some(channel);
         }
 
         let node = self.node_for_node(node_id)?;
-        self.meta.register_peer(node_id, node);
-        self.meta.network_factory().get_or_create_channel(node_id)
+        self.cluster_network_factory.register_node(node_id, node);
+        self.cluster_network_factory.get_or_create_channel(node_id)
     }
 
     /// Get all registered peer nodes (id + node info) from the Meta group.
     ///
     /// Used by [`crate::network::cluster_client::ClusterClient`] for broadcasting.
     pub fn get_all_peers(&self) -> Vec<(NodeId, KalamNode)> {
-        self.meta.network_factory().get_all_peers()
+        self.cluster_network_factory.get_all_peers()
     }
 
     /// Get all group IDs

@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::common::{
     force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
-    test_context,
+    shared_http_client, test_context,
 };
 
 /// Test that all KalamDataTypes are preserved correctly in query results
@@ -22,7 +22,7 @@ use crate::common::{
 #[ntest::timeout(60000)]
 async fn test_all_kalam_datatypes_are_preserved() {
     let ctx = test_context();
-    let client = Client::new();
+    let client = shared_http_client();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("dtypes");
     let table = "all_types";
@@ -161,7 +161,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
 #[ntest::timeout(60000)]
 async fn test_system_tables_shows_correct_datatypes() {
     let ctx = test_context();
-    let client = Client::new();
+    let client = shared_http_client();
     let base_url = force_auto_test_server_url_async().await;
     let ns = generate_unique_namespace("systypes");
     let table = "type_check";

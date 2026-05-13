@@ -10,22 +10,12 @@
 //! Run with:
 //!   cargo nextest run --test smoke smoke_security_rpc_auth
 
-use std::time::Duration;
-
 use base64::{engine::general_purpose, Engine as _};
-use reqwest::Client;
 use serde_json::json;
 
 use crate::common::*;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-fn http_client() -> Client {
-    Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .expect("Failed to build reqwest client")
-}
 
 fn sql_url() -> String {
     format!("{}/v1/api/sql", server_url())
@@ -64,7 +54,7 @@ fn smoke_rpc_sql_no_auth_returns_401() {
     }
 
     let status = block(async {
-        http_client()
+        shared_http_client()
             .post(sql_url())
             .json(&json!({ "sql": "SELECT 1" }))
             .send()
@@ -91,7 +81,7 @@ fn smoke_rpc_sql_invalid_bearer_returns_401() {
     }
 
     let status = block(async {
-        http_client()
+        shared_http_client()
             .post(sql_url())
             .header("Authorization", "Bearer not.a.valid.jwt")
             .json(&json!({ "sql": "SELECT 1" }))
@@ -124,7 +114,7 @@ fn smoke_rpc_sql_forged_jwt_alg_none_returns_401() {
         "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhdHRhY2tlciIsInJvbGUiOiJzeXN0ZW0iLCJleHAiOjk5OTk5OTk5OTl9.";
 
     let status = block(async {
-        http_client()
+        shared_http_client()
             .post(sql_url())
             .header("Authorization", format!("Bearer {}", forged))
             .json(&json!({ "sql": "SELECT * FROM system.users" }))
@@ -157,7 +147,7 @@ fn smoke_rpc_sql_basic_auth_returns_401() {
     let basic = "Basic YWRtaW46a2FsYW1kYjEyMw==";
 
     let status = block(async {
-        http_client()
+        shared_http_client()
             .post(sql_url())
             .header("Authorization", basic)
             .json(&json!({ "sql": "SELECT 1" }))
@@ -192,7 +182,7 @@ fn smoke_rpc_non_login_auth_endpoints_reject_basic_auth() {
         ))
         .expect("valid basic auth header");
 
-        let me_status = http_client()
+        let me_status = shared_http_client()
             .get(me_url())
             .header(reqwest::header::AUTHORIZATION, auth_header.clone())
             .send()
@@ -200,7 +190,7 @@ fn smoke_rpc_non_login_auth_endpoints_reject_basic_auth() {
             .expect("/auth/me request failed")
             .status();
 
-        let refresh_status = http_client()
+        let refresh_status = shared_http_client()
             .post(refresh_url())
             .header(reqwest::header::AUTHORIZATION, auth_header)
             .send()
@@ -232,8 +222,14 @@ fn smoke_rpc_me_no_auth_returns_401() {
         return;
     }
 
-    let status =
-        block(async { http_client().get(me_url()).send().await.expect("Request failed").status() });
+    let status = block(async {
+        shared_http_client()
+            .get(me_url())
+            .send()
+            .await
+            .expect("Request failed")
+            .status()
+    });
 
     assert_eq!(
         status.as_u16(),
@@ -254,7 +250,12 @@ fn smoke_rpc_health_is_public() {
     }
 
     let status = block(async {
-        http_client().get(health_url()).send().await.expect("Request failed").status()
+        shared_http_client()
+            .get(health_url())
+            .send()
+            .await
+            .expect("Request failed")
+            .status()
     });
 
     assert!(status.is_success(), "/health must be publicly accessible (2xx), got {}", status);
@@ -275,7 +276,7 @@ fn smoke_rpc_login_wrong_password_returns_401_generic_message() {
     }
 
     let (status, body) = block(async {
-        let response = http_client()
+        let response = shared_http_client()
             .post(login_url())
             .json(&json!({
                 "user": "admin",
@@ -325,7 +326,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
     }
 
     let (status_real_user, msg_real_user) = block(async {
-        let resp = http_client()
+        let resp = shared_http_client()
             .post(login_url())
             .json(&json!({ "user": "admin", "password": "wrong-pass-abc123" }))
             .send()
@@ -343,7 +344,7 @@ fn smoke_rpc_login_nonexistent_user_matches_wrong_password_response() {
     });
 
     let (status_fake_user, msg_fake_user) = block(async {
-        let resp = http_client()
+        let resp = shared_http_client()
             .post(login_url())
             .json(&json!({
                 "user": "this_user_definitely_does_not_exist_xyz",
@@ -478,7 +479,7 @@ fn smoke_rpc_sql_empty_body_returns_error() {
     });
 
     let status = block(async {
-        http_client()
+        shared_http_client()
             .post(sql_url())
             .header("Authorization", format!("Bearer {}", token))
             .header("Content-Type", "application/json")

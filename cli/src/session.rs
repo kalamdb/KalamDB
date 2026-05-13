@@ -958,14 +958,11 @@ impl CLISession {
             return Ok(None);
         };
 
-        let status = serde_json::from_value::<SqlSubscriptionStatus>(
-            status_value.clone().into_inner(),
-        )
-        .map_err(|_| {
-            CLIError::ParseError(
-                "Subscription status has an invalid format".into(),
-            )
-        })?;
+        let status =
+            serde_json::from_value::<SqlSubscriptionStatus>(status_value.clone().into_inner())
+                .map_err(|_| {
+                    CLIError::ParseError("Subscription status has an invalid format".into())
+                })?;
 
         if status != SqlSubscriptionStatus::SubscriptionRequired {
             return Ok(None);

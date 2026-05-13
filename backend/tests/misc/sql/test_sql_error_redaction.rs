@@ -20,10 +20,7 @@ async fn test_non_admin_sql_errors_redact_table_details() {
     let user_response = server.execute_sql_as_user(&sql, &username).await;
     assert_eq!(user_response.status, ResponseStatus::Error);
     let user_error = user_response.error.expect("user response should include an error payload");
-    assert_eq!(
-        user_error.message,
-        "SQL statement failed. Review the statement and try again.",
-    );
+    assert_eq!(user_error.message, "SQL statement failed. Review the statement and try again.",);
     assert!(user_error.details.is_none());
     assert!(!user_error.message.contains(&namespace));
     assert!(!user_error.message.contains(&table_name));

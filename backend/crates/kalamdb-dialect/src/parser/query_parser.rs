@@ -259,9 +259,8 @@ impl QueryParser {
 
         // Wrap in a dummy SELECT to parse the expression
         let dummy_query = format!("SELECT * FROM dummy WHERE {}", expr_str);
-        let statements = parse_sql_statements(&dummy_query, &dialect).map_err(|e| {
-            QueryParseError::ParseError(e.to_string())
-        })?;
+        let statements = parse_sql_statements(&dummy_query, &dialect)
+            .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Failed to parse expression".to_string()));

@@ -93,14 +93,17 @@ static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    // Tests use separate tokio runtimes, so reusing one global reqwest client can leave pooled
-    // dispatch tasks bound to a runtime that has already shut down.
-    Client::builder()
-        .pool_max_idle_per_host(512)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_nodelay(true)
-        .build()
-        .expect("failed to build test HTTP client")
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .pool_max_idle_per_host(512)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_nodelay(true)
+                .build()
+                .expect("failed to build test HTTP client")
+        })
+        .clone()
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +122,36 @@ impl TestAuthManager {
         Self {
             ready_urls: Mutex::new(HashSet::new()),
         }
+    }
+
+    async fn send_with_retry(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let max_attempts = if matches!(server_type_from_env(), Some(ServerType::Cluster)) {
+            40
+        } else {
+            5
+        };
+        for attempt in 0..max_attempts {
+            let Some(attempt_request) = request.try_clone() else {
+                return request.send().await;
+            };
+
+            match attempt_request.send().await {
+                Ok(response) => return Ok(response),
+                Err(error) if attempt + 1 < max_attempts => {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if error.is_timeout() || error.is_connect() || error.is_request() {
+                        continue;
+                    }
+                    continue;
+                },
+                Err(error) => return Err(error),
+            }
+        }
+
+        unreachable!("send_with_retry must return within max_attempts")
     }
 
     fn with_shared_token_cache<R>(
@@ -221,15 +254,13 @@ impl TestAuthManager {
         }
 
         let root_password = root_password_from_env();
-        let setup_response = client
-            .post(format!("{}/v1/api/auth/setup", base_url))
-            .json(&json!({
+        let setup_response = self
+            .send_with_retry(client.post(format!("{}/v1/api/auth/setup", base_url)).json(&json!({
                 "user": "admin",
                 "password": "kalamdb123",
                 "root_password": root_password,
                 "email": null
-            }))
-            .send()
+            })))
             .await?;
 
         if !setup_response.status().is_success() {
@@ -341,13 +372,14 @@ impl TestAuthManager {
 
         let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
         let client = shared_http_client();
-        let exists_response = client
-            .post(format!("{}/v1/api/sql", base_url))
-            .bearer_auth(&root_token)
-            .json(&json!({
-                "sql": "SELECT user_id FROM system.users WHERE user_id = 'admin' LIMIT 1"
-            }))
-            .send()
+        let exists_response = self
+            .send_with_retry(
+                client.post(format!("{}/v1/api/sql", base_url)).bearer_auth(&root_token).json(
+                    &json!({
+                        "sql": "SELECT user_id FROM system.users WHERE user_id = 'admin' LIMIT 1"
+                    }),
+                ),
+            )
             .await?;
 
         let admin_exists = if exists_response.status().is_success() {
@@ -366,16 +398,17 @@ impl TestAuthManager {
         };
 
         if admin_exists {
-            let password_response = client
-                .post(format!("{}/v1/api/sql", base_url))
-                .bearer_auth(&root_token)
-                .json(&json!({
-                    "sql": format!(
-                        "ALTER USER admin SET PASSWORD '{}'",
-                        admin_password()
-                    )
-                }))
-                .send()
+            let password_response = self
+                .send_with_retry(
+                    client.post(format!("{}/v1/api/sql", base_url)).bearer_auth(&root_token).json(
+                        &json!({
+                            "sql": format!(
+                                "ALTER USER admin SET PASSWORD '{}'",
+                                admin_password()
+                            )
+                        }),
+                    ),
+                )
                 .await?;
 
             if !password_response.status().is_success() {
@@ -383,13 +416,14 @@ impl TestAuthManager {
                 return Err(format!("Failed to reset admin password: {}", body).into());
             }
 
-            let role_response = client
-                .post(format!("{}/v1/api/sql", base_url))
-                .bearer_auth(&root_token)
-                .json(&json!({
-                    "sql": "ALTER USER admin SET ROLE 'dba'"
-                }))
-                .send()
+            let role_response = self
+                .send_with_retry(
+                    client.post(format!("{}/v1/api/sql", base_url)).bearer_auth(&root_token).json(
+                        &json!({
+                            "sql": "ALTER USER admin SET ROLE 'dba'"
+                        }),
+                    ),
+                )
                 .await?;
 
             if !role_response.status().is_success() {
@@ -400,16 +434,17 @@ impl TestAuthManager {
             return Ok(());
         }
 
-        let response = client
-            .post(format!("{}/v1/api/sql", base_url))
-            .bearer_auth(root_token)
-            .json(&json!({
-                "sql": format!(
-                    "CREATE USER admin WITH PASSWORD '{}' ROLE 'dba'",
-                    admin_password()
-                )
-            }))
-            .send()
+        let response = self
+            .send_with_retry(
+                client.post(format!("{}/v1/api/sql", base_url)).bearer_auth(root_token).json(
+                    &json!({
+                        "sql": format!(
+                            "CREATE USER admin WITH PASSWORD '{}' ROLE 'dba'",
+                            admin_password()
+                        )
+                    }),
+                ),
+            )
             .await?;
 
         if !response.status().is_success() {
@@ -2480,11 +2515,12 @@ pub fn is_server_running() -> bool {
     let ctx = test_context();
 
     if ctx.is_cluster {
-        let urls = if ctx.cluster_urls.is_empty() {
-            ctx.cluster_urls_raw.clone()
-        } else {
-            ctx.cluster_urls.clone()
-        };
+        let mut urls = ctx.cluster_urls.clone();
+        for url in &ctx.cluster_urls_raw {
+            if !urls.contains(url) {
+                urls.push(url.clone());
+            }
+        }
         let reachable = wait_for_reachable_cluster_urls(&urls, Duration::from_secs(5));
         if !reachable.is_empty() {
             return true;
@@ -2679,15 +2715,14 @@ fn server_requires_auth_for_url(url: &str) -> Option<bool> {
 pub fn get_available_server_urls() -> Vec<String> {
     let ctx = test_context();
     if ctx.is_cluster {
-        let seed_urls = if ctx.cluster_urls.is_empty() {
-            ctx.cluster_urls_raw.clone()
-        } else {
-            ctx.cluster_urls.clone()
-        };
-        let mut urls = wait_for_sql_ready_cluster_urls(&seed_urls, Duration::from_secs(2));
-        if urls.is_empty() {
-            urls = seed_urls;
+        let mut seed_urls = ctx.cluster_urls.clone();
+        for url in &ctx.cluster_urls_raw {
+            if !seed_urls.contains(url) {
+                seed_urls.push(url.clone());
+            }
         }
+
+        let mut urls = seed_urls;
         if let Some(leader) = leader_url() {
             urls.retain(|url| url != &leader);
             urls.insert(0, leader);
@@ -2701,6 +2736,10 @@ pub fn get_available_server_urls() -> Vec<String> {
 
 pub fn cluster_urls_config_order() -> Vec<String> {
     test_context().cluster_urls_raw.clone()
+}
+
+pub fn is_cluster_url_reachable(url: &str) -> bool {
+    url_reachable(url)
 }
 
 fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
@@ -3786,6 +3825,37 @@ fn get_shared_root_client_for_url(base_url: &str) -> KalamLinkClient {
     build_root_client(base_url)
 }
 
+fn shared_user_client_cache() -> &'static Mutex<HashMap<String, KalamLinkClient>> {
+    static CLIENT_CACHE: OnceLock<Mutex<HashMap<String, KalamLinkClient>>> = OnceLock::new();
+    CLIENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn shared_test_client_for_url_with_timeouts(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    timeouts: &KalamLinkTimeouts,
+) -> Result<KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
+    if username == default_username() && password == default_password() {
+        return Ok(get_shared_root_client_for_url(base_url));
+    }
+
+    let cache_key = format!("{}\n{}\n{}", base_url, username, password);
+
+    if let Ok(mut guard) = shared_user_client_cache().lock() {
+        if let Some(client) = guard.get(&cache_key) {
+            return Ok(client.clone());
+        }
+
+        let client =
+            build_client_for_url_with_timeouts(base_url, username, password, timeouts.clone())?;
+        guard.insert(cache_key, client.clone());
+        return Ok(client);
+    }
+
+    build_client_for_url_with_timeouts(base_url, username, password, timeouts.clone())
+}
+
 fn get_shared_root_client() -> KalamLinkClient {
     let base_url = get_available_server_urls()
         .first()
@@ -3860,12 +3930,9 @@ fn execute_sql_via_client_internal(
                         .initial_data_timeout(Duration::from_secs(30))
                         .build();
 
-                    let client = if username == default_username() && password == default_password()
-                    {
-                        get_shared_root_client_for_url(url)
-                    } else {
-                        build_client_for_url_with_timeouts(url, username, password, timeouts)?
-                    };
+                    let client = shared_test_client_for_url_with_timeouts(
+                        url, username, password, &timeouts,
+                    )?;
                     let response = client.execute_query(sql, None, params.clone(), None).await?;
                     Ok(response)
                 }
