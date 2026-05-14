@@ -137,22 +137,61 @@ fn raise_fd_limit() {
 }
 
 fn resolve_config_path() -> PathBuf {
-    if let Some(arg_path) = std::env::args().nth(1) {
-        PathBuf::from(arg_path)
+    let cwd_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("server.toml");
+    if cwd_path.exists() {
+        cwd_path
     } else {
-        let cwd_path = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("server.toml");
-        if cwd_path.exists() {
-            cwd_path
-        } else {
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
-                .unwrap_or_else(|| PathBuf::from("."));
-            exe_dir.join("server.toml")
-        }
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        exe_dir.join("server.toml")
     }
+}
+
+#[derive(Debug)]
+enum StartupCommand {
+    Run { config_path: PathBuf },
+    Version,
+    Help,
+}
+
+fn parse_startup_command<I, S>(args: I) -> Result<StartupCommand>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut args = args.into_iter();
+    let _executable = args.next();
+
+    match args.next().as_ref().map(AsRef::as_ref) {
+        None => Ok(StartupCommand::Run {
+            config_path: resolve_config_path(),
+        }),
+        Some("--version") | Some("-V") | Some("version") => Ok(StartupCommand::Version),
+        Some("--help") | Some("-h") | Some("help") => Ok(StartupCommand::Help),
+        Some(arg) if arg.starts_with('-') => Err(anyhow!(
+            "Unknown option '{}'. Use --help to show supported arguments.",
+            arg
+        )),
+        Some(config_path) => Ok(StartupCommand::Run {
+            config_path: PathBuf::from(config_path),
+        }),
+    }
+}
+
+fn print_version() {
+    println!("KalamDB Server v{} | Build: {}", SERVER_VERSION, BUILD_DATE);
+}
+
+fn print_help() {
+    println!("Usage: kalamdb-server [CONFIG_PATH]");
+    println!();
+    println!("Options:");
+    println!("  -h, --help       Show this help message");
+    println!("  -V, --version    Show version information");
 }
 
 fn load_server_config(config_path: &Path) -> ServerConfig {
@@ -231,7 +270,19 @@ fn main() -> Result<()> {
     #[cfg(unix)]
     raise_fd_limit();
 
-    let config = load_server_config(&resolve_config_path());
+    let config_path = match parse_startup_command(std::env::args())? {
+        StartupCommand::Version => {
+            print_version();
+            return Ok(());
+        },
+        StartupCommand::Help => {
+            print_help();
+            return Ok(());
+        },
+        StartupCommand::Run { config_path } => config_path,
+    };
+
+    let config = load_server_config(&config_path);
     let worker_threads = resolve_tokio_worker_threads(&config);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -353,6 +404,37 @@ mod tests {
     use std::{alloc::Layout, hint::black_box, time::Instant};
 
     use kalamdb_observability::{collect_runtime_metrics, force_allocator_collection};
+
+    use super::{parse_startup_command, StartupCommand};
+
+    #[test]
+    fn parses_version_flag_before_config_resolution() {
+        let command = parse_startup_command(["kalamdb-server", "--version"]).unwrap();
+        assert!(matches!(command, StartupCommand::Version));
+    }
+
+    #[test]
+    fn parses_help_flag_before_config_resolution() {
+        let command = parse_startup_command(["kalamdb-server", "--help"]).unwrap();
+        assert!(matches!(command, StartupCommand::Help));
+    }
+
+    #[test]
+    fn preserves_positional_config_path() {
+        let command = parse_startup_command(["kalamdb-server", "ci-server.toml"]).unwrap();
+        match command {
+            StartupCommand::Run { config_path } => {
+                assert_eq!(config_path, std::path::PathBuf::from("ci-server.toml"));
+            },
+            _ => panic!("expected config path run command"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_flags() {
+        let error = parse_startup_command(["kalamdb-server", "--bogus"]).unwrap_err();
+        assert!(error.to_string().contains("Unknown option '--bogus'"));
+    }
 
     /// Verify the global allocator can allocate, write, read, and free memory.
     /// Under mimalloc this runs through the replaced global allocator; under the
