@@ -1,31 +1,18 @@
-import React from "react";
 import { Plus, MessageSquare, Sparkles } from "lucide-react";
 import type { InferSelectModel } from "drizzle-orm";
 import type { conversations as ConversationsTable } from "@/schema";
-import { conversations } from "@/schema";
 import { cn, formatTime } from "@/lib/utils";
 
-type Conversation = InferSelectModel<typeof ConversationsTable>;
+type ConversationRow = InferSelectModel<typeof ConversationsTable>;
 
 interface SidebarProps {
-  conversations: Conversation[];
+  conversations: ConversationRow[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  insert: (table: typeof ConversationsTable) => { values: (row: Conversation) => Promise<unknown> };
+  onCreate: () => Promise<void> | void;
 }
 
-export function Sidebar({ conversations: convos, selectedId, onSelect, insert }: SidebarProps) {
-  async function createNew() {
-    const id = crypto.randomUUID();
-    await insert(conversations).values({
-      id,
-      title: "New conversation",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    onSelect(id);
-  }
-
+export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate }: SidebarProps) {
   return (
     <aside className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col min-h-0 bg-[var(--surface)]/60 backdrop-blur-xl">
       <div className="p-4 border-b border-[var(--border)] flex items-center gap-2">
@@ -36,7 +23,7 @@ export function Sidebar({ conversations: convos, selectedId, onSelect, insert }:
       </div>
       <div className="p-3">
         <button
-          onClick={createNew}
+          onClick={() => void onCreate()}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-[var(--accent)] to-purple-500 text-white text-sm font-medium hover:opacity-95 shadow-lg shadow-[var(--accent-glow)] hover:shadow-xl transition-all"
         >
           <Plus className="size-4" /> New chat

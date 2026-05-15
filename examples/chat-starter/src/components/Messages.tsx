@@ -36,6 +36,16 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
     return map;
   }, [approvals]);
 
+  // Apply the slide-up animation only the first time a message appears in the
+  // list. Otherwise the animation replays on every parent re-render (typing
+  // tokens trigger ~10/s) and the whole list flickers.
+  const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
+  const isNew = (id: string): boolean => {
+    if (seenMessageIdsRef.current.has(id)) return false;
+    seenMessageIdsRef.current.add(id);
+    return true;
+  };
+
   if (messages.length === 0) {
     return (
       <p className="text-sm text-[var(--muted-foreground)] text-center py-12">
@@ -56,7 +66,7 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
         const isPending = !displayBody && (m.status === "pending" || m.status === "streaming");
 
         return (
-          <li key={m.id} className={cn("flex gap-3 animate-slide-up", isUser ? "flex-row-reverse" : "")}>
+          <li key={m.id} className={cn("flex gap-3", isNew(m.id) && "animate-slide-up", isUser ? "flex-row-reverse" : "")}>
             <div
               className={cn(
                 "size-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm",

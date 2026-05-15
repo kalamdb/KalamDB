@@ -5,9 +5,10 @@ interface ComposerProps {
   onSend: (body: string) => Promise<void>;
   onStop: () => Promise<void>;
   isStreaming: boolean;
+  canStop: boolean;
 }
 
-export function Composer({ onSend, onStop, isStreaming }: ComposerProps) {
+export function Composer({ onSend, onStop, isStreaming, canStop }: ComposerProps) {
   const [draft, setDraft] = React.useState("");
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -54,8 +55,9 @@ export function Composer({ onSend, onStop, isStreaming }: ComposerProps) {
         <button
           type="button"
           onClick={() => void onStop()}
+          disabled={!canStop}
           aria-label="Stop"
-          className="size-9 rounded-xl bg-[var(--destructive)] text-white inline-flex items-center justify-center hover:opacity-90 shadow-md transition-opacity"
+          className="size-9 rounded-xl bg-[var(--destructive)] text-white inline-flex items-center justify-center hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed shadow-md transition-opacity"
         >
           <Square className="size-4" fill="currentColor" />
         </button>

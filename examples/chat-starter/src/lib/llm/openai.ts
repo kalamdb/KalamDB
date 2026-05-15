@@ -23,6 +23,10 @@ interface OpenAiMessage {
   tool_call_id?: string;
 }
 
+// Hard cap on a single tool-call's accumulated argument JSON. A model that
+// streams arguments forever can OOM the agent process; abort instead.
+const MAX_TOOL_ARGS_BYTES = 64 * 1024;
+
 export class OpenAiAdapter implements LlmAdapter {
   public readonly name: string;
   private readonly apiKey: string;
@@ -62,7 +66,6 @@ export class OpenAiAdapter implements LlmAdapter {
       );
     }
 
-    // Accumulators for tool calls (OpenAI streams the arguments JSON in deltas).
     const pendingTools = new Map<
       number,
       { id: string; name: string; argsText: string }
@@ -71,9 +74,13 @@ export class OpenAiAdapter implements LlmAdapter {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let finishReason: "stop" | "tool_calls" | "length" | "error" = "stop";
+    // Start at "error" so an abnormal stream termination (network drop with
+    // no terminal finish_reason frame) doesn't silently report success.
+    let finishReason: "stop" | "tool_calls" | "length" | "error" = "error";
+    let finishObserved = false;
+    let streamDone = false;
 
-    while (true) {
+    outer: while (!streamDone) {
       if (args.signal.aborted) {
         reader.cancel().catch(() => undefined);
         return;
@@ -89,7 +96,8 @@ export class OpenAiAdapter implements LlmAdapter {
         if (!trimmed.startsWith("data: ")) continue;
         const payload = trimmed.slice(6);
         if (payload === "[DONE]") {
-          break;
+          streamDone = true;
+          break outer;
         }
         try {
           const json = JSON.parse(payload) as {
@@ -102,7 +110,7 @@ export class OpenAiAdapter implements LlmAdapter {
                   function?: { name?: string; arguments?: string };
                 }>;
               };
-              finish_reason?: "stop" | "tool_calls" | "length" | null;
+              finish_reason?: "stop" | "tool_calls" | "length" | "content_filter" | null;
             }>;
           };
           const choice = json.choices?.[0];
@@ -119,15 +127,29 @@ export class OpenAiAdapter implements LlmAdapter {
               };
               if (tc.id) existing.id = tc.id;
               if (tc.function?.name) existing.name = tc.function.name;
-              if (tc.function?.arguments) existing.argsText += tc.function.arguments;
+              if (tc.function?.arguments) {
+                existing.argsText += tc.function.arguments;
+                if (existing.argsText.length > MAX_TOOL_ARGS_BYTES) {
+                  reader.cancel().catch(() => undefined);
+                  throw new Error(
+                    `OpenAI tool-call arguments exceeded ${MAX_TOOL_ARGS_BYTES} bytes; aborting`,
+                  );
+                }
+              }
               pendingTools.set(tc.index, existing);
             }
           }
           if (choice?.finish_reason) {
-            finishReason = choice.finish_reason;
+            finishObserved = true;
+            // content_filter is not actionable from the caller's perspective —
+            // map to error so the agent doesn't try to keep going.
+            finishReason = choice.finish_reason === "content_filter" ? "error" : choice.finish_reason;
           }
-        } catch {
-          // Ignore malformed frames.
+        } catch (err) {
+          if (err instanceof Error && err.message.startsWith("OpenAI tool-call")) {
+            throw err;
+          }
+          // Otherwise, ignore malformed SSE frames.
         }
       }
     }
@@ -146,7 +168,7 @@ export class OpenAiAdapter implements LlmAdapter {
       };
     }
 
-    yield { type: "done", reason: finishReason };
+    yield { type: "done", reason: finishObserved ? finishReason : "error" };
   }
 }
 

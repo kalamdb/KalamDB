@@ -34,9 +34,25 @@ export interface LlmAdapter {
 
 let cached: LlmAdapter | null = null;
 
+type Provider = "openai" | "anthropic" | "mock";
+
+function pickProvider(): Provider {
+  const explicit = (process.env.LLM_PROVIDER ?? "").toLowerCase();
+  if (explicit === "openai" || explicit === "anthropic" || explicit === "mock") {
+    return explicit;
+  }
+  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
+  return "mock";
+}
+
 export async function getLlmAdapter(): Promise<LlmAdapter> {
   if (cached) return cached;
-  if (process.env.OPENAI_API_KEY) {
+  const provider = pickProvider();
+  if (provider === "openai") {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("LLM_PROVIDER=openai but OPENAI_API_KEY is not set");
+    }
     const { OpenAiAdapter } = await import("./openai.js");
     cached = new OpenAiAdapter({
       apiKey: process.env.OPENAI_API_KEY,
@@ -44,10 +60,21 @@ export async function getLlmAdapter(): Promise<LlmAdapter> {
     });
     return cached;
   }
+  if (provider === "anthropic") {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set");
+    }
+    const { AnthropicAdapter } = await import("./anthropic.js");
+    cached = new AnthropicAdapter({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      model: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001",
+    });
+    return cached;
+  }
   const { MockAdapter } = await import("./mock.js");
   cached = new MockAdapter();
   console.warn(
-    "[llm] No OPENAI_API_KEY set. Using mock adapter (canned replies). Set the env var to talk to OpenAI for real.",
+    "[llm] No OPENAI_API_KEY / ANTHROPIC_API_KEY set. Using mock adapter (canned replies). Set one to use a real model.",
   );
   return cached;
 }

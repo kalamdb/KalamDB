@@ -1,37 +1,59 @@
 import React from "react";
-import type { InferSelectModel } from "drizzle-orm";
+import type { InferSelectModel, Table } from "drizzle-orm";
 import { approvals, conversations, messages, tasks, typingTokens } from "@/schema";
 import { Messages } from "./Messages";
 import { Composer } from "./Composer";
 
-type Conversation = InferSelectModel<typeof conversations>;
-type Message = InferSelectModel<typeof messages>;
-type Token = InferSelectModel<typeof typingTokens>;
-type Approval = InferSelectModel<typeof approvals>;
-type Task = InferSelectModel<typeof tasks>;
+type ConversationRow = InferSelectModel<typeof conversations>;
+type MessageRow = InferSelectModel<typeof messages>;
+type TokenRow = InferSelectModel<typeof typingTokens>;
+type ApprovalRow = InferSelectModel<typeof approvals>;
+type TaskRow = InferSelectModel<typeof tasks>;
+
+type InsertFn = <T extends Table>(table: T) => { values: (row: Record<string, unknown>) => Promise<unknown> };
+type UpdateFn = <T extends Table>(table: T, id: string) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
 
 interface ConversationProps {
   conversationId: string;
-  conversation: Conversation | null;
-  messages: Message[];
-  typingTokens: Token[];
-  approvals: Approval[];
-  activeTask: Task | null;
-  insert: any;
-  update: any;
+  conversation: ConversationRow | null;
+  messages: MessageRow[];
+  typingTokens: TokenRow[];
+  approvals: ApprovalRow[];
+  activeTask: TaskRow | null;
+  isAgentBusy: boolean;
+  insert: InsertFn;
+  update: UpdateFn;
 }
 
 export function Conversation(props: ConversationProps) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const lastUserMessageIdRef = React.useRef<string | null>(null);
 
+  // Auto-scroll: smooth when the user just sent a message (so they see the
+  // movement), instant during streaming token deltas (~10/s otherwise creates
+  // a fight between queued smooth animations).
   React.useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [props.messages.length, props.typingTokens.length]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const latestUserMessage = [...props.messages].reverse().find((m) => m.role === "user");
+    const justSentByUser = latestUserMessage && latestUserMessage.id !== lastUserMessageIdRef.current;
+    lastUserMessageIdRef.current = latestUserMessage?.id ?? null;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: justSentByUser ? "smooth" : "instant",
+    });
+  }, [props.messages, props.typingTokens.length]);
 
   async function sendUserMessage(body: string) {
     if (!body.trim()) return;
     const now = new Date();
+    const isFirstMessage = props.messages.length === 0;
     const userMessageId = crypto.randomUUID();
+    const assistantId = crypto.randomUUID();
+
+    // Two writes only: the user's message and the task. The agent inserts the
+    // assistant message row on the receiving end (idempotently) so we never
+    // leave an orphan 'pending' assistant row if the task insert fails.
     await props.insert(messages).values({
       id: userMessageId,
       conversationId: props.conversationId,
@@ -41,29 +63,18 @@ export function Conversation(props: ConversationProps) {
       createdAt: now,
       updatedAt: now,
     });
-
-    const assistantId = crypto.randomUUID();
-    await props.insert(messages).values({
-      id: assistantId,
-      conversationId: props.conversationId,
-      role: "assistant",
-      body: "",
-      status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
     await props.insert(tasks).values({
       id: crypto.randomUUID(),
       conversationId: props.conversationId,
       messageId: assistantId,
       isCancelled: false,
-      startedAt: new Date(),
+      startedAt: now,
       finishedAt: null,
     });
 
     await props.update(conversations, props.conversationId).set({
-      updatedAt: new Date(),
-      ...(props.messages.length === 0 ? { title: body.slice(0, 60) } : {}),
+      updatedAt: now,
+      ...(isFirstMessage ? { title: body.slice(0, 60) } : {}),
     });
   }
 
@@ -88,7 +99,7 @@ export function Conversation(props: ConversationProps) {
           </h1>
           <p className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
             {props.messages.length} message{props.messages.length === 1 ? "" : "s"}
-            {props.activeTask && <span className="ml-2 text-[var(--accent)]">  streaming</span>}
+            {props.isAgentBusy && <span className="ml-2 text-[var(--accent)]">  streaming</span>}
           </p>
         </div>
       </header>
@@ -109,7 +120,8 @@ export function Conversation(props: ConversationProps) {
           <Composer
             onSend={sendUserMessage}
             onStop={stopTask}
-            isStreaming={props.activeTask !== null}
+            isStreaming={props.isAgentBusy}
+            canStop={props.activeTask !== null && !props.activeTask.isCancelled}
           />
         </div>
       </div>

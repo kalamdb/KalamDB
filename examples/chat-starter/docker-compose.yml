@@ -1,19 +1,23 @@
 services:
   kalamdb:
-    image: jamals86/kalamdb:latest
+    image: jamals86/kalamdb:0.5.0-beta.1
     container_name: kalamdb-chat-starter
     ports:
       - "8080:8080"
     environment:
+      # DEV-ONLY. Do not carry these settings into production.
       KALAMDB_SERVER_HOST: "0.0.0.0"
-      KALAMDB_ROOT_PASSWORD: "kalamdb-dev-password"
-      KALAMDB_JWT_SECRET: "starter-dev-secret-key-minimum-32-characters-long"
+      KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:-kalamdb-dev-password}"
+      KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:-starter-dev-secret-key-minimum-32-characters-long}"
+      # Allow first-run schema creation over HTTP (used by `npm run setup`).
+      # In prod this should be false; provision schemas with migrations.
       KALAMDB_ALLOW_REMOTE_SETUP: "true"
+      # CORS=* is fine when KalamDB is only reachable from the local Vite dev
+      # server. In prod, set this to your actual frontend origin(s).
       KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: "*"
       RUST_LOG: "${RUST_LOG:-info}"
     volumes:
       - kalamdb_data:/data
-      - ./server.toml:/config/server.toml:ro
     restart: unless-stopped
 
 volumes:

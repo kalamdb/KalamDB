@@ -1,19 +1,23 @@
 -- KalamDB chat starter schema
 -- Run via `npm run setup` (or paste into the SQL editor).
+--
+-- All tables are TYPE='USER' to match the kTable.user(...) annotation in
+-- src/schema.ts (which expects the standard user system columns: _seq,
+-- _deleted, _commit_seq). TYPE='USER' is also required on chat.tasks so the
+-- ON INSERT-sourced topic carries user metadata — runConsumer rejects events
+-- without it.
 
 DROP TOPIC chat.task_events;
 DROP NAMESPACE IF EXISTS chat;
 CREATE NAMESPACE chat;
 
--- Conversations: top-level chat threads, listed in the sidebar.
 CREATE TABLE chat.conversations (
   id          TEXT PRIMARY KEY,
   title       TEXT NOT NULL,
   created_at  TIMESTAMP NOT NULL,
   updated_at  TIMESTAMP NOT NULL
-);
+) WITH (TYPE = 'USER');
 
--- Messages: human and assistant turns, plus tool-call markers.
 CREATE TABLE chat.messages (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -22,10 +26,9 @@ CREATE TABLE chat.messages (
   status           TEXT NOT NULL,         -- 'pending' | 'streaming' | 'final' | 'cancelled' | 'error'
   created_at       TIMESTAMP NOT NULL,
   updated_at       TIMESTAMP NOT NULL
-);
+) WITH (TYPE = 'USER');
 
--- Typing tokens: streamed deltas while the agent is generating.
--- Cleared when the message reaches status='final' or 'cancelled'.
+-- Cleared by the agent when a message reaches a terminal status.
 CREATE TABLE chat.typing_tokens (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -33,9 +36,9 @@ CREATE TABLE chat.typing_tokens (
   body             TEXT NOT NULL,
   seq              INTEGER NOT NULL,
   created_at       TIMESTAMP NOT NULL
-);
+) WITH (TYPE = 'USER');
 
--- Approvals: human-in-the-loop checkpoints the agent waits on.
+-- Human-in-the-loop checkpoints the agent waits on.
 CREATE TABLE chat.approvals (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -44,13 +47,11 @@ CREATE TABLE chat.approvals (
   status           TEXT NOT NULL,         -- 'pending' | 'approved' | 'rejected'
   created_at       TIMESTAMP NOT NULL,
   resolved_at      TIMESTAMP
-);
+) WITH (TYPE = 'USER');
 
--- Tasks: in-flight agent work. The agent watches its own task row and bails
--- when is_cancelled flips to true (this is the live-query-as-control-plane
--- pattern — a Stop button is just an UPDATE on this row).
--- TYPE = 'USER' is required for ON INSERT-sourced topics to carry user
--- metadata; runConsumer rejects events without it.
+-- The agent watches its own task row; Stop button = UPDATE setting
+-- is_cancelled=true. Sourced into chat.task_events on INSERT so a fresh
+-- agent process picks up new work via runConsumer (Kafka-shaped work queue).
 CREATE TABLE chat.tasks (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -60,10 +61,5 @@ CREATE TABLE chat.tasks (
   finished_at      TIMESTAMP
 ) WITH (TYPE = 'USER');
 
--- Topic: every new task row is published as a message on chat.task_events.
--- The agent subscribes via runConsumer (Kafka-style work queue with at-least-
--- once delivery + group-based load balancing). The chat.tasks row stays as
--- the cancellation channel — the agent watches it via a live query and
--- aborts when is_cancelled flips to true.
 CREATE TOPIC chat.task_events;
 ALTER TOPIC chat.task_events ADD SOURCE chat.tasks ON INSERT;

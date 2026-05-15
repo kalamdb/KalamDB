@@ -18,11 +18,12 @@ import {
   type LlmTool,
   type LlmToolCall,
 } from "../lib/llm/index.js";
+import { UUID_RE, uuidLit } from "./ids.js";
 
-const URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
+const KALAMDB_URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
 const USER = process.env.KALAMDB_USER ?? "root";
 const PASSWORD = process.env.KALAMDB_PASSWORD ?? "kalamdb-dev-password";
-const TASK_TOPIC = "chat.task_events";
+const TASK_TOPIC = process.env.KALAMDB_TASK_TOPIC ?? "chat.task_events";
 const GROUP_ID = process.env.KALAMDB_GROUP ?? "chat-agents";
 
 const SYSTEM_PROMPT = `You are a concise, helpful assistant inside a KalamDB-powered chat app.
@@ -59,66 +60,47 @@ interface Task {
   id: string;
   conversation_id: string;
   message_id: string;
-  is_cancelled: boolean;
-  finished_at: string | null;
 }
 
 const activeControllers = new Map<string, AbortController>();
 
 async function main(): Promise<void> {
   // Two clients: the consumer client drives runConsumer (topic pulls + acks),
-  // and a regular KalamDB client handles SQL + live queries (cancellation
-  // channel + approval-resolution subscriptions).
+  // and a regular KalamDB client handles SQL + live queries (per-task cancel
+  // subscriptions + approval-resolution subscriptions).
   const consumerClient = createConsumerClient({
-    url: URL,
+    url: KALAMDB_URL,
     authProvider: async () => Auth.basic(USER, PASSWORD),
     disableCompression: true,
   });
   const sqlClient = createClient({
-    url: URL,
+    url: KALAMDB_URL,
     authProvider: async () => Auth.basic(USER, PASSWORD),
     disableCompression: true,
   });
   await sqlClient.connect();
   const llm = await getLlmAdapter();
-  console.log(`[agent] connected to ${URL}, using ${llm.name}`);
+  console.log(`[agent] connected to ${KALAMDB_URL}, using ${llm.name}`);
   console.log(`[agent] topic=${TASK_TOPIC} group=${GROUP_ID}`);
 
   process.on("unhandledRejection", (reason) => {
     console.error("[agent] unhandled rejection:", reason);
   });
 
-  // Cancellation channel: live query on chat.tasks streams UPDATE events so
-  // we can abort an in-flight task when its is_cancelled flips to true.
-  // (runConsumer is INSERT-sourced, so it can't carry cancel signals.)
-  const cancelUnsub = await sqlClient.live<Task>(
-    "SELECT id, is_cancelled FROM chat.tasks",
-    (rows) => {
-      for (const row of rows) {
-        const id = unwrap(row.id);
-        const cancelled = unwrap(row.is_cancelled);
-        if (cancelled !== true && cancelled !== "true") continue;
-        const ctrl = activeControllers.get(id);
-        if (ctrl && !ctrl.signal.aborted) {
-          console.log(`[agent] cancel signal for ${id.slice(0, 8)}`);
-          ctrl.abort();
-        }
-      }
-    },
-  );
-
   const stop = new AbortController();
-  process.on("SIGINT", async () => {
-    console.log("\n[agent] shutting down");
+  const shutdown = async (signal: string): Promise<void> => {
+    console.log(`\n[agent] ${signal} — shutting down`);
     stop.abort();
     for (const ctrl of activeControllers.values()) ctrl.abort();
-    await cancelUnsub();
-    await sqlClient.disconnect();
+    await sqlClient.disconnect().catch(() => undefined);
     process.exit(0);
-  });
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  // Work queue: runConsumer pulls new tasks off the topic with at-least-once
-  // delivery + group-based load balancing across agent replicas.
+  // Work queue. The topic is sourced from chat.tasks ON INSERT, so each new
+  // task arrives here with at-least-once delivery and group-based load
+  // balancing across replicas of this process.
   await runConsumer<Record<string, unknown>>({
     client: consumerClient,
     name: "chat-agent",
@@ -137,10 +119,18 @@ async function main(): Promise<void> {
         id: String(unwrap(row.id) ?? ""),
         conversation_id: String(unwrap(row.conversation_id) ?? ""),
         message_id: String(unwrap(row.message_id) ?? ""),
-        is_cancelled: false,
-        finished_at: null,
       };
-      if (!task.id || activeControllers.has(task.id)) return;
+      if (!UUID_RE.test(task.id) || !UUID_RE.test(task.conversation_id) || !UUID_RE.test(task.message_id)) {
+        console.warn(`[agent] dropping malformed task event:`, row);
+        return;
+      }
+      if (activeControllers.has(task.id)) return;
+
+      // At-least-once redelivery: skip tasks already finished or cancelled.
+      if (await isTaskTerminal(sqlClient, task.id)) {
+        return;
+      }
+
       const ctrl = new AbortController();
       activeControllers.set(task.id, ctrl);
       try {
@@ -155,6 +145,9 @@ async function main(): Promise<void> {
     onConnectionRestored: ({ attempt }) => {
       console.log(`[agent] reconnected after ${attempt} attempt(s)`);
     },
+    onConnectionError: ({ error, attempt }) => {
+      console.error(`[agent] consumer giving up after ${attempt} attempt(s): ${error instanceof Error ? error.message : String(error)}`);
+    },
   });
 }
 
@@ -166,19 +159,43 @@ async function runTask(
 ): Promise<void> {
   console.log(`[agent] task ${task.id.slice(0, 8)} → message ${task.message_id.slice(0, 8)}`);
 
+  // Per-task cancellation subscription, scoped to this row only — replaces
+  // the previous global live-on-chat.tasks fan-out.
+  const cancelUnsub = await client.live<{ id: string; is_cancelled: boolean | string }>(
+    `SELECT id, is_cancelled FROM chat.tasks WHERE id = ${uuidLit(task.id)}`,
+    (rows) => {
+      for (const row of rows) {
+        const cancelled = unwrap(row.is_cancelled);
+        if ((cancelled === true || cancelled === "true") && !controller.signal.aborted) {
+          console.log(`[agent] cancel signal for ${task.id.slice(0, 8)}`);
+          controller.abort();
+        }
+      }
+    },
+  );
+
+  const assembled: string[] = [];
+  let buffer = "";
+  let flushTimer: NodeJS.Timeout | null = null;
+  let seq = 0;
+  let finalStatus: "final" | "cancelled" | "error" = "error";
+
+  const cleanup = async (): Promise<void> => {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    buffer = "";
+    await cancelUnsub().catch(() => undefined);
+    await clearTypingTokens(client, task.message_id).catch(() => undefined);
+    await finalizeTask(client, task.id).catch(() => undefined);
+  };
+
   try {
+    await ensureAssistantStub(client, task);
     await markStreaming(client, task.message_id);
+
     const baseMessages: LlmMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
     baseMessages.push(...(await fetchHistory(client, task.conversation_id)));
     console.log(`[agent] history: ${baseMessages.length - 1} messages; starting LLM turn`);
 
-    const assembled: string[] = [];
-    let seq = 0;
-    const messages: LlmMessage[] = [...baseMessages];
-    let turn = 0;
-
-    let buffer = "";
-    let flushTimer: NodeJS.Timeout | null = null;
     const flush = async () => {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       if (!buffer) return;
@@ -206,6 +223,8 @@ async function runTask(
       }
     };
 
+    const messages: LlmMessage[] = [...baseMessages];
+    let turn = 0;
     while (turn < 8) {
       turn++;
       const pendingCalls: LlmToolCall[] = [];
@@ -229,23 +248,26 @@ async function runTask(
         }
       } catch (error) {
         if (controller.signal.aborted) {
+          finalStatus = "cancelled";
           await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
           return;
         }
         console.error(`[agent] llm error:`, error);
+        finalStatus = "error";
         await finalizeMessage(client, task.message_id, "Sorry — something went wrong.", "error");
         return;
       }
 
       if (controller.signal.aborted) {
+        finalStatus = "cancelled";
         await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
         return;
       }
 
       if (stopReason !== "tool_calls" || pendingCalls.length === 0) {
         await flush();
+        finalStatus = "final";
         await finalizeMessage(client, task.message_id, assembled.join(""), "final");
-        await clearTypingTokens(client, task.message_id);
         return;
       }
 
@@ -263,27 +285,29 @@ async function runTask(
           content: result,
         });
         if (controller.signal.aborted) {
+          finalStatus = "cancelled";
           await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
           return;
         }
       }
     }
 
+    finalStatus = "final";
     await finalizeMessage(
       client,
       task.message_id,
       assembled.join("") + "\n\n(Agent exceeded tool-call turn limit.)",
       "final",
     );
-    await clearTypingTokens(client, task.message_id);
   } finally {
-    await finalizeTask(client, task.id);
+    void finalStatus;
+    await cleanup();
   }
 }
 
 async function dispatchTool(
   client: KalamDBClient,
-  task: { id: string; conversation_id: string; message_id: string },
+  task: Task,
   call: LlmToolCall,
   signal: AbortSignal,
 ): Promise<string> {
@@ -295,7 +319,7 @@ async function dispatchTool(
 
 async function requestApproval(
   client: KalamDBClient,
-  task: { id: string; conversation_id: string; message_id: string },
+  task: Task,
   call: LlmToolCall,
   signal: AbortSignal,
 ): Promise<string> {
@@ -320,41 +344,40 @@ async function requestApproval(
     let settled = false;
     let unsubscribe: Unsubscribe | undefined;
 
-    const onAbort = () => {
+    const finish = (value: string): void => {
       if (settled) return;
       settled = true;
+      signal.removeEventListener("abort", onAbort);
       void unsubscribe?.();
-      resolve("rejected (cancelled by user before approval resolved)");
+      resolve(value);
     };
+    const onAbort = (): void => finish("rejected (cancelled by user before approval resolved)");
     signal.addEventListener("abort", onAbort, { once: true });
 
     client
       .live<{ id: string; status: string }>(
-        `SELECT id, status FROM chat.approvals WHERE id = '${approvalId}'`,
+        `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
         (rows) => {
           const row = rows[0];
           if (!row) return;
           const status = unwrap(row.status);
           if (status === "approved" || status === "rejected") {
-            if (settled) return;
-            settled = true;
-            signal.removeEventListener("abort", onAbort);
-            void unsubscribe?.();
             console.log(`[agent] approval ${approvalId.slice(0, 8)} resolved: ${status}`);
-            resolve(status);
+            finish(status);
           }
+        },
+        {
+          onError: (err) => {
+            console.error(`[agent] approval live errored:`, err);
+            finish(`error subscribing to approval: ${String(err)}`);
+          },
         },
       )
       .then((u) => {
         unsubscribe = u;
         if (settled) void u();
       })
-      .catch((err) => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        resolve(`error subscribing to approval: ${String(err)}`);
-      });
+      .catch((err) => finish(`error subscribing to approval: ${String(err)}`));
   });
 }
 
@@ -364,9 +387,10 @@ async function fetchHistory(
 ): Promise<LlmMessage[]> {
   const res = await client.query(
     `SELECT role, body FROM chat.messages
-       WHERE conversation_id = '${conversationId}'
+       WHERE conversation_id = $1
          AND status IN ('final', 'streaming')
        ORDER BY created_at ASC`,
+    [conversationId],
   );
   const rows =
     (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
@@ -380,6 +404,41 @@ async function fetchHistory(
     out.push({ role, content: body });
   }
   return out;
+}
+
+async function isTaskTerminal(client: KalamDBClient, taskId: string): Promise<boolean> {
+  const res = await client.query(
+    `SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`,
+    [taskId],
+  );
+  const row =
+    (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
+      ?.named_rows?.[0];
+  if (!row) return true;
+  const finishedAt = unwrap(row.finished_at);
+  const cancelled = unwrap(row.is_cancelled);
+  return Boolean(finishedAt) || cancelled === true || cancelled === "true";
+}
+
+async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<void> {
+  // Idempotent: if redelivery brought us back here, the row may already exist.
+  const res = await client.query(
+    `SELECT id FROM chat.messages WHERE id = $1`,
+    [task.message_id],
+  );
+  const exists =
+    ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows?.length ?? 0) > 0;
+  if (exists) return;
+  const now = new Date().toISOString();
+  await client.insert("chat.messages", {
+    id: task.message_id,
+    conversation_id: task.conversation_id,
+    role: "assistant",
+    body: "",
+    status: "pending",
+    created_at: now,
+    updated_at: now,
+  });
 }
 
 async function markStreaming(client: KalamDBClient, messageId: string): Promise<void> {
@@ -410,14 +469,15 @@ async function finalizeTask(client: KalamDBClient, taskId: string): Promise<void
 
 async function clearTypingTokens(client: KalamDBClient, messageId: string): Promise<void> {
   const res = await client.query(
-    `SELECT id FROM chat.typing_tokens WHERE message_id = '${messageId}'`,
+    `SELECT id FROM chat.typing_tokens WHERE message_id = $1`,
+    [messageId],
   );
   const rows =
     (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
       ?.named_rows ?? [];
   for (const row of rows) {
     const id = unwrap(row.id);
-    if (typeof id === "string" && id.length > 0) {
+    if (typeof id === "string" && UUID_RE.test(id)) {
       await client.delete("chat.typing_tokens", id);
     }
   }
