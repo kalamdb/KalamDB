@@ -10,8 +10,13 @@ type TokenRow = InferSelectModel<typeof typingTokens>;
 type ApprovalRow = InferSelectModel<typeof approvals>;
 type TaskRow = InferSelectModel<typeof tasks>;
 
-type InsertFn = <T extends Table>(table: T) => { values: (row: Record<string, unknown>) => Promise<unknown> };
-type UpdateFn = <T extends Table>(table: T, id: string) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
+type InsertFn = <T extends Table>(
+  table: T,
+) => { values: (row: Record<string, unknown>) => Promise<unknown> };
+type UpdateFn = <T extends Table>(
+  table: T,
+  id: string,
+) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
 
 interface ConversationProps {
   conversationId: string;
@@ -36,7 +41,8 @@ export function Conversation(props: ConversationProps) {
     const el = scrollRef.current;
     if (!el) return;
     const latestUserMessage = [...props.messages].reverse().find((m) => m.role === "user");
-    const justSentByUser = latestUserMessage && latestUserMessage.id !== lastUserMessageIdRef.current;
+    const justSentByUser =
+      latestUserMessage && latestUserMessage.id !== lastUserMessageIdRef.current;
     lastUserMessageIdRef.current = latestUserMessage?.id ?? null;
     el.scrollTo({
       top: el.scrollHeight,
@@ -99,7 +105,7 @@ export function Conversation(props: ConversationProps) {
           </h1>
           <p className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
             {props.messages.length} message{props.messages.length === 1 ? "" : "s"}
-            {props.isAgentBusy && <span className="ml-2 text-[var(--accent)]">  streaming</span>}
+            {props.isAgentBusy && <span className="ml-2 text-[var(--accent)]"> streaming</span>}
           </p>
         </div>
       </header>

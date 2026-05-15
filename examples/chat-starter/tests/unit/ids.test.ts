@@ -22,7 +22,10 @@ test("UUID_RE rejects malformed shapes", () => {
 });
 
 test("uuidLit wraps a valid UUID as a SQL literal", () => {
-  assert.equal(uuidLit("4d9f52c9-8e1b-49d3-9c96-17f18ff90058"), "'4d9f52c9-8e1b-49d3-9c96-17f18ff90058'");
+  assert.equal(
+    uuidLit("4d9f52c9-8e1b-49d3-9c96-17f18ff90058"),
+    "'4d9f52c9-8e1b-49d3-9c96-17f18ff90058'",
+  );
 });
 
 test("uuidLit throws on injection attempts", () => {

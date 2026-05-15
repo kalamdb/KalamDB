@@ -1,8 +1,4 @@
-import type {
-  LlmAdapter,
-  LlmStreamArgs,
-  LlmStreamEvent,
-} from "./index.js";
+import type { LlmAdapter, LlmStreamArgs, LlmStreamEvent } from "./index.js";
 
 /**
  * Canned-response adapter for first-run demos without an API key.
@@ -38,7 +34,10 @@ export class MockAdapter implements LlmAdapter {
       return;
     }
 
-    if (!isResumeAfterApproval && /\b(delete|remove|drop|send|charge|email|uninstall|wipe)\b/.test(text)) {
+    if (
+      !isResumeAfterApproval &&
+      /\b(delete|remove|drop|send|charge|email|uninstall|wipe)\b/.test(text)
+    ) {
       // Interleave a short text preface before the tool_call so the agent's
       // assembled-text-flush path is exercised the same way it would be with
       // a real model.

@@ -2,9 +2,21 @@ import React from "react";
 import { MessageSquarePlus, Sparkles, Zap, ShieldCheck, Square } from "lucide-react";
 
 const FEATURES = [
-  { icon: Zap, title: "Streaming", body: "Each LLM token is a row in `typing_tokens`. UI subscribes; no SSE plumbing." },
-  { icon: ShieldCheck, title: "Approvals", body: "The agent calls `request_approval`. UI shows it; one click resolves." },
-  { icon: Square, title: "Stop, live", body: "Stop button is an UPDATE. The agent watches its own row and aborts." },
+  {
+    icon: Zap,
+    title: "Streaming",
+    body: "Each LLM token is a row in `typing_tokens`. UI subscribes; no SSE plumbing.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Approvals",
+    body: "The agent calls `request_approval`. UI shows it; one click resolves.",
+  },
+  {
+    icon: Square,
+    title: "Stop, live",
+    body: "Stop button is an UPDATE. The agent watches its own row and aborts.",
+  },
 ];
 
 export function Welcome({ onCreate }: { onCreate: () => void }) {
@@ -21,7 +33,7 @@ export function Welcome({ onCreate }: { onCreate: () => void }) {
         <div className="space-y-3">
           <h1 className="text-3xl font-semibold tracking-tight">KalamDB Chat Starter</h1>
           <p className="text-sm text-[var(--muted-foreground)] leading-relaxed max-w-md mx-auto">
-            Live queries power every real-time behavior in this app  streaming, approvals,
+            Live queries power every real-time behavior in this app streaming, approvals,
             cancellation. No bespoke WebSocket plumbing.
           </p>
         </div>
@@ -34,7 +46,9 @@ export function Welcome({ onCreate }: { onCreate: () => void }) {
             >
               <f.icon className="size-4 text-[var(--accent)] mb-2" />
               <h3 className="text-sm font-medium">{f.title}</h3>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1 leading-relaxed">{f.body}</p>
+              <p className="text-xs text-[var(--muted-foreground)] mt-1 leading-relaxed">
+                {f.body}
+              </p>
             </div>
           ))}
         </div>

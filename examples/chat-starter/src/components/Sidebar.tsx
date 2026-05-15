@@ -57,7 +57,8 @@ export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate 
         )}
       </div>
       <div className="p-3 border-t border-[var(--border)] text-[10px] text-[var(--muted-foreground)]">
-        Powered by <span className="font-medium text-[var(--foreground)]">KalamDB</span> live queries
+        Powered by <span className="font-medium text-[var(--foreground)]">KalamDB</span> live
+        queries
       </div>
     </aside>
   );

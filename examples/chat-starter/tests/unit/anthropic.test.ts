@@ -34,9 +34,7 @@ test("splitSystemAndMessages translates assistant tool_calls into Anthropic tool
     {
       role: "assistant",
       content: "Let me check.",
-      toolCalls: [
-        { id: "call_1", name: "request_approval", arguments: { question: "Approve?" } },
-      ],
+      toolCalls: [{ id: "call_1", name: "request_approval", arguments: { question: "Approve?" } }],
     },
   ];
   const out = splitSystemAndMessages(messages);
@@ -49,20 +47,20 @@ test("splitSystemAndMessages translates assistant tool_calls into Anthropic tool
 });
 
 test("splitSystemAndMessages emits an empty-string assistant when no content + no tool_calls", () => {
-  const messages: LlmMessage[] = [
-    { role: "assistant", content: "" },
-  ];
+  const messages: LlmMessage[] = [{ role: "assistant", content: "" }];
   const out = splitSystemAndMessages(messages);
   assert.equal(out.messages[0]?.content, "");
 });
 
 test("splitSystemAndMessages converts a tool message into a user tool_result", () => {
-  const messages: LlmMessage[] = [
-    { role: "tool", toolCallId: "call_1", content: "approved" },
-  ];
+  const messages: LlmMessage[] = [{ role: "tool", toolCallId: "call_1", content: "approved" }];
   const out = splitSystemAndMessages(messages);
   assert.equal(out.messages[0]?.role, "user");
-  const blocks = out.messages[0]?.content as Array<{ type: string; tool_use_id: string; content: string }>;
+  const blocks = out.messages[0]?.content as Array<{
+    type: string;
+    tool_use_id: string;
+    content: string;
+  }>;
   assert.equal(blocks[0]?.type, "tool_result");
   assert.equal(blocks[0]?.tool_use_id, "call_1");
   assert.equal(blocks[0]?.content, "approved");

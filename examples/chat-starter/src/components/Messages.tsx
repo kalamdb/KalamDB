@@ -1,7 +1,11 @@
 import React from "react";
 import { User, Sparkles, Check, X, ShieldQuestion } from "lucide-react";
 import type { InferSelectModel } from "drizzle-orm";
-import type { messages as MessagesTable, typingTokens as TokensTable, approvals as ApprovalsTable } from "@/schema";
+import type {
+  messages as MessagesTable,
+  typingTokens as TokensTable,
+  approvals as ApprovalsTable,
+} from "@/schema";
 import { cn, formatTime } from "@/lib/utils";
 
 type Message = InferSelectModel<typeof MessagesTable>;
@@ -36,15 +40,10 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
     return map;
   }, [approvals]);
 
-  // Apply the slide-up animation only the first time a message appears in the
-  // list. Otherwise the animation replays on every parent re-render (typing
-  // tokens trigger ~10/s) and the whole list flickers.
-  const seenMessageIdsRef = React.useRef<Set<string>>(new Set());
-  const isNew = (id: string): boolean => {
-    if (seenMessageIdsRef.current.has(id)) return false;
-    seenMessageIdsRef.current.add(id);
-    return true;
-  };
+  // CSS keyframe animations attach to the DOM node, not to React's virtual
+  // DOM. As long as each <li> has a stable key (m.id), React reuses the same
+  // DOM element across renders so the animation only fires on first mount —
+  // exactly what we want for streaming where messages update ~10x/sec.
 
   if (messages.length === 0) {
     return (
@@ -59,14 +58,16 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
       {messages.map((m) => {
         const tokens = tokensByMessage.get(m.id) ?? [];
         const streamed = tokens.map((t) => t.body).join("");
-        const displayBody =
-          m.status === "streaming" && streamed.length > 0 ? streamed : m.body;
+        const displayBody = m.status === "streaming" && streamed.length > 0 ? streamed : m.body;
         const isUser = m.role === "user";
         const messageApprovals = approvalsByMessage.get(m.id) ?? [];
         const isPending = !displayBody && (m.status === "pending" || m.status === "streaming");
 
         return (
-          <li key={m.id} className={cn("flex gap-3", isNew(m.id) && "animate-slide-up", isUser ? "flex-row-reverse" : "")}>
+          <li
+            key={m.id}
+            className={cn("flex gap-3 animate-slide-up", isUser ? "flex-row-reverse" : "")}
+          >
             <div
               className={cn(
                 "size-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm",
@@ -81,7 +82,12 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                 <Sparkles className="size-4 text-white" />
               )}
             </div>
-            <div className={cn("max-w-[78%] flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
+            <div
+              className={cn(
+                "max-w-[78%] flex flex-col gap-2",
+                isUser ? "items-end" : "items-start",
+              )}
+            >
               <div
                 className={cn(
                   "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap shadow-sm",
@@ -145,11 +151,17 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                   ) : (
                     <p className="text-[12px] text-[var(--muted-foreground)] flex items-center gap-1.5">
                       {a.status === "approved" ? (
-                        <><Check className="size-3.5 text-emerald-500" /> Approved</>
+                        <>
+                          <Check className="size-3.5 text-emerald-500" /> Approved
+                        </>
                       ) : (
-                        <><X className="size-3.5 text-red-500" /> Rejected</>
+                        <>
+                          <X className="size-3.5 text-red-500" /> Rejected
+                        </>
                       )}
-                      {a.resolvedAt ? <span className="opacity-60"> {formatTime(a.resolvedAt)}</span> : null}
+                      {a.resolvedAt ? (
+                        <span className="opacity-60"> {formatTime(a.resolvedAt)}</span>
+                      ) : null}
                     </p>
                   )}
                 </div>

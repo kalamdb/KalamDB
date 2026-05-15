@@ -48,9 +48,11 @@ test("destructive verb triggers a request_approval tool call (with text preface)
 test("resuming after an approved tool result yields a confirmation reply", async () => {
   const events = await collect([
     { role: "user", content: "Please delete my old account data immediately." },
-    { role: "assistant", content: "Let me get explicit approval before I do that.", toolCalls: [
-      { id: "mock_x", name: "request_approval", arguments: { question: "Approve?" } },
-    ] },
+    {
+      role: "assistant",
+      content: "Let me get explicit approval before I do that.",
+      toolCalls: [{ id: "mock_x", name: "request_approval", arguments: { question: "Approve?" } }],
+    },
     { role: "tool", toolCallId: "mock_x", content: "approved" },
   ]);
   const text = events
@@ -84,7 +86,7 @@ test("abort signal stops the generator before completion", async () => {
   const messages: LlmMessage[] = [{ role: "user", content: "hi" }];
   const stream = adapter.stream({ messages, signal: controller.signal });
   let count = 0;
-  for await (const _event of stream) {
+  for await (const _ev of stream) {
     count++;
     controller.abort();
   }

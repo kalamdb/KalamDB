@@ -1,0 +1,45 @@
+name: chat-starter
+
+on:
+  pull_request:
+    paths:
+      - "examples/chat-starter/**"
+      - ".github/workflows/chat-starter.yml"
+  push:
+    branches: [main]
+    paths:
+      - "examples/chat-starter/**"
+      - ".github/workflows/chat-starter.yml"
+
+defaults:
+  run:
+    working-directory: examples/chat-starter
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: examples/chat-starter/package-lock.json
+
+      # The chat-starter consumes @kalamdb/* via file: links into the same
+      # repo. Build those workspaces' dist first so the file: install picks
+      # up real artifacts.
+      - name: Install + build sibling SDKs
+        run: |
+          cd ../../link/sdks/typescript/client && npm ci && npm run build
+          cd ../orm && npm ci && npm run build || true
+          cd ../react && npm ci && npm run build || true
+        working-directory: examples/chat-starter
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run test:unit
+      - run: npm run test:component

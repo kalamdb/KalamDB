@@ -1,10 +1,5 @@
 import "dotenv/config";
-import {
-  Auth,
-  createClient,
-  type KalamDBClient,
-  type Unsubscribe,
-} from "@kalamdb/client";
+import { Auth, createClient, type KalamDBClient, type Unsubscribe } from "@kalamdb/client";
 import {
   createConsumerClient,
   runConsumer,
@@ -18,7 +13,11 @@ import {
   type LlmTool,
   type LlmToolCall,
 } from "../lib/llm/index.js";
+import { withRetry } from "../lib/llm/retry.js";
 import { UUID_RE, uuidLit } from "./ids.js";
+import { logger } from "../lib/logger.js";
+
+const log = logger.child({ component: "agent" });
 
 const KALAMDB_URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
 const USER = process.env.KALAMDB_USER ?? "root";
@@ -79,17 +78,16 @@ async function main(): Promise<void> {
     disableCompression: true,
   });
   await sqlClient.connect();
-  const llm = await getLlmAdapter();
-  console.log(`[agent] connected to ${KALAMDB_URL}, using ${llm.name}`);
-  console.log(`[agent] topic=${TASK_TOPIC} group=${GROUP_ID}`);
+  const llm = withRetry(await getLlmAdapter(), undefined, log);
+  log.info({ url: KALAMDB_URL, llm: llm.name, topic: TASK_TOPIC, group: GROUP_ID }, "agent ready");
 
   process.on("unhandledRejection", (reason) => {
-    console.error("[agent] unhandled rejection:", reason);
+    log.error({ err: reason }, "unhandled rejection");
   });
 
   const stop = new AbortController();
   const shutdown = async (signal: string): Promise<void> => {
-    console.log(`\n[agent] ${signal} — shutting down`);
+    log.info({ signal }, "shutting down");
     stop.abort();
     for (const ctrl of activeControllers.values()) ctrl.abort();
     await sqlClient.disconnect().catch(() => undefined);
@@ -120,8 +118,12 @@ async function main(): Promise<void> {
         conversation_id: String(unwrap(row.conversation_id) ?? ""),
         message_id: String(unwrap(row.message_id) ?? ""),
       };
-      if (!UUID_RE.test(task.id) || !UUID_RE.test(task.conversation_id) || !UUID_RE.test(task.message_id)) {
-        console.warn(`[agent] dropping malformed task event:`, row);
+      if (
+        !UUID_RE.test(task.id) ||
+        !UUID_RE.test(task.conversation_id) ||
+        !UUID_RE.test(task.message_id)
+      ) {
+        log.warn({ row }, "dropping malformed task event");
         return;
       }
       if (activeControllers.has(task.id)) return;
@@ -140,13 +142,13 @@ async function main(): Promise<void> {
       }
     },
     onConnectionRetry: ({ attempt, backoffMs, error }) => {
-      console.warn(`[agent] reconnecting in ${backoffMs}ms (attempt ${attempt}): ${error instanceof Error ? error.message : String(error)}`);
+      log.warn({ attempt, backoffMs, err: error }, "consumer reconnecting");
     },
     onConnectionRestored: ({ attempt }) => {
-      console.log(`[agent] reconnected after ${attempt} attempt(s)`);
+      log.info({ attempt }, "consumer reconnected");
     },
     onConnectionError: ({ error, attempt }) => {
-      console.error(`[agent] consumer giving up after ${attempt} attempt(s): ${error instanceof Error ? error.message : String(error)}`);
+      log.error({ attempt, err: error }, "consumer giving up");
     },
   });
 }
@@ -157,7 +159,12 @@ async function runTask(
   task: Task,
   controller: AbortController,
 ): Promise<void> {
-  console.log(`[agent] task ${task.id.slice(0, 8)} → message ${task.message_id.slice(0, 8)}`);
+  const tlog = log.child({
+    task_id: task.id,
+    message_id: task.message_id,
+    conversation_id: task.conversation_id,
+  });
+  tlog.info("task started");
 
   // Per-task cancellation subscription, scoped to this row only — replaces
   // the previous global live-on-chat.tasks fan-out.
@@ -167,7 +174,7 @@ async function runTask(
       for (const row of rows) {
         const cancelled = unwrap(row.is_cancelled);
         if ((cancelled === true || cancelled === "true") && !controller.signal.aborted) {
-          console.log(`[agent] cancel signal for ${task.id.slice(0, 8)}`);
+          tlog.info("cancel signal received");
           controller.abort();
         }
       }
@@ -181,7 +188,10 @@ async function runTask(
   let finalStatus: "final" | "cancelled" | "error" = "error";
 
   const cleanup = async (): Promise<void> => {
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
     buffer = "";
     await cancelUnsub().catch(() => undefined);
     await clearTypingTokens(client, task.message_id).catch(() => undefined);
@@ -194,10 +204,13 @@ async function runTask(
 
     const baseMessages: LlmMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
     baseMessages.push(...(await fetchHistory(client, task.conversation_id)));
-    console.log(`[agent] history: ${baseMessages.length - 1} messages; starting LLM turn`);
+    tlog.debug({ history: baseMessages.length - 1 }, "starting LLM turn");
 
     const flush = async () => {
-      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
       if (!buffer) return;
       const body = buffer;
       buffer = "";
@@ -211,7 +224,7 @@ async function runTask(
           created_at: new Date().toISOString(),
         });
       } catch (e) {
-        console.error("[agent] typing-token flush failed:", (e as Error).message);
+        tlog.error({ err: e }, "typing-token flush failed");
       }
     };
     const enqueue = (delta: string) => {
@@ -219,7 +232,9 @@ async function runTask(
       if (buffer.length >= 16) {
         void flush();
       } else if (!flushTimer) {
-        flushTimer = setTimeout(() => { void flush(); }, 200);
+        flushTimer = setTimeout(() => {
+          void flush();
+        }, 200);
       }
     };
 
@@ -252,7 +267,7 @@ async function runTask(
           await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
           return;
         }
-        console.error(`[agent] llm error:`, error);
+        tlog.error({ err: error }, "llm error");
         finalStatus = "error";
         await finalizeMessage(client, task.message_id, "Sorry — something went wrong.", "error");
         return;
@@ -338,7 +353,7 @@ async function requestApproval(
     created_at: new Date().toISOString(),
     resolved_at: null,
   });
-  console.log(`[agent] approval ${approvalId.slice(0, 8)} pending: ${question}`);
+  log.info({ approval_id: approvalId, message_id: task.message_id, question }, "approval pending");
 
   return await new Promise<string>((resolve) => {
     let settled = false;
@@ -362,13 +377,13 @@ async function requestApproval(
           if (!row) return;
           const status = unwrap(row.status);
           if (status === "approved" || status === "rejected") {
-            console.log(`[agent] approval ${approvalId.slice(0, 8)} resolved: ${status}`);
+            log.info({ approval_id: approvalId, status }, "approval resolved");
             finish(status);
           }
         },
         {
           onError: (err) => {
-            console.error(`[agent] approval live errored:`, err);
+            log.error({ approval_id: approvalId, err }, "approval live errored");
             finish(`error subscribing to approval: ${String(err)}`);
           },
         },
@@ -381,10 +396,7 @@ async function requestApproval(
   });
 }
 
-async function fetchHistory(
-  client: KalamDBClient,
-  conversationId: string,
-): Promise<LlmMessage[]> {
+async function fetchHistory(client: KalamDBClient, conversationId: string): Promise<LlmMessage[]> {
   const res = await client.query(
     `SELECT role, body FROM chat.messages
        WHERE conversation_id = $1
@@ -407,13 +419,11 @@ async function fetchHistory(
 }
 
 async function isTaskTerminal(client: KalamDBClient, taskId: string): Promise<boolean> {
-  const res = await client.query(
-    `SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`,
-    [taskId],
-  );
-  const row =
-    (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
-      ?.named_rows?.[0];
+  const res = await client.query(`SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`, [
+    taskId,
+  ]);
+  const row = (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> })
+    .results?.[0]?.named_rows?.[0];
   if (!row) return true;
   const finishedAt = unwrap(row.finished_at);
   const cancelled = unwrap(row.is_cancelled);
@@ -422,12 +432,10 @@ async function isTaskTerminal(client: KalamDBClient, taskId: string): Promise<bo
 
 async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<void> {
   // Idempotent: if redelivery brought us back here, the row may already exist.
-  const res = await client.query(
-    `SELECT id FROM chat.messages WHERE id = $1`,
-    [task.message_id],
-  );
+  const res = await client.query(`SELECT id FROM chat.messages WHERE id = $1`, [task.message_id]);
   const exists =
-    ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows?.length ?? 0) > 0;
+    ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows
+      ?.length ?? 0) > 0;
   if (exists) return;
   const now = new Date().toISOString();
   await client.insert("chat.messages", {
@@ -468,10 +476,9 @@ async function finalizeTask(client: KalamDBClient, taskId: string): Promise<void
 }
 
 async function clearTypingTokens(client: KalamDBClient, messageId: string): Promise<void> {
-  const res = await client.query(
-    `SELECT id FROM chat.typing_tokens WHERE message_id = $1`,
-    [messageId],
-  );
+  const res = await client.query(`SELECT id FROM chat.typing_tokens WHERE message_id = $1`, [
+    messageId,
+  ]);
   const rows =
     (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
       ?.named_rows ?? [];
@@ -494,6 +501,6 @@ function unwrap(value: unknown): any {
 }
 
 main().catch((err) => {
-  console.error("[agent] fatal:", err);
+  log.fatal({ err }, "agent fatal");
   process.exit(1);
 });

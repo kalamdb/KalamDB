@@ -1,10 +1,4 @@
-import type {
-  LlmAdapter,
-  LlmMessage,
-  LlmStreamArgs,
-  LlmStreamEvent,
-  LlmTool,
-} from "./index.js";
+import type { LlmAdapter, LlmMessage, LlmStreamArgs, LlmStreamEvent, LlmTool } from "./index.js";
 
 interface AnthropicOptions {
   apiKey: string;
@@ -100,8 +94,16 @@ export class AnthropicAdapter implements LlmAdapter {
         const payload = dataLine.slice(6);
         try {
           const json = JSON.parse(payload) as
-            | { type: "content_block_start"; index: number; content_block: { type: string; id?: string; name?: string } }
-            | { type: "content_block_delta"; index: number; delta: { type: string; text?: string; partial_json?: string } }
+            | {
+                type: "content_block_start";
+                index: number;
+                content_block: { type: string; id?: string; name?: string };
+              }
+            | {
+                type: "content_block_delta";
+                index: number;
+                delta: { type: string; text?: string; partial_json?: string };
+              }
             | { type: "content_block_stop"; index: number }
             | { type: "message_delta"; delta: { stop_reason?: string } }
             | { type: "message_stop" }
@@ -149,7 +151,7 @@ export class AnthropicAdapter implements LlmAdapter {
 
     for (const block of toolBlocks.values()) {
       if (!block.id || !block.name) continue;
-      let parsed: Record<string, unknown> = {};
+      let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(block.argsText || "{}") as Record<string, unknown>;
       } catch {
@@ -165,9 +167,10 @@ export class AnthropicAdapter implements LlmAdapter {
   }
 }
 
-export function splitSystemAndMessages(
-  messages: LlmMessage[],
-): { system: string | undefined; messages: AnthropicMessage[] } {
+export function splitSystemAndMessages(messages: LlmMessage[]): {
+  system: string | undefined;
+  messages: AnthropicMessage[];
+} {
   const systemParts: string[] = [];
   const out: AnthropicMessage[] = [];
   for (const m of messages) {

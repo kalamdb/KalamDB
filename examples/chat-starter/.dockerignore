@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.github
+playwright-report
+test-results
+e2e-shots
+e2e-videos
+e2e-drive.cjs
+*.tsbuildinfo

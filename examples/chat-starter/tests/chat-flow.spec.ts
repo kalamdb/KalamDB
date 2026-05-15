@@ -41,7 +41,10 @@ test("streaming: assistant reply appears and completes", async ({ page }) => {
   await waitForComposerReady(page);
 
   // The assistant message bubble is present.
-  const assistantBubble = page.locator("li").filter({ hasText: /(Mock reply|KalamDB|adapter)/i }).first();
+  const assistantBubble = page
+    .locator("li")
+    .filter({ hasText: /(Mock reply|KalamDB|adapter)/i })
+    .first();
   await expect(assistantBubble).toBeVisible();
 });
 

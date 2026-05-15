@@ -1,10 +1,4 @@
-import type {
-  LlmAdapter,
-  LlmMessage,
-  LlmStreamArgs,
-  LlmStreamEvent,
-  LlmTool,
-} from "./index.js";
+import type { LlmAdapter, LlmMessage, LlmStreamArgs, LlmStreamEvent, LlmTool } from "./index.js";
 
 interface OpenAiOptions {
   apiKey: string;
@@ -61,15 +55,10 @@ export class OpenAiAdapter implements LlmAdapter {
       body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
-      throw new Error(
-        `OpenAI request failed (${res.status}): ${await res.text().catch(() => "")}`,
-      );
+      throw new Error(`OpenAI request failed (${res.status}): ${await res.text().catch(() => "")}`);
     }
 
-    const pendingTools = new Map<
-      number,
-      { id: string; name: string; argsText: string }
-    >();
+    const pendingTools = new Map<number, { id: string; name: string; argsText: string }>();
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -78,9 +67,8 @@ export class OpenAiAdapter implements LlmAdapter {
     // no terminal finish_reason frame) doesn't silently report success.
     let finishReason: "stop" | "tool_calls" | "length" | "error" = "error";
     let finishObserved = false;
-    let streamDone = false;
 
-    outer: while (!streamDone) {
+    outer: while (true) {
       if (args.signal.aborted) {
         reader.cancel().catch(() => undefined);
         return;
@@ -96,7 +84,6 @@ export class OpenAiAdapter implements LlmAdapter {
         if (!trimmed.startsWith("data: ")) continue;
         const payload = trimmed.slice(6);
         if (payload === "[DONE]") {
-          streamDone = true;
           break outer;
         }
         try {
@@ -143,7 +130,8 @@ export class OpenAiAdapter implements LlmAdapter {
             finishObserved = true;
             // content_filter is not actionable from the caller's perspective —
             // map to error so the agent doesn't try to keep going.
-            finishReason = choice.finish_reason === "content_filter" ? "error" : choice.finish_reason;
+            finishReason =
+              choice.finish_reason === "content_filter" ? "error" : choice.finish_reason;
           }
         } catch (err) {
           if (err instanceof Error && err.message.startsWith("OpenAI tool-call")) {
@@ -156,7 +144,7 @@ export class OpenAiAdapter implements LlmAdapter {
 
     for (const pending of pendingTools.values()) {
       if (!pending.id || !pending.name) continue;
-      let parsed: Record<string, unknown> = {};
+      let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(pending.argsText || "{}") as Record<string, unknown>;
       } catch {

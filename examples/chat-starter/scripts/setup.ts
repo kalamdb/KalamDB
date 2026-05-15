@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { splitStatements } from "./sql-split.js";
+import { logger } from "../src/lib/logger.js";
+
+const log = logger.child({ component: "setup" });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SQL_FILE = resolve(__dirname, "..", "chat-app.sql");
@@ -31,7 +34,9 @@ async function exec(token: string, sql: string): Promise<void> {
     body: JSON.stringify({ sql }),
   });
   if (!res.ok) {
-    throw new Error(`SQL failed (${res.status}): ${sql.slice(0, 80)}\n${await res.text().catch(() => "")}`);
+    throw new Error(
+      `SQL failed (${res.status}): ${sql.slice(0, 80)}\n${await res.text().catch(() => "")}`,
+    );
   }
 }
 
@@ -40,27 +45,27 @@ async function main(): Promise<void> {
   const statements = splitStatements(text);
 
   const token = await login();
-  console.log(`[setup] logged into ${URL} as ${USER}`);
+  log.info({ url: URL, user: USER }, "logged in");
   for (const stmt of statements) {
     const head = stmt.split("\n")[0]!.slice(0, 60);
     try {
       await exec(token, stmt);
-      console.log(`[setup] ok    ${head}`);
+      log.info({ stmt: head }, "ok");
     } catch (err) {
       // DROP statements are best-effort on a fresh database where the
       // target doesn't exist yet. Anything else is a hard failure.
       if (/^\s*DROP\b/i.test(stmt)) {
         const detail = (err as Error).message.split("\n")[0];
-        console.log(`[setup] skip  ${head}  (${detail})`);
+        log.info({ stmt: head, reason: detail }, "skip");
         continue;
       }
       throw err;
     }
   }
-  console.log("[setup] done");
+  log.info("schema setup complete");
 }
 
 main().catch((err) => {
-  console.error("[setup] failed:", err);
+  log.fatal({ err }, "setup failed");
   process.exit(1);
 });

@@ -71,24 +71,24 @@ Three Node processes run in dev (all started by `npm run dev`):
 
 ## Tables
 
-| Table | Purpose |
-|---|---|
-| `chat.conversations` | Top-level chat threads (sidebar). |
-| `chat.messages` | User + assistant turns. `status`: `pending` → `streaming` → `final` / `cancelled` / `error`. The agent inserts the assistant row idempotently when it picks up a task. |
-| `chat.typing_tokens` | One row per LLM delta batch. Cleared when the message reaches a terminal status. |
-| `chat.approvals` | Human-in-the-loop checkpoints. Status flips to `approved` / `rejected` when the user clicks. |
-| `chat.tasks` | In-flight agent work. `WITH (TYPE = 'USER')` — required for the ON-INSERT-sourced topic to carry user metadata. The agent subscribes to its own row for cancellation. |
-| `chat.task_events` (topic) | Sourced from `chat.tasks ON INSERT`. Agents consume via `runConsumer`. |
+| Table                      | Purpose                                                                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chat.conversations`       | Top-level chat threads (sidebar).                                                                                                                                      |
+| `chat.messages`            | User + assistant turns. `status`: `pending` → `streaming` → `final` / `cancelled` / `error`. The agent inserts the assistant row idempotently when it picks up a task. |
+| `chat.typing_tokens`       | One row per LLM delta batch. Cleared when the message reaches a terminal status.                                                                                       |
+| `chat.approvals`           | Human-in-the-loop checkpoints. Status flips to `approved` / `rejected` when the user clicks.                                                                           |
+| `chat.tasks`               | In-flight agent work. `WITH (TYPE = 'USER')` — required for the ON-INSERT-sourced topic to carry user metadata. The agent subscribes to its own row for cancellation.  |
+| `chat.task_events` (topic) | Sourced from `chat.tasks ON INSERT`. Agents consume via `runConsumer`.                                                                                                 |
 
 ## LLM providers
 
 The pluggable adapter lives at `src/lib/llm/`. Three implementations ship:
 
-| Provider | When it's selected | Env vars |
-|---|---|---|
-| OpenAI | `LLM_PROVIDER=openai`, or `OPENAI_API_KEY` set with no provider override | `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`) |
+| Provider  | When it's selected                                                                               | Env vars                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| OpenAI    | `LLM_PROVIDER=openai`, or `OPENAI_API_KEY` set with no provider override                         | `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`)                     |
 | Anthropic | `LLM_PROVIDER=anthropic`, or `ANTHROPIC_API_KEY` set with no provider override and no OpenAI key | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`) |
-| Mock | `LLM_PROVIDER=mock`, or no API keys set | none |
+| Mock      | `LLM_PROVIDER=mock`, or no API keys set                                                          | none                                                                         |
 
 To add another (Bedrock, local Ollama, etc.), implement the `LlmAdapter` interface in a new file under `src/lib/llm/` and wire it into `getLlmAdapter()` in `src/lib/llm/index.ts`:
 
@@ -136,14 +136,14 @@ This is a starter. Before running it anywhere real:
 
 ## Scripts
 
-| Command | Effect |
-|---|---|
-| `npm run dev` | Boot vite + backend + agent under one process (via `concurrently`). |
-| `npm run vite` / `server` / `agent` | Run each individually. |
-| `npm run setup` | (Re)create the schema in `chat-app.sql`. Destructive: drops and recreates `chat.*`. |
-| `npm run build` | Type-check + build the Vite app for production. |
-| `npm test` | Playwright e2e tests (requires the dev stack to be running). |
-| `npm run typecheck` | Strict TS check across both app + agent configs. |
+| Command                             | Effect                                                                              |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `npm run dev`                       | Boot vite + backend + agent under one process (via `concurrently`).                 |
+| `npm run vite` / `server` / `agent` | Run each individually.                                                              |
+| `npm run setup`                     | (Re)create the schema in `chat-app.sql`. Destructive: drops and recreates `chat.*`. |
+| `npm run build`                     | Type-check + build the Vite app for production.                                     |
+| `npm test`                          | Playwright e2e tests (requires the dev stack to be running).                        |
+| `npm run typecheck`                 | Strict TS check across both app + agent configs.                                    |
 
 ## License
 

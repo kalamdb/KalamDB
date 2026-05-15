@@ -1,0 +1,73 @@
+# Production-shaped Compose file. Pair with your own secrets management
+# (.env, Docker secrets, Hashicorp Vault, AWS Secrets Manager) — do NOT
+# commit real KALAMDB_PASSWORD / OPENAI_API_KEY values here.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# The frontend (vite build → static files) is not in this file. Serve
+# dist/ from your CDN or a CDN-fronted nginx; have it proxy /api → server
+# and /kdb → kalamdb.
+
+services:
+  kalamdb:
+    image: jamals86/kalamdb:0.5.0-beta.1
+    environment:
+      KALAMDB_SERVER_HOST: "0.0.0.0"
+      KALAMDB_ROOT_PASSWORD: "${KALAMDB_ROOT_PASSWORD:?must be set}"
+      KALAMDB_JWT_SECRET: "${KALAMDB_JWT_SECRET:?must be set, min 32 chars}"
+      KALAMDB_ALLOW_REMOTE_SETUP: "false"
+      KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: "${CORS_ORIGIN:?set to your frontend origin}"
+    volumes:
+      - kalamdb_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build: .
+    command: ["npx", "tsx", "server/index.ts"]
+    environment:
+      NODE_ENV: production
+      LOG_SERVICE: server
+      KALAMDB_URL: "http://kalamdb:8080"
+      KALAMDB_USER: "root"
+      KALAMDB_PASSWORD: "${KALAMDB_ROOT_PASSWORD:?must be set}"
+      PORT: "3001"
+      TOKEN_RATE_LIMIT_PER_MINUTE: "60"
+    depends_on:
+      kalamdb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  agent:
+    build: .
+    command: ["npx", "tsx", "src/agent/index.ts"]
+    environment:
+      NODE_ENV: production
+      LOG_SERVICE: agent
+      KALAMDB_URL: "http://kalamdb:8080"
+      KALAMDB_USER: "root"
+      KALAMDB_PASSWORD: "${KALAMDB_ROOT_PASSWORD:?must be set}"
+      KALAMDB_GROUP: "chat-agents"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-}"
+    depends_on:
+      kalamdb:
+        condition: service_healthy
+    restart: unless-stopped
+    # Run multiple replicas — they coordinate via KALAMDB_GROUP.
+    deploy:
+      replicas: 2
+
+volumes:
+  kalamdb_data:
