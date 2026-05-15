@@ -171,6 +171,9 @@ fn evaluate_expr(expr: &Expr, row_data: &Row, depth: usize) -> Result<bool, Live
             true,
         ),
 
+        Expr::IsNull(inner) => Ok(value_is_null(inner, row_data)),
+        Expr::IsNotNull(inner) => Ok(!value_is_null(inner, row_data)),
+
         _ => Err(LiveError::InvalidOperation(format!("Unsupported expression type: {:?}", expr))),
     }
 }
@@ -403,6 +406,15 @@ fn extract_value(expr: &Expr, row_data: &Row) -> Result<ScalarValue, LiveError> 
             "Unsupported expression in value extraction: {:?}",
             expr
         ))),
+    }
+}
+
+/// Evaluate `<expr> IS NULL`. A missing column is treated as NULL (SQL standard);
+/// any typed-NULL scalar (`Utf8(None)`, `Int64(None)`, etc.) is also NULL.
+fn value_is_null(expr: &Expr, row_data: &Row) -> bool {
+    match extract_value(expr, row_data) {
+        Ok(value) => value.is_null(),
+        Err(_) => true,
     }
 }
 
