@@ -14,17 +14,17 @@ interface SidebarProps {
 
 export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate }: SidebarProps) {
   return (
-    <aside className="w-72 shrink-0 border-r border-[var(--border)] flex flex-col min-h-0 bg-[var(--surface)]/60 backdrop-blur-xl">
-      <div className="p-4 border-b border-[var(--border)] flex items-center gap-2">
-        <div className="size-7 rounded-lg bg-gradient-to-br from-[var(--accent)] to-purple-500 flex items-center justify-center shadow-lg shadow-[var(--accent-glow)]">
-          <Sparkles className="size-4 text-white" />
+    <aside className="w-72 shrink-0 border-r border-[var(--surface-border)] flex flex-col min-h-0 bg-[var(--background-alt)]/60 backdrop-blur-xl">
+      <div className="p-4 border-b border-[var(--surface-border)] flex items-center gap-2">
+        <div className="size-7 rounded-lg bg-[var(--accent)] flex items-center justify-center shadow-[0_0_18px_var(--accent-glow)]">
+          <Sparkles className="size-4 text-[var(--accent-foreground)]" />
         </div>
         <span className="font-semibold text-sm tracking-tight">KalamDB Chat</span>
       </div>
       <div className="p-3">
         <button
           onClick={() => void onCreate()}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-[var(--accent)] to-purple-500 text-white text-sm font-medium hover:opacity-95 shadow-lg shadow-[var(--accent-glow)] hover:shadow-xl transition-all"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)] text-sm font-medium hover:brightness-110 shadow-[0_0_18px_var(--accent-glow)] transition"
         >
           <Plus className="size-4" /> New chat
         </button>
@@ -41,8 +41,8 @@ export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate 
                   className={cn(
                     "w-full text-left flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-all",
                     c.id === selectedId
-                      ? "bg-[var(--surface-elevated)] shadow-sm"
-                      : "hover:bg-[var(--surface-elevated)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                      ? "bg-[var(--surface)] border border-[var(--surface-border)]"
+                      : "border border-transparent hover:bg-[var(--surface)]/40 text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
                   )}
                 >
                   <MessageSquare className="size-4 mt-0.5 shrink-0 opacity-60" />
@@ -56,9 +56,8 @@ export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate 
           </ul>
         )}
       </div>
-      <div className="p-3 border-t border-[var(--border)] text-[10px] text-[var(--muted-foreground)]">
-        Powered by <span className="font-medium text-[var(--foreground)]">KalamDB</span> live
-        queries
+      <div className="p-3 border-t border-[var(--surface-border)] text-[10px] text-[var(--muted-foreground)] font-mono tracking-wide">
+        powered by <span className="text-[var(--accent)]">kalamdb</span> live queries
       </div>
     </aside>
   );

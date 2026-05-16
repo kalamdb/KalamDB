@@ -98,7 +98,7 @@ export function App() {
                 onSelect={setSelectedId}
                 onCreate={() => createConversation(ctx.insert)}
               />
-              <main className="flex-1 flex flex-col min-h-0 bg-[var(--background)]">
+              <main className="flex-1 flex flex-col min-h-0">
                 {selectedId ? (
                   <Conversation
                     conversationId={selectedId}

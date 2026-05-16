@@ -175,16 +175,9 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
   });
 }
 
-// CLI entrypoint. Importing this file from a test will skip the listen().
-const isDirectInvocation = (() => {
-  try {
-    return import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`;
-  } catch {
-    return false;
-  }
-})();
-
-if (isDirectInvocation || process.env.SERVER_AUTOSTART === "1") {
+// CLI entrypoint. Tests import buildServer() directly with NODE_ENV=test,
+// so we skip the auto-listen in that mode.
+if (process.env.NODE_ENV !== "test") {
   const port = Number(process.env.PORT ?? DEFAULTS.port);
   const server = buildServer();
   server.listen(port, "127.0.0.1", () => {

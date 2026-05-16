@@ -1,56 +1,93 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans:
+    "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* Palette lifted from kalamdb.org so this starter feels native to the brand.
+   Dark-only by design — light mode is intentionally not provided. */
 @layer base {
   :root {
-    --background: oklch(0.985 0.002 247);
-    --surface: oklch(1 0 0);
-    --surface-elevated: oklch(0.97 0.003 247);
-    --foreground: oklch(0.18 0.012 264);
-    --muted: oklch(0.95 0.005 264);
-    --muted-foreground: oklch(0.5 0.015 264);
-    --border: oklch(0.92 0.004 264);
-    --accent: oklch(0.6 0.18 270);
-    --accent-foreground: oklch(0.99 0 0);
-    --destructive: oklch(0.62 0.21 22);
-    --accent-glow: oklch(0.55 0.18 270 / 0.25);
-  }
+    /* Backgrounds */
+    --background: #0a0f1e;
+    --background-alt: #0e1529;
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background: oklch(0.13 0.012 264);
-      --surface: oklch(0.17 0.014 264);
-      --surface-elevated: oklch(0.2 0.014 264);
-      --foreground: oklch(0.96 0.005 264);
-      --muted: oklch(0.22 0.012 264);
-      --muted-foreground: oklch(0.62 0.018 264);
-      --border: oklch(0.27 0.012 264);
-      --accent: oklch(0.7 0.18 270);
-      --accent-foreground: oklch(0.12 0.012 264);
-      --accent-glow: oklch(0.7 0.18 270 / 0.3);
-    }
+    /* Surfaces (glass) */
+    --surface: rgba(16, 24, 48, 0.65);
+    --surface-elevated: rgba(20, 30, 60, 0.7);
+    --surface-border: rgba(255, 255, 255, 0.06);
+    --glass: rgba(16, 24, 48, 0.45);
+    --glass-border: rgba(255, 255, 255, 0.1);
+
+    /* Text */
+    --foreground: #f0f4ff;
+    --muted-foreground: #8b9cc7;
+
+    /* Borders (used by Tailwind utilities through the alias below) */
+    --border: rgba(255, 255, 255, 0.08);
+    --muted: rgba(255, 255, 255, 0.04);
+
+    /* Accents */
+    --accent: #00f0d4;
+    --accent-foreground: #061812;
+    --accent-glow: rgba(0, 240, 212, 0.18);
+    --destructive: #ff5c72;
   }
 
   html,
   body {
     font-family: var(--font-sans);
     color: var(--foreground);
-    background:
-      radial-gradient(at 0% 0%, oklch(0.7 0.18 270 / 0.06) 0%, transparent 50%),
-      radial-gradient(at 100% 100%, oklch(0.7 0.18 320 / 0.06) 0%, transparent 50%),
-      var(--background);
+    background-color: var(--background);
+    background-image:
+      radial-gradient(at 20% 0%, rgba(0, 240, 212, 0.06) 0%, transparent 50%),
+      radial-gradient(at 80% 100%, rgba(123, 95, 255, 0.05) 0%, transparent 55%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
+    font-feature-settings:
+      "ss01" on,
+      "cv11" on;
   }
 
-  button {
+  button,
+  textarea,
+  input {
     font-family: inherit;
   }
-  textarea {
-    font-family: inherit;
+
+  /* Mono font for code-shaped content. Use the `font-mono` Tailwind utility
+     to opt into it where it makes sense (e.g., task IDs, status pills). */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  /* Subtle scrollbar in the brand palette */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* Text selection picks up the accent so highlights feel branded */
+  ::selection {
+    background: rgba(0, 240, 212, 0.25);
+    color: var(--foreground);
   }
 }
 
@@ -68,7 +105,7 @@
 @keyframes pulse-soft {
   0%,
   100% {
-    opacity: 0.4;
+    opacity: 0.35;
   }
   50% {
     opacity: 1;

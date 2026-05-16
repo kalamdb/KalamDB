@@ -98,14 +98,19 @@ export function Conversation(props: ConversationProps) {
 
   return (
     <>
-      <header className="border-b border-[var(--border)] bg-[var(--surface)]/60 backdrop-blur-xl px-6 py-3.5 flex items-center justify-between">
+      <header className="border-b border-[var(--surface-border)] bg-[var(--background-alt)]/60 backdrop-blur-xl px-6 py-3.5 flex items-center justify-between">
         <div className="min-w-0">
           <h1 className="text-sm font-semibold truncate tracking-tight">
             {props.conversation?.title ?? "Conversation"}
           </h1>
-          <p className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
+          <p className="text-[11px] text-[var(--muted-foreground)] mt-0.5 font-mono">
             {props.messages.length} message{props.messages.length === 1 ? "" : "s"}
-            {props.isAgentBusy && <span className="ml-2 text-[var(--accent)]"> streaming</span>}
+            {props.isAgentBusy && (
+              <span className="ml-2 inline-flex items-center gap-1 text-[var(--accent)]">
+                <span className="size-1.5 rounded-full bg-[var(--accent)] animate-pulse-soft" />
+                streaming
+              </span>
+            )}
           </p>
         </div>
       </header>
@@ -121,7 +126,7 @@ export function Conversation(props: ConversationProps) {
         </div>
       </div>
 
-      <div className="border-t border-[var(--border)] bg-[var(--surface)]/60 backdrop-blur-xl px-6 py-4">
+      <div className="border-t border-[var(--surface-border)] bg-[var(--background-alt)]/60 backdrop-blur-xl px-6 py-4">
         <div className="max-w-2xl mx-auto">
           <Composer
             onSend={sendUserMessage}

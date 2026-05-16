@@ -73,13 +73,13 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                 "size-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm",
                 isUser
                   ? "bg-[var(--surface-elevated)] border border-[var(--border)]"
-                  : "bg-gradient-to-br from-[var(--accent)] to-purple-500 shadow-[var(--accent-glow)]",
+                  : "bg-[var(--accent)] shadow-[0_0_24px_var(--accent-glow)]",
               )}
             >
               {isUser ? (
                 <User className="size-4 opacity-70" />
               ) : (
-                <Sparkles className="size-4 text-white" />
+                <Sparkles className="size-4 text-[var(--accent-foreground)]" />
               )}
             </div>
             <div
@@ -92,8 +92,8 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                 className={cn(
                   "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap shadow-sm",
                   isUser
-                    ? "bg-gradient-to-br from-[var(--accent)] to-purple-500 text-white rounded-br-md"
-                    : "bg-[var(--surface)] border border-[var(--border)] rounded-bl-md",
+                    ? "bg-[var(--accent)] text-[var(--accent-foreground)] rounded-br-md"
+                    : "bg-[var(--surface)] backdrop-blur-md border border-[var(--surface-border)] rounded-bl-md",
                   m.status === "cancelled" && "opacity-60 italic",
                   m.status === "error" && "border-[var(--destructive)]",
                 )}
@@ -116,18 +116,18 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                 <div
                   key={a.id}
                   className={cn(
-                    "rounded-2xl border bg-[var(--surface)] p-4 text-sm space-y-3 shadow-sm w-full max-w-md",
+                    "rounded-2xl border bg-[var(--surface)] backdrop-blur-md p-4 text-sm space-y-3 w-full max-w-md",
                     a.status === "pending"
-                      ? "border-[var(--accent)]/40 shadow-[var(--accent-glow)]"
-                      : "border-[var(--border)]",
+                      ? "border-[var(--accent)]/40 shadow-[0_0_28px_var(--accent-glow)]"
+                      : "border-[var(--surface-border)]",
                   )}
                 >
                   <div className="flex items-start gap-2.5">
-                    <div className="size-7 rounded-lg bg-[var(--accent)]/10 flex items-center justify-center shrink-0">
+                    <div className="size-7 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30 flex items-center justify-center shrink-0">
                       <ShieldQuestion className="size-4 text-[var(--accent)]" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-[var(--muted-foreground)] uppercase tracking-wide mb-1">
+                      <p className="text-[11px] font-mono text-[var(--muted-foreground)] uppercase tracking-widest mb-1">
                         Approval required
                       </p>
                       <p className="text-[14px] leading-relaxed">{a.question}</p>
@@ -137,26 +137,26 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                     <div className="flex gap-2 justify-end">
                       <button
                         onClick={() => onApproval(a.id, "rejected")}
-                        className="px-3.5 py-1.5 text-[13px] rounded-lg border border-[var(--border)] hover:bg-[var(--muted)] inline-flex items-center gap-1.5 transition-colors"
+                        className="px-3.5 py-1.5 text-[13px] rounded-lg border border-[var(--surface-border)] hover:border-[var(--destructive)]/60 hover:text-[var(--destructive)] inline-flex items-center gap-1.5 transition"
                       >
                         <X className="size-3.5" /> Reject
                       </button>
                       <button
                         onClick={() => onApproval(a.id, "approved")}
-                        className="px-3.5 py-1.5 text-[13px] rounded-lg bg-gradient-to-r from-[var(--accent)] to-purple-500 text-white shadow-md shadow-[var(--accent-glow)] inline-flex items-center gap-1.5 hover:shadow-lg transition-shadow"
+                        className="px-3.5 py-1.5 text-[13px] rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)] font-medium shadow-[0_0_20px_var(--accent-glow)] inline-flex items-center gap-1.5 hover:brightness-110 transition"
                       >
                         <Check className="size-3.5" /> Approve
                       </button>
                     </div>
                   ) : (
-                    <p className="text-[12px] text-[var(--muted-foreground)] flex items-center gap-1.5">
+                    <p className="text-[12px] text-[var(--muted-foreground)] flex items-center gap-1.5 font-mono">
                       {a.status === "approved" ? (
                         <>
-                          <Check className="size-3.5 text-emerald-500" /> Approved
+                          <Check className="size-3.5 text-[var(--accent)]" /> Approved
                         </>
                       ) : (
                         <>
-                          <X className="size-3.5 text-red-500" /> Rejected
+                          <X className="size-3.5 text-[var(--destructive)]" /> Rejected
                         </>
                       )}
                       {a.resolvedAt ? (

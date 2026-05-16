@@ -1,4 +1,5 @@
 import pino, { type LoggerOptions } from "pino";
+import { createRequire } from "node:module";
 
 // Shared structured logger for the agent, backend, and setup script.
 // We deliberately do NOT use pino.transport(): transports run in a worker
@@ -31,8 +32,9 @@ function buildStream(): NodeJS.WritableStream {
   if (!isDev || isTest) {
     return process.stdout;
   }
-  // Lazily require pino-pretty so the agent image doesn't need it in prod.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // Lazily require pino-pretty (via createRequire because this module ships
+  // as ESM) so production images don't need it.
+  const require = createRequire(import.meta.url);
   const pretty = require("pino-pretty") as (opts: Record<string, unknown>) => NodeJS.WritableStream;
   return pretty({
     colorize: true,

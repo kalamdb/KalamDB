@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { Auth, createClient, type KalamDBClient, type Unsubscribe } from "@kalamdb/client";
+import { Auth, createClient, type KalamDBClient } from "@kalamdb/client";
 import {
   createConsumerClient,
   runConsumer,
@@ -10,12 +10,12 @@ import {
   getLlmAdapter,
   type LlmAdapter,
   type LlmMessage,
-  type LlmTool,
   type LlmToolCall,
 } from "../lib/llm/index.js";
 import { withRetry } from "../lib/llm/retry.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { logger } from "../lib/logger.js";
+import { dispatchTool, TOOLS, type ToolContext } from "./tools.js";
 
 const log = logger.child({ component: "agent" });
 
@@ -27,33 +27,45 @@ const GROUP_ID = process.env.KALAMDB_GROUP ?? "chat-agents";
 
 const SYSTEM_PROMPT = `You are a concise, helpful assistant inside a KalamDB-powered chat app.
 
-You have access to a single tool: \`request_approval(question)\`. Use it BEFORE taking any irreversible or risky action — for example: deleting data, sending emails, charging payments, running shell commands, sharing user data with third parties, or anything the user has not explicitly authorized in this turn.
+# Tools available
+- request_approval(question)  — ask the user for explicit yes/no before any irreversible action.
+- query_database(sql)         — run a single read-only SELECT against the chat namespace.
+- delete_conversation(conversation_id) — permanently delete a conversation and its history.
 
-The tool returns one of:
-  - "approved": you may proceed; describe the action you took.
-  - "rejected": stop immediately and acknowledge the user's decision.
+# Database schema (chat namespace)
+Five tables; all use string UUID primary keys unless noted.
 
-Do not use the tool for cosmetic confirmations or trivial clarifications — ask the user in plain text for those.
+- chat.conversations(id, title, created_at, updated_at)
+- chat.messages(id, conversation_id, role, body, status, created_at, updated_at)
+    role:   'user' | 'assistant' | 'system'
+    status: 'pending' | 'streaming' | 'final' | 'cancelled' | 'error'
+- chat.typing_tokens(id, conversation_id, message_id, body, seq, created_at)
+    Streaming token deltas. Cleared when the message reaches a terminal status.
+- chat.approvals(id, conversation_id, message_id, question, status, created_at, resolved_at)
+    status: 'pending' | 'approved' | 'rejected'
+- chat.tasks(id, conversation_id, message_id, is_cancelled, started_at, finished_at)
+    One row per assistant turn. finished_at = NULL while the agent is working.
 
-Otherwise, keep replies short unless the user asks for more detail.`;
+# Tool-use rules
+1. If the user asks a question that can be answered from the schema above
+   (counts, lists, history searches, "what did I ...", etc.), call
+   query_database. Always namespace tables as chat.<table>. Do NOT show the
+   raw SQL or the JSON result to the user — phrase the answer in natural
+   language. If the SELECT errors, retry once with a simpler query before
+   apologizing.
 
-const APPROVAL_TOOL: LlmTool = {
-  name: "request_approval",
-  description:
-    "Pause and request explicit user approval before performing a risky or irreversible action. Returns 'approved' or 'rejected'.",
-  parameters: {
-    type: "object",
-    properties: {
-      question: {
-        type: "string",
-        description:
-          "A clear, specific yes/no question describing exactly what you are about to do. The user sees this verbatim.",
-      },
-    },
-    required: ["question"],
-    additionalProperties: false,
-  },
-};
+2. For any DESTRUCTIVE or IRREVERSIBLE action (delete_conversation, future
+   send_email / charge / shell-command tools), you MUST call request_approval
+   IMMEDIATELY BEFORE the destructive tool, in the same turn. If approval
+   returns 'rejected' or 'cancelled', stop immediately and acknowledge.
+   Never call delete_conversation without an approval that just returned
+   'approved'.
+
+3. Do not use request_approval for cosmetic confirmations or trivial
+   clarifications — ask in plain text for those.
+
+4. Keep replies short unless the user asks for detail. Don't narrate your
+   tool use ("Let me check the database..."); just produce the result.`;
 
 interface Task {
   id: string;
@@ -202,9 +214,18 @@ async function runTask(
     await ensureAssistantStub(client, task);
     await markStreaming(client, task.message_id);
 
-    const baseMessages: LlmMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
+    // The LLM needs to know which conversation it's in so delete_conversation,
+    // query_database etc. can scope to the right id. Inject it as a separate
+    // system message so the static SYSTEM_PROMPT stays cache-friendly.
+    const baseMessages: LlmMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "system",
+        content: `# Current conversation\nconversation_id = ${task.conversation_id}`,
+      },
+    ];
     baseMessages.push(...(await fetchHistory(client, task.conversation_id)));
-    tlog.debug({ history: baseMessages.length - 1 }, "starting LLM turn");
+    tlog.debug({ history: baseMessages.length - 2 }, "starting LLM turn");
 
     const flush = async () => {
       if (flushTimer) {
@@ -239,6 +260,14 @@ async function runTask(
     };
 
     const messages: LlmMessage[] = [...baseMessages];
+    const toolCtx: ToolContext = {
+      client,
+      log: tlog,
+      task,
+      signal: controller.signal,
+      lastToolCallName: null,
+      lastApprovalDecision: null,
+    };
     let turn = 0;
     while (turn < 8) {
       turn++;
@@ -248,7 +277,7 @@ async function runTask(
       try {
         for await (const event of llm.stream({
           messages,
-          tools: [APPROVAL_TOOL],
+          tools: TOOLS,
           signal: controller.signal,
         })) {
           if (event.type === "text") {
@@ -293,7 +322,7 @@ async function runTask(
       });
 
       for (const call of pendingCalls) {
-        const result = await dispatchTool(client, task, call, controller.signal);
+        const result = await dispatchTool(toolCtx, call);
         messages.push({
           role: "tool",
           toolCallId: call.id,
@@ -318,82 +347,6 @@ async function runTask(
     void finalStatus;
     await cleanup();
   }
-}
-
-async function dispatchTool(
-  client: KalamDBClient,
-  task: Task,
-  call: LlmToolCall,
-  signal: AbortSignal,
-): Promise<string> {
-  if (call.name === "request_approval") {
-    return await requestApproval(client, task, call, signal);
-  }
-  return `Unknown tool: ${call.name}`;
-}
-
-async function requestApproval(
-  client: KalamDBClient,
-  task: Task,
-  call: LlmToolCall,
-  signal: AbortSignal,
-): Promise<string> {
-  const question =
-    typeof call.arguments.question === "string"
-      ? call.arguments.question
-      : "The assistant is requesting approval.";
-  const approvalId = crypto.randomUUID();
-
-  await client.insert("chat.approvals", {
-    id: approvalId,
-    conversation_id: task.conversation_id,
-    message_id: task.message_id,
-    question,
-    status: "pending",
-    created_at: new Date().toISOString(),
-    resolved_at: null,
-  });
-  log.info({ approval_id: approvalId, message_id: task.message_id, question }, "approval pending");
-
-  return await new Promise<string>((resolve) => {
-    let settled = false;
-    let unsubscribe: Unsubscribe | undefined;
-
-    const finish = (value: string): void => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      void unsubscribe?.();
-      resolve(value);
-    };
-    const onAbort = (): void => finish("rejected (cancelled by user before approval resolved)");
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    client
-      .live<{ id: string; status: string }>(
-        `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
-        (rows) => {
-          const row = rows[0];
-          if (!row) return;
-          const status = unwrap(row.status);
-          if (status === "approved" || status === "rejected") {
-            log.info({ approval_id: approvalId, status }, "approval resolved");
-            finish(status);
-          }
-        },
-        {
-          onError: (err) => {
-            log.error({ approval_id: approvalId, err }, "approval live errored");
-            finish(`error subscribing to approval: ${String(err)}`);
-          },
-        },
-      )
-      .then((u) => {
-        unsubscribe = u;
-        if (settled) void u();
-      })
-      .catch((err) => finish(`error subscribing to approval: ${String(err)}`));
-  });
 }
 
 async function fetchHistory(client: KalamDBClient, conversationId: string): Promise<LlmMessage[]> {
