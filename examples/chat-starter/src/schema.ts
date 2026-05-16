@@ -1,5 +1,5 @@
 import { boolean, integer, text, timestamp } from "drizzle-orm/pg-core";
-import { kTable } from "@kalamdb/orm";
+import { kTable, embedding } from "@kalamdb/orm";
 
 export const conversations = kTable.user("chat.conversations", {
   id: text("id").primaryKey(),
@@ -44,4 +44,14 @@ export const tasks = kTable.user("chat.tasks", {
   isCancelled: boolean("is_cancelled").notNull(),
   startedAt: timestamp("started_at").notNull(),
   finishedAt: timestamp("finished_at"),
+});
+
+// Knowledge base for RAG (shared across all users / conversations).
+export const docs = kTable.shared("chat.docs", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  source: text("source"),
+  embedding: embedding("embedding", 384),
+  createdAt: timestamp("created_at").notNull(),
 });

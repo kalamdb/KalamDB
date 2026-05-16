@@ -91,6 +91,42 @@ test("after delete_conversation succeeds, mock wraps up with a confirmation", as
   assert.match(text, /deleted/i);
 });
 
+test("fuzzy 'what is' prompt triggers a search_documents tool call (RAG)", async () => {
+  const events = await collect([
+    { role: "user", content: "What is a KalamDB topic and how does it work?" },
+  ]);
+  const toolEvent = events.find((e) => e.type === "tool_call") as
+    | { type: "tool_call"; call: { name: string; arguments: { query: string; limit?: number } } }
+    | undefined;
+  assert.ok(toolEvent);
+  assert.equal(toolEvent.call.name, "search_documents");
+  assert.match(toolEvent.call.arguments.query, /topic/);
+});
+
+test("after search_documents returns rows, mock phrases the answer with a citation", async () => {
+  const events = await collect([
+    { role: "user", content: "What is a topic?" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        { id: "mock_s", name: "search_documents", arguments: { query: "what is a topic" } },
+      ],
+    },
+    {
+      role: "tool",
+      toolCallId: "mock_s",
+      content:
+        '{"row_count":1,"rows":[{"id":"doc-topics","title":"Topics & runConsumer","body":"Topics are an append-only stream of events.","distance":0.05}]}',
+    },
+  ]);
+  const text = events
+    .filter((e) => e.type === "text")
+    .map((e) => (e as { delta: string }).delta)
+    .join("");
+  assert.match(text, /source: "Topics & runConsumer"/);
+});
+
 test("query-shaped prompt triggers a query_database tool call", async () => {
   const events = await collect([{ role: "user", content: "How many messages do I have?" }]);
   const toolEvent = events.find((e) => e.type === "tool_call") as

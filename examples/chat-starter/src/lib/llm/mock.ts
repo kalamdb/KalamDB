@@ -25,7 +25,10 @@ export class MockAdapter implements LlmAdapter {
 
     const lastTool = [...args.messages].reverse().find((m) => m.role === "tool");
     const lastAssistant = [...args.messages].reverse().find((m) => m.role === "assistant");
+    // Lowercased view for keyword matching; raw view preserves casing for
+    // JSON field extraction (e.g., the title we cite in RAG replies).
     const decision = lastTool && lastTool.role === "tool" ? lastTool.content.toLowerCase() : null;
+    const decisionRaw = lastTool && lastTool.role === "tool" ? lastTool.content : null;
 
     // The agent injects `conversation_id = <uuid>` in a system message so any
     // tool that needs it (delete_conversation, query_database with a WHERE
@@ -96,6 +99,48 @@ export class MockAdapter implements LlmAdapter {
     // ---- delete flow: turn 3 = wrap up -------------------------------------
     if (decision && decision.startsWith("deleted conversation")) {
       yield { type: "text", delta: "Deleted. Anything else?" };
+      yield { type: "done", reason: "stop" };
+      return;
+    }
+
+    // ---- search_documents flow: turn 1 = run the search --------------------
+    // Fuzzy / conceptual questions about KalamDB itself go through RAG, not
+    // query_database. We detect them BEFORE the structured-query branch
+    // because "how does X work" and "what is X" overlap with "how many" only
+    // weakly — but we want RAG to win on those phrasings.
+    if (
+      !decision &&
+      /\b(what is|what's|how does|how do|explain|tell me about|describe)\b/.test(text) &&
+      !/\b(how many|count of|number of)\b/.test(text)
+    ) {
+      yield {
+        type: "tool_call",
+        call: {
+          id: `mock_search_${Date.now()}`,
+          name: "search_documents",
+          arguments: { query: lastUser?.role === "user" ? lastUser.content : text, limit: 3 },
+        },
+      };
+      yield { type: "done", reason: "tool_calls" };
+      return;
+    }
+
+    // ---- search_documents flow: turn 2 = phrase the answer with citation --
+    if (
+      decisionRaw &&
+      decisionRaw.startsWith("{") &&
+      lastAssistant?.toolCalls?.some((c) => c.name === "search_documents")
+    ) {
+      const titleMatch = decisionRaw.match(/"title":\s*"([^"]+)"/);
+      const bodyMatch = decisionRaw.match(/"body":\s*"([^"]+)"/);
+      const title = titleMatch ? titleMatch[1] : "the docs";
+      const snippet = bodyMatch ? bodyMatch[1]!.slice(0, 120) : "see the documentation";
+      const reply = `${snippet} (source: "${title}")`;
+      for (const chunk of chunkString(reply, 6)) {
+        if (args.signal.aborted) return;
+        await sleep(40);
+        yield { type: "text", delta: chunk };
+      }
       yield { type: "done", reason: "stop" };
       return;
     }

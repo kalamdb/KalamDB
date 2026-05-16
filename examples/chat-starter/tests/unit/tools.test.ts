@@ -207,6 +207,101 @@ test("delete_conversation CONSUMES the approval (cannot be reused for a second d
 });
 
 // =============================================================================
+// search_documents (RAG)
+// =============================================================================
+
+test("search_documents rejects an empty query", async () => {
+  process.env.EMBEDDING_PROVIDER = "fake";
+  const stub = makeStubClient();
+  const ctx = makeCtx(stub.client);
+  const out = await dispatchTool(ctx, {
+    id: "c1",
+    name: "search_documents",
+    arguments: { query: "" },
+  });
+  assert.match(out, /^Error: query must be a non-empty string/);
+});
+
+test("search_documents embeds the query (fake) and runs COSINE_DISTANCE SELECT", async () => {
+  process.env.EMBEDDING_PROVIDER = "fake";
+  const stub = makeStubClient({
+    queryResult: {
+      results: [
+        {
+          named_rows: [
+            { id: "doc-topics", title: "Topics", body: "...", source: "specs", distance: 0.12 },
+            { id: "doc-live", title: "Live queries", body: "...", source: "specs", distance: 0.24 },
+          ],
+        },
+      ],
+    },
+  });
+  const ctx = makeCtx(stub.client);
+  const out = await dispatchTool(ctx, {
+    id: "c1",
+    name: "search_documents",
+    arguments: { query: "what is a topic?", limit: 2 },
+  });
+  const parsed = JSON.parse(out) as { row_count: number; rows: Array<{ title: string }> };
+  assert.equal(parsed.row_count, 2);
+  assert.equal(parsed.rows[0]!.title, "Topics");
+  // Verify the SELECT shape.
+  assert.equal(stub.queries.length, 1);
+  assert.match(stub.queries[0]!.sql, /COSINE_DISTANCE\(embedding, '\[/);
+  assert.match(stub.queries[0]!.sql, /FROM chat\.docs/);
+  assert.match(stub.queries[0]!.sql, /ORDER BY distance ASC/);
+  assert.match(stub.queries[0]!.sql, /LIMIT 2/);
+});
+
+test("search_documents clamps limit to [1, 10]", async () => {
+  process.env.EMBEDDING_PROVIDER = "fake";
+  const stub = makeStubClient();
+  const ctx = makeCtx(stub.client);
+  await dispatchTool(ctx, {
+    id: "c1",
+    name: "search_documents",
+    arguments: { query: "x", limit: 9999 },
+  });
+  assert.match(stub.queries[0]!.sql, /LIMIT 10/);
+
+  stub.queries.length = 0;
+  await dispatchTool(ctx, {
+    id: "c2",
+    name: "search_documents",
+    arguments: { query: "x", limit: -3 },
+  });
+  assert.match(stub.queries[0]!.sql, /LIMIT 1/);
+});
+
+test("search_documents surfaces upstream query errors", async () => {
+  process.env.EMBEDDING_PROVIDER = "fake";
+  const stub = makeStubClient({ queryThrows: new Error("docs table not found") });
+  const ctx = makeCtx(stub.client);
+  const out = await dispatchTool(ctx, {
+    id: "c1",
+    name: "search_documents",
+    arguments: { query: "x" },
+  });
+  assert.match(out, /^Error: docs table not found/);
+});
+
+test("search_documents surfaces embedding errors when no fallback is available", async () => {
+  // Force OpenAI path with no key set — embed() will reject.
+  process.env.EMBEDDING_PROVIDER = "openai";
+  delete process.env.OPENAI_API_KEY;
+  const stub = makeStubClient();
+  const ctx = makeCtx(stub.client);
+  const out = await dispatchTool(ctx, {
+    id: "c1",
+    name: "search_documents",
+    arguments: { query: "x" },
+  });
+  assert.match(out, /^Error: failed to embed query/);
+  assert.equal(stub.queries.length, 0);
+  delete process.env.EMBEDDING_PROVIDER;
+});
+
+// =============================================================================
 // Unknown tool
 // =============================================================================
 

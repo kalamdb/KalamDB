@@ -1,6 +1,7 @@
 import type { KalamDBClient, Unsubscribe } from "@kalamdb/client";
 import type { LlmTool, LlmToolCall } from "../lib/llm/index.js";
 import type { Logger } from "../lib/logger.js";
+import { embed, embeddingLiteral } from "../lib/llm/embedding.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { guardSelect } from "./sql-guard.js";
 
@@ -61,10 +62,32 @@ export const DELETE_CONVERSATION_TOOL: LlmTool = {
   },
 };
 
+export const SEARCH_DOCUMENTS_TOOL: LlmTool = {
+  name: "search_documents",
+  description:
+    "Semantic search over the KalamDB knowledge base (chat.docs) using vector similarity. Use this for FUZZY / CONCEPTUAL questions about KalamDB itself ('what is a topic?', 'how does cancellation work?', 'how do I use live queries?'). Returns the top matching documents as a JSON array with title, body, source, and distance. Always cite the doc titles you used when phrasing the answer.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "The natural-language query to embed and search for.",
+      },
+      limit: {
+        type: "integer",
+        description: "Maximum number of documents to return. Default 5, max 10.",
+      },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+};
+
 export const TOOLS: LlmTool[] = [
   REQUEST_APPROVAL_TOOL,
   QUERY_DATABASE_TOOL,
   DELETE_CONVERSATION_TOOL,
+  SEARCH_DOCUMENTS_TOOL,
 ];
 
 // =============================================================================
@@ -90,6 +113,8 @@ export async function dispatchTool(ctx: ToolContext, call: LlmToolCall): Promise
       return await handleQueryDatabase(ctx, call);
     case "delete_conversation":
       return await handleDeleteConversation(ctx, call);
+    case "search_documents":
+      return await handleSearchDocuments(ctx, call);
     default:
       return `Unknown tool: ${call.name}`;
   }
@@ -232,6 +257,71 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     return `deleted conversation ${id} and all related rows`;
   } catch (err) {
     ctx.log.error({ err, conversation_id: id }, "delete_conversation failed");
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+// =============================================================================
+// search_documents (RAG)
+// =============================================================================
+
+const MAX_SEARCH_LIMIT = 10;
+const DEFAULT_SEARCH_LIMIT = 5;
+const MAX_SEARCH_RESULT_BYTES = 16 * 1024;
+
+async function handleSearchDocuments(ctx: ToolContext, call: LlmToolCall): Promise<string> {
+  const query = typeof call.arguments.query === "string" ? call.arguments.query.trim() : "";
+  if (!query) {
+    return "Error: query must be a non-empty string.";
+  }
+  let limit = DEFAULT_SEARCH_LIMIT;
+  if (typeof call.arguments.limit === "number" && Number.isFinite(call.arguments.limit)) {
+    limit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(call.arguments.limit)));
+  }
+  ctx.log.info({ query, limit }, "search_documents running");
+
+  let vec: number[];
+  try {
+    vec = await embed(query);
+  } catch (err) {
+    ctx.log.error({ err }, "search_documents embedding failed");
+    return `Error: failed to embed query: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  const vecLit = embeddingLiteral(vec);
+
+  try {
+    const res = await ctx.client.query(
+      `SELECT id, title, body, source,
+              COSINE_DISTANCE(embedding, '${vecLit}') AS distance
+       FROM chat.docs
+       ORDER BY distance ASC
+       LIMIT ${limit}`,
+    );
+    const rows =
+      (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
+        ?.named_rows ?? [];
+    const plain = rows.map((r) => {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(r)) out[k] = unwrap(v);
+      return out;
+    });
+    const serialized = JSON.stringify({ row_count: plain.length, rows: plain });
+    if (serialized.length > MAX_SEARCH_RESULT_BYTES) {
+      // Truncate body fields to a preview if the payload is too large.
+      const trimmed = plain.map((row) => {
+        const body = typeof row.body === "string" ? row.body : String(row.body ?? "");
+        return { ...row, body: body.length > 400 ? body.slice(0, 400) + "…" : body };
+      });
+      return JSON.stringify({
+        row_count: trimmed.length,
+        truncated: true,
+        rows: trimmed,
+        note: "Document bodies were truncated to ~400 chars each because the full payload exceeded the response cap.",
+      });
+    }
+    return serialized;
+  } catch (err) {
+    ctx.log.error({ err }, "search_documents failed");
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }

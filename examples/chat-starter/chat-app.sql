@@ -63,3 +63,18 @@ CREATE TABLE chat.tasks (
 
 CREATE TOPIC chat.task_events;
 ALTER TOPIC chat.task_events ADD SOURCE chat.tasks ON INSERT;
+
+-- Knowledge base for RAG. SHARED (not USER) because the docs are global
+-- knowledge — every conversation reads from the same corpus. The
+-- EMBEDDING(384) column stores per-document vectors; the COSINE index
+-- makes nearest-neighbour search efficient at scale.
+CREATE SHARED TABLE chat.docs (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  source      TEXT,
+  embedding   EMBEDDING(384),
+  created_at  TIMESTAMP NOT NULL
+);
+
+ALTER TABLE chat.docs CREATE INDEX embedding USING COSINE;

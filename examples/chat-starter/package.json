@@ -10,6 +10,7 @@
     "server": "tsx watch server/index.ts",
     "agent": "tsx watch src/agent/index.ts",
     "setup": "tsx scripts/setup.ts",
+    "seed-docs": "tsx scripts/seed-docs.ts",
     "build": "tsc -p tsconfig.app.json && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run test:unit && npm run test:component && playwright test",

@@ -14,6 +14,11 @@ test("preserves an explicit LIMIT instead of overriding", () => {
   assert.equal(r.sql, "SELECT id FROM chat.messages LIMIT 5");
 });
 
+test("accepts SELECTs against chat.docs (RAG knowledge base)", () => {
+  const r = guardSelect("SELECT id, title FROM chat.docs ORDER BY created_at DESC LIMIT 10");
+  assert.equal(r.ok, true);
+});
+
 test("accepts JOIN across allowed tables", () => {
   const r = guardSelect(
     "SELECT m.id FROM chat.messages m JOIN chat.conversations c ON m.conversation_id = c.id",
