@@ -13,6 +13,7 @@ import {
   type LlmToolCall,
 } from "../lib/llm/index.js";
 import { withRetry } from "../lib/llm/retry.js";
+import { withSlowdown } from "../lib/llm/slowdown.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { logger } from "../lib/logger.js";
 import { dispatchTool, TOOLS, type ToolContext } from "./tools.js";
@@ -54,6 +55,16 @@ Five tables; all use string UUID primary keys unless noted.
    language. If the SELECT errors, retry once with a simpler query before
    apologizing.
 
+   IMPORTANT: your own current in-flight assistant message is ALREADY
+   inserted into chat.messages with status='streaming' before you run this
+   tool. From the user's perspective that row is just a "..." typing
+   indicator — they don't count it as a message. When you query
+   chat.messages for counts or listings, filter to user-visible rows by
+   default:
+       WHERE status IN ('final','cancelled','error')
+   Only include 'pending' / 'streaming' rows if the user explicitly asks
+   about in-flight or unfinished messages.
+
 2. For any DESTRUCTIVE or IRREVERSIBLE action (delete_conversation, future
    send_email / charge / shell-command tools), you MUST call request_approval
    IMMEDIATELY BEFORE the destructive tool, in the same turn. If approval
@@ -90,7 +101,15 @@ async function main(): Promise<void> {
     disableCompression: true,
   });
   await sqlClient.connect();
-  const llm = withRetry(await getLlmAdapter(), undefined, log);
+  let llm = withRetry(await getLlmAdapter(), undefined, log);
+  // Recorder-only knob: when set, wraps the adapter with a per-token sleep so
+  // the demo recorder has a window to click Stop before fast models finish.
+  // Has no effect in production deployments (env is unset).
+  const slowdownMs = Number(process.env.RECORDER_SLOWDOWN_MS ?? "0");
+  if (slowdownMs > 0) {
+    llm = withSlowdown(llm, slowdownMs);
+    log.warn({ slowdown_ms: slowdownMs }, "recorder slowdown active — DO NOT USE IN PRODUCTION");
+  }
   log.info({ url: KALAMDB_URL, llm: llm.name, topic: TASK_TOPIC, group: GROUP_ID }, "agent ready");
 
   process.on("unhandledRejection", (reason) => {
