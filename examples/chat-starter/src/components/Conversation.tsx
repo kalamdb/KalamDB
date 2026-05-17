@@ -34,9 +34,12 @@ export function Conversation(props: ConversationProps) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const lastUserMessageIdRef = React.useRef<string | null>(null);
 
-  // Auto-scroll: smooth when the user just sent a message (so they see the
-  // movement), instant during streaming token deltas (~10/s otherwise creates
-  // a fight between queued smooth animations).
+  // Auto-scroll: smooth when the user just sent a message OR when a new
+  // approval card appears (both deserve attention), instant during streaming
+  // token deltas (~10/s otherwise creates a fight between queued smooth
+  // animations).
+  const approvalCount = props.approvals.length;
+  const lastApprovalCountRef = React.useRef<number>(0);
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -44,11 +47,19 @@ export function Conversation(props: ConversationProps) {
     const justSentByUser =
       latestUserMessage && latestUserMessage.id !== lastUserMessageIdRef.current;
     lastUserMessageIdRef.current = latestUserMessage?.id ?? null;
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: justSentByUser ? "smooth" : "instant",
+    const newApproval = approvalCount > lastApprovalCountRef.current;
+    lastApprovalCountRef.current = approvalCount;
+    // Defer to the next frame so the new approval card / message bubble has
+    // been measured before we scroll — otherwise scrollHeight is stale and
+    // the bottom row can end up clipped under the composer.
+    const handle = requestAnimationFrame(() => {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: justSentByUser || newApproval ? "smooth" : "instant",
+      });
     });
-  }, [props.messages, props.typingTokens.length]);
+    return () => cancelAnimationFrame(handle);
+  }, [props.messages, props.typingTokens.length, approvalCount]);
 
   async function sendUserMessage(body: string) {
     if (!body.trim()) return;
