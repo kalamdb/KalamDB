@@ -35,22 +35,30 @@ export function Conversation(props: ConversationProps) {
   const lastUserMessageIdRef = React.useRef<string | null>(null);
 
   // Auto-scroll policy:
-  //   - Force a smooth scroll when the user just sent a message OR a new
-  //     approval card appears — both deserve attention and aren't the user
-  //     "reading earlier content".
-  //   - Otherwise (streaming token deltas, status updates), only scroll if
-  //     the user is already near the bottom. This avoids fighting a user
-  //     who deliberately scrolled up to re-read while a reply streams in.
+  //   - Force a smooth scroll when the user just sent a message, a new
+  //     approval card appears, OR the assistant message just transitioned
+  //     to a terminal status (final / cancelled / error). All three are
+  //     moments the user expects to see at the bottom.
+  //   - Otherwise (streaming token deltas), only scroll if the user is
+  //     already near the bottom. This avoids fighting a user who
+  //     deliberately scrolled up to re-read while a reply streams in.
   //
-  // Effect re-runs are kept cheap by depending on stable scalars (lengths
-  // and the latest user message id) instead of array references that
-  // change on every parent render.
+  // Effect re-runs are kept cheap by depending on stable scalars (lengths,
+  // ids, status strings) instead of array references that change on every
+  // parent render.
   const messageCount = props.messages.length;
   const tokenCount = props.typingTokens.length;
   const approvalCount = props.approvals.length;
   const latestUserMessageId =
     [...props.messages].reverse().find((m) => m.role === "user")?.id ?? null;
+  const latestAssistant = [...props.messages].reverse().find((m) => m.role === "assistant");
+  const latestAssistantId = latestAssistant?.id ?? null;
+  const latestAssistantStatus = latestAssistant?.status ?? null;
   const lastApprovalCountRef = React.useRef<number>(0);
+  const lastAssistantStatusRef = React.useRef<{ id: string | null; status: string | null }>({
+    id: null,
+    status: null,
+  });
   const SCROLL_NEAR_BOTTOM_PX = 80;
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -60,9 +68,20 @@ export function Conversation(props: ConversationProps) {
     lastUserMessageIdRef.current = latestUserMessageId;
     const newApproval = approvalCount > lastApprovalCountRef.current;
     lastApprovalCountRef.current = approvalCount;
+    // "Assistant just terminated" = same assistant row transitioned out of
+    // pending/streaming. Worth a scroll because (stopped) / final body
+    // lands below the previous fold.
+    const prev = lastAssistantStatusRef.current;
+    const TERMINAL = ["final", "cancelled", "error"];
+    const justTerminated =
+      latestAssistantId !== null &&
+      latestAssistantId === prev.id &&
+      !TERMINAL.includes(prev.status ?? "") &&
+      TERMINAL.includes(latestAssistantStatus ?? "");
+    lastAssistantStatusRef.current = { id: latestAssistantId, status: latestAssistantStatus };
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const nearBottom = distanceFromBottom < SCROLL_NEAR_BOTTOM_PX;
-    const shouldScroll = justSentByUser || newApproval || nearBottom;
+    const shouldScroll = justSentByUser || newApproval || justTerminated || nearBottom;
     if (!shouldScroll) return;
     // Defer to the next frame so the new approval card / message bubble has
     // been measured before we read scrollHeight — otherwise the target is
@@ -70,11 +89,18 @@ export function Conversation(props: ConversationProps) {
     const handle = requestAnimationFrame(() => {
       el.scrollTo({
         top: el.scrollHeight,
-        behavior: justSentByUser || newApproval ? "smooth" : "instant",
+        behavior: justSentByUser || newApproval || justTerminated ? "smooth" : "instant",
       });
     });
     return () => cancelAnimationFrame(handle);
-  }, [messageCount, tokenCount, approvalCount, latestUserMessageId]);
+  }, [
+    messageCount,
+    tokenCount,
+    approvalCount,
+    latestUserMessageId,
+    latestAssistantId,
+    latestAssistantStatus,
+  ]);
 
   async function sendUserMessage(body: string) {
     if (!body.trim()) return;

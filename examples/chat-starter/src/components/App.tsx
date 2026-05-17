@@ -1,6 +1,7 @@
 import React from "react";
 import { LiveQueries } from "@kalamdb/react";
 import { asc, desc, eq } from "drizzle-orm";
+import type { InferSelectModel, Table } from "drizzle-orm";
 import { approvals, conversations, messages, tasks, typingTokens } from "@/schema";
 import { NO_CONVERSATION_SENTINEL } from "@/lib/constants";
 import { Sidebar } from "./Sidebar";
@@ -15,27 +16,14 @@ const APPROVAL_LIMIT = 100;
 const TASK_LIMIT = 100;
 const CONVERSATION_LIMIT = 100;
 
+type ConversationRow = InferSelectModel<typeof conversations>;
+type MessageRow = InferSelectModel<typeof messages>;
+type TokenRow = InferSelectModel<typeof typingTokens>;
+type ApprovalRow = InferSelectModel<typeof approvals>;
+type TaskRow = InferSelectModel<typeof tasks>;
+
 export function App() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
-
-  const createConversation = React.useCallback(
-    async (
-      insert: (table: typeof conversations) => {
-        values: (row: Record<string, unknown>) => Promise<unknown>;
-      },
-    ) => {
-      const id = crypto.randomUUID();
-      const now = new Date();
-      await insert(conversations).values({
-        id,
-        title: "New conversation",
-        createdAt: now,
-        updatedAt: now,
-      });
-      setSelectedId(id);
-    },
-    [],
-  );
 
   return (
     <div className="flex h-full">
@@ -88,46 +76,118 @@ export function App() {
           },
         }}
       >
-        {(ctx) => {
-          // "Agent is busy" = any task hasn't been finalized OR any message is
-          // still mid-flight. Both signals matter: relying on isCancelled
-          // alone would re-enable the composer the moment Stop is clicked,
-          // before the agent has flushed and finalized.
-          const activeTask = ctx.tasks.rows.find((t) => !t.finishedAt) ?? null;
-          const hasPendingMessage = ctx.messages.rows.some(
-            (m) => m.status === "pending" || m.status === "streaming",
-          );
-          const isAgentBusy = Boolean(activeTask) || hasPendingMessage;
-
-          return (
-            <>
-              <Sidebar
-                conversations={ctx.conversations.rows}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onCreate={() => createConversation(ctx.insert)}
-              />
-              <main className="flex-1 flex flex-col min-h-0">
-                {selectedId ? (
-                  <Conversation
-                    conversationId={selectedId}
-                    conversation={ctx.conversations.rows.find((c) => c.id === selectedId) ?? null}
-                    messages={ctx.messages.rows}
-                    typingTokens={ctx.typing.rows}
-                    approvals={ctx.approvals.rows}
-                    activeTask={activeTask}
-                    isAgentBusy={isAgentBusy}
-                    insert={ctx.insert}
-                    update={ctx.update}
-                  />
-                ) : (
-                  <Welcome onCreate={() => createConversation(ctx.insert)} />
-                )}
-              </main>
-            </>
-          );
-        }}
+        {(ctx) => (
+          <ChatBody
+            conversationsRows={ctx.conversations.rows as ConversationRow[]}
+            messagesRows={ctx.messages.rows as MessageRow[]}
+            typingRows={ctx.typing.rows as TokenRow[]}
+            approvalsRows={ctx.approvals.rows as ApprovalRow[]}
+            tasksRows={ctx.tasks.rows as TaskRow[]}
+            insert={ctx.insert}
+            update={ctx.update}
+            selectedId={selectedId}
+            setSelectedId={setSelectedId}
+          />
+        )}
       </LiveQueries>
     </div>
+  );
+}
+
+// Inner component: hosts the auto-deselect effect (the render-prop body of
+// <LiveQueries> can't host hooks directly). Typed row props let TS catch
+// shape drift between schema.ts and the consumers below.
+interface ChatBodyProps {
+  conversationsRows: ConversationRow[];
+  messagesRows: MessageRow[];
+  typingRows: TokenRow[];
+  approvalsRows: ApprovalRow[];
+  tasksRows: TaskRow[];
+  // LiveQueries' insert/update helpers — typed at the consumer interface
+  // (Conversation expects the same shape). The SDK's exported generics
+  // require pinning to a specific LiveQueriesDefinition, which we avoid
+  // here by accepting the consumer-friendly signature.
+  insert: <T extends Table>(
+    table: T,
+  ) => { values: (row: Record<string, unknown>) => Promise<unknown> };
+  update: <T extends Table>(
+    table: T,
+    id: string,
+  ) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+}
+
+function ChatBody(props: ChatBodyProps) {
+  const {
+    conversationsRows,
+    messagesRows,
+    typingRows,
+    approvalsRows,
+    tasksRows,
+    insert,
+    update,
+    selectedId,
+    setSelectedId,
+  } = props;
+
+  // When the selected conversation disappears from live results (e.g.,
+  // delete_conversation just cascaded), drop selectedId so the UI returns
+  // to the Welcome screen instead of leaving the user "inside" a now-empty
+  // conversation row.
+  React.useEffect(() => {
+    if (!selectedId) return;
+    const stillExists = conversationsRows.some((c) => c.id === selectedId);
+    if (!stillExists) setSelectedId(null);
+  }, [selectedId, conversationsRows, setSelectedId]);
+
+  const createConversation = React.useCallback(async () => {
+    const id = crypto.randomUUID();
+    const now = new Date();
+    await insert(conversations).values({
+      id,
+      title: "New conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    setSelectedId(id);
+  }, [insert, setSelectedId]);
+
+  // "Agent is busy" = any task hasn't been finalized OR any message is still
+  // mid-flight. Both signals matter: relying on isCancelled alone would
+  // re-enable the composer the moment Stop is clicked, before the agent has
+  // flushed and finalized.
+  const activeTask = tasksRows.find((t) => !t.finishedAt) ?? null;
+  const hasPendingMessage = messagesRows.some(
+    (m) => m.status === "pending" || m.status === "streaming",
+  );
+  const isAgentBusy = Boolean(activeTask) || hasPendingMessage;
+
+  return (
+    <>
+      <Sidebar
+        conversations={conversationsRows}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onCreate={createConversation}
+      />
+      <main className="flex-1 flex flex-col min-h-0">
+        {selectedId ? (
+          <Conversation
+            conversationId={selectedId}
+            conversation={conversationsRows.find((c) => c.id === selectedId) ?? null}
+            messages={messagesRows}
+            typingTokens={typingRows}
+            approvals={approvalsRows}
+            activeTask={activeTask}
+            isAgentBusy={isAgentBusy}
+            insert={insert}
+            update={update}
+          />
+        ) : (
+          <Welcome onCreate={createConversation} />
+        )}
+      </main>
+    </>
   );
 }
