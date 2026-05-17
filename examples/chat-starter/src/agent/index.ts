@@ -26,6 +26,11 @@ const PASSWORD = process.env.KALAMDB_PASSWORD ?? "kalamdb-dev-password";
 const TASK_TOPIC = process.env.KALAMDB_TASK_TOPIC ?? "chat.task_events";
 const GROUP_ID = process.env.KALAMDB_GROUP ?? "chat-agents";
 
+/** Hard cap on assistant-turn iterations (text → tool calls → text → ...) per
+ *  task. Generous for current tool surface but bounded so a misbehaving LLM
+ *  can't loop forever. */
+const MAX_TOOL_TURNS = 8;
+
 const SYSTEM_PROMPT = `You are a concise, helpful assistant inside a KalamDB-powered chat app.
 
 # Tools available
@@ -168,9 +173,11 @@ async function main(): Promise<void> {
       if (activeControllers.has(task.id)) return;
 
       // At-least-once redelivery: skip tasks already finished or cancelled.
-      if (await isTaskTerminal(sqlClient, task.id)) {
-        return;
-      }
+      // isTaskTerminal returns null when the row hasn't become readable yet
+      // (rare topic-vs-table read-visibility race) — treat that as "not
+      // terminal, proceed", so the worker still picks the work up.
+      const terminal = await isTaskTerminal(sqlClient, task.id, log);
+      if (terminal === true) return;
 
       const ctrl = new AbortController();
       activeControllers.set(task.id, ctrl);
@@ -220,6 +227,16 @@ async function runTask(
     },
   );
 
+  // Startup race: between isTaskTerminal returning false and the live sub
+  // attaching, the user could click Stop. Re-read the row now that we're
+  // subscribed and bail before doing any writes.
+  const stillTerminal = await isTaskTerminal(client, task.id, tlog);
+  if (stillTerminal === true) {
+    tlog.info("task became terminal during subscription attach — bailing");
+    await cancelUnsub().catch(() => undefined);
+    return;
+  }
+
   const assembled: string[] = [];
   let buffer = "";
   let flushTimer: NodeJS.Timeout | null = null;
@@ -235,6 +252,7 @@ async function runTask(
     await cancelUnsub().catch(() => undefined);
     await clearTypingTokens(client, task.message_id).catch(() => undefined);
     await finalizeTask(client, task.id).catch(() => undefined);
+    tlog.info({ final_status: finalStatus }, "task complete");
   };
 
   try {
@@ -292,11 +310,10 @@ async function runTask(
       log: tlog,
       task,
       signal: controller.signal,
-      lastToolCallName: null,
       lastApprovalDecision: null,
     };
     let turn = 0;
-    while (turn < 8) {
+    while (turn < MAX_TOOL_TURNS) {
       turn++;
       const pendingCalls: LlmToolCall[] = [];
       let stopReason: "stop" | "tool_calls" | "length" | "error" = "stop";
@@ -371,7 +388,6 @@ async function runTask(
       "final",
     );
   } finally {
-    void finalStatus;
     await cleanup();
   }
 }
@@ -398,35 +414,63 @@ async function fetchHistory(client: KalamDBClient, conversationId: string): Prom
   return out;
 }
 
-async function isTaskTerminal(client: KalamDBClient, taskId: string): Promise<boolean> {
+/**
+ * Returns:
+ *   - true  → task is finished or cancelled (skip).
+ *   - false → task is active, proceed.
+ *   - null  → row doesn't exist yet (topic event preceded table read-
+ *             visibility). Caller should proceed; the row will appear soon.
+ */
+async function isTaskTerminal(
+  client: KalamDBClient,
+  taskId: string,
+  log_: typeof log,
+): Promise<boolean | null> {
   const res = await client.query(`SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`, [
     taskId,
   ]);
   const row = (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> })
     .results?.[0]?.named_rows?.[0];
-  if (!row) return true;
+  if (!row) {
+    log_.warn({ task_id: taskId }, "task row not yet visible after topic event — proceeding");
+    return null;
+  }
   const finishedAt = unwrap(row.finished_at);
   const cancelled = unwrap(row.is_cancelled);
   return Boolean(finishedAt) || cancelled === true || cancelled === "true";
 }
 
 async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<void> {
-  // Idempotent: if redelivery brought us back here, the row may already exist.
+  // Two-tier idempotency:
+  //   1. Cheap: SELECT-then-skip handles the common redelivery case.
+  //   2. Safe: PK collision on INSERT handles the rebalance race where two
+  //      consumers in the same group transiently both see the event. We
+  //      catch any "duplicate key / already exists" error from KalamDB and
+  //      treat it as success; anything else propagates.
   const res = await client.query(`SELECT id FROM chat.messages WHERE id = $1`, [task.message_id]);
   const exists =
     ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows
       ?.length ?? 0) > 0;
   if (exists) return;
   const now = new Date().toISOString();
-  await client.insert("chat.messages", {
-    id: task.message_id,
-    conversation_id: task.conversation_id,
-    role: "assistant",
-    body: "",
-    status: "pending",
-    created_at: now,
-    updated_at: now,
-  });
+  try {
+    await client.insert("chat.messages", {
+      id: task.message_id,
+      conversation_id: task.conversation_id,
+      role: "assistant",
+      body: "",
+      status: "pending",
+      created_at: now,
+      updated_at: now,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/duplicate|already exists|unique|primary key/i.test(msg)) {
+      log.warn({ message_id: task.message_id }, "assistant stub already exists (race) — ignored");
+      return;
+    }
+    throw err;
+  }
 }
 
 async function markStreaming(client: KalamDBClient, messageId: string): Promise<void> {

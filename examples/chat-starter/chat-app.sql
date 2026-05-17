@@ -7,6 +7,9 @@
 -- ON INSERT-sourced topic carries user metadata — runConsumer rejects events
 -- without it.
 
+-- KalamDB doesn't currently accept `DROP TOPIC IF EXISTS` (it parses IF as
+-- the topic name). The setup script tolerates the "Not found" error on a
+-- fresh database — see scripts/setup.ts for the swallow logic.
 DROP TOPIC chat.task_events;
 DROP NAMESPACE IF EXISTS chat;
 CREATE NAMESPACE chat;

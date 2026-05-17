@@ -14,6 +14,9 @@
 // fake (tests) with real (live agent) safely.
 
 export const EMBEDDING_DIMENSIONS = 384;
+/** Cap on input length for the FAKE embedder (linear-time loop). Real OpenAI
+ *  paths cap themselves on the token side. */
+const FAKE_EMBED_MAX_CHARS = 32 * 1024;
 
 export interface EmbedOptions {
   /** Override which model to call. Defaults to text-embedding-3-small. */
@@ -81,9 +84,15 @@ async function embedWithOpenAI(text: string, opts: EmbedOptions): Promise<number
  * strings yield identical vectors. Not semantically aware.
  */
 export function fakeEmbed(text: string): number[] {
+  if (text.length > FAKE_EMBED_MAX_CHARS) {
+    throw new Error(
+      `fakeEmbed input too large: ${text.length} > ${FAKE_EMBED_MAX_CHARS} chars. ` +
+        `Truncate the input, or use the real OpenAI embedder which caps on token count.`,
+    );
+  }
   const out = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
   let h1 = 2166136261; // FNV-1a 32-bit init
-  let h2 = 5381;        // DJB2 init
+  let h2 = 5381; // DJB2 init
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
     h1 ^= c;

@@ -1,35 +1,25 @@
+import { scanSql } from "../src/agent/sql-scan.js";
+
 // Split a SQL script on statement-terminating semicolons while respecting
-// single-quoted string literals (with doubled-quote escapes).
-//
-// Not a full SQL parser — sufficient for the schema we ship. Comments and
-// double-quoted identifiers don't appear in chat-app.sql; if you add them,
-// this helper needs to grow.
+// single-quoted string literals (with doubled-quote escapes). Implemented on
+// top of the shared scanSql() walker so this matches sql-guard's behavior
+// exactly.
 export function splitStatements(sql: string): string[] {
-  const stripped = sql.replace(/^\s*--.*$/gm, "");
+  const positions = scanSql(sql).semicolons;
   const out: string[] = [];
-  let buf = "";
-  let inSingle = false;
-  for (let i = 0; i < stripped.length; i++) {
-    const ch = stripped[i];
-    if (ch === "'") {
-      if (inSingle && stripped[i + 1] === "'") {
-        buf += "''";
-        i++;
-        continue;
-      }
-      inSingle = !inSingle;
-      buf += ch;
-      continue;
-    }
-    if (ch === ";" && !inSingle) {
-      const stmt = buf.trim();
-      if (stmt.length > 0) out.push(stmt);
-      buf = "";
-      continue;
-    }
-    buf += ch;
+  let start = 0;
+  for (const pos of positions) {
+    const stmt = stripCommentsAndTrim(sql.slice(start, pos));
+    if (stmt.length > 0) out.push(stmt);
+    start = pos + 1;
   }
-  const tail = buf.trim();
+  const tail = stripCommentsAndTrim(sql.slice(start));
   if (tail.length > 0) out.push(tail);
   return out;
+}
+
+/** Strip `-- ...` line comments and trim. Block comments are left in place
+ *  (chat-app.sql doesn't use any). */
+function stripCommentsAndTrim(s: string): string {
+  return s.replace(/^\s*--.*$/gm, "").trim();
 }

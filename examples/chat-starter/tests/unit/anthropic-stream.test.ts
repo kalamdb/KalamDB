@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AnthropicAdapter } from "../../src/lib/llm/anthropic.js";
-import type { LlmStreamEvent } from "../../src/lib/llm/index.js";
+import { LlmHttpError, type LlmStreamEvent } from "../../src/lib/llm/index.js";
 
 // Anthropic streams as `event: foo\ndata: {...}\n\n` per frame. We only
 // inspect the data line, so the test wire format matches.
@@ -131,10 +131,10 @@ test("Anthropic: oversized tool args abort the stream", async () => {
   );
 });
 
-test("Anthropic: HTTP error surfaces with status code", async () => {
+test("Anthropic: HTTP error surfaces as an LlmHttpError with the status code", async () => {
   const err = new Response("overloaded", { status: 529 });
   await assert.rejects(
     withMockedFetch(err, () => collect(new AnthropicAdapter({ apiKey: "k", model: "test" }))),
-    /\(529\)/,
+    (e) => e instanceof LlmHttpError && e.status === 529,
   );
 });

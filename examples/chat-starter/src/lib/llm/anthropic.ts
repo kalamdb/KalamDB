@@ -1,4 +1,11 @@
-import type { LlmAdapter, LlmMessage, LlmStreamArgs, LlmStreamEvent, LlmTool } from "./index.js";
+import {
+  LlmHttpError,
+  type LlmAdapter,
+  type LlmMessage,
+  type LlmStreamArgs,
+  type LlmStreamEvent,
+  type LlmTool,
+} from "./index.js";
 
 interface AnthropicOptions {
   apiKey: string;
@@ -59,7 +66,8 @@ export class AnthropicAdapter implements LlmAdapter {
       body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
-      throw new Error(
+      throw new LlmHttpError(
+        res.status,
         `Anthropic request failed (${res.status}): ${await res.text().catch(() => "")}`,
       );
     }

@@ -11,7 +11,7 @@
 //   - AbortError / aborted signal
 //   - HTTP 4xx (other than 429) — caller's fault, won't fix on retry
 
-import type { LlmAdapter, LlmStreamArgs, LlmStreamEvent } from "./index.js";
+import { LlmHttpError, type LlmAdapter, type LlmStreamArgs, type LlmStreamEvent } from "./index.js";
 import type { Logger } from "../logger.js";
 
 export interface RetryPolicy {
@@ -37,13 +37,8 @@ function isAbort(err: unknown, signal: AbortSignal): boolean {
 
 function isRetryable(err: unknown): boolean {
   if (err instanceof TypeError) return true; // fetch network failure
-  if (err instanceof Error) {
-    // Adapters throw with the upstream status code embedded in the message.
-    const m = err.message.match(/\((\d{3})\)/);
-    if (m) {
-      const status = Number(m[1]);
-      return status === 429 || (status >= 500 && status < 600);
-    }
+  if (err instanceof LlmHttpError) {
+    return err.status === 429 || (err.status >= 500 && err.status < 600);
   }
   return false;
 }

@@ -34,24 +34,39 @@ export function Conversation(props: ConversationProps) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const lastUserMessageIdRef = React.useRef<string | null>(null);
 
-  // Auto-scroll: smooth when the user just sent a message OR when a new
-  // approval card appears (both deserve attention), instant during streaming
-  // token deltas (~10/s otherwise creates a fight between queued smooth
-  // animations).
+  // Auto-scroll policy:
+  //   - Force a smooth scroll when the user just sent a message OR a new
+  //     approval card appears — both deserve attention and aren't the user
+  //     "reading earlier content".
+  //   - Otherwise (streaming token deltas, status updates), only scroll if
+  //     the user is already near the bottom. This avoids fighting a user
+  //     who deliberately scrolled up to re-read while a reply streams in.
+  //
+  // Effect re-runs are kept cheap by depending on stable scalars (lengths
+  // and the latest user message id) instead of array references that
+  // change on every parent render.
+  const messageCount = props.messages.length;
+  const tokenCount = props.typingTokens.length;
   const approvalCount = props.approvals.length;
+  const latestUserMessageId =
+    [...props.messages].reverse().find((m) => m.role === "user")?.id ?? null;
   const lastApprovalCountRef = React.useRef<number>(0);
+  const SCROLL_NEAR_BOTTOM_PX = 80;
   React.useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const latestUserMessage = [...props.messages].reverse().find((m) => m.role === "user");
     const justSentByUser =
-      latestUserMessage && latestUserMessage.id !== lastUserMessageIdRef.current;
-    lastUserMessageIdRef.current = latestUserMessage?.id ?? null;
+      latestUserMessageId !== null && latestUserMessageId !== lastUserMessageIdRef.current;
+    lastUserMessageIdRef.current = latestUserMessageId;
     const newApproval = approvalCount > lastApprovalCountRef.current;
     lastApprovalCountRef.current = approvalCount;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distanceFromBottom < SCROLL_NEAR_BOTTOM_PX;
+    const shouldScroll = justSentByUser || newApproval || nearBottom;
+    if (!shouldScroll) return;
     // Defer to the next frame so the new approval card / message bubble has
-    // been measured before we scroll — otherwise scrollHeight is stale and
-    // the bottom row can end up clipped under the composer.
+    // been measured before we read scrollHeight — otherwise the target is
+    // stale and the bottom row can end up clipped under the composer.
     const handle = requestAnimationFrame(() => {
       el.scrollTo({
         top: el.scrollHeight,
@@ -59,7 +74,7 @@ export function Conversation(props: ConversationProps) {
       });
     });
     return () => cancelAnimationFrame(handle);
-  }, [props.messages, props.typingTokens.length, approvalCount]);
+  }, [messageCount, tokenCount, approvalCount, latestUserMessageId]);
 
   async function sendUserMessage(body: string) {
     if (!body.trim()) return;

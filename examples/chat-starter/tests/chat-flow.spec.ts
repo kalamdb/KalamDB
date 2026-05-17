@@ -40,11 +40,13 @@ test("streaming: assistant reply appears and completes", async ({ page }) => {
   // Eventually the reply finalizes and the composer is usable again.
   await waitForComposerReady(page);
 
-  // The assistant message bubble is present.
+  // The assistant message bubble is present. Narrow by the Sparkles avatar
+  // SVG that only assistant rows render — guards against the user bubble
+  // matching by accident if its prompt also contains "KalamDB".
   const assistantBubble = page
     .locator("li")
-    .filter({ hasText: /(Mock reply|KalamDB|adapter)/i })
-    .first();
+    .filter({ has: page.locator(".lucide-sparkles") })
+    .last();
   await expect(assistantBubble).toBeVisible();
 });
 

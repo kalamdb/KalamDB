@@ -2,6 +2,7 @@ import React from "react";
 import { LiveQueries } from "@kalamdb/react";
 import { asc, desc, eq } from "drizzle-orm";
 import { approvals, conversations, messages, tasks, typingTokens } from "@/schema";
+import { NO_CONVERSATION_SENTINEL } from "@/lib/constants";
 import { Sidebar } from "./Sidebar";
 import { Conversation } from "./Conversation";
 import { Welcome } from "./Welcome";
@@ -48,7 +49,9 @@ export function App() {
           messages: {
             table: messages,
             where: (t) =>
-              selectedId ? eq(t.conversationId, selectedId) : eq(t.conversationId, "__none__"),
+              selectedId
+                ? eq(t.conversationId, selectedId)
+                : eq(t.conversationId, NO_CONVERSATION_SENTINEL),
             orderBy: (t) => asc(t.createdAt),
             limit: MESSAGE_LIMIT,
             deps: [selectedId],
@@ -56,7 +59,9 @@ export function App() {
           typing: {
             table: typingTokens,
             where: (t) =>
-              selectedId ? eq(t.conversationId, selectedId) : eq(t.conversationId, "__none__"),
+              selectedId
+                ? eq(t.conversationId, selectedId)
+                : eq(t.conversationId, NO_CONVERSATION_SENTINEL),
             orderBy: (t) => asc(t.seq),
             limit: TYPING_LIMIT,
             deps: [selectedId],
@@ -64,7 +69,9 @@ export function App() {
           approvals: {
             table: approvals,
             where: (t) =>
-              selectedId ? eq(t.conversationId, selectedId) : eq(t.conversationId, "__none__"),
+              selectedId
+                ? eq(t.conversationId, selectedId)
+                : eq(t.conversationId, NO_CONVERSATION_SENTINEL),
             orderBy: (t) => asc(t.createdAt),
             limit: APPROVAL_LIMIT,
             deps: [selectedId],
@@ -72,7 +79,9 @@ export function App() {
           tasks: {
             table: tasks,
             where: (t) =>
-              selectedId ? eq(t.conversationId, selectedId) : eq(t.conversationId, "__none__"),
+              selectedId
+                ? eq(t.conversationId, selectedId)
+                : eq(t.conversationId, NO_CONVERSATION_SENTINEL),
             orderBy: (t) => desc(t.startedAt),
             limit: TASK_LIMIT,
             deps: [selectedId],

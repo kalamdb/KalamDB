@@ -118,3 +118,81 @@
 .animate-pulse-soft {
   animation: pulse-soft 1.4s ease-in-out infinite;
 }
+
+/* Markdown rendering inside assistant bubbles. Scoped so user bubbles
+   (which we render as plain text) don't pick these up. */
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body p {
+  margin: 0.5em 0;
+  line-height: 1.55;
+}
+.md-body strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.md-body em {
+  font-style: italic;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0.9em 0 0.4em;
+}
+.md-body h1 {
+  font-size: 1.15em;
+}
+.md-body h2 {
+  font-size: 1.08em;
+}
+.md-body h3,
+.md-body h4 {
+  font-size: 1em;
+}
+.md-body ul,
+.md-body ol {
+  margin: 0.4em 0;
+  padding-left: 1.25em;
+}
+.md-body li {
+  margin: 0.2em 0;
+}
+.md-body ul li {
+  list-style: disc;
+}
+.md-body ol li {
+  list-style: decimal;
+}
+.md-body blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  border-left: 2px solid var(--surface-border);
+  color: var(--muted-foreground);
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--surface-border);
+  margin: 0.8em 0;
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.95em;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--surface-border);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.md-body th {
+  background: var(--background-alt);
+  font-weight: 600;
+}

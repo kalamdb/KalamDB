@@ -7,6 +7,7 @@ import type {
   approvals as ApprovalsTable,
 } from "@/schema";
 import { cn, formatTime } from "@/lib/utils";
+import { MarkdownBody } from "./MarkdownBody";
 
 type Message = InferSelectModel<typeof MessagesTable>;
 type Token = InferSelectModel<typeof TokensTable>;
@@ -90,9 +91,9 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
             >
               <div
                 className={cn(
-                  "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap shadow-sm",
+                  "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed shadow-sm",
                   isUser
-                    ? "bg-[var(--accent)] text-[var(--accent-foreground)] rounded-br-md"
+                    ? "bg-[var(--accent)] text-[var(--accent-foreground)] rounded-br-md whitespace-pre-wrap"
                     : "bg-[var(--surface)] backdrop-blur-md border border-[var(--surface-border)] rounded-bl-md",
                   m.status === "cancelled" && "opacity-60 italic",
                   m.status === "error" && "border-[var(--destructive)]",
@@ -104,8 +105,10 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                     <span className="size-1.5 rounded-full bg-current animate-pulse-soft [animation-delay:0.15s]" />
                     <span className="size-1.5 rounded-full bg-current animate-pulse-soft [animation-delay:0.3s]" />
                   </span>
-                ) : (
+                ) : isUser ? (
                   displayBody
+                ) : (
+                  <MarkdownBody>{displayBody}</MarkdownBody>
                 )}
                 {m.status === "cancelled" && (
                   <span className="block mt-1.5 text-[11px] opacity-70">(stopped)</span>

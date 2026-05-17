@@ -123,16 +123,31 @@ See `server/index.ts` for the boundary; that's the file to modify.
 
 ## Deployment checklist
 
-This is a starter. Before running it anywhere real:
+This is a starter. Before running it anywhere real, the operator MUST address each item below. The starter has fences in code (refusing to start with unsafe defaults under `NODE_ENV=production`) but they are deliberately overridable so they can't be ignored silently.
 
-- [ ] Replace the bundled `kalamdb-dev-password` and `KALAMDB_JWT_SECRET` in `docker-compose.yml` (use shell env substitution, not committed values).
-- [ ] Tighten `KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS` from `*` to your actual frontend origin.
-- [ ] Set `KALAMDB_ALLOW_REMOTE_SETUP=false` — provision schemas with migrations, not the bundled `npm run setup`.
-- [ ] Implement real user auth in `server/index.ts:/api/auth/token` and mint scoped per-user tokens, not the shared root token.
-- [ ] Add retry on transient LLM errors in `src/agent/index.ts` — the current code surfaces any failure as `status='error'` immediately. For a real product, retry rate-limit / transient network failures with backoff.
-- [ ] Add proper observability (the agent currently `console.log`s; replace with structured logging + your tracing system).
-- [ ] Run multiple agent replicas behind the same `KALAMDB_GROUP` — runConsumer load-balances automatically.
-- [ ] Pin the Docker image tag in `docker-compose.yml` to whatever version you've actually tested against.
+**Security boundary**
+
+- [ ] **Replace `/api/auth/token` with real caller auth.** The default implementation mints a root-equivalent KalamDB token to any caller. In `NODE_ENV=production`, the server refuses to start unless `ALLOW_UNAUTHENTICATED_TOKENS=true` is set — that env is a fence the operator must deliberately step over, not a feature flag. The right fix is to validate the user's session in `server/index.ts` (cookie / OAuth / your IdP) before minting a per-user KalamDB token. See `server/index.ts:assertProductionFence`.
+- [ ] **Set `TRUST_PROXY=1` only behind a known reverse proxy.** Without it, the rate limiter and request logging fall back to the socket address. With it, `X-Forwarded-For` is honored — which is mandatory if you terminate TLS at a proxy, but a credential firehose if you don't (an attacker rotates the header and bypasses per-IP limits). If your load balancer doesn't strip or replace untrusted `X-Forwarded-For`, do NOT set this.
+- [ ] **Replace `KALAMDB_JWT_SECRET`.** The default value in `docker-compose.yml` is in the repo — anyone reading this README knows it. Set via env / Docker secret / your secret manager.
+- [ ] **Replace `KALAMDB_ROOT_PASSWORD`.** Same.
+- [ ] **Tighten `KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS`** from `*` to your actual frontend origin.
+- [ ] **Set `KALAMDB_ALLOW_REMOTE_SETUP=false`** — provision schemas with migrations, not the bundled `npm run setup`.
+
+**Reliability & scaling**
+
+- [ ] Run multiple agent replicas behind the same `KALAMDB_GROUP`. For Docker Compose: `docker compose -f docker-compose.prod.yml up -d --scale agent=N`. For Docker Swarm or Kubernetes, set the appropriate replica count on the agent deployment. `deploy.replicas` in the compose file is intentionally unset (Swarm-only field, silently ignored by plain Compose).
+- [ ] Pin the KalamDB image tag in `docker-compose.yml` / `docker-compose.prod.yml` to whatever version you've tested against — `:latest` will change under you.
+- [ ] Re-seed the RAG knowledge base (`npm run seed-docs`) whenever the corpus changes; the seed script wipes any rows tagged `starter/seed:%` before re-inserting so renamed doc ids don't leave orphans.
+
+**Observability**
+
+- [ ] The agent and backend use pino with credential-path redaction. Route stdout to whatever log system you have.
+- [ ] `/api/health` deep-probes upstream KalamDB and caches the answer for `HEALTH_CACHE_MS` (default 2s) to avoid amplifying probes into upstream traffic. Wire it up to `compose healthcheck` / k8s `readinessProbe`.
+
+**Test it**
+
+- [ ] After every change to `chat-app.sql`, `src/agent/`, `server/`, or `src/lib/llm/`, run `npm run typecheck && npm run lint && npm test:unit && npm run test:component`. The e2e (`npm test`) needs the dev stack running.
 
 ## Scripts
 

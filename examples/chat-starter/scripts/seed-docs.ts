@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { logger } from "../src/lib/logger.js";
 import { embed, embeddingLiteral } from "../src/lib/llm/embedding.js";
+import { SEED_SOURCE_TAG } from "../src/lib/constants.js";
 
 // Seeds chat.docs (SHARED) with a hand-curated KalamDB knowledge base.
 // Run via `npm run seed-docs`. Idempotent — wipes existing rows first.
@@ -188,14 +189,20 @@ async function login(): Promise<string> {
   return body.access_token;
 }
 
-async function execSql(token: string, sql: string, params?: unknown[]): Promise<unknown> {
+// All seed SQL is constructed here from values we control (seeded DOCS
+// array + helper functions); we use the single-statement {sql} shape and
+// escape via sqlString() consistently. No parameterized $1 binding —
+// keeping the seed script uniform makes the cascade easier to read.
+async function execSql(token: string, sql: string): Promise<unknown> {
   const res = await fetch(`${URL}/v1/api/sql`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(params ? { sql, params } : { sql }),
+    body: JSON.stringify({ sql }),
   });
   if (!res.ok) {
-    throw new Error(`SQL failed (${res.status}): ${sql.slice(0, 80)} — ${await res.text().catch(() => "")}`);
+    throw new Error(
+      `SQL failed (${res.status}): ${sql.slice(0, 80)} — ${await res.text().catch(() => "")}`,
+    );
   }
   return res.json();
 }
@@ -208,22 +215,27 @@ async function main(): Promise<void> {
   const token = await login();
   log.info({ url: URL, count: DOCS.length }, "seed-docs starting");
 
-  // KalamDB's DELETE planner requires a concrete predicate. Wipe by
-  // iterating known seed IDs — guarantees idempotency without needing a
-  // bulk-delete primitive.
-  for (const doc of DOCS) {
-    await execSql(token, `DELETE FROM chat.docs WHERE id = ${sqlString(doc.id)}`);
-  }
-  log.info("chat.docs wiped");
+  // Wipe by the SEED_SOURCE_TAG prefix (not by id) so renamed or removed
+  // doc ids from previous runs don't leave orphans behind. We stamp every
+  // seed row with source = `<tag>:<human-source>` below.
+  await execSql(
+    token,
+    `DELETE FROM chat.docs WHERE source LIKE ${sqlString(SEED_SOURCE_TAG + ":%")}`,
+  );
+  log.info({ tag: SEED_SOURCE_TAG }, "chat.docs wiped");
 
   for (const doc of DOCS) {
     const vec = await embed(`${doc.title}\n\n${doc.body}`);
     const vecLit = embeddingLiteral(vec);
     const now = new Date().toISOString();
+    // Embed the per-doc source as `<SEED_SOURCE_TAG>:<doc-source>` so the
+    // LLM still sees the human-friendly origin in citations, while the
+    // wipe predicate above can match every seed regardless of doc id.
+    const taggedSource = `${SEED_SOURCE_TAG}:${doc.source}`;
     const sql =
       `INSERT INTO chat.docs (id, title, body, source, embedding, created_at) VALUES (` +
       `${sqlString(doc.id)}, ${sqlString(doc.title)}, ${sqlString(doc.body)}, ` +
-      `${sqlString(doc.source)}, '${vecLit}', ${sqlString(now)})`;
+      `${sqlString(taggedSource)}, '${vecLit}', ${sqlString(now)})`;
     await execSql(token, sql);
     log.info({ id: doc.id, title: doc.title }, "indexed");
   }

@@ -88,6 +88,33 @@ test("rejects empty input", () => {
   assert.equal(guardSelect("   \n  ").ok, false);
 });
 
+test("ACCEPTS double-hyphen INSIDE a string literal (not a comment)", () => {
+  const r = guardSelect("SELECT id FROM chat.messages WHERE body LIKE '%--%'");
+  assert.equal(r.ok, true);
+});
+
+test("ACCEPTS semicolon INSIDE a string literal (not a statement chain)", () => {
+  const r = guardSelect("SELECT id FROM chat.messages WHERE body = 'a;b'");
+  assert.equal(r.ok, true);
+});
+
+test("ACCEPTS escaped quotes (it''s) inside literals without confusing the scanner", () => {
+  const r = guardSelect("SELECT id FROM chat.messages WHERE body = 'it''s; tricky'");
+  assert.equal(r.ok, true);
+});
+
+test("still REJECTS real comment outside any string", () => {
+  const r = guardSelect("SELECT id FROM chat.messages -- DROP TABLE x");
+  assert.equal(r.ok, false);
+  assert.match(r.reason!, /Comments/);
+});
+
+test("still REJECTS real semicolon chain outside any string", () => {
+  const r = guardSelect("SELECT 1 FROM chat.tasks; DROP TABLE chat.messages");
+  assert.equal(r.ok, false);
+  assert.match(r.reason!, /single statement/);
+});
+
 test("rejects oversized SQL", () => {
   const huge = "SELECT * FROM chat.messages WHERE id IN (" + "'x',".repeat(2000) + "'y')";
   const r = guardSelect(huge);

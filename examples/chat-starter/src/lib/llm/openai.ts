@@ -1,4 +1,11 @@
-import type { LlmAdapter, LlmMessage, LlmStreamArgs, LlmStreamEvent, LlmTool } from "./index.js";
+import {
+  LlmHttpError,
+  type LlmAdapter,
+  type LlmMessage,
+  type LlmStreamArgs,
+  type LlmStreamEvent,
+  type LlmTool,
+} from "./index.js";
 
 interface OpenAiOptions {
   apiKey: string;
@@ -55,7 +62,10 @@ export class OpenAiAdapter implements LlmAdapter {
       body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
-      throw new Error(`OpenAI request failed (${res.status}): ${await res.text().catch(() => "")}`);
+      throw new LlmHttpError(
+        res.status,
+        `OpenAI request failed (${res.status}): ${await res.text().catch(() => "")}`,
+      );
     }
 
     const pendingTools = new Map<number, { id: string; name: string; argsText: string }>();

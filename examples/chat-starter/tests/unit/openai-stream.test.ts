@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OpenAiAdapter } from "../../src/lib/llm/openai.js";
-import type { LlmStreamEvent } from "../../src/lib/llm/index.js";
+import { LlmHttpError, type LlmStreamEvent } from "../../src/lib/llm/index.js";
 
 // Build a Response whose body is the given SSE frames, terminated by [DONE].
 function sseResponse(frames: string[], status = 200): Response {
@@ -149,10 +149,10 @@ test("OpenAI: oversized tool args abort the stream", async () => {
   );
 });
 
-test("OpenAI: HTTP error surfaces as a throw including status code", async () => {
+test("OpenAI: HTTP error surfaces as an LlmHttpError with the status code", async () => {
   const errResponse = new Response("rate limit", { status: 429 });
   await assert.rejects(
     withMockedFetch(errResponse, () => collect(new OpenAiAdapter({ apiKey: "k", model: "test" }))),
-    /\(429\)/,
+    (err) => err instanceof LlmHttpError && err.status === 429,
   );
 });

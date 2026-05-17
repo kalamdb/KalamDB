@@ -11,6 +11,11 @@ import { logger } from "../src/lib/logger.js";
 // user's session cookie / OAuth token first, then mint a per-user KalamDB
 // token scoped to that user's data. This starter demonstrates the boundary
 // (secrets stay server-side) without implementing user accounts.
+//
+// To prevent the starter from being deployed unmodified as an open token
+// vending machine, the server refuses to boot in NODE_ENV=production unless
+// ALLOW_UNAUTHENTICATED_TOKENS=true is explicitly set — a fence the operator
+// must deliberately step over.
 
 const log = logger.child({ component: "server" });
 
@@ -20,6 +25,8 @@ const DEFAULTS = {
   password: "kalamdb-dev-password",
   port: 3001,
   tokenRateLimitPerMinute: 10,
+  healthRateLimitPerMinute: 60,
+  healthCacheMs: 2_000,
 } as const;
 
 export interface ServerConfig {
@@ -27,6 +34,10 @@ export interface ServerConfig {
   kalamdbUser: string;
   kalamdbPassword: string;
   tokenRateLimitPerMinute: number;
+  healthRateLimitPerMinute: number;
+  healthCacheMs: number;
+  /** When true, X-Forwarded-For is honored. Set behind a trusted reverse proxy only. */
+  trustProxy: boolean;
 }
 
 function configFromEnv(): ServerConfig {
@@ -37,6 +48,11 @@ function configFromEnv(): ServerConfig {
     tokenRateLimitPerMinute: Number(
       process.env.TOKEN_RATE_LIMIT_PER_MINUTE ?? DEFAULTS.tokenRateLimitPerMinute,
     ),
+    healthRateLimitPerMinute: Number(
+      process.env.HEALTH_RATE_LIMIT_PER_MINUTE ?? DEFAULTS.healthRateLimitPerMinute,
+    ),
+    healthCacheMs: Number(process.env.HEALTH_CACHE_MS ?? DEFAULTS.healthCacheMs),
+    trustProxy: process.env.TRUST_PROXY === "1",
   };
 }
 
@@ -91,9 +107,14 @@ function makeRateLimiter(perMinute: number) {
   };
 }
 
-function clientIp(req: IncomingMessage): string {
-  const fwd = req.headers["x-forwarded-for"];
-  if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0]!.trim();
+function clientIp(req: IncomingMessage, trustProxy: boolean): string {
+  // X-Forwarded-For is trivially spoofable — only trust it when explicitly
+  // told there's a known reverse proxy in front (TRUST_PROXY=1). Otherwise
+  // attackers rotate the header and bypass the per-IP limiter.
+  if (trustProxy) {
+    const fwd = req.headers["x-forwarded-for"];
+    if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0]!.trim();
+  }
   return req.socket.remoteAddress ?? "unknown";
 }
 
@@ -117,41 +138,58 @@ export interface BuildServerOptions {
 export function buildServer(opts: BuildServerOptions = {}): Server {
   const cfg = opts.config ?? configFromEnv();
   const getKalamToken = opts.tokenFetcher ?? makeTokenFetcher(cfg);
-  const rateTake = makeRateLimiter(cfg.tokenRateLimitPerMinute);
+  const rateTakeToken = makeRateLimiter(cfg.tokenRateLimitPerMinute);
+  const rateTakeHealth = makeRateLimiter(cfg.healthRateLimitPerMinute);
+
+  // /api/health caches its upstream-healthy answer briefly so repeated probes
+  // (k8s readiness, ELB, monitoring) don't amplify into upstream traffic.
+  let healthCache: { ok: boolean; status: number; at: number; upstream?: number | string } | null =
+    null;
 
   async function handle(
     req: IncomingMessage,
     res: ServerResponse,
     requestLog: typeof log,
   ): Promise<void> {
+    const ip = clientIp(req, cfg.trustProxy);
     if (req.method === "POST" && req.url === "/api/auth/token") {
-      const ip = clientIp(req);
-      if (!rateTake(ip)) {
+      if (!rateTakeToken(ip)) {
         requestLog.warn({ ip }, "rate limit exceeded on /api/auth/token");
         json(res, 429, { error: "rate_limited" });
         return;
       }
       // Real app: authenticate the caller here (session cookie, OAuth, etc).
+      // See README "Deployment checklist" for the fences guarding this path.
       const { token, expiresAt } = await getKalamToken();
       json(res, 200, { token, expiresAt });
       return;
     }
     if (req.method === "GET" && req.url === "/api/health") {
-      // Deep health: actually probe the upstream KalamDB. If it can't be
-      // reached the API is useless, so report unhealthy.
+      if (!rateTakeHealth(ip)) {
+        json(res, 429, { error: "rate_limited" });
+        return;
+      }
+      // Serve from cache if fresh.
+      if (healthCache && Date.now() - healthCache.at < cfg.healthCacheMs) {
+        json(res, healthCache.status, { ok: healthCache.ok, upstream: healthCache.upstream });
+        return;
+      }
       try {
         const r = await fetch(`${cfg.kalamdbUrl}/v1/api/health`, {
           signal: AbortSignal.timeout(2000),
         });
         if (!r.ok) {
+          healthCache = { ok: false, status: 503, at: Date.now(), upstream: r.status };
           json(res, 503, { ok: false, upstream: r.status });
           return;
         }
       } catch (err) {
+        healthCache = { ok: false, status: 503, at: Date.now(), upstream: "unreachable" };
         json(res, 503, { ok: false, upstream: "unreachable" });
         requestLog.warn({ err }, "upstream KalamDB health probe failed");
         return;
       }
+      healthCache = { ok: true, status: 200, at: Date.now() };
       json(res, 200, { ok: true });
       return;
     }
@@ -159,7 +197,9 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
   }
 
   return createServer((req, res) => {
-    const requestId = (req.headers["x-request-id"] as string | undefined) ?? randomUUID();
+    const incoming = req.headers["x-request-id"];
+    const requestId =
+      typeof incoming === "string" && /^[\w-]{8,128}$/.test(incoming) ? incoming : randomUUID();
     setSecurityHeaders(res, requestId);
     const requestLog = log.child({ request_id: requestId, method: req.method, url: req.url });
     const start = Date.now();
@@ -175,9 +215,34 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
   });
 }
 
-// CLI entrypoint. Tests import buildServer() directly with NODE_ENV=test,
-// so we skip the auto-listen in that mode.
+// ---------------------------------------------------------------------------
+// CLI entrypoint
+// ---------------------------------------------------------------------------
+//
+// Tests import buildServer() directly with NODE_ENV=test, so we skip the
+// auto-listen and the production fence in that mode.
+
+function assertProductionFence(): void {
+  if (process.env.NODE_ENV !== "production") return;
+  if (process.env.ALLOW_UNAUTHENTICATED_TOKENS === "true") {
+    log.warn(
+      "/api/auth/token is mounted WITHOUT caller authentication (ALLOW_UNAUTHENTICATED_TOKENS=true). " +
+        "Anyone reaching this endpoint can mint a KalamDB token. Only acceptable behind a private " +
+        "network boundary or for an internal demo. See README for plugging in real auth.",
+    );
+    return;
+  }
+  const msg =
+    "REFUSING TO START: NODE_ENV=production but /api/auth/token has no caller authentication. " +
+    "Plug in real auth in server/index.ts (validate the caller's session and mint a per-user " +
+    "KalamDB token), or set ALLOW_UNAUTHENTICATED_TOKENS=true to deliberately bypass this fence. " +
+    "See README 'Deployment checklist'.";
+  log.fatal(msg);
+  throw new Error(msg);
+}
+
 if (process.env.NODE_ENV !== "test") {
+  assertProductionFence();
   const port = Number(process.env.PORT ?? DEFAULTS.port);
   const server = buildServer();
   server.listen(port, "127.0.0.1", () => {

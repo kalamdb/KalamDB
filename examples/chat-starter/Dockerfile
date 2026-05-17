@@ -16,7 +16,11 @@ COPY tsconfig.json tsconfig.agent.json tsconfig.app.json ./
 COPY src ./src
 COPY server ./server
 COPY scripts ./scripts
-RUN npx tsc -p tsconfig.agent.json --noEmit
+# Typecheck both app and agent so the image build catches frontend errors
+# too — even though the frontend bundle is built separately by your CDN
+# step, breaking imports in shared lib code would still ship via the
+# tsx-served agent paths.
+RUN npx tsc -p tsconfig.agent.json --noEmit && npx tsc -p tsconfig.app.json --noEmit
 # tsx runs TS directly at startup; we don't precompile to JS here.
 
 # ---- runtime ----
@@ -42,7 +46,9 @@ USER node
 # which probes the upstream KalamDB. Wire it up in your orchestrator
 # (docker-compose healthcheck, k8s readinessProbe, etc.).
 
-# Default: run nothing. Override CMD per service:
+# No default CMD — operators MUST override per service:
 #   server: ["npx", "tsx", "server/index.ts"]
 #   agent:  ["npx", "tsx", "src/agent/index.ts"]
-CMD ["node", "--print", "'set CMD to server/index.ts or src/agent/index.ts'"]
+# The hard error below keeps orchestrators from quietly succeeding with no
+# process (and recycling the container until quota runs out).
+CMD ["node", "-e", "console.error('chat-starter image has no default CMD — set command: [npx, tsx, server/index.ts] or [npx, tsx, src/agent/index.ts] in your compose / k8s spec. See Dockerfile.'); process.exit(1)"]

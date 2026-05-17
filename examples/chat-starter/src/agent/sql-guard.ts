@@ -8,6 +8,8 @@
 // query) are recoverable — the model will retry with a simpler query.
 // False positives (accepting something destructive) are not.
 
+import { hasCommentOutsideStrings, semicolonPositionsOutsideStrings } from "./sql-scan.js";
+
 const ALLOWED_NAMESPACES = ["chat"] as const;
 
 const DEFAULT_LIMIT = 200;
@@ -26,16 +28,22 @@ function trimStatement(sql: string): string {
   return sql.trim().replace(/;+\s*$/, "");
 }
 
-/** Detect SQL comments — they're a common way to dodge keyword filters. */
+/**
+ * Detect SQL comments OUTSIDE string literals. The naive /--/ regex rejects
+ * perfectly innocent queries like WHERE body LIKE '%--%' that the LLM will
+ * produce for any user content containing double-hyphens. The scanner walks
+ * the string respecting single-quote literals.
+ */
 function containsComment(sql: string): boolean {
-  return /--/.test(sql) || /\/\*/.test(sql);
+  return hasCommentOutsideStrings(sql);
 }
 
-/** Detect statement terminators OTHER than the trailing one we stripped. */
+/**
+ * Detect statement terminators OTHER than the trailing one we stripped, and
+ * outside string literals. WHERE body = 'a;b' must not count.
+ */
 function containsExtraStatements(sql: string): boolean {
-  // After trimStatement removes the trailing ; (and any whitespace after),
-  // any remaining ; means the LLM tried to chain statements.
-  return /;/.test(sql);
+  return semicolonPositionsOutsideStrings(sql).length > 0;
 }
 
 /** First non-whitespace keyword token. */

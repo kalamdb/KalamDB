@@ -44,7 +44,6 @@ function makeCtx(client: ToolContext["client"]): ToolContext {
       message_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     },
     signal: new AbortController().signal,
-    lastToolCallName: null,
     lastApprovalDecision: null,
   };
 }
@@ -164,7 +163,7 @@ test("delete_conversation REFUSES a non-UUID id even with approval", async () =>
   assert.equal(stub.queries.length, 0);
 });
 
-test("delete_conversation cascades through all child tables, then the parent", async () => {
+test("delete_conversation cascades atomically (single BEGIN/COMMIT request)", async () => {
   const stub = makeStubClient();
   const ctx = makeCtx(stub.client);
   ctx.lastApprovalDecision = "approved";
@@ -174,16 +173,41 @@ test("delete_conversation cascades through all child tables, then the parent", a
     arguments: { conversation_id: "11111111-1111-1111-1111-111111111111" },
   });
   assert.match(out, /^deleted conversation/);
-  // 5 deletes in this exact order: typing_tokens, approvals, tasks, messages, conversations.
-  assert.equal(stub.queries.length, 5);
-  assert.match(stub.queries[0]!.sql, /DELETE FROM chat\.typing_tokens/);
-  assert.match(stub.queries[1]!.sql, /DELETE FROM chat\.approvals/);
-  assert.match(stub.queries[2]!.sql, /DELETE FROM chat\.tasks/);
-  assert.match(stub.queries[3]!.sql, /DELETE FROM chat\.messages/);
-  assert.match(stub.queries[4]!.sql, /DELETE FROM chat\.conversations/);
-  for (const q of stub.queries) {
-    assert.deepEqual(q.params, ["11111111-1111-1111-1111-111111111111"]);
-  }
+  // One transactional request, not five separate ones.
+  assert.equal(stub.queries.length, 1);
+  const sql = stub.queries[0]!.sql;
+  assert.match(sql, /^BEGIN/);
+  assert.match(sql, /COMMIT$/);
+  // All 5 child + parent DELETEs present, in dependency-safe order.
+  const idx = (s: string) => sql.indexOf(s);
+  assert.ok(idx("DELETE FROM chat.typing_tokens") > 0);
+  assert.ok(idx("DELETE FROM chat.approvals") > 0);
+  assert.ok(idx("DELETE FROM chat.tasks") > 0);
+  assert.ok(idx("DELETE FROM chat.messages") > 0);
+  assert.ok(idx("DELETE FROM chat.conversations") > 0);
+  // Order: typing_tokens before approvals before tasks before messages before conversations.
+  assert.ok(idx("typing_tokens") < idx("approvals"));
+  assert.ok(idx("approvals") < idx("tasks"));
+  assert.ok(idx("tasks") < idx("messages"));
+  assert.ok(idx("messages") < idx("conversations"));
+  // ID embedded via uuidLit (validated).
+  assert.match(sql, /'11111111-1111-1111-1111-111111111111'/);
+});
+
+test("delete_conversation refuses to proceed if the abort signal already fired", async () => {
+  const stub = makeStubClient();
+  const ctx = makeCtx(stub.client);
+  ctx.lastApprovalDecision = "approved";
+  const controller = new AbortController();
+  controller.abort();
+  ctx.signal = controller.signal;
+  const out = await dispatchTool(ctx, {
+    id: "c1",
+    name: "delete_conversation",
+    arguments: { conversation_id: "11111111-1111-1111-1111-111111111111" },
+  });
+  assert.match(out, /cancelled before delete/);
+  assert.equal(stub.queries.length, 0);
 });
 
 test("delete_conversation CONSUMES the approval (cannot be reused for a second delete)", async () => {

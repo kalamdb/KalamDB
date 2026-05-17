@@ -8,6 +8,9 @@ const baseConfig: ServerConfig = {
   kalamdbUser: "root",
   kalamdbPassword: "x",
   tokenRateLimitPerMinute: 60,
+  healthRateLimitPerMinute: 600,
+  healthCacheMs: 0, // disable cache in most tests
+  trustProxy: false,
 };
 
 interface RunningServer {
@@ -171,4 +174,88 @@ test("unknown routes return 404", async () => {
       assert.equal(res.status, 404);
     },
   );
+});
+
+test("X-Forwarded-For is IGNORED when trustProxy is false (anti-spoofing)", async () => {
+  const rateLimit = 2;
+  await withServer(
+    {
+      config: { ...baseConfig, tokenRateLimitPerMinute: rateLimit, trustProxy: false },
+      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+    },
+    async (s) => {
+      // Hit the limit using rotating X-Forwarded-For values. Because
+      // trustProxy=false, all requests count toward the same socket IP and
+      // the 3rd one must be rate-limited.
+      const r1 = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "x-forwarded-for": "1.1.1.1" },
+      });
+      const r2 = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "x-forwarded-for": "2.2.2.2" },
+      });
+      const r3 = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "x-forwarded-for": "3.3.3.3" },
+      });
+      assert.equal(r1.status, 200);
+      assert.equal(r2.status, 200);
+      assert.equal(r3.status, 429, "spoofed XFF must not bypass the per-IP limit");
+    },
+  );
+});
+
+test("X-Forwarded-For IS honored when trustProxy is true", async () => {
+  const rateLimit = 1;
+  await withServer(
+    {
+      config: { ...baseConfig, tokenRateLimitPerMinute: rateLimit, trustProxy: true },
+      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+    },
+    async (s) => {
+      // Two requests from "different" XFF IPs both succeed because trustProxy
+      // is true and each gets its own bucket.
+      const r1 = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "x-forwarded-for": "10.0.0.1" },
+      });
+      const r2 = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "x-forwarded-for": "10.0.0.2" },
+      });
+      assert.equal(r1.status, 200);
+      assert.equal(r2.status, 200);
+    },
+  );
+});
+
+test("/api/health serves cached answer within healthCacheMs window", async () => {
+  let probeCount = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: unknown, _init?: unknown) => {
+    const url = typeof input === "string" ? input : (input as { url: string }).url;
+    if (url.includes("/v1/api/health")) {
+      probeCount++;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    return realFetch(input as string | URL | Request);
+  }) as typeof fetch;
+  try {
+    await withServer(
+      {
+        config: { ...baseConfig, healthCacheMs: 10_000 },
+        tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      },
+      async (s) => {
+        for (let i = 0; i < 5; i++) {
+          const r = await realFetch(`${s.url}/api/health`);
+          assert.equal(r.status, 200);
+        }
+        assert.equal(probeCount, 1, "upstream must be probed exactly once when cache is fresh");
+      },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

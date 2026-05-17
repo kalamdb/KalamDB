@@ -48,6 +48,11 @@ export function Composer({ onSend, onStop, isStreaming, canStop }: ComposerProps
         onKeyDown={handleKey}
         placeholder={isStreaming ? "Streaming  press Stop to cancel" : "Message KalamDB Chat"}
         rows={1}
+        // Deliberately disabled while the agent is busy — the starter has no
+        // "queued send" UX. Drafting+queueing while a reply streams in is a
+        // worthwhile addition for a real product (ChatGPT et al. do it) but
+        // would couple the agent to the idea of a pending-message queue,
+        // which isn't a primitive the chat-starter wants to demo.
         disabled={isStreaming}
         className="flex-1 resize-none bg-transparent outline-none text-[14px] leading-relaxed py-1.5 disabled:opacity-60 placeholder:text-[var(--muted-foreground)]"
       />

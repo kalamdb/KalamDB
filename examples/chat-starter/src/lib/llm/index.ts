@@ -32,7 +32,28 @@ export interface LlmAdapter {
   stream(args: LlmStreamArgs): AsyncGenerator<LlmStreamEvent, void, undefined>;
 }
 
+/**
+ * Thrown by an LlmAdapter when the upstream provider returned a non-OK HTTP
+ * status. Carries the status code so the retry layer can decide what's
+ * transient (429, 5xx) vs terminal (4xx) without parsing strings.
+ */
+export class LlmHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "LlmHttpError";
+    this.status = status;
+  }
+}
+
 let cached: LlmAdapter | null = null;
+
+/** Test helper — drops the cached adapter so a subsequent getLlmAdapter()
+ *  re-runs the provider-pick logic against the current env. Production
+ *  code should never call this. */
+export function resetCachedAdapterForTests(): void {
+  cached = null;
+}
 
 type Provider = "openai" | "anthropic" | "mock";
 

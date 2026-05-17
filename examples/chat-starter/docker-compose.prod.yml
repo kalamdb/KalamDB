@@ -65,9 +65,12 @@ services:
       kalamdb:
         condition: service_healthy
     restart: unless-stopped
-    # Run multiple replicas — they coordinate via KALAMDB_GROUP.
-    deploy:
-      replicas: 2
+    # To run multiple agent replicas under the same KALAMDB_GROUP (they will
+    # share the task topic with at-least-once delivery + load balancing):
+    #   docker compose -f docker-compose.prod.yml up -d --scale agent=N
+    # Note: deploy.replicas is intentionally NOT set here — that field only
+    # takes effect under Docker Swarm. Plain `docker compose up` would
+    # silently ignore it and you'd end up with one agent.
 
 volumes:
   kalamdb_data:

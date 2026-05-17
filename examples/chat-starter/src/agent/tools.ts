@@ -99,9 +99,9 @@ export interface ToolContext {
   log: Logger;
   task: { id: string; conversation_id: string; message_id: string };
   signal: AbortSignal;
-  /** Most recent tool name handled — used to enforce "request_approval first". */
-  lastToolCallName: string | null;
-  /** Decision returned by the most recent request_approval — 'approved' / 'rejected' / null. */
+  /** Decision returned by the most recent request_approval — 'approved' / 'rejected' / null.
+   *  Consumed (set to null) by destructive tools so a single approval can't
+   *  authorize two destructive actions. */
   lastApprovalDecision: string | null;
 }
 
@@ -153,7 +153,13 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
       void unsubscribe?.();
       resolve(value);
     };
-    const onAbort = (): void => finish("rejected (cancelled by user before approval resolved)");
+    const onAbort = (): void => {
+      // Return exactly "rejected" so the system-prompt rule for that
+      // literal matches cleanly (the LLM doesn't have to parse a verbose
+      // explanation). The verbose reason goes to the agent log instead.
+      ctx.log.info({ approval_id: approvalId }, "approval rejected by abort signal");
+      finish("rejected");
+    };
     ctx.signal.addEventListener("abort", onAbort, { once: true });
 
     ctx.client
@@ -182,7 +188,6 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
       .catch((err) => finish(`error subscribing to approval: ${String(err)}`));
   });
 
-  ctx.lastToolCallName = "request_approval";
   ctx.lastApprovalDecision = decision;
   return decision;
 }
@@ -244,19 +249,33 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     return `Error: conversation_id must be a UUID; got "${id}".`;
   }
 
+  // Honor cancellation: if the user clicked Stop between the approval and
+  // here, don't proceed with destructive work.
+  if (ctx.signal.aborted) {
+    return "Error: cancelled before delete could start";
+  }
+
   ctx.log.info({ conversation_id: id }, "delete_conversation cascade starting");
   try {
-    // Cascade order matters less than completeness — children first is the
-    // safe convention even when foreign keys aren't enforced.
-    await ctx.client.query("DELETE FROM chat.typing_tokens WHERE conversation_id = $1", [id]);
-    await ctx.client.query("DELETE FROM chat.approvals WHERE conversation_id = $1", [id]);
-    await ctx.client.query("DELETE FROM chat.tasks WHERE conversation_id = $1", [id]);
-    await ctx.client.query("DELETE FROM chat.messages WHERE conversation_id = $1", [id]);
-    await ctx.client.query("DELETE FROM chat.conversations WHERE id = $1", [id]);
+    // Atomic cascade: KalamDB executes BEGIN/COMMIT in a single SQL request
+    // as one transaction (any DELETE failure → automatic rollback → no
+    // half-deleted state). children first by convention, then the parent
+    // row last.
+    const idLit = uuidLit(id);
+    const sql = [
+      "BEGIN",
+      `DELETE FROM chat.typing_tokens WHERE conversation_id = ${idLit}`,
+      `DELETE FROM chat.approvals WHERE conversation_id = ${idLit}`,
+      `DELETE FROM chat.tasks WHERE conversation_id = ${idLit}`,
+      `DELETE FROM chat.messages WHERE conversation_id = ${idLit}`,
+      `DELETE FROM chat.conversations WHERE id = ${idLit}`,
+      "COMMIT",
+    ].join("; ");
+    await ctx.client.query(sql);
     ctx.log.info({ conversation_id: id }, "delete_conversation cascade complete");
     return `deleted conversation ${id} and all related rows`;
   } catch (err) {
-    ctx.log.error({ err, conversation_id: id }, "delete_conversation failed");
+    ctx.log.error({ err, conversation_id: id }, "delete_conversation failed (rolled back)");
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }

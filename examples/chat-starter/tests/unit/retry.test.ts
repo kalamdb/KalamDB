@@ -2,7 +2,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { withRetry } from "../../src/lib/llm/retry.js";
-import type { LlmAdapter, LlmStreamArgs, LlmStreamEvent } from "../../src/lib/llm/index.js";
+import {
+  LlmHttpError,
+  type LlmAdapter,
+  type LlmStreamArgs,
+  type LlmStreamEvent,
+} from "../../src/lib/llm/index.js";
+
+function httpError(status: number, body = "x"): LlmHttpError {
+  return new LlmHttpError(status, `upstream failed (${status}): ${body}`);
+}
 
 function makeAdapter(
   attemptHandlers: Array<() => AsyncGenerator<LlmStreamEvent, void, undefined>>,
@@ -36,8 +45,8 @@ async function* throws(err: Error): AsyncGenerator<LlmStreamEvent, void, undefin
 
 test("retries on transient 5xx errors then succeeds", async () => {
   const a = makeAdapter([
-    () => throws(new Error("OpenAI request failed (503): bad gateway")),
-    () => throws(new Error("OpenAI request failed (502): bad gateway")),
+    () => throws(httpError(503)),
+    () => throws(httpError(502)),
     () =>
       yields([
         { type: "text", delta: "hello" },
@@ -58,7 +67,7 @@ test("retries on transient 5xx errors then succeeds", async () => {
 
 test("retries on 429 then succeeds", async () => {
   const a = makeAdapter([
-    () => throws(new Error("OpenAI request failed (429): too many requests")),
+    () => throws(httpError(429, "too many requests")),
     () => yields([{ type: "done", reason: "stop" }]),
   ]);
   const wrapped = withRetry(a.adapter, { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5 });
@@ -73,7 +82,7 @@ test("retries on 429 then succeeds", async () => {
 
 test("does NOT retry on 4xx client errors", async () => {
   const a = makeAdapter([
-    () => throws(new Error("OpenAI request failed (400): bad input")),
+    () => throws(httpError(400, "bad input")),
     () => yields([{ type: "done", reason: "stop" }]),
   ]);
   const wrapped = withRetry(a.adapter, { maxAttempts: 5, baseDelayMs: 1, maxDelayMs: 5 });
@@ -115,9 +124,9 @@ test("respects abort signal and does NOT retry", async () => {
 
 test("gives up after maxAttempts and rethrows the last error", async () => {
   const a = makeAdapter([
-    () => throws(new Error("OpenAI request failed (503): one")),
-    () => throws(new Error("OpenAI request failed (503): two")),
-    () => throws(new Error("OpenAI request failed (503): three")),
+    () => throws(httpError(503, "one")),
+    () => throws(httpError(503, "two")),
+    () => throws(httpError(503, "three")),
   ]);
   const wrapped = withRetry(a.adapter, { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5 });
   await assert.rejects(
@@ -138,7 +147,7 @@ test("does NOT retry once events have started streaming", async () => {
   const a = makeAdapter([
     async function* () {
       yield { type: "text", delta: "hi" };
-      throw new Error("OpenAI request failed (503): mid-stream");
+      throw httpError(503, "mid-stream");
     },
   ]);
   const wrapped = withRetry(a.adapter, { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5 });
