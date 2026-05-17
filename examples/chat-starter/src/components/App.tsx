@@ -131,14 +131,39 @@ function ChatBody(props: ChatBodyProps) {
     setSelectedId,
   } = props;
 
-  // When the selected conversation disappears from live results (e.g.,
+  // When the selected conversation DISAPPEARS from live results (e.g.,
   // delete_conversation just cascaded), drop selectedId so the UI returns
   // to the Welcome screen instead of leaving the user "inside" a now-empty
   // conversation row.
+  //
+  // Two guards to avoid false-positive deselection right after creating a
+  // new conversation (the live query takes a moment to propagate the new
+  // row, during which selectedId is set but the row isn't in the list):
+  //   1. Only deselect if the row was PREVIOUSLY OBSERVED in the rows.
+  //   2. Only after a short settle window (so we don't race the first
+  //      propagation of a freshly-inserted row).
+  const observedSelectedRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!selectedId) return;
-    const stillExists = conversationsRows.some((c) => c.id === selectedId);
-    if (!stillExists) setSelectedId(null);
+    if (!selectedId) {
+      observedSelectedRef.current = null;
+      return;
+    }
+    const exists = conversationsRows.some((c) => c.id === selectedId);
+    if (exists) {
+      observedSelectedRef.current = selectedId;
+      return;
+    }
+    // If we've never observed this id, don't deselect — could be the
+    // moment between create-INSERT and the subscription delivering the
+    // new row.
+    if (observedSelectedRef.current !== selectedId) return;
+    // Was here before, now gone → real deletion. Drop selection (defer
+    // briefly so any in-flight state updates settle first).
+    const handle = setTimeout(() => {
+      setSelectedId(null);
+      observedSelectedRef.current = null;
+    }, 250);
+    return () => clearTimeout(handle);
   }, [selectedId, conversationsRows, setSelectedId]);
 
   const createConversation = React.useCallback(async () => {
