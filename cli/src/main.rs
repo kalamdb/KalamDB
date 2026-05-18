@@ -26,11 +26,7 @@ mod connect;
 mod terminal_input;
 
 use args::Cli;
-use commands::{
-    credentials::{handle_credentials, login_and_store_credentials},
-    subscriptions::handle_subscriptions,
-    watch_schema::handle_watch_schema,
-};
+use commands::handle_pre_session_commands;
 use connect::create_session;
 use terminal_input::prompt_password;
 
@@ -70,23 +66,8 @@ async fn run() -> Result<()> {
     // Load credential store
     let mut credential_store = FileCredentialStore::new()?;
 
-    // Handle credential management commands (sync operations like list, show, delete)
-    if handle_credentials(&cli, &mut credential_store)? {
-        return Ok(());
-    }
-
-    // Handle credential login/update (async - requires network)
-    if login_and_store_credentials(&cli, &mut credential_store).await? {
-        return Ok(());
-    }
-
-    // Handle schema watch mode.
-    if handle_watch_schema(&cli, &mut credential_store).await? {
-        return Ok(());
-    }
-
-    // Handle subscription management commands
-    if handle_subscriptions(&cli, &mut credential_store).await? {
+    // Handle modes that do not use the regular command/file/interactive session path.
+    if handle_pre_session_commands(&cli, &mut credential_store).await? {
         return Ok(());
     }
 
@@ -97,7 +78,8 @@ async fn run() -> Result<()> {
     let mut session = create_session(&cli, &mut credential_store, &config, config_path).await?;
 
     // Execute based on mode
-    match (cli.file, cli.command, cli.consume) {
+    let command_text = cli.command_text();
+    match (cli.file, command_text, cli.consume) {
         // Consume mode takes precedence
         (_, _, true) => {
             let topic = cli.topic.ok_or_else(|| {
@@ -117,11 +99,8 @@ async fn run() -> Result<()> {
 
         // Execute SQL file
         (Some(file), None, false) => {
-            let sql = std::fs::read_to_string(&file).map_err(|e| {
-                CLIError::FileError(format!("Failed to read {}: {}", file.display(), e))
-            })?;
             session.print_execution_target_banner();
-            session.execute_batch(&sql).await?;
+            session.execute_file(&file).await?;
         },
 
         // Execute single command

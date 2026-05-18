@@ -1,2 +1,0 @@
-    Checking kalamdb-raft v0.5.0-beta.1 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-raft)
-    Finished `dev` profile [unoptimized] target(s) in 5.61s

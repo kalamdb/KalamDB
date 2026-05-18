@@ -688,18 +688,18 @@ pub async fn run(
                 }
             }
 
-            // Force-close WebSocket connections BEFORE stopping HTTP server.
-            // Live clients can resume, so do not spend shutdown time draining socket close
-            // handshakes here.
+            // Give WebSocket handlers a short grace window to process the shutdown event and
+            // unregister before falling back to a force close.
             info!("Shutting down WebSocket connections...");
-            connection_registry_shutdown.shutdown(std::time::Duration::ZERO).await;
+            connection_registry_shutdown
+                .shutdown(std::time::Duration::from_secs(1))
+                .await;
 
-            // Stop the HTTP server immediately. On process shutdown we prefer a fast exit over
-            // graceful socket draining because live clients can reconnect and resume.
+            // Stop the HTTP server once live connections had a brief chance to close cleanly.
             server_handle.stop(false).await;
 
             info!(
-                "Waiting up to {}s for active jobs to complete...",
+                "Waiting up to {}s for running jobs to complete...",
                 shutdown_timeout_secs
             );
 

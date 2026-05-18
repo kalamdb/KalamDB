@@ -1,42 +1,23 @@
 use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
+use humantime::parse_duration;
 use kalam_cli::OutputFormat;
 
 fn parse_watch_interval(value: &str) -> Result<Duration, String> {
     let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err("interval must not be empty".into());
-    }
-
-    let (amount, unit) = if let Some(amount) = trimmed.strip_suffix("ms") {
-        (amount, "ms")
-    } else if let Some(amount) = trimmed.strip_suffix('s') {
-        (amount, "s")
-    } else if let Some(amount) = trimmed.strip_suffix('m') {
-        (amount, "m")
-    } else if let Some(amount) = trimmed.strip_suffix('h') {
-        (amount, "h")
+    let duration = if !trimmed.is_empty() && trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
+        let seconds = trimmed.parse::<u64>().map_err(|err| err.to_string())?;
+        Duration::from_secs(seconds)
     } else {
-        (trimmed, "s")
+        parse_duration(trimmed).map_err(|err| err.to_string())?
     };
 
-    let numeric = amount
-        .trim()
-        .parse::<u64>()
-        .map_err(|_| format!("invalid interval '{trimmed}'"))?;
-
-    if numeric == 0 {
+    if duration.is_zero() {
         return Err("interval must be greater than zero".into());
     }
 
-    match unit {
-        "ms" => Ok(Duration::from_millis(numeric)),
-        "s" => Ok(Duration::from_secs(numeric)),
-        "m" => Ok(Duration::from_secs(numeric.saturating_mul(60))),
-        "h" => Ok(Duration::from_secs(numeric.saturating_mul(60 * 60))),
-        _ => Err(format!("unsupported interval unit in '{trimmed}'")),
-    }
+    Ok(duration)
 }
 
 // Build information - Create a static version string at compile time
@@ -96,9 +77,9 @@ pub struct Cli {
     #[arg(short = 'f', long = "file")]
     pub file: Option<PathBuf>,
 
-    /// Execute SQL command and exit
-    #[arg(short = 'c', long = "command")]
-    pub command: Option<String>,
+    /// Execute a SQL statement or shared CLI command and exit
+    #[arg(short = 'c', long = "command", num_args = 1.., conflicts_with = "file")]
+    pub command: Option<Vec<String>>,
 
     /// Output format
     #[arg(long = "format", default_value = "table")]
@@ -277,6 +258,12 @@ pub struct Cli {
     pub consume_timeout: Option<u64>,
 }
 
+impl Cli {
+    pub fn command_text(&self) -> Option<String> {
+        self.command.as_ref().map(|parts| parts.join(" "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -294,6 +281,7 @@ mod tests {
         assert_eq!(parse_watch_interval("250ms").unwrap(), Duration::from_millis(250));
         assert_eq!(parse_watch_interval("2s").unwrap(), Duration::from_secs(2));
         assert_eq!(parse_watch_interval("3m").unwrap(), Duration::from_secs(180));
+        assert_eq!(parse_watch_interval("1h").unwrap(), Duration::from_secs(3600));
     }
 
     #[test]
@@ -319,8 +307,22 @@ mod tests {
         .expect("short flags should parse");
 
         assert_eq!(cli.url.as_deref(), Some("http://127.0.0.1:2900"));
-        assert_eq!(cli.command.as_deref(), Some("SELECT 1"));
+        assert_eq!(cli.command_text().as_deref(), Some("SELECT 1"));
         assert!(cli.verbose);
+    }
+
+    #[test]
+    fn command_flag_accepts_multiple_tokens() {
+        let cli = Cli::try_parse_from([
+            "kalam",
+            "--command",
+            "cluster",
+            "list",
+            "groups",
+        ])
+        .expect("multi-token command should parse");
+
+        assert_eq!(cli.command_text().as_deref(), Some("cluster list groups"));
     }
 
     #[test]

@@ -11,9 +11,10 @@
 use datafusion::{
     scalar::ScalarValue,
     sql::sqlparser::{
-        ast::{BinaryOperator, Expr, Statement, Value},
+        ast::{BinaryOperator, Expr, Value},
         dialect::PostgreSqlDialect,
         parser::Parser,
+        tokenizer::Token,
     },
 };
 use kalamdb_commons::models::rows::Row;
@@ -31,28 +32,20 @@ use crate::error::LiveError;
 ///
 /// Parsed expression ready for evaluation
 pub fn parse_where_clause(where_clause: &str) -> Result<Expr, LiveError> {
-    // Parse as a SELECT with WHERE to extract the expression
-    let sql = format!("SELECT * FROM t WHERE {}", where_clause);
-
     let dialect = PostgreSqlDialect {};
-    let statements = Parser::parse_sql(&dialect, &sql)
+    let mut parser = Parser::new(&dialect)
+        .try_with_sql(where_clause)
         .map_err(|e| LiveError::InvalidOperation(format!("Failed to parse WHERE clause: {}", e)))?;
 
-    if statements.is_empty() {
-        return Err(LiveError::InvalidOperation("Empty WHERE clause".to_string()));
+    let expr = parser
+        .parse_expr()
+        .map_err(|e| LiveError::InvalidOperation(format!("Failed to parse WHERE clause: {}", e)))?;
+
+    if !matches!(parser.peek_nth_token_ref(0).token, Token::EOF) {
+        return Err(LiveError::InvalidOperation("Invalid WHERE clause syntax".to_string()));
     }
 
-    // Extract WHERE expression from parsed SELECT
-    match &statements[0] {
-        Statement::Query(query) => {
-            if let Some(selection) = &query.body.as_select().and_then(|s| s.selection.as_ref()) {
-                Ok((*selection).clone())
-            } else {
-                Err(LiveError::InvalidOperation("No WHERE clause found".to_string()))
-            }
-        },
-        _ => Err(LiveError::InvalidOperation("Invalid WHERE clause syntax".to_string())),
-    }
+    Ok(expr)
 }
 
 /// Maximum recursion depth for expression evaluation (prevents stack overflow)
