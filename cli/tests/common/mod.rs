@@ -93,14 +93,23 @@ static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    Client::builder()
-        .pool_max_idle_per_host(512)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(3))
-        .tcp_nodelay(true)
-        .build()
-        .expect("failed to build test HTTP client")
+    // Return a process-wide singleton so all concurrent callers (e.g. 24 parallel
+    // publisher tasks) share one connection pool instead of each opening their own
+    // burst of TCP connections to the cluster leader.  pool_max_idle_per_host is
+    // only effective when the same Client instance is reused across requests.
+    static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+    HTTP_CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .pool_max_idle_per_host(512)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(3))
+                .tcp_nodelay(true)
+                .build()
+                .expect("failed to build test HTTP client")
+        })
+        .clone()
 }
 
 #[derive(Clone, Debug)]
