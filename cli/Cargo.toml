@@ -95,9 +95,12 @@ kalam-client = { path = "../link/kalam-client", default-features = false, featur
 
 # CLI argument parsing
 clap = { workspace = true }
+console = { workspace = true }
+humantime = { workspace = true }
 
 # Readline interface
 rustyline = { workspace = true }
+shlex = { workspace = true }
 
 # Progress indicators
 indicatif = { workspace = true }

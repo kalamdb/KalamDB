@@ -136,15 +136,26 @@ fn test_cli_batch_file_execution() {
 
     // Use a unique ID based on timestamp to avoid conflicts
     let unique_id = rand::random::<i64>().abs();
+    let batch_user = generate_unique_namespace("batch_file_user");
 
     std::fs::write(
         &sql_file,
         format!(
-            r#"CREATE NAMESPACE {};
+            r#"-- SQL-file importer must ignore semicolons in comments;
+CREATE NAMESPACE {};
+CREATE USER {} WITH PASSWORD 'demo123' ROLE 'user';
+/* Block comments with ; should not split the file. */
 CREATE TABLE {} (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10');
-INSERT INTO {} (id, name) VALUES ({}, 'Item One');
-SELECT * FROM {};"#,
-            namespace, full_table_name, full_table_name, unique_id, full_table_name
+EXECUTE AS USER '{}' (INSERT INTO {} (id, name) VALUES ({}, 'Item; One -- literal'));
+EXECUTE AS USER '{}' (SELECT * FROM {});"#,
+            namespace,
+            batch_user,
+            full_table_name,
+            batch_user,
+            full_table_name,
+            unique_id,
+            batch_user,
+            full_table_name
         ),
     )
     .unwrap();
@@ -154,12 +165,13 @@ SELECT * FROM {};"#,
 
     // Verify execution - should show Query OK messages and final result
     assert!(
-        stdout.contains("Item One") || stdout.contains("Query OK"),
-        "Batch execution should succeed with proper messages.\nstdout: {}",
+        stdout.contains("Item; One -- literal"),
+        "Batch execution should preserve semicolons and comment markers inside literals.\nstdout: {}",
         stdout
     );
 
     // Cleanup
+    let _ = execute_sql_as_root_via_cli(&format!("DROP USER IF EXISTS {}", batch_user));
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }
 

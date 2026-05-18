@@ -11,15 +11,6 @@ fn print_info_row(label: &str, value: impl Display) {
 }
 
 impl CLISession {
-    pub(super) fn normalize_server_field(value: String) -> Option<String> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    }
-
     /// Show current session information
     ///
     /// Displays detailed information about the current CLI session

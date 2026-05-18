@@ -3,14 +3,18 @@
 //! Uses sqlparser-rs for safe SQL parsing to prevent SQL injection attacks
 //! and ensure proper handling of edge cases.
 
-use std::fmt;
+use std::{fmt, ops::ControlFlow};
 
 use kalamdb_commons::constants::SystemColumnNames;
 use sqlparser::ast::{
-    Expr, GroupByExpr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    Expr, Function, FunctionArguments, GroupByExpr, Query, Select, SelectItem, SetExpr, Statement,
+    TableFactor, TableWithJoins, Value, Visit, VisitMut, Visitor, VisitorMut,
 };
 
-use crate::{dialect::KalamDbDialect, parser::utils::parse_sql_statements};
+use crate::{
+    dialect::KalamDbDialect,
+    parser::utils::{parse_sql_expression, parse_sql_statements},
+};
 
 /// Error type for query parsing
 #[derive(Debug, Clone)]
@@ -138,14 +142,24 @@ impl QueryParser {
             TableFactor::Table { name, .. } => {
                 use sqlparser::ast::ObjectNamePart;
                 // Handle schema-qualified names (namespace.table)
-                let parts: Vec<String> = name
-                    .0
-                    .iter()
-                    .filter_map(|part| match part {
-                        ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
-                        _ => None,
-                    })
-                    .collect();
+                let mut parts = Vec::with_capacity(name.0.len());
+                for part in &name.0 {
+                    match part {
+                        ObjectNamePart::Identifier(ident) => parts.push(ident.value.clone()),
+                        _ => {
+                            return Err(QueryParseError::InvalidSql(
+                                "Subscription query table reference must be an identifier."
+                                    .to_string(),
+                            ));
+                        },
+                    }
+                }
+
+                if parts.is_empty() || parts.len() > 2 {
+                    return Err(QueryParseError::InvalidSql(
+                        "Subscription query table reference must be [namespace.]table.".to_string(),
+                    ));
+                }
 
                 Ok(parts.join("."))
             },
@@ -183,15 +197,24 @@ impl QueryParser {
 
     /// Resolve placeholders like CURRENT_USER() in WHERE clause
     ///
-    /// SECURITY: Escapes single quotes in user_id to prevent SQL injection.
-    /// A malicious user_id like `foo' OR 1=1 --` would be escaped to
-    /// `foo'' OR 1=1 --`, producing a safe string literal.
+    /// SECURITY: Parses the filter first and only replaces real AST nodes, not
+    /// text inside string literals. The typed UserId is still escaped before it
+    /// is emitted as a SQL string literal.
     pub fn resolve_where_clause_placeholders(
         where_clause: &str,
         user_id: &kalamdb_commons::models::UserId,
     ) -> String {
         let escaped_user_id = user_id.as_str().replace('\'', "''");
-        where_clause.replace("CURRENT_USER()", &format!("'{}'", escaped_user_id))
+        let dialect = KalamDbDialect::default();
+        let Ok(mut expr) = parse_sql_expression(where_clause, &dialect) else {
+            return where_clause.to_string();
+        };
+
+        let mut visitor = CurrentUserPlaceholderResolver {
+            replacement: Expr::value(Value::SingleQuotedString(escaped_user_id)),
+        };
+        let _ = VisitMut::visit(&mut expr, &mut visitor);
+        expr.to_string()
     }
 
     /// Extract projection columns from a parsed Query AST
@@ -217,16 +240,9 @@ impl QueryParser {
                     has_wildcard = true;
                     break;
                 },
-                SelectItem::UnnamedExpr(expr) => {
-                    columns.push(Self::expr_to_column_name(expr));
-                },
-                SelectItem::ExprWithAlias { expr: _, alias } => {
-                    columns.push(alias.value.clone());
-                },
-                SelectItem::QualifiedWildcard(_, _) => {
-                    has_wildcard = true;
-                    break;
-                },
+                SelectItem::UnnamedExpr(expr) => columns.push(Self::projection_column_name(expr)?),
+                SelectItem::ExprWithAlias { .. } => return Err(Self::unsupported_projection()),
+                SelectItem::QualifiedWildcard(_, _) => return Err(Self::unsupported_projection()),
             }
         }
 
@@ -235,6 +251,21 @@ impl QueryParser {
         } else {
             Ok(Some(columns))
         }
+    }
+
+    fn projection_column_name(expr: &Expr) -> Result<String, QueryParseError> {
+        match expr {
+            Expr::Identifier(_) | Expr::CompoundIdentifier(_) => {
+                Ok(Self::expr_to_column_name(expr))
+            },
+            _ => Err(Self::unsupported_projection()),
+        }
+    }
+
+    fn unsupported_projection() -> QueryParseError {
+        QueryParseError::InvalidSql(
+            "Subscription query projections must be direct column references or '*'.".to_string(),
+        )
     }
 
     /// Convert an expression to a column name string
@@ -256,21 +287,21 @@ impl QueryParser {
         expr_str: &str,
     ) -> Result<(String, Vec<String>), QueryParseError> {
         let dialect = KalamDbDialect::default();
-
-        // Wrap in a dummy SELECT to parse the expression
-        let dummy_query = format!("SELECT * FROM dummy WHERE {}", expr_str);
-        let statements = parse_sql_statements(&dummy_query, &dialect)
+        parse_sql_expression(expr_str, &dialect)
             .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
-
-        if statements.is_empty() {
-            return Err(QueryParseError::InvalidSql("Failed to parse expression".to_string()));
-        }
 
         // Extract parameters ($1, $2, etc.)
         let mut params = Vec::new();
         Self::extract_parameters_from_expr_str(expr_str, &mut params);
 
         Ok((expr_str.to_string(), params))
+    }
+
+    pub fn validate_row_filter_expr(expr_str: &str) -> Result<(), QueryParseError> {
+        let dialect = KalamDbDialect::default();
+        let expr = parse_sql_expression(expr_str, &dialect)
+            .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
+        Self::validate_row_filter_ast(&expr)
     }
 
     /// Extract parameter placeholders from expression string
@@ -382,7 +413,13 @@ impl QueryParser {
         }
 
         match &table_with_joins.relation {
-            TableFactor::Table { .. } => {},
+            TableFactor::Table { alias, .. } => {
+                if alias.is_some() {
+                    return Err(QueryParseError::InvalidSql(
+                        "Subscription query does not support table aliases.".to_string(),
+                    ));
+                }
+            },
             _ => {
                 return Err(QueryParseError::InvalidSql(
                     "Subscription query requires a direct table reference in FROM.".to_string(),
@@ -390,7 +427,13 @@ impl QueryParser {
             },
         }
 
-        Self::validate_subscription_projection_items(&select.projection)
+        Self::validate_subscription_projection_items(&select.projection)?;
+
+        if let Some(selection) = &select.selection {
+            Self::validate_row_filter_ast(selection)?;
+        }
+
+        Ok(())
     }
 
     fn validate_subscription_projection_items(
@@ -398,9 +441,11 @@ impl QueryParser {
     ) -> Result<(), QueryParseError> {
         for item in projection {
             let column_name = match item {
-                SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..) => continue,
-                SelectItem::UnnamedExpr(expr) => Some(Self::expr_to_column_name(expr)),
-                SelectItem::ExprWithAlias { expr, .. } => Some(Self::expr_to_column_name(expr)),
+                SelectItem::Wildcard(_) => continue,
+                SelectItem::UnnamedExpr(expr) => Some(Self::projection_column_name(expr)?),
+                SelectItem::ExprWithAlias { .. } | SelectItem::QualifiedWildcard(..) => {
+                    return Err(Self::unsupported_projection());
+                },
             };
 
             if let Some(column_name) = column_name {
@@ -424,6 +469,66 @@ impl QueryParser {
         match group_by {
             GroupByExpr::All(_) => true,
             GroupByExpr::Expressions(expressions, _) => !expressions.is_empty(),
+        }
+    }
+
+    fn validate_row_filter_ast(expr: &Expr) -> Result<(), QueryParseError> {
+        let mut visitor = SubscriptionWhereExprValidator;
+        match expr.visit(&mut visitor) {
+            ControlFlow::Continue(()) => Ok(()),
+            ControlFlow::Break(error) => Err(error),
+        }
+    }
+}
+
+struct CurrentUserPlaceholderResolver {
+    replacement: Expr,
+}
+
+impl VisitorMut for CurrentUserPlaceholderResolver {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if is_current_user_placeholder(expr) {
+            *expr = self.replacement.clone();
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn is_current_user_placeholder(expr: &Expr) -> bool {
+    match expr {
+        Expr::Identifier(ident) => ident.value.eq_ignore_ascii_case("CURRENT_USER"),
+        Expr::Function(function) => is_current_user_function(function),
+        _ => false,
+    }
+}
+
+fn is_current_user_function(function: &Function) -> bool {
+    let name = function.name.to_string();
+    if !name.eq_ignore_ascii_case("CURRENT_USER") && !name.eq_ignore_ascii_case("CURRENT_USER_ID") {
+        return false;
+    }
+
+    matches!(&function.args, FunctionArguments::None)
+        || matches!(&function.args, FunctionArguments::List(args) if args.args.is_empty())
+}
+
+struct SubscriptionWhereExprValidator;
+
+impl Visitor for SubscriptionWhereExprValidator {
+    type Break = QueryParseError;
+
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        match expr {
+            Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => {
+                ControlFlow::Break(QueryParseError::InvalidSql(
+                    "Subscription WHERE clause does not support subqueries; only row-local \
+                     predicates are allowed."
+                        .to_string(),
+                ))
+            },
+            _ => ControlFlow::Continue(()),
         }
     }
 }
@@ -512,6 +617,63 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_subscription_query_rejects_computed_projection() {
+        let err = QueryParser::validate_subscription_query(
+            "SELECT CONCAT(user_id, '-x') FROM chat.messages",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("direct column references"));
+    }
+
+    #[test]
+    fn test_validate_subscription_query_rejects_projection_alias() {
+        let err =
+            QueryParser::validate_subscription_query("SELECT user_id AS actor FROM chat.messages")
+                .unwrap_err();
+
+        assert!(err.to_string().contains("direct column references"));
+    }
+
+    #[test]
+    fn test_validate_subscription_query_rejects_table_alias() {
+        let err = QueryParser::validate_subscription_query(
+            "SELECT m.user_id FROM chat.messages AS m WHERE m.id = 1",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("table aliases"));
+    }
+
+    #[test]
+    fn test_validate_subscription_query_rejects_where_subqueries() {
+        let err = QueryParser::validate_subscription_query(
+            "SELECT id FROM chat.messages WHERE EXISTS (SELECT 1 FROM system.users)",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("does not support subqueries"));
+    }
+
+    #[test]
+    fn test_validate_row_filter_expr_rejects_trailing_tokens() {
+        let err = QueryParser::validate_row_filter_expr("user_id = 'alice'; DROP TABLE users")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("trailing tokens"));
+    }
+
+    #[test]
+    fn test_resolve_where_clause_placeholders_handles_keyword_form() {
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            "owner_id = CURRENT_USER AND body = 'CURRENT_USER() literal'",
+            &kalamdb_commons::models::UserId::from("user_1"),
+        );
+
+        assert_eq!(resolved, "owner_id = 'user_1' AND body = 'CURRENT_USER() literal'");
+    }
+
+    #[test]
     fn test_analyze_subscription_query_extracts_all_parts() {
         let analysis = QueryParser::analyze_subscription_query(
             "SELECT id, name FROM chat.messages WHERE conversation_id = 1",
@@ -521,5 +683,242 @@ mod tests {
         assert_eq!(analysis.table_name, "chat.messages");
         assert_eq!(analysis.where_clause, Some("conversation_id = 1".to_string()));
         assert_eq!(analysis.projections, Some(vec!["id".to_string(), "name".to_string()]));
+    }
+
+    // ========================================================================
+    // Security Tests: Row-Filter Hardening & Placeholder Safety
+    //
+    // These tests act as tripwires: if a guard is removed or bypassed the
+    // test turns red. Do not relax assertions without a security review.
+    // ========================================================================
+
+    // ── validate_row_filter_expr — subquery injection ────────────────────────
+
+    #[test]
+    fn test_security_filter_rejects_in_subquery() {
+        let err = QueryParser::validate_row_filter_expr(
+            "user_id IN (SELECT id FROM system.users WHERE role = 'admin')",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "IN (SELECT …) in row filter must be blocked; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_scalar_subquery() {
+        let err = QueryParser::validate_row_filter_expr(
+            "role = (SELECT role FROM system.users WHERE id = 'attacker')",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "Scalar subquery in row filter must be blocked; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_exists_subquery() {
+        let err = QueryParser::validate_row_filter_expr(
+            "EXISTS (SELECT 1 FROM system.api_keys WHERE scope = 'superadmin')",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "EXISTS subquery must be blocked; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_not_exists_subquery() {
+        let err = QueryParser::validate_row_filter_expr(
+            "NOT EXISTS (SELECT 1 FROM security.blocklist WHERE blocked_id = user_id)",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "NOT EXISTS subquery must be blocked; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_in_subquery_api_keys() {
+        // Attempts to correlate user data with a secret table to grant/deny
+        // visibility of rows based on privileged information.
+        let err = QueryParser::validate_row_filter_expr(
+            "token IN (SELECT api_key FROM system.api_keys WHERE scope = 'superadmin')",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "IN (SELECT …) on privileged table must be blocked; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_nested_subquery_chain() {
+        // Doubly nested subquery: each level individually breaches the guard.
+        let err = QueryParser::validate_row_filter_expr(
+            "id IN (SELECT id FROM app.sessions WHERE token = (SELECT token FROM system.users LIMIT 1))",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("subqueries"),
+            "Nested subquery chain must be blocked; got: {err}"
+        );
+    }
+
+    // ── validate_row_filter_expr — trailing-token injection ──────────────────
+
+    #[test]
+    fn test_security_filter_rejects_stacked_drop() {
+        let err =
+            QueryParser::validate_row_filter_expr("user_id = 'alice'; DROP TABLE system.users")
+                .unwrap_err();
+        assert!(
+            err.to_string().contains("trailing tokens"),
+            "Stacked DROP must be rejected as trailing tokens; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_stacked_update_after_predicate() {
+        let err = QueryParser::validate_row_filter_expr(
+            "active = true; UPDATE system.users SET role = 'admin' WHERE 1=1",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("trailing tokens"),
+            "Stacked UPDATE must be rejected; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_rejects_null_byte_like_separator() {
+        // The raw string `1=1 --` ends with a comment; the comment is consumed
+        // by the tokeniser so the expression is valid but harmless. This test
+        // verifies the comment does NOT allow SQL injection by confirming the
+        // expression parses cleanly (no trailing tokens survive the comment).
+        let result = QueryParser::validate_row_filter_expr("user_id = 'alice' -- harmless comment");
+        assert!(
+            result.is_ok(),
+            "A trailing comment is safe and must not be rejected; got: {result:?}"
+        );
+    }
+
+    // ── resolve_where_clause_placeholders — placeholder safety ───────────────
+
+    #[test]
+    fn test_security_placeholder_string_literal_not_treated_as_placeholder() {
+        // The value 'CURRENT_USER' inside a SQL string literal must be
+        // preserved as-is. Only AST identifier / function nodes are replaced.
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            "category = 'CURRENT_USER' AND owner_id = CURRENT_USER",
+            &kalamdb_commons::models::UserId::from("eve"),
+        );
+        assert!(
+            resolved.contains("'CURRENT_USER'"),
+            "String literal must NOT be replaced; got: {resolved}"
+        );
+        assert!(
+            resolved.contains("'eve'"),
+            "AST CURRENT_USER must be replaced with user id; got: {resolved}"
+        );
+        // The user id literal must appear exactly once — not substituted into
+        // the adjacent string literal too.
+        assert_eq!(
+            resolved.matches("'eve'").count(),
+            1,
+            "User id must appear exactly once; got: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_security_placeholder_all_occurrences_in_complex_predicate() {
+        // Every CURRENT_USER node in the AST must be replaced, not only the
+        // first. An adversary could craft `owner = CURRENT_USER AND viewer =
+        // CURRENT_USER` hoping the second instance escapes substitution.
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            "owner_id = CURRENT_USER AND delegate_id = CURRENT_USER",
+            &kalamdb_commons::models::UserId::from("carol"),
+        );
+        assert_eq!(
+            resolved.matches("'carol'").count(),
+            2,
+            "Both CURRENT_USER nodes must be replaced; got: {resolved}"
+        );
+        assert!(
+            !resolved.contains("CURRENT_USER"),
+            "No unresolved CURRENT_USER must remain; got: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_security_placeholder_current_user_id_alias_replaced() {
+        // CURRENT_USER_ID() is a KalamDB alias; it must resolve identically
+        // to CURRENT_USER() so users cannot bypass replacement by spelling
+        // it differently.
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            "owner_id = CURRENT_USER_ID()",
+            &kalamdb_commons::models::UserId::from("frank"),
+        );
+        assert!(
+            resolved.contains("'frank'"),
+            "CURRENT_USER_ID() must be replaced; got: {resolved}"
+        );
+        assert!(
+            !resolved.to_uppercase().contains("CURRENT_USER"),
+            "No unresolved placeholder must remain; got: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_security_placeholder_unparseable_filter_returned_unchanged() {
+        // If the expression cannot be parsed (truncated / malformed), it is
+        // returned verbatim rather than partially rewritten.  Partial rewrites
+        // could corrupt semantics or leak partial user data in error messages.
+        let broken = "user_id = CURRENT_USER AND (";
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            broken,
+            &kalamdb_commons::models::UserId::from("grace"),
+        );
+        assert_eq!(
+            resolved, broken,
+            "Unparseable filter must be returned unchanged; got: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_security_placeholder_current_user_in_nested_or_expression() {
+        // CURRENT_USER buried inside an OR sub-expression must still be
+        // replaced; the AST visitor descends the full expression tree.
+        let resolved = QueryParser::resolve_where_clause_placeholders(
+            "(owner_id = CURRENT_USER() OR shared = true) AND active = true",
+            &kalamdb_commons::models::UserId::from("heidi"),
+        );
+        assert!(
+            resolved.contains("'heidi'"),
+            "CURRENT_USER() inside OR must be replaced; got: {resolved}"
+        );
+        assert!(
+            !resolved.to_uppercase().contains("CURRENT_USER"),
+            "No unresolved CURRENT_USER must remain; got: {resolved}"
+        );
+    }
+
+    #[test]
+    fn test_security_filter_accepts_safe_boolean_predicate() {
+        // A plain boolean predicate (no subquery, no trailing tokens) is a
+        // legitimate row-local filter and must NOT be rejected.
+        QueryParser::validate_row_filter_expr("active = true AND role = 'user'")
+            .expect("Simple boolean predicate must be accepted");
+    }
+
+    #[test]
+    fn test_security_filter_accepts_in_literal_list() {
+        // IN with a literal value list is safe (no correlated table lookup).
+        QueryParser::validate_row_filter_expr("status IN ('pending', 'active', 'paused')")
+            .expect("IN with literal list must be accepted");
     }
 }

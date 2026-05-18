@@ -172,10 +172,9 @@ where
         }),
         Some("--version") | Some("-V") | Some("version") => Ok(StartupCommand::Version),
         Some("--help") | Some("-h") | Some("help") => Ok(StartupCommand::Help),
-        Some(arg) if arg.starts_with('-') => Err(anyhow!(
-            "Unknown option '{}'. Use --help to show supported arguments.",
-            arg
-        )),
+        Some(arg) if arg.starts_with('-') => {
+            Err(anyhow!("Unknown option '{}'. Use --help to show supported arguments.", arg))
+        },
         Some(config_path) => Ok(StartupCommand::Run {
             config_path: PathBuf::from(config_path),
         }),

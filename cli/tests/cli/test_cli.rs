@@ -145,6 +145,22 @@ fn test_cli_session_timeout() {
     );
 }
 
+#[test]
+fn test_cli_external_meta_command_help_without_backslash() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    let mut cmd = create_cli_command_with_root_auth();
+    cmd.arg("--command").arg("help");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Kalam CLI Help"))
+        .stdout(predicate::str::contains("Meta Commands"));
+}
+
 /// T062: Test command history (up/down arrows)
 #[test]
 fn test_cli_command_history() {

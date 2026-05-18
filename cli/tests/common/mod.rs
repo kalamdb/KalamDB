@@ -93,17 +93,14 @@ static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            Client::builder()
-                .pool_max_idle_per_host(512)
-                .pool_idle_timeout(Duration::from_secs(90))
-                .tcp_nodelay(true)
-                .build()
-                .expect("failed to build test HTTP client")
-        })
-        .clone()
+    Client::builder()
+        .pool_max_idle_per_host(512)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(3))
+        .tcp_nodelay(true)
+        .build()
+        .expect("failed to build test HTTP client")
 }
 
 #[derive(Clone, Debug)]
@@ -565,34 +562,29 @@ impl TestAuthManager {
             let password_owned = password.to_string();
             let base_url_display = base_url.to_string();
             let username_display = username.to_string();
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
+            let worker = std::thread::spawn(move || {
                 let runtime = match Runtime::new() {
                     Ok(rt) => rt,
-                    Err(err) => {
-                        let _ = tx.send(Err(err.to_string()));
-                        return;
-                    },
+                    Err(err) => return Err(err.to_string()),
                 };
-                let result = runtime
+                runtime
                     .block_on(test_auth_manager().token_for_url(
                         &base_url_owned,
                         &username_owned,
                         &password_owned,
                     ))
                     .map(AuthProvider::jwt_token)
-                    .map_err(|err| err.to_string());
-                let _ = tx.send(result);
+                    .map_err(|err| err.to_string())
             });
-            match rx.recv_timeout(Duration::from_secs(60)) {
+            match worker.join() {
                 Ok(Ok(auth)) => auth,
                 Ok(Err(err)) => panic!(
                     "Failed to authenticate user '{}' for {}: {}",
                     username_display, base_url_display, err
                 ),
-                Err(err) => panic!(
+                Err(_) => panic!(
                     "Failed to authenticate user '{}' for {}: {}",
-                    username_display, base_url_display, err
+                    username_display, base_url_display, "auth worker panicked"
                 ),
             }
         } else {
@@ -2147,25 +2139,20 @@ fn get_access_token_for_url_sync(base_url: &str, username: &str, password: &str)
         let base_url_owned = base_url.to_string();
         let username_owned = username.to_string();
         let password_owned = password.to_string();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let runtime = match Runtime::new() {
                 Ok(rt) => rt,
-                Err(err) => {
-                    let _ = tx.send(Err(err.to_string()));
-                    return;
-                },
+                Err(err) => return Err(err.to_string()),
             };
-            let result = runtime
+            runtime
                 .block_on(get_access_token_for_url(
                     &base_url_owned,
                     &username_owned,
                     &password_owned,
                 ))
-                .map_err(|err| err.to_string());
-            let _ = tx.send(result);
+                .map_err(|err| err.to_string())
         });
-        match rx.recv_timeout(Duration::from_secs(60)) {
+        match worker.join() {
             Ok(Ok(token)) => Some(token),
             _ => None,
         }

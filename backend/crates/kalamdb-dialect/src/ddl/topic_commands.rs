@@ -11,7 +11,10 @@
 use kalamdb_commons::models::{PayloadMode, TableId, TopicId, TopicOp};
 
 use crate::{
-    parser::utils::{extract_identifier, extract_keyword_value, normalize_sql},
+    parser::{
+        query_parser::QueryParser,
+        utils::{extract_identifier, extract_keyword_value, normalize_sql},
+    },
     DdlAst,
 };
 
@@ -313,7 +316,9 @@ pub fn parse_alter_topic_add_source(sql: &str) -> Result<AddTopicSourceStatement
 
     // Optional: WHERE clause (extract everything between WHERE and WITH/end)
     let filter_expr = if sql_upper.contains(" WHERE ") {
-        Some(extract_where_clause(&normalized)?)
+        let filter_expr = extract_where_clause(&normalized)?;
+        QueryParser::validate_row_filter_expr(&filter_expr).map_err(|e| e.to_string())?;
+        Some(filter_expr)
     } else {
         None
     };
@@ -803,6 +808,37 @@ mod tests {
             parse_alter_topic_clear_retention("ALTER TOPIC app.events CLEAR RETENTION").unwrap();
 
         assert_eq!(stmt.topic_name, "app.events");
+    }
+
+    #[test]
+    fn test_parse_alter_topic_add_source_validates_filter() {
+        let stmt = parse_alter_topic_add_source(
+            "ALTER TOPIC app.events ADD SOURCE app.messages ON INSERT WHERE priority >= 5",
+        )
+        .unwrap();
+
+        assert_eq!(stmt.topic_name, "app.events");
+        assert_eq!(stmt.filter_expr, Some("priority >= 5".to_string()));
+    }
+
+    #[test]
+    fn test_parse_alter_topic_add_source_rejects_filter_subquery() {
+        let err = parse_alter_topic_add_source(
+            "ALTER TOPIC app.events ADD SOURCE app.messages ON INSERT WHERE EXISTS (SELECT 1)",
+        )
+        .unwrap_err();
+
+        assert!(err.contains("does not support subqueries"));
+    }
+
+    #[test]
+    fn test_parse_alter_topic_add_source_rejects_filter_trailing_tokens() {
+        let err = parse_alter_topic_add_source(
+            "ALTER TOPIC app.events ADD SOURCE app.messages ON INSERT WHERE id = 1; DROP TOPIC x",
+        )
+        .unwrap_err();
+
+        assert!(err.contains("trailing tokens"));
     }
 
     #[test]

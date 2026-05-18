@@ -30,6 +30,6 @@ pub use system::*;
 pub use utils::{
     extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
     insert_column_names_from_statement, insert_columns_match,
-    normalize_context_keyword_calls_for_sqlparser, parse_single_statement,
+    normalize_context_keyword_calls_for_sqlparser, parse_single_statement, parse_sql_expression,
     rewrite_context_functions_for_datafusion,
 };
