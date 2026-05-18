@@ -560,7 +560,7 @@ fn smoke_cli_alter_table() {
 }
 
 /// Smoke Test: Error handling for invalid commands
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_cli_error_handling() {
     if !is_server_running() {

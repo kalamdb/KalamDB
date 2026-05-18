@@ -2176,47 +2176,29 @@ pub async fn execute_sql_via_http_as(
     let token = get_access_token(username, password).await?;
 
     let client = shared_http_client();
-    let mut last_parsed: Option<serde_json::Value> = None;
+    let base_url = if is_cluster_mode() {
+        leader_url().unwrap_or_else(|| server_url().to_string())
+    } else {
+        server_url().to_string()
+    };
 
-    for attempt in 0..5 {
-        let base_url = if is_cluster_mode() {
-            leader_url().unwrap_or_else(|| server_url().to_string())
-        } else {
-            server_url().to_string()
-        };
+    let response = client
+        .post(format!("{}/v1/api/sql", base_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
 
-        let response = client
-            .post(format!("{}/v1/api/sql", base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&json!({ "sql": sql }))
-            .send()
-            .await?;
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
 
-        let body = response.text().await?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
-        last_parsed = Some(parsed.clone());
+    let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
 
-        let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
-
-        if status.eq_ignore_ascii_case("success") {
-            if is_cluster_mode() {
-                wait_for_cluster_after_sql(sql);
-            }
-            return Ok(parsed);
-        }
-
-        let err_msg = json_error_message(&parsed).unwrap_or_default();
-        if is_leader_error(&err_msg) && attempt < 4 {
-            let delay_ms = 300 + attempt * 200;
-            tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
-            continue;
-        }
-
-        return Ok(parsed);
+    if status.eq_ignore_ascii_case("success") && is_cluster_mode() {
+        wait_for_cluster_after_sql(sql);
     }
 
-    Ok(last_parsed
-        .unwrap_or_else(|| json!({"status": "error", "error": {"message": "No response"}})))
+    Ok(parsed)
 }
 
 /// Execute SQL over HTTP as root user.
