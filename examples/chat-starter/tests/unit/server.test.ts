@@ -11,6 +11,7 @@ const baseConfig: ServerConfig = {
   healthRateLimitPerMinute: 600,
   healthCacheMs: 0, // disable cache in most tests
   trustProxy: false,
+  allowedOrigins: [], // CSRF tests opt into specific allow-lists
 };
 
 interface RunningServer {
@@ -126,7 +127,11 @@ test("GET /api/health probes upstream and reports 503 on failure", async () => {
     await withServer(
       {
         config: baseConfig,
-        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+        tokenFetcher: async (u: string) => ({
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+          user: u,
+        }),
       },
       async (s) => {
         const res = await realFetch(`${s.url}/api/health`);
@@ -151,7 +156,11 @@ test("GET /api/health returns 200 when upstream is OK", async () => {
     await withServer(
       {
         config: baseConfig,
-        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+        tokenFetcher: async (u: string) => ({
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+          user: u,
+        }),
       },
       async (s) => {
         const res = await realFetch(`${s.url}/api/health`);
@@ -341,7 +350,11 @@ test("/api/health serves cached answer within healthCacheMs window", async () =>
     await withServer(
       {
         config: { ...baseConfig, healthCacheMs: 10_000 },
-        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+        tokenFetcher: async (u: string) => ({
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+          user: u,
+        }),
       },
       async (s) => {
         for (let i = 0; i < 5; i++) {
@@ -354,4 +367,78 @@ test("/api/health serves cached answer within healthCacheMs window", async () =>
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("POST /api/auth/token rejects non-JSON content-type with 415", async () => {
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: "{}",
+      });
+      assert.equal(res.status, 415);
+      const body = (await res.json()) as { error: string };
+      assert.equal(body.error, "unsupported_media_type");
+    },
+  );
+});
+
+test("POST /api/auth/token rejects a disallowed Origin with 403", async () => {
+  await withServer(
+    {
+      config: { ...baseConfig, allowedOrigins: ["http://127.0.0.1:5173"] },
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ user: "alice" }),
+      });
+      assert.equal(res.status, 403);
+      const body = (await res.json()) as { error: string };
+      assert.equal(body.error, "forbidden_origin");
+    },
+  );
+});
+
+test("POST /api/auth/token accepts an allow-listed Origin", async () => {
+  await withServer(
+    {
+      config: { ...baseConfig, allowedOrigins: ["http://127.0.0.1:5173"] },
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" },
+        body: JSON.stringify({ user: "alice" }),
+      });
+      assert.equal(res.status, 200);
+    },
+  );
+});
+
+test("POST /api/auth/token accepts requests with no Origin header (same-origin fetch)", async () => {
+  await withServer(
+    {
+      // Even with a strict allow-list, a missing Origin (same-origin script
+      // POST) must pass through — that's the legitimate frontend flow.
+      config: { ...baseConfig, allowedOrigins: ["http://127.0.0.1:5173"] },
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user: "alice" }),
+      });
+      assert.equal(res.status, 200);
+    },
+  );
 });

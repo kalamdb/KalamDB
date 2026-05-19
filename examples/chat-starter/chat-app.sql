@@ -82,6 +82,11 @@ CREATE SHARED TABLE chat.docs (
 
 ALTER TABLE chat.docs CREATE INDEX embedding USING COSINE;
 
+-- SHARED tables default to ACCESS LEVEL Private — only the table owner
+-- (root) can read them. The whole point of chat.docs is that EVERY user
+-- can use it as a RAG corpus, so flip it to Public.
+ALTER TABLE chat.docs SET ACCESS LEVEL PUBLIC;
+
 -- ---------------------------------------------------------------------------
 -- Demo users for the multi-tenant story.
 -- ---------------------------------------------------------------------------

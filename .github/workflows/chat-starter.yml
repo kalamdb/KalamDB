@@ -4,12 +4,17 @@ on:
   pull_request:
     paths:
       - "examples/chat-starter/**"
+      - "link/sdks/typescript/**"
       - ".github/workflows/chat-starter.yml"
   push:
     branches: [main]
     paths:
       - "examples/chat-starter/**"
+      - "link/sdks/typescript/**"
       - ".github/workflows/chat-starter.yml"
+
+permissions:
+  contents: read
 
 defaults:
   run:
@@ -17,29 +22,60 @@ defaults:
 
 jobs:
   ci:
+    name: Lint / typecheck / unit / component
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: examples/chat-starter/package-lock.json
 
-      # The chat-starter consumes @kalamdb/* via file: links into the same
-      # repo. Build those workspaces' dist first so the file: install picks
-      # up real artifacts.
-      - name: Install + build sibling SDKs
+      # The chat-starter consumes @kalamdb/* via file: links into this repo
+      # (it lives next to the SDKs it demos). Build each sibling SDK's dist
+      # first so the file: install picks up real artifacts. When the starter
+      # eventually moves into its own template repo, swap the deps to the
+      # published @kalamdb/* versions on npm and delete this whole block.
+      - name: Build @kalamdb/client
+        working-directory: link/sdks/typescript/client
         run: |
-          cd ../../link/sdks/typescript/client && npm ci && npm run build
-          cd ../orm && npm ci && npm run build || true
-          cd ../react && npm ci && npm run build || true
-        working-directory: examples/chat-starter
+          set -euo pipefail
+          npm ci
+          npm run build
 
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run test:unit
-      - run: npm run test:component
+      - name: Build @kalamdb/orm
+        working-directory: link/sdks/typescript/orm
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Build @kalamdb/react
+        working-directory: link/sdks/typescript/react
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Install chat-starter deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Component tests
+        run: npm run test:component

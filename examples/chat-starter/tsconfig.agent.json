@@ -16,5 +16,6 @@
     "paths": { "@/*": ["./src/*"] },
     "types": ["node"]
   },
-  "include": ["src/agent", "src/lib", "src/schema.ts", "scripts", "server", "tests/unit"]
+  "include": ["src/agent", "src/lib", "src/schema.ts", "scripts", "server", "tests/unit"],
+  "exclude": ["src/lib/userStore.ts"]
 }

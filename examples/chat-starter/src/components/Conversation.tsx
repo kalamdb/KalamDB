@@ -49,9 +49,8 @@ export function Conversation(props: ConversationProps) {
   const messageCount = props.messages.length;
   const tokenCount = props.typingTokens.length;
   const approvalCount = props.approvals.length;
-  const latestUserMessageId =
-    [...props.messages].reverse().find((m) => m.role === "user")?.id ?? null;
-  const latestAssistant = [...props.messages].reverse().find((m) => m.role === "assistant");
+  const latestUserMessageId = props.messages.findLast((m) => m.role === "user")?.id ?? null;
+  const latestAssistant = props.messages.findLast((m) => m.role === "assistant");
   const latestAssistantId = latestAssistant?.id ?? null;
   const latestAssistantStatus = latestAssistant?.status ?? null;
   const lastApprovalCountRef = React.useRef<number>(0);

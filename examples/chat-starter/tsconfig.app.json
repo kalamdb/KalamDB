@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -20,8 +20,11 @@
   "include": [
     "src/components",
     "src/lib/utils.ts",
+    "src/lib/user.ts",
+    "src/lib/userStore.ts",
     "src/client.ts",
     "src/main.tsx",
+    "src/AppShell.tsx",
     "src/schema.ts"
   ]
 }

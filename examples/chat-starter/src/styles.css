@@ -89,6 +89,15 @@
     background: rgba(0, 240, 212, 0.25);
     color: var(--foreground);
   }
+
+  /* User bubbles are accent-colored, so the default branded-selection rule
+     above leaves light text on near-identical light bg. Invert it inside
+     user bubbles: dark text on a darker accent-glass selection background. */
+  .user-bubble ::selection,
+  .user-bubble::selection {
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--accent-foreground);
+  }
 }
 
 @keyframes slide-up {

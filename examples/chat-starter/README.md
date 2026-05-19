@@ -109,17 +109,31 @@ The stream yields `LlmStreamEvent` values: `{type: "text", delta}`, `{type: "too
 
 The browser holds **no** KalamDB credentials. The flow is:
 
-1. Browser calls `POST /api/auth/token` (proxied through Vite to `server/index.ts`).
-2. The backend logs into KalamDB with the bundled root credentials (env-only, never bundled into the frontend) and returns the resulting access token to the browser.
-3. The browser uses that token for live queries and SQL via `Auth.jwt(...)` in the `@kalamdb/client` SDK.
+1. The sidebar dropdown picks a demo user (`alice`, `bob`, `carol`, or "Admin (default)"). The choice is persisted in `localStorage`.
+2. Browser calls `POST /api/auth/token` with `{ user }` in the body (proxied through Vite to `server/index.ts`).
+3. The backend looks the user up against its in-memory password map, logs into KalamDB as that user, and returns a short-lived access token.
+4. The browser uses that token for live queries and SQL via `Auth.jwt(...)` in the `@kalamdb/client` SDK.
+5. Every USER-table SQL the agent issues on behalf of that user is wrapped in `EXECUTE AS USER '<user>'`, so KalamDB's per-user table partitioning enforces isolation end-to-end.
 
-This keeps the secret on the server. **What it does NOT do** is mint per-user tokens — every browser session gets a token with the same (admin) authority. That's fine for a starter; replace `/api/auth/token` with logic that:
+Open two browser windows, pick a different demo user in each, and verify your conversations are isolated.
 
-- Validates the caller's session (cookie, OAuth, whatever your auth is)
-- Mints a KalamDB token scoped to that user's data
-- Caches/refreshes it server-side
+CSRF defense:
 
-See `server/index.ts` for the boundary; that's the file to modify.
+- `POST /api/auth/token` rejects requests whose `Content-Type` isn't `application/json` (blocks "simple request" form-style forgery).
+- It also rejects cross-origin requests whose `Origin` header isn't in the `ALLOWED_ORIGINS` env list. Same-origin script POSTs don't send `Origin` and are permitted.
+
+### Plugging in real auth
+
+The dropdown is intentionally fake — passwords live server-side and anyone who picks "alice" becomes alice. That's safe for a local demo, fatal on the public internet. The starter's production fence (`ALLOW_UNAUTHENTICATED_TOKENS`) refuses to boot under `NODE_ENV=production` so this never ships by accident.
+
+The swap is a single file: **`server/index.ts`**. The `/api/auth/token` handler is the seam. Replace the demo-user lookup with the real flow:
+
+1. **Validate the caller** using whatever your real auth is — session cookie, OAuth, your IdP, etc. Reject unauthenticated callers with 401 before touching KalamDB. (If you use cookies, KEEP the existing CSRF gates and add SameSite + CSRF tokens if your auth crosses sites.)
+2. **Resolve the caller to a KalamDB user identifier** — either map your auth's user-id to a `chat.users`-shaped table, or auto-provision a KalamDB user on first login.
+3. **Mint a KalamDB token scoped to that user** by calling KalamDB's `/v1/api/auth/login` with that user's credentials (kept in a secret manager, not the source). The existing `makeTokenFetcher` already caches tokens per-username and refreshes near expiry — keep that logic, just feed it the resolved username.
+4. **Remove the demo seeds** from `chat-app.sql` (`CREATE USER alice/bob/carol`) and the `DEMO_USERS` map in `server/index.ts`. The frontend `UserPicker` is only useful for the demo — either remove it from `src/components/Sidebar.tsx` or repurpose it to show the signed-in user's name.
+
+Everything downstream of `/api/auth/token` — the agent's `EXECUTE AS USER`, the per-user live subscriptions, the `chat.*` table partitioning — keeps working unchanged. The boundary is the token-issuance step; the data plane is already real.
 
 ## Deployment checklist
 

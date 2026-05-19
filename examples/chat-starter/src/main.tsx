@@ -1,14 +1,10 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { KalamProvider } from "@kalamdb/react";
-import { getClient } from "./client";
-import { App } from "./components/App";
+import { AppShell } from "./AppShell";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <KalamProvider client={getClient()}>
-      <App />
-    </KalamProvider>
+    <AppShell />
   </React.StrictMode>,
 );

@@ -1,11 +1,11 @@
-// Recorder-only helper. NEVER imported in production code paths.
+// Recorder-only LLM-stream slowdown.
 //
-// Wraps an LlmAdapter so each token-yielding event is held back by a fixed
-// number of milliseconds. The only consumer is the agent's optional
-// RECORDER_SLOWDOWN_MS env, which the recorder script sets transiently when
-// it spawns its own agent for the Stop-mid-stream demo. The slowdown makes
-// the streaming window long enough for a Playwright click to land before
-// the real LLM finishes — without changing what the LLM actually produces.
+// Imported unconditionally by src/agent/index.ts but a no-op unless the
+// agent is launched with RECORDER_SLOWDOWN_MS=<positive int>. The recorder
+// script sets that env when capturing the Stop-mid-stream demo so the
+// streaming window is long enough for a Playwright click to land before a
+// fast model finishes. Production deployments leave the env unset and pay
+// zero cost — withSlowdown returns the inner adapter unchanged.
 
 import type { LlmAdapter, LlmStreamArgs, LlmStreamEvent } from "./index.js";
 

@@ -22,7 +22,12 @@ type TokenRow = InferSelectModel<typeof typingTokens>;
 type ApprovalRow = InferSelectModel<typeof approvals>;
 type TaskRow = InferSelectModel<typeof tasks>;
 
-export function App() {
+interface AppProps {
+  currentUser: string;
+  onUserChange: (next: string) => void;
+}
+
+export function App({ currentUser, onUserChange }: AppProps) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   return (
@@ -87,6 +92,8 @@ export function App() {
             update={ctx.update}
             selectedId={selectedId}
             setSelectedId={setSelectedId}
+            currentUser={currentUser}
+            onUserChange={onUserChange}
           />
         )}
       </LiveQueries>
@@ -116,6 +123,8 @@ interface ChatBodyProps {
   ) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
+  currentUser: string;
+  onUserChange: (next: string) => void;
 }
 
 function ChatBody(props: ChatBodyProps) {
@@ -129,6 +138,8 @@ function ChatBody(props: ChatBodyProps) {
     update,
     selectedId,
     setSelectedId,
+    currentUser,
+    onUserChange,
   } = props;
 
   // When the selected conversation DISAPPEARS from live results (e.g.,
@@ -195,6 +206,8 @@ function ChatBody(props: ChatBodyProps) {
         selectedId={selectedId}
         onSelect={setSelectedId}
         onCreate={createConversation}
+        currentUser={currentUser}
+        onUserChange={onUserChange}
       />
       <main className="flex-1 flex flex-col min-h-0">
         {selectedId ? (

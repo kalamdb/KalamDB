@@ -93,7 +93,7 @@ export function Messages({ messages, typingTokens, approvals, onApproval }: Mess
                 className={cn(
                   "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed shadow-sm",
                   isUser
-                    ? "bg-[var(--accent)] text-[var(--accent-foreground)] rounded-br-md whitespace-pre-wrap"
+                    ? "bg-[var(--accent)] text-[var(--accent-foreground)] rounded-br-md whitespace-pre-wrap user-bubble"
                     : "bg-[var(--surface)] backdrop-blur-md border border-[var(--surface-border)] rounded-bl-md",
                   m.status === "cancelled" && "opacity-60 italic",
                   m.status === "error" && "border-[var(--destructive)]",

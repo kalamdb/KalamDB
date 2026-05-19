@@ -2,6 +2,7 @@ import { Plus, MessageSquare, Sparkles } from "lucide-react";
 import type { InferSelectModel } from "drizzle-orm";
 import type { conversations as ConversationsTable } from "@/schema";
 import { cn, formatTime } from "@/lib/utils";
+import { UserPicker } from "./UserPicker";
 
 type ConversationRow = InferSelectModel<typeof ConversationsTable>;
 
@@ -10,9 +11,18 @@ interface SidebarProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreate: () => Promise<void> | void;
+  currentUser: string;
+  onUserChange: (next: string) => void;
 }
 
-export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate }: SidebarProps) {
+export function Sidebar({
+  conversations: convos,
+  selectedId,
+  onSelect,
+  onCreate,
+  currentUser,
+  onUserChange,
+}: SidebarProps) {
   return (
     <aside className="w-72 shrink-0 border-r border-[var(--surface-border)] flex flex-col min-h-0 bg-[var(--background-alt)]/60 backdrop-blur-xl">
       <div className="p-4 border-b border-[var(--surface-border)] flex items-center gap-2">
@@ -56,8 +66,11 @@ export function Sidebar({ conversations: convos, selectedId, onSelect, onCreate 
           </ul>
         )}
       </div>
-      <div className="p-3 border-t border-[var(--surface-border)] text-[10px] text-[var(--muted-foreground)] font-mono tracking-wide">
-        powered by <span className="text-[var(--accent)]">kalamdb</span> live queries
+      <div className="border-t border-[var(--surface-border)] p-3 space-y-3">
+        <UserPicker currentUser={currentUser} onUserChange={onUserChange} />
+        <div className="text-[10px] text-[var(--muted-foreground)] font-mono tracking-wide">
+          powered by <span className="text-[var(--accent)]">kalamdb</span> live queries
+        </div>
       </div>
     </aside>
   );

@@ -24,29 +24,17 @@ const DEFAULTS = {
   user: "root",
   password: "kalamdb-dev-password",
   port: 3001,
-  tokenRateLimitPerMinute: 10,
+  // The browser hits /api/auth/token on every page load, on user-switch in
+  // the demo dropdown, and again on any 401 the SDK encounters. 10/min was
+  // too tight for active dev or for the Playwright e2e suite. 120/min still
+  // throttles brute-force abuse but stays out of the way of legitimate
+  // usage. Lower it back when you plug in real auth in front.
+  tokenRateLimitPerMinute: 120,
   healthRateLimitPerMinute: 60,
   healthCacheMs: 2_000,
 } as const;
 
-/**
- * Demo users for the multi-tenant story. The browser picks one from the
- * sign-in dropdown, the backend mints that user's KalamDB token. The
- * passwords match what `chat-app.sql`'s CREATE USER statements set.
- *
- * THIS IS A DEMO. Shared passwords mean anyone who picks "alice" becomes
- * alice — fine for local development (open two tabs to see isolation),
- * fatal for any deployment. The production fence below + the README's
- * "Plugging in real auth" section explain the swap path.
- */
-const DEMO_USERS = {
-  alice: "demo-alice-pw",
-  bob: "demo-bob-pw",
-  carol: "demo-carol-pw",
-} as const;
-
-type DemoUser = keyof typeof DEMO_USERS;
-const DEMO_USER_LIST: ReadonlyArray<DemoUser> = ["alice", "bob", "carol"];
+import { DEMO_USER_PASSWORDS, DEMO_USER_LIST, type DemoUser } from "../src/lib/demo-users.js";
 
 export interface ServerConfig {
   kalamdbUrl: string;
@@ -58,6 +46,15 @@ export interface ServerConfig {
   healthCacheMs: number;
   /** When true, X-Forwarded-For is honored. Set behind a trusted reverse proxy only. */
   trustProxy: boolean;
+  /**
+   * Allow-listed `Origin` values for the /api/auth/token endpoint. A
+   * cross-origin POST with any other Origin (or no Origin) is rejected with
+   * 403. Same-origin POSTs from `<script>` don't carry an Origin header and
+   * are permitted — that's the legitimate frontend flow. Empty array = allow
+   * any origin (only safe behind ALLOW_UNAUTHENTICATED_TOKENS=true, i.e.
+   * private-network demos).
+   */
+  allowedOrigins: ReadonlyArray<string>;
 }
 
 function configFromEnv(): ServerConfig {
@@ -73,7 +70,19 @@ function configFromEnv(): ServerConfig {
     ),
     healthCacheMs: Number(process.env.HEALTH_CACHE_MS ?? DEFAULTS.healthCacheMs),
     trustProxy: process.env.TRUST_PROXY === "1",
+    allowedOrigins: parseAllowedOrigins(process.env.ALLOWED_ORIGINS),
   };
+}
+
+/** Comma-separated list of `Origin` values that are allowed to POST
+ *  /api/auth/token. Empty / unset = empty array (= reject all cross-origin
+ *  POSTs). Each entry must be a full scheme://host[:port] origin. */
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 export interface CachedToken {
@@ -122,10 +131,12 @@ function makeTokenFetcher(cfg: ServerConfig): TokenFetcher {
 
 function passwordFor(username: string, cfg: ServerConfig): string {
   if (username === cfg.kalamdbUser) return cfg.kalamdbPassword;
-  if (Object.prototype.hasOwnProperty.call(DEMO_USERS, username)) {
-    return DEMO_USERS[username as DemoUser];
+  if (Object.prototype.hasOwnProperty.call(DEMO_USER_PASSWORDS, username)) {
+    return DEMO_USER_PASSWORDS[username as DemoUser];
   }
-  throw new Error(`Unknown user '${username}'. Known: ${[cfg.kalamdbUser, ...DEMO_USER_LIST].join(", ")}`);
+  throw new Error(
+    `Unknown user '${username}'. Known: ${[cfg.kalamdbUser, ...DEMO_USER_LIST].join(", ")}`,
+  );
 }
 
 async function readJsonBody(req: IncomingMessage, maxBytes = 4096): Promise<unknown> {
@@ -227,6 +238,33 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
         requestLog.warn({ ip }, "rate limit exceeded on /api/auth/token");
         json(res, 429, { error: "rate_limited" });
         return;
+      }
+      // CSRF defense. The endpoint mints a real KalamDB token, so a same-
+      // origin browser script must be the only caller. Two gates:
+      //   1. content-type: application/json — blocks form-style cross-origin
+      //      POSTs that bypass preflight (text/plain or
+      //      application/x-www-form-urlencoded).
+      //   2. Origin allow-list — rejects any cross-origin POST whose Origin
+      //      isn't in cfg.allowedOrigins. Same-origin POSTs from the page's
+      //      own script don't carry an Origin header on every browser, so a
+      //      missing Origin is permitted (it's the legit fetch() flow).
+      //
+      // Operators who plug in real cookie/session auth MUST keep these
+      // gates — adding `credentials: 'include'` without them re-introduces
+      // a textbook CSRF hole.
+      const ctype = (req.headers["content-type"] ?? "").toString().toLowerCase();
+      if (ctype && !ctype.startsWith("application/json")) {
+        requestLog.warn({ ctype }, "rejecting /api/auth/token with non-JSON content-type");
+        json(res, 415, { error: "unsupported_media_type" });
+        return;
+      }
+      const origin = req.headers.origin;
+      if (typeof origin === "string" && origin.length > 0) {
+        if (cfg.allowedOrigins.length > 0 && !cfg.allowedOrigins.includes(origin)) {
+          requestLog.warn({ origin }, "rejecting /api/auth/token from disallowed origin");
+          json(res, 403, { error: "forbidden_origin" });
+          return;
+        }
       }
       // Real app: authenticate the caller here (session cookie, OAuth, etc)
       // BEFORE deciding which user to mint a token for. The demo trusts
