@@ -15,6 +15,20 @@ import {
 import { withRetry } from "../lib/llm/retry.js";
 import { withSlowdown } from "../lib/llm/slowdown.js";
 import { UUID_RE, uuidLit } from "./ids.js";
+
+/** Escapes a user identifier for safe inlining into EXECUTE AS USER '<...>'.
+ *  USER_RE already restricts characters at the entry point, so this is
+ *  defense-in-depth. */
+function escapeUser(user: string): string {
+  return user.replace(/'/g, "''");
+}
+
+/** Wraps `sql` (single statement, no trailing ;) in `EXECUTE AS USER '<u>' (...)`.
+ *  Used for live() subscriptions where we need the wrapping but the SDK's
+ *  convenience executeAsUser() helper is for one-shot query() calls only. */
+function asUser(user: string, sql: string): string {
+  return `EXECUTE AS USER '${escapeUser(user)}' (${sql.trim().replace(/;+\s*$/g, "")})`;
+}
 import { logger } from "../lib/logger.js";
 import { dispatchTool, TOOLS, type ToolContext } from "./tools.js";
 
@@ -95,7 +109,15 @@ interface Task {
   id: string;
   conversation_id: string;
   message_id: string;
+  /** KalamDB user that owns this task. Sourced from the consumer change
+   *  event's connecting-identity metadata; every SQL write the agent makes
+   *  on behalf of this task is wrapped in EXECUTE AS USER '<user>' so the
+   *  per-user partitioning of the chat.* USER tables is enforced even though
+   *  the agent itself logs in as root. */
+  user: string;
 }
+
+const USER_RE = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 const activeControllers = new Map<string, AbortController>();
 
@@ -157,17 +179,23 @@ async function main(): Promise<void> {
       change: ConsumerChange<Record<string, unknown>>,
     ) => {
       const row = change.data;
+      // change.user carries the connecting identity that inserted the task
+      // row (KalamDB attaches it to every event from a USER-typed source
+      // table). We pin every SQL write for this task to that identity.
+      const taskUser = String(change.user ?? "");
       const task: Task = {
         id: String(unwrap(row.id) ?? ""),
         conversation_id: String(unwrap(row.conversation_id) ?? ""),
         message_id: String(unwrap(row.message_id) ?? ""),
+        user: taskUser,
       };
       if (
         !UUID_RE.test(task.id) ||
         !UUID_RE.test(task.conversation_id) ||
-        !UUID_RE.test(task.message_id)
+        !UUID_RE.test(task.message_id) ||
+        !USER_RE.test(task.user)
       ) {
-        log.warn({ row }, "dropping malformed task event");
+        log.warn({ row, user: taskUser }, "dropping malformed task event");
         return;
       }
       if (activeControllers.has(task.id)) return;
@@ -176,7 +204,7 @@ async function main(): Promise<void> {
       // isTaskTerminal returns null when the row hasn't become readable yet
       // (rare topic-vs-table read-visibility race) — treat that as "not
       // terminal, proceed", so the worker still picks the work up.
-      const terminal = await isTaskTerminal(sqlClient, task.id, log);
+      const terminal = await isTaskTerminal(sqlClient, task.user, task.id, log);
       if (terminal === true) return;
 
       const ctrl = new AbortController();
@@ -215,7 +243,7 @@ async function runTask(
   // Per-task cancellation subscription, scoped to this row only — replaces
   // the previous global live-on-chat.tasks fan-out.
   const cancelUnsub = await client.live<{ id: string; is_cancelled: boolean | string }>(
-    `SELECT id, is_cancelled FROM chat.tasks WHERE id = ${uuidLit(task.id)}`,
+    asUser(task.user, `SELECT id, is_cancelled FROM chat.tasks WHERE id = ${uuidLit(task.id)}`),
     (rows) => {
       for (const row of rows) {
         const cancelled = unwrap(row.is_cancelled);
@@ -230,7 +258,7 @@ async function runTask(
   // Startup race: between isTaskTerminal returning false and the live sub
   // attaching, the user could click Stop. Re-read the row now that we're
   // subscribed and bail before doing any writes.
-  const stillTerminal = await isTaskTerminal(client, task.id, tlog);
+  const stillTerminal = await isTaskTerminal(client, task.user, task.id, tlog);
   if (stillTerminal === true) {
     tlog.info("task became terminal during subscription attach — bailing");
     await cancelUnsub().catch(() => undefined);
@@ -250,14 +278,14 @@ async function runTask(
     }
     buffer = "";
     await cancelUnsub().catch(() => undefined);
-    await clearTypingTokens(client, task.message_id).catch(() => undefined);
-    await finalizeTask(client, task.id).catch(() => undefined);
+    await clearTypingTokens(client, task.user, task.message_id).catch(() => undefined);
+    await finalizeTask(client, task.user, task.id).catch(() => undefined);
     tlog.info({ final_status: finalStatus }, "task complete");
   };
 
   try {
     await ensureAssistantStub(client, task);
-    await markStreaming(client, task.message_id);
+    await markStreaming(client, task.user, task.message_id);
 
     // The LLM needs to know which conversation it's in so delete_conversation,
     // query_database etc. can scope to the right id. Inject it as a separate
@@ -269,7 +297,7 @@ async function runTask(
         content: `# Current conversation\nconversation_id = ${task.conversation_id}`,
       },
     ];
-    baseMessages.push(...(await fetchHistory(client, task.conversation_id)));
+    baseMessages.push(...(await fetchHistory(client, task.user, task.conversation_id)));
     tlog.debug({ history: baseMessages.length - 2 }, "starting LLM turn");
 
     const flush = async () => {
@@ -281,14 +309,19 @@ async function runTask(
       const body = buffer;
       buffer = "";
       try {
-        await client.insert("chat.typing_tokens", {
-          id: crypto.randomUUID(),
-          conversation_id: task.conversation_id,
-          message_id: task.message_id,
-          body,
-          seq: ++seq,
-          created_at: new Date().toISOString(),
-        });
+        await client.executeAsUser(
+          `INSERT INTO chat.typing_tokens (id, conversation_id, message_id, body, seq, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          task.user,
+          [
+            crypto.randomUUID(),
+            task.conversation_id,
+            task.message_id,
+            body,
+            ++seq,
+            new Date().toISOString(),
+          ],
+        );
       } catch (e) {
         tlog.error({ err: e }, "typing-token flush failed");
       }
@@ -309,6 +342,7 @@ async function runTask(
       client,
       log: tlog,
       task,
+      user: task.user,
       signal: controller.signal,
       lastApprovalDecision: null,
     };
@@ -337,25 +371,25 @@ async function runTask(
       } catch (error) {
         if (controller.signal.aborted) {
           finalStatus = "cancelled";
-          await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+          await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "cancelled");
           return;
         }
         tlog.error({ err: error }, "llm error");
         finalStatus = "error";
-        await finalizeMessage(client, task.message_id, "Sorry — something went wrong.", "error");
+        await finalizeMessage(client, task.user, task.message_id, "Sorry — something went wrong.", "error");
         return;
       }
 
       if (controller.signal.aborted) {
         finalStatus = "cancelled";
-        await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+        await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "cancelled");
         return;
       }
 
       if (stopReason !== "tool_calls" || pendingCalls.length === 0) {
         await flush();
         finalStatus = "final";
-        await finalizeMessage(client, task.message_id, assembled.join(""), "final");
+        await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "final");
         return;
       }
 
@@ -374,7 +408,7 @@ async function runTask(
         });
         if (controller.signal.aborted) {
           finalStatus = "cancelled";
-          await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+          await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "cancelled");
           return;
         }
       }
@@ -383,6 +417,7 @@ async function runTask(
     finalStatus = "final";
     await finalizeMessage(
       client,
+      task.user,
       task.message_id,
       assembled.join("") + "\n\n(Agent exceeded tool-call turn limit.)",
       "final",
@@ -392,12 +427,17 @@ async function runTask(
   }
 }
 
-async function fetchHistory(client: KalamDBClient, conversationId: string): Promise<LlmMessage[]> {
-  const res = await client.query(
+async function fetchHistory(
+  client: KalamDBClient,
+  user: string,
+  conversationId: string,
+): Promise<LlmMessage[]> {
+  const res = await client.executeAsUser(
     `SELECT role, body FROM chat.messages
        WHERE conversation_id = $1
          AND status IN ('final', 'streaming')
        ORDER BY created_at ASC`,
+    user,
     [conversationId],
   );
   const rows =
@@ -423,12 +463,15 @@ async function fetchHistory(client: KalamDBClient, conversationId: string): Prom
  */
 async function isTaskTerminal(
   client: KalamDBClient,
+  user: string,
   taskId: string,
   log_: typeof log,
 ): Promise<boolean | null> {
-  const res = await client.query(`SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`, [
-    taskId,
-  ]);
+  const res = await client.executeAsUser(
+    `SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`,
+    user,
+    [taskId],
+  );
   const row = (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> })
     .results?.[0]?.named_rows?.[0];
   if (!row) {
@@ -447,22 +490,23 @@ async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<v
   //      consumers in the same group transiently both see the event. We
   //      catch any "duplicate key / already exists" error from KalamDB and
   //      treat it as success; anything else propagates.
-  const res = await client.query(`SELECT id FROM chat.messages WHERE id = $1`, [task.message_id]);
+  const res = await client.executeAsUser(
+    `SELECT id FROM chat.messages WHERE id = $1`,
+    task.user,
+    [task.message_id],
+  );
   const exists =
     ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows
       ?.length ?? 0) > 0;
   if (exists) return;
   const now = new Date().toISOString();
   try {
-    await client.insert("chat.messages", {
-      id: task.message_id,
-      conversation_id: task.conversation_id,
-      role: "assistant",
-      body: "",
-      status: "pending",
-      created_at: now,
-      updated_at: now,
-    });
+    await client.executeAsUser(
+      `INSERT INTO chat.messages (id, conversation_id, role, body, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      task.user,
+      [task.message_id, task.conversation_id, "assistant", "", "pending", now, now],
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/duplicate|already exists|unique|primary key/i.test(msg)) {
@@ -473,45 +517,54 @@ async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<v
   }
 }
 
-async function markStreaming(client: KalamDBClient, messageId: string): Promise<void> {
-  await client.update("chat.messages", messageId, {
-    status: "streaming",
-    updated_at: new Date().toISOString(),
-  });
+async function markStreaming(
+  client: KalamDBClient,
+  user: string,
+  messageId: string,
+): Promise<void> {
+  await client.executeAsUser(
+    `UPDATE chat.messages SET status = $1, updated_at = $2 WHERE id = $3`,
+    user,
+    ["streaming", new Date().toISOString(), messageId],
+  );
 }
 
 async function finalizeMessage(
   client: KalamDBClient,
+  user: string,
   messageId: string,
   body: string,
   status: "final" | "cancelled" | "error",
 ): Promise<void> {
-  await client.update("chat.messages", messageId, {
-    body,
-    status,
-    updated_at: new Date().toISOString(),
-  });
+  await client.executeAsUser(
+    `UPDATE chat.messages SET body = $1, status = $2, updated_at = $3 WHERE id = $4`,
+    user,
+    [body, status, new Date().toISOString(), messageId],
+  );
 }
 
-async function finalizeTask(client: KalamDBClient, taskId: string): Promise<void> {
-  await client.update("chat.tasks", taskId, {
-    finished_at: new Date().toISOString(),
-  });
+async function finalizeTask(
+  client: KalamDBClient,
+  user: string,
+  taskId: string,
+): Promise<void> {
+  await client.executeAsUser(
+    `UPDATE chat.tasks SET finished_at = $1 WHERE id = $2`,
+    user,
+    [new Date().toISOString(), taskId],
+  );
 }
 
-async function clearTypingTokens(client: KalamDBClient, messageId: string): Promise<void> {
-  const res = await client.query(`SELECT id FROM chat.typing_tokens WHERE message_id = $1`, [
-    messageId,
-  ]);
-  const rows =
-    (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
-      ?.named_rows ?? [];
-  for (const row of rows) {
-    const id = unwrap(row.id);
-    if (typeof id === "string" && UUID_RE.test(id)) {
-      await client.delete("chat.typing_tokens", id);
-    }
-  }
+async function clearTypingTokens(
+  client: KalamDBClient,
+  user: string,
+  messageId: string,
+): Promise<void> {
+  await client.executeAsUser(
+    `DELETE FROM chat.typing_tokens WHERE message_id = $1`,
+    user,
+    [messageId],
+  );
 }
 
 function unwrap(value: unknown): any {

@@ -10,18 +10,29 @@ function makeStubClient(
     queryThrows?: Error;
     inserts?: Array<{ table: string; row: Record<string, unknown> }>;
     queries?: Array<{ sql: string; params?: unknown[] }>;
+    executeAsUserCalls?: Array<{ sql: string; user: string; params?: unknown[] }>;
   } = {},
 ) {
   const inserts = opts.inserts ?? [];
   const queries = opts.queries ?? [];
+  const executeAsUserCalls = opts.executeAsUserCalls ?? [];
   return {
     inserts,
     queries,
+    executeAsUserCalls,
     client: {
       insert: async (table: string, row: Record<string, unknown>) => {
         inserts.push({ table, row });
       },
       query: async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (opts.queryThrows) throw opts.queryThrows;
+        return opts.queryResult ?? { results: [{ named_rows: [] }] };
+      },
+      executeAsUser: async (sql: string, user: string, params?: unknown[]) => {
+        executeAsUserCalls.push({ sql, user, params });
+        // Also track in queries[] so existing assertions about the query
+        // surface still work for tools that issue executeAsUser SELECTs.
         queries.push({ sql, params });
         if (opts.queryThrows) throw opts.queryThrows;
         return opts.queryResult ?? { results: [{ named_rows: [] }] };
@@ -43,6 +54,7 @@ function makeCtx(client: ToolContext["client"]): ToolContext {
       conversation_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
       message_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     },
+    user: "alice",
     signal: new AbortController().signal,
     lastApprovalDecision: null,
   };
@@ -163,7 +175,7 @@ test("delete_conversation REFUSES a non-UUID id even with approval", async () =>
   assert.equal(stub.queries.length, 0);
 });
 
-test("delete_conversation cascades atomically (single BEGIN/COMMIT request)", async () => {
+test("delete_conversation cascades via per-user executeAsUser calls in dependency order", async () => {
   const stub = makeStubClient();
   const ctx = makeCtx(stub.client);
   ctx.lastApprovalDecision = "approved";
@@ -173,25 +185,21 @@ test("delete_conversation cascades atomically (single BEGIN/COMMIT request)", as
     arguments: { conversation_id: "11111111-1111-1111-1111-111111111111" },
   });
   assert.match(out, /^deleted conversation/);
-  // One transactional request, not five separate ones.
-  assert.equal(stub.queries.length, 1);
-  const sql = stub.queries[0]!.sql;
-  assert.match(sql, /^BEGIN/);
-  assert.match(sql, /COMMIT$/);
-  // All 5 child + parent DELETEs present, in dependency-safe order.
-  const idx = (s: string) => sql.indexOf(s);
-  assert.ok(idx("DELETE FROM chat.typing_tokens") > 0);
-  assert.ok(idx("DELETE FROM chat.approvals") > 0);
-  assert.ok(idx("DELETE FROM chat.tasks") > 0);
-  assert.ok(idx("DELETE FROM chat.messages") > 0);
-  assert.ok(idx("DELETE FROM chat.conversations") > 0);
-  // Order: typing_tokens before approvals before tasks before messages before conversations.
-  assert.ok(idx("typing_tokens") < idx("approvals"));
-  assert.ok(idx("approvals") < idx("tasks"));
-  assert.ok(idx("tasks") < idx("messages"));
-  assert.ok(idx("messages") < idx("conversations"));
-  // ID embedded via uuidLit (validated).
-  assert.match(sql, /'11111111-1111-1111-1111-111111111111'/);
+  // Five wrapped DELETEs, one per child + parent table, all scoped to the
+  // task owner so a malicious LLM can't delete anyone else's data.
+  assert.equal(stub.executeAsUserCalls.length, 5);
+  for (const call of stub.executeAsUserCalls) {
+    assert.equal(call.user, "alice");
+    assert.deepEqual(call.params, ["11111111-1111-1111-1111-111111111111"]);
+  }
+  const tables = stub.executeAsUserCalls.map((c) => c.sql.match(/FROM (chat\.\w+)/)![1]);
+  assert.deepEqual(tables, [
+    "chat.typing_tokens",
+    "chat.approvals",
+    "chat.tasks",
+    "chat.messages",
+    "chat.conversations",
+  ]);
 });
 
 test("delete_conversation refuses to proceed if the abort signal already fired", async () => {

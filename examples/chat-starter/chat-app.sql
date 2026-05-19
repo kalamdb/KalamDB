@@ -81,3 +81,24 @@ CREATE SHARED TABLE chat.docs (
 );
 
 ALTER TABLE chat.docs CREATE INDEX embedding USING COSINE;
+
+-- ---------------------------------------------------------------------------
+-- Demo users for the multi-tenant story.
+-- ---------------------------------------------------------------------------
+-- Three KalamDB users let the starter demonstrate per-user data isolation
+-- without dragging in a real auth system. The sign-in dropdown in the UI
+-- lets you switch between them; the backend mints each user's KalamDB token
+-- with the matching password.
+--
+-- The passwords below are SHARED — anyone who picks "alice" from the dropdown
+-- becomes alice. That's fine for a local demo (open two browser tabs to
+-- prove isolation works) and a HARD STOP for any real deployment. See the
+-- README's "Plugging in real auth" section for the swap recipe.
+--
+-- KalamDB doesn't parse IF NOT EXISTS on CREATE USER, and DROP USER is a
+-- soft-delete (re-creating with the same name is rejected). So setup.ts is
+-- the one that handles re-runs: it swallows "User '<x>' already exists"
+-- errors on these statements (see the swallow logic in scripts/setup.ts).
+CREATE USER alice  WITH PASSWORD 'demo-alice-pw'  ROLE user;
+CREATE USER bob    WITH PASSWORD 'demo-bob-pw'    ROLE user;
+CREATE USER carol  WITH PASSWORD 'demo-carol-pw'  ROLE user;

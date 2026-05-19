@@ -41,9 +41,9 @@ test("POST /api/auth/token returns the cached KalamDB token", async () => {
   await withServer(
     {
       config: baseConfig,
-      tokenFetcher: async () => {
+      tokenFetcher: async (u: string) => {
         fetched += 1;
-        return { token: "kalam-token-xyz", expiresAt: Date.now() + 60_000 };
+        return { token: "kalam-token-xyz", expiresAt: Date.now() + 60_000, user: u };
       },
     },
     async (s) => {
@@ -84,7 +84,7 @@ test("POST /api/auth/token enforces per-IP rate limit", async () => {
   await withServer(
     {
       config: { ...baseConfig, tokenRateLimitPerMinute: rateLimit },
-      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
     },
     async (s) => {
       for (let i = 0; i < rateLimit; i++) {
@@ -103,7 +103,7 @@ test("X-Request-ID is echoed when supplied by the caller", async () => {
   await withServer(
     {
       config: baseConfig,
-      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
     },
     async (s) => {
       const supplied = "11111111-2222-3333-4444-555555555555";
@@ -126,7 +126,7 @@ test("GET /api/health probes upstream and reports 503 on failure", async () => {
     await withServer(
       {
         config: baseConfig,
-        tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
       },
       async (s) => {
         const res = await realFetch(`${s.url}/api/health`);
@@ -151,7 +151,7 @@ test("GET /api/health returns 200 when upstream is OK", async () => {
     await withServer(
       {
         config: baseConfig,
-        tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
       },
       async (s) => {
         const res = await realFetch(`${s.url}/api/health`);
@@ -163,11 +163,107 @@ test("GET /api/health returns 200 when upstream is OK", async () => {
   }
 });
 
+test("POST /api/auth/token passes the requested `user` through to the fetcher", async () => {
+  const received: string[] = [];
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => {
+        received.push(u);
+        return { token: `tok-${u}`, expiresAt: Date.now() + 60_000, user: u };
+      },
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user: "alice" }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { token: string; user: string };
+      assert.equal(body.user, "alice");
+      assert.equal(body.token, "tok-alice");
+      assert.deepEqual(received, ["alice"]);
+    },
+  );
+});
+
+test("POST /api/auth/token rejects an Unknown user with 400", async () => {
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => {
+        throw new Error(`Unknown user '${u}'. Known: root, alice`);
+      },
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user: "mallory" }),
+      });
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { error: string };
+      assert.equal(body.error, "unknown_user");
+    },
+  );
+});
+
+test("POST /api/auth/token rejects a malformed JSON body with 400", async () => {
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not json",
+      });
+      assert.equal(res.status, 400);
+    },
+  );
+});
+
+test("POST /api/auth/token falls back to the admin user when no body / no `user` field", async () => {
+  const received: string[] = [];
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => {
+        received.push(u);
+        return { token: "t", expiresAt: Date.now() + 60_000, user: u };
+      },
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, { method: "POST" });
+      assert.equal(res.status, 200);
+      assert.equal(received[0], baseConfig.kalamdbUser);
+    },
+  );
+});
+
+test("GET /api/users returns the demo user list", async () => {
+  await withServer(
+    {
+      config: baseConfig,
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/users`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { users: string[] };
+      assert.deepEqual(body.users, ["alice", "bob", "carol"]);
+    },
+  );
+});
+
 test("unknown routes return 404", async () => {
   await withServer(
     {
       config: baseConfig,
-      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
     },
     async (s) => {
       const res = await fetch(`${s.url}/api/nope`);
@@ -181,7 +277,7 @@ test("X-Forwarded-For is IGNORED when trustProxy is false (anti-spoofing)", asyn
   await withServer(
     {
       config: { ...baseConfig, tokenRateLimitPerMinute: rateLimit, trustProxy: false },
-      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
     },
     async (s) => {
       // Hit the limit using rotating X-Forwarded-For values. Because
@@ -211,7 +307,7 @@ test("X-Forwarded-For IS honored when trustProxy is true", async () => {
   await withServer(
     {
       config: { ...baseConfig, tokenRateLimitPerMinute: rateLimit, trustProxy: true },
-      tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
     },
     async (s) => {
       // Two requests from "different" XFF IPs both succeed because trustProxy
@@ -245,7 +341,7 @@ test("/api/health serves cached answer within healthCacheMs window", async () =>
     await withServer(
       {
         config: { ...baseConfig, healthCacheMs: 10_000 },
-        tokenFetcher: async () => ({ token: "t", expiresAt: Date.now() + 60_000 }),
+        tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
       },
       async (s) => {
         for (let i = 0; i < 5; i++) {

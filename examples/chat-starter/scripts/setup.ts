@@ -52,11 +52,20 @@ async function main(): Promise<void> {
       await exec(token, stmt);
       log.info({ stmt: head }, "ok");
     } catch (err) {
+      const msg = (err as Error).message;
+      const detail = msg.split("\n")[0];
       // DROP statements are best-effort on a fresh database where the
-      // target doesn't exist yet. Anything else is a hard failure.
+      // target doesn't exist yet.
       if (/^\s*DROP\b/i.test(stmt)) {
-        const detail = (err as Error).message.split("\n")[0];
         log.info({ stmt: head, reason: detail }, "skip");
+        continue;
+      }
+      // CREATE USER fails if the user already exists (KalamDB's DROP USER is
+      // a soft-delete that prevents re-creation, so there's no clean way to
+      // make this idempotent on the SQL side). Treat "already exists" as
+      // success so re-running setup is safe.
+      if (/^\s*CREATE\s+USER\b/i.test(stmt) && /already exists/i.test(msg)) {
+        log.info({ stmt: head }, "user already exists, ok");
         continue;
       }
       throw err;

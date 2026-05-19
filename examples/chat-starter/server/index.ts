@@ -29,8 +29,28 @@ const DEFAULTS = {
   healthCacheMs: 2_000,
 } as const;
 
+/**
+ * Demo users for the multi-tenant story. The browser picks one from the
+ * sign-in dropdown, the backend mints that user's KalamDB token. The
+ * passwords match what `chat-app.sql`'s CREATE USER statements set.
+ *
+ * THIS IS A DEMO. Shared passwords mean anyone who picks "alice" becomes
+ * alice — fine for local development (open two tabs to see isolation),
+ * fatal for any deployment. The production fence below + the README's
+ * "Plugging in real auth" section explain the swap path.
+ */
+const DEMO_USERS = {
+  alice: "demo-alice-pw",
+  bob: "demo-bob-pw",
+  carol: "demo-carol-pw",
+} as const;
+
+type DemoUser = keyof typeof DEMO_USERS;
+const DEMO_USER_LIST: ReadonlyArray<DemoUser> = ["alice", "bob", "carol"];
+
 export interface ServerConfig {
   kalamdbUrl: string;
+  /** Fallback admin user — used to log in if /api/auth/token is called without a `user` param. */
   kalamdbUser: string;
   kalamdbPassword: string;
   tokenRateLimitPerMinute: number;
@@ -56,33 +76,83 @@ function configFromEnv(): ServerConfig {
   };
 }
 
-interface CachedToken {
+export interface CachedToken {
   token: string;
   expiresAt: number;
+  user: string;
 }
 
 const TOKEN_REFRESH_SAFETY_MS = 60_000;
 
-function makeTokenFetcher(cfg: ServerConfig): () => Promise<CachedToken> {
-  let cached: CachedToken | null = null;
-  return async function getKalamToken(): Promise<CachedToken> {
+/**
+ * Returns a per-user token fetcher. Each (username, password) gets its own
+ * cached token; calls with the same username re-use the cached entry until
+ * its expiry approaches.
+ */
+export type TokenFetcher = (username: string) => Promise<CachedToken>;
+
+function makeTokenFetcher(cfg: ServerConfig): TokenFetcher {
+  const cache = new Map<string, CachedToken>();
+  return async function getKalamToken(username: string): Promise<CachedToken> {
+    const cached = cache.get(username);
     if (cached && cached.expiresAt - Date.now() > TOKEN_REFRESH_SAFETY_MS) {
       return cached;
     }
+    const password = passwordFor(username, cfg);
     const res = await fetch(`${cfg.kalamdbUrl}/v1/api/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: cfg.kalamdbUser, password: cfg.kalamdbPassword }),
+      body: JSON.stringify({ username, password }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`KalamDB login failed (${res.status}): ${body}`);
+      throw new Error(`KalamDB login failed for '${username}' (${res.status}): ${body}`);
     }
     const body = (await res.json()) as { access_token: string; expires_in?: number };
     const lifetimeMs = (body.expires_in ?? 60 * 60) * 1000;
-    cached = { token: body.access_token, expiresAt: Date.now() + lifetimeMs };
-    return cached;
+    const entry: CachedToken = {
+      token: body.access_token,
+      expiresAt: Date.now() + lifetimeMs,
+      user: username,
+    };
+    cache.set(username, entry);
+    return entry;
   };
+}
+
+function passwordFor(username: string, cfg: ServerConfig): string {
+  if (username === cfg.kalamdbUser) return cfg.kalamdbPassword;
+  if (Object.prototype.hasOwnProperty.call(DEMO_USERS, username)) {
+    return DEMO_USERS[username as DemoUser];
+  }
+  throw new Error(`Unknown user '${username}'. Known: ${[cfg.kalamdbUser, ...DEMO_USER_LIST].join(", ")}`);
+}
+
+async function readJsonBody(req: IncomingMessage, maxBytes = 4096): Promise<unknown> {
+  return await new Promise((resolve, reject) => {
+    let total = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        req.destroy();
+        reject(new Error(`request body exceeds ${maxBytes} bytes`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (chunks.length === 0) return resolve(null);
+      const buf = Buffer.concat(chunks).toString("utf8").trim();
+      if (!buf) return resolve(null);
+      try {
+        resolve(JSON.parse(buf));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+    req.on("error", reject);
+  });
 }
 
 // Per-IP token-bucket rate limiter. Memory-only — fine for a single process;
@@ -132,7 +202,7 @@ function json(res: ServerResponse, status: number, payload: unknown): void {
 
 export interface BuildServerOptions {
   config?: ServerConfig;
-  tokenFetcher?: () => Promise<CachedToken>;
+  tokenFetcher?: TokenFetcher;
 }
 
 export function buildServer(opts: BuildServerOptions = {}): Server {
@@ -158,10 +228,48 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
         json(res, 429, { error: "rate_limited" });
         return;
       }
-      // Real app: authenticate the caller here (session cookie, OAuth, etc).
-      // See README "Deployment checklist" for the fences guarding this path.
-      const { token, expiresAt } = await getKalamToken();
-      json(res, 200, { token, expiresAt });
+      // Real app: authenticate the caller here (session cookie, OAuth, etc)
+      // BEFORE deciding which user to mint a token for. The demo trusts
+      // whatever `user` the browser sends — anyone who picks "alice" from
+      // the dropdown becomes alice. See README "Plugging in real auth" for
+      // the swap.
+      let username = cfg.kalamdbUser;
+      try {
+        const body = await readJsonBody(req);
+        if (body && typeof body === "object" && "user" in body) {
+          const u = (body as { user: unknown }).user;
+          if (typeof u === "string" && u.trim().length > 0) {
+            username = u.trim();
+          }
+        }
+      } catch (err) {
+        requestLog.warn({ err }, "rejecting malformed /api/auth/token body");
+        json(res, 400, { error: "bad_request" });
+        return;
+      }
+      try {
+        const cached = await getKalamToken(username);
+        json(res, 200, {
+          token: cached.token,
+          expiresAt: cached.expiresAt,
+          user: cached.user,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/Unknown user/.test(msg)) {
+          json(res, 400, { error: "unknown_user" });
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/users") {
+      // Tells the frontend which demo users to list in the sign-in
+      // dropdown. Production deployments would replace this with whatever
+      // their real identity service exposes (or just return [] and rely on
+      // a real login form).
+      json(res, 200, { users: DEMO_USER_LIST });
       return;
     }
     if (req.method === "GET" && req.url === "/api/health") {

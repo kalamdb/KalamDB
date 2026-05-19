@@ -5,6 +5,10 @@ import { embed, embeddingLiteral } from "../lib/llm/embedding.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { guardSelect } from "./sql-guard.js";
 
+function escapeUserForSql(user: string): string {
+  return user.replace(/'/g, "''");
+}
+
 // =============================================================================
 // Tool definitions sent to the LLM.
 // =============================================================================
@@ -98,6 +102,11 @@ export interface ToolContext {
   client: KalamDBClient;
   log: Logger;
   task: { id: string; conversation_id: string; message_id: string };
+  /** KalamDB user that owns the task. Every USER-table SQL the tools issue
+   *  is wrapped in EXECUTE AS USER '<user>' (...) so writes/reads land in
+   *  the right per-user partition even though the agent's own login is
+   *  the root admin. */
+  user: string;
   signal: AbortSignal;
   /** Decision returned by the most recent request_approval — 'approved' / 'rejected' / null.
    *  Consumed (set to null) by destructive tools so a single approval can't
@@ -131,15 +140,20 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
       : "The assistant is requesting approval.";
   const approvalId = crypto.randomUUID();
 
-  await ctx.client.insert("chat.approvals", {
-    id: approvalId,
-    conversation_id: ctx.task.conversation_id,
-    message_id: ctx.task.message_id,
-    question,
-    status: "pending",
-    created_at: new Date().toISOString(),
-    resolved_at: null,
-  });
+  await ctx.client.executeAsUser(
+    `INSERT INTO chat.approvals (id, conversation_id, message_id, question, status, created_at, resolved_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    ctx.user,
+    [
+      approvalId,
+      ctx.task.conversation_id,
+      ctx.task.message_id,
+      question,
+      "pending",
+      new Date().toISOString(),
+      null,
+    ],
+  );
   ctx.log.info({ approval_id: approvalId, question }, "approval pending");
 
   const decision = await new Promise<string>((resolve) => {
@@ -164,7 +178,10 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
 
     ctx.client
       .live<{ id: string; status: string }>(
-        `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
+        // chat.approvals is a USER table — wrap the live SELECT in
+        // EXECUTE AS USER so the agent (logged in as root) sees the row in
+        // the task owner's partition.
+        `EXECUTE AS USER '${escapeUserForSql(ctx.user)}' (SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)})`,
         (rows) => {
           const row = rows[0];
           if (!row) return;
@@ -205,9 +222,13 @@ async function handleQueryDatabase(ctx: ToolContext, call: LlmToolCall): Promise
     ctx.log.warn({ sql: raw, reason: guard.reason }, "query_database rejected by guard");
     return `Error: ${guard.reason}`;
   }
-  ctx.log.info({ sql: guard.sql }, "query_database running");
+  ctx.log.info({ sql: guard.sql, user: ctx.user }, "query_database running");
   try {
-    const res = await ctx.client.query(guard.sql!);
+    // Scope the LLM's SELECT to the task owner. This is the production
+    // multi-tenant fence: even if the LLM tries to inspect another user's
+    // data, KalamDB's USER table partitioning serves rows from ctx.user's
+    // partition only.
+    const res = await ctx.client.executeAsUser(guard.sql!, ctx.user);
     const rows =
       (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
         ?.named_rows ?? [];
@@ -255,23 +276,28 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     return "Error: cancelled before delete could start";
   }
 
-  ctx.log.info({ conversation_id: id }, "delete_conversation cascade starting");
+  ctx.log.info({ conversation_id: id, user: ctx.user }, "delete_conversation cascade starting");
   try {
-    // Atomic cascade: KalamDB executes BEGIN/COMMIT in a single SQL request
-    // as one transaction (any DELETE failure → automatic rollback → no
-    // half-deleted state). children first by convention, then the parent
-    // row last.
-    const idLit = uuidLit(id);
-    const sql = [
-      "BEGIN",
-      `DELETE FROM chat.typing_tokens WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.approvals WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.tasks WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.messages WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.conversations WHERE id = ${idLit}`,
-      "COMMIT",
-    ].join("; ");
-    await ctx.client.query(sql);
+    // Per-user cascade: each DELETE runs inside EXECUTE AS USER '<ctx.user>'
+    // so it only affects the task owner's partition (a user can't delete
+    // anyone else's data even if the LLM asked it to).
+    //
+    // Tradeoff vs. the previous single-shot BEGIN/COMMIT: KalamDB's
+    // EXECUTE AS USER wraps a single statement, so we issue one wrapped
+    // DELETE per child table sequentially. If a later DELETE fails the
+    // earlier rows are already gone. That's acceptable for this demo —
+    // children are orphan rows the UI ignores once the parent disappears,
+    // and the LLM surfaces the error so the user can retry.
+    const deletes = [
+      `DELETE FROM chat.typing_tokens WHERE conversation_id = $1`,
+      `DELETE FROM chat.approvals WHERE conversation_id = $1`,
+      `DELETE FROM chat.tasks WHERE conversation_id = $1`,
+      `DELETE FROM chat.messages WHERE conversation_id = $1`,
+      `DELETE FROM chat.conversations WHERE id = $1`,
+    ];
+    for (const stmt of deletes) {
+      await ctx.client.executeAsUser(stmt, ctx.user, [id]);
+    }
     ctx.log.info({ conversation_id: id }, "delete_conversation cascade complete");
     return `deleted conversation ${id} and all related rows`;
   } catch (err) {
