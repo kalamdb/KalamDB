@@ -296,7 +296,7 @@ impl AppContext {
             ));
 
             // Create schema cache (Phase 10 unified cache)
-            let schema_registry = Arc::new(SchemaRegistry::new(10000));
+            let schema_registry = Arc::new(SchemaRegistry::new(256));
 
             // Create system schema provider (views created lazily on first access,
             // stored in SchemaRegistry's CachedTableData)

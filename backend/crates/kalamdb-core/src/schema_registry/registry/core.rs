@@ -48,6 +48,7 @@ struct SystemSchemaReconcileStats {
 ///
 /// Maximum number of entries in the version_cache before LRU eviction kicks in.
 /// Each entry contains a CachedTableData with Arrow schema and column metadata.
+const TABLE_CACHE_MAX_ENTRIES: usize = 256;
 const VERSION_CACHE_MAX_ENTRIES: usize = 256;
 
 pub struct SchemaRegistry {
@@ -56,6 +57,15 @@ pub struct SchemaRegistry {
 
     /// Cache for table data (latest versions)
     table_cache: DashMap<TableId, Arc<CachedTableData>>,
+
+    /// LRU access timestamps for table_cache entries.
+    table_cache_access: DashMap<TableId, u64>,
+
+    /// Monotonic counter for LRU ordering of table_cache.
+    table_cache_counter: AtomicU64,
+
+    /// Maximum number of latest table entries kept hot in memory.
+    table_cache_max_entries: usize,
 
     /// Cache for specific table versions (for reading old Parquet files)
     version_cache: DashMap<TableVersionId, Arc<CachedTableData>>,
@@ -91,6 +101,9 @@ impl SchemaRegistry {
         Self {
             app_context: OnceLock::new(),
             table_cache: DashMap::with_capacity(initial_capacity),
+            table_cache_access: DashMap::with_capacity(initial_capacity),
+            table_cache_counter: AtomicU64::new(0),
+            table_cache_max_entries: std::cmp::max(1, std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES)),
             version_cache: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
             version_cache_access: DashMap::with_capacity(std::cmp::min(
                 VERSION_CACHE_MAX_ENTRIES,
@@ -422,9 +435,94 @@ impl SchemaRegistry {
 
     // ===== Basic Cache Methods =====
 
+    fn touch_table_cache_entry(&self, table_id: &TableId) {
+        let ts = self.table_cache_counter.fetch_add(1, Ordering::Relaxed);
+        self.table_cache_access.insert(table_id.clone(), ts);
+    }
+
+    fn maybe_evict_table_cache_lru(&self) {
+        if self.table_cache.len() <= self.table_cache_max_entries {
+            return;
+        }
+
+        let target = self.table_cache_max_entries * 3 / 4;
+        let excess = self.table_cache.len().saturating_sub(target.max(1));
+        if excess == 0 {
+            return;
+        }
+
+        let mut entries: Vec<(TableId, u64)> = self
+            .table_cache_access
+            .iter()
+            .filter_map(|entry| {
+                let table_id = entry.key().clone();
+                let cached = self.table_cache.get(&table_id)?;
+                cached.value().get_provider().is_none().then_some((table_id, *entry.value()))
+            })
+            .collect();
+
+        if entries.is_empty() {
+            return;
+        }
+
+        entries.sort_by_key(|(_table_id, ts)| *ts);
+        let evict_count = std::cmp::min(excess, entries.len());
+
+        for (table_id, _) in entries.into_iter().take(evict_count) {
+            self.table_cache.remove(&table_id);
+            self.table_cache_access.remove(&table_id);
+        }
+
+        log::debug!(
+            "[SchemaRegistry] Evicted {} latest table_cache entries, remaining={}",
+            evict_count,
+            self.table_cache.len()
+        );
+    }
+
+    fn get_cached(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
+        let result = self.table_cache.get(table_id).map(|entry| entry.value().clone());
+        if result.is_some() {
+            self.touch_table_cache_entry(table_id);
+        }
+        result
+    }
+
+    fn load_cached_table(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<CachedTableData>>, KalamDbError> {
+        let app_ctx = self.app_context();
+        let tables_provider = app_ctx.system_tables().tables();
+
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => {
+                let table_arc = Arc::new(table_def);
+                let data = Arc::new(CachedTableData::from_table_definition(
+                    app_ctx.as_ref(),
+                    table_id,
+                    table_arc,
+                )?);
+                self.insert_cached(table_id.clone(), Arc::clone(&data));
+                Ok(Some(data))
+            },
+            None => Ok(None),
+        }
+    }
+
     /// Get cached table data for a table (latest version)
     pub fn get(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
-        self.table_cache.get(table_id).map(|entry| entry.value().clone())
+        if let Some(cached) = self.get_cached(table_id) {
+            return Some(cached);
+        }
+
+        match self.load_cached_table(table_id) {
+            Ok(cached) => cached,
+            Err(error) => {
+                log::error!("Failed to hydrate cached table {}: {}", table_id, error);
+                None
+            },
+        }
     }
 
     /// Register a new or updated table definition (CREATE/ALTER)
@@ -470,6 +568,7 @@ impl SchemaRegistry {
         // 1. Create CachedTableData
         let cached_data = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
+        self.touch_table_cache_entry(&table_id);
 
         // 2. Bind provider into CachedTableData
         match table_def.table_type {
@@ -494,19 +593,31 @@ impl SchemaRegistry {
                     cached_data.set_provider(Arc::clone(&table_provider));
 
                     // 3. Register with DataFusion immediately
-                    self.register_with_datafusion(&table_id, table_provider)?;
+                    if let Err(error) = self.register_with_datafusion(&table_id, table_provider) {
+                        log::error!("Failed to create provider for table {}: {}", table_id, error);
+                        if let Some(previous) = previous_entry {
+                            self.table_cache.insert(table_id.clone(), previous);
+                        } else {
+                            self.table_cache.remove(&table_id);
+                        }
+                        self.table_cache_access.remove(&table_id);
+                        return Err(error);
+                    }
                 },
-                Err(e) => {
-                    log::error!("Failed to create provider for table {}: {}", table_id, e);
+                Err(error) => {
+                    log::error!("Failed to create provider for table {}: {}", table_id, error);
                     if let Some(previous) = previous_entry {
-                        self.table_cache.insert(table_id, previous);
+                        self.table_cache.insert(table_id.clone(), previous);
                     } else {
                         self.table_cache.remove(&table_id);
                     }
-                    return Err(e);
+                    self.table_cache_access.remove(&table_id);
+                    return Err(error);
                 },
             },
         }
+
+        self.maybe_evict_table_cache_lru();
 
         Ok(())
     }
@@ -712,12 +823,15 @@ impl SchemaRegistry {
 
     /// Insert fully initialized cached table data into the cache
     pub fn insert_cached(&self, table_id: TableId, data: Arc<CachedTableData>) {
-        self.table_cache.insert(table_id, data);
+        self.table_cache.insert(table_id.clone(), data);
+        self.touch_table_cache_entry(&table_id);
+        self.maybe_evict_table_cache_lru();
     }
 
     /// Invalidate (remove) cached table data
     pub fn invalidate(&self, table_id: &TableId) {
         self.table_cache.remove(table_id);
+        self.table_cache_access.remove(table_id);
         let _ = self.deregister_from_datafusion(table_id);
     }
 
@@ -725,6 +839,7 @@ impl SchemaRegistry {
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
         // Remove from latest cache
         self.table_cache.remove(table_id);
+        self.table_cache_access.remove(table_id);
 
         // Remove all versioned entries for this table
         let keys_to_remove: Vec<TableVersionId> = self
@@ -809,6 +924,7 @@ impl SchemaRegistry {
     /// Clear all cached data
     pub fn clear(&self) {
         self.table_cache.clear();
+        self.table_cache_access.clear();
         self.version_cache.clear();
         self.version_cache_access.clear();
     }
@@ -1073,7 +1189,7 @@ impl SchemaRegistry {
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
         let app_ctx = self.app_context();
         // Fast path: check cache
-        if let Some(cached) = self.get(table_id) {
+        if let Some(cached) = self.get_cached(table_id) {
             return Ok(Some(Arc::clone(&cached.table)));
         }
 
@@ -1104,7 +1220,7 @@ impl SchemaRegistry {
     ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
         let app_ctx = self.app_context();
         // Fast path: check cache
-        if let Some(cached) = self.get(table_id) {
+        if let Some(cached) = self.get_cached(table_id) {
             return Ok(Some(Arc::clone(&cached.table)));
         }
 

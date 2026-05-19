@@ -18,6 +18,7 @@ kalamdb-live = { path = "crates/kalamdb-live" }
 kalamdb-handlers = { path = "crates/kalamdb-handlers" }
 kalamdb-jobs = { path = "crates/kalamdb-jobs" }
 kalamdb-api = { path = "crates/kalamdb-api", default-features = false }
+kalamdb-observability = { path = "crates/kalamdb-observability", features = ["mimalloc"] }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
