@@ -336,6 +336,17 @@ impl FlushExecutor {
             result.parquet_files.len()
         );
 
+        if result.rows_flushed > 0 {
+            if let Some(sql_executor) = app_ctx.try_sql_executor() {
+                sql_executor.clear_plan_cache();
+                log::trace!(
+                    "Cleared SQL plan cache after flush for {} (rows_flushed={})",
+                    table_id,
+                    result.rows_flushed
+                );
+            }
+        }
+
         // Fire-and-forget: check if the shared table scope is empty and clean
         // up cold segments if so.  Also non-blocking to avoid stalling.
         if matches!(table_type, TableType::Shared) {

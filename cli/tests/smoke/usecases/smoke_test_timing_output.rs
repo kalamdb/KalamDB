@@ -405,6 +405,11 @@ fn smoke_test_timing_flush_operation() {
     let output =
         execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full)).expect("flush table");
 
+    let job_id =
+        parse_job_id_from_flush_output(&output).expect("flush output should contain a job id");
+    verify_job_completed(&job_id, Duration::from_secs(30))
+        .expect("flush job should complete for timing output test");
+
     let timing = parse_timing_ms(&output);
     println!("STORAGE FLUSH TABLE timing: {:?}", timing);
 

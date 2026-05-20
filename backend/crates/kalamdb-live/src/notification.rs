@@ -26,7 +26,6 @@ use kalamdb_system::NotificationService as NotificationServiceTrait;
 use tokio::sync::mpsc;
 
 use super::{
-    helpers::filter_eval::matches as filter_matches,
     manager::ConnectionsManager,
     models::{epoch_millis, ChangeNotification, ChangeType, SubscriptionHandle},
 };
@@ -85,7 +84,7 @@ impl PayloadCacheKey {
 
 #[inline]
 fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
-    use datafusion::scalar::ScalarValue;
+    use datafusion_common::ScalarValue;
     change_notification
         .row_data
         .values
@@ -99,7 +98,7 @@ fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
 
 #[inline]
 fn extract_commit_seq(change_notification: &ChangeNotification) -> Option<u64> {
-    use datafusion::scalar::ScalarValue;
+    use datafusion_common::ScalarValue;
     change_notification
         .row_data
         .values
@@ -645,7 +644,7 @@ fn dispatch_chunk(
     for handle in handles {
         // Filter check (operates on ScalarValue — no serialization)
         if let Some(ref filter_expr) = handle.filter_expr {
-            match filter_matches(filter_expr, new_row) {
+            match filter_expr.matches(new_row) {
                 Ok(true) => {},
                 Ok(false) => continue,
                 Err(e) => {
@@ -700,7 +699,7 @@ fn dispatch_one(
     delivery_timestamp_ms: u64,
 ) -> Result<usize, LiveError> {
     if let Some(ref filter_expr) = handle.filter_expr {
-        match filter_matches(filter_expr, new_row) {
+        match filter_expr.matches(new_row) {
             Ok(true) => {},
             Ok(false) => return Ok(0),
             Err(e) => {
@@ -757,19 +756,17 @@ impl NotificationServiceTrait for NotificationService {
 mod tests {
     use std::{collections::BTreeMap, time::Duration};
 
-    use datafusion::scalar::ScalarValue;
+    use datafusion_common::ScalarValue;
     use kalamdb_commons::{
         models::{rows::Row, ConnectionId, NamespaceId, TableName},
         NodeId,
     };
+    use kalamdb_row_filter::parse_where_clause;
 
     use super::*;
-    use crate::{
-        helpers::filter_eval::parse_where_clause,
-        models::{
-            SubscriptionFlowControl, SubscriptionHandle, SubscriptionRuntimeMetadata,
-            MAX_SUBSCRIPTIONS_PER_CONNECTION, NOTIFICATION_CHANNEL_CAPACITY,
-        },
+    use crate::models::{
+        SubscriptionFlowControl, SubscriptionHandle, SubscriptionRuntimeMetadata,
+        MAX_SUBSCRIPTIONS_PER_CONNECTION, NOTIFICATION_CHANNEL_CAPACITY,
     };
 
     fn make_table_id(ns: &str, table: &str) -> TableId {

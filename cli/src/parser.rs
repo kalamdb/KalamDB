@@ -313,7 +313,10 @@ enum MetaCommand {
     Sessions,
     #[command(name = "stats", alias = "metrics", about = "Show system stats")]
     Stats,
-    #[command(name = "flush", about = "Run STORAGE FLUSH using the current namespace")]
+    #[command(
+        name = "flush",
+        about = "Run STORAGE FLUSH using the current namespace"
+    )]
     Flush(FlushArgs),
     #[command(name = "cluster", about = "Cluster operations")]
     Cluster(ClusterArgs),
@@ -327,9 +330,17 @@ enum MetaCommand {
     Format(FormatArgs),
     #[command(name = "subscribe", aliases = ["watch", "live"], about = "Start a live query")]
     Subscribe(TrailingValueArgs),
-    #[command(name = "refresh-tables", alias = "refresh", about = "Refresh autocomplete caches")]
+    #[command(
+        name = "refresh-tables",
+        alias = "refresh",
+        about = "Refresh autocomplete caches"
+    )]
     RefreshTables,
-    #[command(name = "show-credentials", alias = "credentials", about = "Show stored credentials")]
+    #[command(
+        name = "show-credentials",
+        alias = "credentials",
+        about = "Show stored credentials"
+    )]
     ShowCredentials,
     #[command(name = "update-credentials", about = "Update stored credentials")]
     UpdateCredentials(UpdateCredentialsArgs),
@@ -794,10 +805,7 @@ pub(crate) fn render_meta_command_help(color_enabled: bool) -> String {
         help.push('\n');
     }
 
-    help.push_str(&format!(
-        "{}\n",
-        format_help_heading("Backup and Export SQL", color_enabled)
-    ));
+    help.push_str(&format!("{}\n", format_help_heading("Backup and Export SQL", color_enabled)));
     help.push_str("  Run these as normal SQL statements:\n");
     for example in [
         "BACKUP DATABASE TO '/tmp/kalamdb-backup.tar.gz';",
@@ -814,10 +822,7 @@ pub(crate) fn render_meta_command_help(color_enabled: bool) -> String {
         )
     ));
 
-    help.push_str(&format!(
-        "{}\n",
-        format_help_heading("Examples", color_enabled)
-    ));
+    help.push_str(&format!("{}\n", format_help_heading("Examples", color_enabled)));
     for example in [
         "USE NAMESPACE chat;",
         "SELECT * FROM system.tables LIMIT 5;",
@@ -1258,7 +1263,9 @@ mod tests {
 
         assert_eq!(parser.parse_external_command("cluster list").unwrap(), Command::ClusterList);
         assert_eq!(
-            parser.parse_external_command("consume app.events --group workers --limit 2").unwrap(),
+            parser
+                .parse_external_command("consume app.events --group workers --limit 2")
+                .unwrap(),
             Command::Consume {
                 topic: "app.events".to_string(),
                 group: Some("workers".to_string()),
@@ -1305,7 +1312,10 @@ mod tests {
         let parser = CommandParser::new();
 
         assert_eq!(
-            parser.parse_external_command("as alice SELECT * FROM chat.messages WHERE body = 'hi  there'")
+            parser
+                .parse_external_command(
+                    "as alice SELECT * FROM chat.messages WHERE body = 'hi  there'"
+                )
                 .unwrap(),
             Command::ExecuteAs {
                 user: "alice".to_string(),

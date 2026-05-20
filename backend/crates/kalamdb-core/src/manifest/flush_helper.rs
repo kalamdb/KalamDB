@@ -9,6 +9,7 @@ use datafusion::arrow::{array::*, compute, record_batch::RecordBatch};
 use kalamdb_commons::{
     arrow_utils::compute_min_max, constants::SystemColumnNames, ids::SeqId, TableId, UserId,
 };
+use kalamdb_store::StorageError;
 use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
 
 use super::ManifestService;
@@ -53,12 +54,14 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
     ) -> Result<(), KalamDbError> {
-        self.manifest_service.mark_syncing(table_id, user_id).map_err(|e| {
-            KalamDbError::Other(format!(
-                "Failed to mark manifest as syncing for {}: {}",
-                table_id, e
-            ))
-        })
+        self.manifest_service
+            .mark_syncing_in_locked_scope(table_id, user_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to mark manifest as syncing for {}: {}",
+                    table_id, e
+                ))
+            })
     }
 
     /// Get next batch number for a table/scope by reading manifest
@@ -77,14 +80,30 @@ impl FlushManifestHelper {
             });
         }
 
-        match self.manifest_service.read_manifest(table_id, user_id) {
-            Ok(manifest) => Ok(if manifest.segments.is_empty() {
-                0
-            } else {
-                manifest.last_sequence_number + 1
-            }),
-            Err(_) => Ok(0), // No manifest exists yet, start with batch 0
-        }
+        Ok(0)
+    }
+
+    pub fn with_flush_scope_lock<T, F>(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        f: F,
+    ) -> Result<T, KalamDbError>
+    where
+        F: FnOnce() -> Result<T, KalamDbError>,
+    {
+        self.manifest_service
+            .with_flush_scope_lock(table_id, user_id, || {
+                f().map_err(|err| StorageError::Other(err.to_string()))
+            })
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to run locked flush scope for {} (user_id={:?}): {}",
+                    table_id,
+                    user_id.map(UserId::as_str),
+                    e
+                ))
+            })
     }
 
     /// Extract min/max _seq values from RecordBatch
@@ -195,33 +214,14 @@ impl FlushManifestHelper {
             schema_version,
         );
 
-        // Update manifest (Hot Store update)
-        let updated_manifest =
-            self.manifest_service.update_manifest(table_id, user_id, segment).map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to update manifest for {} (user_id={:?}): {}",
-                    table_id,
-                    user_id.map(|u| u.as_str()),
-                    e
-                ))
-            })?;
-
-        // Flush manifest to disk (Cold Store persistence)
-        self.manifest_service.flush_manifest(table_id, user_id).map_err(|e| {
-            KalamDbError::Other(format!(
-                "Failed to flush manifest for {} (user_id={:?}): {}",
-                table_id,
-                user_id.map(|u| u.as_str()),
-                e
-            ))
-        })?;
-
-        // ManifestService now handles all caching internally
-        self.manifest_service
-            .update_after_flush(table_id, user_id, &updated_manifest, None)
+        // Commit the flush result in one step so we avoid a dirty-cache write followed by an
+        // immediate storage + cache rewrite for the same manifest.
+        let updated_manifest = self
+            .manifest_service
+            .persist_flushed_segment(table_id, user_id, segment)
             .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to update manifest cache for {} (user_id={:?}): {}",
+                    "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),
                     e
@@ -272,30 +272,62 @@ impl FlushManifestHelper {
             schema_version,
         );
 
-        let updated_manifest =
-            self.manifest_service.update_manifest(table_id, user_id, segment).map_err(|e| {
+        let updated_manifest = self
+            .manifest_service
+            .persist_flushed_segment(table_id, user_id, segment)
+            .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to update manifest for {} (user_id={:?}): {}",
+                    "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),
                     e
                 ))
             })?;
 
-        self.manifest_service.flush_manifest(table_id, user_id).map_err(|e| {
-            KalamDbError::Other(format!(
-                "Failed to flush manifest for {} (user_id={:?}): {}",
-                table_id,
-                user_id.map(|u| u.as_str()),
-                e
-            ))
-        })?;
+        log::debug!(
+            "[MANIFEST] ✅ Updated manifest and cache: {} (user_id={:?}, rows={}, size={} bytes)",
+            table_id,
+            user_id.map(|u| u.as_str()),
+            row_count,
+            file_size_bytes
+        );
 
-        self.manifest_service
-            .update_after_flush(table_id, user_id, &updated_manifest, None)
+        Ok(updated_manifest)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_manifest_after_flush_with_stats_in_locked_scope(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        batch_filename: String,
+        min_seq: SeqId,
+        max_seq: SeqId,
+        column_stats: HashMap<u64, ColumnStats>,
+        row_count: u64,
+        file_size_bytes: u64,
+        schema_version: u32,
+    ) -> Result<Manifest, KalamDbError> {
+        let segment_id = batch_filename.clone();
+        let relative_path = batch_filename;
+
+        let segment = SegmentMetadata::with_schema_version(
+            segment_id,
+            relative_path,
+            column_stats,
+            min_seq,
+            max_seq,
+            row_count,
+            file_size_bytes,
+            schema_version,
+        );
+
+        let updated_manifest = self
+            .manifest_service
+            .persist_flushed_segment_in_locked_scope(table_id, user_id, segment)
             .map_err(|e| {
                 KalamDbError::Other(format!(
-                    "Failed to update manifest cache for {} (user_id={:?}): {}",
+                    "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),
                     e

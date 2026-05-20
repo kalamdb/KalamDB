@@ -494,6 +494,43 @@ async fn wait_for_topic_routes(
     }
 }
 
+async fn wait_for_topic_messages(
+    server: &TestServer,
+    topic_id: &str,
+    partition_id: u32,
+    min_messages: usize,
+) -> Vec<TopicMessage> {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(20);
+    let topic_id = TopicId::new(topic_id);
+
+    loop {
+        let messages = server
+            .app_context
+            .topic_publisher()
+            .fetch_messages(&topic_id, partition_id, 0, 100)
+            .expect("Failed to fetch topic messages directly from publisher");
+
+        if messages.len() >= min_messages {
+            return messages;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "Timed out waiting for topic '{}' partition {} to have at least {} message(s)",
+                topic_id.as_str(),
+                partition_id,
+                min_messages
+            );
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(120)).await;
+    }
+}
+
+fn topic_message_payload(message: &TopicMessage) -> Value {
+    serde_json::from_slice(&message.payload).expect("topic payload should decode as JSON")
+}
+
 #[tokio::test]
 #[ntest::timeout(20000)]
 #[serial]
@@ -553,6 +590,305 @@ async fn test_http_consume_returns_stored_user_id_without_lookup() {
     assert_eq!(response.messages.len(), 1);
     assert_eq!(payload["messages"][0]["user"].as_str(), Some("deleted-user-123"));
     assert_eq!(payload["messages"][0]["op"].as_str(), Some("Insert"));
+}
+
+#[tokio::test]
+#[ntest::timeout(30000)]
+#[serial]
+async fn test_topic_source_where_filters_insert_messages() {
+    let server = TestServer::new_shared().await;
+    let http_server = http_server::get_global_server().await;
+
+    let namespace = consolidated_helpers::unique_namespace("tp_where_insert");
+    let table = consolidated_helpers::unique_table("tasks");
+    let topic_table = consolidated_helpers::unique_table("task_cancellations");
+    let source_table = format!("{}.{}", namespace, table);
+    let topic = format!("{}.{}", namespace, topic_table);
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL DEFAULT false)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        create_table.status,
+        ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
+    assert_eq!(
+        create_topic.status,
+        ResponseStatus::Success,
+        "CREATE TOPIC failed: {:?}",
+        create_topic.error
+    );
+
+    let add_source = server
+        .execute_sql(&format!(
+            "ALTER TOPIC {} ADD SOURCE {} ON INSERT WHERE cancelled = true WITH (payload = 'full')",
+            topic, source_table
+        ))
+        .await;
+    assert_eq!(
+        add_source.status,
+        ResponseStatus::Success,
+        "ALTER TOPIC ADD SOURCE failed: {:?}",
+        add_source.error
+    );
+    wait_for_topic_routes(http_server, &topic, 1).await;
+
+    let non_matching_insert = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, title, cancelled) VALUES (1, 'keep task active', false)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        non_matching_insert.status,
+        ResponseStatus::Success,
+        "non-matching INSERT failed: {:?}",
+        non_matching_insert.error
+    );
+
+    let matching_insert = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, title, cancelled) VALUES (2, 'cancel deployment', true)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        matching_insert.status,
+        ResponseStatus::Success,
+        "matching INSERT failed: {:?}",
+        matching_insert.error
+    );
+
+    let messages = wait_for_topic_messages(&server, &topic, 0, 1).await;
+    assert_eq!(messages.len(), 1, "only the cancelled insert should publish to the topic");
+    assert_eq!(messages[0].op, TopicOp::Insert);
+    assert_eq!(messages[0].key.as_deref(), Some("2"));
+
+    let payload = topic_message_payload(&messages[0]);
+    assert_eq!(payload["title"].as_str(), Some("cancel deployment"));
+    assert_eq!(payload["cancelled"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+#[ntest::timeout(30000)]
+#[serial]
+async fn test_topic_source_where_filters_update_messages() {
+    let server = TestServer::new_shared().await;
+    let http_server = http_server::get_global_server().await;
+
+    let namespace = consolidated_helpers::unique_namespace("tp_where_update");
+    let table = consolidated_helpers::unique_table("tasks");
+    let topic_table = consolidated_helpers::unique_table("task_cancellations");
+    let source_table = format!("{}.{}", namespace, table);
+    let topic = format!("{}.{}", namespace, topic_table);
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL DEFAULT false)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        create_table.status,
+        ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
+    assert_eq!(
+        create_topic.status,
+        ResponseStatus::Success,
+        "CREATE TOPIC failed: {:?}",
+        create_topic.error
+    );
+
+    let add_source = server
+        .execute_sql(&format!(
+            "ALTER TOPIC {} ADD SOURCE {} ON UPDATE WHERE cancelled = true WITH (payload = 'full')",
+            topic, source_table
+        ))
+        .await;
+    assert_eq!(
+        add_source.status,
+        ResponseStatus::Success,
+        "ALTER TOPIC ADD SOURCE failed: {:?}",
+        add_source.error
+    );
+    wait_for_topic_routes(http_server, &topic, 1).await;
+
+    let insert = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, title, cancelled) VALUES (1, 'ship release', false)",
+            source_table
+        ))
+        .await;
+    assert_eq!(insert.status, ResponseStatus::Success, "seed INSERT failed: {:?}", insert.error);
+
+    let non_matching_update = server
+        .execute_sql(&format!(
+            "UPDATE {} SET title = 'still shipping', cancelled = false WHERE id = 1",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        non_matching_update.status,
+        ResponseStatus::Success,
+        "non-matching UPDATE failed: {:?}",
+        non_matching_update.error
+    );
+
+    let matching_update = server
+        .execute_sql(&format!(
+            "UPDATE {} SET title = 'release cancelled', cancelled = true WHERE id = 1",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        matching_update.status,
+        ResponseStatus::Success,
+        "matching UPDATE failed: {:?}",
+        matching_update.error
+    );
+
+    let messages = wait_for_topic_messages(&server, &topic, 0, 1).await;
+    assert_eq!(messages.len(), 1, "only the cancelled update should publish to the topic");
+    assert_eq!(messages[0].op, TopicOp::Update);
+    assert_eq!(messages[0].key.as_deref(), Some("1"));
+
+    let payload = topic_message_payload(&messages[0]);
+    assert_eq!(payload["title"].as_str(), Some("release cancelled"));
+    assert_eq!(payload["cancelled"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+#[ntest::timeout(30000)]
+#[serial]
+async fn test_topic_source_where_filters_complex_insert_messages() {
+    let server = TestServer::new_shared().await;
+    let http_server = http_server::get_global_server().await;
+
+    let namespace = consolidated_helpers::unique_namespace("tp_where_complex");
+    let table = consolidated_helpers::unique_table("events");
+    let topic_table = consolidated_helpers::unique_table("filtered_events");
+    let source_table = format!("{}.{}", namespace, table);
+    let topic = format!("{}.{}", namespace, topic_table);
+
+    let create_namespace = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    assert_eq!(create_namespace.status, ResponseStatus::Success);
+
+    let create_table = server
+        .execute_sql(&format!(
+            "CREATE TABLE {} (id INT PRIMARY KEY, status TEXT NOT NULL, priority INT NOT NULL, event_type TEXT NOT NULL, archived BOOLEAN)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        create_table.status,
+        ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    let create_topic = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
+    assert_eq!(
+        create_topic.status,
+        ResponseStatus::Success,
+        "CREATE TOPIC failed: {:?}",
+        create_topic.error
+    );
+
+    let add_source = server
+        .execute_sql(&format!(
+            "ALTER TOPIC {} ADD SOURCE {} ON INSERT WHERE ((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL WITH (payload = 'full')",
+            topic, source_table
+        ))
+        .await;
+    assert_eq!(
+        add_source.status,
+        ResponseStatus::Success,
+        "ALTER TOPIC ADD SOURCE failed: {:?}",
+        add_source.error
+    );
+    wait_for_topic_routes(http_server, &topic, 1).await;
+
+    let non_matching_status = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, status, priority, event_type) VALUES (1, 'active', 1, 'noop')",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        non_matching_status.status,
+        ResponseStatus::Success,
+        "non-matching status INSERT failed: {:?}",
+        non_matching_status.error
+    );
+
+    let matching_status = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, status, priority, event_type) VALUES (2, 'blocked', 7, 'noop')",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        matching_status.status,
+        ResponseStatus::Success,
+        "matching status INSERT failed: {:?}",
+        matching_status.error
+    );
+
+    let matching_event_type = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, status, priority, event_type) VALUES (3, 'active', 1, 'DEPLOY_START')",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        matching_event_type.status,
+        ResponseStatus::Success,
+        "matching event type INSERT failed: {:?}",
+        matching_event_type.error
+    );
+
+    let archived_match_candidate = server
+        .execute_sql(&format!(
+            "INSERT INTO {} (id, status, priority, event_type, archived) VALUES (4, 'blocked', 7, 'noop', true)",
+            source_table
+        ))
+        .await;
+    assert_eq!(
+        archived_match_candidate.status,
+        ResponseStatus::Success,
+        "archived INSERT failed: {:?}",
+        archived_match_candidate.error
+    );
+
+    let messages = wait_for_topic_messages(&server, &topic, 0, 2).await;
+    assert_eq!(messages.len(), 2, "only the two unarchived matching inserts should publish");
+    assert_eq!(messages[0].op, TopicOp::Insert);
+    assert_eq!(messages[1].op, TopicOp::Insert);
+
+    let keys: Vec<_> = messages.iter().filter_map(|message| message.key.as_deref()).collect();
+    assert_eq!(keys, vec!["2", "3"]);
+
+    let status_payload = topic_message_payload(&messages[0]);
+    let event_payload = topic_message_payload(&messages[1]);
+    assert_eq!(status_payload["status"].as_str(), Some("blocked"));
+    assert_eq!(event_payload["event_type"].as_str(), Some("DEPLOY_START"));
 }
 
 #[tokio::test]

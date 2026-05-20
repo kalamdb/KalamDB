@@ -144,7 +144,7 @@ pub struct AppContext {
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 
-    // ===== Manifest Service (unified: hot cache + RocksDB + cold storage) =====
+    // ===== Manifest Service (unified: memory cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
     // ===== File Storage Service (for FILE datatype) =====
@@ -400,7 +400,7 @@ impl AppContext {
             let system_columns_service =
                 Arc::new(crate::schema_registry::SystemColumnsService::new(worker_id));
 
-            // Create unified manifest service (hot cache + RocksDB + cold storage)
+            // Create unified manifest service (memory cache + RocksDB + cold storage)
             let mut manifest_service_obj = crate::manifest::ManifestService::new(
                 system_tables.manifest(),
                 config.manifest_cache.clone(),
@@ -675,8 +675,8 @@ impl AppContext {
                 Arc::new(move || app_ctx_for_live.live_query_manager().snapshot_live_queries());
             live_view.set_snapshot_callback(Arc::clone(&live_snapshot_callback));
 
-            // Wire up ManifestTableProvider in_memory_checker callback
-            // This allows system.manifest to show if a cache entry is in hot memory
+            // Wire up ManifestTableProvider in_memory_checker callback.
+            // This allows system.manifest to show if an entry is in the process memory cache.
             let manifest_for_checker = Arc::clone(&app_ctx.manifest_service);
             app_ctx.system_tables().manifest().set_in_memory_checker(Arc::new(
                 move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key),
@@ -1211,10 +1211,10 @@ impl AppContext {
         self.slow_query_logger.clone()
     }
 
-    /// Get the manifest service (unified: hot cache + RocksDB + cold storage)
+    /// Get the manifest service (unified: memory cache + RocksDB + cold storage)
     ///
     /// Returns an Arc reference to the ManifestService that provides:
-    /// - Hot cache (moka) for sub-millisecond lookups
+    /// - Process memory cache for active manifest entries
     /// - RocksDB persistence for crash recovery
     /// - Cold storage access for manifest.json files
     pub fn manifest_service(&self) -> Arc<crate::manifest::ManifestService> {

@@ -618,13 +618,6 @@ pub struct ManifestCacheSettings {
     /// Manifests not accessed for this many days will be removed from cache
     #[serde(default = "default_manifest_cache_eviction_ttl_days")]
     pub eviction_ttl_days: u64,
-
-    /// Weight factor for user table manifests (default: 10)
-    /// User tables are evicted N times faster than shared tables.
-    /// Set to 1 to treat all tables equally.
-    /// Higher values give stronger preference to keeping shared tables in memory.
-    #[serde(default = "default_user_table_weight_factor")]
-    pub user_table_weight_factor: u32,
 }
 
 impl ManifestCacheSettings {
@@ -645,7 +638,6 @@ impl Default for ManifestCacheSettings {
             eviction_interval_seconds: default_manifest_cache_eviction_interval(),
             max_entries: default_manifest_cache_max_entries(),
             eviction_ttl_days: default_manifest_cache_eviction_ttl_days(),
-            user_table_weight_factor: default_user_table_weight_factor(),
         }
     }
 }

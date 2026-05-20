@@ -140,7 +140,7 @@ impl SystemSchemaProvider {
         let table_id = system_table.table_id();
 
         // Check if provider already exists in SchemaRegistry
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             if let Some(provider) = cached.get_provider() {
                 return Some(provider);
             }
@@ -218,7 +218,7 @@ impl SystemSchemaProvider {
         // Wrap with security and store in SchemaRegistry
         let secured: Arc<dyn TableProvider + Send + Sync> =
             secure_provider(provider, system_table.table_id());
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             cached.set_provider(Arc::clone(&secured));
         }
 
@@ -262,7 +262,7 @@ impl SchemaProvider for SystemSchemaProvider {
         let table_id = system_table.table_id();
 
         // Fast path: check SchemaRegistry for cached provider
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             if let Some(provider) = cached.get_provider() {
                 return Ok(Some(provider));
             }

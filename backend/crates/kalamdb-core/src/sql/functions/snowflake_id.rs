@@ -11,9 +11,10 @@
 use std::{
     any::Any,
     sync::{
-        atomic::{AtomicU16, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -36,7 +37,7 @@ const TIMESTAMP_SHIFT: u64 = NODE_ID_BITS + SEQUENCE_BITS; // 22
 const NODE_ID_SHIFT: u64 = SEQUENCE_BITS; // 12
 
 /// Global sequence counter for Snowflake ID generation
-static SEQUENCE_COUNTER: AtomicU16 = AtomicU16::new(0);
+static LAST_TIMESTAMP_AND_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// SNOWFLAKE_ID() scalar function implementation
 ///
@@ -75,18 +76,7 @@ impl SnowflakeIdFunction {
 
     /// Generate a single Snowflake ID
     fn generate_id(&self) -> i64 {
-        // Get current timestamp in milliseconds
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64;
-
-        // Get next sequence number (atomic increment with wraparound)
-        let sequence = SEQUENCE_COUNTER
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |val| {
-                Some(if val >= MAX_SEQUENCE { 0 } else { val + 1 })
-            })
-            .unwrap();
+        let (timestamp, sequence) = next_timestamp_and_sequence();
 
         // Combine components into 64-bit ID
         let id = ((timestamp & ((1 << TIMESTAMP_BITS) - 1)) << TIMESTAMP_SHIFT)
@@ -94,6 +84,56 @@ impl SnowflakeIdFunction {
             | (sequence as u64);
 
         id as i64
+    }
+}
+
+fn current_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64
+}
+
+fn pack_timestamp_and_sequence(timestamp: u64, sequence: u16) -> u64 {
+    (timestamp << SEQUENCE_BITS) | sequence as u64
+}
+
+fn unpack_timestamp_and_sequence(value: u64) -> (u64, u16) {
+    (value >> SEQUENCE_BITS, (value & MAX_SEQUENCE as u64) as u16)
+}
+
+fn wait_for_next_timestamp(last_timestamp: u64) -> u64 {
+    loop {
+        let timestamp = current_timestamp_millis();
+        if timestamp > last_timestamp {
+            return timestamp;
+        }
+        thread::yield_now();
+    }
+}
+
+fn next_timestamp_and_sequence() -> (u64, u16) {
+    loop {
+        let now = current_timestamp_millis();
+        let observed = LAST_TIMESTAMP_AND_SEQUENCE.load(Ordering::Acquire);
+        let (last_timestamp, last_sequence) = unpack_timestamp_and_sequence(observed);
+
+        let (next_timestamp, next_sequence) = if now > last_timestamp {
+            (now, 0)
+        } else if last_sequence < MAX_SEQUENCE {
+            (last_timestamp, last_sequence + 1)
+        } else {
+            (wait_for_next_timestamp(last_timestamp), 0)
+        };
+
+        let next_state = pack_timestamp_and_sequence(next_timestamp, next_sequence);
+
+        if LAST_TIMESTAMP_AND_SEQUENCE
+            .compare_exchange(observed, next_state, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return (next_timestamp, next_sequence);
+        }
     }
 }
 

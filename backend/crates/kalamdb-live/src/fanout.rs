@@ -4,7 +4,7 @@
 //! to live query subscribers. These are produced by the transaction
 //! coordinator and consumed by the notification service.
 
-use datafusion::scalar::ScalarValue;
+use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     ids::SeqId,

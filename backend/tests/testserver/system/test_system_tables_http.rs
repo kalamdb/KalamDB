@@ -22,14 +22,11 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     let auth = create_user_auth_header_default(server, &user).await?;
 
     let resp = server
-        .execute_sql_with_auth(
-            &format!(
-                "CREATE TABLE {}.{} (id INT PRIMARY KEY, v TEXT) WITH (TYPE='USER', \
+        .execute_sql(&format!(
+            "CREATE TABLE {}.{} (id INT PRIMARY KEY, v TEXT) WITH (TYPE='USER', \
                  STORAGE_ID='local', FLUSH_POLICY='rows:5')",
-                ns, table_user
-            ),
-            &auth,
-        )
+            ns, table_user
+        ))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 

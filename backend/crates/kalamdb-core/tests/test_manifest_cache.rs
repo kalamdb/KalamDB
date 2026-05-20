@@ -27,7 +27,6 @@ fn create_test_service() -> ManifestService {
         eviction_interval_seconds: 300,
         max_entries: 1000,
         eviction_ttl_days: 7,
-        user_table_weight_factor: 10,
     })
 }
 
@@ -56,37 +55,29 @@ fn test_get_or_load_cache_hit() {
     let namespace = NamespaceId::new("ns1");
     let table = TableName::new("products");
     let table_id = TableId::new(namespace.clone(), table.clone());
-    let manifest = create_test_manifest("ns1", "products", Some("u_123"));
+    let manifest = create_test_manifest("ns1", "products", None);
 
     // Populate cache
     service
-        .update_after_flush(
-            &table_id,
-            Some(&UserId::from("u_123")),
-            &manifest,
-            Some("etag-v1".to_string()),
-        )
+        .update_after_flush(&table_id, None, &manifest, Some("etag-v1".to_string()))
         .unwrap();
 
-    // First read should hit hot cache
-    let result1 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
+    // First read should hit memory cache
+    let result1 = service.get_or_load(&table_id, None).unwrap();
     assert!(result1.is_some(), "Expected cache hit");
     let entry1 = result1.unwrap();
     assert_eq!(entry1.etag, Some("etag-v1".to_string()));
     assert_eq!(entry1.sync_state, SyncState::InSync);
 
-    // Second read should also hit hot cache (last_accessed updated)
-    let result2 = service.get_or_load(&table_id, Some(&UserId::from("u_123"))).unwrap();
+    // Second read should also hit memory cache
+    let result2 = service.get_or_load(&table_id, None).unwrap();
     assert!(result2.is_some(), "Expected cache hit on second read");
 
-    // Verify entry is in hot cache
-    assert!(
-        service.is_in_hot_cache(&table_id, Some(&UserId::from("u_123"))),
-        "entry should be in hot cache"
-    );
+    // Verify entry is in memory cache
+    assert!(service.is_in_hot_cache(&table_id, None), "entry should be in memory cache");
 }
 
-// T098: update_after_flush() → atomic write to RocksDB CF + hot cache
+// T098: update_after_flush() → atomic write to RocksDB CF + memory cache
 #[test]
 fn test_update_after_flush_atomic_write() {
     let service = create_test_service();
@@ -156,23 +147,23 @@ fn test_update_after_flush_atomic_write() {
 //     // Service 2: Simulate server restart
 //     let service2 = ManifestService::new(backend, "/tmp/test".to_string(), config);
 
-//     // Before restore, hot cache should be empty
+//     // Before restore, memory cache should be empty
 //     let result_before = service2
 //         .get_or_load(&table_id1, Some(&UserId::from("u_123")))
 //         .unwrap();
 //     assert!(
 //         result_before.is_some(),
-//         "Entry should be in RocksDB, loaded to hot cache"
+//         "Entry should be in RocksDB, loaded to memory cache"
 //     );
 
 //     // Restore from RocksDB
 //     service2.restore_from_rocksdb().unwrap();
 
-//     // After restore, both entries should be in hot cache
+//     // After restore, both entries should be in memory cache
 //     let count = service2.count().unwrap();
 //     assert_eq!(count, 2, "Should have 2 entries after restore");
 
-//     // Verify entries are accessible from hot cache
+//     // Verify entries are accessible from memory cache
 //     let entry1 = service2
 //         .get_or_load(&table_id1, Some(&UserId::from("u_123")))
 //         .unwrap();
@@ -310,27 +301,27 @@ fn test_invalidate_table_removes_all_user_entries() {
         )
         .unwrap();
 
-    // Verify hot cache has entries
-    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))));
-    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))));
-    assert!(service.is_in_hot_cache(&table_id, Some(&UserId::from("user3"))));
+    // User-scoped manifests are persisted in RocksDB only; they should not enter process memory.
+    assert!(!service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))));
+    assert!(!service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))));
+    assert!(!service.is_in_hot_cache(&table_id, Some(&UserId::from("user3"))));
 
     // Invalidate all entries for the table
     let invalidated = service.invalidate_table(&table_id).unwrap();
     assert_eq!(invalidated, 3, "Should have invalidated 3 entries");
 
-    // Verify all entries are removed from hot cache
+    // Verify all entries are removed from memory cache
     assert!(
         !service.is_in_hot_cache(&table_id, Some(&UserId::from("user1"))),
-        "user1 should be removed from hot cache"
+        "user1 should be removed from memory cache"
     );
     assert!(
         !service.is_in_hot_cache(&table_id, Some(&UserId::from("user2"))),
-        "user2 should be removed from hot cache"
+        "user2 should be removed from memory cache"
     );
     assert!(
         !service.is_in_hot_cache(&table_id, Some(&UserId::from("user3"))),
-        "user3 should be removed from hot cache"
+        "user3 should be removed from memory cache"
     );
 
     // Verify entries are removed from RocksDB
@@ -423,18 +414,13 @@ fn test_invalidate_table_shared() {
     assert_eq!(service.count().unwrap(), 0);
 }
 
-// Test tiered eviction: user tables should be evicted before shared tables
-// when cache reaches capacity
+// Test memory-tier policy: user manifests stay out of memory regardless of capacity.
 #[test]
-fn test_tiered_eviction_shared_tables_stay_longer() {
-    // Create a cache with small capacity: weight_factor=10, max_entries=2
-    // This gives weighted_capacity = 20
-    // Shared tables cost weight=1, user tables cost weight=10
+fn test_user_manifests_do_not_enter_memory_cache() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries: 2, // Small cache to trigger eviction
+        max_entries: 2,
         eviction_ttl_days: 7,
-        user_table_weight_factor: 10, // User tables are 10x heavier
     };
     let service = create_test_service_with_config(config);
 
@@ -451,10 +437,6 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
         )
         .unwrap();
 
-    // Add user table entries (weight = 10 each)
-    // With max_entries=2 and weight_factor=10, weighted_capacity=20
-    // Shared (weight=1) + User1 (weight=10) = 11, still fits
-    // Adding User2 (weight=10) = 21, exceeds capacity, should trigger eviction
     for i in 1..=3 {
         let user_id = UserId::from(format!("user_{}", i));
         let user_manifest = Manifest::new(table_id.clone(), Some(user_id.clone()));
@@ -463,36 +445,22 @@ fn test_tiered_eviction_shared_tables_stay_longer() {
             .unwrap();
     }
 
-    // After adding 1 shared (w=1) + 3 user tables (w=10 each) = 31 total weight
-    // but max weighted capacity = 20
-    // Moka should evict some user tables while keeping the shared table
-
-    // Verify shared table is still in cache (it has lower weight)
-    // Note: moka's eviction is eventually consistent, so we check immediately after insert
-    // The shared table with weight=1 should have priority over user tables with weight=10
-    let shared_in_cache = service.is_in_hot_cache(&table_id, None);
-
-    // At least check that not all 4 entries are in the hot cache
-    // (some eviction must have occurred due to weight limit)
-    // This is a probabilistic test - moka may not evict synchronously
-    println!("Shared table in cache: {}", shared_in_cache);
-    println!("Cache entry count: {}", service.count().unwrap_or_default());
-
-    // The key assertion: if eviction happened, shared table should still be there
-    // because it has lower weight (higher priority to stay)
-    // We can't guarantee exact behavior due to moka's async eviction,
-    // but we verify the weigher is correctly applied by checking the shared table
-    // is NOT the first to be evicted when we add many user tables
+    assert!(service.is_in_hot_cache(&table_id, None));
+    for i in 1..=3 {
+        let user_id = UserId::from(format!("user_{}", i));
+        assert!(!service.is_in_hot_cache(&table_id, Some(&user_id)));
+        assert!(service.get_or_load(&table_id, Some(&user_id)).unwrap().is_some());
+        assert!(!service.is_in_hot_cache(&table_id, Some(&user_id)));
+    }
+    assert_eq!(service.count().unwrap(), 4);
 }
 
-// Test that user_table_weight_factor=1 treats all tables equally
 #[test]
-fn test_equal_weight_factor() {
+fn test_shared_and_user_manifest_tiers_stay_separate() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
         max_entries: 10,
         eviction_ttl_days: 7,
-        user_table_weight_factor: 1, // All tables have equal weight
     };
     let service = create_test_service_with_config(config);
 
@@ -509,8 +477,8 @@ fn test_equal_weight_factor() {
         .update_after_flush(&table_id, Some(&user_id), &user_manifest, None)
         .unwrap();
 
-    // Both should be in cache with equal priority
+    // Shared manifests are in process memory; user manifests remain RocksDB-only.
     assert!(service.is_in_hot_cache(&table_id, None));
-    assert!(service.is_in_hot_cache(&table_id, Some(&user_id)));
+    assert!(!service.is_in_hot_cache(&table_id, Some(&user_id)));
     assert_eq!(service.count().unwrap(), 2);
 }

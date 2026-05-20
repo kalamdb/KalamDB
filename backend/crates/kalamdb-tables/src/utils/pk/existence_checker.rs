@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{models::TableId, schemas::TableType, UserId};
 use kalamdb_filestore::StorageRegistry;
+use kalamdb_store::StorageError;
 use kalamdb_system::{
     Manifest, ManifestService as ManifestServiceTrait, SchemaRegistry as SchemaRegistryTrait,
 };
@@ -54,7 +55,7 @@ impl PkCheckResult {
 /// Optimized for INSERT/UPDATE operations that need to validate PK uniqueness.
 /// Uses a tiered approach:
 /// 1. Check if PK is auto-increment (skip)
-/// 2. Use manifest cache (L1/L2) to load segment metadata
+/// 2. Use ManifestService to load segment metadata from memory, RocksDB, or storage
 /// 3. Apply min/max pruning to skip irrelevant segments
 /// 4. Scan only necessary Parquet files
 ///
@@ -83,7 +84,7 @@ impl PkExistenceChecker {
     ///
     /// ## Flow:
     /// 1. Check if PK is AUTO_INCREMENT → return AutoIncrement (skip check)
-    /// 2. Load manifest from cache (L1 hot cache → L2 RocksDB → storage)
+    /// 2. Load manifest from ManifestService (memory → RocksDB → storage)
     /// 3. Use column_stats min/max to prune segments
     /// 4. Scan only matching Parquet files
     ///
@@ -138,106 +139,60 @@ impl PkExistenceChecker {
             .map(|uid| format!("user={}", uid.as_str()))
             .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-        // 1. Get CachedTableData for storage access
-        let storage_id = match self.schema_registry.get_storage_id(table_id) {
-            Ok(id) => id,
-            Err(e) => {
-                log::trace!(
-                    "[PkExistenceChecker] No storage id for {}.{} {} - PK not in cold: {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label,
-                    e
-                );
-                return Ok(PkCheckResult::NotFound);
-            },
-        };
-
-        // 2. Get StorageCached from registry
-        let storage_cached = match self
-            .storage_registry
-            .get_cached(&storage_id)
-            .into_kalamdb_error("Failed to get storage cache")?
-        {
-            Some(cached) => cached,
-            None => {
-                log::trace!(
-                    "[PkExistenceChecker] Storage not found for {}.{} {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label
-                );
-                return Ok(PkCheckResult::NotFound);
-            },
-        };
-
-        // 3. List parquet files using async method
-        let all_parquet_files =
-            match storage_cached.list_parquet_files(table_type, table_id, user_id).await {
-                Ok(files) => files,
-                Err(_) => {
+        // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
+        let manifest: Option<Manifest> =
+            match self.manifest_service.get_or_load_async(table_id, user_id).await {
+                Ok(Some(entry)) => {
                     log::trace!(
-                        "[PkExistenceChecker] No storage dir for {}.{} {}",
+                        "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
                         namespace.as_str(),
                         table.as_str(),
                         scope_label
                     );
-                    return Ok(PkCheckResult::NotFound);
+                    Some(entry.manifest.clone())
+                },
+                Ok(None) => {
+                    log::trace!(
+                        "[PkExistenceChecker] No manifest for {}.{} {} - will check all files",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label
+                    );
+                    None
+                },
+                Err(StorageError::SerializationError(e)) => {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Failed to load manifest for {} {}: {}",
+                        table_id, scope_label, e
+                    )));
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[PkExistenceChecker] Manifest cache error for {}.{} {}: {}",
+                        namespace.as_str(),
+                        table.as_str(),
+                        scope_label,
+                        e
+                    );
+                    None
                 },
             };
 
-        if all_parquet_files.is_empty() {
-            log::trace!(
-                "[PkExistenceChecker] No files in storage for {}.{} {}",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(PkCheckResult::NotFound);
+        if let Some(ref m) = manifest {
+            if m.segments.is_empty() {
+                log::trace!(
+                    "[PkExistenceChecker] Cached manifest has no segments for {}.{} {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(PkCheckResult::NotFound);
+            }
         }
 
-        // 4. Load manifest from cache (L1 → L2 → storage)
-        let manifest: Option<Manifest> = match self.manifest_service.get_or_load(table_id, user_id)
-        {
-            Ok(Some(entry)) => {
-                log::trace!(
-                    "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label
-                );
-                Some(entry.manifest.clone())
-            },
-            Ok(None) => {
-                log::trace!(
-                    "[PkExistenceChecker] No manifest in cache for {}.{} {} - will check all files",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label
-                );
-                // Try to load from storage (manifest.json file)
-                self.load_manifest_from_storage_async(
-                    &storage_cached,
-                    table_type,
-                    table_id,
-                    user_id,
-                )
-                .await?
-            },
-            Err(e) => {
-                log::warn!(
-                    "[PkExistenceChecker] Manifest cache error for {}.{} {}: {}",
-                    namespace.as_str(),
-                    table.as_str(),
-                    scope_label,
-                    e
-                );
-                None
-            },
-        };
-
-        // 5. Use manifest to prune segments by min/max or check all Parquet files
+        // 2. Use manifest to prune segments by min/max, or list files if no manifest exists.
         let planner = ManifestAccessPlanner::new();
+        let mut storage_cached_for_scan: Option<Arc<kalamdb_filestore::StorageCached>> = None;
         let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
             let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
             if pruned_paths.is_empty() {
@@ -264,7 +219,35 @@ impl PkExistenceChecker {
                 pruned_paths
             }
         } else {
-            // No manifest - check all Parquet files
+            let storage_cached = match self.storage_cached_for_table(table_id, &scope_label)? {
+                Some(cached) => cached,
+                None => return Ok(PkCheckResult::NotFound),
+            };
+            let all_parquet_files =
+                match storage_cached.list_parquet_files(table_type, table_id, user_id).await {
+                    Ok(files) => files,
+                    Err(_) => {
+                        log::trace!(
+                            "[PkExistenceChecker] No storage dir for {}.{} {}",
+                            namespace.as_str(),
+                            table.as_str(),
+                            scope_label
+                        );
+                        return Ok(PkCheckResult::NotFound);
+                    },
+                };
+
+            if all_parquet_files.is_empty() {
+                log::trace!(
+                    "[PkExistenceChecker] No files in storage for {}.{} {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                return Ok(PkCheckResult::NotFound);
+            }
+
+            storage_cached_for_scan = Some(storage_cached);
             all_parquet_files
         };
 
@@ -272,7 +255,15 @@ impl PkExistenceChecker {
             return Ok(PkCheckResult::NotFound);
         }
 
-        // 6. Scan pruned Parquet files for the PK
+        let storage_cached = match storage_cached_for_scan {
+            Some(cached) => cached,
+            None => match self.storage_cached_for_table(table_id, &scope_label)? {
+                Some(cached) => cached,
+                None => return Ok(PkCheckResult::NotFound),
+            },
+        };
+
+        // 3. Scan pruned Parquet files for the PK.
         for file_name in files_to_scan {
             if self
                 .pk_exists_in_parquet_async(
@@ -303,38 +294,51 @@ impl PkExistenceChecker {
         Ok(PkCheckResult::NotFound)
     }
 
+    fn storage_cached_for_table(
+        &self,
+        table_id: &TableId,
+        scope_label: &str,
+    ) -> Result<Option<Arc<kalamdb_filestore::StorageCached>>, KalamDbError> {
+        let namespace = table_id.namespace_id();
+        let table = table_id.table_name();
+        let storage_id = match self.schema_registry.get_storage_id(table_id) {
+            Ok(id) => id,
+            Err(e) => {
+                log::trace!(
+                    "[PkExistenceChecker] No storage id for {}.{} {} - PK not in cold: {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label,
+                    e
+                );
+                return Ok(None);
+            },
+        };
+
+        match self
+            .storage_registry
+            .get_cached(&storage_id)
+            .into_kalamdb_error("Failed to get storage cache")?
+        {
+            Some(cached) => Ok(Some(cached)),
+            None => {
+                log::trace!(
+                    "[PkExistenceChecker] Storage not found for {}.{} {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                Ok(None)
+            },
+        }
+    }
+
     /// Extract PK value as string from an Arrow array (now uses shared utility)
     fn extract_pk_as_string(
         col: &dyn datafusion::arrow::array::Array,
         idx: usize,
     ) -> Option<String> {
         crate::utils::pk_utils::extract_pk_as_string(col, idx)
-    }
-
-    /// Async load manifest.json from storage
-    async fn load_manifest_from_storage_async(
-        &self,
-        storage_cached: &kalamdb_filestore::StorageCached,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Option<Manifest>, KalamDbError> {
-        match storage_cached.get(table_type, table_id, user_id, "manifest.json").await {
-            Ok(result) => {
-                let manifest: Manifest = serde_json::from_slice(&result.data).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!("Failed to parse manifest.json: {}", e))
-                })?;
-                log::trace!(
-                    "[PkExistenceChecker] Loaded manifest.json from storage: {} segments",
-                    manifest.segments.len()
-                );
-                Ok(Some(manifest))
-            },
-            Err(_) => {
-                log::trace!("[PkExistenceChecker] No manifest.json found in storage");
-                Ok(None)
-            },
-        }
     }
 
     /// Async check if a PK exists in a specific Parquet file via streaming.

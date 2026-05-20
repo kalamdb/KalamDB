@@ -12,13 +12,13 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::{
     ids::SeqId,
     models::{ConnectionId, LiveQueryId, TableId, UserId},
     websocket::SubscriptionRequest,
     TableType,
 };
+use kalamdb_row_filter::RowFilter;
 use log::debug;
 
 use super::{
@@ -53,7 +53,7 @@ impl SubscriptionService {
     /// - connection_state: Shared reference to the connection state
     /// - request: Client subscription request containing SQL and options
     /// - table_id: Pre-validated table identifier (validated in ws_handler)
-    /// - filter_expr: Optional parsed WHERE clause expression
+    /// - filter_expr: Optional compiled row-local WHERE clause
     /// - projections: Optional column projections (None = SELECT *, i.e., all columns)
     /// - batch_size: Batch size for initial data fetching
     /// - enable_initial_load: Whether the subscription needs snapshot and batch state
@@ -63,7 +63,7 @@ impl SubscriptionService {
         connection_state: &SharedConnectionState,
         request: &SubscriptionRequest,
         table_id: TableId,
-        filter_expr: Option<Expr>,
+        filter_expr: Option<RowFilter>,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,

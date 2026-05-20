@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeMap, fmt::Write, sync::Arc};
 
-use datafusion::arrow::{
+use arrow::{
     array::{Array, Int64Array},
     record_batch::RecordBatch,
 };
@@ -635,12 +635,12 @@ mod tests {
         Arc as StdArc,
     };
 
+    use arrow::record_batch::RecordBatch;
     use arrow::{
         array::{Int64Array, UInt64Array},
         datatypes::{DataType, Field, Schema},
     };
     use async_trait::async_trait;
-    use datafusion::arrow::record_batch::RecordBatch;
     use kalamdb_commons::{
         models::{LiveQueryId, NamespaceId, TableName, UserId},
         schemas::TableDefinition,

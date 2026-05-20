@@ -48,10 +48,11 @@ use crate::{errors::CommonError, models::KalamCellValue};
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn Array>;
 
-/// Coerce a list of rows to match the schema types and fill defaults.
+/// Coerce a list of rows to match the schema types and fill missing columns with typed NULLs.
 ///
-/// This is useful for INSERT operations where we need to ensure the data matches
-/// the schema before broadcasting or storing.
+/// Explicit SQL defaults must be applied before this step. This helper only ensures that every
+/// schema column is present and correctly typed so downstream constraint validation can see
+/// omitted columns instead of having them silently materialized to placeholder values.
 pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, String> {
     let _span = tracing::info_span!(
         "coerce_rows",
@@ -59,17 +60,16 @@ pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, Strin
         num_fields = schema.fields().len()
     )
     .entered();
-    let defaults = get_column_defaults(schema);
     let typed_nulls = get_typed_nulls(schema);
 
     rows.into_iter()
         .map(|mut row| {
-            // 1. Add defaults for any missing fields (moves/clones only defaults)
+            // 1. Materialize missing schema columns as typed NULLs so constraint checks can
+            //    distinguish omitted required fields from explicit defaults applied earlier.
             for (i, field) in schema.fields().iter().enumerate() {
                 let field_name = field.name().as_str();
                 if !row.values.contains_key(field_name) {
-                    let default_val = defaults[i].clone().unwrap_or_else(|| typed_nulls[i].clone());
-                    row.values.insert(field_name.to_string(), default_val);
+                    row.values.insert(field_name.to_string(), typed_nulls[i].clone());
                 }
             }
 
@@ -448,6 +448,24 @@ mod tests {
             values.insert(key.to_string(), value);
         }
         Row::new(values)
+    }
+
+    #[test]
+    fn test_coerce_rows_keeps_omitted_required_columns_null() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("email", DataType::Utf8, false),
+        ]));
+
+        let rows = vec![make_row(vec![("id", ScalarValue::Int64(Some(1)))])];
+
+        let coerced = coerce_rows(rows, &schema).unwrap();
+        let email = coerced[0].values.get("email").expect("email should be materialized");
+
+        assert!(
+            email.is_null(),
+            "missing required columns must remain NULL so NOT NULL validation can reject them"
+        );
     }
 
     #[test]

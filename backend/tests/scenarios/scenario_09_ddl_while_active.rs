@@ -70,8 +70,8 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
     // =========================================================
     // Step 3: Start subscription
     // =========================================================
-    let sql = format!("SELECT * FROM {}.data ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.data", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     let _ = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;
     let initial = drain_initial_data(&mut subscription, Duration::from_secs(5)).await?;

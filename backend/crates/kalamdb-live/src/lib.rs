@@ -25,10 +25,7 @@ pub use fanout::{
     CommitSideEffectPlan, FanoutDispatchPlan, FanoutOwnerScope, TransactionSideEffects,
 };
 // Re-export from helpers
-pub use helpers::{
-    filter_eval::{matches as filter_matches, parse_where_clause},
-    initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
-};
+pub use helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 pub use kalamdb_commons::{
     models::{ConnectionId, LiveQueryId, TableId, UserId},
     NodeId,

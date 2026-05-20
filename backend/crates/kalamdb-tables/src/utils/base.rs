@@ -106,7 +106,7 @@ use kalamdb_datafusion_sources::{
     },
     pruning::mvcc_filter_evaluation,
 };
-use kalamdb_filestore::registry::ListResult;
+use kalamdb_filestore::registry::{ListResult, StorageCached};
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, Manifest, SchemaRegistry as SchemaRegistryTrait,
 };
@@ -1212,31 +1212,9 @@ pub async fn pk_exists_in_cold(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get storage_id from schema registry
-    let storage_id = match core.services.schema_registry.get_storage_id(table_id) {
-        Ok(id) => id,
-        Err(_) => {
-            // log::trace!(
-            //     "[pk_exists_in_cold] No storage id for {}.{} {} - PK not in cold",
-            //     namespace.as_str(),
-            //     table.as_str(),
-            //     scope_label
-            // );
-            return Ok(false);
-        },
-    };
-
-    // 2. Get StorageCached from registry
-    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
-        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
-    })?;
-    let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
-        KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
-    })?;
-
-    // 4. Load manifest from cache
+    // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
     let manifest_service = core.services.manifest_service.clone();
-    let cache_result = manifest_service.get_or_load(table_id, user_id);
+    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
 
     let manifest: Option<Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(entry.manifest.clone()),
@@ -1248,6 +1226,12 @@ pub async fn pk_exists_in_cold(
             //     scope_label
             // );
             None
+        },
+        Err(kalamdb_store::StorageError::SerializationError(e)) => {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Failed to load manifest for {} {}: {}",
+                table_id, scope_label, e
+            )));
         },
         Err(e) => {
             log::warn!(
@@ -1275,8 +1259,9 @@ pub async fn pk_exists_in_cold(
         }
     }
 
-    // 5. Use manifest to prune segments or list all Parquet files
+    // 2. Use manifest to prune segments or list all Parquet files.
     let planner = ManifestAccessPlanner::new();
+    let mut storage_cached_for_scan: Option<Arc<StorageCached>> = None;
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
         let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
         if pruned_paths.is_empty() {
@@ -1301,7 +1286,10 @@ pub async fn pk_exists_in_cold(
             pruned_paths
         }
     } else {
-        // No manifest - use all Parquet files from listing
+        // No manifest - use all Parquet files from listing.
+        let Some(storage_cached) = resolve_storage_cached_for_pk(core, table_id)? else {
+            return Ok(false);
+        };
         let list_result = match storage_cached.list(table_type, table_id, user_id).await {
             Ok(result) => result,
             Err(_) => {
@@ -1323,6 +1311,7 @@ pub async fn pk_exists_in_cold(
             // );
             return Ok(false);
         }
+        storage_cached_for_scan = Some(storage_cached);
         collect_parquet_files_from_list(&list_result)
     };
 
@@ -1330,7 +1319,15 @@ pub async fn pk_exists_in_cold(
         return Ok(false);
     }
 
-    // 6. Scan pruned Parquet files and check for PK using StorageCached
+    let storage_cached = match storage_cached_for_scan {
+        Some(cached) => cached,
+        None => match resolve_storage_cached_for_pk(core, table_id)? {
+            Some(cached) => cached,
+            None => return Ok(false),
+        },
+    };
+
+    // 3. Scan pruned Parquet files and check for PK using StorageCached.
     // Manifest paths are just filenames (e.g., "batch-0.parquet"), so prepend storage_path
     for file_name in files_to_scan {
         if pk_exists_in_parquet_via_storage_cache(
@@ -1357,6 +1354,21 @@ pub async fn pk_exists_in_cold(
     }
 
     Ok(false)
+}
+
+fn resolve_storage_cached_for_pk(
+    core: &TableProviderCore,
+    table_id: &TableId,
+) -> Result<Option<Arc<StorageCached>>, KalamDbError> {
+    let storage_id = match core.services.schema_registry.get_storage_id(table_id) {
+        Ok(id) => id,
+        Err(_) => return Ok(None),
+    };
+
+    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
+        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
+    })?;
+    storage_registry.get_cached(&storage_id).map_err(KalamDbError::from)
 }
 
 fn collect_parquet_files_from_list(list_result: &ListResult) -> Vec<String> {
@@ -1411,31 +1423,9 @@ pub async fn pk_exists_batch_in_cold(
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
-    // 1. Get storage_id from schema registry
-    let storage_id = match core.services.schema_registry.get_storage_id(table_id) {
-        Ok(id) => id,
-        Err(_) => {
-            log::trace!(
-                "[pk_exists_batch_in_cold] No storage id for {}.{} {} - PK not in cold",
-                namespace.as_str(),
-                table.as_str(),
-                scope_label
-            );
-            return Ok(None);
-        },
-    };
-
-    // 2. Get StorageCached from registry
-    let storage_registry = core.services.storage_registry.as_ref().ok_or_else(|| {
-        KalamDbError::InvalidOperation("Storage registry not configured".to_string())
-    })?;
-    let storage_cached = storage_registry.get_cached(&storage_id)?.ok_or_else(|| {
-        KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
-    })?;
-
-    // 4. Load manifest from cache
+    // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
     let manifest_service = core.services.manifest_service.clone();
-    let cache_result = manifest_service.get_or_load(table_id, user_id);
+    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
 
     let manifest: Option<Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(entry.manifest.clone()),
@@ -1447,6 +1437,12 @@ pub async fn pk_exists_batch_in_cold(
             //     scope_label
             // );
             None
+        },
+        Err(kalamdb_store::StorageError::SerializationError(e)) => {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Failed to load manifest for {} {}: {}",
+                table_id, scope_label, e
+            )));
         },
         Err(e) => {
             log::warn!(
@@ -1474,8 +1470,9 @@ pub async fn pk_exists_batch_in_cold(
         }
     }
 
-    // 5. Determine files to scan - union of files that may contain any of the PK values
+    // 2. Determine files to scan - union of files that may contain any PK value.
     let planner = ManifestAccessPlanner::new();
+    let mut storage_cached_for_scan: Option<Arc<StorageCached>> = None;
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
         // Collect all potentially relevant files for any PK value
         let mut relevant_files: HashSet<String> = HashSet::new();
@@ -1507,6 +1504,15 @@ pub async fn pk_exists_batch_in_cold(
         }
     } else {
         // No manifest - use all Parquet files from listing
+        let Some(storage_cached) = resolve_storage_cached_for_pk(core, table_id)? else {
+            log::trace!(
+                "[pk_exists_batch_in_cold] No storage id for {}.{} {} - PK not in cold",
+                namespace.as_str(),
+                table.as_str(),
+                scope_label
+            );
+            return Ok(None);
+        };
         let list_result = match storage_cached.list(table_type, table_id, user_id).await {
             Ok(result) => result,
             Err(_) => {
@@ -1528,6 +1534,7 @@ pub async fn pk_exists_batch_in_cold(
             );
             return Ok(None);
         }
+        storage_cached_for_scan = Some(storage_cached);
         collect_parquet_files_from_list(&list_result)
     };
 
@@ -1535,10 +1542,18 @@ pub async fn pk_exists_batch_in_cold(
         return Ok(None);
     }
 
-    // 6. Create a HashSet for O(1) PK lookups
+    let storage_cached = match storage_cached_for_scan {
+        Some(cached) => cached,
+        None => match resolve_storage_cached_for_pk(core, table_id)? {
+            Some(cached) => cached,
+            None => return Ok(None),
+        },
+    };
+
+    // 3. Create a HashSet for O(1) PK lookups.
     let pk_set: HashSet<&str> = pk_values.iter().map(|s| s.as_str()).collect();
 
-    // 7. Scan Parquet files and check for PKs (batch version)
+    // 4. Scan Parquet files and check for PKs (batch version).
     for file_name in files_to_scan {
         if let Some(found_pk) = pk_exists_batch_in_parquet_via_storage_cache(
             &storage_cached,

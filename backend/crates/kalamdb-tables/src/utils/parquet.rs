@@ -116,6 +116,12 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
             );
             use_degraded_mode = true;
         },
+        Err(kalamdb_store::StorageError::SerializationError(e)) => {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Failed to load manifest for {} {}: {}",
+                table_id, scope_label, e
+            )));
+        },
         Err(e) => {
             log::warn!(
                 "⚠️  Manifest cache ERROR | table={} | {} | error={} | fallback=directory_scan",

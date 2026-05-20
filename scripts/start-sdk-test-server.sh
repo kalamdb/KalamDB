@@ -10,7 +10,7 @@ SERVER_LOG="${KALAMDB_SERVER_LOG:-}"
 SERVER_PID_FILE="${KALAMDB_SERVER_PID_FILE:-}"
 SERVER_TEMPLATE="${KALAMDB_SERVER_TEMPLATE:-$ROOT_DIR/backend/server.example.toml}"
 JWT_SECRET="${KALAMDB_JWT_SECRET:-sdk-test-secret-key-minimum-32-characters-long}"
-WAIT_SECONDS="${KALAMDB_SERVER_WAIT_SECONDS:-60}"
+WAIT_SECONDS="${KALAMDB_SERVER_WAIT_SECONDS:-180}"
 GRPC_HOST="${KALAMDB_GRPC_HOST:-}"
 GRPC_PORT="${KALAMDB_GRPC_PORT:-}"
 CLUSTER_ID="${KALAMDB_CLUSTER_ID:-sdk-test-cluster}"
@@ -98,7 +98,7 @@ rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/data" "$WORK_DIR/logs" "$(dirname "$SERVER_LOG")"
 cp "$SERVER_TEMPLATE" "$WORK_DIR/server.toml"
 
-perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g' "$WORK_DIR/server.toml"
+perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g; s|port = [0-9]+|port = '"$(server_port)"'|g' "$WORK_DIR/server.toml"
 
 if [[ -n "$SERVER_BIN" ]]; then
     SERVER_CMD=("$SERVER_BIN" "$WORK_DIR/server.toml")

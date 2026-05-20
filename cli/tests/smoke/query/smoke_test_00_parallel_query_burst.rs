@@ -119,7 +119,13 @@ fn smoke_test_00_parallel_query_burst() {
     );
     let flush_sql = format!("STORAGE FLUSH TABLE {}", full_table_name);
     match execute_sql_as_root_via_client(&flush_sql) {
-        Ok(output) => println!("STORAGE FLUSH TABLE acknowledged: {}", output.trim()),
+        Ok(output) => {
+            println!("STORAGE FLUSH TABLE acknowledged: {}", output.trim());
+            let job_id = parse_job_id_from_flush_output(&output)
+                .expect("flush output should contain a job id");
+            verify_job_completed(&job_id, Duration::from_secs(60))
+                .expect("flush job should complete before load test");
+        },
         Err(err) => panic!("STORAGE FLUSH TABLE {} failed: {}", full_table_name, err),
     }
 

@@ -97,88 +97,105 @@ impl<'a> FlushScopeWriter<'a> {
             }
         }
 
-        let batch_number = self.manifest_helper.get_next_batch_number(self.table_id, user_id)?;
-        let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
-        let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
-
-        let temp_path = storage_cached
-            .get_file_path(self.table_type, self.table_id, user_id, &temp_filename)
-            .full_path;
-        let destination_path = storage_cached
-            .get_file_path(self.table_type, self.table_id, user_id, &batch_filename)
-            .full_path;
-
-        if let Err(err) = self.manifest_helper.mark_syncing(self.table_id, user_id) {
-            log::warn!(
-                "⚠️  Failed to mark manifest as syncing for {} (user_id={:?}): {} \
-                 (continuing)",
-                self.table_id,
-                user_id.map(UserId::as_str),
-                err
-            );
-        }
-
         let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
         let column_stats = FlushManifestHelper::extract_column_stats(&batch, self.indexed_columns);
         let row_count = batch.num_rows() as u64;
 
-        log::debug!("📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}", temp_path, rows_count);
-        let result = storage_cached
-            .write_parquet_sync(
-                self.table_type,
+        self.manifest_helper.with_flush_scope_lock(self.table_id, user_id, || {
+            let batch_number =
+                self.manifest_helper.get_next_batch_number(self.table_id, user_id)?;
+            let batch_filename = FlushManifestHelper::generate_batch_filename(batch_number);
+            let temp_filename = FlushManifestHelper::generate_temp_filename(batch_number);
+
+            let temp_path = storage_cached
+                .get_file_path(self.table_type, self.table_id, user_id, &temp_filename)
+                .full_path;
+            let destination_path = storage_cached
+                .get_file_path(self.table_type, self.table_id, user_id, &batch_filename)
+                .full_path;
+
+            if let Err(err) = self.manifest_helper.mark_syncing(self.table_id, user_id) {
+                log::warn!(
+                    "⚠️  Failed to mark manifest as syncing for {} (user_id={:?}): {} \
+                     (continuing)",
+                    self.table_id,
+                    user_id.map(UserId::as_str),
+                    err
+                );
+            }
+
+            log::debug!(
+                "📝 [ATOMIC] Writing Parquet to temp path: {}, rows={}",
+                temp_path,
+                rows_count
+            );
+            let result = storage_cached
+                .write_parquet_sync(
+                    self.table_type,
+                    self.table_id,
+                    user_id,
+                    &temp_filename,
+                    self.schema.clone(),
+                    vec![batch.clone()],
+                    Some(self.bloom_filter_columns.to_vec()),
+                )
+                .into_kalamdb_error("Filestore error")?;
+
+            log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
+            storage_cached
+                .rename_sync(
+                    self.table_type,
+                    self.table_id,
+                    user_id,
+                    &temp_filename,
+                    &batch_filename,
+                )
+                .into_kalamdb_error("Failed to rename Parquet file to final location")?;
+
+            let schema_version = helpers::get_schema_version(self.unified_cache, self.table_id);
+            self.manifest_helper.update_manifest_after_flush_with_stats_in_locked_scope(
                 self.table_id,
                 user_id,
-                &temp_filename,
-                self.schema.clone(),
-                vec![batch],
-                Some(self.bloom_filter_columns.to_vec()),
-            )
-            .into_kalamdb_error("Filestore error")?;
+                batch_filename,
+                min_seq,
+                max_seq,
+                column_stats.clone(),
+                row_count,
+                result.size_bytes,
+                schema_version,
+            )?;
 
-        log::debug!("📝 [ATOMIC] Renaming {} -> {}", temp_path, destination_path);
-        storage_cached
-            .rename_sync(self.table_type, self.table_id, user_id, &temp_filename, &batch_filename)
-            .into_kalamdb_error("Failed to rename Parquet file to final location")?;
+            if let Some(sql_executor) = self.app_context.try_sql_executor() {
+                sql_executor.clear_plan_cache();
+            }
 
-        let schema_version = helpers::get_schema_version(self.unified_cache, self.table_id);
-        self.manifest_helper.update_manifest_after_flush_with_stats(
-            self.table_id,
-            user_id,
-            batch_filename,
-            min_seq,
-            max_seq,
-            column_stats,
-            row_count,
-            result.size_bytes,
-            schema_version,
-        )?;
+            match (self.table_type, user_id) {
+                (TableType::User, Some(user_id)) => flush_user_scope_vectors(
+                    self.app_context,
+                    self.table_id,
+                    user_id,
+                    self.schema,
+                    &storage_cached,
+                )?,
+                (TableType::Shared, None) => flush_shared_scope_vectors(
+                    self.app_context,
+                    self.table_id,
+                    self.schema,
+                    &storage_cached,
+                )?,
+                (table_type, user_id) => {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "invalid flush scope: table_type={:?}, user_id={:?}",
+                        table_type,
+                        user_id.map(UserId::as_str)
+                    )));
+                },
+            }
 
-        match (self.table_type, user_id) {
-            (TableType::User, Some(user_id)) => flush_user_scope_vectors(
-                self.app_context,
-                self.table_id,
-                user_id,
-                self.schema,
-                &storage_cached,
-            )?,
-            (TableType::Shared, None) => flush_shared_scope_vectors(
-                self.app_context,
-                self.table_id,
-                self.schema,
-                &storage_cached,
-            )?,
-            (table_type, user_id) => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "invalid flush scope: table_type={:?}, user_id={:?}",
-                    table_type,
-                    user_id.map(UserId::as_str)
-                )));
-            },
-        }
-
-        Ok(FlushScopeWriteResult {
-            rows_count,
-            destination_path,
+            Ok(FlushScopeWriteResult {
+                rows_count,
+                destination_path,
+            })
         })
     }
 }

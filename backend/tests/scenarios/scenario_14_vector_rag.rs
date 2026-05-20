@@ -6,6 +6,8 @@
 //! - Vector indexes + flush artifacts in cold storage
 //! - Similarity queries joined back to document rows
 
+use std::time::{Duration, Instant};
+
 use kalam_client::KalamCellValue;
 use kalamdb_api::http::sql::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
 use kalamdb_commons::{
@@ -16,6 +18,7 @@ use kalamdb_commons::{
 use kalamdb_system::FileRef;
 use reqwest::multipart;
 use serde_json::Value as JsonValue;
+use tokio::time::sleep;
 
 use super::helpers::*;
 
@@ -33,6 +36,112 @@ fn extract_id_list(rows: &[std::collections::HashMap<String, KalamCellValue>]) -
                 .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
         })
         .collect()
+}
+
+async fn wait_for_user_vector_snapshots(
+    server: &crate::test_support::http_server::HttpTestServer,
+    table_id: &TableId,
+    user_id: &UserId,
+    columns: &[&str],
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let app_context = server.app_context();
+        let manifest = app_context
+            .manifest_service()
+            .ensure_manifest_initialized(table_id, Some(user_id))
+            .map_err(|e| anyhow::anyhow!("Failed to load vectors manifest: {}", e))?;
+        let cached_table = app_context.schema_registry().get(table_id).ok_or_else(|| {
+            anyhow::anyhow!("Missing cached vectors table {}", table_id.full_name())
+        })?;
+        let storage_cached = cached_table
+            .storage_cached(&app_context.storage_registry())
+            .map_err(|e| anyhow::anyhow!("Failed to resolve vectors storage cache: {}", e))?;
+
+        let mut pending = Vec::new();
+        for column in columns {
+            let Some(meta) = manifest.vector_indexes.get(*column) else {
+                pending.push(format!("{}:missing-metadata", column));
+                continue;
+            };
+            let Some(snapshot_path) = meta.snapshot_path.as_ref() else {
+                pending.push(format!("{}:missing-snapshot", column));
+                continue;
+            };
+            let exists = storage_cached
+                .exists(TableType::User, table_id, Some(user_id), snapshot_path)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed snapshot exists check for {} ({}): {}",
+                        column,
+                        snapshot_path,
+                        e
+                    )
+                })?;
+            if !exists.exists {
+                pending.push(format!("{}:missing-file", column));
+            }
+        }
+
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "Timed out waiting for vector snapshots for {} in scope {}: {:?}",
+                table_id.full_name(),
+                user_id,
+                pending
+            );
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn wait_for_vector_query_contains(
+    client: &kalam_client::KalamLinkClient,
+    sql: &str,
+    expected_ids: &[i64],
+    timeout: Duration,
+) -> anyhow::Result<Vec<i64>> {
+    let deadline = Instant::now() + timeout;
+    let mut last_ids = Vec::new();
+    let mut last_error = None;
+
+    loop {
+        match client.execute_query(sql, None, None, None).await {
+            Ok(response) if response.success() => {
+                let ids = extract_id_list(&response.rows_as_maps());
+                if expected_ids.iter().all(|id| ids.contains(id)) {
+                    return Ok(ids);
+                }
+                last_ids = ids;
+                last_error = None;
+            },
+            Ok(response) => {
+                last_error = Some(format!("{:?}", response.error));
+            },
+            Err(error) => {
+                last_error = Some(error.to_string());
+            },
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "Timed out waiting for vector query to include {:?}; last_ids={:?}; last_error={:?}",
+                expected_ids,
+                last_ids,
+                last_error
+            );
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
 }
 
 async fn execute_sql_multipart(
@@ -215,13 +324,21 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
     assert!(!file_a.stored_name().is_empty(), "attachment_a file reference should be valid");
     assert!(!file_b.stored_name().is_empty(), "attachment_b file reference should be valid");
 
-    let resp = server
-        .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, vectors_table))
-        .await?;
-    assert_success(&resp, "STORAGE FLUSH vectors table");
-    wait_for_flush_complete(server, &ns, vectors_table, std::time::Duration::from_secs(25)).await?;
+    flush_and_wait(server, &ns, vectors_table).await?;
 
     let vectors_table_id = TableId::from_strings(&ns, vectors_table);
+    wait_for_user_vector_snapshots(
+        server,
+        &vectors_table_id,
+        &manifest_user,
+        &[
+            "doc_embedding",
+            "attachment_a_embedding",
+            "attachment_b_embedding",
+        ],
+        Duration::from_secs(15),
+    )
+    .await?;
     let manifest = app_context
         .manifest_service()
         .ensure_manifest_initialized(&vectors_table_id, Some(&manifest_user))
@@ -269,43 +386,34 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
     let seeded_ids = extract_id_list(&seeded_rows_resp.rows_as_maps());
     assert_eq!(seeded_ids, vec![1, 2, 3], "expected 3 seeded vector rows");
 
-    let doc_query_resp = user_client
-        .execute_query(
-            &format!(
-                "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
-                 LIMIT 2",
-                ns, vectors_table
-            ),
-            None,
-            None,
-            None,
-        )
-        .await?;
-    assert!(doc_query_resp.success(), "doc_embedding vector query should succeed");
-    let doc_ids = extract_id_list(&doc_query_resp.rows_as_maps());
+    let doc_ids = wait_for_vector_query_contains(
+        &user_client,
+        &format!(
+            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
+             LIMIT 2",
+            ns, vectors_table
+        ),
+        &[1],
+        Duration::from_secs(10),
+    )
+    .await?;
     assert!(
         doc_ids.contains(&1),
         "row 1 should be included in top-k for doc_embedding; ids={:?}",
         doc_ids
     );
 
-    let attachment_query_resp = user_client
-        .execute_query(
-            &format!(
-                "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(attachment_b_embedding, \
-                 '[0.0,1.0,0.0]') LIMIT 2",
-                ns, vectors_table
-            ),
-            None,
-            None,
-            None,
-        )
-        .await?;
-    assert!(
-        attachment_query_resp.success(),
-        "attachment_b_embedding vector query should succeed"
-    );
-    let attachment_ids = extract_id_list(&attachment_query_resp.rows_as_maps());
+    let attachment_ids = wait_for_vector_query_contains(
+        &user_client,
+        &format!(
+            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(attachment_b_embedding, \
+             '[0.0,1.0,0.0]') LIMIT 2",
+            ns, vectors_table
+        ),
+        &[3],
+        Duration::from_secs(10),
+    )
+    .await?;
     assert!(
         attachment_ids.contains(&3),
         "row 3 should be included in top-k for attachment_b_embedding; ids={:?}",
@@ -353,20 +461,17 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
         insert_hot_vector_resp.error
     );
 
-    let mixed_tier_resp = user_client
-        .execute_query(
-            &format!(
-                "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
-                 LIMIT 3",
-                ns, vectors_table
-            ),
-            None,
-            None,
-            None,
-        )
-        .await?;
-    assert!(mixed_tier_resp.success(), "mixed hot+cold vector query should succeed");
-    let mixed_ids = extract_id_list(&mixed_tier_resp.rows_as_maps());
+    let mixed_ids = wait_for_vector_query_contains(
+        &user_client,
+        &format!(
+            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
+             LIMIT 3",
+            ns, vectors_table
+        ),
+        &[1, 4],
+        Duration::from_secs(10),
+    )
+    .await?;
     assert!(mixed_ids.contains(&1), "mixed vector results should include cold row id=1");
     assert!(mixed_ids.contains(&4), "mixed vector results should include hot row id=4");
 
@@ -403,11 +508,19 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
         "deleted vector row should not appear in similarity results"
     );
 
-    let resp = server
-        .execute_sql(&format!("STORAGE FLUSH TABLE {}.{}", ns, vectors_table))
-        .await?;
-    assert_success(&resp, "STORAGE FLUSH vectors table (second cycle)");
-    wait_for_flush_complete(server, &ns, vectors_table, std::time::Duration::from_secs(25)).await?;
+    flush_and_wait(server, &ns, vectors_table).await?;
+    wait_for_user_vector_snapshots(
+        server,
+        &vectors_table_id,
+        &manifest_user,
+        &[
+            "doc_embedding",
+            "attachment_a_embedding",
+            "attachment_b_embedding",
+        ],
+        Duration::from_secs(15),
+    )
+    .await?;
 
     let manifest_after_second_flush = app_context
         .manifest_service()

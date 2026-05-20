@@ -4,8 +4,11 @@
 //! O(1) lookups to determine which topics should receive messages for a
 //! given table mutation.
 
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use kalamdb_commons::models::{TableId, TopicId, TopicOp};
+use kalamdb_row_filter::{parse_where_clause, RowFilter};
 use kalamdb_system::providers::topics::{Topic, TopicRoute};
 
 /// Cached route entry combining topic ID with route configuration.
@@ -14,6 +17,7 @@ pub(crate) struct RouteEntry {
     pub topic_id: TopicId,
     pub topic_partitions: u32,
     pub route: TopicRoute,
+    pub compiled_filter: Option<Arc<RowFilter>>,
 }
 
 /// Manages the in-memory route cache.
@@ -85,16 +89,12 @@ impl RouteCache {
             self.topics.insert(topic.topic_id.clone(), topic.clone());
 
             for route in &topic.routes {
-                let entry = RouteEntry {
-                    topic_id: topic.topic_id.clone(),
-                    topic_partitions: topic.partitions,
-                    route: route.clone(),
-                };
-
-                self.table_routes
-                    .entry(route.table_id.clone())
-                    .or_insert_with(Vec::new)
-                    .push(entry);
+                if let Some(entry) = build_route_entry(&topic.topic_id, topic.partitions, route) {
+                    self.table_routes
+                        .entry(route.table_id.clone())
+                        .or_insert_with(Vec::new)
+                        .push(entry);
+                }
             }
         }
     }
@@ -104,16 +104,12 @@ impl RouteCache {
         let topic_id = topic.topic_id.clone();
 
         for route in &topic.routes {
-            let entry = RouteEntry {
-                topic_id: topic_id.clone(),
-                topic_partitions: topic.partitions,
-                route: route.clone(),
-            };
-
-            self.table_routes
-                .entry(route.table_id.clone())
-                .or_insert_with(Vec::new)
-                .push(entry);
+            if let Some(entry) = build_route_entry(&topic_id, topic.partitions, route) {
+                self.table_routes
+                    .entry(route.table_id.clone())
+                    .or_insert_with(Vec::new)
+                    .push(entry);
+            }
         }
 
         self.topics.insert(topic_id, topic);
@@ -165,4 +161,35 @@ impl RouteCache {
     pub fn total_routes(&self) -> usize {
         self.table_routes.iter().map(|r| r.len()).sum()
     }
+}
+
+fn build_route_entry(
+    topic_id: &TopicId,
+    topic_partitions: u32,
+    route: &TopicRoute,
+) -> Option<RouteEntry> {
+    let compiled_filter = match route.filter_expr.as_deref() {
+        Some(filter_expr) => match parse_where_clause(filter_expr) {
+            Ok(filter) => Some(Arc::new(filter)),
+            Err(error) => {
+                log::warn!(
+                    "Skipping topic route {} -> {} ON {:?} because filter {:?} could not be parsed at cache load: {}",
+                    topic_id.as_str(),
+                    route.table_id,
+                    route.op,
+                    filter_expr,
+                    error
+                );
+                return None;
+            },
+        },
+        None => None,
+    };
+
+    Some(RouteEntry {
+        topic_id: topic_id.clone(),
+        topic_partitions,
+        route: route.clone(),
+        compiled_filter,
+    })
 }

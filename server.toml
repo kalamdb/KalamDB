@@ -104,10 +104,6 @@ max_entries = 500
 # TTL in days for manifest eviction (default: 7 days)
 eviction_ttl_days = 7
 
-# Weight factor for user table manifests (default: 10)
-# User tables are evicted N times faster than shared tables.
-user_table_weight_factor = 10
-
 [flush]
 # Default row limit for flush policies (default: 10000 rows)
 # Tables without explicit flush policy will use this value

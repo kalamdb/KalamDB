@@ -103,7 +103,10 @@ impl SchemaRegistry {
             table_cache: DashMap::with_capacity(initial_capacity),
             table_cache_access: DashMap::with_capacity(initial_capacity),
             table_cache_counter: AtomicU64::new(0),
-            table_cache_max_entries: std::cmp::max(1, std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES)),
+            table_cache_max_entries: std::cmp::max(
+                1,
+                std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES),
+            ),
             version_cache: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
             version_cache_access: DashMap::with_capacity(std::cmp::min(
                 VERSION_CACHE_MAX_ENTRIES,
@@ -486,6 +489,11 @@ impl SchemaRegistry {
             self.touch_table_cache_entry(table_id);
         }
         result
+    }
+
+    /// Return a cached table entry without attempting storage hydration.
+    pub fn get_if_cached(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
+        self.get_cached(table_id)
     }
 
     fn load_cached_table(
