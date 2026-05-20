@@ -21,17 +21,27 @@ docker compose up -d
 # 2. Configure (then optionally drop in an OPENAI_API_KEY or ANTHROPIC_API_KEY)
 cp .env.example .env
 
-# 3. Install + create the schema
+# 3. Install dependencies
 npm install
+
+# 4. Create the schema + demo users (alice / bob / carol).
+#    Destructive — refuses to run if the chat namespace already has data.
+#    Pass --force to wipe and re-create.
 npm run setup
 
-# 4. Run the full dev stack (vite + backend + agent)
+# 5. Seed the RAG corpus so search_documents has something to search.
+#    Skip this if you don't care about the "what is a topic?" demo path.
+npm run seed-docs
+
+# 6. Run the full dev stack (vite + backend + agent)
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>, click **New chat**, send a message. Watch the assistant reply stream in token-by-token. While it's streaming, hit **Stop** — the reply truncates and is marked `(stopped)`.
+Open <http://127.0.0.1:5173>. The sidebar shows you're signed in as **alice** by default. Click **New chat**, send a message. Watch the assistant reply stream in token-by-token. While it's streaming, hit **Stop** — the reply truncates and is marked `(stopped)`.
 
 To trigger an approval flow, say something destructive ("delete my old account data"). The agent emits a `request_approval` tool call; an approval card appears; click Approve or Reject.
+
+To see multi-tenant isolation, open a second browser window (incognito, so it gets its own `localStorage`), pick **bob** from the sidebar dropdown, and verify your conversations are invisible to bob — and vice versa.
 
 Without `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` set, the agent uses a **mock adapter** with canned replies that still exercises the streaming, approval, and cancellation paths.
 
@@ -103,7 +113,13 @@ The stream yields `LlmStreamEvent` values: `{type: "text", delta}`, `{type: "too
 
 ## Tests
 
-`npm test` runs the Playwright suite (`tests/chat-flow.spec.ts`) — three deterministic tests covering streaming, approvals, and cancellation. They run against the mock adapter so they don't need API keys. Boot the dev stack first (`npm run dev`), then run tests in another terminal.
+Three layers:
+
+- `npm run test:unit` — Node's built-in `tsx --test` runner against `tests/unit/*.test.ts`. Pure-JS units (SQL guard, agent tools with stubbed clients, server endpoints with a stub fetcher, embedding helpers, retry/slowdown wrappers). No KalamDB or browser needed.
+- `npm run test:component` — Vitest + jsdom against `tests/component/*.test.tsx`. React components against fake data.
+- `npm run test:e2e` — Playwright against `tests/chat-flow.spec.ts` (streaming, approvals, cancellation). **Requires** the full dev stack running first: `docker compose up -d` → `npm run setup` → `LLM_PROVIDER=mock npm run dev` in one terminal, then `npm run test:e2e` in another. The mock provider is mandatory — the e2e prompts (`__slow_stream__`, "delete my old account data immediately") are mock-keywords; a real LLM won't reproduce them deterministically.
+
+`npm test` runs all three in sequence.
 
 ## How auth works in this starter
 

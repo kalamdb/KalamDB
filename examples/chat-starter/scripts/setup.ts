@@ -27,6 +27,31 @@ async function login(): Promise<string> {
   return body.access_token;
 }
 
+/** Counts every row across the chat namespace's USER tables — a single
+ *  non-zero return means setup will destroy real data. Returns 0 if the
+ *  namespace doesn't exist yet (i.e. fresh database). */
+async function countExistingData(token: string): Promise<number> {
+  const tables = ["conversations", "messages", "tasks", "approvals", "typing_tokens"];
+  let total = 0;
+  for (const tbl of tables) {
+    const res = await fetch(`${URL}/v1/api/sql`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ sql: `SELECT count(*) AS n FROM chat.${tbl}` }),
+    });
+    if (!res.ok) {
+      // Most likely the table / namespace doesn't exist — first run.
+      continue;
+    }
+    const body = (await res.json()) as {
+      results?: Array<{ rows?: Array<Array<unknown>> }>;
+    };
+    const n = Number(body.results?.[0]?.rows?.[0]?.[0] ?? 0);
+    total += n;
+  }
+  return total;
+}
+
 async function exec(token: string, sql: string): Promise<void> {
   const res = await fetch(`${URL}/v1/api/sql`, {
     method: "POST",
@@ -46,6 +71,27 @@ async function main(): Promise<void> {
 
   const token = await login();
   log.info({ url: URL, user: USER }, "logged in");
+
+  // chat-app.sql leads with DROP NAMESPACE — re-running setup wipes
+  // every conversation, message, task, and approval across all demo
+  // users. Refuse to proceed without explicit confirmation if the
+  // namespace already has any user data, so a tab-completion mistake
+  // or a re-typed quick-start command can't silently nuke a session.
+  const force = process.argv.includes("--force");
+  const existing = await countExistingData(token);
+  if (existing > 0 && !force) {
+    log.fatal(
+      { existing_rows: existing },
+      "REFUSING TO RUN: chat namespace already has data. " +
+        "Re-running setup will DROP the namespace and delete every conversation " +
+        "across all demo users. Pass --force if that's what you want.",
+    );
+    process.exit(2);
+  }
+  if (force && existing > 0) {
+    log.warn({ existing_rows: existing }, "--force given; wiping existing data");
+  }
+
   for (const stmt of statements) {
     const head = stmt.split("\n")[0]!.slice(0, 60);
     try {

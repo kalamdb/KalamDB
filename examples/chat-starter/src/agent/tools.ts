@@ -162,53 +162,62 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
   });
   ctx.log.info({ approval_id: approvalId, question }, "approval pending");
 
-  const decision = await new Promise<string>((resolve) => {
-    let settled = false;
-    let unsubscribe: Unsubscribe | undefined;
-
-    const finish = (value: string): void => {
-      if (settled) return;
-      settled = true;
-      ctx.signal.removeEventListener("abort", onAbort);
-      void unsubscribe?.();
-      resolve(value);
-    };
-    const onAbort = (): void => {
-      // Return exactly "rejected" so the system-prompt rule for that
-      // literal matches cleanly (the LLM doesn't have to parse a verbose
-      // explanation). The verbose reason goes to the agent log instead.
-      ctx.log.info({ approval_id: approvalId }, "approval rejected by abort signal");
-      finish("rejected");
-    };
-    ctx.signal.addEventListener("abort", onAbort, { once: true });
-
-    ctx.client
-      .live<{ id: string; status: string }>(
-        // ctx.client is authenticated AS the task owner, so the SELECT runs
-        // in the owner's partition without any EXECUTE AS USER wrapping.
-        `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
-        (rows) => {
-          const row = rows[0];
-          if (!row) return;
-          const status = unwrap(row.status);
-          if (status === "approved" || status === "rejected") {
-            ctx.log.info({ approval_id: approvalId, status }, "approval resolved");
-            finish(status);
-          }
-        },
-        {
-          onError: (err) => {
-            ctx.log.error({ approval_id: approvalId, err }, "approval live errored");
-            finish(`error subscribing to approval: ${String(err)}`);
-          },
-        },
-      )
-      .then((u) => {
-        unsubscribe = u;
-        if (settled) void u();
-      })
-      .catch((err) => finish(`error subscribing to approval: ${String(err)}`));
+  // Wire up the resolver state machine BEFORE subscribing — earlier this
+  // lived inside a .then() chain on the same Promise that resolved the
+  // decision, which left a window where `unsubscribe` was still undefined
+  // and an early abort could leak the subscription. ctx.client is
+  // authenticated AS the task owner, so the SELECT runs in the owner's
+  // partition without any EXECUTE AS USER wrapping.
+  let settled = false;
+  let unsubscribe: Unsubscribe | null = null;
+  let resolveDecision!: (value: string) => void;
+  const decisionPromise = new Promise<string>((resolve) => {
+    resolveDecision = resolve;
   });
+  const finish = (value: string): void => {
+    if (settled) return;
+    settled = true;
+    ctx.signal.removeEventListener("abort", onAbort);
+    if (unsubscribe) void unsubscribe();
+    resolveDecision(value);
+  };
+  const onAbort = (): void => {
+    ctx.log.info({ approval_id: approvalId }, "approval rejected by abort signal");
+    finish("rejected");
+  };
+  if (ctx.signal.aborted) {
+    return "rejected";
+  }
+  ctx.signal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    unsubscribe = await ctx.client.live<{ id: string; status: string }>(
+      `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
+      (rows) => {
+        const row = rows[0];
+        if (!row) return;
+        const status = unwrap(row.status);
+        if (status === "approved" || status === "rejected") {
+          ctx.log.info({ approval_id: approvalId, status }, "approval resolved");
+          finish(status);
+        }
+      },
+      {
+        onError: (err) => {
+          ctx.log.error({ approval_id: approvalId, err }, "approval live errored");
+          finish(`error subscribing to approval: ${String(err)}`);
+        },
+      },
+    );
+    // If the abort listener fired *during* the await above, settled is
+    // already true and the unsubscribe handle we just received needs
+    // teardown now (finish() ran before unsubscribe was assigned).
+    if (settled) void unsubscribe();
+  } catch (err) {
+    finish(`error subscribing to approval: ${String(err)}`);
+  }
+
+  const decision = await decisionPromise;
 
   ctx.lastApprovalDecision = decision;
   return decision;
@@ -328,19 +337,18 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
 
   ctx.log.info({ user: ctx.task.user }, "delete_all_conversations starting");
   try {
-    // First read the conversation ids in the user's partition so we know
-    // how many we're nuking — purely for the return message; the actual
-    // bulk deletes use WHERE clauses on the indexed conversation_id /
-    // created_at columns that match every row.
-    //
-    // Important: don't delete the in-flight task or assistant message for
-    // THIS turn — they're still being written by the agent loop. Filtering
-    // on `created_at < $now` is the simplest scope: anything created
-    // before this tool ran is fair game; the current turn is younger.
-    const nowIso = new Date().toISOString();
+    // The user's just-sent message, the in-flight task row, and the
+    // assistant stub for THIS turn were all written before this tool
+    // dispatched — any time-based filter ("rows older than now") would
+    // nuke them too and the agent would crash trying to finalize rows
+    // that no longer exist. Scope the cascade explicitly by excluding
+    // the three IDs we own for the current turn.
+    const currentConv = uuidLit(ctx.task.conversation_id);
+    const currentTask = uuidLit(ctx.task.id);
+    const currentMsg = uuidLit(ctx.task.message_id);
+
     const countRes = await ctx.client.query(
-      `SELECT count(*) AS n FROM chat.conversations WHERE created_at < $1`,
-      [nowIso],
+      `SELECT count(*) AS n FROM chat.conversations WHERE id != ${currentConv}`,
     );
     const n = Number(
       (
@@ -350,25 +358,27 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
     );
     if (n === 0) {
       ctx.log.info({ user: ctx.task.user }, "delete_all_conversations: nothing to delete");
-      return "deleted 0 conversations (none existed)";
+      return "deleted 0 conversations (the current one is excluded; there were no others)";
     }
 
     // Atomic cascade. Order matters — child rows first, parent last —
     // so a partial failure can't leave dangling FK-shaped references
     // (KalamDB doesn't enforce FKs but the UI joins on these so leaving
-    // orphans would surface as ghost rows).
+    // orphans would surface as ghost rows). The current turn's task /
+    // message / conversation are explicitly excluded so the in-flight
+    // agent state survives.
     const sql = [
       "BEGIN",
-      `DELETE FROM chat.typing_tokens WHERE created_at < '${nowIso}'`,
-      `DELETE FROM chat.approvals WHERE created_at < '${nowIso}'`,
-      `DELETE FROM chat.tasks WHERE started_at < '${nowIso}'`,
-      `DELETE FROM chat.messages WHERE created_at < '${nowIso}'`,
-      `DELETE FROM chat.conversations WHERE created_at < '${nowIso}'`,
+      `DELETE FROM chat.typing_tokens WHERE conversation_id != ${currentConv}`,
+      `DELETE FROM chat.approvals WHERE conversation_id != ${currentConv}`,
+      `DELETE FROM chat.tasks WHERE id != ${currentTask}`,
+      `DELETE FROM chat.messages WHERE id != ${currentMsg}`,
+      `DELETE FROM chat.conversations WHERE id != ${currentConv}`,
       "COMMIT",
     ].join("; ");
     await ctx.client.query(sql);
     ctx.log.info({ user: ctx.task.user, n }, "delete_all_conversations complete");
-    return `deleted ${n} conversations and all related rows`;
+    return `deleted ${n} other conversations and all related rows (the one you're chatting in was kept)`;
   } catch (err) {
     ctx.log.error({ err, user: ctx.task.user }, "delete_all_conversations failed (rolled back)");
     return `Error: ${err instanceof Error ? err.message : String(err)}`;

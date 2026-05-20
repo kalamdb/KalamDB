@@ -75,14 +75,20 @@ function configFromEnv(): ServerConfig {
 }
 
 /** Comma-separated list of `Origin` values that are allowed to POST
- *  /api/auth/token. Empty / unset = empty array (= reject all cross-origin
- *  POSTs). Each entry must be a full scheme://host[:port] origin. */
+ *  /api/auth/token. Each entry must be a full scheme://host[:port] origin.
+ *
+ *  In production this MUST be set explicitly — empty / unset = reject every
+ *  cross-origin POST. In development we default to the Vite dev-server
+ *  origins so the local browser flow works out of the box. */
 function parseAllowedOrigins(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  if (raw) {
+    return raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  if (process.env.NODE_ENV === "production") return [];
+  return ["http://127.0.0.1:5173", "http://localhost:5173"];
 }
 
 export interface CachedToken {
@@ -240,14 +246,17 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
         return;
       }
       // CSRF defense. The endpoint mints a real KalamDB token, so a same-
-      // origin browser script must be the only caller. Two gates:
+      // origin browser script must be the only caller. Three gates:
       //   1. content-type: application/json — blocks form-style cross-origin
       //      POSTs that bypass preflight (text/plain or
       //      application/x-www-form-urlencoded).
-      //   2. Origin allow-list — rejects any cross-origin POST whose Origin
-      //      isn't in cfg.allowedOrigins. Same-origin POSTs from the page's
-      //      own script don't carry an Origin header on every browser, so a
-      //      missing Origin is permitted (it's the legit fetch() flow).
+      //   2. Origin allow-list — any cross-origin POST whose Origin isn't
+      //      in cfg.allowedOrigins is rejected. Empty allow-list means
+      //      reject every cross-origin POST.
+      //   3. Same-origin POSTs from the page's own script don't always
+      //      carry an Origin header (older browsers, some same-origin
+      //      fetches), so a missing Origin is permitted — that's the
+      //      legitimate frontend flow.
       //
       // Operators who plug in real cookie/session auth MUST keep these
       // gates — adding `credentials: 'include'` without them re-introduces
@@ -260,8 +269,11 @@ export function buildServer(opts: BuildServerOptions = {}): Server {
       }
       const origin = req.headers.origin;
       if (typeof origin === "string" && origin.length > 0) {
-        if (cfg.allowedOrigins.length > 0 && !cfg.allowedOrigins.includes(origin)) {
-          requestLog.warn({ origin }, "rejecting /api/auth/token from disallowed origin");
+        if (!cfg.allowedOrigins.includes(origin)) {
+          requestLog.warn(
+            { origin, allowed: cfg.allowedOrigins },
+            "rejecting /api/auth/token from disallowed origin",
+          );
           json(res, 403, { error: "forbidden_origin" });
           return;
         }

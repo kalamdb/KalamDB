@@ -388,6 +388,24 @@ test("POST /api/auth/token rejects non-JSON content-type with 415", async () => 
   );
 });
 
+test("POST /api/auth/token rejects ANY cross-origin POST when allow-list is empty (closed by default)", async () => {
+  await withServer(
+    {
+      // baseConfig.allowedOrigins = [] — must reject every cross-origin POST.
+      config: baseConfig,
+      tokenFetcher: async (u: string) => ({ token: "t", expiresAt: Date.now() + 60_000, user: u }),
+    },
+    async (s) => {
+      const res = await fetch(`${s.url}/api/auth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ user: "alice" }),
+      });
+      assert.equal(res.status, 403);
+    },
+  );
+});
+
 test("POST /api/auth/token rejects a disallowed Origin with 403", async () => {
   await withServer(
     {

@@ -432,6 +432,15 @@ async function runTask(
     };
     let turn = 0;
     while (turn < MAX_TOOL_TURNS) {
+      // A cancel could land between the previous turn's last abort check and
+      // this iteration (e.g. between markStreaming and llm.stream, or between
+      // a tool call returning and the next LLM round). Without this, the
+      // agent would fire one more LLM request before noticing.
+      if (controller.signal.aborted) {
+        finalStatus = "cancelled";
+        await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+        return;
+      }
       turn++;
       const pendingCalls: LlmToolCall[] = [];
       let stopReason: "stop" | "tool_calls" | "length" | "error" = "stop";

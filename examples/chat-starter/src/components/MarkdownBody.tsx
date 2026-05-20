@@ -7,6 +7,21 @@ interface MarkdownBodyProps {
   className?: string;
 }
 
+/** URL allow-list for assistant-rendered links. Assistant bodies are
+ *  LLM-generated and can also echo back tool-result content the user
+ *  controls — so we must not blindly trust `href`. react-markdown calls
+ *  this for every link / image URL; returning an empty string makes the
+ *  anchor inert. */
+function safeUrl(url?: string): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+  // Relative URLs (no scheme) and the http(s)/mailto schemes are safe.
+  // Block javascript:, data:, vbscript:, file:, anything else exotic.
+  if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return ""; // any other scheme → drop
+  return trimmed; // bare / relative paths
+}
+
 // Renders assistant bodies as markdown. Streaming bodies arrive as
 // concatenated token chunks (e.g. "**bo" then "ld**"); react-markdown
 // re-parses on every render and emits what is currently parseable, so the
@@ -20,6 +35,7 @@ export function MarkdownBody({ children, className }: MarkdownBodyProps) {
     <div className={cn("md-body", className)}>
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={safeUrl}
         components={{
           a: ({ href, children: linkChildren, ...rest }) => (
             <a

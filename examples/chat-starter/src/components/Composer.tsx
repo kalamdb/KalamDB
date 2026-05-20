@@ -22,8 +22,17 @@ export function Composer({ onSend, onStop, isStreaming, canStop }: ComposerProps
   async function submit() {
     const body = draft.trim();
     if (!body || isStreaming) return;
+    // Clear the input optimistically so the next character the user types
+    // doesn't land on top of what they just sent. If onSend throws (network
+    // down, KalamDB rejecting the insert) we restore the draft so the user
+    // doesn't lose what they typed.
     setDraft("");
-    await onSend(body);
+    try {
+      await onSend(body);
+    } catch (err) {
+      setDraft(body);
+      throw err;
+    }
   }
 
   function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
