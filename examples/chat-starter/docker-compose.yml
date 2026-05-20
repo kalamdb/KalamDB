@@ -3,7 +3,7 @@ services:
     image: jamals86/kalamdb:0.5.0-beta.1
     container_name: kalamdb-chat-starter
     ports:
-      - "8080:8080"
+      - "2900:2900"
     environment:
       # DEV-ONLY. Do not carry these settings into production.
       KALAMDB_SERVER_HOST: "0.0.0.0"

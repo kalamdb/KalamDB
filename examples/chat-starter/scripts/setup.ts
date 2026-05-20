@@ -10,7 +10,7 @@ const log = logger.child({ component: "setup" });
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SQL_FILE = resolve(__dirname, "..", "chat-app.sql");
 
-const URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
+const URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:2900";
 const USER = process.env.KALAMDB_USER ?? "root";
 const PASSWORD = process.env.KALAMDB_PASSWORD ?? "kalamdb-dev-password";
 

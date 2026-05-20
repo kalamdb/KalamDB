@@ -1,4 +1,4 @@
-import type { KalamDBClient, Unsubscribe } from "@kalamdb/client";
+import type { KalamDBClient } from "@kalamdb/client";
 import type { LlmTool, LlmToolCall } from "../lib/llm/index.js";
 import type { Logger } from "../lib/logger.js";
 import { embed, embeddingLiteral } from "../lib/llm/embedding.js";
@@ -108,11 +108,17 @@ export const TOOLS: LlmTool[] = [
 // Dispatch
 // =============================================================================
 
+/** In-flight request_approval waiters, keyed by approval id. The agent's
+ *  approval-resolution consumer (see agent/index.ts) calls the registered
+ *  resolver when the matching chat.approvals row's status flips. */
+export type PendingApprovals = Map<string, (status: string) => void>;
+
 export interface ToolContext {
-  /** KalamDB client authenticated AS the task owner. All SQL the tools
-   *  issue is automatically scoped to that user's partition — no per-call
-   *  EXECUTE AS USER wrapping needed (and the subscription endpoint
-   *  wouldn't accept it anyway). */
+  /** SQL client logged in as the agent's admin identity. Every USER-table
+   *  DML / query in this module is wrapped via
+   *  `client.executeAsUser(sql, ctx.task.user, params)` so KalamDB applies
+   *  the multi-tenant fence server-side. SHARED tables (chat.docs) are
+   *  queried directly. */
   client: KalamDBClient;
   log: Logger;
   task: { id: string; conversation_id: string; message_id: string; user: string };
@@ -121,6 +127,9 @@ export interface ToolContext {
    *  Consumed (set to null) by destructive tools so a single approval can't
    *  authorize two destructive actions. */
   lastApprovalDecision: string | null;
+  /** Shared waiter registry written into by request_approval and drained by
+   *  the chat.approval_resolutions consumer in agent/index.ts. */
+  pendingApprovals: PendingApprovals;
 }
 
 export async function dispatchTool(ctx: ToolContext, call: LlmToolCall): Promise<string> {
@@ -151,25 +160,35 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
       : "The assistant is requesting approval.";
   const approvalId = crypto.randomUUID();
 
-  await ctx.client.insert("chat.approvals", {
-    id: approvalId,
-    conversation_id: ctx.task.conversation_id,
-    message_id: ctx.task.message_id,
-    question,
-    status: "pending",
-    created_at: new Date().toISOString(),
-    resolved_at: null,
-  });
+  // If the task was already aborted before we even got here, short-circuit
+  // before writing to the DB (the resolver never gets registered, so the
+  // approval-resolution consumer would never wake us).
+  if (ctx.signal.aborted) return "rejected";
+
+  await ctx.client.executeAsUser(
+    `INSERT INTO chat.approvals (id, conversation_id, message_id, question, status, created_at, resolved_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    ctx.task.user,
+    [
+      approvalId,
+      ctx.task.conversation_id,
+      ctx.task.message_id,
+      question,
+      "pending",
+      new Date().toISOString(),
+      null,
+    ],
+  );
   ctx.log.info({ approval_id: approvalId, question }, "approval pending");
 
-  // Wire up the resolver state machine BEFORE subscribing — earlier this
-  // lived inside a .then() chain on the same Promise that resolved the
-  // decision, which left a window where `unsubscribe` was still undefined
-  // and an early abort could leak the subscription. ctx.client is
-  // authenticated AS the task owner, so the SELECT runs in the owner's
-  // partition without any EXECUTE AS USER wrapping.
+  // Register a waiter in the shared map. The chat.approval_resolutions
+  // consumer (one per agent process, see agent/index.ts) calls our
+  // resolver when the matching approval row flips to approved / rejected.
+  //
+  // No per-approval live() subscription anymore — that's the whole point
+  // of the topic refactor: O(active-tasks) live subscriptions collapse to
+  // O(1) consumer per process.
   let settled = false;
-  let unsubscribe: Unsubscribe | null = null;
   let resolveDecision!: (value: string) => void;
   const decisionPromise = new Promise<string>((resolve) => {
     resolveDecision = resolve;
@@ -178,49 +197,33 @@ async function handleRequestApproval(ctx: ToolContext, call: LlmToolCall): Promi
     if (settled) return;
     settled = true;
     ctx.signal.removeEventListener("abort", onAbort);
-    if (unsubscribe) void unsubscribe();
+    ctx.pendingApprovals.delete(approvalId);
     resolveDecision(value);
   };
   const onAbort = (): void => {
     ctx.log.info({ approval_id: approvalId }, "approval rejected by abort signal");
     finish("rejected");
   };
-  if (ctx.signal.aborted) {
-    return "rejected";
-  }
   ctx.signal.addEventListener("abort", onAbort, { once: true });
+  ctx.pendingApprovals.set(approvalId, finish);
 
+  // Bounded wait. If the UI never resolves the approval (user closed
+  // the tab, browser crashed, network died), the runConsumer slot would
+  // be held forever and back up the entire task topic. Treat a five-
+  // minute hang as a timeout-rejection so the agent finalizes and the
+  // consumer can commit.
+  const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+  const timeout = setTimeout(() => {
+    ctx.log.warn({ approval_id: approvalId }, "approval timed out — treating as rejected");
+    finish("rejected");
+  }, APPROVAL_TIMEOUT_MS);
   try {
-    unsubscribe = await ctx.client.live<{ id: string; status: string }>(
-      `SELECT id, status FROM chat.approvals WHERE id = ${uuidLit(approvalId)}`,
-      (rows) => {
-        const row = rows[0];
-        if (!row) return;
-        const status = unwrap(row.status);
-        if (status === "approved" || status === "rejected") {
-          ctx.log.info({ approval_id: approvalId, status }, "approval resolved");
-          finish(status);
-        }
-      },
-      {
-        onError: (err) => {
-          ctx.log.error({ approval_id: approvalId, err }, "approval live errored");
-          finish(`error subscribing to approval: ${String(err)}`);
-        },
-      },
-    );
-    // If the abort listener fired *during* the await above, settled is
-    // already true and the unsubscribe handle we just received needs
-    // teardown now (finish() ran before unsubscribe was assigned).
-    if (settled) void unsubscribe();
-  } catch (err) {
-    finish(`error subscribing to approval: ${String(err)}`);
+    const decision = await decisionPromise;
+    ctx.lastApprovalDecision = decision;
+    return decision;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const decision = await decisionPromise;
-
-  ctx.lastApprovalDecision = decision;
-  return decision;
 }
 
 // =============================================================================
@@ -238,10 +241,11 @@ async function handleQueryDatabase(ctx: ToolContext, call: LlmToolCall): Promise
   }
   ctx.log.info({ sql: guard.sql, user: ctx.task.user }, "query_database running");
   try {
-    // ctx.client is authenticated AS the task owner; KalamDB's USER table
-    // partitioning serves rows from that user's partition only. Even if the
-    // LLM tries to inspect another user's data, the multi-tenant fence holds.
-    const res = await ctx.client.query(guard.sql!);
+    // The agent's client is the admin; executeAsUser pins the SELECT to
+    // the task owner's partition. Even if the LLM tries to inspect
+    // another user's data, KalamDB's USER-table partitioning serves rows
+    // from ctx.task.user's partition only.
+    const res = await ctx.client.executeAsUser(guard.sql!, ctx.task.user);
     const plainRows = extractRows(res).map((r) => {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(r)) out[k] = unwrap(v);
@@ -291,12 +295,11 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     "delete_conversation cascade starting",
   );
   try {
-    // Atomic cascade: KalamDB executes BEGIN/COMMIT in a single SQL request
-    // as one transaction (any DELETE failure → automatic rollback → no
-    // half-deleted state). ctx.client is authenticated AS the task owner,
-    // so the entire transaction runs in their partition — even if the LLM
-    // pasted in a conversation_id belonging to another user, KalamDB simply
-    // wouldn't find the row.
+    // Atomic cascade wrapped in one EXECUTE AS USER (BEGIN; ...; COMMIT;).
+    // KalamDB executes BEGIN/COMMIT in a single SQL request as one
+    // transaction — any DELETE failure → automatic rollback → no half-
+    // deleted state. The wrap pins every statement to the task owner's
+    // partition.
     const idLit = uuidLit(id);
     const sql = [
       "BEGIN",
@@ -307,7 +310,7 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
       `DELETE FROM chat.conversations WHERE id = ${idLit}`,
       "COMMIT",
     ].join("; ");
-    await ctx.client.query(sql);
+    await ctx.client.executeAsUser(sql, ctx.task.user);
     ctx.log.info({ conversation_id: id }, "delete_conversation cascade complete");
     return `deleted conversation ${id} and all related rows`;
   } catch (err) {
@@ -344,8 +347,9 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
     const currentTask = uuidLit(ctx.task.id);
     const currentMsg = uuidLit(ctx.task.message_id);
 
-    const countRes = await ctx.client.query(
+    const countRes = await ctx.client.executeAsUser(
       `SELECT count(*) AS n FROM chat.conversations WHERE id != ${currentConv}`,
+      ctx.task.user,
     );
     const n = kdbBigIntToNumber(extractRows(countRes)[0]?.n);
     if (n === 0) {
@@ -368,7 +372,7 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
       `DELETE FROM chat.conversations WHERE id != ${currentConv}`,
       "COMMIT",
     ].join("; ");
-    await ctx.client.query(sql);
+    await ctx.client.executeAsUser(sql, ctx.task.user);
     ctx.log.info({ user: ctx.task.user, n }, "delete_all_conversations complete");
     return `deleted ${n} other conversations and all related rows (the one you're chatting in was kept)`;
   } catch (err) {
@@ -406,6 +410,8 @@ async function handleSearchDocuments(ctx: ToolContext, call: LlmToolCall): Promi
   const vecLit = embeddingLiteral(vec);
 
   try {
+    // chat.docs is SHARED with ACCESS LEVEL PUBLIC — every user can read it,
+    // so we don't need (and can't usefully use) executeAsUser here.
     const res = await ctx.client.query(
       `SELECT id, title, body, source,
               COSINE_DISTANCE(embedding, '${vecLit}') AS distance

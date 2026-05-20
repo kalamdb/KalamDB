@@ -22,7 +22,7 @@ services:
       - kalamdb_data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2900/v1/api/health"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -33,7 +33,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_SERVICE: server
-      KALAMDB_URL: "http://kalamdb:8080"
+      KALAMDB_URL: "http://kalamdb:2900"
       KALAMDB_USER: "root"
       KALAMDB_PASSWORD: "${KALAMDB_ROOT_PASSWORD:?must be set}"
       PORT: "3001"
@@ -54,7 +54,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_SERVICE: agent
-      KALAMDB_URL: "http://kalamdb:8080"
+      KALAMDB_URL: "http://kalamdb:2900"
       KALAMDB_USER: "root"
       KALAMDB_PASSWORD: "${KALAMDB_ROOT_PASSWORD:?must be set}"
       KALAMDB_GROUP: "chat-agents"

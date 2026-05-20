@@ -1,15 +1,25 @@
 -- KalamDB chat starter schema
 -- Run via `npm run setup` (or paste into the SQL editor).
 --
--- All tables are TYPE='USER' to match the kTable.user(...) annotation in
--- src/schema.ts (which expects the standard user system columns: _seq,
--- _deleted, _commit_seq). TYPE='USER' is also required on chat.tasks so the
--- ON INSERT-sourced topic carries user metadata — runConsumer rejects events
--- without it.
+-- Storage classes used here:
+--   * USER tables — per-user-partitioned. Reads/writes for a given user
+--     only see that user's rows. Used for everything durable: conversations,
+--     messages, approvals, tasks. Required on chat.tasks so the
+--     ON-INSERT-sourced topic carries `user` metadata (runConsumer rejects
+--     events without it).
+--   * STREAM table — fast write-optimized storage with a TTL. Used for
+--     typing_tokens: they're produced at high frequency, consumed within
+--     seconds by the UI's live query, and never need long-term retention.
+--     TTL handles cleanup so the agent doesn't need a `clearTypingTokens`
+--     pass after every turn.
+--   * SHARED table — readable by every user. Used for chat.docs (the RAG
+--     corpus is global knowledge).
 
 -- KalamDB doesn't currently accept `DROP TOPIC IF EXISTS` (it parses IF as
 -- the topic name). The setup script tolerates the "Not found" error on a
 -- fresh database — see scripts/setup.ts for the swallow logic.
+DROP TOPIC chat.approval_resolutions;
+DROP TOPIC chat.task_cancels;
 DROP TOPIC chat.task_events;
 DROP NAMESPACE IF EXISTS chat;
 CREATE NAMESPACE chat;
@@ -31,7 +41,10 @@ CREATE TABLE chat.messages (
   updated_at       TIMESTAMP NOT NULL
 ) WITH (TYPE = 'USER');
 
--- Cleared by the agent when a message reaches a terminal status.
+-- STREAM table: write-optimized, TTL-expired. The agent INSERTs token deltas
+-- here at LLM streaming speed and the UI live-queries them. After the
+-- message finalizes, the rows are noise — letting KalamDB's TTL sweep
+-- them costs less IO than a per-turn DELETE pass.
 CREATE TABLE chat.typing_tokens (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -39,9 +52,11 @@ CREATE TABLE chat.typing_tokens (
   body             TEXT NOT NULL,
   seq              INTEGER NOT NULL,
   created_at       TIMESTAMP NOT NULL
-) WITH (TYPE = 'USER');
+) WITH (TYPE = 'STREAM', TTL_SECONDS = 120);
 
--- Human-in-the-loop checkpoints the agent waits on.
+-- Human-in-the-loop checkpoints. The agent inserts a row, waits on the
+-- chat.approval_resolutions topic (sourced ON UPDATE WHERE status flips),
+-- and proceeds when the UI flips status to 'approved' / 'rejected'.
 CREATE TABLE chat.approvals (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -52,9 +67,9 @@ CREATE TABLE chat.approvals (
   resolved_at      TIMESTAMP
 ) WITH (TYPE = 'USER');
 
--- The agent watches its own task row; Stop button = UPDATE setting
--- is_cancelled=true. Sourced into chat.task_events on INSERT so a fresh
--- agent process picks up new work via runConsumer (Kafka-shaped work queue).
+-- One row per assistant turn. The Stop button flips is_cancelled=true; the
+-- agent reacts to the chat.task_cancels topic (sourced ON UPDATE WHERE
+-- is_cancelled = true) and aborts the matching in-flight task.
 CREATE TABLE chat.tasks (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
@@ -64,9 +79,31 @@ CREATE TABLE chat.tasks (
   finished_at      TIMESTAMP
 ) WITH (TYPE = 'USER');
 
+-- ----------------------------------------------------------------------------
+-- Topics
+-- ----------------------------------------------------------------------------
+-- New tasks → agent work queue. ON INSERT means each freshly-inserted task
+-- row becomes a topic event the agent's runConsumer picks up.
 CREATE TOPIC chat.task_events;
 ALTER TOPIC chat.task_events ADD SOURCE chat.tasks ON INSERT;
 
+-- Stop clicks → cancel notifications. Instead of opening a per-task live()
+-- subscription (which doesn't scale and can't be wrapped in EXECUTE AS USER),
+-- the agent runs one consumer on this topic and aborts the matching local
+-- AbortController for every cancel event across all users.
+CREATE TOPIC chat.task_cancels;
+ALTER TOPIC chat.task_cancels ADD SOURCE chat.tasks ON UPDATE WHERE is_cancelled = true;
+
+-- Approval clicks → resolution events. The agent registers a pending
+-- callback per request_approval invocation and resolves it when the
+-- matching topic event arrives. Same scalability win as task_cancels.
+CREATE TOPIC chat.approval_resolutions;
+ALTER TOPIC chat.approval_resolutions ADD SOURCE chat.approvals
+  ON UPDATE WHERE status IN ('approved', 'rejected');
+
+-- ----------------------------------------------------------------------------
+-- RAG corpus
+-- ----------------------------------------------------------------------------
 -- Knowledge base for RAG. SHARED (not USER) because the docs are global
 -- knowledge — every conversation reads from the same corpus. The
 -- EMBEDDING(384) column stores per-document vectors; the COSINE index

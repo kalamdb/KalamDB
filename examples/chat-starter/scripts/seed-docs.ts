@@ -12,7 +12,7 @@ import { SEED_SOURCE_TAG } from "../src/lib/constants.js";
 
 const log = logger.child({ component: "seed-docs" });
 
-const URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
+const URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:2900";
 const USER = process.env.KALAMDB_USER ?? "root";
 const PASSWORD = process.env.KALAMDB_PASSWORD ?? "kalamdb-dev-password";
 

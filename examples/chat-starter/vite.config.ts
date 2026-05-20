@@ -5,7 +5,7 @@ import path from "node:path";
 
 // Browser-side env vars only — secrets must never appear in import.meta.env.
 // KALAMDB_URL is needed at proxy-config time; it's not bundled into the app.
-const kalamUrl = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
+const kalamUrl = process.env.KALAMDB_URL ?? "http://127.0.0.1:2900";
 const apiUrl = process.env.API_URL ?? "http://127.0.0.1:3001";
 
 export default defineConfig({

@@ -26,6 +26,16 @@ function makeStubClient(
         if (opts.queryThrows) throw opts.queryThrows;
         return opts.queryResult ?? { results: [{ named_rows: [] }] };
       },
+      // The agent always goes through executeAsUser for USER-table SQL
+      // (search_documents on chat.docs is the only plain query). For the
+      // unit tests we don't care about the wrapping itself — just that
+      // the right SQL gets issued — so the stub mirrors query()'s
+      // behavior and tracks the call into the same `queries` array.
+      executeAsUser: async (sql: string, _user: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (opts.queryThrows) throw opts.queryThrows;
+        return opts.queryResult ?? { results: [{ named_rows: [] }] };
+      },
       // unused but typed
       live: async () => () => undefined,
       update: async () => undefined,
@@ -46,6 +56,7 @@ function makeCtx(client: ToolContext["client"]): ToolContext {
     },
     signal: new AbortController().signal,
     lastApprovalDecision: null,
+    pendingApprovals: new Map(),
   };
 }
 

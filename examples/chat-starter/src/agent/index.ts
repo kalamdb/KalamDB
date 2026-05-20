@@ -14,19 +14,20 @@ import {
 } from "../lib/llm/index.js";
 import { withRetry } from "../lib/llm/retry.js";
 import { withSlowdown } from "../lib/llm/slowdown.js";
-import { UUID_RE, uuidLit } from "./ids.js";
+import { UUID_RE } from "./ids.js";
 import { logger } from "../lib/logger.js";
 import { USER_RE } from "../lib/user.js";
 import { extractRows, unwrap } from "../lib/kdb-row.js";
-import { DEMO_USER_PASSWORDS, type DemoUser } from "../lib/demo-users.js";
-import { dispatchTool, TOOLS, type ToolContext } from "./tools.js";
+import { dispatchTool, TOOLS, type ToolContext, type PendingApprovals } from "./tools.js";
 
 const log = logger.child({ component: "agent" });
 
-const KALAMDB_URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:8080";
+const KALAMDB_URL = process.env.KALAMDB_URL ?? "http://127.0.0.1:2900";
 const ADMIN_USER = process.env.KALAMDB_USER ?? "root";
 const ADMIN_PASSWORD = process.env.KALAMDB_PASSWORD ?? "kalamdb-dev-password";
 const TASK_TOPIC = process.env.KALAMDB_TASK_TOPIC ?? "chat.task_events";
+const CANCEL_TOPIC = process.env.KALAMDB_CANCEL_TOPIC ?? "chat.task_cancels";
+const APPROVAL_TOPIC = process.env.KALAMDB_APPROVAL_TOPIC ?? "chat.approval_resolutions";
 const GROUP_ID = process.env.KALAMDB_GROUP ?? "chat-agents";
 
 /** Hard cap on assistant-turn iterations (text → tool calls → text → ...) per
@@ -51,7 +52,7 @@ Five tables; all use string UUID primary keys unless noted.
     role:   'user' | 'assistant' | 'system'
     status: 'pending' | 'streaming' | 'final' | 'cancelled' | 'error'
 - chat.typing_tokens(id, conversation_id, message_id, body, seq, created_at)
-    Streaming token deltas. Cleared when the message reaches a terminal status.
+    Streaming token deltas. TTL-expired by KalamDB.
 - chat.approvals(id, conversation_id, message_id, question, status, created_at, resolved_at)
     status: 'pending' | 'approved' | 'rejected'
 - chat.tasks(id, conversation_id, message_id, is_cancelled, started_at, finished_at)
@@ -126,85 +127,61 @@ interface Task {
   conversation_id: string;
   message_id: string;
   /** KalamDB user that owns this task. Sourced from the consumer change
-   *  event's connecting-identity metadata. The agent maintains a per-user
-   *  client cache (see getUserClient below) and routes every SQL operation
-   *  for this task through that user's client, so the per-user partitioning
-   *  of the chat.* USER tables enforces tenant isolation end-to-end.
-   *
-   *  Why per-user clients instead of `EXECUTE AS USER (...)` wrapping?
-   *  KalamDB's live-subscription endpoint rejects EXECUTE AS USER in the
-   *  subscription SQL (it only parses bare statements), so any approach
-   *  that tries to wrap subscription SQL fails at the protocol level. A
-   *  client authenticated AS the user works for both query() and live(). */
+   *  event's connecting-identity metadata. Every SQL the agent issues on
+   *  behalf of this task is wrapped in `executeAsUser(sql, task.user, …)`
+   *  so the per-user partitioning of the chat.* USER tables enforces
+   *  tenant isolation end-to-end without the agent having to log in as
+   *  every individual user. */
   user: string;
 }
 
 const activeControllers = new Map<string, AbortController>();
 
-/** Looks up the password for a demo user. Real deployments swap this for
- *  a token-exchange / impersonation call against KalamDB so the agent
- *  doesn't have to hold user passwords. */
-function passwordForUser(user: string): string {
-  if (Object.prototype.hasOwnProperty.call(DEMO_USER_PASSWORDS, user)) {
-    return DEMO_USER_PASSWORDS[user as DemoUser];
-  }
-  if (user === ADMIN_USER) return ADMIN_PASSWORD;
-  throw new Error(`No password configured for user '${user}'`);
-}
+/** Map of in-flight `request_approval` waiters keyed by approval id. The
+ *  approval-resolution consumer (see main()) calls the resolver when the
+ *  matching `chat.approvals` row's status flips to approved / rejected. */
+const pendingApprovals: PendingApprovals = new Map();
 
-/** Returns a KalamDB client authenticated AS `user`, creating + connecting it
- *  on first use and caching it for subsequent tasks owned by the same user.
- *  The cache lives for the agent process lifetime; clients are torn down on
- *  shutdown. */
-function makeUserClientPool(): {
-  get: (user: string) => Promise<KalamDBClient>;
-  disconnectAll: () => Promise<void>;
-} {
-  const cache = new Map<string, Promise<KalamDBClient>>();
-  return {
-    async get(user: string): Promise<KalamDBClient> {
-      const existing = cache.get(user);
-      if (existing) return existing;
-      const password = passwordForUser(user);
-      const promise = (async (): Promise<KalamDBClient> => {
-        const client = createClient({
-          url: KALAMDB_URL,
-          authProvider: async () => Auth.basic(user, password),
-          disableCompression: true,
-        });
-        await client.connect();
-        return client;
-      })();
-      cache.set(user, promise);
-      try {
-        return await promise;
-      } catch (err) {
-        // Don't keep a rejected promise in the cache — next task should retry.
-        cache.delete(user);
-        throw err;
-      }
-    },
-    async disconnectAll(): Promise<void> {
-      for (const promise of cache.values()) {
-        await promise.then((c) => c.disconnect()).catch(() => undefined);
-      }
-      cache.clear();
-    },
-  };
-}
+// Wire-format shapes for the three topics the agent consumes. KalamDB
+// delivers consumer-event cells as plain JS primitives (via JSON), so
+// these types narrow `change.data.X` from `unknown` to the actual
+// runtime type — typo protection on field names + correct value types
+// at the call site. No `unwrap()` needed for consumer events; that
+// helper is for `client.query()` results, which use a different layer.
+type TaskEventRow = {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+};
+
+type TaskCancelRow = {
+  id: string;
+};
+
+type ApprovalResolutionRow = {
+  id: string;
+  status: string;
+};
 
 async function main(): Promise<void> {
-  // The consumer client drives runConsumer (topic pulls + acks) under the
-  // agent's admin identity — topic membership is global, not per-tenant.
+  // One consumer client for all three topics (task events + cancels +
+  // approval resolutions). Topic membership is global, not per-tenant.
   const consumerClient = createConsumerClient({
     url: KALAMDB_URL,
     authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASSWORD),
     disableCompression: true,
   });
-  // Per-user clients for all SQL the agent issues on behalf of a task.
-  // See Task.user docstring for why this isn't a single root client +
-  // EXECUTE AS USER wrapping.
-  const userClients = makeUserClientPool();
+  // One SQL client, authenticated as the admin. Every DML / query the agent
+  // issues on behalf of a task is wrapped in
+  // `executeAsUser(sql, task.user, …)`, which KalamDB rewrites to
+  // `EXECUTE AS USER '<user>' (<sql>)` server-side. Single connection
+  // replaces the previous per-user client pool.
+  const sqlClient = createClient({
+    url: KALAMDB_URL,
+    authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASSWORD),
+    disableCompression: true,
+  });
+  await sqlClient.connect();
 
   let llm = withRetry(await getLlmAdapter(), undefined, log);
   // Recorder-only knob: when set, wraps the adapter with a per-token sleep so
@@ -215,7 +192,15 @@ async function main(): Promise<void> {
     llm = withSlowdown(llm, slowdownMs);
     log.warn({ slowdown_ms: slowdownMs }, "recorder slowdown active — DO NOT USE IN PRODUCTION");
   }
-  log.info({ url: KALAMDB_URL, llm: llm.name, topic: TASK_TOPIC, group: GROUP_ID }, "agent ready");
+  log.info(
+    {
+      url: KALAMDB_URL,
+      llm: llm.name,
+      topics: { task: TASK_TOPIC, cancel: CANCEL_TOPIC, approval: APPROVAL_TOPIC },
+      group: GROUP_ID,
+    },
+    "agent ready",
+  );
 
   process.on("unhandledRejection", (reason) => {
     log.error({ err: reason }, "unhandled rejection");
@@ -226,16 +211,40 @@ async function main(): Promise<void> {
     log.info({ signal }, "shutting down");
     stop.abort();
     for (const ctrl of activeControllers.values()) ctrl.abort();
-    await userClients.disconnectAll();
+    await sqlClient.disconnect().catch(() => undefined);
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-  // Work queue. The topic is sourced from chat.tasks ON INSERT, so each new
-  // task arrives here with at-least-once delivery and group-based load
-  // balancing across replicas of this process.
-  await runConsumer<Record<string, unknown>>({
+  // Three consumers run concurrently:
+  //
+  //   1. chat.task_events (ON INSERT)   — work queue. One agent process in
+  //      the group picks up each new task and drives the LLM.
+  //   2. chat.task_cancels (ON UPDATE)  — Stop-button signal. One consumer
+  //      receives every cancellation across all users and aborts the
+  //      matching local AbortController.
+  //   3. chat.approval_resolutions      — Approve/Reject signal. Resolves
+  //      pending `request_approval` waiters when the UI flips the approval
+  //      row's status.
+  //
+  // Each pair (cancels, approvals) is GLOBAL across users — that's the
+  // architectural win over per-task live() subscriptions: O(1) connections
+  // instead of O(open-tasks).
+  await Promise.all([
+    runTaskConsumer(consumerClient, sqlClient, llm, stop.signal),
+    runCancelConsumer(consumerClient, stop.signal),
+    runApprovalResolutionConsumer(consumerClient, stop.signal),
+  ]);
+}
+
+async function runTaskConsumer(
+  consumerClient: ReturnType<typeof createConsumerClient>,
+  sqlClient: KalamDBClient,
+  llm: LlmAdapter,
+  stopSignal: AbortSignal,
+): Promise<void> {
+  await runConsumer<TaskEventRow>({
     client: consumerClient,
     name: "chat-agent",
     topic: TASK_TOPIC,
@@ -243,20 +252,15 @@ async function main(): Promise<void> {
     start: "earliest",
     batchSize: 10,
     timeoutSeconds: 30,
-    stopSignal: stop.signal,
+    stopSignal,
     onChange: async (
-      _ctx: ConsumerRunContext<Record<string, unknown>>,
-      change: ConsumerChange<Record<string, unknown>>,
+      _ctx: ConsumerRunContext<TaskEventRow>,
+      change: ConsumerChange<TaskEventRow>,
     ) => {
-      const row = change.data;
-      // change.user carries the connecting identity that inserted the task
-      // row (KalamDB attaches it to every event from a USER-typed source
-      // table). We pin every SQL operation for this task to that identity
-      // via a per-user client.
       const task: Task = {
-        id: String(unwrap(row.id) ?? ""),
-        conversation_id: String(unwrap(row.conversation_id) ?? ""),
-        message_id: String(unwrap(row.message_id) ?? ""),
+        id: change.data.id,
+        conversation_id: change.data.conversation_id,
+        message_id: change.data.message_id,
         user: String(change.user ?? ""),
       };
       if (
@@ -265,49 +269,112 @@ async function main(): Promise<void> {
         !UUID_RE.test(task.message_id) ||
         !USER_RE.test(task.user)
       ) {
-        log.warn({ row, user: task.user }, "dropping malformed task event");
+        log.warn({ row: change.data, user: task.user }, "dropping malformed task event");
         return;
       }
       if (activeControllers.has(task.id)) return;
 
-      let client: KalamDBClient;
-      try {
-        client = await userClients.get(task.user);
-      } catch (err) {
-        log.error({ err, user: task.user, task_id: task.id }, "could not acquire per-user client");
-        return;
-      }
-
-      // At-least-once redelivery: skip tasks already finished or cancelled.
-      // isTaskTerminal returns null when the row hasn't become readable yet
-      // (rare topic-vs-table read-visibility race) — treat that as "not
-      // terminal, proceed", so the worker still picks the work up.
-      const terminal = await isTaskTerminal(client, task.id, log);
+      // At-least-once redelivery: skip tasks already finished or
+      // cancelled. If the task is cancelled-but-not-finalized (Stop
+      // clicked before any agent attached, or a prior attempt crashed),
+      // finalize it so the UI clears.
+      const terminal = await isTaskTerminal(sqlClient, task.user, task.id, log);
       if (terminal === true) {
-        // Cancelled-but-not-finalized: the user clicked Stop before any
-        // agent picked this task up (or a previous attempt died after
-        // setting is_cancelled but before finalizing). Finalize now so the
-        // UI's "agent busy" indicator clears.
-        await finalizeStuckCancelled(client, task.id, task.message_id, log).catch(() => undefined);
+        await finalizeStuckCancelled(sqlClient, task.user, task.id, task.message_id, log).catch(
+          () => undefined,
+        );
         return;
       }
 
       const ctrl = new AbortController();
       activeControllers.set(task.id, ctrl);
       try {
-        await runTask(client, llm, task, ctrl);
+        await runTask(sqlClient, llm, task, ctrl);
       } finally {
         activeControllers.delete(task.id);
       }
     },
     onConnectionRetry: ({ attempt, backoffMs, error }) => {
-      log.warn({ attempt, backoffMs, err: error }, "consumer reconnecting");
+      log.warn({ attempt, backoffMs, err: error }, "task consumer reconnecting");
     },
     onConnectionRestored: ({ attempt }) => {
-      log.info({ attempt }, "consumer reconnected");
+      log.info({ attempt }, "task consumer reconnected");
     },
     onConnectionError: ({ error, attempt }) => {
-      log.error({ attempt, err: error }, "consumer giving up");
+      log.error({ attempt, err: error }, "task consumer giving up");
+    },
+  });
+}
+
+async function runCancelConsumer(
+  consumerClient: ReturnType<typeof createConsumerClient>,
+  stopSignal: AbortSignal,
+): Promise<void> {
+  // Replaces the previous N per-task live() subscriptions. One consumer
+  // here receives every chat.tasks UPDATE WHERE is_cancelled=true across
+  // every user; we look the task_id up in activeControllers and abort.
+  await runConsumer<TaskCancelRow>({
+    client: consumerClient,
+    name: "chat-agent-cancels",
+    topic: CANCEL_TOPIC,
+    // Each replica needs its OWN view of cancels (the abort signal is
+    // local to the process holding the task), so we use a unique group
+    // per process. With a shared group only ONE replica would see the
+    // cancel and the others' tasks would run on.
+    groupId: `chat-agents-cancels-${process.pid}`,
+    start: "latest",
+    batchSize: 50,
+    timeoutSeconds: 30,
+    stopSignal,
+    onChange: async (
+      _ctx: ConsumerRunContext<TaskCancelRow>,
+      change: ConsumerChange<TaskCancelRow>,
+    ) => {
+      const taskId = change.data.id;
+      if (!UUID_RE.test(taskId)) return;
+      const ctrl = activeControllers.get(taskId);
+      if (!ctrl) return; // task isn't running on this replica
+      if (ctrl.signal.aborted) return;
+      log.info({ task_id: taskId, user: String(change.user ?? "") }, "cancel signal received");
+      ctrl.abort();
+    },
+    onConnectionError: ({ error, attempt }) => {
+      log.error({ attempt, err: error }, "cancel consumer giving up");
+    },
+  });
+}
+
+async function runApprovalResolutionConsumer(
+  consumerClient: ReturnType<typeof createConsumerClient>,
+  stopSignal: AbortSignal,
+): Promise<void> {
+  // Replaces the previous per-approval live() subscription inside
+  // request_approval. The tool registers a resolver in pendingApprovals
+  // keyed by approval id; we fire it when the matching topic event lands.
+  await runConsumer<ApprovalResolutionRow>({
+    client: consumerClient,
+    name: "chat-agent-approvals",
+    topic: APPROVAL_TOPIC,
+    groupId: `chat-agents-approvals-${process.pid}`,
+    start: "latest",
+    batchSize: 50,
+    timeoutSeconds: 30,
+    stopSignal,
+    onChange: async (
+      _ctx: ConsumerRunContext<ApprovalResolutionRow>,
+      change: ConsumerChange<ApprovalResolutionRow>,
+    ) => {
+      const approvalId = change.data.id;
+      const status = change.data.status;
+      if (!UUID_RE.test(approvalId)) return;
+      if (status !== "approved" && status !== "rejected") return;
+      const resolver = pendingApprovals.get(approvalId);
+      if (!resolver) return; // not waiting on this approval on this replica
+      log.info({ approval_id: approvalId, status }, "approval resolved");
+      resolver(status);
+    },
+    onConnectionError: ({ error, attempt }) => {
+      log.error({ attempt, err: error }, "approval consumer giving up");
     },
   });
 }
@@ -326,56 +393,6 @@ async function runTask(
   });
   tlog.info("task started");
 
-  // Per-task cancellation subscription. `client` is already authenticated AS
-  // task.user, so the SELECT runs in the right partition without any
-  // EXECUTE AS USER wrapping (which the subscription endpoint rejects).
-  //
-  // We treat THREE signals as a cancel:
-  //   1. is_cancelled flipped to true (the Stop button's UPDATE).
-  //   2. The task row disappeared after we'd observed it — this happens
-  //      when delete_conversation cascades or a parallel tab nukes the
-  //      conversation. Without this guard, the agent would keep streaming
-  //      against a deleted conversation, burning LLM tokens and writing
-  //      orphan typing_tokens rows the UI never shows.
-  //   3. (Implicit) the controller's abort signal — checked elsewhere.
-  //
-  // `observedRow` is the "we saw it once" latch needed for signal 2: the
-  // very first callback fires with the initial result, which may be empty
-  // for the topic-vs-table read-visibility race even before any delete.
-  // Without the latch, that would self-cancel every task on attach.
-  let observedRow = false;
-  const cancelUnsub = await client.live<{ id: string; is_cancelled: boolean | string }>(
-    `SELECT id, is_cancelled FROM chat.tasks WHERE id = ${uuidLit(task.id)}`,
-    (rows) => {
-      if (rows.length > 0) {
-        observedRow = true;
-        for (const row of rows) {
-          const cancelled = unwrap(row.is_cancelled);
-          if ((cancelled === true || cancelled === "true") && !controller.signal.aborted) {
-            tlog.info("cancel signal received (is_cancelled flipped)");
-            controller.abort();
-          }
-        }
-      } else if (observedRow && !controller.signal.aborted) {
-        tlog.info("cancel signal received (task row deleted — likely conversation cascade)");
-        controller.abort();
-      }
-    },
-  );
-
-  // Startup race: between isTaskTerminal returning false and the live sub
-  // attaching, the user could click Stop. Re-read the row now that we're
-  // subscribed and bail before doing any writes — but still finalize, or
-  // the task row's finished_at stays null and the UI's "agent busy"
-  // indicator never clears.
-  const stillTerminal = await isTaskTerminal(client, task.id, tlog);
-  if (stillTerminal === true) {
-    tlog.info("task became terminal during subscription attach — bailing");
-    await cancelUnsub().catch(() => undefined);
-    await finalizeStuckCancelled(client, task.id, task.message_id, tlog).catch(() => undefined);
-    return;
-  }
-
   const assembled: string[] = [];
   let buffer = "";
   let flushTimer: NodeJS.Timeout | null = null;
@@ -388,15 +405,14 @@ async function runTask(
       flushTimer = null;
     }
     buffer = "";
-    await cancelUnsub().catch(() => undefined);
-    await clearTypingTokens(client, task.message_id).catch(() => undefined);
-    await finalizeTask(client, task.id).catch(() => undefined);
+    // No clearTypingTokens — chat.typing_tokens is a STREAM table with TTL.
+    await finalizeTask(client, task.user, task.id).catch(() => undefined);
     tlog.info({ final_status: finalStatus }, "task complete");
   };
 
   try {
     await ensureAssistantStub(client, task);
-    await markStreaming(client, task.message_id);
+    await markStreaming(client, task.user, task.message_id);
 
     // The LLM needs to know which conversation it's in so delete_conversation,
     // query_database etc. can scope to the right id. Inject it as a separate
@@ -408,7 +424,7 @@ async function runTask(
         content: `# Current conversation\nconversation_id = ${task.conversation_id}`,
       },
     ];
-    baseMessages.push(...(await fetchHistory(client, task.conversation_id)));
+    baseMessages.push(...(await fetchHistory(client, task.user, task.conversation_id)));
     tlog.debug({ history: baseMessages.length - 2 }, "starting LLM turn");
 
     const flush = async () => {
@@ -420,14 +436,19 @@ async function runTask(
       const body = buffer;
       buffer = "";
       try {
-        await client.insert("chat.typing_tokens", {
-          id: crypto.randomUUID(),
-          conversation_id: task.conversation_id,
-          message_id: task.message_id,
-          body,
-          seq: ++seq,
-          created_at: new Date().toISOString(),
-        });
+        await client.executeAsUser(
+          `INSERT INTO chat.typing_tokens (id, conversation_id, message_id, body, seq, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          task.user,
+          [
+            crypto.randomUUID(),
+            task.conversation_id,
+            task.message_id,
+            body,
+            ++seq,
+            new Date().toISOString(),
+          ],
+        );
       } catch (e) {
         tlog.error({ err: e }, "typing-token flush failed");
       }
@@ -450,6 +471,7 @@ async function runTask(
       task,
       signal: controller.signal,
       lastApprovalDecision: null,
+      pendingApprovals,
     };
     let turn = 0;
     while (turn < MAX_TOOL_TURNS) {
@@ -459,7 +481,7 @@ async function runTask(
       // agent would fire one more LLM request before noticing.
       if (controller.signal.aborted) {
         finalStatus = "cancelled";
-        await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+        await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "cancelled");
         return;
       }
       turn++;
@@ -485,25 +507,37 @@ async function runTask(
       } catch (error) {
         if (controller.signal.aborted) {
           finalStatus = "cancelled";
-          await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+          await finalizeMessage(
+            client,
+            task.user,
+            task.message_id,
+            assembled.join(""),
+            "cancelled",
+          );
           return;
         }
         tlog.error({ err: error }, "llm error");
         finalStatus = "error";
-        await finalizeMessage(client, task.message_id, "Sorry — something went wrong.", "error");
+        await finalizeMessage(
+          client,
+          task.user,
+          task.message_id,
+          "Sorry — something went wrong.",
+          "error",
+        );
         return;
       }
 
       if (controller.signal.aborted) {
         finalStatus = "cancelled";
-        await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+        await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "cancelled");
         return;
       }
 
       if (stopReason !== "tool_calls" || pendingCalls.length === 0) {
         await flush();
         finalStatus = "final";
-        await finalizeMessage(client, task.message_id, assembled.join(""), "final");
+        await finalizeMessage(client, task.user, task.message_id, assembled.join(""), "final");
         return;
       }
 
@@ -522,7 +556,13 @@ async function runTask(
         });
         if (controller.signal.aborted) {
           finalStatus = "cancelled";
-          await finalizeMessage(client, task.message_id, assembled.join(""), "cancelled");
+          await finalizeMessage(
+            client,
+            task.user,
+            task.message_id,
+            assembled.join(""),
+            "cancelled",
+          );
           return;
         }
       }
@@ -531,6 +571,7 @@ async function runTask(
     finalStatus = "final";
     await finalizeMessage(
       client,
+      task.user,
       task.message_id,
       assembled.join("") + "\n\n(Agent exceeded tool-call turn limit.)",
       "final",
@@ -540,12 +581,17 @@ async function runTask(
   }
 }
 
-async function fetchHistory(client: KalamDBClient, conversationId: string): Promise<LlmMessage[]> {
-  const res = await client.query(
+async function fetchHistory(
+  client: KalamDBClient,
+  user: string,
+  conversationId: string,
+): Promise<LlmMessage[]> {
+  const res = await client.executeAsUser(
     `SELECT role, body FROM chat.messages
        WHERE conversation_id = $1
          AND status IN ('final', 'streaming')
        ORDER BY created_at ASC`,
+    user,
     [conversationId],
   );
   const out: LlmMessage[] = [];
@@ -568,12 +614,15 @@ async function fetchHistory(client: KalamDBClient, conversationId: string): Prom
  */
 async function isTaskTerminal(
   client: KalamDBClient,
+  user: string,
   taskId: string,
   log_: typeof log,
 ): Promise<boolean | null> {
-  const res = await client.query(`SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`, [
-    taskId,
-  ]);
+  const res = await client.executeAsUser(
+    `SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`,
+    user,
+    [taskId],
+  );
   const row = extractRows(res)[0];
   if (!row) {
     log_.warn({ task_id: taskId }, "task row not yet visible after topic event — proceeding");
@@ -591,19 +640,18 @@ async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<v
   //      consumers in the same group transiently both see the event. We
   //      catch any "duplicate key / already exists" error from KalamDB and
   //      treat it as success; anything else propagates.
-  const res = await client.query(`SELECT id FROM chat.messages WHERE id = $1`, [task.message_id]);
+  const res = await client.executeAsUser(`SELECT id FROM chat.messages WHERE id = $1`, task.user, [
+    task.message_id,
+  ]);
   if (extractRows(res).length > 0) return;
   const now = new Date().toISOString();
   try {
-    await client.insert("chat.messages", {
-      id: task.message_id,
-      conversation_id: task.conversation_id,
-      role: "assistant",
-      body: "",
-      status: "pending",
-      created_at: now,
-      updated_at: now,
-    });
+    await client.executeAsUser(
+      `INSERT INTO chat.messages (id, conversation_id, role, body, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      task.user,
+      [task.message_id, task.conversation_id, "assistant", "", "pending", now, now],
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/duplicate|already exists|unique|primary key/i.test(msg)) {
@@ -614,34 +662,37 @@ async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<v
   }
 }
 
-async function markStreaming(client: KalamDBClient, messageId: string): Promise<void> {
-  await client.update("chat.messages", messageId, {
-    status: "streaming",
-    updated_at: new Date().toISOString(),
-  });
+async function markStreaming(
+  client: KalamDBClient,
+  user: string,
+  messageId: string,
+): Promise<void> {
+  await client.executeAsUser(
+    `UPDATE chat.messages SET status = $1, updated_at = $2 WHERE id = $3`,
+    user,
+    ["streaming", new Date().toISOString(), messageId],
+  );
 }
 
 async function finalizeMessage(
   client: KalamDBClient,
+  user: string,
   messageId: string,
   body: string,
   status: "final" | "cancelled" | "error",
 ): Promise<void> {
-  await client.update("chat.messages", messageId, {
-    body,
-    status,
-    updated_at: new Date().toISOString(),
-  });
+  await client.executeAsUser(
+    `UPDATE chat.messages SET body = $1, status = $2, updated_at = $3 WHERE id = $4`,
+    user,
+    [body, status, new Date().toISOString(), messageId],
+  );
 }
 
-async function finalizeTask(client: KalamDBClient, taskId: string): Promise<void> {
-  await client.update("chat.tasks", taskId, {
-    finished_at: new Date().toISOString(),
-  });
-}
-
-async function clearTypingTokens(client: KalamDBClient, messageId: string): Promise<void> {
-  await client.query(`DELETE FROM chat.typing_tokens WHERE message_id = $1`, [messageId]);
+async function finalizeTask(client: KalamDBClient, user: string, taskId: string): Promise<void> {
+  await client.executeAsUser(`UPDATE chat.tasks SET finished_at = $1 WHERE id = $2`, user, [
+    new Date().toISOString(),
+    taskId,
+  ]);
 }
 
 /**
@@ -656,23 +707,26 @@ async function clearTypingTokens(client: KalamDBClient, messageId: string): Prom
  */
 async function finalizeStuckCancelled(
   client: KalamDBClient,
+  user: string,
   taskId: string,
   messageId: string,
   log_: typeof log,
 ): Promise<void> {
   log_.info({ task_id: taskId }, "finalizing stuck cancelled task");
-  await client.update("chat.tasks", taskId, {
-    finished_at: new Date().toISOString(),
-  });
+  await client.executeAsUser(`UPDATE chat.tasks SET finished_at = $1 WHERE id = $2`, user, [
+    new Date().toISOString(),
+    taskId,
+  ]);
   // The assistant message stub may or may not exist (depends on whether a
   // prior delivery attempt got far enough to insert it). UPDATE on a
   // missing row is a no-op, and the status filter keeps us from clobbering
   // a message that's already final.
   await client
-    .query(
+    .executeAsUser(
       `UPDATE chat.messages
          SET status = 'cancelled', updated_at = $1
        WHERE id = $2 AND status IN ('pending', 'streaming')`,
+      user,
       [new Date().toISOString(), messageId],
     )
     .catch(() => undefined);

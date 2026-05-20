@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The tests assume the dev stack is up: KalamDB at :8080, the backend +
+// The tests assume the dev stack is up: KalamDB at :2900, the backend +
 // agent + vite running. `npm run dev` boots all three. The tests do NOT
 // auto-start the stack — the user is expected to run `npm run setup`
 // followed by `npm run dev` in a separate terminal, then `npm test`.

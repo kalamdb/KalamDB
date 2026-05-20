@@ -20,7 +20,7 @@ import { logger } from "../src/lib/logger.js";
 const log = logger.child({ component: "server" });
 
 const DEFAULTS = {
-  url: "http://127.0.0.1:8080",
+  url: "http://127.0.0.1:2900",
   user: "root",
   password: "kalamdb-dev-password",
   port: 3001,

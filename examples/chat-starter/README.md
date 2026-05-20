@@ -24,7 +24,7 @@ This is a starter you can read end-to-end in an hour and lift into your own prod
 
 | Port | Process      | What it is                                      |
 | ---- | ------------ | ----------------------------------------------- |
-| 8080 | KalamDB      | The database (`docker compose up -d`)           |
+| 2900 | KalamDB      | The database (`docker compose up -d`)           |
 | 5173 | Vite         | The frontend                                    |
 | 3001 | Node backend | Token broker (`/api/auth/token`) + health proxy |
 
@@ -35,7 +35,7 @@ If any of these clash with something you're already running, override them in `.
 ```bash
 cd examples/chat-starter
 
-# 1. Boot KalamDB locally (port 8080).
+# 1. Boot KalamDB locally (port 2900).
 docker compose up -d
 
 # 2. Configure. Drop in an OPENAI_API_KEY or ANTHROPIC_API_KEY if you have one;
