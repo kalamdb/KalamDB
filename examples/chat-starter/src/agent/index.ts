@@ -329,15 +329,36 @@ async function runTask(
   // Per-task cancellation subscription. `client` is already authenticated AS
   // task.user, so the SELECT runs in the right partition without any
   // EXECUTE AS USER wrapping (which the subscription endpoint rejects).
+  //
+  // We treat THREE signals as a cancel:
+  //   1. is_cancelled flipped to true (the Stop button's UPDATE).
+  //   2. The task row disappeared after we'd observed it — this happens
+  //      when delete_conversation cascades or a parallel tab nukes the
+  //      conversation. Without this guard, the agent would keep streaming
+  //      against a deleted conversation, burning LLM tokens and writing
+  //      orphan typing_tokens rows the UI never shows.
+  //   3. (Implicit) the controller's abort signal — checked elsewhere.
+  //
+  // `observedRow` is the "we saw it once" latch needed for signal 2: the
+  // very first callback fires with the initial result, which may be empty
+  // for the topic-vs-table read-visibility race even before any delete.
+  // Without the latch, that would self-cancel every task on attach.
+  let observedRow = false;
   const cancelUnsub = await client.live<{ id: string; is_cancelled: boolean | string }>(
     `SELECT id, is_cancelled FROM chat.tasks WHERE id = ${uuidLit(task.id)}`,
     (rows) => {
-      for (const row of rows) {
-        const cancelled = unwrap(row.is_cancelled);
-        if ((cancelled === true || cancelled === "true") && !controller.signal.aborted) {
-          tlog.info("cancel signal received");
-          controller.abort();
+      if (rows.length > 0) {
+        observedRow = true;
+        for (const row of rows) {
+          const cancelled = unwrap(row.is_cancelled);
+          if ((cancelled === true || cancelled === "true") && !controller.signal.aborted) {
+            tlog.info("cancel signal received (is_cancelled flipped)");
+            controller.abort();
+          }
         }
+      } else if (observedRow && !controller.signal.aborted) {
+        tlog.info("cancel signal received (task row deleted — likely conversation cascade)");
+        controller.abort();
       }
     },
   );
