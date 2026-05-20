@@ -22,6 +22,8 @@
     "src/lib/utils.ts",
     "src/lib/user.ts",
     "src/lib/userStore.ts",
+    "src/lib/kdb-types.ts",
+    "src/lib/constants.ts",
     "src/client.ts",
     "src/main.tsx",
     "src/AppShell.tsx",

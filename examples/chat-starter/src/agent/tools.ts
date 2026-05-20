@@ -4,7 +4,7 @@ import type { Logger } from "../lib/logger.js";
 import { embed, embeddingLiteral } from "../lib/llm/embedding.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { guardSelect } from "./sql-guard.js";
-import { unwrap } from "../lib/kdb-row.js";
+import { extractRows, kdbBigIntToNumber, unwrap } from "../lib/kdb-row.js";
 
 // =============================================================================
 // Tool definitions sent to the LLM.
@@ -242,10 +242,7 @@ async function handleQueryDatabase(ctx: ToolContext, call: LlmToolCall): Promise
     // partitioning serves rows from that user's partition only. Even if the
     // LLM tries to inspect another user's data, the multi-tenant fence holds.
     const res = await ctx.client.query(guard.sql!);
-    const rows =
-      (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
-        ?.named_rows ?? [];
-    const plainRows = rows.map((r) => {
+    const plainRows = extractRows(res).map((r) => {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(r)) out[k] = unwrap(v);
       return out;
@@ -350,12 +347,7 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
     const countRes = await ctx.client.query(
       `SELECT count(*) AS n FROM chat.conversations WHERE id != ${currentConv}`,
     );
-    const n = Number(
-      (
-        (countRes as { results?: Array<{ named_rows?: Array<{ n?: unknown }> }> }).results?.[0]
-          ?.named_rows?.[0]?.n as unknown as { toString: () => string } | undefined
-      )?.toString() ?? "0",
-    );
+    const n = kdbBigIntToNumber(extractRows(countRes)[0]?.n);
     if (n === 0) {
       ctx.log.info({ user: ctx.task.user }, "delete_all_conversations: nothing to delete");
       return "deleted 0 conversations (the current one is excluded; there were no others)";
@@ -421,10 +413,7 @@ async function handleSearchDocuments(ctx: ToolContext, call: LlmToolCall): Promi
        ORDER BY distance ASC
        LIMIT ${limit}`,
     );
-    const rows =
-      (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
-        ?.named_rows ?? [];
-    const plain = rows.map((r) => {
+    const plain = extractRows(res).map((r) => {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(r)) out[k] = unwrap(v);
       return out;

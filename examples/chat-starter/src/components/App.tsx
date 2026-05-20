@@ -1,9 +1,10 @@
 import React from "react";
 import { LiveQueries } from "@kalamdb/react";
 import { asc, desc, eq } from "drizzle-orm";
-import type { InferSelectModel, Table } from "drizzle-orm";
+import type { InferSelectModel } from "drizzle-orm";
 import { approvals, conversations, messages, tasks, typingTokens } from "@/schema";
 import { NO_CONVERSATION_SENTINEL } from "@/lib/constants";
+import type { InsertFn, UpdateFn } from "@/lib/kdb-types";
 import { Sidebar } from "./Sidebar";
 import { Conversation } from "./Conversation";
 import { Welcome } from "./Welcome";
@@ -110,17 +111,8 @@ interface ChatBodyProps {
   typingRows: TokenRow[];
   approvalsRows: ApprovalRow[];
   tasksRows: TaskRow[];
-  // LiveQueries' insert/update helpers — typed at the consumer interface
-  // (Conversation expects the same shape). The SDK's exported generics
-  // require pinning to a specific LiveQueriesDefinition, which we avoid
-  // here by accepting the consumer-friendly signature.
-  insert: <T extends Table>(
-    table: T,
-  ) => { values: (row: Record<string, unknown>) => Promise<unknown> };
-  update: <T extends Table>(
-    table: T,
-    id: string,
-  ) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
+  insert: InsertFn;
+  update: UpdateFn;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   currentUser: string;

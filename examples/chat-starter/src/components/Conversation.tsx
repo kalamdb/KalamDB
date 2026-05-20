@@ -1,6 +1,7 @@
 import React from "react";
-import type { InferSelectModel, Table } from "drizzle-orm";
+import type { InferSelectModel } from "drizzle-orm";
 import { approvals, conversations, messages, tasks, typingTokens } from "@/schema";
+import type { InsertFn, UpdateFn } from "@/lib/kdb-types";
 import { Messages } from "./Messages";
 import { Composer } from "./Composer";
 
@@ -9,14 +10,6 @@ type MessageRow = InferSelectModel<typeof messages>;
 type TokenRow = InferSelectModel<typeof typingTokens>;
 type ApprovalRow = InferSelectModel<typeof approvals>;
 type TaskRow = InferSelectModel<typeof tasks>;
-
-type InsertFn = <T extends Table>(
-  table: T,
-) => { values: (row: Record<string, unknown>) => Promise<unknown> };
-type UpdateFn = <T extends Table>(
-  table: T,
-  id: string,
-) => { set: (patch: Record<string, unknown>) => Promise<unknown> };
 
 interface ConversationProps {
   conversationId: string;

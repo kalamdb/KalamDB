@@ -17,7 +17,7 @@ import { withSlowdown } from "../lib/llm/slowdown.js";
 import { UUID_RE, uuidLit } from "./ids.js";
 import { logger } from "../lib/logger.js";
 import { USER_RE } from "../lib/user.js";
-import { unwrap } from "../lib/kdb-row.js";
+import { extractRows, unwrap } from "../lib/kdb-row.js";
 import { DEMO_USER_PASSWORDS, type DemoUser } from "../lib/demo-users.js";
 import { dispatchTool, TOOLS, type ToolContext } from "./tools.js";
 
@@ -548,11 +548,8 @@ async function fetchHistory(client: KalamDBClient, conversationId: string): Prom
        ORDER BY created_at ASC`,
     [conversationId],
   );
-  const rows =
-    (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> }).results?.[0]
-      ?.named_rows ?? [];
   const out: LlmMessage[] = [];
-  for (const row of rows) {
+  for (const row of extractRows(res)) {
     const role = unwrap(row.role);
     const body = unwrap(row.body);
     if (role !== "user" && role !== "assistant") continue;
@@ -577,8 +574,7 @@ async function isTaskTerminal(
   const res = await client.query(`SELECT finished_at, is_cancelled FROM chat.tasks WHERE id = $1`, [
     taskId,
   ]);
-  const row = (res as { results?: Array<{ named_rows?: Array<Record<string, unknown>> }> })
-    .results?.[0]?.named_rows?.[0];
+  const row = extractRows(res)[0];
   if (!row) {
     log_.warn({ task_id: taskId }, "task row not yet visible after topic event — proceeding");
     return null;
@@ -596,10 +592,7 @@ async function ensureAssistantStub(client: KalamDBClient, task: Task): Promise<v
   //      catch any "duplicate key / already exists" error from KalamDB and
   //      treat it as success; anything else propagates.
   const res = await client.query(`SELECT id FROM chat.messages WHERE id = $1`, [task.message_id]);
-  const exists =
-    ((res as { results?: Array<{ named_rows?: Array<unknown> }> }).results?.[0]?.named_rows
-      ?.length ?? 0) > 0;
-  if (exists) return;
+  if (extractRows(res).length > 0) return;
   const now = new Date().toISOString();
   try {
     await client.insert("chat.messages", {
