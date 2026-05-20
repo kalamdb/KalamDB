@@ -14,26 +14,52 @@ This is a starter you can read end-to-end in an hour and lift into your own prod
 
 ## Quick start
 
+### Prerequisites
+
+- **Node 20+** and **npm**.
+- **Docker** (or any way to run KalamDB locally).
+- **Rust toolchain + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/installer/)** — only because the `@kalamdb/client` and `@kalamdb/consumer` SDKs include a WASM crate that's built from source via the `bootstrap-sdks` step below. When the chat-starter moves to its own repo and consumes the published `@kalamdb/*` npm packages, this prereq disappears.
+
+### Ports the demo uses
+
+| Port | Process      | What it is                                      |
+| ---- | ------------ | ----------------------------------------------- |
+| 8080 | KalamDB      | The database (`docker compose up -d`)           |
+| 5173 | Vite         | The frontend                                    |
+| 3001 | Node backend | Token broker (`/api/auth/token`) + health proxy |
+
+If any of these clash with something you're already running, override them in `.env` (`PORT=…` for the backend, `KALAMDB_URL=…` for the database; `vite.config.ts` has the Vite port).
+
+### Steps
+
 ```bash
-# 1. Boot KalamDB locally (port 8080)
+cd examples/chat-starter
+
+# 1. Boot KalamDB locally (port 8080).
 docker compose up -d
 
-# 2. Configure (then optionally drop in an OPENAI_API_KEY or ANTHROPIC_API_KEY)
+# 2. Configure. Drop in an OPENAI_API_KEY or ANTHROPIC_API_KEY if you have one;
+#    leave both empty to use the deterministic mock adapter.
 cp .env.example .env
 
-# 3. Install dependencies
+# 3. Build the @kalamdb/* SDKs that chat-starter consumes via file: links.
+#    Rust + wasm-pack required. Skip this on subsequent runs unless you
+#    pulled changes under link/sdks/typescript.
+npm run bootstrap-sdks
+
+# 4. Install chat-starter deps.
 npm install
 
-# 4. Create the schema + demo users (alice / bob / carol).
+# 5. Create the schema + demo users (alice / bob / carol).
 #    Destructive — refuses to run if the chat namespace already has data.
 #    Pass --force to wipe and re-create.
 npm run setup
 
-# 5. Seed the RAG corpus so search_documents has something to search.
-#    Skip this if you don't care about the "what is a topic?" demo path.
+# 6. Seed the RAG corpus so search_documents has something to search.
+#    Skip if you don't care about the "what is a topic?" demo path.
 npm run seed-docs
 
-# 6. Run the full dev stack (vite + backend + agent)
+# 7. Run the full dev stack (vite + backend + agent).
 npm run dev
 ```
 
