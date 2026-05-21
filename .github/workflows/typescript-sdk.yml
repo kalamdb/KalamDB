@@ -274,7 +274,7 @@ jobs:
           from pathlib import Path
 
           artifacts_dir = Path("ts-sdk-test-artifacts")
-          expected_packages = {"client", "consumer", "orm"}
+          expected_packages = {"client", "consumer", "orm", "react"}
           found_packages = set()
           total = 0
           passed = 0

@@ -348,11 +348,19 @@ jobs:
       - name: Commit badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
+          set -euo pipefail
+
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          git checkout -B ci-test-badge-update
           git add .github/badges/tests.json
-          git diff --staged --quiet || git commit -m "Update test badge [skip ci]"
-          git push || echo "Nothing to push"
+          if git diff --staged --quiet; then
+            echo "Test badge file already up to date"
+            exit 0
+          fi
+
+          git commit -m "Update test badge [skip ci]"
+          git push origin HEAD:main
 
   license_compliance:
     name: License Compliance
