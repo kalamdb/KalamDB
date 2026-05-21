@@ -301,11 +301,17 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     // inverse shape (multi-statement inside one EXECUTE AS USER wrap),
     // so this layout is what works AND keeps the cascade atomic. A
     // DELETE failure → automatic rollback → no half-deleted state.
+    // chat.typing_tokens is intentionally excluded from the cascade:
+    // it's a STREAM table and KalamDB rejects DELETE on STREAM tables
+    // inside explicit transactions. The TTL_SECONDS=120 on the table
+    // expires any orphans within 2 minutes anyway, and typing_tokens
+    // are agent-only ephemeral rows (never queried by the UI for a
+    // deleted conversation), so the brief window of orphans is
+    // invisible to users.
     const idLit = uuidLit(id);
     const u = ctx.task.user;
     const sql = [
       "BEGIN",
-      `EXECUTE AS USER '${u}' (DELETE FROM chat.typing_tokens WHERE conversation_id = ${idLit})`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.approvals WHERE conversation_id = ${idLit})`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.tasks WHERE conversation_id = ${idLit})`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.messages WHERE conversation_id = ${idLit})`,
@@ -363,10 +369,12 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
     // delete_conversation: outer BEGIN/COMMIT + per-statement EXECUTE
     // AS USER. We use `WHERE id != ''` (rather than no WHERE) because
     // KalamDB rejects unconditional DELETE.
+    // typing_tokens (STREAM table) excluded — TTL handles cleanup, and
+    // KalamDB rejects STREAM table DELETE inside explicit transactions.
+    // See delete_conversation for the full reasoning.
     const u = ctx.task.user;
     const sql = [
       "BEGIN",
-      `EXECUTE AS USER '${u}' (DELETE FROM chat.typing_tokens WHERE id != '')`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.approvals WHERE id != '')`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.tasks WHERE id != '')`,
       `EXECUTE AS USER '${u}' (DELETE FROM chat.messages WHERE id != '')`,

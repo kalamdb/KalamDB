@@ -193,15 +193,16 @@ test("delete_conversation cascades atomically (single BEGIN/COMMIT request)", as
   assert.match(sql, /^BEGIN/);
   assert.match(sql, /COMMIT$/);
   const idx = (s: string) => sql.indexOf(s);
-  assert.ok(idx("DELETE FROM chat.typing_tokens") > 0);
+  // typing_tokens is a STREAM table — KalamDB rejects DELETE on STREAM
+  // inside an explicit transaction, and the TTL handles cleanup anyway,
+  // so it's intentionally NOT in the cascade.
+  assert.equal(idx("DELETE FROM chat.typing_tokens"), -1);
   assert.ok(idx("DELETE FROM chat.approvals") > 0);
   assert.ok(idx("DELETE FROM chat.tasks") > 0);
   assert.ok(idx("DELETE FROM chat.messages") > 0);
   assert.ok(idx("DELETE FROM chat.conversations") > 0);
-  // Order: typing_tokens before approvals before tasks before messages before conversations.
-  assert.ok(idx("typing_tokens") < idx("approvals"));
+  // Order: approvals before tasks before messages before conversations.
   assert.ok(idx("approvals") < idx("tasks"));
-  assert.ok(idx("tasks") < idx("messages"));
   assert.ok(idx("messages") < idx("conversations"));
   // ID embedded via uuidLit (validated).
   assert.match(sql, /'11111111-1111-1111-1111-111111111111'/);
@@ -295,19 +296,19 @@ test("delete_all_conversations cascades atomically across every table", async ()
   const cascadeSql = stub.queries[1]!.sql;
   assert.match(cascadeSql, /^BEGIN/);
   assert.match(cascadeSql, /COMMIT$/);
-  // All 5 child + parent DELETEs present, in dependency-safe order.
+  // typing_tokens (STREAM table) intentionally NOT in the cascade:
+  // KalamDB rejects DELETE on STREAM inside explicit transactions,
+  // and the TTL handles cleanup.
   const idx = (s: string) => cascadeSql.indexOf(s);
-  assert.ok(idx("DELETE FROM chat.typing_tokens") > 0);
+  assert.equal(idx("DELETE FROM chat.typing_tokens"), -1);
   assert.ok(idx("DELETE FROM chat.approvals") > 0);
   assert.ok(idx("DELETE FROM chat.tasks") > 0);
   assert.ok(idx("DELETE FROM chat.messages") > 0);
   assert.ok(idx("DELETE FROM chat.conversations") > 0);
-  assert.ok(idx("typing_tokens") < idx("approvals"));
   assert.ok(idx("approvals") < idx("tasks"));
   assert.ok(idx("tasks") < idx("messages"));
   assert.ok(idx("messages") < idx("conversations"));
   // "Delete all" means all — the in-flight conversation is included.
-  assert.match(cascadeSql, /typing_tokens WHERE id != ''/);
   assert.match(cascadeSql, /conversations WHERE id != ''/);
 });
 

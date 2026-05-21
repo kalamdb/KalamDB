@@ -338,12 +338,13 @@ async function runCancelConsumer(
     ) => {
       const taskId = change.data.id;
       if (!UUID_RE.test(taskId)) return;
-      // Defensive: KalamDB's `ON UPDATE WHERE is_cancelled = true` topic
-      // filter is currently delivered on every UPDATE regardless of the
-      // WHERE clause (server-side filter doesn't fire). Re-check the
-      // payload here so we don't abort a task just because the agent
-      // wrote `finished_at`. Without this, every finalizeTask UPDATE
-      // looks like a cancel.
+      // Defense-in-depth + back-compat with KalamDB ≤ 0.5.0-beta.1.
+      // The topic source `ON UPDATE WHERE is_cancelled = true` filter
+      // was added in a later main commit (kalamdb-row-filter integration
+      // in the publisher routing). On the older pinned image, every
+      // UPDATE to chat.tasks fires this topic — including the agent's
+      // own finalizeTask. Re-checking is_cancelled here keeps the
+      // cascade correct on both old and new server versions.
       if (change.data.is_cancelled !== true) return;
       const ctrl = activeControllers.get(taskId);
       if (!ctrl) return; // task isn't running on this replica
