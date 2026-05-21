@@ -329,7 +329,14 @@ async function runCancelConsumer(
     // cancel and the others' tasks would run on.
     groupId: `chat-agents-cancels-${process.pid}`,
     start: "latest",
-    batchSize: 50,
+    // batchSize=1 so a user-clicked Stop fires the consumer's onChange
+    // the instant the event arrives, instead of waiting for a batch to
+    // accumulate. Cancels are infrequent + latency-sensitive — the user
+    // is staring at the UI waiting for the bubble to mark "(stopped)".
+    // timeoutSeconds is the long-poll re-issue cadence when idle (every
+    // 30s the consumer re-polls; default is fine since batchSize=1 still
+    // returns immediately on event arrival).
+    batchSize: 1,
     timeoutSeconds: 30,
     stopSignal,
     onChange: async (
@@ -371,7 +378,11 @@ async function runApprovalResolutionConsumer(
     topic: APPROVAL_TOPIC,
     groupId: `chat-agents-approvals-${process.pid}`,
     start: "latest",
-    batchSize: 50,
+    // Same shape as the cancel consumer — Approve/Reject clicks are
+    // latency-sensitive (user is staring at the UI waiting for the
+    // next agent step). See cancel-consumer comment above for the
+    // batchSize=1 + timeoutSeconds=30 rationale.
+    batchSize: 1,
     timeoutSeconds: 30,
     stopSignal,
     onChange: async (
