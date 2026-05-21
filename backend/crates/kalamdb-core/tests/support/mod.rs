@@ -27,7 +27,10 @@ use kalamdb_core::{
     sql::{
         context::{ExecutionContext, ExecutionResult},
         executor::{
-            handler_registry::HandlerRegistry, request_transaction_state::RequestTransactionState,
+            handler_registry::HandlerRegistry,
+            request_transaction_state::{
+                AppContextRequestTransactionCoordinator, RequestTransactionState,
+            },
             SqlExecutor,
         },
     },
@@ -291,7 +294,12 @@ pub fn row(id: i64, name: &str) -> Row {
 }
 
 pub fn request_transaction_state(exec_ctx: &ExecutionContext) -> RequestTransactionState<'_> {
-    RequestTransactionState::from_execution_context(exec_ctx)
-        .expect("request transaction state")
+    RequestTransactionState::from_request_id(exec_ctx.request_id())
         .expect("request transaction state present")
+}
+
+pub fn request_transaction_coordinator(
+    app_ctx: &AppContext,
+) -> AppContextRequestTransactionCoordinator<'_> {
+    AppContextRequestTransactionCoordinator::new(app_ctx)
 }

@@ -23,7 +23,10 @@ use crate::{
             default_ordering::apply_default_order_by,
             handler_registry::HandlerRegistry,
             parameter_binding::{replace_placeholders_in_plan, validate_params},
-            request_transaction_state::RequestTransactionState,
+            request_transaction_state::{
+                map_request_transaction_error, AppContextRequestTransactionCoordinator,
+                RequestTransactionState,
+            },
         },
         plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig},
         ExecutionContext, ExecutionResult,
@@ -49,10 +52,12 @@ impl SqlExecutor {
             return Ok(None);
         };
 
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_transaction_state =
-            RequestTransactionState::from_execution_context(exec_ctx)?;
+            RequestTransactionState::from_request_id(exec_ctx.request_id());
         if let Some(state) = request_transaction_state.as_mut() {
-            state.sync_from_coordinator(self.app_context.as_ref());
+            state.sync(&request_transaction_coordinator);
             if state.is_active() {
                 return Ok(None);
             }
@@ -308,9 +313,11 @@ impl SqlExecutor {
         &self,
         exec_ctx: &'a ExecutionContext,
     ) -> Result<Option<RequestTransactionState<'a>>, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?;
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id());
         if let Some(state) = request_state.as_mut() {
-            state.sync_from_coordinator(&self.app_context);
+            state.sync(&request_transaction_coordinator);
         }
         Ok(request_state)
     }
@@ -322,6 +329,30 @@ impl SqlExecutor {
         Ok(self
             .request_transaction_state(exec_ctx)?
             .and_then(|state| state.active_transaction_id().cloned()))
+    }
+
+    async fn resolve_prepared_table_type(
+        &self,
+        metadata: &PreparedExecutionStatement,
+    ) -> Result<Option<TableType>, KalamDbError> {
+        if let Some(table_type) = metadata.table_type {
+            return Ok(Some(table_type));
+        }
+
+        let Some(table_id) = metadata.table_id.as_ref() else {
+            return Ok(None);
+        };
+
+        if let Some(cached) = self.app_context.schema_registry().get(table_id) {
+            return Ok(Some(cached.table_entry().table_type));
+        }
+
+        Ok(self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists_async(table_id)
+            .await?
+            .map(|table_def| table_def.table_type))
     }
 
     fn transaction_query_context_for_request(
@@ -382,14 +413,18 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
-            .ok_or_else(|| {
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state =
+            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "BEGIN requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.begin(&self.app_context)?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .begin(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction started ({})", transaction_id),
         })
@@ -399,14 +434,19 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
-            .ok_or_else(|| {
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state =
+            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "COMMIT requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.commit(&self.app_context).await?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .commit(&request_transaction_coordinator)
+            .await
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction committed ({})", transaction_id),
         })
@@ -416,14 +456,18 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
-            .ok_or_else(|| {
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state =
+            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "ROLLBACK requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.rollback(&self.app_context)?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .rollback(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction rolled back ({})", transaction_id),
         })
@@ -447,7 +491,7 @@ impl SqlExecutor {
         Ok(())
     }
 
-    fn reject_unsupported_dml_in_active_request_transaction(
+    async fn reject_unsupported_dml_in_active_request_transaction(
         &self,
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
@@ -456,7 +500,7 @@ impl SqlExecutor {
             return Ok(());
         };
 
-        match metadata.table_type {
+        match self.resolve_prepared_table_type(metadata).await? {
             Some(TableType::Stream) => Err(KalamDbError::InvalidOperation(format!(
                 "transaction '{}' failed: stream tables are not supported inside explicit transactions",
                 transaction_id
@@ -673,7 +717,9 @@ impl SqlExecutor {
 
                 // Native DataFusion DML path (provider insert/update/delete hooks)
                 SqlStatementKind::Insert(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
+                    self
+                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                        .await?;
                     if params.is_empty() {
                         if let Some(result) = self
                             .try_execute_literal_insert_via_applier(
@@ -706,7 +752,9 @@ impl SqlExecutor {
                     }
                 },
                 SqlStatementKind::Update(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
+                    self
+                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                        .await?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
                         metadata,
@@ -717,7 +765,9 @@ impl SqlExecutor {
                     .await
                 },
                 SqlStatementKind::Delete(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
+                    self
+                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                        .await?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
                         metadata,
@@ -807,13 +857,15 @@ impl SqlExecutor {
             &owned_exec_ctx
         };
 
-        let mut request_state = RequestTransactionState::from_execution_context(dml_exec_ctx)?
-            .ok_or_else(|| {
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state =
+            RequestTransactionState::from_request_id(dml_exec_ctx.request_id()).ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "autocommit DML requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
+        request_state.sync(&request_transaction_coordinator);
 
         if request_state.is_active() {
             return self
@@ -821,21 +873,23 @@ impl SqlExecutor {
                 .await;
         }
 
-        request_state.begin(&self.app_context)?;
+        request_state
+            .begin(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         let result = self
             .execute_dml_via_datafusion_inner(sql, metadata, params, dml_exec_ctx, dml_kind)
             .await;
 
         match result {
-            Ok(result) => match request_state.commit(&self.app_context).await {
+            Ok(result) => match request_state.commit(&request_transaction_coordinator).await {
                 Ok(_) => Ok(result),
                 Err(error) => {
-                    let _ = request_state.rollback_if_active(&self.app_context);
-                    Err(error)
+                    let _ = request_state.rollback_if_active(&request_transaction_coordinator);
+                    Err(map_request_transaction_error(error))
                 },
             },
             Err(error) => {
-                let _ = request_state.rollback_if_active(&self.app_context);
+                let _ = request_state.rollback_if_active(&request_transaction_coordinator);
                 Err(error)
             },
         }

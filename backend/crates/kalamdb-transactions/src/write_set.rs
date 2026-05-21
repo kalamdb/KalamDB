@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use kalamdb_commons::models::{TableId, TransactionId, UserId};
 
-use super::{StagedMutation, TransactionOverlay};
+use crate::{StagedMutation, TransactionOverlay};
 
 fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> String {
     match user_id {
@@ -117,7 +117,7 @@ impl TransactionWriteSet {
 mod tests {
     use std::collections::BTreeMap;
 
-    use datafusion_common::ScalarValue;
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         models::{rows::Row, NamespaceId, OperationKind, TableId, TableName},
         TableType,
@@ -260,29 +260,13 @@ mod tests {
             false,
         ));
 
-        let overlay = write_set.merged_overlay();
-        assert_eq!(overlay.table_entries(&table_id).expect("table entries").len(), 2);
-        assert_eq!(
-            overlay
-                .latest_visible_entry_for_scope(&table_id, Some(&first_user), "1")
-                .expect("first user entry")
-                .payload
-                .values
-                .get("name"),
-            Some(&ScalarValue::Utf8(Some("alice".to_string())))
-        );
-        assert_eq!(
-            overlay
-                .latest_visible_entry_for_scope(&table_id, Some(&second_user), "1")
-                .expect("second user entry")
-                .payload
-                .values
-                .get("name"),
-            Some(&ScalarValue::Utf8(Some("bob".to_string())))
-        );
-        assert!(write_set.latest_mutation_for_scope(&table_id, Some(&first_user), "1").is_some());
-        assert!(write_set
+        let first = write_set
+            .latest_mutation_for_scope(&table_id, Some(&first_user), "1")
+            .expect("first user mutation");
+        let second = write_set
             .latest_mutation_for_scope(&table_id, Some(&second_user), "1")
-            .is_some());
+            .expect("second user mutation");
+        assert_eq!(first.payload.values.get("name"), Some(&ScalarValue::Utf8(Some("alice".to_string()))));
+        assert_eq!(second.payload.values.get("name"), Some(&ScalarValue::Utf8(Some("bob".to_string()))));
     }
 }

@@ -169,15 +169,16 @@ async fn repeated_request_cleanup_rolls_back_without_leaking_state() {
         )
         .await;
 
+        let tx_coordinator = support::request_transaction_coordinator(app_ctx.as_ref());
         let mut tx_state = request_transaction_state(&request_ctx);
-        tx_state.sync_from_coordinator(&app_ctx);
+        tx_state.sync(&tx_coordinator);
         let transaction_id = tx_state
             .active_transaction_id()
             .cloned()
             .expect("request transaction should be active before cleanup");
 
         let rolled_back_id = tx_state
-            .rollback_if_active(&app_ctx)
+            .rollback_if_active(&tx_coordinator)
             .expect("request cleanup succeeds")
             .expect("request cleanup should roll back the active transaction");
         assert_eq!(rolled_back_id, transaction_id);

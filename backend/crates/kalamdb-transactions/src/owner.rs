@@ -1,14 +1,37 @@
+use std::{error::Error, fmt};
+
 use uuid::Uuid;
 
-use crate::error::KalamDbError;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransactionOwnerParseError {
+    InvalidPgSessionId { session_id: String, reason: &'static str },
+}
+
+impl fmt::Display for TransactionOwnerParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPgSessionId { session_id, reason } => {
+                write!(f, "invalid pg session id '{}': {}", session_id, reason)
+            },
+        }
+    }
+}
+
+impl Error for TransactionOwnerParseError {}
 
 #[inline]
-fn invalid_pg_session_id(session_id: &str, reason: &str) -> KalamDbError {
-    KalamDbError::InvalidOperation(format!("invalid pg session id '{}': {}", session_id, reason))
+fn invalid_pg_session_id(
+    session_id: &str,
+    reason: &'static str,
+) -> TransactionOwnerParseError {
+    TransactionOwnerParseError::InvalidPgSessionId {
+        session_id: session_id.to_string(),
+        reason,
+    }
 }
 
 #[inline]
-fn parse_u32_decimal(value: &[u8], session_id: &str) -> Result<u32, KalamDbError> {
+fn parse_u32_decimal(value: &[u8], session_id: &str) -> Result<u32, TransactionOwnerParseError> {
     if value.is_empty() {
         return Err(invalid_pg_session_id(session_id, "missing backend pid"));
     }
@@ -29,7 +52,7 @@ fn parse_u32_decimal(value: &[u8], session_id: &str) -> Result<u32, KalamDbError
 }
 
 #[inline]
-fn parse_u64_hex(value: &[u8], session_id: &str) -> Result<u64, KalamDbError> {
+fn parse_u64_hex(value: &[u8], session_id: &str) -> Result<u64, TransactionOwnerParseError> {
     if value.is_empty() {
         return Ok(0);
     }
@@ -41,7 +64,10 @@ fn parse_u64_hex(value: &[u8], session_id: &str) -> Result<u64, KalamDbError> {
             b'a'..=b'f' => (byte - b'a' + 10) as u64,
             b'A'..=b'F' => (byte - b'A' + 10) as u64,
             _ => {
-                return Err(invalid_pg_session_id(session_id, "config hash must be hexadecimal"));
+                return Err(invalid_pg_session_id(
+                    session_id,
+                    "config hash must be hexadecimal",
+                ));
             },
         };
 
@@ -75,7 +101,7 @@ impl ExecutionOwnerKey {
     }
 
     #[inline]
-    pub fn from_pg_session_id(session_id: &str) -> Result<Self, KalamDbError> {
+    pub fn from_pg_session_id(session_id: &str) -> Result<Self, TransactionOwnerParseError> {
         let bytes = session_id.as_bytes();
         if !bytes.starts_with(b"pg-") {
             return Uuid::parse_str(session_id)
@@ -158,7 +184,8 @@ mod tests {
     #[test]
     fn parses_uuid_pg_session_handles() {
         let owner =
-            ExecutionOwnerKey::from_pg_session_id("019dabfa-1538-7c23-8e61-de751d8c1c38").unwrap();
+            ExecutionOwnerKey::from_pg_session_id("019dabfa-1538-7c23-8e61-de751d8c1c38")
+                .unwrap();
         assert_eq!(
             owner,
             ExecutionOwnerKey::PgSessionUuid {

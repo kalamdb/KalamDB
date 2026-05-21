@@ -26,6 +26,8 @@ All explicit KalamDB transactions, regardless of caller, are owned by `Transacti
 
 `SessionRegistry` and PostgreSQL backend-local extension state may cache or pin transaction ids for cleanup and observability, but they are not the source of truth for durable transaction state.
 
+Shared transaction state types live in `kalamdb-transactions`. `kalamdb-core` keeps the coordinator implementation because coordinator actions depend on `AppContext`, Raft leadership, config, and the durable applier path.
+
 ### 2. PostgreSQL does not open a KalamDB transaction on bare `BEGIN`
 
 The PostgreSQL extension must open a remote KalamDB transaction lazily, only when an explicit PostgreSQL transaction first touches a Kalam-backed foreign table.
@@ -123,7 +125,9 @@ If remote commit waited until PostgreSQL had already fully committed, a remote f
 
 Relevant code anchors:
 
+- `backend/crates/kalamdb-transactions/src/`
 - `backend/crates/kalamdb-core/src/transactions/coordinator.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/request_transaction_state.rs`
 - `backend/crates/kalamdb-core/src/operations/service.rs`
 - `backend/crates/kalamdb-core/src/applier/applier.rs`
 - `backend/crates/kalamdb-core/src/applier/executor/dml.rs`
