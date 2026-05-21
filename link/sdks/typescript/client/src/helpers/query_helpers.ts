@@ -10,7 +10,7 @@
  * values in `KalamCellValue` — no `parseRows`/`parseCellRows` needed.
  */
 
-import type { QueryResponse, SchemaField } from '../types.js';
+import type { JsonValue, QueryResponse, QueryResult, SchemaField } from '../types.js';
 
 /* ================================================================== */
 /*  Column Extraction & Sorting                                       */
@@ -67,10 +67,10 @@ export function sortColumns(columns: string[], preferredOrder: string[]): string
  * Remap an array row from currentColumns order to newColumns order
  */
 function remapArrayRow(
-  row: unknown[],
+  row: JsonValue[],
   currentColumns: string[],
   newColumns: string[],
-): unknown[] {
+): JsonValue[] {
   const idxMap = new Map<string, number>();
   currentColumns.forEach((c, i) => idxMap.set(c, i));
   return newColumns.map(c => (idxMap.has(c) ? row[idxMap.get(c)!] : null));
@@ -79,7 +79,7 @@ function remapArrayRow(
 /**
  * Convert an object row to array format based on column order
  */
-function objectRowToArray(row: Record<string, unknown>, newColumns: string[]): unknown[] {
+function objectRowToArray(row: Record<string, JsonValue>, newColumns: string[]): JsonValue[] {
   return newColumns.map(c => (c in row ? row[c] : null));
 }
 
@@ -106,19 +106,19 @@ export function normalizeQueryResponse(
   const firstResult = resp.results?.[0];
   if (!firstResult) return resp;
 
-  let newRows: unknown[][] = [];
+  let newRows: JsonValue[][] = [];
   const rows = Array.isArray(firstResult.rows) ? firstResult.rows : [];
 
   if (rows.length > 0) {
     const first = rows[0];
     if (Array.isArray(first)) {
-      newRows = rows.map(r => remapArrayRow(r as unknown[], currentColumns, newColumns));
+      newRows = rows.map(r => remapArrayRow(r as JsonValue[], currentColumns, newColumns));
     } else if (first && typeof first === 'object') {
       newRows = rows.map(r =>
-        objectRowToArray(r as unknown as Record<string, unknown>, newColumns),
+        objectRowToArray(r as Record<string, JsonValue>, newColumns),
       );
     } else {
-      newRows = rows as unknown[][];
+      newRows = rows as JsonValue[][];
     }
   }
 
@@ -139,7 +139,7 @@ export function normalizeQueryResponse(
       {
         ...firstResult,
         schema: newSchema,
-        rows: newRows as any,
+        rows: newRows as QueryResult['rows'],
       },
     ],
   };

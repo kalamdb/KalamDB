@@ -316,6 +316,7 @@ where
     filter: Option<Expr>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
     output_projection: Option<Vec<usize>>,
+    limit: Option<usize>,
     output_schema: SchemaRef,
     _marker: std::marker::PhantomData<(K, V)>,
 }
@@ -351,13 +352,18 @@ where
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
+        let source_limit = if self.physical_filter.is_none() {
+            self.limit
+        } else {
+            None
+        };
         let batch = self
             .provider
             .scan_rows_with_context(
                 &self.scan_context,
                 self.projection.as_ref(),
                 self.filter.as_ref(),
-                None,
+                source_limit,
             )
             .await
             .map_err(|error| {
@@ -368,7 +374,7 @@ where
             batch,
             self.physical_filter.as_ref(),
             self.output_projection.as_deref(),
-            None,
+            self.limit,
             self.source_name(),
         )
     }
@@ -745,6 +751,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                 filter: source_filter,
                 physical_filter,
                 output_projection,
+                limit,
                 output_schema,
                 _marker: std::marker::PhantomData,
             },

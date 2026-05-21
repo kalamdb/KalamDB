@@ -946,7 +946,7 @@ impl SqlExecutor {
             self.plan_dml_with_provider_reload(execution_sql, sql, exec_ctx).await?.1
         } else {
             let cache_key = PlanCacheKey::new(
-                exec_ctx.default_namespace().clone(),
+                exec_ctx.default_namespace(),
                 exec_ctx.user_role(),
                 execution_sql,
             );
@@ -1023,16 +1023,12 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        let session = self.create_session_with_transaction_context(exec_ctx)?;
-
         // Try cached template plan first (works for both plain and parameterized SQL).
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
         // time.
-        let cache_key = PlanCacheKey::new(
-            exec_ctx.default_namespace().clone(),
-            exec_ctx.user_role(),
-            execution_sql,
-        );
+        let cache_key =
+            PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             let executable_plan = if params.is_empty() {

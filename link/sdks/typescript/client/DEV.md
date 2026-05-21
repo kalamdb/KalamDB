@@ -54,7 +54,7 @@ The full `build` script runs these steps in order:
 | Step | Command | Description |
 |------|---------|-------------|
 | 1 | `build:wasm` | Compile Rust → WASM with `wasm-pack --profile release-dist`, then run `wasm-opt -Oz --all-features` when available |
-| 2 | `build:fix-types` | Patch `JsonValue` type into generated `.d.ts` |
+| 2 | `build:prepare-wasm-dts` | Patch helper types into generated `.d.ts` |
 | 3 | `build:ts` | Compile TypeScript → `dist/` |
 | 4 | `build:copy-wasm` | Copy WASM artifacts into `dist/wasm/` |
 
@@ -76,17 +76,13 @@ Runs a full local build first, then executes the offline Node test suite with
 - `tests/basic.test.mjs`
 - `tests/normalize.test.mjs`
 - `tests/auth-provider-retry.test.mjs`
-- `tests/agent-runtime.test.mjs`
 - `tests/cell-value.test.mjs`
+- `tests/live-controller.test.mjs`
+- `tests/live-query-typed.test.mjs`
+- `tests/live-sql-descriptor.test.mjs`
 - `tests/single-socket-subscriptions.test.mjs`
 - `tests/readme-examples.test.mjs`
 - `tests/sdk-runtime-coverage.test.mjs`
-
-### Agent runtime tests only
-
-```bash
-npm run test:agent-runtime
-```
 
 ### Full SDK test run
 

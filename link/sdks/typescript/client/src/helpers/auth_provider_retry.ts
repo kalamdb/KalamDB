@@ -14,30 +14,46 @@ const DEFAULT_RETRY: Required<Omit<AuthProviderRetryOptions, 'shouldRetry' | 'sl
   maxBackoffMs: 2000,
 };
 
+const TRANSIENT_AUTH_PROVIDER_MARKERS = [
+  'timeout',
+  'timed out',
+  'network',
+  'socket',
+  'connection',
+  'unreachable',
+  'temporar',
+  '429',
+  '502',
+  '503',
+  '504',
+];
+
+function errorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+
+  const status = (error as { status?: unknown; statusCode?: unknown }).status
+    ?? (error as { statusCode?: unknown }).statusCode;
+  return typeof status === 'number' && Number.isInteger(status) ? status : undefined;
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function isLikelyTransientAuthProviderError(error: unknown): boolean {
-  if (error instanceof Error && error.name.toLowerCase().includes('timeout')) {
+  const status = errorStatus(error);
+  if (status === 429 || status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+
+  if (error instanceof Error && /timeout|network|abort/i.test(error.name)) {
     return true;
   }
 
   const message = String(error).toLowerCase();
-  const transientMarkers = [
-    'timeout',
-    'timed out',
-    'network',
-    'socket',
-    'connection',
-    'unreachable',
-    'temporar',
-    '429',
-    '502',
-    '503',
-    '504',
-  ];
-  return transientMarkers.some((marker) => message.includes(marker));
+  return TRANSIENT_AUTH_PROVIDER_MARKERS.some((marker) => message.includes(marker));
 }
 
 export async function resolveAuthProviderWithRetry(

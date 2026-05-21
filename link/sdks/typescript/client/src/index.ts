@@ -66,6 +66,7 @@ export type {
   HealthCheckResponse,
   HttpVersion,
   JsonValue,
+  KalamCellRawValue,
   KalamDataType,
   LogEntry,
   LogListener,

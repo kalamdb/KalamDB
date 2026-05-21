@@ -65,6 +65,21 @@ pub struct SystemTablesRegistry {
 }
 
 impl SystemTablesRegistry {
+    fn provider_backed_system_tables() -> &'static [SystemTable] {
+        &[
+            SystemTable::Users,
+            SystemTable::Jobs,
+            SystemTable::JobNodes,
+            SystemTable::Namespaces,
+            SystemTable::Storages,
+            SystemTable::Schemas,
+            SystemTable::AuditLog,
+            SystemTable::Manifest,
+            SystemTable::Topics,
+            SystemTable::TopicOffsets,
+        ]
+    }
+
     /// Create a new system tables registry
     ///
     /// Initializes all system table providers from the storage backend.
@@ -278,18 +293,7 @@ impl SystemTablesRegistry {
             };
 
         let mut providers = Vec::new();
-        for table in [
-            SystemTable::Users,
-            SystemTable::Jobs,
-            SystemTable::JobNodes,
-            SystemTable::Namespaces,
-            SystemTable::Storages,
-            SystemTable::Schemas,
-            SystemTable::AuditLog,
-            SystemTable::Manifest,
-            SystemTable::Topics,
-            SystemTable::TopicOffsets,
-        ] {
+        for &table in Self::provider_backed_system_tables() {
             if !persisted_tables.contains(&table) {
                 continue;
             }
@@ -356,6 +360,17 @@ impl SystemTablesRegistry {
         }
 
         providers
+    }
+
+    /// Return persisted system tables that have concrete providers, without
+    /// constructing or wrapping those providers.
+    pub fn persisted_provider_tables(&self) -> Vec<SystemTable> {
+        let persisted_tables = self.persisted_system_tables();
+        Self::provider_backed_system_tables()
+            .iter()
+            .copied()
+            .filter(|table| persisted_tables.contains(table))
+            .collect()
     }
 
     /// Returns a secured provider for a persisted system table.

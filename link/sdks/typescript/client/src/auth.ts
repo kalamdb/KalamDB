@@ -7,6 +7,8 @@
  * - Dynamic provider (async callback for refresh-token flows)
  */
 
+import { encodeUtf8Base64 } from './helpers/base64.js';
+
 /**
  * Basic authentication credentials (user/password)
  */
@@ -28,12 +30,6 @@ export interface JwtAuthCredentials {
  * Union type for all authentication credential types
  */
 export type AuthCredentials = BasicAuthCredentials | JwtAuthCredentials;
-
-type BufferCtor = {
-  from(input: string, encoding?: string): {
-    toString(encoding: string): string;
-  };
-};
 
 /**
  * Type guard to check if credentials are Basic Auth
@@ -57,25 +53,6 @@ export function isAuthenticated(auth: AuthCredentials | null | undefined): auth 
 }
 
 /**
- * Base64 encode a string (works in both Node.js and browser)
- */
-function base64Encode(str: string): string {
-  const runtime = globalThis as typeof globalThis & {
-    btoa?: (input: string) => string;
-    Buffer?: BufferCtor;
-  };
-
-  if (typeof runtime.btoa === 'function') {
-    // Browser environment
-    return runtime.btoa(str);
-  } else if (runtime.Buffer) {
-    // Node.js environment
-    return runtime.Buffer.from(str, 'utf8').toString('base64');
-  }
-  throw new Error('No base64 encoding available');
-}
-
-/**
  * Encode user and password for Basic Auth header
  * 
  * @param user - Canonical user identifier
@@ -83,7 +60,7 @@ function base64Encode(str: string): string {
  * @returns Base64 encoded credentials string
  */
 export function encodeBasicAuth(user: string, password: string): string {
-  return base64Encode(`${user}:${password}`);
+  return encodeUtf8Base64(`${user}:${password}`);
 }
 
 /**

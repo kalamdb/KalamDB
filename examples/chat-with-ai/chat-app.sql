@@ -26,9 +26,3 @@ CREATE TABLE IF NOT EXISTS chat_demo.agent_events (
 
 CREATE TOPIC chat_demo.ai_inbox;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
-
--- Insert some initial messages into the chat
-EXECUTE AS USER 'admin' (INSERT INTO chat_demo.messages (role, author, sender_username, content)
-VALUES
-  ('user', 'user_1', 'john_doe', 'Hello everyone!'),
-  ('assistant', 'ai_bot', 'assistant', 'Hi John, how can I help?'));

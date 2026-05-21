@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  encodeBasicAuth,
   isLikelyTransientAuthProviderError,
   resolveAuthProviderWithRetry,
-} from '../dist/src/helpers/auth_provider_retry.js';
+} from '../dist/src/index.js';
 
 test('resolveAuthProviderWithRetry retries transient errors then succeeds', async () => {
   let attempts = 0;
@@ -63,5 +64,13 @@ test('resolveAuthProviderWithRetry fails fast for non-transient errors', async (
 test('isLikelyTransientAuthProviderError detects network-like messages', () => {
   assert.equal(isLikelyTransientAuthProviderError(new Error('network-request-failed')), true);
   assert.equal(isLikelyTransientAuthProviderError(new Error('503 Service Unavailable')), true);
+  assert.equal(isLikelyTransientAuthProviderError({ status: 429 }), true);
   assert.equal(isLikelyTransientAuthProviderError(new Error('invalid credentials')), false);
+});
+
+test('encodeBasicAuth encodes credentials as UTF-8 before base64', () => {
+  assert.equal(
+    encodeBasicAuth('alice', 'päss:word'),
+    Buffer.from('alice:päss:word', 'utf8').toString('base64'),
+  );
 });
