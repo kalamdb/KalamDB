@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+    atomic::{AtomicU64, AtomicU8, Ordering},
+    Arc, OnceLock,
 };
 
 use datafusion::datasource::TableProvider;
@@ -14,6 +14,54 @@ use kalamdb_filestore::StorageCached;
 use parking_lot::RwLock;
 
 use crate::{app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt};
+
+const PROVIDER_EMPTY: u8 = 0;
+const PROVIDER_INITIALIZED: u8 = 1;
+const PROVIDER_OVERRIDDEN: u8 = 2;
+const PROVIDER_CLEARED: u8 = 3;
+
+struct ProviderSlot {
+    state: AtomicU8,
+    initial: OnceLock<Arc<dyn TableProvider + Send + Sync>>,
+    override_provider: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+}
+
+impl ProviderSlot {
+    fn new() -> Self {
+        Self {
+            state: AtomicU8::new(PROVIDER_EMPTY),
+            initial: OnceLock::new(),
+            override_provider: RwLock::new(None),
+        }
+    }
+
+    fn get(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        match self.state.load(Ordering::Acquire) {
+            PROVIDER_INITIALIZED => self.initial.get().map(Arc::clone),
+            PROVIDER_OVERRIDDEN => self.override_provider.read().as_ref().map(Arc::clone),
+            PROVIDER_EMPTY | PROVIDER_CLEARED => None,
+            _ => None,
+        }
+    }
+
+    fn set(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
+        let mut override_provider = self.override_provider.write();
+
+        if self.initial.set(Arc::clone(&provider)).is_ok() {
+            *override_provider = None;
+            self.state.store(PROVIDER_INITIALIZED, Ordering::Release);
+            return;
+        }
+
+        *override_provider = Some(provider);
+        self.state.store(PROVIDER_OVERRIDDEN, Ordering::Release);
+    }
+
+    fn clear(&self) {
+        *self.override_provider.write() = None;
+        self.state.store(PROVIDER_CLEARED, Ordering::Release);
+    }
+}
 
 /// Lightweight table info for file operations
 #[derive(Debug, Clone)]
@@ -61,8 +109,9 @@ pub struct CachedTableData {
     /// Lazily initialized when first needed and reused for both system and
     /// non-system tables through the common `TableProvider` surface.
     ///
-    /// **Thread Safety**: RwLock allows concurrent reads, exclusive writes for initialization
-    provider: Arc<RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>>,
+    /// **Thread Safety**: first provider read is lock-free after initialization; rare
+    /// override/clear paths use a write lock.
+    provider: Arc<ProviderSlot>,
 }
 
 impl std::fmt::Debug for CachedTableData {
@@ -104,7 +153,7 @@ impl CachedTableData {
             last_accessed_ms: AtomicU64::new(Self::now_millis()),
             bloom_filter_columns,
             indexed_columns,
-            provider: Arc::new(RwLock::new(None)),
+            provider: Arc::new(ProviderSlot::new()),
         }
     }
 
@@ -260,20 +309,63 @@ impl CachedTableData {
 
     /// Get the cached DataFusion TableProvider for this table
     ///
-    /// **Performance**: O(1) access with read lock
+    /// **Performance**: O(1) access with a lock-free fast path after initialization
     pub fn get_provider(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.provider.read().as_ref().map(Arc::clone)
+        self.provider.get()
     }
 
     /// Set the cached `TableProvider` for this table.
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        let mut guard = self.provider.write();
-        *guard = Some(provider);
+        self.provider.set(provider);
     }
 
     /// Clear the cached provider (used during table invalidation)
     pub fn clear_provider(&self) {
-        let mut guard = self.provider.write();
-        *guard = None;
+        self.provider.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::{
+        array::StringArray,
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
+    use datafusion::datasource::MemTable;
+
+    use super::*;
+
+    fn provider_with_field(name: &str) -> Arc<dyn TableProvider + Send + Sync> {
+        let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(StringArray::from(vec!["value"]))],
+        )
+        .expect("test batch");
+
+        Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("test provider"))
+    }
+
+    #[test]
+    fn provider_slot_supports_rebind_and_clear() {
+        let slot = ProviderSlot::new();
+        let first = provider_with_field("first");
+        let second = provider_with_field("second");
+        let third = provider_with_field("third");
+
+        assert!(slot.get().is_none());
+
+        slot.set(first);
+        assert_eq!(slot.get().unwrap().schema().field(0).name(), "first");
+
+        slot.set(second);
+        assert_eq!(slot.get().unwrap().schema().field(0).name(), "second");
+
+        slot.clear();
+        assert!(slot.get().is_none());
+
+        slot.set(third);
+        assert_eq!(slot.get().unwrap().schema().field(0).name(), "third");
     }
 }

@@ -228,16 +228,38 @@ export function upsertLimited<T>(
   getKey: (row: T) => string | null | undefined,
   limit?: number,
 ): T[] {
+  if (incoming.length === 0) {
+    return typeof limit === 'number' && limit >= 0 && current.length > limit
+      ? current.slice(-limit)
+      : current;
+  }
+
   const next = [...current];
+  let keyedIndex: Map<string, number> | undefined;
+
+  const ensureKeyedIndex = (): Map<string, number> => {
+    if (!keyedIndex) {
+      keyedIndex = new Map<string, number>();
+      for (let index = 0; index < next.length; index += 1) {
+        const key = getKey(next[index]);
+        if (key) {
+          keyedIndex.set(key, index);
+        }
+      }
+    }
+    return keyedIndex;
+  };
 
   for (const item of incoming) {
     const key = getKey(item);
     if (key) {
-      const existingIndex = next.findIndex((entry) => getKey(entry) === key);
-      if (existingIndex >= 0) {
+      const indexByKey = ensureKeyedIndex();
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex !== undefined) {
         next[existingIndex] = item;
         continue;
       }
+      indexByKey.set(key, next.length);
     }
 
     next.push(item);
@@ -255,11 +277,13 @@ export function removeMaterializedRows<T>(
   removed: T[],
   getKey: (row: T) => string | null | undefined,
 ): T[] {
-  const keys = new Set(
-    removed
-      .map((row) => getKey(row))
-      .filter((key): key is string => typeof key === 'string' && key.length > 0),
-  );
+  const keys = new Set<string>();
+  for (const row of removed) {
+    const key = getKey(row);
+    if (typeof key === 'string' && key.length > 0) {
+      keys.add(key);
+    }
+  }
 
   if (keys.size === 0) {
     return current;

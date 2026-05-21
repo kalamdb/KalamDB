@@ -56,6 +56,11 @@ fn test_cli_explicit_flush() {
         flush_output
     );
 
+    let job_id =
+        parse_job_id_from_flush_output(&flush_output).expect("flush output should contain job id");
+    verify_job_completed(&job_id, Duration::from_secs(20))
+        .expect("flush job should complete successfully");
+
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
     let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));

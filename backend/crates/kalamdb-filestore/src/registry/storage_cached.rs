@@ -453,12 +453,12 @@ impl StorageCached {
     }
 
     /// Serialize and write `manifest.json` (sync).
-    pub fn write_manifest_sync(
+    pub fn write_manifest_sync<T: serde::Serialize + ?Sized>(
         &self,
         table_type: TableType,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        manifest: &serde_json::Value,
+        manifest: &T,
     ) -> Result<()> {
         // Use compact serialization — pretty-printing adds ~30% overhead
         // for manifests with many segments and provides no runtime benefit.

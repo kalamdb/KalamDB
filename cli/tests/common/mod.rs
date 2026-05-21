@@ -93,14 +93,23 @@ static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    Client::builder()
-        .pool_max_idle_per_host(512)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(3))
-        .tcp_nodelay(true)
-        .build()
-        .expect("failed to build test HTTP client")
+    // Return a process-wide singleton so all concurrent callers (e.g. 24 parallel
+    // publisher tasks) share one connection pool instead of each opening their own
+    // burst of TCP connections to the cluster leader.  pool_max_idle_per_host is
+    // only effective when the same Client instance is reused across requests.
+    static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+    HTTP_CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .pool_max_idle_per_host(512)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .connect_timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(3))
+                .tcp_nodelay(true)
+                .build()
+                .expect("failed to build test HTTP client")
+        })
+        .clone()
 }
 
 #[derive(Clone, Debug)]
@@ -2176,47 +2185,29 @@ pub async fn execute_sql_via_http_as(
     let token = get_access_token(username, password).await?;
 
     let client = shared_http_client();
-    let mut last_parsed: Option<serde_json::Value> = None;
+    let base_url = if is_cluster_mode() {
+        leader_url().unwrap_or_else(|| server_url().to_string())
+    } else {
+        server_url().to_string()
+    };
 
-    for attempt in 0..5 {
-        let base_url = if is_cluster_mode() {
-            leader_url().unwrap_or_else(|| server_url().to_string())
-        } else {
-            server_url().to_string()
-        };
+    let response = client
+        .post(format!("{}/v1/api/sql", base_url))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
 
-        let response = client
-            .post(format!("{}/v1/api/sql", base_url))
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&json!({ "sql": sql }))
-            .send()
-            .await?;
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
 
-        let body = response.text().await?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
-        last_parsed = Some(parsed.clone());
+    let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
 
-        let status = parsed.get("status").and_then(|s| s.as_str()).unwrap_or("");
-
-        if status.eq_ignore_ascii_case("success") {
-            if is_cluster_mode() {
-                wait_for_cluster_after_sql(sql);
-            }
-            return Ok(parsed);
-        }
-
-        let err_msg = json_error_message(&parsed).unwrap_or_default();
-        if is_leader_error(&err_msg) && attempt < 4 {
-            let delay_ms = 300 + attempt * 200;
-            tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
-            continue;
-        }
-
-        return Ok(parsed);
+    if status.eq_ignore_ascii_case("success") && is_cluster_mode() {
+        wait_for_cluster_after_sql(sql);
     }
 
-    Ok(last_parsed
-        .unwrap_or_else(|| json!({"status": "error", "error": {"message": "No response"}})))
+    Ok(parsed)
 }
 
 /// Execute SQL over HTTP as root user.

@@ -170,9 +170,8 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // =========================================================
     // Step 6: Start subscription for u1
     // =========================================================
-    let subscription_sql =
-        format!("SELECT * FROM {}.messages WHERE conversation_id = 1 ORDER BY id", ns);
-    let mut subscription = u1_client.subscribe(&subscription_sql).await?;
+    let subscription_sql = format!("SELECT * FROM {}.messages WHERE conversation_id = 1", ns);
+    let mut subscription = u1_client.live_events(&subscription_sql).await?;
 
     // Wait for ACK
     let (_sub_id, _total_rows) = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;

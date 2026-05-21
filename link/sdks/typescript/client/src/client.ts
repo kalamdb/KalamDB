@@ -151,6 +151,7 @@ const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.
 export class KalamDBClient {
   private wasmClient: WasmClient | null = null;
   private initialized = false;
+  private initializing: Promise<void> | null = null;
   private connecting: Promise<void> | null = null;
   private url: string;
   /** Current auth state — resolved lazily from authProvider during initialization. */
@@ -305,9 +306,20 @@ export class KalamDBClient {
    * Called automatically before the first operation that requires it.
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    await this.ensureInitialized();
 
-    try {
+    // Eager connect: when wsLazyConnect is false, connect immediately.
+    if (!this.wsLazyConnect) {
+      this.log(LogLevel.Debug, 'init', 'wsLazyConnect=false — connecting eagerly...');
+      await this.connectInternal();
+    }
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initializing) return this.initializing;
+
+    this.initializing = (async () => {
       if (!this.wasmUrl && !isNodeRuntime()) {
         this.wasmUrl = BUNDLED_BROWSER_WASM_URL;
       }
@@ -353,15 +365,15 @@ export class KalamDBClient {
 
       this.initialized = true;
       this.log(LogLevel.Info, 'init', 'WASM initialization complete');
+    })();
 
-      // Eager connect: when wsLazyConnect is false, connect immediately.
-      if (!this.wsLazyConnect) {
-        this.log(LogLevel.Debug, 'init', 'wsLazyConnect=false — connecting eagerly...');
-        await this.connectInternal();
-      }
+    try {
+      await this.initializing;
     } catch (error) {
       this.log(LogLevel.Error, 'init', `WASM initialization failed: ${error}`);
       throw new Error(`Failed to initialize WASM client: ${error}`);
+    } finally {
+      this.initializing = null;
     }
   }
 
@@ -386,7 +398,7 @@ export class KalamDBClient {
     this.connecting = (async () => {
       try {
         this.log(LogLevel.Info, 'connection', `Connecting to ${this.url}...`);
-        await this.initialize();
+        await this.ensureInitialized();
 
         // Auto-login: exchange Basic credentials for JWT before WebSocket connect.
         if (this.auth?.type === 'basic') {
@@ -896,17 +908,36 @@ export class KalamDBClient {
     rowId: string | number,
     data: Record<string, unknown>,
   ): Promise<QueryResponse> {
-    const setClauses = Object.entries(data)
-      .map(([key, value]) => {
-        if (value === null) return `${key} = NULL`;
-        if (typeof value === 'string') return `${key} = '${value.replace(/'/g, "''")}'`;
-        if (typeof value === 'boolean') return `${key} = ${value}`;
-        return `${key} = ${value}`;
-      })
-      .join(', ');
+    const entries = Object.entries(data);
+    if (entries.length === 0) {
+      throw new Error('update() requires at least one column value');
+    }
 
-    const idLiteral = typeof rowId === 'number' ? String(rowId) : `'${String(rowId).replace(/'/g, "''")}'`;
-    return this.query(`UPDATE ${tableName} SET ${setClauses} WHERE id = ${idLiteral}`);
+    const assignments = entries.map(([column], index) => (
+      `${KalamDBClient.quoteSqlIdentifier(column)} = $${index + 1}`
+    ));
+    const params = entries.map(([, value]) => value);
+    params.push(rowId);
+
+    const idParam = entries.length + 1;
+    const sql = `UPDATE ${KalamDBClient.quoteQualifiedIdentifier(tableName)} SET ${assignments.join(', ')} WHERE "id" = $${idParam}`;
+    return this.query(sql, params);
+  }
+
+  private static quoteSqlIdentifier(identifier: string): string {
+    const trimmed = identifier.trim();
+    if (!trimmed) {
+      throw new Error('SQL identifier cannot be empty');
+    }
+    return `"${trimmed.replace(/"/g, '""')}"`;
+  }
+
+  private static quoteQualifiedIdentifier(identifierPath: string): string {
+    const parts = identifierPath.split('.');
+    if (parts.some((part) => part.trim().length === 0)) {
+      throw new Error('SQL identifier path cannot contain empty segments');
+    }
+    return parts.map((part) => KalamDBClient.quoteSqlIdentifier(part)).join('.');
   }
 
   /**
@@ -918,10 +949,9 @@ export class KalamDBClient {
    */
   private static namedRows(response: QueryResponse): RowData[] {
     const result = response.results?.[0];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = (result as any)?.named_rows as Record<string, unknown>[] | undefined;
+    const raw = result?.named_rows;
     if (!raw || !Array.isArray(raw)) return [];
-    return raw.map(row => wrapRowMap(row));
+    return raw.map(row => wrapRowMap(row as Record<string, unknown>));
   }
 
   /**

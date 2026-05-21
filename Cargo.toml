@@ -9,6 +9,7 @@ members = [
     "pg/crates/kalam-pg-client",
     "backend/crates/kalamdb-macros",
     "backend/crates/kalamdb-commons",
+    "backend/crates/kalamdb-row-filter",
     "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
     "backend/crates/kalamdb-streams",
@@ -176,6 +177,7 @@ rand = "0.10.1"
 rcgen = "0.14.8"
 x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = false }
+kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
@@ -225,12 +227,12 @@ wasm-bindgen = { version = "0.2.121" }
 wasm-bindgen-futures = { version = "0.4.71" }
 js-sys = { version = "0.3.98" }
 libc = "0.2.186"
-libmimalloc-sys = { version = "0.1.47", features = ["extended"] }
+libmimalloc-sys = { version = "0.1.48", features = ["extended"] }
 web-sys = { version = "0.3.98" }
 tsify = { version = "0.5.6", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6.5"
 flate2 = "1.1.9"
-tar = "0.4"
+tar = "0.4.46"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 miniz_oxide = "0.9.1"
 flutter_rust_bridge = "=2.12.0"
@@ -248,7 +250,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
 tracing-actix-web = "0.7.21"
 tracing-log = "0.2"
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 opentelemetry = "0.32.0"
 opentelemetry_sdk = { version = "0.32.0", features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["trace", "grpc-tonic", "http-proto"] }

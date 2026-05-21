@@ -11,13 +11,13 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::{
     ids::SeqId,
     models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId},
     websocket::{CompressionType, ProtocolOptions, SerializationType, WireNotification},
     Role,
 };
+use kalamdb_row_filter::RowFilter;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 
@@ -84,8 +84,8 @@ pub enum ConnectionEvent {
 pub struct SubscriptionHandle {
     /// Stable subscription identifier shared across all notifications for this subscriber.
     pub subscription_id: Arc<str>,
-    /// Shared filter expression (Arc for zero-copy across indices)
-    pub filter_expr: Option<Arc<Expr>>,
+    /// Shared compiled filter expression (Arc for zero-copy across indices)
+    pub filter_expr: Option<Arc<RowFilter>>,
     /// Column projections for filtering notification payload (None = all columns)
     pub projections: Option<Arc<Vec<String>>>,
     /// Shared notification channel
@@ -314,7 +314,7 @@ pub struct InitialLoadState {
 /// - Column projections (projections)
 /// - Optional initial data batch fetching and pagination
 ///
-/// Memory optimization: Uses Arc<Expr> for filter sharing and allocates
+/// Memory optimization: Uses Arc<RowFilter> for filter sharing and allocates
 /// snapshot/batch state only when the subscription actually requests it.
 #[derive(Debug, Clone)]
 pub struct SubscriptionState {
@@ -323,7 +323,7 @@ pub struct SubscriptionState {
     /// Compiled filter expression from WHERE clause (parsed once at subscription time)
     /// None means no filter (SELECT * without WHERE)
     /// Arc-wrapped for sharing with SubscriptionHandle
-    pub filter_expr: Option<Arc<Expr>>,
+    pub filter_expr: Option<Arc<RowFilter>>,
     /// Column projections from SELECT clause (None = SELECT *, i.e., all columns)
     /// Arc-wrapped for sharing with SubscriptionHandle
     pub projections: Option<Arc<Vec<String>>>,

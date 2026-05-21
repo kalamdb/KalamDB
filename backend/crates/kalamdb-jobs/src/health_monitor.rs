@@ -40,10 +40,6 @@ impl HealthMonitor {
         let active_subscriptions = app_context.connection_registry().subscription_count();
         let ws_sessions = get_websocket_session_count();
 
-        if active_subscriptions > 0 {
-            return;
-        }
-
         let Some(idle_for) = idle_duration() else {
             return;
         };
@@ -73,7 +69,7 @@ impl HealthMonitor {
             }
         }
 
-        if active_connections == 0 && ws_sessions == 0 {
+        if active_subscriptions == 0 && active_connections == 0 && ws_sessions == 0 {
             app_context.connection_registry().trim_idle_capacity();
         }
         kalamdb_observability::force_allocator_collection(true);

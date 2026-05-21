@@ -26,7 +26,9 @@ const STREAM_CHUNK_SIZE = 64;
 
 const TOPIC_NAME = 'chat_demo.ai_inbox';
 const CONSUMER_GROUP = process.env.KALAMDB_GROUP ?? 'chat-ai-agent';
-const CONSUMER_START = 'earliest';
+const CONSUMER_START = (process.env.KALAMDB_START ?? 'latest').trim().toLowerCase() === 'earliest'
+  ? 'earliest'
+  : 'latest';
 
 type StartAgentOptions = {
   stopSignal?: AbortSignal;
@@ -111,7 +113,7 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
   };
 
   console.log(`[chat-demo-agent] starting (url=${KALAMDB_URL}, user=${KALAMDB_USER}, mode=topic-consumer)`);
-  console.log(`[chat-demo-agent] topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}`);
+  console.log(`[chat-demo-agent] topic=${TOPIC_NAME}  group=${CONSUMER_GROUP}  start=${CONSUMER_START}`);
   console.log(`[chat-demo-agent] messages=${chatMessagesConfig.tableType} events=${agentEventsConfig.tableType} seq=${canReadMessageSeq ? 'enabled' : 'disabled'}`);
   console.log(`[chat-demo-agent] connecting to KalamDB at ${KALAMDB_URL} ...`);
 

@@ -77,14 +77,11 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
         // -------------------------
         {
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT) WITH (TYPE='USER', \
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT) WITH (TYPE='USER', \
                          STORAGE_ID='local', FLUSH_POLICY='rows:100')",
-                        ns, table_user
-                    ),
-                    &auth_a,
-                )
+                    ns, table_user
+                ))
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -279,14 +276,11 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
         {
             let table_auto = "items_auto";
             let resp = server
-                .execute_sql_with_auth(
-                    &format!(
-                        "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, name TEXT) \
+                .execute_sql(&format!(
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, name TEXT) \
                          WITH (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100')",
-                        ns, table_auto
-                    ),
-                    &auth_a,
-                )
+                    ns, table_auto
+                ))
                 .await?;
             assert_eq!(resp.status, ResponseStatus::Success);
 

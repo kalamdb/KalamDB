@@ -46,10 +46,10 @@ HTTP queries work without manually calling `connect()`.
 
 ```typescript
 const result = await client.query('SELECT CURRENT_USER()');
-console.log(result.success, result.rows);
+console.log(result.status, result.results?.[0]?.rows);
 ```
 
-There is no public `client.connect()` step in the current TypeScript SDK. The client initializes itself on first use, and realtime connection management is automatic.
+Most apps do not need to call `client.connect()`. The client initializes itself on first use, and realtime connection management is automatic. `connect()` is available for apps that want to explicitly pre-open or restore the shared WebSocket.
 
 ## 3. Start Realtime Updates
 

@@ -118,7 +118,7 @@ impl JobExecutor for CleanupExecutor {
 
         ctx.log_debug(&format!("Freed {} bytes from Parquet files", bytes_freed));
 
-        // 3. Invalidate manifest cache (L1 hot cache + L2 RocksDB)
+        // 3. Invalidate manifest cache (memory cache + RocksDB)
         let manifest_service = ctx.app_ctx.manifest_service();
         let cache_entries_invalidated =
             manifest_service.invalidate_table(&table_id).map_err(|e| {

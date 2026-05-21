@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use kalamdb_row_filter::RowFilterError;
 use kalamdb_sql::parser::query_parser::QueryParseError;
 use thiserror::Error;
 
@@ -54,6 +55,12 @@ impl LiveError {
 impl From<QueryParseError> for LiveError {
     fn from(err: QueryParseError) -> Self {
         LiveError::InvalidSql(err.into_user_message())
+    }
+}
+
+impl From<RowFilterError> for LiveError {
+    fn from(err: RowFilterError) -> Self {
+        LiveError::InvalidOperation(err.to_string())
     }
 }
 

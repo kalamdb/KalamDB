@@ -135,13 +135,9 @@ impl ManifestCacheEntry {
         serde_json::to_string(&self.manifest).unwrap_or_else(|_| "{}".to_string())
     }
 
-    /// Normalize last_refreshed to milliseconds (handles legacy seconds data)
+    /// Return the last refresh timestamp in milliseconds.
     pub fn last_refreshed_millis(&self) -> i64 {
-        if self.last_refreshed < 1_000_000_000_000 {
-            self.last_refreshed * 1000
-        } else {
-            self.last_refreshed
-        }
+        self.last_refreshed
     }
 
     /// Check if entry is stale based on TTL (milliseconds)
@@ -290,7 +286,6 @@ pub struct SegmentMetadata {
 
     /// Column statistics (min/max/nulls) keyed by column_id
     /// Uses stable column_id for correct mapping after column renames
-    #[serde(default)]
     pub column_stats: HashMap<u64, ColumnStats>,
 
     /// Schema version when this segment was written (Phase 16)
@@ -298,7 +293,6 @@ pub struct SegmentMetadata {
     /// Links this Parquet file to a specific table schema version.
     /// Use `TablesStore::get_version(table_id, schema_version)` to
     /// retrieve the exact TableDefinition for reading this segment.
-    #[serde(default = "default_schema_version")]
     pub schema_version: u32,
 
     // /// If true, this segment is marked for deletion (compaction/cleanup)
@@ -307,13 +301,7 @@ pub struct SegmentMetadata {
     // pub tombstone: bool,
     /// Status of this segment in the flush lifecycle
     /// InProgress → Committed → Tombstone
-    #[serde(default)]
     pub status: SegmentStatus,
-}
-
-/// Default schema version for backward compatibility with existing manifests
-fn default_schema_version() -> u32 {
-    1
 }
 
 impl SegmentMetadata {
@@ -471,7 +459,6 @@ pub struct VectorIndexMetadata {
     /// Last update timestamp.
     pub updated_at: i64,
     /// Current index sync state.
-    #[serde(default)]
     pub state: VectorIndexState,
 }
 
@@ -550,8 +537,6 @@ pub struct Manifest {
     /// Vector index metadata keyed by column name.
     /// This is embedded in manifest.json so index artifacts can be managed with
     /// the same atomic flush lifecycle used for segment metadata.
-    #[serde(default)]
-    // TODO: Dont include in json if empty
     pub vector_indexes: HashMap<String, VectorIndexMetadata>,
 }
 
@@ -1135,12 +1120,6 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_status_default() {
-        // Test that default status is Committed for backward compatibility
-        assert_eq!(SegmentStatus::default(), SegmentStatus::Committed);
-    }
-
-    #[test]
     fn test_manifest_vector_index_roundtrip() {
         let table_id = TableId::new(NamespaceId::new("vec_ns"), TableName::new("emb"));
         let mut manifest = Manifest::new(table_id, Some(UserId::new("u1")));
@@ -1164,18 +1143,5 @@ mod tests {
         assert_eq!(meta.last_applied_seq, SeqId::from(42i64));
         assert_eq!(meta.snapshot_version, 1);
         assert_eq!(meta.snapshot_path.as_deref(), Some("vec-embedding-snapshot-1.vix"));
-    }
-
-    #[test]
-    fn test_manifest_vector_index_backward_compat_default() {
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("t1"));
-        let manifest = Manifest::new(table_id, None);
-        let mut raw = serde_json::to_value(&manifest).unwrap();
-        if let Some(obj) = raw.as_object_mut() {
-            obj.remove("vector_indexes");
-        }
-
-        let decoded: Manifest = serde_json::from_value(raw).unwrap();
-        assert!(decoded.vector_indexes.is_empty());
     }
 }

@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use arrow::datatypes::Schema as ArrowSchema;
+use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
-use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::{
     models::{ReadContext, TableId, UserId},
     schemas::TableDefinition,

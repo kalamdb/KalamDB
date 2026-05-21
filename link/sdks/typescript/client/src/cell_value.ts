@@ -43,6 +43,7 @@
  */
 
 import { FileRef } from './file_ref.js';
+import { decodeBase64ToBytes } from './helpers/base64.js';
 import { SeqId } from './seq_id.js';
 import type { JsonValue } from './types.js';
 
@@ -52,37 +53,22 @@ const TIME_PATTERN = /^\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$/;
 const MILLIS_PER_DAY = 86_400_000;
 const MICROS_PER_DAY = 86_400_000_000n;
 
-function toByteArray(value: unknown): number[] | null {
-  if (value instanceof Uint8Array) return Array.from(value);
+/** Raw value accepted by `KalamCellValue` before accessor-level coercion. */
+export type KalamCellRawValue = JsonValue | bigint | Uint8Array;
+
+function toUint8Array(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
   if (!Array.isArray(value)) return null;
 
-  const bytes: number[] = [];
-  for (const item of value) {
+  const bytes = new Uint8Array(value.length);
+  for (let index = 0; index < value.length; index += 1) {
+    const item = value[index];
     if (typeof item !== 'number' || !Number.isInteger(item) || item < 0 || item > 255) {
       return null;
     }
-    bytes.push(item);
+    bytes[index] = item;
   }
   return bytes;
-}
-
-function tryDecodeBase64(value: string): Uint8Array | null {
-  const normalized = value.trim();
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
-    return null;
-  }
-
-  try {
-    if (typeof atob !== 'function') return null;
-    const decoded = atob(normalized);
-    const bytes = new Uint8Array(decoded.length);
-    for (let index = 0; index < decoded.length; index += 1) {
-      bytes[index] = decoded.charCodeAt(index);
-    }
-    return bytes;
-  } catch {
-    return null;
-  }
 }
 
 function dateFromEpochDays(days: number): Date | null {
@@ -122,10 +108,10 @@ function formatTimeFromMicros(value: number | bigint): string | null {
  */
 export class KalamCellValue {
   /** @internal Raw JSON value as returned by the server */
-  readonly #raw: JsonValue;
+  readonly #raw: KalamCellRawValue;
 
   /** @internal */
-  private constructor(raw: JsonValue) {
+  private constructor(raw: KalamCellRawValue) {
     this.#raw = raw;
   }
 
@@ -140,7 +126,7 @@ export class KalamCellValue {
    */
   static from(raw: unknown): KalamCellValue {
     // Normalise undefined → null (treat as SQL NULL)
-    return new KalamCellValue(raw === undefined ? null : (raw as JsonValue));
+    return new KalamCellValue(raw === undefined ? null : (raw as KalamCellRawValue));
   }
 
   /* ------------------------------------------------------------------ */
@@ -153,7 +139,7 @@ export class KalamCellValue {
    * Use this when you need to pass the value to code that expects plain JSON
    * (e.g., existing WASM helpers, `FileRef.from(cell.toJson())`).
    */
-  toJson(): JsonValue {
+  toJson(): KalamCellRawValue {
     return this.#raw;
   }
 
@@ -162,7 +148,7 @@ export class KalamCellValue {
    *
    * Alias of `toJson()` for codebases that prefer `asX()` naming.
    */
-  asJson(): JsonValue {
+  asJson(): KalamCellRawValue {
     return this.#raw;
   }
 
@@ -195,7 +181,8 @@ export class KalamCellValue {
     return (
       this.#raw !== null &&
       typeof this.#raw === 'object' &&
-      !Array.isArray(this.#raw)
+      !Array.isArray(this.#raw) &&
+      !(this.#raw instanceof Uint8Array)
     );
   }
 
@@ -226,6 +213,7 @@ export class KalamCellValue {
 
     if (typeof this.#raw === 'string') return this.#raw;
     if (typeof this.#raw === 'number') return String(this.#raw);
+    if (typeof this.#raw === 'bigint') return this.#raw.toString();
     if (typeof this.#raw === 'boolean') return this.#raw ? 'true' : 'false';
 
     return JSON.stringify(this.#raw);
@@ -365,9 +353,9 @@ export class KalamCellValue {
    */
   asBytes(): Uint8Array | null {
     if (this.isNull()) return null;
-    const bytes = toByteArray(this.#raw);
-    if (bytes) return Uint8Array.from(bytes);
-    if (typeof this.#raw === 'string') return tryDecodeBase64(this.#raw);
+    const bytes = toUint8Array(this.#raw);
+    if (bytes) return bytes;
+    if (typeof this.#raw === 'string') return decodeBase64ToBytes(this.#raw);
     return null;
   }
 
@@ -553,6 +541,7 @@ export class KalamCellValue {
   toString(): string {
     if (this.isNull()) return 'NULL';
     if (typeof this.#raw === 'string') return this.#raw;
+    if (typeof this.#raw === 'bigint') return this.#raw.toString();
     if (typeof this.#raw === 'object') return JSON.stringify(this.#raw);
     return String(this.#raw);
   }

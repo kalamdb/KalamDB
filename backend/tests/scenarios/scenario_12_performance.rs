@@ -170,7 +170,18 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
         let query_duration = query_start.elapsed();
 
         assert!(resp.success(), "Query at {} rows", batch_target);
-        assert_eq!(resp.rows_as_maps().len(), batch_target, "Row count mismatch");
+
+        let count_resp = client
+            .execute_query(
+                &format!("SELECT COUNT(*) as cnt FROM {}.readings", ns),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        assert!(count_resp.success(), "Count at {} rows", batch_target);
+        let visible_count = count_resp.get_i64("cnt").unwrap_or(-1);
+        assert_eq!(visible_count, batch_target as i64, "Row count mismatch");
 
         query_times.push((batch_target, query_duration));
         println!("Query at {} rows: {:?}", batch_target, query_duration);
@@ -260,7 +271,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
 
         // Measure subscription snapshot time
         let sub_start = Instant::now();
-        let mut sub = client.subscribe(&format!("SELECT * FROM {}.documents", ns)).await?;
+        let mut sub = client.live_events(&format!("SELECT * FROM {}.documents", ns)).await?;
 
         // Wait for ack
         let _ = wait_for_ack(&mut sub, Duration::from_secs(10)).await?;

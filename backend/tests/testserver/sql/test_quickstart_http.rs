@@ -21,14 +21,11 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     // USER table: messages
     {
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.messages (id BIGINT PRIMARY KEY, content TEXT, created_at \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.messages (id BIGINT PRIMARY KEY, content TEXT, created_at \
                      BIGINT) WITH (TYPE='USER', STORAGE_ID='local')",
-                    ns
-                ),
-                &auth,
-            )
+                ns
+            ))
             .await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,
@@ -115,14 +112,11 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     // Note: STREAM table type is not yet implemented.
     {
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.events (id BIGINT PRIMARY KEY, kind TEXT, created_at BIGINT) \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.events (id BIGINT PRIMARY KEY, kind TEXT, created_at BIGINT) \
                      WITH (TYPE='USER', STORAGE_ID='local')",
-                    ns
-                ),
-                &auth,
-            )
+                ns
+            ))
             .await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,

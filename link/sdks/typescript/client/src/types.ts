@@ -12,8 +12,13 @@
 /**
  * Any JSON-compatible value exchanged with the SDK.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type JsonValue = any;
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 import type { SeqId as TypedSeqId } from './seq_id.js';
 
@@ -212,7 +217,7 @@ export interface LiveStreamOptions {
 /* ================================================================== */
 
 export { KalamCellValue, wrapRowMap } from './cell_value.js';
-export type { RowData } from './cell_value.js';
+export type { KalamCellRawValue, RowData } from './cell_value.js';
 
 /* ================================================================== */
 /*  Convenience enums (for runtime values, not just types)            */
@@ -349,9 +354,9 @@ export interface LiveOptions<T> extends LiveStreamOptions {
   /**
    * Maximum number of rows retained in the materialized live result set.
    *
-  * This is separate from the subscription startup controls:
-  * - `batchSize` chunks the initial server snapshot
-  * - `lastRows` chooses how much history to rewind first
+    * This is separate from the subscription startup controls:
+    * - `batchSize` chunks the initial server snapshot
+    * - `lastRows` chooses how much history to rewind first
    * - `limit` bounds the reconciled row set that the client keeps afterward
    */
   limit?: number;
@@ -553,7 +558,7 @@ export interface ClientOptions {
   disableCompression?: boolean;
   /**
    * Explicit URL or buffer for the WASM file.
-  * - Browser: string URL when you need to override the SDK's bundled default
+    * - Browser: string URL when you need to override the SDK's bundled default
    * - Node.js: BufferSource (fs.readFileSync result)
    * Usually optional. The SDK resolves its packaged WASM automatically in
    * browsers and reads the bundled file directly in Node.js.
@@ -563,11 +568,11 @@ export interface ClientOptions {
    * Control when the WebSocket connection is established.
    *
    * When `true` (the default), the WebSocket connection is deferred until
-  * the first `live()`, `liveTable()`, or `liveEvents()` call. This avoids
+    * the first `live()`, `liveTable()`, or `liveEvents()` call. This avoids
    * unnecessary connections when the client is only used for HTTP queries.
    *
    * When `false`, the WebSocket connection is established eagerly during
-  * initialization (before any live call). Use this when you want the
+    * initialization (before any live call). Use this when you want the
    * connection ready immediately.
    *
    * Authentication uses the `authProvider` configured on the client.
@@ -586,7 +591,7 @@ export interface ClientOptions {
    * SDK sends a JSON `{"type":"ping"}` message instead to prevent the
    * server-side heartbeat timeout from closing idle connections.
    *
-  * Defaults to `5000` (5 seconds). Set to `0` to disable.
+    * Defaults to `5000` (5 seconds). Set to `0` to disable.
    */
   pingIntervalMs?: number;
 
@@ -597,7 +602,7 @@ export interface ClientOptions {
    * ```typescript
    * const client = createClient({
    *   url: 'http://localhost:2900',
- *   authProvider: async () => Auth.basic('admin', 'secret'),
+   *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onConnect: () => console.log('Connected!'),
    * });
    * ```
@@ -611,7 +616,7 @@ export interface ClientOptions {
    * ```typescript
    * const client = createClient({
    *   url: 'http://localhost:2900',
- *   authProvider: async () => Auth.basic('admin', 'secret'),
+   *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onDisconnect: (reason) => console.log('Disconnected:', reason.message),
    * });
    * ```
@@ -625,7 +630,7 @@ export interface ClientOptions {
    * ```typescript
    * const client = createClient({
    *   url: 'http://localhost:2900',
- *   authProvider: async () => Auth.basic('admin', 'secret'),
+   *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onError: (err) => console.error('Error:', err.message, 'recoverable:', err.recoverable),
    * });
    * ```
@@ -640,7 +645,7 @@ export interface ClientOptions {
    * ```typescript
    * const client = createClient({
    *   url: 'http://localhost:2900',
- *   authProvider: async () => Auth.basic('admin', 'secret'),
+   *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onReceive: (msg) => console.log('[RECV]', msg),
    * });
    * ```
@@ -655,7 +660,7 @@ export interface ClientOptions {
    * ```typescript
    * const client = createClient({
    *   url: 'http://localhost:2900',
- *   authProvider: async () => Auth.basic('admin', 'secret'),
+   *   authProvider: async () => Auth.basic('admin', 'secret'),
    *   onSend: (msg) => console.log('[SEND]', msg),
    * });
    * ```
@@ -670,7 +675,7 @@ export interface ClientOptions {
    *
    * @example
    * ```typescript
-   * createClient({ url, auth, logLevel: LogLevel.Debug });
+    * createClient({ url, authProvider, logLevel: LogLevel.Debug });
    * ```
    */
   logLevel?: LogLevel;
@@ -684,7 +689,7 @@ export interface ClientOptions {
    * @example
    * ```typescript
    * createClient({
-   *   url, auth,
+    *   url, authProvider,
    *   logLevel: LogLevel.Debug,
    *   logListener: (entry) => myLogger.log(entry.level, entry.message),
    * });

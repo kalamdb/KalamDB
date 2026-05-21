@@ -14,6 +14,10 @@ export interface LiveProjectionPlan<TRow = unknown> {
 }
 
 export function projectLiveRows<TRow>(rows: readonly TRow[], plan: LiveProjectionPlan<TRow> = {}): TRow[] {
+  if (!plan.projectRow && !plan.orderBy?.length && typeof plan.limit !== 'number') {
+    return Array.isArray(rows) ? rows as TRow[] : [...rows];
+  }
+
   const projected = plan.projectRow ? rows.map(plan.projectRow) : [...rows];
 
   if (plan.orderBy?.length) {

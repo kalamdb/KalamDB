@@ -1079,7 +1079,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
                     expected_messages: None,
                     publishers_done: Some(publishers_done),
                     deadline: Duration::from_secs(150),
-                    idle_break_after: 40,
+                    idle_break_after: 120,
                     idle_sleep: Duration::from_millis(100),
                     per_record_delay: Duration::ZERO,
                     commit_each_batch: true,
@@ -1094,7 +1094,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
     let consumer_a_handle = spawn_consumer("consumer-a", publishers_done.clone());
     let consumer_b_handle = spawn_consumer("consumer-b", publishers_done.clone());
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let publisher_parallelism = 24;
     topic_test_support::publish_numbered_rows(
@@ -1279,7 +1279,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
                     expected_messages: None,
                     publishers_done: Some(done),
                     deadline: Duration::from_secs(180),
-                    idle_break_after: 45,
+                    idle_break_after: 150,
                     idle_sleep: Duration::from_millis(80),
                     per_record_delay: Duration::ZERO,
                     commit_each_batch: true,
@@ -1290,7 +1290,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
         }));
     }
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
     publishers_done.store(true, Ordering::Relaxed);

@@ -47,14 +47,11 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, event_type TEXT, ts INT) WITH (TYPE \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, event_type TEXT, ts INT) WITH (TYPE \
                      = 'USER', STORAGE_ID = 'local')",
-                    ns, table
-                ),
-                &user_auth,
-            )
+                ns, table
+            ))
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -136,14 +133,11 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, metric_name TEXT, value DOUBLE) \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, metric_name TEXT, value DOUBLE) \
                      WITH (TYPE = 'USER', STORAGE_ID = 'local')",
-                    ns, table
-                ),
-                &user_auth,
-            )
+                ns, table
+            ))
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 

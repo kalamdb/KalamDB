@@ -168,6 +168,39 @@ describe("Dashboard page", () => {
     });
   });
 
+  it("falls back to the live cluster node version when stats omit server_version", async () => {
+    mockGetStatsQuery.mockReturnValue({
+      data: {
+        total_namespaces: "9",
+        total_tables: "42",
+        active_connections: "3",
+        active_subscriptions: "2",
+        jobs_running: "1",
+        jobs_queued: "4",
+        total_storages: "2",
+        server_uptime_human: "1h 10m",
+      },
+      isFetching: false,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<Dashboard />);
+
+    expect(screen.getByText("v1.2.3")).toBeTruthy();
+    expect(screen.queryByText("v0.1.1")).toBeNull();
+  });
+
+  it("renders the storage row above the metrics charts", () => {
+    render(<Dashboard />);
+
+    const storageWidget = screen.getByText("Storage usage local");
+    const metricsChart = screen.getByText("Metrics chart 1");
+
+    const storagePosition = storageWidget.compareDocumentPosition(metricsChart);
+    expect(storagePosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("refreshes dashboard queries and rechecks storage health", async () => {
     const statsRefetch = vi.fn().mockResolvedValue(undefined);
     const dbaRefetch = vi.fn().mockResolvedValue(undefined);

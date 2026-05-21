@@ -274,13 +274,13 @@ impl ExecutionContext {
     /// # Returns
     /// The current default namespace as a NamespaceId (defaults to "default")
     pub fn default_namespace(&self) -> NamespaceId {
-        let state = self
-            .session_context_cache
-            .get()
-            .map(|session| session.state())
-            .unwrap_or_else(|| self.base_session_context.state());
-        let default_schema = state.config().options().catalog.default_schema.clone();
-        NamespaceId::new(default_schema)
+        if let Some(session) = self.session_context_cache.get() {
+            let state = session.state();
+            let default_schema = state.config().options().catalog.default_schema.clone();
+            return NamespaceId::new(default_schema);
+        }
+
+        self.namespace_id.clone().unwrap_or_default()
     }
 
     #[inline]

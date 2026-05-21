@@ -4,6 +4,7 @@ use kalam_client::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
 use super::test_support::consolidated_helpers::unique_namespace;
+use super::test_support::flush::flush_table_and_wait;
 
 #[tokio::test]
 #[ntest::timeout(120000)] // 120 seconds - allow for server startup + job persistence
@@ -26,17 +27,19 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let resp = server.execute_sql(&insert_sql).await?;
     assert_eq!(resp.status, ResponseStatus::Success, "INSERT failed");
 
-    let flush_sql = format!("STORAGE FLUSH TABLE {}.logs", ns);
-    let resp = server.execute_sql(&flush_sql).await?;
-    assert_eq!(resp.status, ResponseStatus::Success, "STORAGE FLUSH TABLE failed");
+    flush_table_and_wait(server, &ns, "logs").await?;
 
-    // Jobs may be persisted asynchronously. Poll briefly.
+    // Job rows can lag the flush completion slightly. Poll the exact idempotency key to confirm
+    // the persisted job record exists for this table flush.
+    let job_key = format!("flush-{}-logs", ns);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let resp = server
-            .execute_sql(
-                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush'",
-            )
+            .execute_sql(&format!(
+                "SELECT job_type, status, parameters FROM system.jobs WHERE job_type = 'flush' \
+                 AND idempotency_key = '{}' ORDER BY created_at DESC LIMIT 1",
+                job_key
+            ))
             .await?;
         assert_eq!(resp.status, ResponseStatus::Success);
         let rows = resp.rows_as_maps();

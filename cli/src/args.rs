@@ -313,14 +313,8 @@ mod tests {
 
     #[test]
     fn command_flag_accepts_multiple_tokens() {
-        let cli = Cli::try_parse_from([
-            "kalam",
-            "--command",
-            "cluster",
-            "list",
-            "groups",
-        ])
-        .expect("multi-token command should parse");
+        let cli = Cli::try_parse_from(["kalam", "--command", "cluster", "list", "groups"])
+            .expect("multi-token command should parse");
 
         assert_eq!(cli.command_text().as_deref(), Some("cluster list groups"));
     }

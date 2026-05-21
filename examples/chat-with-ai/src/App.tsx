@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   Auth,
-  ChangeType,
-  MessageType,
   type RowData,
   createClient,
   type SubscriptionErrorEvent,
@@ -71,19 +69,6 @@ function limitEvents(rows: AgentEventRow[]): AgentEventRow[] {
   // Change frames are merged locally, so keep a deterministic order after upserts/removals.
   const sorted = sortEvents(rows);
   return sorted.length > MAX_AGENT_EVENTS ? sorted.slice(-MAX_AGENT_EVENTS) : sorted;
-}
-
-function upsertEvents(current: AgentEventRow[], incoming: AgentEventRow[]): AgentEventRow[] {
-  const next = new Map(current.map((event) => [event.id, event]));
-  for (const event of incoming) {
-    next.set(event.id, event);
-  }
-  return limitEvents(Array.from(next.values()));
-}
-
-function removeEvents(current: AgentEventRow[], removed: AgentEventRow[]): AgentEventRow[] {
-  const removedIds = new Set(removed.map((event) => event.id));
-  return limitEvents(current.filter((event) => !removedIds.has(event.id)));
 }
 
 function deriveLiveDraft(events: AgentEventRow[]): LiveDraft | null {
@@ -163,10 +148,6 @@ function mapAgentEventRow(row: RowData): AgentEventRow {
   };
 }
 
-function mapAgentEventRows(rows: RowData[] | undefined): AgentEventRow[] {
-  return (rows ?? []).map(mapAgentEventRow);
-}
-
 export function App() {
   const [messages, setMessages] = useState<ChatMessageRow[]>([]);
   const [events, setEvents] = useState<AgentEventRow[]>([]);
@@ -179,52 +160,7 @@ export function App() {
 
   useEffect(() => {
     let active = true;
-    let bufferedEvents: AgentEventRow[] = [];
     const unsubscribers: Array<() => Promise<void>> = [];
-
-    const publishEvents = (nextEvents: AgentEventRow[]): void => {
-      bufferedEvents = nextEvents;
-      flushSync(() => {
-        setEvents(nextEvents);
-      });
-    };
-
-    const handleEventSubscription = (event: { type: string; rows?: RowData[]; old_values?: RowData[]; code?: string; message?: string; change_type?: string }): void => {
-      if (!active) {
-        return;
-      }
-
-      if (event.type === MessageType.Error) {
-        setStatus('error');
-        setError(`Event subscription failed (${event.code}): ${event.message}`);
-        return;
-      }
-
-      if (event.type === MessageType.SubscriptionAck) {
-        return;
-      }
-
-      if (event.type === MessageType.InitialDataBatch) {
-        publishEvents(upsertEvents(bufferedEvents, mapAgentEventRows(event.rows)));
-        return;
-      }
-
-      if (event.type !== MessageType.Change) {
-        return;
-      }
-
-      if (event.change_type === ChangeType.Delete) {
-        publishEvents(removeEvents(bufferedEvents, mapAgentEventRows(event.old_values)));
-        return;
-      }
-
-      let nextEvents = bufferedEvents;
-      if (event.change_type === ChangeType.Update) {
-        nextEvents = removeEvents(nextEvents, mapAgentEventRows(event.old_values));
-      }
-
-      publishEvents(upsertEvents(nextEvents, mapAgentEventRows(event.rows)));
-    };
 
     const start = async (): Promise<void> => {
       try {
@@ -255,13 +191,29 @@ export function App() {
         );
         unsubscribers.push(messagesUnsubscribe);
 
-        // The draft rail keeps raw protocol frames so rapid typing bursts can
-        // be reconciled locally instead of waiting for a full live-row view.
-        const eventsUnsubscribe = await client.liveEvents(
+        const eventsUnsubscribe = await client.live<AgentEventRow>(
           `SELECT * FROM chat_demo.agent_events WHERE room = ${sqlLiteral(ROOM)}`,
-          handleEventSubscription,
+          (nextEvents) => {
+            if (!active) {
+              return;
+            }
+
+            flushSync(() => {
+              setEvents(limitEvents(nextEvents));
+            });
+          },
           {
             lastRows: MAX_AGENT_EVENTS,
+            limit: MAX_AGENT_EVENTS,
+            mapRow: mapAgentEventRow,
+            getKey: 'id',
+            onError: (event: SubscriptionErrorEvent) => {
+              if (!active) {
+                return;
+              }
+              setStatus('error');
+              setError(`Event subscription failed (${event.code}): ${event.message}`);
+            },
           },
         );
         unsubscribers.push(eventsUnsubscribe);

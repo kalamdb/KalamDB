@@ -43,7 +43,7 @@
     "build": "npm run clean && tsc",
     "build:orm": "npm run build",
     "pretest": "npm run ensure:test-deps && npm run ensure:linked-consumer",
-    "test": "npm run build && node --test tests/ktable.test.mjs tests/generate-unit.test.mjs tests/driver.test.mjs tests/filtering.test.mjs tests/agent-consumer.test.mjs tests/temporal-normalize.test.mjs tests/file-column.test.mjs tests/strip-defaults.test.mjs tests/sql-normalize.test.mjs tests/live-descriptor.test.mjs tests/live-typed-query.test.mjs tests/generate.test.mjs tests/generate-schema-changes.test.mjs tests/live.test.mjs tests/cli.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
@@ -53,7 +53,7 @@
   "devDependencies": {
     "@kalamdb/client": "file:../client",
     "@kalamdb/consumer": "file:../consumer",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.1",
     "drizzle-orm": "^0.45.2",
     "typescript": "^6.0.3"
   },

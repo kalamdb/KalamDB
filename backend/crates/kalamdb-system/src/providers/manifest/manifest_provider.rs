@@ -40,13 +40,13 @@ struct ManifestStorageRow {
     manifest_json: Value,
 }
 
-/// Callback type for checking if a cache key is in hot memory
+/// Callback type for checking if a cache key is in process memory.
 pub type InMemoryChecker = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// System.manifest table provider using IndexedEntityStore architecture
 pub struct ManifestTableProvider {
     store: IndexedEntityStore<ManifestId, SystemTableRow>,
-    /// Optional callback to check if a cache key is in hot memory (injected from kalamdb-core)
+    /// Optional callback to check if a cache key is in process memory (injected from kalamdb-core)
     in_memory_checker: RwLock<Option<InMemoryChecker>>,
 }
 
@@ -85,10 +85,10 @@ impl ManifestTableProvider {
         }
     }
 
-    /// Set the in-memory checker callback
+    /// Set the in-memory checker callback.
     ///
     /// This callback is injected from kalamdb-core to check if a cache key
-    /// is currently in the hot cache (RAM).
+    /// is currently in the ManifestService process memory cache.
     pub fn set_in_memory_checker(&self, checker: InMemoryChecker) {
         if let Ok(mut guard) = self.in_memory_checker.write() {
             *guard = Some(checker);
@@ -238,7 +238,7 @@ impl ManifestTableProvider {
                 scopes => OptionalString(|entry| Some(entry.0.scope_str())),
                 etags => OptionalString(|entry| entry.1.etag.as_deref()),
                 last_refreshed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
-                // last_accessed = last_refreshed (moka manages TTI internally).
+                // last_accessed currently follows last_refreshed; the memory layer does not persist access timestamps.
                 last_accessed_vals => Timestamp(|entry| Some(entry.1.last_refreshed_millis())),
                 in_memory_vals => OptionalBoolean(|entry| Some(self.is_in_memory(&entry.0.as_str()))),
                 sync_states => OptionalString(|entry| Some(entry.1.sync_state.to_string())),
@@ -375,14 +375,10 @@ impl ManifestTableProvider {
         let storage_row: ManifestStorageRow =
             system_row_to_model(row, &manifest_table_definition())?;
 
-        let manifest: Manifest = match storage_row.manifest_json {
-            Value::String(json_text) => serde_json::from_str(&json_text).map_err(|error| {
+        let manifest: Manifest =
+            serde_json::from_value(storage_row.manifest_json).map_err(|error| {
                 SystemError::SerializationError(format!("manifest deserialize failed: {error}"))
-            })?,
-            json_value => serde_json::from_value(json_value).map_err(|error| {
-                SystemError::SerializationError(format!("manifest deserialize failed: {error}"))
-            })?,
-        };
+            })?;
 
         let sync_state = match storage_row.sync_state.as_str() {
             "in_sync" => SyncState::InSync,
@@ -428,11 +424,24 @@ crate::impl_simple_system_table_provider!(
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::{NamespaceId, TableId, TableName};
     use kalamdb_store::{entity_store::EntityStore, test_utils::InMemoryBackend};
 
     use super::*;
     use crate::providers::manifest::{Manifest, ManifestCacheEntry, SyncState};
+
+    #[test]
+    fn test_manifest_json_column_remains_json_typed() {
+        let table_definition = manifest_table_definition();
+        let manifest_json = table_definition
+            .columns
+            .iter()
+            .find(|column| column.column_name == "manifest_json")
+            .expect("manifest_json column exists");
+
+        assert_eq!(manifest_json.data_type, KalamDataType::Json);
+    }
 
     #[tokio::test]
     async fn test_empty_manifest_table() {

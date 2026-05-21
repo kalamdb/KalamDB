@@ -140,7 +140,7 @@ impl SystemSchemaProvider {
         let table_id = system_table.table_id();
 
         // Check if provider already exists in SchemaRegistry
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             if let Some(provider) = cached.get_provider() {
                 return Some(provider);
             }
@@ -218,7 +218,7 @@ impl SystemSchemaProvider {
         // Wrap with security and store in SchemaRegistry
         let secured: Arc<dyn TableProvider + Send + Sync> =
             secure_provider(provider, system_table.table_id());
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             cached.set_provider(Arc::clone(&secured));
         }
 
@@ -235,9 +235,9 @@ impl SchemaProvider for SystemSchemaProvider {
     fn table_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .system_tables
-            .all_system_providers()
+            .persisted_provider_tables()
             .into_iter()
-            .map(|(table, _)| table.table_name().to_string())
+            .map(|table| table.table_name().to_string())
             .collect();
 
         for view in SystemTable::all_views() {
@@ -262,7 +262,7 @@ impl SchemaProvider for SystemSchemaProvider {
         let table_id = system_table.table_id();
 
         // Fast path: check SchemaRegistry for cached provider
-        if let Some(cached) = self.schema_registry.get(&table_id) {
+        if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
             if let Some(provider) = cached.get_provider() {
                 return Ok(Some(provider));
             }
@@ -275,6 +275,9 @@ impl SchemaProvider for SystemSchemaProvider {
 
         // For persisted tables without a cached provider, try SystemTablesRegistry fallback
         if let Some(provider) = self.system_tables.persisted_table_provider(system_table) {
+            if let Some(cached) = self.schema_registry.get_if_cached(&table_id) {
+                cached.set_provider(Arc::clone(&provider));
+            }
             return Ok(Some(provider as Arc<dyn TableProvider>));
         }
 

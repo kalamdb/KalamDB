@@ -60,6 +60,23 @@ function formatUptime(seconds: string | undefined): string {
   return `${minutes}m`;
 }
 
+function resolveServerVersion(
+  statsVersion: string | undefined,
+  clusterNodes: Array<{ is_self?: boolean | null; version?: string | null }> | undefined,
+): string {
+  if (statsVersion && statsVersion.trim().length > 0) {
+    return statsVersion;
+  }
+
+  const selfNodeVersion = clusterNodes?.find((node) => node.is_self)?.version;
+  if (selfNodeVersion && selfNodeVersion.trim().length > 0) {
+    return selfNodeVersion;
+  }
+
+  const firstNodeVersion = clusterNodes?.find((node) => node.version && node.version.trim().length > 0)?.version;
+  return firstNodeVersion && firstNodeVersion.trim().length > 0 ? firstNodeVersion : "-";
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [timeRange, setTimeRange] = useState("24 HOURS");
@@ -119,11 +136,12 @@ export default function Dashboard() {
       : clusterError
         ? "Failed to fetch cluster information"
         : null;
+  const serverVersion = resolveServerVersion(stats.server_version, clusterSnapshot?.nodes);
 
   const cards = [
     {
       title: "Version",
-      value: stats.server_version || "v0.1.1",
+      value: serverVersion,
       subtitle: "Server build",
       icon: Server,
     },
@@ -221,8 +239,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <MetricsChart data={dbaStats} isLoading={isDbaStatsLoading} />
-
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.95fr)]">
         <StorageUsageChart
           storages={storages}
@@ -240,6 +256,8 @@ export default function Dashboard() {
           error={clusterErrorMessage}
         />
       </div>
+
+      <MetricsChart data={dbaStats} isLoading={isDbaStatsLoading} />
 
       {error && (
         <Card className="border-destructive/30 bg-destructive/5">

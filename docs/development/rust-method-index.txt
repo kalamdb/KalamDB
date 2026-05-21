@@ -5413,9 +5413,7 @@ backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1059:   
 backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1066:    fn test_segment_in_progress_lifecycle() {
 backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1093:    fn test_segment_tombstone_lifecycle() {
 backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1117:    fn test_segment_status_serde() {
-backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1135:    fn test_segment_status_default() {
 backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1141:    fn test_manifest_vector_index_roundtrip() {
-backend/crates/kalamdb-system/src/providers/manifest/models/manifest.rs:1167:    fn test_manifest_vector_index_backward_compat_default() {
 backend/crates/kalamdb-dialect/src/classifier/types.rs:13:    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 backend/crates/kalamdb-dialect/src/classifier/types.rs:186:    pub fn new(sql_text: String, kind: SqlStatementKind) -> Self {
 backend/crates/kalamdb-dialect/src/classifier/types.rs:191:    pub fn as_str(&self) -> &str {
@@ -7295,7 +7293,6 @@ backend/crates/kalamdb-configs/src/config/defaults.rs:156:pub fn default_flush_c
 backend/crates/kalamdb-configs/src/config/defaults.rs:161:pub fn default_manifest_cache_eviction_interval() -> i64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:165:pub fn default_manifest_cache_max_entries() -> usize {
 backend/crates/kalamdb-configs/src/config/defaults.rs:171:pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
-backend/crates/kalamdb-configs/src/config/defaults.rs:178:pub fn default_user_table_weight_factor() -> u32 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:183:pub fn default_deleted_retention_hours() -> i32 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:187:pub fn default_dba_stats_retention_days() -> u64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:192:pub fn default_stream_ttl() -> u64 {
@@ -9468,7 +9465,6 @@ backend/crates/kalamdb-core/src/manifest/service.rs:103:    fn get_storage_regis
 backend/crates/kalamdb-core/src/manifest/service.rs:116:    pub fn get_or_load(
 backend/crates/kalamdb-core/src/manifest/service.rs:139:    pub async fn get_or_load_async(
 backend/crates/kalamdb-core/src/manifest/service.rs:162:    pub fn count(&self) -> Result<usize, StorageError> {
-backend/crates/kalamdb-core/src/manifest/service.rs:167:    pub fn max_weighted_capacity(&self) -> usize {
 backend/crates/kalamdb-core/src/manifest/service.rs:174:    pub fn update_after_flush(
 backend/crates/kalamdb-core/src/manifest/service.rs:186:    pub fn stage_before_flush(
 backend/crates/kalamdb-core/src/manifest/service.rs:196:    pub fn mark_as_stale(

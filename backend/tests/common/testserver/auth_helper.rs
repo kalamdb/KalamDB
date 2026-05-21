@@ -302,7 +302,7 @@ pub async fn create_user_auth_header_default(
     create_user_auth_header(server, username, "UserPass123!", &Role::User).await
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "e2e-tests")))]
 mod tests {
     use super::*;
 

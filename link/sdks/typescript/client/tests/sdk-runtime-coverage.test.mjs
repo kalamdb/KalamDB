@@ -269,6 +269,43 @@ test('query serializes concurrent WASM calls per client', async () => {
   assert.deepEqual(fakeWasmClient.queryCalls, ['SELECT 1', 'SELECT 2']);
 });
 
+test('update helper uses quoted identifiers and bound parameters', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('coverage-token'),
+  });
+  const fakeWasmClient = createRuntimeCoverageWasmClient();
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  await client.update('demo.tasks', "row'1", {
+    title: "done's done",
+    done: true,
+  });
+
+  assert.equal(fakeWasmClient.queryWithParamsCalls.length, 1);
+  assert.equal(
+    fakeWasmClient.queryWithParamsCalls[0].sql,
+    'UPDATE "demo"."tasks" SET "title" = $1, "done" = $2 WHERE "id" = $3',
+  );
+  assert.equal(
+    fakeWasmClient.queryWithParamsCalls[0].paramsJson,
+    JSON.stringify(["done's done", true, "row'1"]),
+  );
+});
+
+test('update helper rejects empty update payloads', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('coverage-token'),
+  });
+
+  await assert.rejects(
+    () => client.update('demo.tasks', '1', {}),
+    /requires at least one column value/,
+  );
+});
+
 test('liveEvents opens the low-level SQL event stream', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:2900',

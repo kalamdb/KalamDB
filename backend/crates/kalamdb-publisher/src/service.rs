@@ -28,7 +28,12 @@ use kalamdb_tables::{
     TOPIC_RETENTION_INDEX_PARTITION_NAME,
 };
 
-use crate::{models::TopicCacheStats, offset::OffsetAllocator, payload, routing::RouteCache};
+use crate::{
+    models::TopicCacheStats,
+    offset::OffsetAllocator,
+    payload,
+    routing::{RouteCache, RouteEntry},
+};
 
 /// Lookup primary-key columns for a table so topic keys can be derived from
 /// stable row identity instead of the full row payload.
@@ -277,6 +282,27 @@ impl TopicPublisherService {
         }
     }
 
+    fn route_matches_row(entry: &RouteEntry, row: &Row) -> bool {
+        let Some(filter_expr) = entry.compiled_filter.as_deref() else {
+            return true;
+        };
+
+        match filter_expr.matches(row) {
+            Ok(matches) => matches,
+            Err(error) => {
+                tracing::warn!(
+                    topic_name = entry.topic_id.as_str(),
+                    table_id = %entry.route.table_id,
+                    operation = ?entry.route.op,
+                    filter_expr = %entry.route.filter_expr.as_deref().unwrap_or(""),
+                    error = %error,
+                    "Skipping topic route because WHERE evaluation failed"
+                );
+                false
+            },
+        }
+    }
+
     // ===== Registry Methods =====
 
     /// Check if any topics are configured for a given table.
@@ -464,6 +490,10 @@ impl TopicPublisherService {
         let mut total_published = 0;
 
         for entry in matching {
+            if !Self::route_matches_row(&entry, row) {
+                continue;
+            }
+
             let topic_span = tracing::debug_span!(
                 "publish_to_topic",
                 topic_name = entry.topic_id.as_str(),
@@ -609,12 +639,20 @@ impl TopicPublisherService {
                 std::collections::HashMap::new();
 
             for (idx, prep) in prepared.iter().enumerate() {
+                if !Self::route_matches_row(entry, &rows[idx]) {
+                    continue;
+                }
+
                 let partition_hash = match prepared_keys[idx].as_deref() {
                     Some(key) => payload::hash_key(key),
                     None => prep.hash_row(),
                 };
                 let partition_id = (partition_hash % entry.topic_partitions as u64) as u32;
                 partition_groups.entry(partition_id).or_default().push(idx);
+            }
+
+            if partition_groups.is_empty() {
+                continue;
             }
 
             // Borrow topic_id once for the entire entry loop.
@@ -1145,7 +1183,7 @@ mod tests {
     use std::time::Duration as StdDuration;
     use std::{sync::mpsc, thread};
 
-    use datafusion::scalar::ScalarValue;
+    use datafusion_common::ScalarValue;
     use kalamdb_commons::{
         models::{NamespaceId, PayloadMode, TableName},
         KSerializable, StorageKey,
@@ -1170,6 +1208,32 @@ mod tests {
         let mut values = std::collections::BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int32(Some(id)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
+        Row { values }
+    }
+
+    fn create_task_row(id: i32, title: &str, cancelled: bool) -> Row {
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int32(Some(id)));
+        values.insert("title".to_string(), ScalarValue::Utf8(Some(title.to_string())));
+        values.insert("cancelled".to_string(), ScalarValue::Boolean(Some(cancelled)));
+        Row { values }
+    }
+
+    fn create_event_row(
+        id: i32,
+        status: &str,
+        priority: i32,
+        event_type: &str,
+        archived: Option<bool>,
+    ) -> Row {
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int32(Some(id)));
+        values.insert("status".to_string(), ScalarValue::Utf8(Some(status.to_string())));
+        values.insert("priority".to_string(), ScalarValue::Int32(Some(priority)));
+        values.insert("event_type".to_string(), ScalarValue::Utf8(Some(event_type.to_string())));
+        if let Some(archived) = archived {
+            values.insert("archived".to_string(), ScalarValue::Boolean(Some(archived)));
+        }
         Row { values }
     }
 
@@ -1200,6 +1264,18 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    fn create_test_topic_with_filter(
+        topic_id: TopicId,
+        table_id: TableId,
+        op: TopicOp,
+        partitions: u32,
+        filter_expr: &str,
+    ) -> Topic {
+        let mut topic = create_test_topic_with_partitions(topic_id, table_id, op, partitions);
+        topic.routes[0].filter_expr = Some(filter_expr.to_string());
+        topic
     }
 
     fn create_test_topic_with_retention(
@@ -1584,6 +1660,157 @@ mod tests {
             messages.iter().all(|message| message.user_id.as_ref() == Some(&actor_user_id)),
             "every published message should retain the shared-table actor user"
         );
+    }
+
+    #[test]
+    fn test_publish_message_respects_route_filter_on_insert() {
+        let service = service_with_primary_key(&["id"]);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("tasks"));
+        let topic_id = TopicId::new("task_cancellation_insert_topic");
+
+        let topic = create_test_topic_with_filter(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+            "cancelled = true",
+        );
+        service.add_topic(topic);
+
+        let matching_row = create_task_row(1, "cancel deployment", true);
+        let non_matching_row = create_task_row(2, "keep deployment", false);
+
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &matching_row, None)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &non_matching_row, None)
+                .unwrap(),
+            0
+        );
+
+        let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].op, TopicOp::Insert);
+        assert_eq!(messages[0].key.as_deref(), Some("1"));
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&messages[0].payload).expect("topic payload should be JSON");
+        assert_eq!(payload["title"].as_str(), Some("cancel deployment"));
+        assert_eq!(payload["cancelled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_publish_message_respects_complex_route_filter_on_insert() {
+        let service = service_with_primary_key(&["id"]);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("events"));
+        let topic_id = TopicId::new("complex_event_insert_topic");
+
+        let topic = create_test_topic_with_filter(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Insert,
+            1,
+            "((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL",
+        );
+        service.add_topic(topic);
+        assert_eq!(service.cache_stats().total_routes, 1);
+
+        let non_matching_row = create_event_row(1, "active", 1, "noop", None);
+        let matching_status_row = create_event_row(2, "blocked", 7, "noop", None);
+        let matching_event_type_row = create_event_row(3, "active", 1, "DEPLOY_START", None);
+        let archived_row = create_event_row(4, "blocked", 7, "noop", Some(true));
+
+        let routes = service.route_cache.get_matching_routes(&table_id, &TopicOp::Insert);
+        let compiled_filter =
+            routes[0].compiled_filter.as_ref().expect("route should compile filter");
+        assert!(compiled_filter
+            .matches(&matching_status_row)
+            .expect("compiled route filter should evaluate"));
+        assert!(compiled_filter
+            .matches(&matching_event_type_row)
+            .expect("compiled route filter should evaluate"));
+        assert!(!compiled_filter
+            .matches(&archived_row)
+            .expect("compiled route filter should evaluate"));
+
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &non_matching_row, None)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &matching_status_row, None)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &matching_event_type_row, None)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            service
+                .publish_message(&table_id, TopicOp::Insert, &archived_row, None)
+                .unwrap(),
+            0
+        );
+
+        let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+        let keys: HashSet<String> =
+            messages.iter().filter_map(|message| message.key.clone()).collect();
+        assert_eq!(keys, HashSet::from(["2".to_string(), "3".to_string()]));
+    }
+
+    #[test]
+    fn test_publish_batch_respects_route_filter_on_update() {
+        let service = service_with_primary_key(&["id"]);
+
+        let ns = NamespaceId::new("test_ns");
+        let table_id = TableId::new(ns.clone(), TableName::from("tasks"));
+        let topic_id = TopicId::new("task_cancellation_update_topic");
+
+        let topic = create_test_topic_with_filter(
+            topic_id.clone(),
+            table_id.clone(),
+            TopicOp::Update,
+            1,
+            "cancelled = true",
+        );
+        service.add_topic(topic);
+
+        let rows = vec![
+            create_task_row(1, "still running", false),
+            create_task_row(2, "cancel billing", true),
+            create_task_row(3, "stop indexing", true),
+        ];
+
+        assert_eq!(service.publish_batch(&table_id, TopicOp::Update, &rows, None).unwrap(), 2);
+
+        let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| message.op == TopicOp::Update));
+
+        let keys: HashSet<String> =
+            messages.iter().filter_map(|message| message.key.clone()).collect();
+        assert_eq!(keys, HashSet::from(["2".to_string(), "3".to_string()]));
+
+        for message in &messages {
+            let payload: serde_json::Value =
+                serde_json::from_slice(&message.payload).expect("topic payload should be JSON");
+            assert_eq!(payload["cancelled"].as_bool(), Some(true));
+        }
     }
 
     #[test]

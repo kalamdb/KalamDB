@@ -16,7 +16,7 @@ pub mod cpu;
 pub mod health_monitor;
 pub mod runtime_metrics;
 
-pub use activity::{idle_duration, last_activity_ms, record_activity_now};
+pub use activity::{idle_duration, initialize_activity_now, last_activity_ms, record_activity_now};
 pub use allocator_metrics::{
     collect_allocator_metrics, force_allocator_collection, AllocatorMetrics,
 };

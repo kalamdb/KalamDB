@@ -7,10 +7,10 @@ use kalamdb_dba::{
     DbaRegistry,
 };
 use ntest::timeout;
+use tokio::time::{sleep, Duration, Instant};
 
 use super::test_support::TestServer;
 
-#[ignore = "Requires dba bootstrap to be enabled, which is not the default in tests. Remove this once we enable dba bootstrap by default in tests"]
 #[tokio::test]
 #[timeout(30000)]
 async fn test_dba_namespace_and_tables_created_on_startup() {
@@ -52,17 +52,25 @@ async fn test_dba_namespace_and_tables_created_on_startup() {
     );
     assert_eq!(rows[1].get("table_name").and_then(|value| value.as_str()), Some("stats"));
 
-    let stats_response = server
-        .execute_sql(
-            "SELECT metric_name FROM dba.stats WHERE metric_name = 'memory_usage_mb' LIMIT 1",
-        )
-        .await;
-    assert_eq!(stats_response.status, ResponseStatus::Success);
-    assert_eq!(
-        stats_response.rows_as_maps().len(),
-        1,
-        "Expected startup stats snapshot to be recorded"
-    );
+    let stats_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stats_response = server
+            .execute_sql(
+                "SELECT metric_name FROM dba.stats WHERE metric_name = 'memory_usage_mb' LIMIT 1",
+            )
+            .await;
+        assert_eq!(stats_response.status, ResponseStatus::Success);
+
+        if stats_response.rows_as_maps().len() == 1 {
+            break;
+        }
+
+        assert!(
+            Instant::now() < stats_deadline,
+            "Expected startup stats snapshot to be recorded"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[tokio::test]

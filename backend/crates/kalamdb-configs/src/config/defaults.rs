@@ -172,13 +172,6 @@ pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
     7 // 7 days
 }
 
-/// Default weight factor for user table manifests (default: 10)
-/// User tables are evicted N times faster than shared tables.
-/// Higher values give stronger preference to keeping shared tables in memory.
-pub fn default_user_table_weight_factor() -> u32 {
-    10 // User tables are evicted 10x faster than shared tables
-}
-
 // Retention defaults
 pub fn default_deleted_retention_hours() -> i32 {
     168 // 7 days

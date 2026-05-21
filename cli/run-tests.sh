@@ -102,8 +102,9 @@ done
 if [ "$SHOW_HELP" = true ]; then
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Default: runs all workspace tests via cargo nextest, with CLI e2e tests enabled"
-    echo "         using feature: kalam-cli/e2e-tests. Untargeted full runs also execute"
+    echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
+    echo "         using features: kalam-cli/e2e-tests and kalamdb-server/e2e-tests."
+    echo "         Untargeted full runs also execute"
     echo "         TypeScript SDK, example, React Playwright, UI, and Dart test suites."
     echo ""
     echo "Options:"
@@ -125,6 +126,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  $0 --url http://localhost:3000 --password mypass"
     echo "  $0 --cluster-urls http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903 --server-type cluster"
     echo "  $0 --package kalam-cli --test-target cluster"
+    echo "  $0 --package kalamdb-server --test-target test_scenarios_realtime"
     echo "  $0 --package kalam-cli --package kalam-link"
     echo "  $0 --test-list failed-tests.txt"
     exit 0
@@ -479,10 +481,12 @@ if [ ${#PACKAGE_FILTERS[@]} -gt 1 ]; then
     done
 fi
 
-FEATURE_MODE="workspace + CLI e2e feature"
+FEATURE_MODE="workspace + CLI/backend e2e features"
 if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
     if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && [ "${PACKAGE_FILTERS[0]}" = "kalam-cli" ]; then
         FEATURE_MODE="package + CLI e2e feature"
+    elif [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && [ "${PACKAGE_FILTERS[0]}" = "kalamdb-server" ]; then
+        FEATURE_MODE="package + backend e2e feature"
     else
         FEATURE_MODE="package only"
     fi
@@ -574,6 +578,9 @@ export KALAMDB_ADMIN_PASSWORD="${KALAMDB_ADMIN_PASSWORD:-$TEST_ROOT_PASSWORD}"
 export KALAMDB_URL="${KALAMDB_URL:-$KALAMDB_SERVER_URL}"
 export KALAMDB_USER="${KALAMDB_USER:-root}"
 export KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-$TEST_ROOT_PASSWORD}"
+export KALAMDB_TEST_URL="${KALAMDB_TEST_URL:-$KALAMDB_SERVER_URL}"
+export KALAMDB_TEST_USER="${KALAMDB_TEST_USER:-$KALAMDB_ADMIN_USER}"
+export KALAMDB_TEST_PASSWORD="${KALAMDB_TEST_PASSWORD:-$KALAMDB_ADMIN_PASSWORD}"
 export KALAM_URL="${KALAM_URL:-$KALAMDB_URL}"
 export KALAM_USER="${KALAM_USER:-$KALAMDB_USER}"
 export KALAM_PASS="${KALAM_PASS:-$KALAMDB_PASSWORD}"
@@ -633,11 +640,211 @@ run_npm_suite() {
     )
 }
 
+supplementary_server_responding() {
+    curl -sf "$KALAMDB_SERVER_URL/health" > /dev/null 2>&1 \
+        || curl -sf "$KALAMDB_SERVER_URL/v1/api/healthcheck" > /dev/null 2>&1
+}
+
+allocate_free_local_port() {
+    python3 - <<'PY'
+import socket
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
+SUPPLEMENTARY_SERVER_PID=""
+SUPPLEMENTARY_SERVER_WORK_DIR=""
+SUPPLEMENTARY_SERVER_URL=""
+
+cleanup_supplementary_server() {
+    if [ -n "$SUPPLEMENTARY_SERVER_PID" ]; then
+        kill "$SUPPLEMENTARY_SERVER_PID" 2>/dev/null || true
+        wait "$SUPPLEMENTARY_SERVER_PID" 2>/dev/null || true
+        SUPPLEMENTARY_SERVER_PID=""
+    fi
+
+    if [ -n "$SUPPLEMENTARY_SERVER_WORK_DIR" ]; then
+        rm -rf "$SUPPLEMENTARY_SERVER_WORK_DIR"
+        SUPPLEMENTARY_SERVER_WORK_DIR=""
+    fi
+}
+
+trap cleanup_supplementary_server EXIT
+
+supplementary_json_token_from_file() {
+    local path="$1"
+    node -e 'const fs = require("fs"); const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(body.access_token || "");' "$path"
+}
+
+supplementary_sql_response_has_rows() {
+    local path="$1"
+    node -e 'const fs = require("fs"); const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const result = Array.isArray(body.results) ? body.results[0] : null; const rows = Array.isArray(result?.rows) ? result.rows.length : 0; const rowCount = typeof result?.row_count === "number" ? result.row_count : rows; process.exit(rowCount > 0 ? 0 : 1);' "$path"
+}
+
+supplementary_sql_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
+}
+
+supplementary_try_login() {
+    local user="$1"
+    local password="$2"
+    local body_file="$3"
+    local status
+
+    status=$(curl -sS -o "$body_file" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -d "{\"user\":\"$user\",\"password\":\"$password\"}" \
+        "$KALAMDB_SERVER_URL/v1/api/auth/login")
+    [[ "$status" == "200" ]]
+}
+
+setup_supplementary_auth_if_needed() {
+    local auth_tmp_dir
+    local status_body
+    local login_body
+    local root_login_body
+    local user_check_body
+    local user_sql_body
+    local root_token
+    local user_sql
+    local password_sql
+    local check_sql
+    local repair_sql
+    local repair_status
+
+    auth_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-supp-auth.XXXXXX")"
+    status_body="$auth_tmp_dir/status.json"
+    login_body="$auth_tmp_dir/login.json"
+    root_login_body="$auth_tmp_dir/root-login.json"
+    user_check_body="$auth_tmp_dir/user-check.json"
+    user_sql_body="$auth_tmp_dir/user-sql.json"
+
+    if curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
+        if grep -Eq '"needs_setup"[[:space:]]*:[[:space:]]*true' "$status_body"; then
+            curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/setup" \
+                -H "Content-Type: application/json" \
+                -d "{\"user\":\"$KALAMDB_ADMIN_USER\",\"password\":\"$KALAMDB_ADMIN_PASSWORD\",\"root_password\":\"$TEST_ROOT_PASSWORD\",\"email\":null}" \
+                >/dev/null
+            rm -rf "$auth_tmp_dir"
+            return 0
+        fi
+    fi
+
+    if supplementary_try_login "$KALAMDB_ADMIN_USER" "$KALAMDB_ADMIN_PASSWORD" "$login_body"; then
+        rm -rf "$auth_tmp_dir"
+        return 0
+    fi
+
+    if ! supplementary_try_login root "$TEST_ROOT_PASSWORD" "$root_login_body"; then
+        echo "Could not authenticate supplementary admin/root credentials against $KALAMDB_SERVER_URL" >&2
+        if [ -s "$login_body" ]; then
+            echo "Admin login response:" >&2
+            cat "$login_body" >&2
+        fi
+        if [ -s "$root_login_body" ]; then
+            echo "Root login response:" >&2
+            cat "$root_login_body" >&2
+        fi
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    root_token="$(supplementary_json_token_from_file "$root_login_body")"
+    if [ -z "$root_token" ]; then
+        echo "Supplementary root login returned no access token for $KALAMDB_SERVER_URL" >&2
+        cat "$root_login_body" >&2
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    user_sql="$(supplementary_sql_escape "$KALAMDB_ADMIN_USER")"
+    password_sql="$(supplementary_sql_escape "$KALAMDB_ADMIN_PASSWORD")"
+    check_sql="SELECT user_id FROM system.users WHERE user_id = '$user_sql' LIMIT 1"
+
+    curl -sS -o "$user_check_body" \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer $root_token" \
+        -d "{\"sql\":\"$check_sql\"}" \
+        "$KALAMDB_SERVER_URL/v1/api/sql" >/dev/null
+
+    if supplementary_sql_response_has_rows "$user_check_body"; then
+        repair_sql="ALTER USER '$user_sql' SET PASSWORD '$password_sql'; ALTER USER '$user_sql' SET ROLE 'dba';"
+    else
+        repair_sql="CREATE USER '$user_sql' WITH PASSWORD '$password_sql' ROLE 'dba'"
+    fi
+
+    repair_status=$(curl -sS -o "$user_sql_body" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer $root_token" \
+        -d "{\"sql\":\"$repair_sql\"}" \
+        "$KALAMDB_SERVER_URL/v1/api/sql")
+    if [[ "$repair_status" != "200" ]] && ! grep -Eiq 'already exists|duplicate|conflict|idempotent' "$user_sql_body"; then
+        echo "Failed to ensure supplementary admin user '$KALAMDB_ADMIN_USER'." >&2
+        cat "$user_sql_body" >&2
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    if ! supplementary_try_login "$KALAMDB_ADMIN_USER" "$KALAMDB_ADMIN_PASSWORD" "$login_body"; then
+        echo "Supplementary admin credentials still cannot log in after repair." >&2
+        cat "$login_body" >&2
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    rm -rf "$auth_tmp_dir"
+}
+
+start_supplementary_server_if_needed() {
+    local server_log
+    local server_pid_file
+    local server_port
+
+    if [ "$SERVER_TYPE" != "fresh" ]; then
+        return 0
+    fi
+
+    if [ -n "$SUPPLEMENTARY_SERVER_PID" ]; then
+        return 0
+    fi
+
+    server_port="$(allocate_free_local_port)"
+    SUPPLEMENTARY_SERVER_URL="http://127.0.0.1:$server_port"
+    export KALAMDB_SERVER_URL="$SUPPLEMENTARY_SERVER_URL"
+    export KALAMDB_URL="$SUPPLEMENTARY_SERVER_URL"
+    export KALAMDB_TEST_URL="$SUPPLEMENTARY_SERVER_URL"
+    export KALAM_URL="$SUPPLEMENTARY_SERVER_URL"
+
+    SUPPLEMENTARY_SERVER_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-supplementary-server.XXXXXX")"
+    server_log="$SUPPLEMENTARY_SERVER_WORK_DIR/server.log"
+    server_pid_file="$SUPPLEMENTARY_SERVER_WORK_DIR/server.pid"
+
+    KALAMDB_SERVER_WORK_DIR="$SUPPLEMENTARY_SERVER_WORK_DIR" \
+        KALAMDB_SERVER_LOG="$server_log" \
+        KALAMDB_SERVER_PID_FILE="$server_pid_file" \
+        KALAMDB_SERVER_WAIT_SECONDS="${KALAMDB_SERVER_WAIT_SECONDS:-180}" \
+        KALAMDB_URL="$SUPPLEMENTARY_SERVER_URL" \
+        bash "$REPO_ROOT/scripts/start-sdk-test-server.sh"
+
+    SUPPLEMENTARY_SERVER_PID="$(cat "$server_pid_file")"
+    setup_supplementary_auth_if_needed
+}
+
 run_supplementary_suites() {
     step "Checking supplementary suite toolchain"
     require_cmd node
     require_cmd npm
     require_cmd flutter
+
+    start_supplementary_server_if_needed
+
+    export KALAMDB_USER="$KALAMDB_ADMIN_USER"
+    export KALAMDB_PASSWORD="$KALAMDB_ADMIN_PASSWORD"
+    export KALAMDB_TEST_USER="$KALAMDB_ADMIN_USER"
+    export KALAMDB_TEST_PASSWORD="$KALAMDB_ADMIN_PASSWORD"
 
     run_npm_suite "link/sdks/typescript/client" "Running TypeScript client SDK tests" "test"
     run_npm_suite "link/sdks/typescript/consumer" "Running TypeScript consumer SDK tests" "test"
@@ -677,21 +884,29 @@ build_test_cmd() {
         TEST_CMD+=(--all-targets)
     fi
 
+    local e2e_features=()
+
     if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
         local package
         for package in "${PACKAGE_FILTERS[@]}"; do
             TEST_CMD+=(-p "$package")
+
+            case "$package" in
+                kalam-cli|kalamdb-server)
+                    e2e_features+=("e2e-tests")
+                    ;;
+            esac
         done
 
-        if [ "$(single_package_name)" = "kalam-cli" ]; then
-            TEST_CMD+=(--features "e2e-tests")
+        if [ ${#e2e_features[@]} -gt 0 ]; then
+            TEST_CMD+=(--features "${e2e_features[*]}")
         fi
     else
         TEST_CMD+=(--workspace)
         # The PostgreSQL extension crate is tested via the dedicated pgrx workflow,
         # not through generic cargo test/nextest targets.
         TEST_CMD+=(--exclude "kalam-pg-extension")
-        TEST_CMD+=(--features "kalam-cli/e2e-tests")
+        TEST_CMD+=(--features "kalam-cli/e2e-tests kalamdb-server/e2e-tests")
     fi
 
     if [ -n "$TEST_TARGET" ]; then
@@ -726,7 +941,11 @@ run_single_test() {
     build_test_cmd "$test_filter"
     echo "Executing: ${TEST_CMD[*]}"
     echo ""
-    "${TEST_CMD[@]}"
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        env -u KALAMDB_SERVER_URL -u KALAMDB_CLUSTER_URLS "${TEST_CMD[@]}"
+    else
+        "${TEST_CMD[@]}"
+    fi
 }
 
 run_test_list() {

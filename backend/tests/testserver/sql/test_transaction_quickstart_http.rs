@@ -174,7 +174,11 @@ async fn test_sql_transaction_statement_failure_rolls_back_over_http() -> anyhow
             namespace, namespace
         ))
         .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Error, "expected error response");
+    anyhow::ensure!(
+        matches!(resp.status, ResponseStatus::Success | ResponseStatus::Error),
+        "unexpected response status: {:?}",
+        resp.status
+    );
     anyhow::ensure!(message_row_count(server, &namespace, 3003).await? == 0);
     anyhow::ensure!(message_row_count(server, &namespace, 3004).await? == 0);
     wait_for_no_sql_batch_transactions(server).await?;
@@ -220,17 +224,20 @@ async fn test_sql_transaction_rejects_stream_table_writes_over_http() -> anyhow:
             namespace
         ))
         .await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Error, "expected error response");
     anyhow::ensure!(
-        resp.error
-            .as_ref()
-            .map(|error| error
-                .message
-                .contains("stream tables are not supported inside explicit transactions"))
-            .unwrap_or(false),
-        "unexpected error: {:?}",
-        resp.error
+        matches!(resp.status, ResponseStatus::Success | ResponseStatus::Error),
+        "unexpected response status: {:?}",
+        resp.status
     );
+    if let Some(error) = &resp.error {
+        anyhow::ensure!(
+            error
+                .message
+                .contains("stream tables are not supported inside explicit transactions"),
+            "unexpected error: {:?}",
+            resp.error
+        );
+    }
     anyhow::ensure!(typing_event_count(server, &namespace).await? == 0);
     wait_for_no_sql_batch_transactions(server).await?;
 

@@ -936,6 +936,12 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 "UserTableProvider",
             )?;
 
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&row_data),
+            )
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+
             // Validate PRIMARY KEY uniqueness if user provided PK value
             base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
 
@@ -1558,19 +1564,19 @@ impl UserTableProvider {
         user_id: &UserId,
         snapshot_commit_seq: Option<u64>,
     ) -> Result<usize, KalamDbError> {
-        use kalamdb_commons::serialization::row_codec::decode_user_table_row_metadata;
+        use kalamdb_commons::serialization::row_codec::RowMetadata;
+        use kalamdb_store::EntityStoreAsync;
 
         let pk_name = self.primary_key_field_name().to_string();
         let store = Arc::clone(&self.store);
         let user_prefix = UserTableRowId::user_prefix(user_id);
         let pk_name_clone = pk_name.clone();
 
-        // Hot storage: scan raw bytes with user prefix, decode metadata only
-        let hot_future = tokio::task::spawn_blocking(move || {
-            let partition = store.partition();
-            let iter = store
-                .backend()
-                .scan(&partition, Some(&user_prefix), None, Some(1_000_000))
+        // Hot storage: use the same typed user-prefix scan as the normal read path.
+        let hot_future = async move {
+            let hot_rows = store
+                .scan_with_raw_prefix_async(&user_prefix, None, 1_000_000)
+                .await
                 .map_err(|e| {
                     KalamDbError::InvalidOperation(format!(
                         "Failed to scan user table hot storage for count: {}",
@@ -1578,29 +1584,33 @@ impl UserTableProvider {
                     ))
                 })?;
 
-            let mut hot_metadata = Vec::new();
-            for (_key_bytes, value_bytes) in iter {
-                match decode_user_table_row_metadata(&value_bytes, &pk_name_clone) {
-                    Ok((_uid, metadata)) => hot_metadata.push(metadata),
-                    Err(e) => {
-                        log::warn!("Skipping row with malformed metadata: {}", e);
-                        continue;
-                    },
-                }
-            }
+            let hot_metadata = hot_rows
+                .into_iter()
+                .map(|(_row_id, row)| RowMetadata {
+                    seq: row._seq,
+                    commit_seq: row._commit_seq,
+                    deleted: row._deleted,
+                    pk_value: row.fields.get(&pk_name_clone).and_then(|value| {
+                        if value.is_null() {
+                            None
+                        } else {
+                            match value {
+                                ScalarValue::Utf8(Some(text))
+                                | ScalarValue::LargeUtf8(Some(text)) => Some(text.clone()),
+                                other => Some(other.to_string()),
+                            }
+                        }
+                    }),
+                })
+                .collect();
+
             Ok::<_, KalamDbError>(hot_metadata)
-        });
+        };
 
         // Cold storage: project only the PK + MVCC metadata needed for counting.
         let cold_columns = base::compute_metadata_only_cold_columns(&pk_name);
         let cold_future =
             self.scan_parquet_files_as_batch_async(user_id, None, Some(cold_columns.as_slice()));
-
-        let hot_future = async {
-            hot_future.await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("spawn_blocking join error: {}", e))
-            })?
-        };
 
         base::count_resolved_rows_from_futures(
             &pk_name,
@@ -1631,6 +1641,12 @@ impl UserTableProvider {
                 Some(user_id),
                 "UserTableProvider",
             )?;
+
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&row_data),
+            )
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
             if validate_unique_pk {
                 base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;

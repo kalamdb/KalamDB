@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use datafusion::sql::sqlparser::ast::Expr;
 use kalamdb_commons::{
     ids::SeqId,
     models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId},
@@ -21,16 +20,14 @@ use kalamdb_commons::{
     websocket::SubscriptionRequest,
     NodeId, Role,
 };
+use kalamdb_row_filter::{parse_where_clause, RowFilter};
 use kalamdb_sql::parser::query_parser::QueryParser;
 use kalamdb_system::LiveQuery as SystemLiveQuery;
 use tokio::sync::OnceCell;
 
 use crate::{
     error::LiveError,
-    helpers::{
-        filter_eval::parse_where_clause,
-        initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
-    },
+    helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
     manager::ConnectionsManager,
     models::{SharedConnectionState, SubscriptionResult},
     subscription::SubscriptionService,
@@ -164,7 +161,7 @@ impl LiveQueryManager {
     /// - connection_state: Shared reference to connection state
     /// - request: Client subscription request
     /// - table_id: Pre-validated table identifier
-    /// - filter_expr: Optional parsed WHERE clause
+    /// - filter_expr: Optional compiled row-local WHERE clause
     /// - projections: Optional column projections (None = SELECT *, all columns)
     /// - batch_size: Batch size for initial data loading
     /// - table_type: Type of the table (User, Shared, System, Stream)
@@ -173,7 +170,7 @@ impl LiveQueryManager {
         connection_state: &SharedConnectionState,
         request: &SubscriptionRequest,
         table_id: TableId,
-        filter_expr: Option<Expr>,
+        filter_expr: Option<RowFilter>,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,
@@ -270,23 +267,9 @@ impl LiveQueryManager {
             .and_then(|options| options.batch_size)
             .unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
 
-        // Parse filter expression from WHERE clause (if present)
+        // Compile row-local filter from WHERE clause once for live change fanout.
         let where_clause = parsed_query.where_clause.clone();
-        let filter_expr: Option<Expr> = where_clause
-            .clone()
-            .map(|where_clause| {
-                // Resolve placeholders like CURRENT_USER() before parsing
-                let resolved =
-                    QueryParser::resolve_where_clause_placeholders(&where_clause, &user_id);
-                parse_where_clause(&resolved)
-            })
-            .transpose()
-            .map_err(|e| {
-                log::warn!("Failed to parse WHERE clause for filter: {}", e);
-                e
-            })
-            .ok()
-            .flatten();
+        let filter_expr = Self::compile_subscription_filter(where_clause.as_deref(), &user_id)?;
 
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
         let projections = parsed_query.projections.clone();
@@ -510,12 +493,29 @@ impl LiveQueryManager {
     pub fn snapshot_live_queries(&self) -> Vec<SystemLiveQuery> {
         self.registry.snapshot_live_queries(self.node_id)
     }
+
+    fn compile_subscription_filter(
+        where_clause: Option<&str>,
+        user_id: &UserId,
+    ) -> Result<Option<RowFilter>, LiveError> {
+        where_clause
+            .map(|where_clause| {
+                let resolved =
+                    QueryParser::resolve_where_clause_placeholders(where_clause, user_id);
+                parse_where_clause(&resolved).map_err(Into::into)
+            })
+            .transpose()
+            .map_err(|error| {
+                log::warn!("Failed to compile WHERE clause for live filter: {}", error);
+                error
+            })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{NamespaceId, TableId, TableName},
+        models::{NamespaceId, TableId, TableName, UserId},
         schemas::{
             table_options::{SharedTableOptions, SystemTableOptions},
             TableDefinition, TableOptions,
@@ -525,6 +525,10 @@ mod tests {
 
     use super::LiveQueryManager;
     use crate::error::LiveError;
+
+    fn test_user_id() -> UserId {
+        UserId::new("test-user")
+    }
 
     fn table_id() -> TableId {
         TableId::new(NamespaceId::from("shared"), TableName::from("events"))
@@ -614,5 +618,31 @@ mod tests {
         let result =
             LiveQueryManager::validate_table_subscription_permission(Role::Dba, &def, &table_id());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn compile_subscription_filter_returns_none_without_where_clause() {
+        let filter = LiveQueryManager::compile_subscription_filter(None, &test_user_id())
+            .expect("missing WHERE should not fail");
+        assert!(filter.is_none());
+    }
+
+    #[test]
+    fn compile_subscription_filter_compiles_once_for_supported_where_clause() {
+        let filter = LiveQueryManager::compile_subscription_filter(
+            Some("user_id = CURRENT_USER() AND status IN ('active', 'queued')"),
+            &test_user_id(),
+        )
+        .expect("supported WHERE should compile");
+        assert!(filter.is_some());
+    }
+
+    #[test]
+    fn compile_subscription_filter_rejects_unsupported_where_clause() {
+        let result = LiveQueryManager::compile_subscription_filter(
+            Some("status IN (SELECT status FROM shared.allowed_statuses)"),
+            &test_user_id(),
+        );
+        assert!(matches!(result, Err(LiveError::InvalidOperation(_))));
     }
 }

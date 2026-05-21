@@ -403,6 +403,26 @@ ON <INSERT|UPDATE|DELETE>
 [WITH (payload = '<key|full|diff>')];
 ```
 
+`WHERE` is evaluated against the row routed for the selected operation. That lets
+you publish only a subset of inserts or updates into a worker topic.
+
+Example: publish task-cancellation work only when a task is already cancelled on
+insert, or becomes cancelled on update.
+
+```sql
+ALTER TOPIC app.task_cancellations
+ADD SOURCE app.tasks
+ON INSERT
+WHERE cancelled = true
+WITH (payload = 'full');
+
+ALTER TOPIC app.task_cancellations
+ADD SOURCE app.tasks
+ON UPDATE
+WHERE cancelled = true
+WITH (payload = 'full');
+```
+
 ### CONSUME FROM
 
 ```sql

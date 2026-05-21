@@ -37,7 +37,7 @@ async fn test_live_query_detects_inserts() -> anyhow::Result<()> {
     let client = server.link_client("root");
 
     // Subscribe to live query
-    let sql = format!("SELECT * FROM {}.{} ORDER BY id", ns, table);
+    let sql = format!("SELECT * FROM {}.{}", ns, table);
     let mut subscription = client.live_events(&sql).await.expect("Failed to subscribe");
 
     // Insert 10 rows
