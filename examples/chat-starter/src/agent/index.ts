@@ -156,6 +156,7 @@ type TaskEventRow = {
 
 type TaskCancelRow = {
   id: string;
+  is_cancelled: boolean;
 };
 
 type ApprovalResolutionRow = {
@@ -274,11 +275,16 @@ async function runTaskConsumer(
       }
       if (activeControllers.has(task.id)) return;
 
-      // At-least-once redelivery: skip tasks already finished or
-      // cancelled. If the task is cancelled-but-not-finalized (Stop
-      // clicked before any agent attached, or a prior attempt crashed),
-      // finalize it so the UI clears.
+      // At-least-once redelivery: skip tasks already finished, cancelled,
+      // or completely deleted. If the row exists but is cancelled-not-
+      // finalized (Stop clicked before any agent attached, or a prior
+      // attempt crashed), finalize it so the UI clears.
+      // If the row was deleted entirely (test cleanup, manual purge),
+      // isTaskTerminal returns null — treat that as "nothing to do" and
+      // skip, otherwise the agent rebuilds the assistant stub against a
+      // conversation that no longer exists.
       const terminal = await isTaskTerminal(sqlClient, task.user, task.id, log);
+      if (terminal === null) return;
       if (terminal === true) {
         await finalizeStuckCancelled(sqlClient, task.user, task.id, task.message_id, log).catch(
           () => undefined,
@@ -332,6 +338,13 @@ async function runCancelConsumer(
     ) => {
       const taskId = change.data.id;
       if (!UUID_RE.test(taskId)) return;
+      // Defensive: KalamDB's `ON UPDATE WHERE is_cancelled = true` topic
+      // filter is currently delivered on every UPDATE regardless of the
+      // WHERE clause (server-side filter doesn't fire). Re-check the
+      // payload here so we don't abort a task just because the agent
+      // wrote `finished_at`. Without this, every finalizeTask UPDATE
+      // looks like a cancel.
+      if (change.data.is_cancelled !== true) return;
       const ctrl = activeControllers.get(taskId);
       if (!ctrl) return; // task isn't running on this replica
       if (ctrl.signal.aborted) return;

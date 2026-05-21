@@ -278,7 +278,7 @@ test("delete_all_conversations reports 0 when nothing to delete (no cascade fire
   assert.match(stub.queries[0]!.sql, /SELECT count\(\*\)/);
 });
 
-test("delete_all_conversations cascades atomically, excluding the in-flight turn", async () => {
+test("delete_all_conversations cascades atomically across every table", async () => {
   const stub = makeStubClient({
     queryResult: { results: [{ named_rows: [{ n: 12 }] }] },
   });
@@ -289,7 +289,7 @@ test("delete_all_conversations cascades atomically, excluding the in-flight turn
     name: "delete_all_conversations",
     arguments: {},
   });
-  assert.match(out, /^deleted 12 other conversations/);
+  assert.match(out, /^deleted all 12 of your conversations/);
   // 1 count + 1 BEGIN/COMMIT bundle = 2 queries.
   assert.equal(stub.queries.length, 2);
   const cascadeSql = stub.queries[1]!.sql;
@@ -306,17 +306,9 @@ test("delete_all_conversations cascades atomically, excluding the in-flight turn
   assert.ok(idx("approvals") < idx("tasks"));
   assert.ok(idx("tasks") < idx("messages"));
   assert.ok(idx("messages") < idx("conversations"));
-  // Critically: the in-flight conversation / task / message MUST be
-  // excluded from the cascade — otherwise the agent's still-writing
-  // those rows when the delete fires.
-  const currentConv = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
-  const currentTask = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  const currentMsg = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  assert.match(cascadeSql, new RegExp(`typing_tokens WHERE conversation_id != '${currentConv}'`));
-  assert.match(cascadeSql, new RegExp(`approvals WHERE conversation_id != '${currentConv}'`));
-  assert.match(cascadeSql, new RegExp(`tasks WHERE id != '${currentTask}'`));
-  assert.match(cascadeSql, new RegExp(`messages WHERE id != '${currentMsg}'`));
-  assert.match(cascadeSql, new RegExp(`conversations WHERE id != '${currentConv}'`));
+  // "Delete all" means all — the in-flight conversation is included.
+  assert.match(cascadeSql, /typing_tokens WHERE id != ''/);
+  assert.match(cascadeSql, /conversations WHERE id != ''/);
 });
 
 test("delete_all_conversations CONSUMES the approval (cannot be reused for a follow-up delete)", async () => {

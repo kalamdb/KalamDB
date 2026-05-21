@@ -57,6 +57,28 @@ export class MockAdapter implements LlmAdapter {
       return;
     }
 
+    // ---- bulk delete flow: turn 1 = approval -------------------------------
+    // Detect bulk intent BEFORE the single-delete branch so "delete all my
+    // conversations" doesn't get routed through delete_conversation.
+    const isBulkDelete =
+      /\b(delete all|wipe everything|wipe all|clear (my )?history|clear all)\b/i.test(text);
+    if (!decision && isBulkDelete) {
+      yield { type: "text", delta: "I can do that — getting your approval first. " };
+      await sleep(20);
+      yield {
+        type: "tool_call",
+        call: {
+          id: `mock_approval_${Date.now()}`,
+          name: "request_approval",
+          arguments: {
+            question: "Permanently delete ALL of your conversations?",
+          },
+        },
+      };
+      yield { type: "done", reason: "tool_calls" };
+      return;
+    }
+
     // ---- delete flow: turn 1 = approval ------------------------------------
     if (!decision && /\b(delete|remove|wipe|drop|uninstall)\b/.test(text)) {
       yield { type: "text", delta: "I can do that — getting your approval first. " };
@@ -77,19 +99,23 @@ export class MockAdapter implements LlmAdapter {
 
     // ---- delete flow: turn 2 = after approval ------------------------------
     // Look at the *previous* turn — if the assistant just called request_approval
-    // and it was approved, the model should now call delete_conversation.
+    // and it was approved, the model should now call the matching destructive
+    // tool. Pick single vs bulk based on the approval question text.
     if (
       decision === "approved" &&
       lastAssistant &&
       lastAssistant.role === "assistant" &&
       lastAssistant.toolCalls?.some((c) => c.name === "request_approval")
     ) {
+      const approvalCall = lastAssistant.toolCalls.find((c) => c.name === "request_approval");
+      const question = String(approvalCall?.arguments?.question ?? "");
+      const isBulk = /\ball of your conversations\b/i.test(question);
       yield {
         type: "tool_call",
         call: {
           id: `mock_delete_${Date.now()}`,
-          name: "delete_conversation",
-          arguments: { conversation_id: conversationId },
+          name: isBulk ? "delete_all_conversations" : "delete_conversation",
+          arguments: isBulk ? {} : { conversation_id: conversationId },
         },
       };
       yield { type: "done", reason: "tool_calls" };
@@ -97,7 +123,10 @@ export class MockAdapter implements LlmAdapter {
     }
 
     // ---- delete flow: turn 3 = wrap up -------------------------------------
-    if (decision && decision.startsWith("deleted conversation")) {
+    if (
+      decision &&
+      (decision.startsWith("deleted conversation") || decision.startsWith("deleted "))
+    ) {
       yield { type: "text", delta: "Deleted. Anything else?" };
       yield { type: "done", reason: "stop" };
       return;

@@ -295,22 +295,24 @@ async function handleDeleteConversation(ctx: ToolContext, call: LlmToolCall): Pr
     "delete_conversation cascade starting",
   );
   try {
-    // Atomic cascade wrapped in one EXECUTE AS USER (BEGIN; ...; COMMIT;).
-    // KalamDB executes BEGIN/COMMIT in a single SQL request as one
-    // transaction — any DELETE failure → automatic rollback → no half-
-    // deleted state. The wrap pins every statement to the task owner's
-    // partition.
+    // Atomic cascade: outer BEGIN/COMMIT (runs as the agent's admin
+    // identity), with per-statement EXECUTE AS USER pinning each DELETE
+    // to the task owner's partition. KalamDB's parser rejects the
+    // inverse shape (multi-statement inside one EXECUTE AS USER wrap),
+    // so this layout is what works AND keeps the cascade atomic. A
+    // DELETE failure → automatic rollback → no half-deleted state.
     const idLit = uuidLit(id);
+    const u = ctx.task.user;
     const sql = [
       "BEGIN",
-      `DELETE FROM chat.typing_tokens WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.approvals WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.tasks WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.messages WHERE conversation_id = ${idLit}`,
-      `DELETE FROM chat.conversations WHERE id = ${idLit}`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.typing_tokens WHERE conversation_id = ${idLit})`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.approvals WHERE conversation_id = ${idLit})`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.tasks WHERE conversation_id = ${idLit})`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.messages WHERE conversation_id = ${idLit})`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.conversations WHERE id = ${idLit})`,
       "COMMIT",
     ].join("; ");
-    await ctx.client.executeAsUser(sql, ctx.task.user);
+    await ctx.client.query(sql);
     ctx.log.info({ conversation_id: id }, "delete_conversation cascade complete");
     return `deleted conversation ${id} and all related rows`;
   } catch (err) {
@@ -337,44 +339,43 @@ async function handleDeleteAllConversations(ctx: ToolContext): Promise<string> {
 
   ctx.log.info({ user: ctx.task.user }, "delete_all_conversations starting");
   try {
-    // The user's just-sent message, the in-flight task row, and the
-    // assistant stub for THIS turn were all written before this tool
-    // dispatched — any time-based filter ("rows older than now") would
-    // nuke them too and the agent would crash trying to finalize rows
-    // that no longer exist. Scope the cascade explicitly by excluding
-    // the three IDs we own for the current turn.
-    const currentConv = uuidLit(ctx.task.conversation_id);
-    const currentTask = uuidLit(ctx.task.id);
-    const currentMsg = uuidLit(ctx.task.message_id);
-
+    // "Delete all" means all — including the conversation the user is
+    // currently chatting in. The agent's in-flight task / message /
+    // assistant stub get nuked alongside everything else. Subsequent
+    // agent UPDATEs (finalizeMessage, finalizeTask) become no-ops
+    // against missing rows; isTaskTerminal returning null for a
+    // redelivered event is treated as terminal upstream. UI drops back
+    // to the empty state once the deletes finalize.
     const countRes = await ctx.client.executeAsUser(
-      `SELECT count(*) AS n FROM chat.conversations WHERE id != ${currentConv}`,
+      `SELECT count(*) AS n FROM chat.conversations`,
       ctx.task.user,
     );
     const n = kdbBigIntToNumber(extractRows(countRes)[0]?.n);
     if (n === 0) {
       ctx.log.info({ user: ctx.task.user }, "delete_all_conversations: nothing to delete");
-      return "deleted 0 conversations (the current one is excluded; there were no others)";
+      return "deleted 0 conversations (you had none)";
     }
 
     // Atomic cascade. Order matters — child rows first, parent last —
     // so a partial failure can't leave dangling FK-shaped references
     // (KalamDB doesn't enforce FKs but the UI joins on these so leaving
-    // orphans would surface as ghost rows). The current turn's task /
-    // message / conversation are explicitly excluded so the in-flight
-    // agent state survives.
+    // orphans would surface as ghost rows). Same shape as
+    // delete_conversation: outer BEGIN/COMMIT + per-statement EXECUTE
+    // AS USER. We use `WHERE id != ''` (rather than no WHERE) because
+    // KalamDB rejects unconditional DELETE.
+    const u = ctx.task.user;
     const sql = [
       "BEGIN",
-      `DELETE FROM chat.typing_tokens WHERE conversation_id != ${currentConv}`,
-      `DELETE FROM chat.approvals WHERE conversation_id != ${currentConv}`,
-      `DELETE FROM chat.tasks WHERE id != ${currentTask}`,
-      `DELETE FROM chat.messages WHERE id != ${currentMsg}`,
-      `DELETE FROM chat.conversations WHERE id != ${currentConv}`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.typing_tokens WHERE id != '')`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.approvals WHERE id != '')`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.tasks WHERE id != '')`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.messages WHERE id != '')`,
+      `EXECUTE AS USER '${u}' (DELETE FROM chat.conversations WHERE id != '')`,
       "COMMIT",
     ].join("; ");
-    await ctx.client.executeAsUser(sql, ctx.task.user);
+    await ctx.client.query(sql);
     ctx.log.info({ user: ctx.task.user, n }, "delete_all_conversations complete");
-    return `deleted ${n} other conversations and all related rows (the one you're chatting in was kept)`;
+    return `deleted all ${n} of your conversations and every related row`;
   } catch (err) {
     ctx.log.error({ err, user: ctx.task.user }, "delete_all_conversations failed (rolled back)");
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
