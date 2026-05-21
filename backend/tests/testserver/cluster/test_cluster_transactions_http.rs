@@ -1,5 +1,6 @@
 use anyhow::Result;
 use kalam_client::models::{QueryResult, ResponseStatus};
+use kalamdb_commons::UserId;
 use kalamdb_raft::GroupId;
 use tokio::time::{sleep, Duration, Instant};
 
@@ -63,12 +64,39 @@ async fn wait_for_cluster_roles(cluster: &ClusterTestServer) -> Result<(usize, u
     }
 }
 
+async fn wait_for_root_user_leader(cluster: &ClusterTestServer) -> Result<usize> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let root_user = UserId::root();
+
+    loop {
+        for node in &cluster.nodes {
+            if let Some(leader_addr) = node.app_context().leader_addr_for_user(&root_user).await {
+                if let Some((index, _)) = cluster
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.base_url() == leader_addr)
+                {
+                    return Ok(index);
+                }
+            }
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for root user shard leader discovery");
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
 async fn wait_for_table_visible(
     server: &super::test_support::http_server::HttpTestServer,
     namespace: &str,
+    table_name: &str,
 ) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let query = format!("SELECT COUNT(*) AS cnt FROM {}.items", namespace);
+    let query = format!("SELECT COUNT(*) AS cnt FROM {}.{}", namespace, table_name);
 
     loop {
         match server.execute_sql(&query).await {
@@ -78,13 +106,19 @@ async fn wait_for_table_visible(
             },
             Ok(response) => {
                 anyhow::bail!(
-                    "table {}.items did not become visible: {:?}",
+                    "table {}.{} did not become visible: {:?}",
                     namespace,
+                    table_name,
                     response.error
                 )
             },
             Err(error) => {
-                anyhow::bail!("table {}.items did not become visible: {}", namespace, error)
+                anyhow::bail!(
+                    "table {}.{} did not become visible: {}",
+                    namespace,
+                    table_name,
+                    error
+                )
             },
         }
     }
@@ -131,7 +165,7 @@ async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging()
         create_table.error
     );
 
-    wait_for_table_visible(shared_leader, &namespace).await?;
+    wait_for_table_visible(shared_leader, &namespace, "items").await?;
 
     let batch = format!(
         "/* strict */ BEGIN; INSERT INTO {}.items (id, name) VALUES (4101, 'alpha'); INSERT INTO \
@@ -208,6 +242,187 @@ async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging()
     anyhow::ensure!(
         get_count_value(&active_transactions, -1) == 0,
         "expected no lingering SqlBatch transactions"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ntest::timeout(3600)]
+async fn test_sql_transaction_forwarded_from_follower_rejects_stream_table_writes() -> Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
+    let cluster = super::test_support::http_server::get_cluster_server().await;
+    let (follower_index, meta_leader_index, _shared_leader_index) =
+        wait_for_cluster_roles(cluster).await?;
+    let root_user_leader_index = wait_for_root_user_leader(cluster).await?;
+
+    anyhow::ensure!(
+        follower_index != meta_leader_index,
+        "expected a follower/frontdoor distinct from the meta leader"
+    );
+
+    let follower = cluster.get_node(follower_index)?;
+    let meta_leader = cluster.get_node(meta_leader_index)?;
+    let root_user_leader = cluster.get_node(root_user_leader_index)?;
+    let namespace = unique_namespace("tx_cluster_stream_forward");
+
+    let create_namespace = meta_leader
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .await?;
+    anyhow::ensure!(
+        create_namespace.status == ResponseStatus::Success,
+        "CREATE NAMESPACE failed: {:?}",
+        create_namespace.error
+    );
+
+    let create_table = meta_leader
+        .execute_sql(&format!(
+            "CREATE TABLE {}.events (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='STREAM', \
+             TTL_SECONDS=120)",
+            namespace
+        ))
+        .await?;
+    anyhow::ensure!(
+        create_table.status == ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    wait_for_table_visible(root_user_leader, &namespace, "events").await?;
+
+    let batch = format!(
+        "BEGIN; INSERT INTO {}.events (id, name) VALUES (5101, 'typing'); COMMIT;",
+        namespace
+    );
+    let response = follower.execute_sql(&batch).await?;
+    let error = response.error.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("expected stream transaction rejection, got: {:?}", response.results)
+    })?;
+    anyhow::ensure!(
+        error
+            .message
+            .contains("stream tables are not supported inside explicit transactions"),
+        "unexpected error: {:?}",
+        response.error
+    );
+
+    let count = root_user_leader
+        .execute_sql(&format!("SELECT COUNT(*) AS cnt FROM {}.events", namespace))
+        .await?;
+    anyhow::ensure!(
+        count.status == ResponseStatus::Success,
+        "count query failed: {:?}",
+        count.error
+    );
+    anyhow::ensure!(
+        get_count_value(&count, -1) == 0,
+        "rejected stream write must not persist rows"
+    );
+
+    let active_transactions = meta_leader
+        .execute_sql("SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch'")
+        .await?;
+    anyhow::ensure!(
+        active_transactions.status == ResponseStatus::Success,
+        "system.transactions verification failed: {:?}",
+        active_transactions.error
+    );
+    anyhow::ensure!(
+        get_count_value(&active_transactions, -1) == 0,
+        "expected no lingering SqlBatch transactions after rejection"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ntest::timeout(3600)]
+async fn test_sql_transaction_forwarded_from_follower_unclosed_request_rolls_back() -> Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
+    let cluster = super::test_support::http_server::get_cluster_server().await;
+    let (follower_index, meta_leader_index, shared_leader_index) =
+        wait_for_cluster_roles(cluster).await?;
+
+    anyhow::ensure!(
+        follower_index != meta_leader_index,
+        "expected a follower/frontdoor distinct from the meta leader"
+    );
+
+    let follower = cluster.get_node(follower_index)?;
+    let meta_leader = cluster.get_node(meta_leader_index)?;
+    let shared_leader = cluster.get_node(shared_leader_index)?;
+    let namespace = unique_namespace("tx_cluster_unclosed_forward");
+
+    let create_namespace = meta_leader
+        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .await?;
+    anyhow::ensure!(
+        create_namespace.status == ResponseStatus::Success,
+        "CREATE NAMESPACE failed: {:?}",
+        create_namespace.error
+    );
+
+    let create_table = meta_leader
+        .execute_sql(&format!(
+            "CREATE TABLE {}.items (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED', \
+             STORAGE_ID='local')",
+            namespace
+        ))
+        .await?;
+    anyhow::ensure!(
+        create_table.status == ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_table.error
+    );
+
+    wait_for_table_visible(shared_leader, &namespace, "items").await?;
+
+    let response = follower
+        .execute_sql(&format!(
+            "BEGIN; INSERT INTO {}.items (id, name) VALUES (5201, 'orphaned');",
+            namespace
+        ))
+        .await?;
+    anyhow::ensure!(
+        response.status == ResponseStatus::Error,
+        "expected error for unclosed forwarded transaction: {:?}",
+        response
+    );
+    let error = response.error.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("expected error payload for unclosed forwarded transaction")
+    })?;
+    anyhow::ensure!(
+        error.message.contains(
+            "Request completed with an open explicit transaction; rolled back automatically"
+        ),
+        "unexpected error: {:?}",
+        response.error
+    );
+
+    let committed = shared_leader
+        .execute_sql(&format!("SELECT COUNT(*) AS cnt FROM {}.items", namespace))
+        .await?;
+    anyhow::ensure!(
+        committed.status == ResponseStatus::Success,
+        "post-rollback count failed: {:?}",
+        committed.error
+    );
+    anyhow::ensure!(
+        get_count_value(&committed, -1) == 0,
+        "unclosed forwarded transaction must not persist rows"
+    );
+
+    let active_transactions = meta_leader
+        .execute_sql("SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch'")
+        .await?;
+    anyhow::ensure!(
+        active_transactions.status == ResponseStatus::Success,
+        "system.transactions verification failed: {:?}",
+        active_transactions.error
+    );
+    anyhow::ensure!(
+        get_count_value(&active_transactions, -1) == 0,
+        "expected no lingering SqlBatch transactions after unclosed forwarded request"
     );
 
     Ok(())

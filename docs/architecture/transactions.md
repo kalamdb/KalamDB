@@ -4,6 +4,8 @@
 
 KalamDB has one explicit transaction model centered on `TransactionCoordinator` in `backend/crates/kalamdb-core/src/transactions/coordinator.rs`.
 
+Transaction state types live in `backend/crates/kalamdb-transactions`: owner identity, request-scoped SQL transaction state, hot transaction handles, cold staged write sets, Raft binding metadata, active metrics, overlays, staged mutations, and commit sequence tracking. `kalamdb-core` owns orchestration because it has the `AppContext`, Raft executor, config, and applier dependencies.
+
 Two different caller families feed that model today:
 
 - KalamDB-native callers such as HTTP SQL batches and typed internal services
@@ -21,13 +23,25 @@ Autocommit requests are different: they bypass transaction staging and go direct
   File: `backend/crates/kalamdb-core/src/transactions/coordinator.rs`
   Role: source of truth for active explicit transactions, staged write sets, transaction state, ownership, and commit / rollback.
 
+- Transaction state model
+  Files under: `backend/crates/kalamdb-transactions/src/`
+  Role: shared transaction identity and state types used by the coordinator and query layer: `ExecutionOwnerKey`, `RequestTransactionState`, `RequestTransactionBatchGuard`, `TransactionHandle`, `TransactionWriteSet`, `TransactionRaftBinding`, `ActiveTransactionMetric`, `CommitSequenceTracker`, `StagedMutation`, and overlay/query types.
+
 - `TransactionWriteSet`, `TransactionOverlay`, `TransactionQueryContext`
   Files under: `backend/crates/kalamdb-transactions/src/`
   Role: hold staged mutations and provide read-your-writes visibility before commit.
 
 - `RequestTransactionState`
+  File: `backend/crates/kalamdb-transactions/src/request.rs`
+  Role: low-level binding between SQL batch request ownership and an abstract request transaction coordinator for explicit SQL transactions.
+
+- `RequestTransactionBatchGuard`
+  File: `backend/crates/kalamdb-transactions/src/request.rs`
+  Role: lifecycle guard used by SQL batch transports. It syncs request state from the coordinator, rolls back an active request transaction on statement or validation failure, and rejects a request that finishes with an open explicit transaction after rolling it back.
+
+- `AppContextRequestTransactionCoordinator`
   File: `backend/crates/kalamdb-core/src/sql/executor/request_transaction_state.rs`
-  Role: binds SQL batch request ownership to `TransactionCoordinator` for explicit SQL transactions.
+  Role: thin adapter from the shared request transaction lifecycle interface to the core `TransactionCoordinator`. It is not transaction state; it exists because only `kalamdb-core` can access `AppContext`, Raft, and the applier.
 
 ### Typed execution path
 
@@ -72,6 +86,16 @@ Autocommit requests are different: they bypass transaction staging and go direct
   Role: statement-level bridge logic for foreign writes and reads. In autocommit mode these do not open a remote transaction. In explicit PostgreSQL transactions they reuse the remote transaction created by `fdw_xact.rs`.
 
 ## KalamDB-Native Explicit Transaction Flow
+
+HTTP SQL batches and cluster-forwarded SQL batches share the same request-scoped lifecycle guard from `kalamdb-transactions`. Transport code is still responsible for parsing, authorization, forwarding, and response shaping, but transaction cleanup is not transport-specific:
+
+1. create `RequestTransactionBatchGuard` from the `ExecutionContext`
+2. execute statements through the normal SQL executor
+3. sync the guard after each successful statement because `BEGIN`, `COMMIT`, and `ROLLBACK` can change coordinator state
+4. rollback the request transaction before returning any statement execution, validation, or serialization error
+5. call `ensure_closed()` at the end of the batch so `BEGIN; INSERT ...;` without `COMMIT` cannot leak staged writes or active coordinator state
+
+Cluster forwarding preserves the caller request id when it builds the forwarded `ExecutionContext`, so the receiving node uses the same owner key and the same guard behavior as the local HTTP path.
 
 ### 1. Begin
 

@@ -23,8 +23,15 @@ use serde::Serialize;
 use crate::{
     app_context::AppContext,
     sql::{
-        context::ExecutionContext, executor::PreparedExecutionStatement, ExecutionResult,
-        SqlImpersonationService,
+        context::ExecutionContext,
+        executor::{
+            request_transaction_state::{
+                map_request_transaction_error, AppContextRequestTransactionCoordinator,
+                RequestTransactionBatchGuard,
+            },
+            PreparedExecutionStatement,
+        },
+        ExecutionResult, SqlImpersonationService,
     },
 };
 
@@ -322,11 +329,20 @@ impl ClusterMessageHandler for CoreClusterHandler {
             exec_ctx = exec_ctx.with_namespace_id(namespace_id);
         }
 
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_transaction_guard = RequestTransactionBatchGuard::from_request_id(
+            exec_ctx.request_id(),
+            &request_transaction_coordinator,
+        );
+
         let mut scalar_params = Vec::with_capacity(req.params.len());
         for (idx, param) in req.params.iter().enumerate() {
             let scalar = match Self::forwarded_param_to_scalar(param) {
                 Ok(value) => value,
                 Err(e) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
                     return Ok(Self::error_payload(
                         400,
                         "INVALID_PARAMETER",
@@ -341,6 +357,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let statements = match kalamdb_sql::split_statements(&req.sql) {
             Ok(v) if !v.is_empty() => v,
             Ok(_) => {
+                let _ = request_transaction_guard
+                    .rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(
                     400,
                     "EMPTY_SQL",
@@ -350,11 +368,15 @@ impl ClusterMessageHandler for CoreClusterHandler {
             },
             Err(e) => {
                 let message = e.to_string();
+                let _ = request_transaction_guard
+                    .rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(400, "BATCH_PARSE_ERROR", &message, started_at));
             },
         };
 
         if !scalar_params.is_empty() && statements.len() > 1 {
+            let _ = request_transaction_guard
+                .rollback_if_active(&request_transaction_coordinator);
             return Ok(Self::error_payload(
                 400,
                 "PARAMS_WITH_BATCH",
@@ -381,6 +403,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
             ) {
                 Ok(prepared) => prepared,
                 Err(e) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
                     return Ok(Self::error_payload(
                         400,
                         "INVALID_INPUT",
@@ -401,6 +425,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
                 {
                     Ok(user_id) => Some(user_id),
                     Err(e) => {
+                        let _ = request_transaction_guard
+                            .rollback_if_active(&request_transaction_coordinator);
                         return Ok(Self::error_payload(
                             400,
                             "SQL_EXECUTION_ERROR",
@@ -421,6 +447,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     .as_ref()
                     .map(|table_id| table_id.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
+                let _ = request_transaction_guard
+                    .rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(
                     400,
                     "SQL_EXECUTION_ERROR",
@@ -453,6 +481,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
             let exec_result = match exec_result_result {
                 Ok(v) => v,
                 Err(e) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
                     return Ok(Self::error_payload(
                         400,
                         "SQL_EXECUTION_ERROR",
@@ -476,6 +506,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
             ) {
                 Ok(r) => r,
                 Err(err) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
                     return Ok(Self::error_payload(
                         500,
                         "INTERNAL_ERROR",
@@ -485,6 +517,19 @@ impl ClusterMessageHandler for CoreClusterHandler {
                 },
             };
             results.push(result);
+
+            request_transaction_guard.sync(&request_transaction_coordinator);
+        }
+
+        if let Err(err) = request_transaction_guard.ensure_closed(&request_transaction_coordinator) {
+            let err = map_request_transaction_error(err);
+            let message = err.user_message();
+            return Ok(Self::error_payload(
+                400,
+                "SQL_EXECUTION_ERROR",
+                message.as_ref(),
+                started_at,
+            ));
         }
 
         let resp = ForwardedResponse {

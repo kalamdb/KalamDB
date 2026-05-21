@@ -1,8 +1,8 @@
 mod support;
 
 use support::{
-    execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx, request_transaction_state,
-    select_names, setup_shared_table,
+    execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx, request_transaction_coordinator,
+    request_transaction_state, select_names, setup_shared_table,
 };
 
 #[tokio::test]
@@ -15,9 +15,13 @@ async fn request_cleanup_rolls_back_unclosed_sql_transaction() {
     execute_ok(&executor, &request_ctx, "BEGIN").await;
     execute_ok(&executor, &request_ctx, &insert_sql(&table_id, 1, "staged")).await;
 
+    let tx_coordinator = request_transaction_coordinator(app_ctx.as_ref());
     let mut tx_state = request_transaction_state(&request_ctx);
-    tx_state.sync_from_coordinator(&app_ctx);
-    assert!(tx_state.rollback_if_active(&app_ctx).expect("rollback cleanup").is_some());
+    tx_state.sync(&tx_coordinator);
+    assert!(tx_state
+        .rollback_if_active(&tx_coordinator)
+        .expect("rollback cleanup")
+        .is_some());
 
     let observer_ctx = observer_exec_ctx(&app_ctx);
     assert!(select_names(&executor, &observer_ctx, &table_id).await.is_empty());

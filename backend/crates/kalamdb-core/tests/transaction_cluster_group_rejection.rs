@@ -4,8 +4,8 @@ use kalamdb_core::transactions::TransactionRaftBinding;
 use ntest::timeout;
 use support::{
     create_cluster_app_context, create_executor, create_shared_table, create_user_table,
-    execute_err, execute_ok, insert_sql, request_exec_ctx, request_transaction_state, select_names,
-    unique_namespace,
+    execute_err, execute_ok, insert_sql, request_exec_ctx, request_transaction_coordinator,
+    request_transaction_state, select_names, unique_namespace,
 };
 
 #[tokio::test]
@@ -22,8 +22,9 @@ async fn sql_request_transaction_rejects_cross_group_access_without_aborting_bou
     execute_ok(&executor, &request_ctx, "BEGIN").await;
     execute_ok(&executor, &request_ctx, &insert_sql(&user_table, 1, "alpha")).await;
 
+    let tx_coordinator = request_transaction_coordinator(app_ctx.as_ref());
     let mut request_state = request_transaction_state(&request_ctx);
-    request_state.sync_from_coordinator(&app_ctx);
+    request_state.sync(&tx_coordinator);
     let transaction_id = request_state
         .active_transaction_id()
         .cloned()

@@ -5,8 +5,8 @@ use kalamdb_core::transactions::TransactionRaftBinding;
 use ntest::timeout;
 use support::{
     create_cluster_app_context, create_executor, create_shared_table, execute_err, execute_ok,
-    insert_sql, observer_exec_ctx, request_exec_ctx, request_transaction_state, select_names,
-    unique_namespace,
+    insert_sql, observer_exec_ctx, request_exec_ctx, request_transaction_coordinator,
+    request_transaction_state, select_names, unique_namespace,
 };
 
 #[tokio::test]
@@ -22,8 +22,9 @@ async fn sql_request_transaction_aborts_when_bound_leader_changes_before_commit(
     execute_ok(&executor, &request_ctx, "BEGIN").await;
     execute_ok(&executor, &request_ctx, &insert_sql(&table_id, 1, "alpha")).await;
 
+    let tx_coordinator = request_transaction_coordinator(app_ctx.as_ref());
     let mut request_state = request_transaction_state(&request_ctx);
-    request_state.sync_from_coordinator(&app_ctx);
+    request_state.sync(&tx_coordinator);
     let transaction_id = request_state
         .active_transaction_id()
         .cloned()
@@ -66,7 +67,7 @@ async fn sql_request_transaction_aborts_when_bound_leader_changes_before_commit(
     execute_ok(&executor, &request_ctx, "ROLLBACK").await;
 
     let mut cleaned_state = request_transaction_state(&request_ctx);
-    cleaned_state.sync_from_coordinator(&app_ctx);
+    cleaned_state.sync(&tx_coordinator);
     assert!(cleaned_state.active_transaction_id().is_none());
     assert!(app_ctx.transaction_coordinator().get_handle(&transaction_id).is_none());
     assert!(select_names(&executor, &observer_ctx, &table_id).await.is_empty());

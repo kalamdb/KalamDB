@@ -4756,8 +4756,10 @@ dependencies = [
  "futures-util",
  "kalamdb-commons",
  "kalamdb-datafusion-sources",
+ "kalamdb-sharding",
  "serde",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
