@@ -54,14 +54,11 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
     // -----------------------------------------------------------------
     {
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.notes (id TEXT PRIMARY KEY, content TEXT, priority INT) WITH \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.notes (id TEXT PRIMARY KEY, content TEXT, priority INT) WITH \
                      (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:50')",
-                    ns
-                ),
-                &auth1,
-            )
+                ns
+            ))
             .await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,
@@ -167,14 +164,11 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
         let _ = server.execute_sql(&format!("DROP TABLE {}.{}", ns, table)).await;
 
         let resp = server
-            .execute_sql_with_auth(
-                &format!(
-                    "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, content TEXT) WITH (TYPE='USER', \
+            .execute_sql(&format!(
+                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, content TEXT) WITH (TYPE='USER', \
                      STORAGE_ID='local', FLUSH_POLICY='rows:2')",
-                    ns, table
-                ),
-                &auth1,
-            )
+                ns, table
+            ))
             .await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
 

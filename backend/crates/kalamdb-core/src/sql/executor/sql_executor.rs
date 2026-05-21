@@ -447,6 +447,28 @@ impl SqlExecutor {
         Ok(())
     }
 
+    fn reject_unsupported_dml_in_active_request_transaction(
+        &self,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
+            return Ok(());
+        };
+
+        match metadata.table_type {
+            Some(TableType::Stream) => Err(KalamDbError::InvalidOperation(format!(
+                "transaction '{}' failed: stream tables are not supported inside explicit transactions",
+                transaction_id
+            ))),
+            Some(TableType::System) => Err(KalamDbError::InvalidOperation(format!(
+                "transaction '{}' failed: system tables are not supported inside explicit transactions",
+                transaction_id
+            ))),
+            _ => Ok(()),
+        }
+    }
+
     /// Construct a new executor with a pre-built handler registry.
     pub fn new(
         app_context: std::sync::Arc<crate::app_context::AppContext>,
@@ -651,6 +673,7 @@ impl SqlExecutor {
 
                 // Native DataFusion DML path (provider insert/update/delete hooks)
                 SqlStatementKind::Insert(_) => {
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
                     if params.is_empty() {
                         if let Some(result) = self
                             .try_execute_literal_insert_via_applier(
@@ -683,6 +706,7 @@ impl SqlExecutor {
                     }
                 },
                 SqlStatementKind::Update(_) => {
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
                         metadata,
@@ -693,6 +717,7 @@ impl SqlExecutor {
                     .await
                 },
                 SqlStatementKind::Delete(_) => {
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
                         metadata,
@@ -921,7 +946,7 @@ impl SqlExecutor {
             self.plan_dml_with_provider_reload(execution_sql, sql, exec_ctx).await?.1
         } else {
             let cache_key = PlanCacheKey::new(
-                exec_ctx.default_namespace().clone(),
+                exec_ctx.default_namespace(),
                 exec_ctx.user_role(),
                 execution_sql,
             );
@@ -998,16 +1023,12 @@ impl SqlExecutor {
             validate_params(&params)?;
         }
 
-        let session = self.create_session_with_transaction_context(exec_ctx)?;
-
         // Try cached template plan first (works for both plain and parameterized SQL).
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
         // time.
-        let cache_key = PlanCacheKey::new(
-            exec_ctx.default_namespace().clone(),
-            exec_ctx.user_role(),
-            execution_sql,
-        );
+        let cache_key =
+            PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             let executable_plan = if params.is_empty() {

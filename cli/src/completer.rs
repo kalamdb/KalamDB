@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use colored::*;
 use rustyline::completion::{Completer, Pair};
 
-use crate::parser::META_COMMAND_COMPLETIONS;
+use crate::parser::meta_command_completions;
 
 pub(crate) const SQL_KEYWORDS: &[&str] = &[
     // DML
@@ -174,8 +174,7 @@ impl AutoCompleter {
     pub fn new() -> Self {
         let keywords = SQL_KEYWORDS.iter().map(|s| s.to_string()).collect::<Vec<String>>();
 
-        let meta_commands =
-            META_COMMAND_COMPLETIONS.iter().map(|command| (*command).to_string()).collect();
+        let meta_commands = meta_command_completions().iter().cloned().collect();
 
         Self {
             keywords,

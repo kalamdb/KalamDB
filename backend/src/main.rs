@@ -14,6 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use kalamdb_configs::ServerConfig;
+use kalamdb_observability::initialize_activity_now;
 use kalamdb_server::{
     lifecycle::{bootstrap, run},
     startup::configure_auth_runtime,
@@ -172,10 +173,9 @@ where
         }),
         Some("--version") | Some("-V") | Some("version") => Ok(StartupCommand::Version),
         Some("--help") | Some("-h") | Some("help") => Ok(StartupCommand::Help),
-        Some(arg) if arg.starts_with('-') => Err(anyhow!(
-            "Unknown option '{}'. Use --help to show supported arguments.",
-            arg
-        )),
+        Some(arg) if arg.starts_with('-') => {
+            Err(anyhow!("Unknown option '{}'. Use --help to show supported arguments.", arg))
+        },
         Some(config_path) => Ok(StartupCommand::Run {
             config_path: PathBuf::from(config_path),
         }),
@@ -386,6 +386,8 @@ async fn async_main(config: ServerConfig) -> Result<()> {
     .map_err(|error| {
         anyhow::anyhow!("Failed to initialize logging at '{}': {}", server_log_path, error)
     })?;
+
+    initialize_activity_now();
 
     // Display enhanced version information
     info!("KalamDB Server v{:<10} | Build: {}", SERVER_VERSION, BUILD_DATE);

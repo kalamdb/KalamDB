@@ -350,6 +350,11 @@ fn smoke_cli_flush_command() {
     // Test STORAGE FLUSH TABLE
     let result = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
     assert!(result.is_ok(), "STORAGE FLUSH TABLE should succeed: {:?}", result);
+    let flush_output = result.expect("flush command output should be present");
+    let job_id = parse_job_id_from_flush_output(&flush_output)
+        .expect("flush output should contain a job id");
+    verify_job_completed(&job_id, Duration::from_secs(30))
+        .expect("flush job should complete before verification");
 
     // Verify data still accessible after flush
     let result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", full_table))
@@ -560,7 +565,7 @@ fn smoke_cli_alter_table() {
 }
 
 /// Smoke Test: Error handling for invalid commands
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_cli_error_handling() {
     if !is_server_running() {

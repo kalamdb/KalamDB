@@ -9,7 +9,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     ids::UserTableRowId,
-    models::{rows::Row, TableId, UserId},
+    models::{TableId, UserId},
     schemas::TableType,
     StorageKey,
 };
@@ -85,10 +85,6 @@ impl UserTableFlushJob {
         }
     }
 
-    fn scan_batch_size(&self) -> usize {
-        self.app_context.config().flush.flush_batch_size.max(1)
-    }
-
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
         FlushScopeWriter::new(
             &self.app_context,
@@ -102,25 +98,6 @@ impl UserTableFlushJob {
         )
     }
 
-    fn rows_from_versions(
-        latest_versions: HashMap<String, (Vec<u8>, UserTableRow, i64)>,
-        stats: &mut FlushDedupStats,
-    ) -> Vec<(Vec<u8>, Row)> {
-        let mut rows = Vec::with_capacity(latest_versions.len());
-
-        for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
-            if row._deleted {
-                stats.tombstones_filtered += 1;
-                continue;
-            }
-
-            let row_data = helpers::add_system_columns(row.fields, row._seq.as_i64(), false);
-            rows.push((key_bytes, row_data));
-        }
-
-        rows
-    }
-
     fn flush_user_versions(
         &self,
         user_id: &UserId,
@@ -131,8 +108,13 @@ impl UserTableFlushJob {
     ) -> Result<usize, KalamDbError> {
         stats.rows_after_dedup += latest_versions.len();
 
-        let rows = Self::rows_from_versions(latest_versions, stats);
+        let (rows, preserved_tombstone_keys) =
+            helpers::rows_and_tombstones_from_versions(latest_versions, stats);
+        let keys_to_delete =
+            helpers::cleanup_keys_excluding_preserved(keys_to_delete, &preserved_tombstone_keys);
+
         if rows.is_empty() {
+            self.delete_flushed_keys(&keys_to_delete)?;
             return Ok(0);
         }
 
@@ -198,7 +180,7 @@ impl TableFlush for UserTableFlushJob {
         let mut total_rows_flushed = 0;
         let mut users_count = 0;
         let mut error_messages: Vec<String> = Vec::new();
-        let scan_batch_size = self.scan_batch_size();
+        let scan_batch_size = helpers::scan_batch_size(&self.app_context);
 
         // Batched scan with cursor
         let mut cursor: Option<UserTableRowId> = None;
@@ -258,37 +240,15 @@ impl TableFlush for UserTableFlushJob {
                     current_user = Some(user_id.clone());
                 }
 
-                keys_to_delete.push(row_id.storage_key());
-
-                // Extract PK value from fields
-                let seq_val = row._seq.as_i64();
-                let pk_value = helpers::extract_pk_value(&row.fields, &pk_field, seq_val);
-
-                // Track deleted rows
-                if row._deleted {
-                    stats.deleted_count += 1;
-                }
-
-                // Keep MAX(_seq) per PK within the current user scope.
-                match latest_versions.get(&pk_value) {
-                    Some((_existing_key, _existing_row, existing_seq)) => {
-                        if seq_val > *existing_seq {
-                            log::trace!(
-                                "[FLUSH DEDUP] Replacing user={}, pk={}: old_seq={}, new_seq={}, \
-                                 deleted={}",
-                                user_id.as_str(),
-                                pk_value,
-                                existing_seq,
-                                seq_val,
-                                row._deleted
-                            );
-                            latest_versions.insert(pk_value, (row_id.storage_key(), row, seq_val));
-                        }
-                    },
-                    None => {
-                        latest_versions.insert(pk_value, (row_id.storage_key(), row, seq_val));
-                    },
-                }
+                let key_bytes = row_id.storage_key();
+                keys_to_delete.push(key_bytes.clone());
+                helpers::track_latest_version(
+                    &mut latest_versions,
+                    key_bytes,
+                    row,
+                    &pk_field,
+                    &mut stats,
+                );
             }
 
             // Check if we got fewer rows than batch size (end of data)

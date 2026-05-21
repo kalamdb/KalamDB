@@ -1,0 +1,22 @@
+[package]
+name = "kalamdb-row-filter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Single-row SQL WHERE clause parsing and evaluation for KalamDB"
+keywords = ["kalamdb", "sql", "filter", "where"]
+categories = ["database"]
+
+[dependencies]
+kalamdb-commons = { workspace = true, features = ["full"] }
+datafusion-common = { workspace = true }
+sqlparser = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "kalamdb_row_filter"
+path = "src/lib.rs"

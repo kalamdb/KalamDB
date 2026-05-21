@@ -322,7 +322,7 @@ impl JobsManager {
 
         loop {
             // Check for shutdown signal (lock-free atomic check)
-            if self.shutdown.load(std::sync::atomic::Ordering::Acquire) {
+            if self.is_shutting_down() {
                 log::info!("Shutdown signal received, stopping job loop");
                 break;
             }
@@ -341,6 +341,10 @@ impl JobsManager {
             } else {
                 tokio::select! {
                     biased;
+                    _ = self.shutdown_notify.notified() => {
+                        log::info!("Shutdown signal received, stopping job loop");
+                        break;
+                    }
                     // Priority 1: awakened jobs from state machine
                     Some(job_id) = awake_receiver.recv() => Some(job_id),
                     // Priority 2: fallback polling for crash recovery/retries
@@ -386,6 +390,10 @@ impl JobsManager {
                             interval.tick().await;
                         }
                     }, if wal_cleanup_enabled => {
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
+                        }
                         let app_ctx = self.get_attached_app_context();
                         let backend = app_ctx.storage_backend();
                         match tokio::task::spawn_blocking(move || backend.flush_all_memtables()).await {
@@ -410,6 +418,10 @@ impl JobsManager {
                             interval.tick().await;
                         }
                     }, if stream_eviction_enabled => {
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
+                        }
                         if is_leader {
                             let app_ctx = self.get_attached_app_context();
                             if let Err(e) = StreamEvictionScheduler::check_and_schedule(&app_ctx, self).await {
@@ -427,6 +439,10 @@ impl JobsManager {
                             interval.tick().await;
                         }
                     }, if topic_retention_enabled => {
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
+                        }
                         if is_leader {
                             let app_ctx = self.get_attached_app_context();
                             if let Err(e) = TopicRetentionScheduler::check_and_schedule(&app_ctx, self).await {
@@ -445,6 +461,10 @@ impl JobsManager {
                             interval.tick().await;
                         }
                     }, if flush_check_enabled => {
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
+                        }
                         if is_leader {
                             let app_ctx = self.get_attached_app_context();
                             if let Err(e) = FlushScheduler::check_and_schedule(&app_ctx, self).await {

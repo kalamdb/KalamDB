@@ -251,8 +251,8 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
     }
 
     // Subscribe to anomalies (high temp OR low battery)
-    let sql = format!("SELECT * FROM {}.telemetry WHERE temp > 50 OR battery < 15 ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.telemetry WHERE temp > 50 OR battery < 15", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Wait for ACK
     let _ = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;

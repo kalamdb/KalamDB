@@ -24,6 +24,10 @@ npm i @kalamdb/client @kalamdb/consumer
 
 Topic HTTP endpoints require bearer authentication and role `service`, `dba`, or `system`.
 
+## Production Scenario Coverage
+
+The package test suite includes separate real-world worker scenarios for chat CDC projection, unread counters, AI chat summaries, concurrent tool-call auditing, delete redaction, job state transitions, dead-letter handling, high-load analytics, webhook idempotency, and support ticket assignment. The compatibility path for `runAgent()` plus `onRow` is covered separately.
+
 ## Quick Start
 
 ```ts

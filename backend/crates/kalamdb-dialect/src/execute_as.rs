@@ -401,4 +401,170 @@ mod tests {
             parse_execute_as("SELECT * FROM default.todos WHERE id = 10").expect("should parse");
         assert!(result.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Security tests — these act as tripwires: removing a guard turns a test red
+    // -----------------------------------------------------------------------
+
+    // Empty quoted username must be rejected immediately.
+    #[test]
+    fn security_reject_empty_quoted_username() {
+        let err = parse_execute_as("EXECUTE AS USER '' (SELECT 1)")
+            .expect_err("empty quoted username must be rejected");
+        assert!(err.contains("empty"), "Error must mention empty username: {err}");
+    }
+
+    // Bare username that starts with '(' resolves to an empty string.
+    #[test]
+    fn security_reject_empty_bare_username_at_open_paren() {
+        let err = parse_execute_as("EXECUTE AS USER (SELECT 1)")
+            .expect_err("bare username starting with '(' must be rejected");
+        assert!(err.contains("empty"), "Missing bare username must be rejected: {err}");
+    }
+
+    // Classic SQL-injection suffix: ' OR '1'='1' appended after a valid quoted
+    // username must be rejected because the leftover text does not start with '('.
+    #[test]
+    fn security_reject_sql_injection_suffix_after_quoted_username() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' OR '1'='1' (SELECT 1)")
+            .expect_err("SQL injection suffix after username must be rejected");
+        assert!(
+            err.contains("parentheses") || err.contains("wrap"),
+            "Injection suffix must error on missing '(': {err}"
+        );
+    }
+
+    // Semicolon-stacking: 'alice'; DROP TABLE x (SELECT 1).
+    // The parser extracts username 'alice', then sees '; DROP TABLE x …'
+    // which doesn't start with '(' — rejected.
+    #[test]
+    fn security_reject_stacked_ddl_after_username() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice'; DROP TABLE x (SELECT 1)")
+            .expect_err("stacked DDL after username must be rejected");
+        assert!(
+            err.contains("parentheses") || err.contains("wrap"),
+            "Stacked DDL must error: {err}"
+        );
+    }
+
+    // SQL line-comment injected directly after the closing quote: '--comment (…)'
+    // is not a '(' so the parser rejects it.
+    #[test]
+    fn security_reject_line_comment_injection_after_username() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice'--comment (SELECT 1)")
+            .expect_err("comment injection after username must be rejected");
+        assert!(
+            err.contains("parentheses") || err.contains("wrap"),
+            "Comment injection must error: {err}"
+        );
+    }
+
+    // Stacked UPDATE/DELETE inside the parentheses (multi-statement body).
+    #[test]
+    fn security_reject_multi_statement_with_dml_in_body() {
+        let err = parse_execute_as(
+            "EXECUTE AS USER 'alice' (UPDATE t SET x=1 WHERE id=1; DELETE FROM t WHERE id=2)",
+        )
+        .expect_err("multi-statement body with DML must be rejected");
+        assert!(
+            err.contains("single") || err.contains("one"),
+            "Multi-statement DML body must error: {err}"
+        );
+    }
+
+    // SELECT stacked with a DROP inside the parentheses.
+    #[test]
+    fn security_reject_multi_statement_with_ddl_in_body() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' (SELECT 1; DROP TABLE t)")
+            .expect_err("multi-statement body with DDL must be rejected");
+        assert!(
+            err.contains("single") || err.contains("one"),
+            "Multi-statement DDL body must error: {err}"
+        );
+    }
+
+    // Empty parentheses body must be rejected.
+    #[test]
+    fn security_reject_empty_inner_sql_body() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' ()")
+            .expect_err("empty inner SQL body must be rejected");
+        assert!(
+            err.contains("non-empty") || err.contains("empty"),
+            "Empty body must error: {err}"
+        );
+    }
+
+    // Content after the closing ')' is a sign of injection or malformed input.
+    #[test]
+    fn security_reject_trailing_content_after_close_paren() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' (SELECT 1) extra_garbage")
+            .expect_err("trailing content after ')' must be rejected");
+        assert!(
+            err.contains("exactly") || err.contains("single") || err.contains("trailing"),
+            "Trailing content must error: {err}"
+        );
+    }
+
+    // No '(' at all after the username.
+    #[test]
+    fn security_reject_missing_open_paren() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' SELECT 1")
+            .expect_err("missing '(' must be rejected");
+        assert!(
+            err.contains("parentheses") || err.contains("wrap"),
+            "Missing '(' must error: {err}"
+        );
+    }
+
+    // Unclosed '(' — paren that is never closed.
+    #[test]
+    fn security_reject_unclosed_paren() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice' (SELECT 1")
+            .expect_err("unclosed paren must be rejected");
+        assert!(
+            err.contains("closing") || err.contains("')'"),
+            "Unclosed paren must error: {err}"
+        );
+    }
+
+    // Doubled single-quotes used as an escape in the username produce a literal
+    // quote character in the string value — they do NOT execute as SQL.
+    // For example: 'alice'' OR ''1''=''1' is the username string alice' OR '1'='1.
+    // The server must then reject this via a user-not-found authorisation error,
+    // but at the dialect layer the parse succeeds and the value is a plain string.
+    #[test]
+    fn security_username_injection_via_escaped_quotes_is_a_literal_string() {
+        let result = parse_execute_as("EXECUTE AS USER 'alice'' OR ''1''=''1' (SELECT 1)")
+            .expect("parser must succeed")
+            .expect("must be an envelope");
+
+        // The username is the raw string value — no SQL evaluation.
+        assert_eq!(
+            result.username, "alice' OR '1'='1",
+            "Escaped-quote injection must produce a literal string, not execute SQL"
+        );
+        assert_eq!(result.inner_sql, "SELECT 1");
+    }
+
+    // Nested EXECUTE AS: the dialect parser does NOT recursively validate the
+    // inner SQL.  It returns the nested envelope verbatim as the inner_sql.
+    // The server (SqlImpersonationService / role-matrix check) is responsible
+    // for blocking privilege escalation through nesting.
+    // This test documents the current parser behaviour so any future change is
+    // explicit and intentional.
+    #[test]
+    fn security_nested_execute_as_inner_sql_returned_verbatim() {
+        let result = parse_execute_as(
+            "EXECUTE AS USER 'alice' (EXECUTE AS USER 'admin' (SELECT * FROM system.users))",
+        )
+        .expect("outer envelope must parse — the server rejects the nested call")
+        .expect("must be an envelope");
+
+        assert_eq!(result.username, "alice");
+        assert!(
+            result.inner_sql.to_uppercase().starts_with("EXECUTE AS USER"),
+            "Inner SQL must be the nested EXECUTE AS verbatim; got: {}",
+            result.inner_sql
+        );
+    }
 }

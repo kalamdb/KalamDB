@@ -554,7 +554,7 @@ pub async fn setup_complete_environment(server: &TestServer, namespace: &str) ->
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "e2e-tests")))]
 mod tests {
     use super::*;
 

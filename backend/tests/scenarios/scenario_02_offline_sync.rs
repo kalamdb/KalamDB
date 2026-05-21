@@ -125,8 +125,8 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
                     .build()?;
 
                 // Subscribe to items
-                let sql = format!("SELECT * FROM {}.items ORDER BY id", ns);
-                let mut subscription = client.subscribe(&sql).await?;
+                let sql = format!("SELECT * FROM {}.items", ns);
+                let mut subscription = client.live_events(&sql).await?;
 
                 // Wait for ACK
                 let mut got_ack = false;
@@ -261,8 +261,8 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     sleep(Duration::from_millis(500)).await;
 
     // Subscribe to get initial snapshot
-    let sql = format!("SELECT * FROM {}.items ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.items", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Drain initial data
     let initial_count = drain_initial_data(&mut subscription, Duration::from_secs(10)).await?;
@@ -296,7 +296,7 @@ async fn test_scenario_02_offline_drift_resume() -> anyhow::Result<()> {
     assert!(resp.success(), "Update item 1");
 
     // Resume: resubscribe
-    let mut subscription = client.subscribe(&sql).await?;
+    let mut subscription = client.live_events(&sql).await?;
 
     // Get new initial snapshot - should now have 15 items
     let resume_count = drain_initial_data(&mut subscription, Duration::from_secs(10)).await?;
@@ -347,8 +347,8 @@ async fn test_scenario_02_changes_during_snapshot() -> anyhow::Result<()> {
     }
 
     // Subscribe
-    let sql = format!("SELECT * FROM {}.items ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.items", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Immediately start inserting more items (simulating concurrent writes)
     let client_clone = client.clone();

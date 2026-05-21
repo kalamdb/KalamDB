@@ -330,8 +330,8 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     }
 
     // Subscribe to cart 1 only
-    let sql = format!("SELECT * FROM {}.cart_items WHERE cart_id = 1 ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.cart_items WHERE cart_id = 1", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Drain initial (should be 5 items from cart 1)
     let initial = drain_initial_data(&mut subscription, Duration::from_secs(5)).await?;

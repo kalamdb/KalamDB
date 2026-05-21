@@ -72,6 +72,11 @@ impl FlushScheduler {
         app_context: &Arc<AppContext>,
         jobs_manager: &JobsManager,
     ) -> Result<(), KalamDbError> {
+        if jobs_manager.is_shutting_down() {
+            log::debug!("FlushScheduler: shutdown in progress, skipping periodic flush scan");
+            return Ok(());
+        }
+
         let manifest_service = app_context.manifest_service();
         let default_row_limit = app_context.config().flush.default_row_limit as u64;
         let pending_scan = collect_pending_flush_tables(&manifest_service)?;
@@ -83,6 +88,13 @@ impl FlushScheduler {
         let date_key = hourly_date_key();
 
         for table_id in &pending_scan.table_ids {
+            if jobs_manager.is_shutting_down() {
+                log::debug!(
+                    "FlushScheduler: shutdown in progress, stopping periodic flush scheduling"
+                );
+                break;
+            }
+
             // Look up the table definition to determine its type
             // Use async variant to avoid blocking tokio worker on RocksDB cache miss
             let table_def = match schema_registry.get_table_if_exists_async(table_id).await {

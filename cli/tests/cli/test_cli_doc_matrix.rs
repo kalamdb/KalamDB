@@ -8,6 +8,7 @@
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use kalam_cli::parser::CommandParser;
 
 use crate::common::*;
 
@@ -907,43 +908,39 @@ fn test_cli_short_version_command() {
 
 #[test]
 fn test_cli_meta_commands_doc_smoke_non_interactive() {
-    // Interactive meta-commands are parsed in REPL mode, not by `--command`.
-    // Validate parser support directly against the documented command inventory.
-    let parser_source = include_str!("../../src/parser.rs");
+    let parser = CommandParser::new();
     let documented_commands = [
-        "\\help",
-        "\\?",
-        "\\info",
-        "\\session",
-        "\\sessions",
-        "\\history",
-        "\\h",
-        "\\health",
-        "\\stats",
-        "\\metrics",
-        "\\dt",
-        "\\tables",
-        "\\d",
-        "\\describe",
-        "\\as",
-        "\\format",
-        "\\refresh-tables",
-        "\\refresh",
-        "\\subscribe",
-        "\\live",
-        "\\consume",
-        "\\show-credentials",
-        "\\credentials",
-        "\\update-credentials",
-        "\\delete-credentials",
-        "\\flush",
-        "\\cluster",
+        "help",
+        "?",
+        "info",
+        "session",
+        "sessions",
+        "history",
+        "health",
+        "stats",
+        "metrics",
+        "dt",
+        "tables",
+        "describe users",
+        "as alice SELECT 1",
+        "format json",
+        "refresh-tables",
+        "refresh",
+        "subscribe SELECT * FROM app.messages",
+        "live SELECT * FROM app.messages",
+        "consume app.events --group workers --limit 1",
+        "show-credentials",
+        "credentials",
+        "update-credentials admin kalamdb123",
+        "delete-credentials",
+        "flush",
+        "cluster list",
     ];
 
     for command in documented_commands {
         assert!(
-            parser_source.contains(command),
-            "documented interactive command missing in parser source: {}",
+            parser.parse_external_command(command).is_ok(),
+            "documented non-interactive command should parse: {}",
             command,
         );
     }

@@ -6,7 +6,7 @@ use std::sync::{
 use kalamdb_commons::{JobId, NodeId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_system::{JobNodesTableProvider, JobsTableProvider};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::executors::JobRegistry;
 
@@ -33,6 +33,8 @@ pub struct JobsManager {
 
     /// Flag for graceful shutdown (AtomicBool for lock-free access in hot loop)
     pub(crate) shutdown: AtomicBool,
+    /// Wakes the run loop immediately so it does not wait for the next tick while shutting down.
+    pub(crate) shutdown_notify: Notify,
     /// AppContext for global services - uses Weak to avoid Arc cycle
     /// (AppContext holds Arc<JobsManager>, so we use Weak here)
     pub(crate) app_context: Weak<AppContext>,
@@ -65,6 +67,7 @@ impl JobsManager {
             job_registry,
             node_id,
             shutdown: AtomicBool::new(false),
+            shutdown_notify: Notify::new(),
             app_context: Arc::downgrade(&app_ctx),
             awake_sender,
             awake_receiver: parking_lot::Mutex::new(Some(awake_receiver)),
@@ -90,9 +93,14 @@ impl JobsManager {
         }
     }
 
+    pub(crate) fn is_shutting_down(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire)
+    }
+
     /// Request graceful shutdown
     pub fn shutdown(&self) {
         log::debug!("Initiating job manager shutdown");
         self.shutdown.store(true, Ordering::Release);
+        self.shutdown_notify.notify_waiters();
     }
 }

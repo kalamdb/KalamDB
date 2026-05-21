@@ -3,7 +3,7 @@
 //! JobExecutor implementation for manifest cache eviction based on last_accessed timestamp.
 //!
 //! ## Responsibilities
-//! - Evict stale manifest entries from both hot cache (RAM) and RocksDB
+//! - Evict stale manifest entries from both memory cache and RocksDB
 //! - Check last_accessed timestamp against configurable TTL
 //! - Track eviction metrics (entries evicted)
 //!

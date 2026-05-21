@@ -6,6 +6,6 @@
 #[path = "../common/testserver/mod.rs"]
 mod test_support;
 
-// Include cluster test modules (currently disabled)
-// mod test_cluster_basic_operations;
-// mod test_cluster_node_recovery_and_sync;
+// Include cluster test modules
+mod test_cluster_basic_operations;
+mod test_cluster_node_recovery_and_sync;

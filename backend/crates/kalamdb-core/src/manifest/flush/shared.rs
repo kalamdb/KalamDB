@@ -3,14 +3,11 @@
 //! Flushes shared table data from RocksDB to a single Parquet file.
 //! All rows are written to one file per flush operation.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
-    constants::SystemColumnNames,
-    ids::SharedTableRowId,
-    models::{rows::Row, TableId},
-    StorageKey,
+    constants::SystemColumnNames, ids::SharedTableRowId, models::TableId, StorageKey,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
@@ -87,10 +84,6 @@ impl SharedTableFlushJob {
         }
     }
 
-    fn scan_batch_size(&self) -> usize {
-        self.app_context.config().flush.flush_batch_size.max(1)
-    }
-
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
         FlushScopeWriter::new(
             &self.app_context,
@@ -134,8 +127,6 @@ impl TableFlush for SharedTableFlushJob {
     fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
         log::debug!("🔄 Starting shared table flush: table={}", self.table_id);
 
-        use std::collections::HashMap;
-
         // Get primary key field name from schema
         let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
@@ -148,7 +139,7 @@ impl TableFlush for SharedTableFlushJob {
 
         // Batched scan with cursor
         let mut cursor: Option<SharedTableRowId> = None;
-        let scan_batch_size = self.scan_batch_size();
+        let scan_batch_size = helpers::scan_batch_size(&self.app_context);
         loop {
             let batch = self
                 .store
@@ -175,29 +166,15 @@ impl TableFlush for SharedTableFlushJob {
             stats.rows_before_dedup += batch_len;
 
             for (key, row) in batch {
-                // Track ALL keys for deletion (before dedup)
-                all_keys_to_delete.push(key.storage_key());
-
-                // Extract PK value from fields
-                let seq_val = row._seq.as_i64();
-                let pk_value = helpers::extract_pk_value(&row.fields, &pk_field, seq_val);
-
-                // Track deleted rows
-                if row._deleted {
-                    stats.deleted_count += 1;
-                }
-
-                // Keep MAX(_seq) per pk_value
-                match latest_versions.get(&pk_value) {
-                    Some((_existing_key, _existing_row, existing_seq)) => {
-                        if seq_val > *existing_seq {
-                            latest_versions.insert(pk_value, (key.storage_key(), row, seq_val));
-                        }
-                    },
-                    None => {
-                        latest_versions.insert(pk_value, (key.storage_key(), row, seq_val));
-                    },
-                }
+                let key_bytes = key.storage_key();
+                all_keys_to_delete.push(key_bytes.clone());
+                helpers::track_latest_version(
+                    &mut latest_versions,
+                    key_bytes,
+                    row,
+                    &pk_field,
+                    &mut stats,
+                );
             }
 
             // Check if we got fewer rows than batch size (end of data)
@@ -207,26 +184,20 @@ impl TableFlush for SharedTableFlushJob {
         }
 
         stats.rows_after_dedup = latest_versions.len();
-
-        // STEP 2: Filter out deleted rows (tombstones) and convert to Rows
-        let mut rows: Vec<(Vec<u8>, Row)> = Vec::new();
-
-        for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
-            // Skip soft-deleted rows (tombstones)
-            if row._deleted {
-                stats.tombstones_filtered += 1;
-                continue;
-            }
-
-            let row_data = helpers::add_system_columns(row.fields, row._seq.as_i64(), false);
-            rows.push((key_bytes, row_data));
-        }
+        let (rows, preserved_tombstone_keys) =
+            helpers::rows_and_tombstones_from_versions(latest_versions, &mut stats);
 
         // Log dedup statistics
         stats.log_summary(&self.table_id.to_string());
 
+        let keys_to_delete = helpers::cleanup_keys_excluding_preserved(
+            all_keys_to_delete,
+            &preserved_tombstone_keys,
+        );
+
         // If no rows to flush, return early
         if rows.is_empty() {
+            self.delete_flushed_rows(&keys_to_delete)?;
             log::info!(
                 "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
                 self.table_id
@@ -256,10 +227,10 @@ impl TableFlush for SharedTableFlushJob {
         // Delete ALL flushed rows from RocksDB (including old versions)
         log::info!(
             "📊 [FLUSH CLEANUP] Deleting {} rows from hot storage (including {} old versions)",
-            all_keys_to_delete.len(),
-            all_keys_to_delete.len() - rows_count
+            keys_to_delete.len(),
+            keys_to_delete.len().saturating_sub(rows_count)
         );
-        self.delete_flushed_rows(&all_keys_to_delete)?;
+        self.delete_flushed_rows(&keys_to_delete)?;
 
         // Note: RocksDB compaction is handled by the FlushExecutor (fire-and-forget)
         // to avoid blocking job completion. Removing the inline compact() call here

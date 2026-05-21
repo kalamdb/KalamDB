@@ -18,6 +18,7 @@ kalamdb-live = { path = "crates/kalamdb-live" }
 kalamdb-handlers = { path = "crates/kalamdb-handlers" }
 kalamdb-jobs = { path = "crates/kalamdb-jobs" }
 kalamdb-api = { path = "crates/kalamdb-api", default-features = false }
+kalamdb-observability = { path = "crates/kalamdb-observability", features = ["mimalloc"] }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
@@ -98,14 +99,30 @@ path = "tests/scenarios/test_scenarios.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
+name = "test_scenarios_realtime"
+path = "tests/scenarios/test_scenarios_realtime.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "test_scenarios_lifecycle"
+path = "tests/scenarios/test_scenarios_lifecycle.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
+name = "test_scenarios_scale"
+path = "tests/scenarios/test_scenarios_scale.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
 name = "endurance_test"
 path = "tests/endurance_test.rs"
 required-features = ["e2e-tests"]
 
 
-# [[test]]
-# name = "test_cluster"
-# path = "tests/cluster/test_cluster.rs"
+[[test]]
+name = "test_cluster"
+path = "tests/cluster/test_cluster.rs"
+required-features = ["e2e-tests"]
 
 [[test]]
 name = "test_misc"

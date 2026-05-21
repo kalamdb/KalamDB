@@ -195,10 +195,6 @@ max_entries = 500
 # Set to 0 to disable manifest eviction (not recommended for long-running servers)
 eviction_ttl_days = 7
 
-# Weight factor for user table manifests (default: 10)
-# User tables are evicted N times faster than shared tables.
-user_table_weight_factor = 10
-
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)
 max_message_size = 1048576

@@ -19,6 +19,14 @@ pub fn record_activity_now() -> u64 {
     now
 }
 
+/// Seed the activity clock on process startup so idle trim can run before the
+/// first external request arrives.
+pub fn initialize_activity_now() -> u64 {
+    let now = epoch_millis();
+    let _ = LAST_ACTIVITY_MS.compare_exchange(0, now, Ordering::AcqRel, Ordering::Acquire);
+    LAST_ACTIVITY_MS.load(Ordering::Acquire)
+}
+
 /// Return the last recorded activity timestamp in epoch milliseconds.
 pub fn last_activity_ms() -> Option<u64> {
     let last = LAST_ACTIVITY_MS.load(Ordering::Acquire);
@@ -39,6 +47,13 @@ mod tests {
     fn test_record_activity_updates_idle_duration() {
         record_activity_now();
         let idle = idle_duration().expect("idle duration should be available after activity");
+        assert!(idle < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_initialize_activity_seeds_idle_duration() {
+        initialize_activity_now();
+        let idle = idle_duration().expect("idle duration should be available after init");
         assert!(idle < Duration::from_secs(1));
     }
 }

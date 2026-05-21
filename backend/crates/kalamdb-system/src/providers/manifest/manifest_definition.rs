@@ -95,7 +95,7 @@ pub fn manifest_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("True if manifest is currently in hot cache (RAM)".to_string()),
+            Some("True if manifest is currently in the process memory cache".to_string()),
         ),
         ColumnDefinition::new(
             9,

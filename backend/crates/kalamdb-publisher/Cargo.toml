@@ -13,6 +13,7 @@ categories = ["database"]
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-row-filter = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
@@ -32,7 +33,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-datafusion = { workspace = true }
+datafusion-common = { workspace = true }
 
 [lib]
 name = "kalamdb_publisher"

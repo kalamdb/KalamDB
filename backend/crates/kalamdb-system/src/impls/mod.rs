@@ -17,6 +17,10 @@ pub use topic_publisher::TopicPublisher;
 /// Interface for ManifestService implementations used by table providers.
 #[async_trait::async_trait]
 pub trait ManifestService: Send + Sync {
+    /// Read a manifest through the canonical service path.
+    ///
+    /// Implementations should resolve memory first, then the local RocksDB manifest copy,
+    /// then storage manifest.json, hydrating faster layers after lower-layer hits.
     fn get_or_load(
         &self,
         table_id: &TableId,

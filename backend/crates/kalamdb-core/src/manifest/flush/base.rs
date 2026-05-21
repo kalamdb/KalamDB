@@ -195,6 +195,8 @@ pub mod config {
 
 /// Common helper functions for flush operations
 pub mod helpers {
+    use std::collections::{HashMap, HashSet};
+
     use datafusion::{
         arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
         scalar::ScalarValue,
@@ -202,11 +204,68 @@ pub mod helpers {
     use kalamdb_commons::{
         constants::SystemColumnNames, models::rows::Row, next_storage_key_bytes,
     };
+    use kalamdb_tables::{SharedTableRow, UserTableRow};
 
     use crate::{
-        error::KalamDbError, error_extensions::KalamDbResultExt,
+        app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt,
         providers::arrow_json_conversion::json_rows_to_arrow_batch,
     };
+
+    use super::FlushDedupStats;
+
+    pub type LatestVersions<R> = HashMap<String, (Vec<u8>, R, i64)>;
+
+    /// Row behavior shared by user/shared flush version resolution.
+    pub trait FlushVersionRow {
+        fn seq_i64(&self) -> i64;
+        fn is_deleted(&self) -> bool;
+        fn fields(&self) -> &Row;
+        fn into_fields(self) -> Row;
+    }
+
+    impl FlushVersionRow for UserTableRow {
+        #[inline]
+        fn seq_i64(&self) -> i64 {
+            self._seq.as_i64()
+        }
+
+        #[inline]
+        fn is_deleted(&self) -> bool {
+            self._deleted
+        }
+
+        #[inline]
+        fn fields(&self) -> &Row {
+            &self.fields
+        }
+
+        #[inline]
+        fn into_fields(self) -> Row {
+            self.fields
+        }
+    }
+
+    impl FlushVersionRow for SharedTableRow {
+        #[inline]
+        fn seq_i64(&self) -> i64 {
+            self._seq.as_i64()
+        }
+
+        #[inline]
+        fn is_deleted(&self) -> bool {
+            self._deleted
+        }
+
+        #[inline]
+        fn fields(&self) -> &Row {
+            &self.fields
+        }
+
+        #[inline]
+        fn into_fields(self) -> Row {
+            self.fields
+        }
+    }
 
     /// Extract primary key field name from Arrow schema
     ///
@@ -218,6 +277,12 @@ pub mod helpers {
             .find(|f| !f.name().starts_with('_'))
             .map(|f| f.name().clone())
             .unwrap_or_else(|| "id".to_string())
+    }
+
+    /// Configured row scan batch size, clamped to a valid minimum.
+    #[inline]
+    pub fn scan_batch_size(app_context: &AppContext) -> usize {
+        app_context.config().flush.flush_batch_size.max(1)
     }
 
     /// Update cursor for next batch (append null byte to skip current key)
@@ -291,6 +356,74 @@ pub mod helpers {
         row.values
             .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
         row
+    }
+
+    /// Track the latest hot-storage version for a primary key.
+    #[inline]
+    pub fn track_latest_version<R: FlushVersionRow>(
+        latest_versions: &mut LatestVersions<R>,
+        key_bytes: Vec<u8>,
+        row: R,
+        pk_field: &str,
+        stats: &mut FlushDedupStats,
+    ) {
+        let seq = row.seq_i64();
+        let pk_value = extract_pk_value(row.fields(), pk_field, seq);
+
+        if row.is_deleted() {
+            stats.deleted_count += 1;
+        }
+
+        match latest_versions.get(&pk_value) {
+            Some((_existing_key, _existing_row, existing_seq)) if seq <= *existing_seq => {},
+            _ => {
+                latest_versions.insert(pk_value, (key_bytes, row, seq));
+            },
+        }
+    }
+
+    /// Split latest hot versions into flushable rows and tombstones that must stay hot.
+    ///
+    /// Tombstones are intentionally not written to Parquet, but the latest tombstone key must remain
+    /// in hot storage so it can continue masking older flushed segments until compaction reconciles
+    /// cold storage.
+    pub fn rows_and_tombstones_from_versions<R: FlushVersionRow>(
+        latest_versions: LatestVersions<R>,
+        stats: &mut FlushDedupStats,
+    ) -> (Vec<(Vec<u8>, Row)>, HashSet<Vec<u8>>) {
+        let mut rows = Vec::with_capacity(latest_versions.len());
+        let mut preserved_tombstone_keys = HashSet::new();
+
+        for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
+            if row.is_deleted() {
+                stats.tombstones_filtered += 1;
+                preserved_tombstone_keys.insert(key_bytes);
+                continue;
+            }
+
+            let seq = row.seq_i64();
+            rows.push((key_bytes, add_system_columns(row.into_fields(), seq, false)));
+        }
+
+        (rows, preserved_tombstone_keys)
+    }
+
+    /// Remove keys that must remain hot, preserving ownership of all other cleanup keys.
+    pub fn cleanup_keys_excluding_preserved(
+        keys: Vec<Vec<u8>>,
+        preserved_keys: &HashSet<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        if preserved_keys.is_empty() {
+            return keys;
+        }
+
+        let mut cleanup_keys = Vec::with_capacity(keys.len().saturating_sub(preserved_keys.len()));
+        for key in keys {
+            if !preserved_keys.contains(&key) {
+                cleanup_keys.push(key);
+            }
+        }
+        cleanup_keys
     }
 }
 

@@ -55,8 +55,8 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
     // =========================================================
     // Step 2: Start subscription
     // =========================================================
-    let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.events", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Wait for ACK
     let _ = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;
@@ -214,8 +214,8 @@ async fn test_scenario_08_sustained_load() -> anyhow::Result<()> {
     let client = create_user_and_client(server, &username, &Role::User).await?;
 
     // Start subscription
-    let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.events", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     let _ = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;
     let _ = drain_initial_data(&mut subscription, Duration::from_secs(2)).await?;
@@ -321,8 +321,8 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     }
 
     // First subscription
-    let sql = format!("SELECT * FROM {}.events ORDER BY id", ns);
-    let mut sub1 = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.events", ns);
+    let mut sub1 = client.live_events(&sql).await?;
     let _ = wait_for_ack(&mut sub1, Duration::from_secs(15)).await?;
     let initial1 = drain_initial_data(&mut sub1, Duration::from_secs(15)).await?;
     assert_eq!(initial1, 5, "First subscription should see 5 items");
@@ -344,7 +344,7 @@ async fn test_scenario_08_subscription_reconnect() -> anyhow::Result<()> {
     }
 
     // Reconnect with new subscription
-    let mut sub2 = client.subscribe(&sql).await?;
+    let mut sub2 = client.live_events(&sql).await?;
     let _ = wait_for_ack(&mut sub2, Duration::from_secs(15)).await?;
     let initial2 = drain_initial_data(&mut sub2, Duration::from_secs(15)).await?;
     assert_eq!(initial2, 10, "Second subscription should see 10 items");

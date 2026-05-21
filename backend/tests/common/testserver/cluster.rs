@@ -1,4 +1,6 @@
 //! Cluster test server for testing multiple node scenarios
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use kalam_client::models::QueryResponse;
 use rand::RngExt;
@@ -164,8 +166,8 @@ impl ClusterTestServer {
                 for (k, (first_map, result_map)) in
                     first_maps.iter().zip(result_maps.iter()).enumerate()
                 {
-                    let first_str = format!("{:?}", first_map);
-                    let result_str = format!("{:?}", result_map);
+                    let first_str = canonicalize_row_map(first_map);
+                    let result_str = canonicalize_row_map(result_map);
 
                     if first_str != result_str {
                         eprintln!(
@@ -190,4 +192,12 @@ impl ClusterTestServer {
             node_states: std::sync::Arc::new(Mutex::new(vec![true, true, true])),
         }
     }
+}
+
+fn canonicalize_row_map(
+    row: &std::collections::HashMap<String, kalam_client::KalamCellValue>,
+) -> String {
+    let ordered: BTreeMap<_, _> =
+        row.iter().map(|(key, value)| (key.clone(), value.to_string())).collect();
+    format!("{:?}", ordered)
 }

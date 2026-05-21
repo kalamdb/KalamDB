@@ -89,7 +89,7 @@ async fn run_subscriber(
     errors: Arc<AtomicU64>,
 ) -> Result<()> {
     let mut subscription = client
-        .subscribe(&format!(
+        .live_events(&format!(
             "SELECT id, conversation_id, role_id, content FROM {}.messages WHERE conversation_id \
              = {}",
             namespace, conversation_id

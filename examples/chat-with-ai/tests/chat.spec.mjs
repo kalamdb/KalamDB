@@ -13,6 +13,8 @@ const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
 
 let agentProcess;
+let agentStdout = '';
+let agentStderr = '';
 const testGroup = `chat-demo-test-${Date.now()}`;
 
 function appendNodeOption(existing, flag) {
@@ -51,6 +53,18 @@ async function executeSql(token, sql) {
   if (!response.ok) {
     throw new Error(`SQL failed: ${response.status} ${await response.text()}`);
   }
+}
+
+async function insertUserMessage(roomName, content, username = adminUsername) {
+  const token = await login(adminUsername, adminPassword);
+  const statement = `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES (${sqlLiteral(roomName)}, 'user', ${sqlLiteral(username)}, ${sqlLiteral(username)}, ${sqlLiteral(content)})`;
+
+  if (username === adminUsername) {
+    await executeSql(token, statement);
+    return;
+  }
+
+  await executeSql(token, `EXECUTE AS USER ${sqlLiteral(username)} (${statement})`);
 }
 
 function sqlLiteral(value) {
@@ -302,25 +316,44 @@ async function seedChatHistory() {
 }
 
 async function waitForOutput(process, expected) {
-  await new Promise((resolve, reject) => {
-    let stderr = '';
-    const timer = setTimeout(() => reject(new Error(`Timed out waiting for: ${expected}`)), 20_000);
-    const onData = (chunk) => {
-      if (chunk.toString().includes(expected)) {
-        clearTimeout(timer);
-        process.stdout.off('data', onData);
-        resolve();
-      }
-    };
-    process.stdout.on('data', onData);
-    process.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    process.on('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Agent exited early with code ${code}${stderr ? `: ${stderr}` : ''}`));
-    });
+  await waitFor(() => {
+    const combinedOutput = `${agentStdout}\n${agentStderr}`;
+    if (combinedOutput.includes(expected)) {
+      return true;
+    }
+    if (process.exitCode !== null) {
+      throw new Error(`Agent exited early with code ${process.exitCode}${combinedOutput.trim() ? `:\n${combinedOutput}` : ''}`);
+    }
+    return false;
+  }, {
+    timeoutMs: 20_000,
+    description: expected,
   });
+}
+
+async function waitForAgentReady() {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const probeRoom = uniqueName('agent-ready');
+    const probeMessage = `${probeRoom}-probe-${attempt}`;
+
+    await insertUserMessage(probeRoom, probeMessage);
+
+    try {
+      await waitFor(
+        () => agentStdout.includes(`room=${probeRoom}`),
+        {
+          timeoutMs: 5_000,
+          description: `agent readiness probe ${probeRoom}`,
+        },
+      );
+      return;
+    } catch {
+      // Retry with a fresh probe room in case the consumer was not ready yet.
+    }
+  }
+
+  const combinedOutput = `${agentStdout}\n${agentStderr}`.trim();
+  throw new Error(`Agent did not consume readiness probes before tests started${combinedOutput ? `:\n${combinedOutput}` : ''}`);
 }
 
 test.beforeAll(async () => {
@@ -340,13 +373,26 @@ test.beforeAll(async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
+      KALAMDB_USER: process.env.KALAMDB_USER ?? adminUsername,
+      KALAMDB_PASSWORD: process.env.KALAMDB_PASSWORD ?? adminPassword,
       KALAMDB_GROUP: testGroup,
       KALAMDB_START: 'latest',
       NODE_OPTIONS: appendNodeOption(process.env.NODE_OPTIONS, '--preserve-symlinks'),
     },
   });
 
-    await waitForOutput(agentProcess, '[chat-demo-agent] starting');
+  agentStdout = '';
+  agentStderr = '';
+  agentProcess.stdout.on('data', (chunk) => {
+    agentStdout += chunk.toString();
+  });
+  agentProcess.stderr.on('data', (chunk) => {
+    agentStderr += chunk.toString();
+  });
+
+  await waitForOutput(agentProcess, '[chat-demo-agent] starting');
+  await waitForAgentReady();
 });
 
 test.afterAll(() => {

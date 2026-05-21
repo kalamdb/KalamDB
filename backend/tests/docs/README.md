@@ -30,7 +30,7 @@ This directory contains categorized documentation of all backend test scenarios.
 - **DML Integrity**: `misc/sql/test_dml_complex.rs` and `testserver/sql/test_user_sql_commands_http.rs` overlap on basic INSERT/SELECT verification.
 
 ### ⚠️ Gaps
-- **RAFT Replication**: Many cluster tests are `.disabled` or incomplete. High priority for stabilizing the consensus layer tests.
+- **RAFT Replication**: Cluster CRUD and offline/online recovery coverage is now runnable, but broader failover and membership scenarios still need expansion.
 - **S3 Storage**: Multi-storage logic is tested with local folders, but lack E2E coverage for actual S3 API (localstack).
 - **Backpressure**: WebSocket slow-consumer scenarios are not explicitly tested.
 - **Schema Drop**: `ALTER TABLE DROP COLUMN` has limited coverage.
@@ -38,3 +38,5 @@ This directory contains categorized documentation of all backend test scenarios.
 ## Instructions for Agents
 When asked to add a new test, please refer to these documents to find the most appropriate category and check if the scenario is already covered.
 Prefer extending an existing scenario in `scenarios/` for complex workflows, or adding a focused test in `misc/` or `testserver/` for specific feature verification.
+
+Scenario categories are also exposed as dedicated nextest targets so partial runs do not require the full scenario suite: `test_scenarios_realtime`, `test_scenarios_lifecycle`, and `test_scenarios_scale`.

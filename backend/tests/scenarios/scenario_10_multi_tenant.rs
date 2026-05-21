@@ -277,16 +277,12 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
     let client_b = create_user_and_client(server, &user_b, &Role::User).await?;
 
     // Subscribe to ns_a.events
-    let mut sub_a = client_a
-        .subscribe(&format!("SELECT * FROM {}.events ORDER BY id", ns_a))
-        .await?;
+    let mut sub_a = client_a.live_events(&format!("SELECT * FROM {}.events", ns_a)).await?;
     let _ = wait_for_ack(&mut sub_a, Duration::from_secs(5)).await?;
     let _ = drain_initial_data(&mut sub_a, Duration::from_secs(2)).await?;
 
     // Subscribe to ns_b.events
-    let mut sub_b = client_b
-        .subscribe(&format!("SELECT * FROM {}.events ORDER BY id", ns_b))
-        .await?;
+    let mut sub_b = client_b.live_events(&format!("SELECT * FROM {}.events", ns_b)).await?;
     let _ = wait_for_ack(&mut sub_b, Duration::from_secs(5)).await?;
     let _ = drain_initial_data(&mut sub_b, Duration::from_secs(2)).await?;
 

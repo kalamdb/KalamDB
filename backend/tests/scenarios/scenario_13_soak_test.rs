@@ -257,7 +257,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
 
     let sub_handle = tokio::spawn(async move {
         let mut sub = match sub_client
-            .subscribe(&format!("SELECT * FROM {}.orders LIMIT 1000", ns_for_sub))
+            .live_events(&format!("SELECT * FROM {}.orders LIMIT 1000", ns_for_sub))
             .await
         {
             Ok(s) => s,
@@ -423,17 +423,43 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
         )
         .await?;
     assert!(resp.success(), "Query all products");
-    assert_eq!(resp.rows_as_maps().len(), 100, "Should have 100 products");
+
+    let count_resp = client
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.products", ns), None, None, None)
+        .await?;
+    assert!(count_resp.success(), "Count all products");
+    let product_count = count_resp.get_i64("cnt").unwrap_or(-1);
+    assert_eq!(product_count, 100, "Should have 100 products");
 
     // Verify old rows have NULL price, new rows have price
-    let row_50 = &resp.rows_as_maps()[49]; // id = 50
+    let row_50_resp = client
+        .execute_query(
+            &format!("SELECT id, name, price FROM {}.products WHERE id = 50", ns),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(row_50_resp.success(), "Query product 50");
+    let row_50_maps = row_50_resp.rows_as_maps();
+    let row_50 = row_50_maps.first().expect("product 50 should exist");
     let price_50 = row_50.get("price");
     assert!(
         price_50.is_none() || price_50.unwrap().is_null(),
         "Old row should have NULL price"
     );
 
-    let row_51 = &resp.rows_as_maps()[50]; // id = 51
+    let row_51_resp = client
+        .execute_query(
+            &format!("SELECT id, name, price FROM {}.products WHERE id = 51", ns),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(row_51_resp.success(), "Query product 51");
+    let row_51_maps = row_51_resp.rows_as_maps();
+    let row_51 = row_51_maps.first().expect("product 51 should exist");
     let price_51 = row_51.get("price").and_then(|v| v.as_f64());
     assert!(price_51.is_some(), "New row should have price");
     assert!((price_51.unwrap() - (51.0 * 9.99)).abs() < 0.01);

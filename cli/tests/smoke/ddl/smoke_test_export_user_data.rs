@@ -337,7 +337,13 @@ fn smoke_export_download_zip_is_valid() {
         )
         .expect("INSERT failed");
     }
-    let _ = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table));
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .expect("flush before export should succeed");
+    let flush_job_id = parse_job_id_from_flush_output(&flush_output)
+        .expect("flush before export should include a job id");
+    verify_job_completed(&flush_job_id, Duration::from_secs(30))
+        .expect("flush before export should complete successfully");
 
     // Trigger export
     let export_out = execute_sql_via_client_as(&export_user, export_pass, "EXPORT USER DATA")

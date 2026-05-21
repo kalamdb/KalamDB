@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-row-filter = { workspace = true }
 kalamdb-publisher = { path = "../kalamdb-publisher" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-session = { path = "../kalamdb-session" }
@@ -17,9 +18,7 @@ kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
-datafusion = { workspace = true }
 datafusion-common = { workspace = true }
-sqlparser = { workspace = true }
 
 # Concurrent data structures
 dashmap = { workspace = true }
@@ -42,9 +41,6 @@ chrono = { workspace = true }
 
 # Logging
 log = { workspace = true }
-
-# Regular expressions
-regex = { workspace = true }
 
 # Single-assignment statics
 once_cell = { workspace = true }

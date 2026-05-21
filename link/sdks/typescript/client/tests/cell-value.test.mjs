@@ -181,8 +181,10 @@ describe('KalamCellValue datatype-specific accessors', () => {
   });
 
   it('parses BYTES arrays and base64 strings', () => {
+    const rawBytes = new Uint8Array([7, 8, 9]);
     assert.deepEqual(Array.from(KalamCellValue.from([1, 2, 255]).asBytes()), [1, 2, 255]);
     assert.deepEqual(Array.from(KalamCellValue.from('AQID').asBytes()), [1, 2, 3]);
+    assert.equal(KalamCellValue.from(rawBytes).asBytes(), rawBytes);
     assert.equal(KalamCellValue.from([1, 999]).asBytes(), null);
   });
 

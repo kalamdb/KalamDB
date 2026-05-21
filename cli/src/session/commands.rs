@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{future::Future, pin::Pin, time::Instant};
 
 use colored::Colorize;
 use kalam_client::SubscriptionConfig;
@@ -6,14 +6,30 @@ use kalam_client::SubscriptionConfig;
 use super::{CLISession, OutputFormat};
 use crate::{
     error::{CLIError, Result},
-    parser::{Command, FlushTarget},
+    parser::{render_meta_command_help, Command, FlushTarget},
 };
+
+type SessionCommandFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
+
+trait SessionCommandHandler {
+    fn run<'a>(self, session: &'a mut CLISession) -> SessionCommandFuture<'a>;
+}
+
+impl SessionCommandHandler for Command {
+    fn run<'a>(self, session: &'a mut CLISession) -> SessionCommandFuture<'a> {
+        Box::pin(async move { session.execute_command_inner(self).await })
+    }
+}
 
 impl CLISession {
     /// Execute a parsed command
     ///
     /// **Implements T094**: Backslash command handling
     pub(super) async fn execute_command(&mut self, command: Command) -> Result<()> {
+        command.run(self).await
+    }
+
+    async fn execute_command_inner(&mut self, command: Command) -> Result<()> {
         match command {
             Command::Sql(sql) => {
                 self.execute(&sql).await?;
@@ -448,122 +464,8 @@ impl CLISession {
         format!("\"{}\"", value.replace('"', "\"\""))
     }
 
-    fn print_help_section(title: &str) {
-        println!("{}", title.yellow().bold());
-    }
-
-    fn print_help_row(command: &str, description: &str) {
-        println!("  {} {}", format!("{command:<38}").cyan(), description);
-    }
-
-    fn print_help_example(example: &str) {
-        println!("  {}", example.green());
-    }
-
     fn show_help(&self) {
-        println!();
-        println!("{}", "Kalam CLI Help".bright_blue().bold());
-        println!();
-
-        Self::print_help_section("Basics");
-        println!("  Write SQL and end with ';' to run it");
-        println!("  Press Tab for SQL, table, namespace, and command completion");
-        println!("  Press Up on an empty prompt to open command history");
-        println!();
-
-        Self::print_help_section("Meta Commands");
-        for (command, description) in [
-            ("\\help, \\?", "Show this help"),
-            ("\\quit, \\q", "Exit CLI"),
-            ("\\info, \\session", "Show session details"),
-            ("\\history, \\h", "Browse command history"),
-            ("\\health", "Run public health probes"),
-            ("\\dt, \\tables", "List tables"),
-            ("\\d, \\describe <table>", "Describe a table"),
-            ("\\as <user_id> <SQL>", "Wrap a statement as EXECUTE AS '<user_id>'"),
-            ("\\format <table|json|csv>", "Change output format"),
-            ("\\refresh-tables, \\refresh", "Refresh autocomplete caches"),
-            ("\\stats, \\metrics", "Show system stats"),
-            ("\\sessions", "Show active sessions"),
-            ("\\flush [all|table <table>]", "Run STORAGE FLUSH using the current namespace"),
-            ("\\cluster <subcommand>", "Cluster operations"),
-            ("\\consume <topic>", "Consume topic messages"),
-        ] {
-            Self::print_help_row(command, description);
-        }
-        println!();
-
-        Self::print_help_section("Live Queries");
-        for (command, description) in [
-            ("\\live <SELECT ...>", "Start a live query"),
-            ("\\subscribe <SELECT ...>", "Alias of \\live"),
-        ] {
-            Self::print_help_row(command, description);
-        }
-        Self::print_help_example("\\live SELECT * FROM chat.messages;");
-        println!("  {}", "system.* tables are not subscribable.".dimmed());
-        println!();
-
-        Self::print_help_section("Backup and Export SQL");
-        println!("  Run these as normal SQL statements:");
-        Self::print_help_example("BACKUP DATABASE TO '/tmp/kalamdb-backup.tar.gz';");
-        Self::print_help_example("EXPORT USER DATA;");
-        Self::print_help_example("SHOW EXPORT;");
-        println!(
-            "  {}",
-            "SHOW EXPORT returns a download_url for the finished user export.".dimmed()
-        );
-        println!();
-
-        Self::print_help_section("Cluster Commands");
-        for (command, description) in [
-            ("\\cluster list", "List cluster nodes"),
-            ("\\cluster list groups", "List raft groups"),
-            ("\\cluster snapshot", "Trigger a snapshot"),
-            ("\\cluster purge --upto <index>", "Purge raft logs"),
-            ("\\cluster trigger-election", "Trigger an election"),
-            ("\\cluster transfer-leader <node_id>", "Transfer leadership"),
-            ("\\cluster rebalance", "Rebalance leaders"),
-            ("\\cluster stepdown", "Leader stepdown"),
-            ("\\cluster clear", "Clear old snapshots"),
-            ("\\cluster join <id> <rpc> <api>", "Join a node at runtime"),
-        ] {
-            Self::print_help_row(command, description);
-        }
-        println!();
-
-        Self::print_help_section("Credentials");
-        for (command, description) in [
-            ("\\show-credentials, \\credentials", "Show stored credentials"),
-            ("\\update-credentials <user> <password>", "Update stored credentials"),
-            ("\\delete-credentials", "Delete stored credentials"),
-        ] {
-            Self::print_help_row(command, description);
-        }
-        println!();
-
-        Self::print_help_section("Topic Consumption");
-        for (command, description) in [
-            ("\\consume app.events", "Consume a topic"),
-            ("\\consume app.events --group my-group", "Consume with a group"),
-            (
-                "\\consume app.events --from earliest --limit 10",
-                "Read from the earliest offset",
-            ),
-        ] {
-            Self::print_help_row(command, description);
-        }
-        println!("  {}", "CLI args: kalam --consume --topic app.events --group my-group".green());
-        println!();
-
-        Self::print_help_section("Examples");
-        Self::print_help_example("USE NAMESPACE chat;");
-        Self::print_help_example("SELECT * FROM system.tables LIMIT 5;");
-        Self::print_help_example("\\flush table messages");
-        Self::print_help_example("\\describe chat.messages;");
-        Self::print_help_example("\\as user_123 SELECT * FROM user.orders LIMIT 5;");
-        Self::print_help_example("\\cluster list");
-        println!();
+        print!("{}", render_meta_command_help(self.color));
     }
 
     /// Consume messages from a topic

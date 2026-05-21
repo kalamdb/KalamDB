@@ -43,7 +43,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.92.0"
-  WASM_PACK_VERSION: "0.14.0"
+  WASM_PACK_VERSION: "0.15.0"
   PG_EXTENSION_MAJOR: "16"
   PG_EXTENSION_FLAVOR: "pg16"
   PGRX_VERSION: "0.18.0"
@@ -461,9 +461,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v cargo
-          "$HOME/.cargo/bin/cargo" --version
-          "$HOME/.cargo/bin/rustc" --version
+          command -v rustup
+          "$HOME/.cargo/bin/rustup" --version
+          "$HOME/.cargo/bin/rustup" show active-toolchain
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -483,7 +485,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/cargo" build \
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalam
@@ -929,9 +931,11 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
-          command -v cargo
-          "$HOME/.cargo/bin/cargo" --version
-          "$HOME/.cargo/bin/rustc" --version
+          command -v rustup
+          "$HOME/.cargo/bin/rustup" --version
+          "$HOME/.cargo/bin/rustup" show active-toolchain
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo --version
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" rustc --version
 
       - name: Cache Rust
         if: ${{ steps.vars.outputs.build_macos == 'true' }}
@@ -956,7 +960,7 @@ jobs:
           SKIP_UI_BUILD: "1"
         run: |
           set -euo pipefail
-          "$HOME/.cargo/bin/cargo" build \
+          "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalamdb-server

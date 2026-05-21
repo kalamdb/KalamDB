@@ -195,6 +195,43 @@ pub fn parse_sql_statements(
     }
 }
 
+/// Parse a single SQL expression using KalamDB parser defaults.
+///
+/// This keeps fragment parsing on sqlparser-rs instead of wrapping expressions
+/// in synthetic SELECT statements or accepting unparsed trailing tokens.
+pub fn parse_sql_expression(sql: &str, dialect: &dyn Dialect) -> Result<Expr, ParserError> {
+    let parse_with_sql = |candidate: &str| {
+        let mut parser = Parser::new(dialect)
+            .with_options(parser_options())
+            .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
+            .try_with_sql(candidate)?;
+
+        let expr = parser.parse_expr()?;
+        if !matches!(parser.peek_nth_token_ref(0).token, Token::EOF) {
+            return Err(ParserError::ParserError(
+                "expression contains trailing tokens".to_string(),
+            ));
+        }
+
+        Ok(expr)
+    };
+
+    match parse_with_sql(sql) {
+        Ok(expr) => Ok(expr),
+        Err(original_error)
+            if CURRENT_USER_CALL_RE.is_match(sql) || CURRENT_ROLE_CALL_RE.is_match(sql) =>
+        {
+            let normalized_sql = normalize_context_keyword_calls_for_sqlparser(sql);
+            if normalized_sql == sql {
+                return Err(original_error);
+            }
+
+            parse_with_sql(&normalized_sql).map_err(|_| original_error)
+        },
+        Err(error) => Err(error),
+    }
+}
+
 /// Parse a single SQL statement using KalamDB defaults and KalamDbDialect.
 pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserError> {
     let dialect = KalamDbDialect::default();

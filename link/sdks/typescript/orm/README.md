@@ -61,6 +61,10 @@ kTable.system('system.users', columns);
 
 Pass `{ systemColumns: true }` when your app needs typed `_seq`/`_deleted` fields for ordering, resume checks, or diagnostics. Streams only receive `_seq`; shared and user tables receive `_seq` and `_deleted`.
 
+## Consumer And ORM Coverage
+
+The package test suite includes dedicated generated-schema plus `runConsumer()` scenarios for chat, AI chat memory, job dispatch, support CRM, and commerce fulfillment domains. Each scenario combines shared, user, and stream table definitions with topic consumption and Drizzle builders through `kalamDriver()` or `executeAsUser()`.
+
 ## Generate `schema.ts`
 
 ```bash

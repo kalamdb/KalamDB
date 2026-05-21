@@ -120,7 +120,6 @@ async fn table_without_primary_key_rejected() {
 
 /// Verify NULL constraint violations are caught
 #[tokio::test]
-#[ignore = "NOT NULL constraint enforcement not yet implemented"]
 async fn null_constraint_violation_detected() {
     let server = TestServer::new_shared().await;
 

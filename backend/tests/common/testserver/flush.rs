@@ -58,6 +58,22 @@ fn extract_flush_job_id(resp: &QueryResponse) -> Option<String> {
     }
 }
 
+fn flush_success_message(resp: &QueryResponse) -> Option<&str> {
+    resp.results.first()?.message.as_deref()
+}
+
+fn is_no_pending_writes_message(message: &str) -> bool {
+    message.contains("Storage flush skipped: no pending writes")
+}
+
+fn is_active_flush_message(message: &str) -> bool {
+    message.contains("Storage flush skipped: a flush is already queued or running")
+}
+
+fn is_noop_flush_error_message(message: &str) -> bool {
+    message.contains("pre-validation returned false (nothing to do)")
+}
+
 fn escape_sql_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -195,6 +211,14 @@ pub async fn wait_for_flush_jobs_settled(
 
             matching_count += 1;
             let status = row.get("status").and_then(|v| v.as_str()).unwrap_or_default();
+            if is_error_terminal_job_status(status) {
+                anyhow::bail!(
+                    "flush job for {}.{} settled with error status '{}'",
+                    ns,
+                    table,
+                    status
+                );
+            }
             has_completed |= status == "completed" || status == "skipped";
             has_pending |= is_pending_job_status(status);
 
@@ -213,7 +237,7 @@ pub async fn wait_for_flush_jobs_settled(
             return Ok(());
         }
 
-        if matching_count > 0 && !has_parquet && !has_completed {
+        if matching_count == 0 && !has_parquet && !has_completed {
             let _ = server.app_context().job_manager().run_once_for_tests().await;
             let _ = force_flush_table(server, ns, table).await;
         }
@@ -251,6 +275,20 @@ pub async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str
         if let Some(job_id) = extract_flush_job_id(&resp) {
             return wait_for_flush_job_by_id(server, &job_id, Duration::from_secs(60)).await;
         }
+        if let Some(message) = flush_success_message(&resp) {
+            if is_no_pending_writes_message(message) {
+                return Ok(());
+            }
+            if is_active_flush_message(message) {
+                let key = format!("flush-{}-{}", ns, table);
+                return wait_for_flush_job_by_idempotency_key(
+                    server,
+                    &key,
+                    Duration::from_secs(60),
+                )
+                .await;
+            }
+        }
         return wait_for_flush_jobs_settled(server, ns, table).await;
     }
 
@@ -263,6 +301,16 @@ pub async fn flush_table_and_wait(server: &HttpTestServer, ns: &str, table: &str
     if is_idempotent_conflict {
         let key = format!("flush-{}-{}", ns, table);
         return wait_for_flush_job_by_idempotency_key(server, &key, Duration::from_secs(60)).await;
+    }
+
+    let is_noop_prevalidation = resp
+        .error
+        .as_ref()
+        .map(|e| is_noop_flush_error_message(&e.message))
+        .unwrap_or(false);
+
+    if is_noop_prevalidation {
+        return wait_for_flush_jobs_settled(server, ns, table).await;
     }
 
     anyhow::bail!("STORAGE FLUSH TABLE failed: {:?}", resp.error);

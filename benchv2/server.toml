@@ -59,7 +59,6 @@ eviction_interval_seconds = 60
 eviction_interval_seconds = 300
 max_entries = 500
 eviction_ttl_days = 7
-user_table_weight_factor = 10
 
 [limits]
 max_message_size = 1048576

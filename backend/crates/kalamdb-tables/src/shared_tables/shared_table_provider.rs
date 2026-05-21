@@ -797,6 +797,12 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         async move {
             ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&row_data),
+            )
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+
             // IGNORE user_id parameter - no RLS for shared tables
             base::ensure_unique_pk_value(self, None, &row_data).await?;
 
@@ -1414,6 +1420,12 @@ impl SharedTableProvider {
         );
         async move {
             ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
+
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&row_data),
+            )
+            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
 
             if validate_unique_pk {
                 base::ensure_unique_pk_value(self, None, &row_data).await?;

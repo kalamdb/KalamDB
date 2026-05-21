@@ -385,3 +385,248 @@ fn smoke_security_system_table_write_blocked() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user_name));
 }
+
+// ── Session / row isolation ────────────────────────────────────────────────
+
+// Two independent regular users write to the same USER table.
+// Each must only see their own rows — a malicious or accidental cross-user
+// read must return zero rows for the other user's data.
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_security_cross_user_row_isolation() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_security_cross_user_row_isolation: server not running at {}",
+            server_url()
+        );
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_row_iso_ns");
+    let table = generate_unique_table("smoke_row_iso_tbl");
+    let full_table = format!("{}.{}", namespace, table);
+
+    let user_a = generate_unique_namespace("smoke_row_iso_ua");
+    let user_b = generate_unique_namespace("smoke_row_iso_ub");
+    let password = "test_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, note TEXT) WITH (TYPE='USER')",
+        full_table
+    ))
+    .expect("Failed to create user table");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        user_a, password
+    ))
+    .expect("Failed to create user_a");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        user_b, password
+    ))
+    .expect("Failed to create user_b");
+
+    // User A inserts a private row.
+    execute_sql_via_client_as(
+        &user_a,
+        password,
+        &format!("INSERT INTO {} (id, note) VALUES ('a1', 'secret-a')", full_table),
+    )
+    .expect("User A insert failed");
+
+    // User B inserts a different private row.
+    execute_sql_via_client_as(
+        &user_b,
+        password,
+        &format!("INSERT INTO {} (id, note) VALUES ('b1', 'secret-b')", full_table),
+    )
+    .expect("User B insert failed");
+
+    // User A must see their own row.
+    let a_view = execute_sql_via_client_as(
+        &user_a,
+        password,
+        &format!("SELECT note FROM {} WHERE id = 'a1'", full_table),
+    )
+    .expect("User A select failed");
+    assert!(a_view.contains("secret-a"), "User A should see their own row: {a_view}");
+
+    // User A must NOT see User B's row via filtered query.
+    assert!(!a_view.contains("secret-b"), "User A leaked User B's row: {a_view}");
+
+    // User B must see their own row.
+    let b_view = execute_sql_via_client_as(
+        &user_b,
+        password,
+        &format!("SELECT note FROM {} WHERE id = 'b1'", full_table),
+    )
+    .expect("User B select failed");
+    assert!(b_view.contains("secret-b"), "User B should see their own row: {b_view}");
+
+    // User B must NOT see User A's row.
+    assert!(!b_view.contains("secret-a"), "User B leaked User A's row: {b_view}");
+
+    // Full-table SELECT: each user must see only their own row.
+    let a_all =
+        execute_sql_via_client_as(&user_a, password, &format!("SELECT note FROM {}", full_table))
+            .expect("User A full-table select failed");
+    assert!(
+        !a_all.contains("secret-b"),
+        "User A's full-table select must not expose User B's data: {a_all}"
+    );
+
+    let b_all =
+        execute_sql_via_client_as(&user_b, password, &format!("SELECT note FROM {}", full_table))
+            .expect("User B full-table select failed");
+    assert!(
+        !b_all.contains("secret-a"),
+        "User B's full-table select must not expose User A's data: {b_all}"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_a));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_b));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+}
+
+// ── EXECUTE AS injection prevention ───────────────────────────────────────
+
+// A SQL-injection suffix in the EXECUTE AS username position must be rejected
+// by the server before reaching the authorisation layer.
+// For example: EXECUTE AS USER 'alice' OR '1'='1' (SELECT 1)
+// The parser extracts username='alice', then the leftover ' OR …' doesn't
+// start with '(' — the server returns a parse error, never an auth check.
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_security_execute_as_username_injection_rejected() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_security_execute_as_username_injection_rejected: server not running at {}",
+            server_url()
+        );
+        return;
+    }
+
+    let user_name = generate_unique_namespace("smoke_ea_inject");
+    let user_pass = "test_pass_123";
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        user_name, user_pass
+    ))
+    .expect("Failed to create user");
+
+    // Each case exploits a different injection vector in the EXECUTE AS syntax.
+    let injection_cases = vec![
+        // SQL-injection suffix after username
+        "EXECUTE AS USER 'alice' OR '1'='1' (SELECT 1)",
+        // Semicolon-stacking after username
+        "EXECUTE AS USER 'alice'; DROP TABLE system.users (SELECT 1)",
+        // Line-comment injection after username
+        "EXECUTE AS USER 'alice'--inject (SELECT 1)",
+        // Multi-statement inside the body
+        "EXECUTE AS USER 'alice' (SELECT 1; DROP TABLE system.users)",
+        // Empty username
+        "EXECUTE AS USER '' (SELECT 1)",
+    ];
+
+    for sql in injection_cases {
+        let result = execute_sql_via_client_as(&user_name, user_pass, sql);
+        assert!(
+            result.is_err(),
+            "EXECUTE AS injection case must be rejected by the server: {}",
+            sql
+        );
+    }
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_name));
+}
+
+// A regular user (role='user') must be denied when they attempt to impersonate
+// any other user via EXECUTE AS USER, regardless of the target user's role.
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_security_plain_user_cannot_execute_as_any_user() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_security_plain_user_cannot_execute_as_any_user: server not running at {}",
+            server_url()
+        );
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_ea_deny_ns");
+    let table = generate_unique_table("smoke_ea_deny_tbl");
+    let full_table = format!("{}.{}", namespace, table);
+
+    let actor = generate_unique_namespace("smoke_ea_actor");
+    let target = generate_unique_namespace("smoke_ea_target");
+    let dba_target = generate_unique_namespace("smoke_ea_dba");
+    let password = "test_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id VARCHAR PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
+        full_table
+    ))
+    .expect("Failed to create user table");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        actor, password
+    ))
+    .expect("Failed to create actor");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        target, password
+    ))
+    .expect("Failed to create target");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'dba'",
+        dba_target, password
+    ))
+    .expect("Failed to create dba_target");
+
+    // Regular user → regular user: must be denied.
+    let result_user = execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!(
+            "EXECUTE AS USER '{}' (INSERT INTO {} (id, v) VALUES ('x', 'blocked'))",
+            target, full_table
+        ),
+    );
+    assert!(
+        result_user.is_err(),
+        "Regular user must not impersonate another user: {}",
+        result_user.unwrap_or_default()
+    );
+
+    // Regular user → DBA user: must also be denied.
+    let result_dba = execute_sql_via_client_as(
+        &actor,
+        password,
+        &format!("EXECUTE AS USER '{}' (SELECT 1)", dba_target),
+    );
+    assert!(
+        result_dba.is_err(),
+        "Regular user must not impersonate a DBA: {}",
+        result_dba.unwrap_or_default()
+    );
+
+    // Verify no rows leaked into the table from the denied attempt.
+    let leaked =
+        execute_sql_via_client_as(&target, password, &format!("SELECT * FROM {}", full_table))
+            .expect("Target select failed");
+    assert!(
+        !leaked.contains("blocked"),
+        "Denied EXECUTE AS must not insert any rows: {leaked}"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", dba_target));
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+}

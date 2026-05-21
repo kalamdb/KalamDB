@@ -348,7 +348,11 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         typing_events, conversation_id
     ))
     .expect("stream transaction request should return");
-    assert_success(&stream_tx, "stream write inside explicit transaction");
+    assert_error_contains(
+        &stream_tx,
+        "stream tables are not supported inside explicit transactions",
+        "stream write inside explicit transaction",
+    );
 
     let stream_rows = execute_sql_as_root_via_client_json(&format!(
         "SELECT event_type FROM {} WHERE conversation_id = {}",
@@ -361,8 +365,8 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         stream_rows
     );
     assert!(
-        stream_rows.contains("committed_in_tx"),
-        "stream transaction commit should leave a visible event: {}",
+        !stream_rows.contains("committed_in_tx"),
+        "failed stream transaction should not leave a visible event: {}",
         stream_rows
     );
 

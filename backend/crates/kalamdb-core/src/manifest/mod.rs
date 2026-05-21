@@ -3,7 +3,7 @@
 //! Provides manifest.json tracking and caching for Parquet batch files.
 //!
 //! Architecture:
-//! - ManifestService: Unified service with hot cache (moka) + RocksDB persistence + cold storage
+//! - ManifestService: Unified service with memory cache + RocksDB persistence + cold storage
 //! - FlushManifestHelper: Helper for manifest operations during flush
 //! - ManifestAccessPlanner: Query planner for manifest-based segment selection
 //! - flush: RocksDB-to-Parquet flush implementations

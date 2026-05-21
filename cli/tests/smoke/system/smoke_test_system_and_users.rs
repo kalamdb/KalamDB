@@ -1,6 +1,8 @@
 // Smoke Test 3: System tables and user lifecycle
 // Covers: SELECT from system tables, CREATE USER, verify presence, DROP USER, STORAGE FLUSH ALL job
 
+use std::time::Duration;
+
 use crate::common::*;
 
 #[ntest::timeout(180_000)]
@@ -93,7 +95,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     println!("[FLUSH ALL] Job IDs: {:?}", job_ids);
     assert!(!job_ids.is_empty(), "should have at least one job ID");
 
-    // Verify each job has been recorded in system.jobs (no need to wait for completion here)
+    // Verify each job has been recorded in system.jobs and completes before teardown.
     for job_id in &job_ids {
         let q = format!("SELECT job_id FROM system.jobs WHERE job_id='{}'", job_id);
         let out = execute_sql_as_root_via_client(&q).expect("query system.jobs should succeed");
@@ -104,8 +106,14 @@ fn smoke_system_tables_and_user_lifecycle() {
             job_id,
             out
         );
+
+        verify_job_completed(job_id, Duration::from_secs(60))
+            .unwrap_or_else(|e| panic!("flush-all job {} did not complete: {}", job_id, e));
     }
-    println!("[FLUSH ALL] Verified {} jobs recorded in system.jobs", job_ids.len());
+    println!(
+        "[FLUSH ALL] Verified {} jobs recorded in system.jobs and completed",
+        job_ids.len()
+    );
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", test_ns));

@@ -111,8 +111,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
 
     // Both users subscribe to document changes
     let doc_sql = format!("SELECT * FROM {}.documents WHERE id = 1", ns);
-    let mut sub1 = user1_client.subscribe(&doc_sql).await?;
-    let mut sub2 = user2_client.subscribe(&doc_sql).await?;
+    let mut sub1 = user1_client.live_events(&doc_sql).await?;
+    let mut sub2 = user2_client.live_events(&doc_sql).await?;
 
     // Wait for ACKs
     let _ = wait_for_ack(&mut sub1, Duration::from_secs(5)).await?;
@@ -310,8 +310,8 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
     let client = server.link_client("root");
 
     // Subscribe to presence for doc_id = 1 only
-    let sql = format!("SELECT * FROM {}.presence WHERE doc_id = 1 ORDER BY id", ns);
-    let mut subscription = client.subscribe(&sql).await?;
+    let sql = format!("SELECT * FROM {}.presence WHERE doc_id = 1", ns);
+    let mut subscription = client.live_events(&sql).await?;
 
     // Wait for ACK
     let _ = wait_for_ack(&mut subscription, Duration::from_secs(5)).await?;

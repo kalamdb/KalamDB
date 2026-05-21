@@ -415,6 +415,12 @@ pub(crate) fn try_batch_inserts_in_transaction(
             _ => return Ok(None),
         };
 
+        let statement_columns: Vec<String> =
+            insert.columns.iter().map(|ident| ident.value.clone()).collect();
+        if statement_columns != requested_columns {
+            return Ok(None);
+        }
+
         if insert.on.is_some() || insert.overwrite || insert.returning.is_some() {
             return Ok(None);
         }
