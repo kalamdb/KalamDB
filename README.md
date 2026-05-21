@@ -22,8 +22,8 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
 <p align="center"><strong>SDKs</strong></p>
 
 <p align="center">
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
+  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/typescript-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
+  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/dart-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
   <a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/v/%40kalamdb%2Fclient?label=typescript%20sdk" alt="TypeScript SDK" /></a>
   <a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=dart%20sdk" alt="Dart SDK" /></a>
 </p>
