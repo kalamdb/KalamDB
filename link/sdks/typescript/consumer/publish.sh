@@ -22,6 +22,7 @@ PUBLISH_ACCESS="${PUBLISH_ACCESS-public}"
 PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_URL#https://}"
 PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST#http://}"
 PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST%/}"
+BUILD_REGISTRY_URL="${BUILD_REGISTRY_URL:-https://registry.npmjs.org}"
 REGISTRY_FLAG="--registry $PUBLISH_REGISTRY_URL"
 ACCESS_FLAG=""
 if [[ -n "$PUBLISH_ACCESS" ]]; then
@@ -94,6 +95,7 @@ else
 fi
 
 cd "$SDK_DIR"
+export npm_config_registry="$BUILD_REGISTRY_URL"
 
 if [[ "$SKIP_BUILD" == "false" ]]; then
   echo "📦 Installing npm dependencies..."
