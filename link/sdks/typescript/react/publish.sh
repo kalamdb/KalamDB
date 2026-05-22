@@ -136,7 +136,7 @@ PACKAGE_PAGE_URL=""
 if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
   PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
 fi
-INTERNAL_PEER_DEPENDENCIES="$(node -p "const pkg=JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const packageName=process.argv[2]; const scope = packageName.startsWith('@') ? packageName.split('/')[0] : ''; console.log(Object.keys(pkg.peerDependencies ?? {}).filter((name) => scope && name.startsWith(scope + '/') && name !== packageName).join('\n'))" "$PUBLISH_PACKAGE_JSON" "$PACKAGE_NAME")"
+INTERNAL_PEER_DEPENDENCIES="$(node -p "(() => { const pkg = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const packageName = process.argv[2]; const scope = packageName.startsWith('@') ? packageName.split('/')[0] : ''; return Object.keys(pkg.peerDependencies ?? {}).filter((name) => scope && name.startsWith(scope + '/') && name !== packageName).join('\n'); })()" "$PUBLISH_PACKAGE_JSON" "$PACKAGE_NAME")"
 
 echo ""
 echo "══════════════════════════════════════════════════════"
@@ -221,10 +221,9 @@ ensure_registry_auth_configured
 
 echo ""
 echo "Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
-PUBLISH_SCRIPTS_FLAG=""
-if [[ "$SKIP_BUILD" == "true" || -n "$STAGED_PUBLISH_DIR" ]]; then
-  PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
-fi
+# The publish script already built or validated dist/, so never let npm publish
+# re-enter lifecycle scripts under the publish registry.
+PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
 
 OTP_FLAG=""
 if [[ -n "$OTP_CODE" ]]; then

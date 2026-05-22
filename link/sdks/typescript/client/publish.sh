@@ -226,12 +226,9 @@ npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --l
 # ─── Publish ──────────────────────────────────────────────────────────────────
 echo ""
 echo "🚀 Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
-# --skip-build means the user has pre-built dist/; skip npm lifecycle scripts so
-# prepublishOnly doesn't re-run the full build (including wasm-pack).
-PUBLISH_SCRIPTS_FLAG=""
-if [[ "$SKIP_BUILD" == "true" || -n "$STAGED_PUBLISH_DIR" ]]; then
-  PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
-fi
+# The publish script already built or validated dist/, so never let npm publish
+# re-enter lifecycle scripts under the publish registry.
+PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
 
 # OTP flag for 2FA-protected accounts
 OTP_FLAG=""

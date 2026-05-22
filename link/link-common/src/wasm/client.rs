@@ -486,13 +486,13 @@ fn clear_active_socket(
     ws_ref: &Rc<RefCell<Option<WebSocket>>>,
     source_ws: &WebSocket,
     ping_interval_id: &Rc<RefCell<i32>>,
-) {
+) -> bool {
     let should_clear = ws_ref
         .borrow()
         .as_ref()
         .is_some_and(|current_ws| js_sys::Object::is(current_ws.as_ref(), source_ws.as_ref()));
     if !should_clear {
-        return;
+        return false;
     }
 
     if let Some(current_ws) = ws_ref.borrow_mut().take() {
@@ -506,6 +506,8 @@ fn clear_active_socket(
         super::helpers::global_clear_interval(id);
         *ping_interval_id.borrow_mut() = -1;
     }
+
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -713,7 +715,10 @@ fn install_runtime_disconnect_handlers(
     let source_ws_for_error = ws.clone();
     let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
         wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
-        clear_active_socket(&ws_ref_for_error, &source_ws_for_error, &ping_interval_id_for_error);
+        if !clear_active_socket(&ws_ref_for_error, &source_ws_for_error, &ping_interval_id_for_error)
+        {
+            return;
+        }
         emit_runtime_ws_error(&on_error_for_err, "WebSocket connection failed", true);
         reject_pending_subscriptions(
             &subscriptions_for_error,
@@ -734,7 +739,10 @@ fn install_runtime_disconnect_handlers(
             e.code(),
             e.reason()
         ));
-        clear_active_socket(&ws_ref_for_close, &source_ws_for_close, &ping_interval_id_for_close);
+        if !clear_active_socket(&ws_ref_for_close, &source_ws_for_close, &ping_interval_id_for_close)
+        {
+            return;
+        }
         if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
             let reason_obj = js_sys::Object::new();
             let _ = js_sys::Reflect::set(
@@ -1238,11 +1246,13 @@ impl KalamClient {
         let source_ws_for_error = ws.clone();
         let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
             wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
-            clear_active_socket(
+            if !clear_active_socket(
                 &ws_ref_for_error,
                 &source_ws_for_error,
                 &ping_interval_id_for_error,
-            );
+            ) {
+                return;
+            }
             // Emit on_error callback
             if let Some(cb) = on_error_for_err.borrow().as_ref() {
                 let err_obj = js_sys::Object::new();
@@ -1276,11 +1286,13 @@ impl KalamClient {
                 e.code(),
                 e.reason()
             ));
-            clear_active_socket(
+            if !clear_active_socket(
                 &ws_ref_for_close,
                 &source_ws_for_close,
                 &ping_interval_id_for_close,
-            );
+            ) {
+                return;
+            }
             // Emit on_disconnect callback
             if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
                 let reason_obj = js_sys::Object::new();
