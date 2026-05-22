@@ -251,10 +251,9 @@ ensure_registry_auth_configured
 # ─── Publish ──────────────────────────────────────────────────────────────────
 echo ""
 echo "🚀 Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
-PUBLISH_SCRIPTS_FLAG=""
-if [[ "$SKIP_BUILD" == "true" || -n "$STAGED_PUBLISH_DIR" ]]; then
-  PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
-fi
+# The publish script already built or validated dist/, so never let npm publish
+# re-enter lifecycle scripts under the publish registry.
+PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
 
 OTP_FLAG=""
 if [[ -n "$OTP_CODE" ]]; then
