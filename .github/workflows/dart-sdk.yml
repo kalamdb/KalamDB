@@ -37,6 +37,7 @@ env:
   RUST_VERSION: "1.92.0"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   resolve_versions:
