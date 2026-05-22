@@ -1099,7 +1099,7 @@ export class KalamDBClient {
    * @returns The full LoginResponse (access_token, refresh_token, user info, etc.)
    */
   async login(): Promise<LoginResponse> {
-    await this.initialize();
+    await this.ensureInitialized();
     let auth = this.auth;
     if (!auth || auth.type !== 'basic') {
       auth = await resolveAuthProviderWithRetry(this._authProvider, {
@@ -1135,7 +1135,7 @@ export class KalamDBClient {
    */
   async refreshToken(refreshToken: string): Promise<LoginResponse> {
     this.log(LogLevel.Debug, 'auth', 'Refreshing access token...');
-    await this.initialize();
+    await this.ensureInitialized();
     const wasmClient = this.wasmClient;
     if (!wasmClient) throw new Error('WASM client not initialized');
 

@@ -19,6 +19,8 @@ snippets/
 # IDE
 .vscode/
 *.swp
+playwright-report/
+test-results/
 
 # OS
 .DS_Store

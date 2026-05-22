@@ -44,6 +44,8 @@ impl ServerConfig {
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
+    /// - KALAMDB_OAUTH_AUTO_PROVISION: Override oauth.auto_provision
+    ///   oauth.auto_provision (kept for backward compatibility)
     /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a
     ///   comma-separated list or "*"
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
@@ -200,6 +202,14 @@ impl ServerConfig {
         // Allow remote setup (default: false)
         if let Ok(val) = env::var("KALAMDB_ALLOW_REMOTE_SETUP") {
             self.auth.allow_remote_setup =
+                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        }
+
+        // Auto-provision OAuth users on first verified provider login.
+        if let Ok(val) = env::var("KALAMDB_OAUTH_AUTO_PROVISION")
+            .or_else(|_| env::var("KALAMDB_AUTH_AUTO_CREATE_USERS_FROM_PROVIDER"))
+        {
+            self.oauth.auto_provision =
                 val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
         }
 

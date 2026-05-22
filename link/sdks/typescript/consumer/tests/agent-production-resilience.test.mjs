@@ -541,3 +541,228 @@ test('onConnectionRestored fires via empty-poll onBatchSuccess path after reconn
   // onConnectionRestored fired via the onBatchSuccess hook (empty poll path)
   assert.deepEqual(restored, [1]);
 });
+
+test('stopSignal aborts per-message retry backoff without extra attempts or failure handling', async () => {
+  const message = makeMessage({ offset: 230 });
+  const { client, state } = createMockClient([message]);
+  const controller = new AbortController();
+
+  const attempts = [];
+  const retries = [];
+  let failedCalls = 0;
+  let errorCalls = 0;
+
+  await runConsumer({
+    client,
+    name: 'abort-message-retry',
+    topic: message.topic,
+    groupId: message.group_id,
+    stopSignal: controller.signal,
+    retry: {
+      maxAttempts: 5,
+      initialBackoffMs: 30_000,
+      maxBackoffMs: 30_000,
+      jitterRatio: 0,
+    },
+    onChange: async (ctx) => {
+      attempts.push(ctx.attempt);
+      throw new Error('transient-downstream-timeout');
+    },
+    onRetry: (event) => {
+      retries.push(event.attempt);
+      controller.abort();
+    },
+    onFailed: async () => {
+      failedCalls += 1;
+    },
+    onError: () => {
+      errorCalls += 1;
+    },
+  });
+
+  assert.deepEqual(attempts, [1]);
+  assert.deepEqual(retries, [1]);
+  assert.equal(failedCalls, 0);
+  assert.equal(errorCalls, 0);
+  assert.deepEqual(state.ackedOffsets, []);
+});
+
+test('stopSignal aborts connection retry backoff without surfacing terminal connection errors', async () => {
+  let runs = 0;
+  const controller = new AbortController();
+  const retries = [];
+  const connectionErrors = [];
+
+  const client = {
+    query: async () => ({ status: 'success', results: [] }),
+    queryOne: async () => null,
+    queryAll: async () => [],
+    consumer: () => ({
+      run: async () => {
+        runs += 1;
+        throw new Error('server-offline');
+      },
+      stop: () => {},
+    }),
+  };
+
+  await runConsumer({
+    client,
+    name: 'abort-connection-retry',
+    topic: 'events',
+    groupId: 'event-worker',
+    stopSignal: controller.signal,
+    connectionRetry: {
+      initialBackoffMs: 30_000,
+      maxBackoffMs: 30_000,
+      jitterRatio: 0,
+    },
+    onConnectionRetry: (event) => {
+      retries.push(event.attempt);
+      controller.abort();
+    },
+    onConnectionError: (event) => {
+      connectionErrors.push(event.attempt);
+    },
+    onChange: async () => {},
+  });
+
+  assert.equal(runs, 1);
+  assert.deepEqual(retries, [1]);
+  assert.deepEqual(connectionErrors, []);
+});
+
+test('connectionRetry shouldRetry false fails fast without scheduling connection retries', async () => {
+  let runs = 0;
+  const retries = [];
+  const connectionErrors = [];
+
+  const client = {
+    query: async () => ({ status: 'success', results: [] }),
+    queryOne: async () => null,
+    queryAll: async () => [],
+    consumer: () => ({
+      run: async () => {
+        runs += 1;
+        throw new Error('authentication-failed');
+      },
+      stop: () => {},
+    }),
+  };
+
+  await assert.rejects(
+    () =>
+      runConsumer({
+        client,
+        name: 'fail-fast-connection',
+        topic: 'events',
+        groupId: 'event-worker',
+        connectionRetry: {
+          initialBackoffMs: 0,
+          maxBackoffMs: 0,
+          jitterRatio: 0,
+          shouldRetry: () => false,
+        },
+        onConnectionRetry: (event) => {
+          retries.push(event.attempt);
+        },
+        onConnectionError: (event) => {
+          connectionErrors.push(event.attempt);
+        },
+        onChange: async () => {},
+      }),
+    /authentication-failed/,
+  );
+
+  assert.equal(runs, 1);
+  assert.deepEqual(retries, []);
+  assert.deepEqual(connectionErrors, [1]);
+});
+
+test('onConnectionRestored fires once for a recovered outage even when the first good batch has multiple messages', async () => {
+  const firstMessage = makeMessage({ offset: 240, payload: { blog_id: '240', content: 'first', _table: 'blog.posts' } });
+  const secondMessage = makeMessage({ offset: 241, payload: { blog_id: '241', content: 'second', _table: 'blog.posts' } });
+  const state = {
+    runs: 0,
+    ackedOffsets: [],
+  };
+
+  const client = {
+    query: async () => ({ status: 'success', results: [] }),
+    queryOne: async () => null,
+    queryAll: async () => [],
+    consumer: () => ({
+      run: async (handler, hooks) => {
+        state.runs += 1;
+        if (state.runs === 1) {
+          throw new Error('socket-reset');
+        }
+
+        hooks?.onBatchSuccess?.({ nextOffset: 242, hasMore: false, messageCount: 2 });
+
+        for (const message of [firstMessage, secondMessage]) {
+          await handler({
+            user: message.user,
+            message,
+            ack: async () => {
+              state.ackedOffsets.push(message.offset);
+            },
+          });
+        }
+      },
+      stop: () => {},
+    }),
+  };
+
+  const restored = [];
+  const seen = [];
+
+  await runConsumer({
+    client,
+    name: 'restore-once',
+    topic: firstMessage.topic,
+    groupId: firstMessage.group_id,
+    retry: { maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 },
+    connectionRetry: { initialBackoffMs: 0, maxBackoffMs: 0, jitterRatio: 0 },
+    onConnectionRestored: (event) => {
+      restored.push(event.attempt);
+    },
+    onChange: async (_ctx, change) => {
+      seen.push(change.offset);
+    },
+  });
+
+  assert.equal(state.runs, 2);
+  assert.deepEqual(restored, [1]);
+  assert.deepEqual(seen, [240, 241]);
+  assert.deepEqual(state.ackedOffsets, [240, 241]);
+});
+
+test('ack failure after onFailed succeeds is reported once without hanging the worker', async () => {
+  const message = makeMessage({ offset: 250 });
+  const { client, state } = createMockClient([message], { ackShouldThrow: true });
+  const errors = [];
+  let failedCalls = 0;
+
+  await runConsumer({
+    client,
+    name: 'failed-ack-error',
+    topic: message.topic,
+    groupId: message.group_id,
+    retry: { maxAttempts: 1, initialBackoffMs: 0, maxBackoffMs: 0 },
+    onChange: async () => {
+      throw new Error('permanent-failure');
+    },
+    onFailed: async () => {
+      failedCalls += 1;
+    },
+    ackOnFailed: true,
+    onError: (event) => {
+      errors.push(String(event.error));
+    },
+  });
+
+  assert.equal(failedCalls, 1);
+  assert.deepEqual(state.ackedOffsets, []);
+  assert.deepEqual(errors, ['Error: ack failed']);
+});

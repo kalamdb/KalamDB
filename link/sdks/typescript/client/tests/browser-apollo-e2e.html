@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KalamDB Browser Apollo Smoke</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4efe7;
+      --surface: rgba(255, 255, 255, 0.82);
+      --ink: #1d2228;
+      --muted: #5b6470;
+      --accent: #0f766e;
+      --accent-soft: rgba(15, 118, 110, 0.14);
+      --danger: #b91c1c;
+      --danger-soft: rgba(185, 28, 28, 0.12);
+      --border: rgba(29, 34, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.15), transparent 32%),
+        radial-gradient(circle at bottom right, rgba(194, 65, 12, 0.12), transparent 28%),
+        linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+      padding: 32px 18px 60px;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero,
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(19, 27, 35, 0.08);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero {
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 4vw, 3.3rem);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .lead {
+      margin: 0;
+      max-width: 52rem;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.6;
+    }
+
+    .status {
+      margin-top: 18px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font: 700 0.86rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .status.running {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .status.pass {
+      background: rgba(22, 163, 74, 0.14);
+      color: #166534;
+    }
+
+    .status.fail {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .panel {
+      padding: 20px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 1rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    li {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.72);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .feed-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 1rem;
+    }
+
+    .feed-card span {
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Browser Apollo Smoke</h1>
+      <p class="lead">
+        This page validates the client in a real browser shape: bootstrap auth,
+        initial query, token refresh, controller-backed live list, and post-live query verification.
+      </p>
+      <div id="status" class="status running">Running browser app flow...</div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Checks</h2>
+        <ul id="checks"></ul>
+      </article>
+      <article class="panel">
+        <h2>Live Feed</h2>
+        <ul id="feed"></ul>
+      </article>
+    </section>
+  </main>
+
+  <script type="module">
+    import { Auth, createClient, createRawSqlLiveDescriptor } from '../dist/src/index.js';
+
+    const params = new URLSearchParams(window.location.search);
+    const backendUrl = params.get('backend') ?? `${window.location.origin}/backend`;
+    const user = params.get('user') ?? 'admin';
+    const password = params.get('password') ?? 'kalamdb123';
+    const namespace = `browser_apollo_${Date.now()}`;
+    const table = `${namespace}.feed`;
+    const statusElement = document.getElementById('status');
+    const checksElement = document.getElementById('checks');
+    const feedElement = document.getElementById('feed');
+
+    function setStatus(kind, message) {
+      statusElement.className = `status ${kind}`;
+      statusElement.textContent = message;
+    }
+
+    function addCheck(message) {
+      const item = document.createElement('li');
+      item.textContent = message;
+      checksElement.appendChild(item);
+    }
+
+    function renderFeed(rows) {
+      feedElement.innerHTML = '';
+      for (const row of rows) {
+        const item = document.createElement('li');
+        item.className = 'feed-card';
+        item.innerHTML = `<strong>#${row.id} · ${row.room}</strong><span>${row.body}</span>`;
+        feedElement.appendChild(item);
+      }
+    }
+
+    function latestSnapshot(snapshots) {
+      return snapshots.at(-1) ?? { rows: [] };
+    }
+
+    async function waitFor(predicate, timeoutMs = 15000, intervalMs = 50) {
+      const started = Date.now();
+      while (!predicate()) {
+        if (Date.now() - started > timeoutMs) {
+          throw new Error(`Timed out after ${timeoutMs}ms`);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+      }
+    }
+
+    async function disposeClient(client) {
+      if (!client) {
+        return;
+      }
+      if (typeof client.shutdown === 'function') {
+        await client.shutdown();
+        return;
+      }
+      await client.disconnect();
+    }
+
+    function mapRow(row) {
+      return {
+        id: row.id.asInt(),
+        room: row.room.asString(),
+        body: row.body.asString(),
+        created_at: row.created_at.asDate().toISOString(),
+      };
+    }
+
+    async function main() {
+      const authProvider = async () => Auth.basic(user, password);
+      const reader = createClient({
+        url: backendUrl,
+        authProvider,
+        wsLazyConnect: true,
+      });
+      const writer = createClient({
+        url: backendUrl,
+        authProvider,
+        wsLazyConnect: true,
+      });
+
+      let controller;
+
+      try {
+        await reader.initialize();
+        await writer.initialize();
+        addCheck('Initialized reader and writer browser clients');
+
+        const login = await reader.login();
+        if (!login.access_token || !login.refresh_token) {
+          throw new Error('login() did not return both access and refresh tokens');
+        }
+        addCheck('Bootstrapped basic auth session into JWT tokens');
+
+        const refreshed = await reader.refreshToken(login.refresh_token);
+        if (!refreshed.access_token) {
+          throw new Error('refreshToken() did not return an access token');
+        }
+        addCheck('Refreshed browser session token successfully');
+
+        await reader.query(`CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
+        await reader.query(
+          `CREATE TABLE IF NOT EXISTS ${table} (
+            id INT PRIMARY KEY,
+            room TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_at TIMESTAMP
+          )`,
+        );
+        addCheck(`Prepared ${table}`);
+
+        const initial = await reader.queryOne(`SELECT COUNT(*) AS total FROM ${table}`);
+        if (initial.total.asInt() !== 0) {
+          throw new Error(`Expected empty table, received count ${initial.total.asInt()}`);
+        }
+        addCheck('Initial query returned an empty feed');
+
+        const descriptor = createRawSqlLiveDescriptor(
+          `SELECT id, room, body, created_at FROM ${table} WHERE room = 'main' ORDER BY created_at DESC LIMIT 2`,
+          { mapRow, getKey: (row) => row.id },
+        );
+        controller = reader.createLiveQueryController(descriptor, { lastRows: 0 });
+        const snapshots = [];
+        controller.subscribe((snapshot) => {
+          snapshots.push(snapshot);
+          renderFeed(snapshot.rows);
+        });
+
+        await controller.start();
+        await waitFor(() => snapshots.some((snapshot) => snapshot.status === 'live'));
+        addCheck('Mounted controller-backed live feed in the browser');
+
+        await writer.query(
+          `INSERT INTO ${table} (id, room, body, created_at) VALUES
+            (1, 'main', 'first browser row', '2026-05-22T10:00:00Z'),
+            (2, 'main', 'second browser row', '2026-05-22T10:01:00Z')`,
+        );
+        await waitFor(() => latestSnapshot(snapshots).rows.length === 2);
+
+        const ids = latestSnapshot(snapshots).rows.map((row) => row.id);
+        if (ids.join(',') !== '2,1') {
+          throw new Error(`Expected projected live order [2,1], received [${ids.join(',')}]`);
+        }
+        addCheck('Live controller projected the newest browser rows first');
+
+        const detail = await reader.queryOne(`SELECT id, body FROM ${table} WHERE id = 2`);
+        if (detail.body.asString() !== 'second browser row') {
+          throw new Error('Detail query after live updates returned the wrong row body');
+        }
+        addCheck('Detail query remained consistent after live delivery');
+
+        setStatus('pass', 'PASS: browser query/live/auth smoke succeeded');
+        window.__browserApolloResult = {
+          ok: true,
+          ids,
+          backendUrl,
+          table,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        addCheck(`FAIL: ${message}`);
+        setStatus('fail', `FAIL: ${message}`);
+        window.__browserApolloResult = { ok: false, error: message };
+        throw error;
+      } finally {
+        try {
+          if (controller) {
+            await controller.dispose();
+          }
+        } catch (_) {
+          // Ignore cleanup drift in the browser harness.
+        }
+        await disposeClient(writer).catch(() => {});
+        await disposeClient(reader).catch(() => {});
+      }
+    }
+
+    main().catch(() => {});
+  </script>
+</body>
+</html>

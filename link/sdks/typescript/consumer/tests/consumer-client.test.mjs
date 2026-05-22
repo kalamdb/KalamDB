@@ -25,6 +25,31 @@ function readHeader(headers, name) {
   return headers[name] ?? headers[name.toLowerCase()];
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeLoginResponse(accessToken) {
+  return {
+    access_token: accessToken,
+    refresh_token: `refresh-${accessToken}`,
+    expires_at: '2026-03-08T10:00:00Z',
+    user: {
+      id: '1',
+      username: 'worker',
+      role: 'service',
+      created_at: '',
+      updated_at: '',
+    },
+  };
+}
+
 test('consumeBatch maps options to the topic HTTP API and decodes payloads', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -396,4 +421,203 @@ test('consumeBatch rejects consume responses missing user metadata', async () =>
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('consumeBatch retries once with refreshed JWT auth after TOKEN_EXPIRED', async () => {
+  let authCalls = 0;
+  const authHeaders = [];
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt(authCalls++ === 0 ? 'jwt-stale' : 'jwt-fresh'),
+  });
+
+  client.topicTransport = {
+    consume: async (authHeader) => {
+      authHeaders.push(authHeader);
+      if (authHeaders.length === 1) {
+        throw { status: 401, code: 'TOKEN_EXPIRED', message: 'jwt expired' };
+      }
+
+      return {
+        messages: [{
+          topic: 'orders',
+          group_id: 'billing',
+          partition_id: 0,
+          offset: 12,
+          user: 'worker-1',
+          payload: { id: 12, status: 'retried' },
+        }],
+        next_offset: 13,
+        has_more: false,
+      };
+    },
+    ack: async () => {
+      throw new Error('unexpected ack');
+    },
+  };
+
+  const batch = await client.consumeBatch({
+    topic: 'orders',
+    group_id: 'billing',
+  });
+
+  assert.equal(authCalls, 2);
+  assert.deepEqual(authHeaders, ['Bearer jwt-stale', 'Bearer jwt-fresh']);
+  assert.equal(batch.messages.length, 1);
+  assert.equal(batch.messages[0].offset, 12);
+  assert.deepEqual(batch.messages[0].payload, { id: 12, status: 'retried' });
+});
+
+test('ack retries once with a fresh login when topic auth becomes UNAUTHENTICATED', async () => {
+  let loginCalls = 0;
+  const authHeaders = [];
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.basic('worker', 'secret'),
+  });
+
+  client.sqlClient.login = async () => makeLoginResponse(loginCalls++ === 0 ? 'jwt-one' : 'jwt-two');
+  client.topicTransport = {
+    consume: async () => {
+      throw new Error('unexpected consume');
+    },
+    ack: async (authHeader) => {
+      authHeaders.push(authHeader);
+      if (authHeaders.length === 1) {
+        throw { status: 401, code: 'UNAUTHENTICATED', message: 'token expired' };
+      }
+
+      return {
+        success: true,
+        acknowledged_offset: 44,
+      };
+    },
+  };
+
+  const response = await client.ack('orders', 'billing', 0, 44);
+
+  assert.equal(loginCalls, 2);
+  assert.deepEqual(authHeaders, ['Bearer jwt-one', 'Bearer jwt-two']);
+  assert.deepEqual(response, {
+    success: true,
+    acknowledged_offset: 44,
+  });
+});
+
+test('consumeBatch does not retry non-retriable topic authorization failures', async () => {
+  let authCalls = 0;
+  let requestCalls = 0;
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt(`jwt-${++authCalls}`),
+  });
+
+  client.topicTransport = {
+    consume: async () => {
+      requestCalls += 1;
+      throw { status: 403, code: 'FORBIDDEN', message: 'group denied' };
+    },
+    ack: async () => {
+      throw new Error('unexpected ack');
+    },
+  };
+
+  await assert.rejects(
+    () => client.consumeBatch({ topic: 'orders', group_id: 'billing' }),
+    /group denied/i,
+  );
+
+  assert.equal(authCalls, 1);
+  assert.equal(requestCalls, 1);
+});
+
+test('consumer run keeps at most one consume request in flight and exits cleanly after stop', async () => {
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('jwt-123'),
+  });
+
+  let consumeCalls = 0;
+  const pendingPoll = deferred();
+
+  client.consumeBatch = async () => {
+    consumeCalls += 1;
+    return pendingPoll.promise;
+  };
+
+  const handle = client.consumer({
+    topic: 'events',
+    group_id: 'worker',
+  });
+
+  const runPromise = handle.run(async () => {
+    throw new Error('handler should not run for an empty batch');
+  });
+
+  await Promise.resolve();
+  assert.equal(consumeCalls, 1);
+
+  handle.stop();
+  pendingPoll.resolve({
+    messages: [],
+    next_offset: 5,
+    has_more: false,
+  });
+
+  await runPromise;
+  assert.equal(consumeCalls, 1);
+});
+
+test('consumer run stops after the current message even when the server reports has_more', async () => {
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('jwt-123'),
+  });
+
+  let consumeCalls = 0;
+  const ackedOffsets = [];
+
+  client.consumeBatch = async () => {
+    consumeCalls += 1;
+    if (consumeCalls > 1) {
+      throw new Error('consumer fetched again after stop');
+    }
+
+    return {
+      messages: [{
+        topic: 'events',
+        group_id: 'worker',
+        partition_id: 0,
+        offset: 10,
+        user: 'processor',
+        payload: { id: 10, status: 'ready' },
+        value: { id: 10, status: 'ready' },
+      }],
+      next_offset: 11,
+      has_more: true,
+    };
+  };
+  client.ack = async (_topic, _groupId, _partitionId, uptoOffset) => {
+    ackedOffsets.push(uptoOffset);
+    return { success: true, acknowledged_offset: uptoOffset };
+  };
+
+  const handle = client.consumer({
+    topic: 'events',
+    group_id: 'worker',
+    auto_ack: true,
+  });
+
+  let seenOffset = 0;
+  await handle.run(async (ctx) => {
+    seenOffset = ctx.message.offset;
+    handle.stop();
+  });
+
+  assert.equal(seenOffset, 10);
+  assert.equal(consumeCalls, 1);
+  assert.deepEqual(ackedOffsets, [10]);
 });

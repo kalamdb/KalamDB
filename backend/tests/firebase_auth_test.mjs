@@ -14,7 +14,7 @@
  *   node backend/tests/firebase_auth_test.mjs
  */
 
-import { createSign } from "node:crypto";
+import { createHash, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -22,7 +22,8 @@ import path from "node:path";
 // ── Config ────────────────────────────────────────────────────────────────
 const KALAMDB_URL = "http://127.0.0.1:2900";
 const KALAMDB_ROOT_PASSWORD = process.env.KALAMDB_ROOT_PASSWORD ?? "kalamdb123";
-const FIREBASE_WEB_API_KEY = "AIzaSyBotd5joGFObcOpBW733IcEbRGfB1oD5Ik";
+const FIREBASE_WEB_API_KEY =
+  process.env.FIREBASE_WEB_API_KEY ?? "AIzaSyAiipzU9ITkIb0Es3JY6xNVaurKB6SxK2s";
 const FIREBASE_PROJECT_ID = "masky-bb320";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +82,12 @@ function decodeJwtPayload(token) {
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 }
 
+/** Match KalamDB's deterministic external OIDC user id mapping. */
+function oidcUserId(issuer, subject) {
+  const digest = createHash("sha256").update(`${issuer}:${subject}`).digest("hex");
+  return `u_oidc_${digest.slice(0, 16)}`;
+}
+
 /** Run a SQL query against KalamDB with a Bearer token. */
 async function kalamQuery(sql, bearerToken) {
   const res = await fetch(`${KALAMDB_URL}/v1/api/sql`, {
@@ -98,6 +105,26 @@ async function kalamQuery(sql, bearerToken) {
     );
   }
   return body;
+}
+
+/** Login to KalamDB and return an access token. */
+async function kalamLogin(user, password) {
+  const res = await fetch(`${KALAMDB_URL}/v1/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user, password }),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      `KalamDB login failed (${res.status}): ${JSON.stringify(body)}`
+    );
+  }
+  const token = body.access_token ?? body.token;
+  if (!token) {
+    throw new Error(`KalamDB login did not return a token: ${JSON.stringify(body)}`);
+  }
+  return token;
 }
 
 /** Log a step result */
@@ -143,8 +170,7 @@ if (claims.aud !== FIREBASE_PROJECT_ID) {
 ok(`Claims look correct`);
 
 section("Step 4: Test Firebase token against KalamDB");
-// Expected username in KalamDB: oidc:fbs:<firebase-uid>
-const expectedUsername = `oidc:fbs:${TEST_UID}`;
+const expectedUsername = oidcUserId(claims.iss, claims.sub);
 
 let result;
 try {
@@ -156,7 +182,7 @@ try {
     "\n  Make sure KalamDB is running with the Firebase issuer configured:"
   );
   console.error(`    jwt_trusted_issuers = "${expectedIss}"`);
-  console.error(`    auto_create_users_from_provider = true`);
+  console.error(`    [oauth] auto_provision = true`);
   process.exit(1);
 }
 
@@ -180,18 +206,22 @@ if (rawResult.includes(expectedUsername)) {
 section("Step 6: Verify user was provisioned in system.users");
 let usersResult;
 try {
+  const rootToken = await kalamLogin("root", KALAMDB_ROOT_PASSWORD);
   usersResult = await kalamQuery(
     `SELECT user_id FROM system.users WHERE user_id = '${expectedUsername}'`,
-    idToken
+    rootToken
   );
   const usersJson = JSON.stringify(usersResult);
   if (usersJson.includes(expectedUsername)) {
     ok(`User '${expectedUsername}' exists in system.users`);
   } else {
-    console.warn(`  ⚠️  User not yet in system.users (may require auto_provision)\n     Response: ${usersJson}`);
+    throw new Error(
+      `User not found in system.users after auto-provision. Response: ${usersJson}`
+    );
   }
 } catch (e) {
-  console.warn(`  ⚠️  Could not query system.users: ${e.message}`);
+  console.error(`  ❌  ${e.message}`);
+  process.exit(1);
 }
 
 console.log("\n🎉  Firebase Auth integration test PASSED\n");

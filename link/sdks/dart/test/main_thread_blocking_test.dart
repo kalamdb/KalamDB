@@ -393,6 +393,17 @@ void main() {
   });
 
   group('Async API contract', () {
+    test('init() is a no-op when the bridge is already initialized', () async {
+      await KalamClient.init();
+
+      final client = await KalamClient.connect(url: 'https://test.example.com');
+
+      expect(mockApi.createClientCalls, 1,
+          reason: 'init() should preserve the existing bridge instance');
+
+      await client.dispose();
+    });
+
     test('connect() creates client and defers websocket connect by default',
         () async {
       final client = await KalamClient.connect(url: 'https://test.example.com');

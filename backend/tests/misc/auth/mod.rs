@@ -22,6 +22,7 @@ mod test_e2e_auth_flow;
 mod test_jwt_auth;
 mod test_last_seen;
 mod test_live_queries_auth_expiry;
+mod test_oidc_auto_provision;
 mod test_oauth;
 mod test_password_complexity;
 mod test_rbac;

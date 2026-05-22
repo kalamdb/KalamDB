@@ -749,20 +749,19 @@ fn sql_first_cell_string(result: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn grpc_target_from_api_addr(api_addr: &str) -> Option<(String, u16)> {
-    let authority = api_addr
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .split('/')
-        .next()
-        .unwrap_or(api_addr);
-    let (host, http_port) = authority.rsplit_once(':')?;
-    let http_port = http_port.parse::<u16>().ok()?;
-    let grpc_port = match http_port {
-        2900 => 2910,
-        _ => http_port.checked_add(1000)?,
-    };
-    Some((host.to_string(), grpc_port))
+fn grpc_target_from_rpc_addr(rpc_addr: &str) -> Option<(String, u16)> {
+    let authority = rpc_addr.split('/').next().unwrap_or(rpc_addr);
+    let (host, port) = authority.rsplit_once(':')?;
+    Some((host.to_string(), port.parse::<u16>().ok()?))
+}
+
+fn http_base_url_from_api_addr(api_addr: &str) -> String {
+    let trimmed = api_addr.trim().trim_end_matches('/');
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
 }
 
 async fn shared_leader_grpc_target_for_env(env: &TestEnv) -> (String, u16) {
@@ -772,14 +771,14 @@ async fn shared_leader_grpc_target_for_env(env: &TestEnv) -> (String, u16) {
     loop {
         let result = env
             .kalamdb_sql(
-                "SELECT cluster.api_addr FROM system.cluster_groups AS groups JOIN \
+                "SELECT cluster.rpc_addr FROM system.cluster_groups AS groups JOIN \
                  system.cluster AS cluster ON groups.current_leader = cluster.node_id WHERE \
                  groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1",
             )
             .await;
 
         if let Some(target) =
-            sql_first_cell_string(&result).and_then(|api_addr| grpc_target_from_api_addr(&api_addr))
+            sql_first_cell_string(&result).and_then(|rpc_addr| grpc_target_from_rpc_addr(&rpc_addr))
         {
             return target;
         }
@@ -802,6 +801,43 @@ pub async fn shared_leader_grpc_target() -> (String, u16) {
     shared_leader_grpc_target_for_env(env).await
 }
 
+async fn shared_leader_api_base_url_for_env(env: &TestEnv) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut triggered_elections = 0;
+
+    loop {
+        let result = env
+            .kalamdb_sql(
+                "SELECT cluster.api_addr FROM system.cluster_groups AS groups JOIN \
+                 system.cluster AS cluster ON groups.current_leader = cluster.node_id WHERE \
+                 groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1",
+            )
+            .await;
+
+        if let Some(base_url) =
+            sql_first_cell_string(&result).map(|api_addr| http_base_url_from_api_addr(&api_addr))
+        {
+            return base_url;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return kalamdb_auth_config().base_url;
+        }
+
+        if triggered_elections < 3 {
+            env.kalamdb_sql("CLUSTER TRIGGER ELECTION").await;
+            triggered_elections += 1;
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+pub async fn shared_leader_api_base_url() -> String {
+    let env = TestEnv::global().await;
+    shared_leader_api_base_url_for_env(env).await
+}
+
 async fn user_shard_leader_grpc_target_for_env(env: &TestEnv, user_id: &str) -> (String, u16) {
     let num_user_shards = cluster_user_shard_count(env).await;
     let group_id = user_shard_group_id(user_id, num_user_shards);
@@ -811,14 +847,14 @@ async fn user_shard_leader_grpc_target_for_env(env: &TestEnv, user_id: &str) -> 
     loop {
         let result = env
             .kalamdb_sql(&format!(
-                "SELECT cluster.api_addr FROM system.cluster_groups AS groups JOIN \
+                "SELECT cluster.rpc_addr FROM system.cluster_groups AS groups JOIN \
                  system.cluster AS cluster ON groups.current_leader = cluster.node_id WHERE \
                  groups.group_id = {group_id} AND groups.current_leader IS NOT NULL LIMIT 1"
             ))
             .await;
 
         if let Some(target) =
-            sql_first_cell_string(&result).and_then(|api_addr| grpc_target_from_api_addr(&api_addr))
+            sql_first_cell_string(&result).and_then(|rpc_addr| grpc_target_from_rpc_addr(&rpc_addr))
         {
             return target;
         }

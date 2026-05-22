@@ -13,7 +13,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    auth::WasmAuthProvider,
+    auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{
         create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
         serialize_json_to_js_value, subscription_hash,
@@ -715,8 +715,11 @@ fn install_runtime_disconnect_handlers(
     let source_ws_for_error = ws.clone();
     let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
         wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
-        if !clear_active_socket(&ws_ref_for_error, &source_ws_for_error, &ping_interval_id_for_error)
-        {
+        if !clear_active_socket(
+            &ws_ref_for_error,
+            &source_ws_for_error,
+            &ping_interval_id_for_error,
+        ) {
             return;
         }
         emit_runtime_ws_error(&on_error_for_err, "WebSocket connection failed", true);
@@ -739,8 +742,11 @@ fn install_runtime_disconnect_handlers(
             e.code(),
             e.reason()
         ));
-        if !clear_active_socket(&ws_ref_for_close, &source_ws_for_close, &ping_interval_id_for_close)
-        {
+        if !clear_active_socket(
+            &ws_ref_for_close,
+            &source_ws_for_close,
+            &ping_interval_id_for_close,
+        ) {
             return;
         }
         if let Some(cb) = on_disconnect_for_close.borrow().as_ref() {
@@ -1130,36 +1136,11 @@ impl KalamClient {
         }
 
         // Resolve auth: dynamic provider takes precedence over static auth.
-        let resolved_auth = if let Some(cb) = self.auth_provider_cb.borrow().as_ref() {
-            // Call the JS async callback and await the Promise it returns.
-            let result = JsFuture::from(js_sys::Promise::resolve(
-                &cb.call0(&JsValue::NULL)
-                    .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
-            ))
-            .await?;
-
-            // Expect `{ jwt: { token: "..." } }` or null/undefined (anonymous).
-            if result.is_null() || result.is_undefined() {
-                WasmAuthProvider::None
-            } else {
-                let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
-                if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
-                    let token = js_sys::Reflect::get(&jwt, &"token".into())
-                        .ok()
-                        .and_then(|v| v.as_string())
-                        .ok_or_else(|| {
-                            JsValue::from_str(
-                                "authProvider result must have shape { jwt: { token: string } }",
-                            )
-                        })?;
-                    WasmAuthProvider::Jwt { token }
-                } else {
-                    WasmAuthProvider::None
-                }
-            }
-        } else {
-            self.auth.borrow().clone()
-        };
+        let resolved_auth = resolve_auth_provider(
+            self.auth_provider_cb.borrow().clone(),
+            self.auth.borrow().clone(),
+        )
+        .await?;
 
         if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
             return Err(JsValue::from_str(
@@ -1493,11 +1474,8 @@ impl KalamClient {
                     &"message".into(),
                     &JsValue::from_str("manual disconnect"),
                 );
-                let _ = js_sys::Reflect::set(
-                    &reason_obj,
-                    &"code".into(),
-                    &JsValue::from_f64(1000.0),
-                );
+                let _ =
+                    js_sys::Reflect::set(&reason_obj, &"code".into(), &JsValue::from_f64(1000.0));
                 let _ = cb.call1(&JsValue::NULL, &reason_obj);
             }
         }
@@ -2102,37 +2080,17 @@ impl KalamClient {
     /// credentials, obtain a JWT, and update `self.auth`.
     async fn reauthenticate_for_http(&self) -> Result<(), JsValue> {
         // Try the dynamic auth provider callback first (set by TS/Dart SDK).
-        if let Some(cb) = self.auth_provider_cb.borrow().as_ref() {
-            let result = JsFuture::from(js_sys::Promise::resolve(
-                &cb.call0(&JsValue::NULL)
-                    .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
-            ))
-            .await?;
-
-            if result.is_null() || result.is_undefined() {
-                *self.auth.borrow_mut() = WasmAuthProvider::None;
-                wasm_debug_log!("KalamClient: authProvider returned no credentials");
-                return Ok(());
-            }
-
-            let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
-            if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
-                let token = js_sys::Reflect::get(&jwt, &"token".into())
-                    .ok()
-                    .and_then(|v| v.as_string())
-                    .ok_or_else(|| {
-                        JsValue::from_str(
-                            "authProvider result must have shape { jwt: { token: string } }",
-                        )
-                    })?;
-                *self.auth.borrow_mut() = WasmAuthProvider::Jwt { token };
-                wasm_debug_log!("KalamClient: Reauthenticated via authProvider (JWT)");
-                return Ok(());
-            }
-
-            // authProvider returned an object without jwt — clear auth
-            *self.auth.borrow_mut() = WasmAuthProvider::None;
-            wasm_debug_log!("KalamClient: authProvider returned no JWT credentials");
+        if let Some(cb) = self.auth_provider_cb.borrow().clone() {
+            let resolved_auth = resolve_auth_provider(Some(cb), WasmAuthProvider::None).await?;
+            let log_message = match &resolved_auth {
+                WasmAuthProvider::Jwt { .. } => {
+                    "KalamClient: Reauthenticated via authProvider (JWT)"
+                },
+                WasmAuthProvider::None => "KalamClient: authProvider returned no credentials",
+                WasmAuthProvider::Basic { .. } => unreachable!(),
+            };
+            *self.auth.borrow_mut() = resolved_auth;
+            wasm_debug_log!(log_message);
             return Ok(());
         }
 

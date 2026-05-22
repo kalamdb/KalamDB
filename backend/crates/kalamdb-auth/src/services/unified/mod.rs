@@ -9,18 +9,16 @@ use std::sync::Arc;
 
 pub use audit::extract_user_id_for_audit;
 use bearer::authenticate_bearer;
+use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
 use password::authenticate_user_password;
 use tracing::Instrument;
 pub use types::{AuthMethod, AuthRequest, AuthenticationResult};
 
 use crate::{
-    errors::error::AuthResult,
-    helpers::authorization_header::extract_bearer_token,
-    models::context::AuthenticatedUser,
-    providers::jwt_config,
-    repository::user_repo::UserRepository,
-    services::login_tracker::LoginTracker,
+    errors::error::AuthResult, helpers::authorization_header::extract_bearer_token,
+    models::context::AuthenticatedUser, providers::jwt_config,
+    repository::user_repo::UserRepository, services::login_tracker::LoginTracker,
 };
 
 /// Cached login tracker instance.
@@ -32,6 +30,10 @@ pub fn init_auth_config(
     oauth: &kalamdb_configs::OAuthSettings,
 ) {
     let mut issuer_audiences = std::collections::HashMap::new();
+    let oauth_default_role = Role::from_str_opt(&oauth.default_role).unwrap_or_else(|| {
+        log::warn!("Invalid oauth.default_role '{}'; falling back to 'user'", oauth.default_role);
+        Role::User
+    });
 
     if let Some(client_id) = &oauth.providers.google.client_id {
         if !oauth.providers.google.issuer.is_empty() {
@@ -54,7 +56,13 @@ pub fn init_auth_config(
         }
     }
 
-    jwt_config::init_jwt_config(&auth.jwt_secret, &auth.jwt_trusted_issuers, issuer_audiences);
+    jwt_config::init_jwt_config(
+        &auth.jwt_secret,
+        &auth.jwt_trusted_issuers,
+        issuer_audiences,
+        oauth.enabled && oauth.auto_provision,
+        oauth_default_role,
+    );
 }
 
 /// Authenticate a request using the unified authentication flow.

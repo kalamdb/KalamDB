@@ -370,10 +370,9 @@ min_password_length = 8
 # Note: Passwords longer than 72 bytes are truncated by bcrypt
 max_password_length = 72
 
-# Disable common password checking (default: false)
-# If true, allows passwords like "password", "123456", etc.
-# WARNING: Only disable for testing/development environments!
-disable_common_password_check = false
+# Enforce uppercase/lowercase/digit/special password complexity (default: false)
+# Keep this false unless you specifically want strict password composition rules.
+enforce_password_complexity = false
 
 # JWT configuration (for JWT Bearer token authentication)
 # Secret key for JWT signature validation (minimum 32 characters recommended)
@@ -386,9 +385,6 @@ jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
 # Example for GitHub OAuth: ["https://github.com"]
 # Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
 jwt_trusted_issuers = "http://localhost:2901/realms/kalamdb,https://securetoken.google.com/masky-bb320"
-
-# Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
-auto_create_users_from_provider = true
 
 [oauth]
 enabled = true

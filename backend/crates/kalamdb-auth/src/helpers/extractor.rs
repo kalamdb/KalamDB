@@ -391,6 +391,11 @@ impl FromRequest for AuthSessionExtractor {
                 },
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                    tracing::debug!(
+                        error = %e,
+                        took_ms = took,
+                        "HTTP bearer authentication failed"
+                    );
                     Err(AuthExtractError::new(e, took))
                 },
             }

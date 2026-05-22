@@ -31,7 +31,7 @@ mod registry;
 mod routing;
 
 use reconnect::connection_task;
-use registry::ConnCmd;
+use registry::{ConnCmd, SubscriptionReady};
 
 pub(crate) struct SharedConnection {
     cmd_tx: mpsc::Sender<ConnCmd>,
@@ -122,10 +122,14 @@ impl SharedConnection {
         match ready_rx.await {
             Ok(Ok(())) => {},
             Ok(Err(error)) => {
-                log::warn!("Initial shared connection failed: {}", error);
+                task.abort();
+                return Err(error);
             },
             Err(_) => {
-                log::warn!("Connection task exited before signalling readiness");
+                task.abort();
+                return Err(KalamLinkError::WebSocketError(
+                    "Connection task exited before signalling readiness".to_string(),
+                ));
             },
         }
 
@@ -148,10 +152,7 @@ impl SharedConnection {
         id: String,
         sql: String,
         options: Option<SubscriptionOptions>,
-    ) -> Result<(
-        mpsc::Receiver<Result<ChangeEvent>>,
-        oneshot::Receiver<Result<(u64, Option<SeqId>)>>,
-    )> {
+    ) -> Result<(mpsc::Receiver<Result<ChangeEvent>>, oneshot::Receiver<SubscriptionReady>)> {
         let (event_tx, event_rx) = mpsc::channel(crate::connection::DEFAULT_EVENT_CHANNEL_CAPACITY);
         let (result_tx, result_rx) = oneshot::channel();
         let request_initial_data = options.is_some();
@@ -225,6 +226,8 @@ impl Drop for SharedConnection {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use tokio::{
         sync::{mpsc, oneshot},
         time::Instant as TokioInstant,
@@ -232,8 +235,8 @@ mod tests {
 
     use super::{
         registry::{
-            clear_startup_deadline, reset_startup_deadline, resume_startup_deadline,
-            startup_deadline, SubEntry,
+            clear_startup_deadline, reset_startup_deadline, resolve_subscription_key,
+            resume_startup_deadline, startup_deadline, SubEntry,
         },
         *,
     };
@@ -288,5 +291,46 @@ mod tests {
 
         assert!(remaining <= Duration::from_millis(5_100));
         assert!(remaining > Duration::from_secs(4));
+    }
+
+    #[test]
+    fn subscription_key_resolution_requires_exact_id() {
+        let subs = HashMap::from([("sub_1".to_string(), make_test_entry("SELECT 1"))]);
+
+        let direct = resolve_subscription_key("sub_1", &subs).expect("direct match");
+        assert_eq!(direct.as_str("sub_1"), "sub_1");
+
+        let fallback =
+            resolve_subscription_key("prefix-sub_1", &subs).expect("unique suffix match");
+        assert_eq!(fallback.as_str("prefix-sub_1"), "sub_1");
+    }
+
+    #[test]
+    fn subscription_key_resolution_rejects_ambiguous_suffixes() {
+        let subs = HashMap::from([
+            ("sub_1".to_string(), make_test_entry("SELECT 1")),
+            ("xsub_1".to_string(), make_test_entry("SELECT 2")),
+        ]);
+
+        assert!(resolve_subscription_key("prefix-xsub_1", &subs).is_none());
+    }
+
+    fn make_test_entry(sql: &str) -> SubEntry {
+        SubEntry {
+            sql: sql.to_string(),
+            options: SubscriptionOptions::default(),
+            request_initial_data: true,
+            event_tx: mpsc::channel(1).0,
+            last_seq_id: None,
+            consumed_seq_id: None,
+            batch_seq_id: None,
+            is_loading: true,
+            generation: 1,
+            created_at_ms: 0,
+            last_event_time_ms: None,
+            pending_result_tx: Some(oneshot::channel().0),
+            ready_deadline: None,
+            reconnect_resubscribe_pending: false,
+        }
     }
 }

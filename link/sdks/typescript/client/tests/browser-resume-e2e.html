@@ -170,7 +170,6 @@
         url: backendUrl,
         authProvider,
         wsLazyConnect: false,
-        pingIntervalMs: 0,
         logLevel: LogLevel.Debug,
       });
       const writer = createClient({
@@ -204,9 +203,13 @@
         await waitFor(() => hasRowId(events, 1));
         log('Observed pre-close live row');
 
-        log('Waiting for heartbeat timeout to close the idle socket...');
-        await waitFor(() => !client.isConnected(), 12000, 150);
-        log('Socket closed by backend heartbeat timeout');
+        log('Requesting proxy to drop the active websocket...');
+        const dropResponse = await fetch('/__drop_ws', { method: 'POST' });
+        if (!dropResponse.ok) {
+          throw new Error(`Proxy drop failed: HTTP ${dropResponse.status}`);
+        }
+        await waitFor(() => !client.isConnected(), 5000, 100);
+        log('Socket closed unexpectedly by local proxy');
 
         const subscriptions = client.getSubscriptions();
         if (subscriptions.length !== 1) {
