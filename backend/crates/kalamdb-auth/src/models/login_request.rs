@@ -1,46 +1,44 @@
-//! Login request model
+//! Login request model and shared auth-request field validators.
 
-use kalamdb_auth::security::password::validate_password_characters;
 use kalamdb_commons::UserId;
 use serde::{Deserialize, Serialize};
 
-/// Maximum password length (bcrypt limit is 72 bytes, but allow some headroom for encoding)
-const MAX_PASSWORD_LENGTH: usize = 256;
+use crate::security::password::{validate_password_characters, MAX_PASSWORD_LENGTH};
 
-/// Login request body
+/// Login request body.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginRequest {
-    /// Canonical user identifier for authentication
+    /// Canonical user identifier for authentication.
     #[serde(alias = "username", deserialize_with = "validate_user_length")]
     pub user: String,
-    /// Password for authentication
+    /// Password for authentication.
     #[serde(deserialize_with = "validate_password_length")]
     pub password: String,
 }
 
-pub(crate) fn validate_user_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+pub fn validate_user_length<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    UserId::try_new(s.clone()).map_err(|e| serde::de::Error::custom(e.to_string()))?;
-    Ok(s)
+    let value = String::deserialize(deserializer)?;
+    UserId::try_new(value.clone()).map_err(|e| serde::de::Error::custom(e.to_string()))?;
+    Ok(value)
 }
 
-pub(crate) fn validate_password_length<'de, D>(deserializer: D) -> Result<String, D::Error>
+pub fn validate_password_length<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    if s.len() > MAX_PASSWORD_LENGTH {
+    let value = String::deserialize(deserializer)?;
+    if value.len() > MAX_PASSWORD_LENGTH {
         return Err(serde::de::Error::custom(format!(
             "password exceeds maximum length of {} characters",
             MAX_PASSWORD_LENGTH
         )));
     }
-    validate_password_characters(&s).map_err(|e| serde::de::Error::custom(e.to_string()))?;
-    Ok(s)
+    validate_password_characters(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?;
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -79,6 +77,18 @@ mod tests {
         .expect_err("path traversal user IDs should be rejected");
 
         assert!(error.to_string().contains("User ID"));
+    }
+
+    #[test]
+    fn rejects_password_above_bcrypt_limit() {
+        let long_password = "a".repeat(73);
+        let error = serde_json::from_value::<LoginRequest>(serde_json::json!({
+            "user": "admin_user",
+            "password": long_password,
+        }))
+        .expect_err("bcrypt truncation boundary should be rejected");
+
+        assert!(error.to_string().contains("maximum length"));
     }
 
     #[test]

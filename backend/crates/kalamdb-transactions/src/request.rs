@@ -60,11 +60,9 @@ impl<E: fmt::Display> fmt::Display for RequestTransactionError<E> {
                 "request owner '{}' already has an active transaction '{}'",
                 owner_id, transaction_id
             ),
-            Self::NoActiveTransaction { operation } => write!(
-                f,
-                "{} requires an active explicit SQL transaction",
-                operation
-            ),
+            Self::NoActiveTransaction { operation } => {
+                write!(f, "{} requires an active explicit SQL transaction", operation)
+            },
             Self::RequestCompletedOpen => f.write_str(OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE),
             Self::Coordinator(error) => write!(f, "{}", error),
         }
@@ -234,9 +232,7 @@ impl<'a> RequestTransactionBatchGuard<'a> {
 
     #[inline]
     pub fn active_transaction_id(&self) -> Option<&TransactionId> {
-        self.state
-            .as_ref()
-            .and_then(RequestTransactionState::active_transaction_id)
+        self.state.as_ref().and_then(RequestTransactionState::active_transaction_id)
     }
 
     #[inline]

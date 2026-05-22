@@ -2,7 +2,10 @@
 
 use base64::prelude::*;
 
-use crate::errors::error::{AuthError, AuthResult};
+use crate::{
+    errors::error::{AuthError, AuthResult},
+    helpers::authorization_header::{parse_authorization_header, AuthorizationScheme},
+};
 
 /// Parse HTTP Basic Auth header and extract credentials.
 ///
@@ -29,12 +32,14 @@ use crate::errors::error::{AuthError, AuthResult};
 /// assert_eq!(password, "pass");
 /// ```
 pub fn parse_basic_auth_header(auth_header: &str) -> AuthResult<(String, String)> {
-    // Check if header starts with "Basic "
-    let encoded = auth_header.strip_prefix("Basic ").ok_or_else(|| {
-        AuthError::MalformedAuthorization(
+    let parsed = parse_authorization_header(auth_header)?;
+    if parsed.scheme != AuthorizationScheme::Basic {
+        return Err(AuthError::MalformedAuthorization(
             "Authorization header must start with 'Basic '".to_string(),
-        )
-    })?;
+        ));
+    }
+
+    let encoded = parsed.credentials;
 
     // Decode base64
     let decoded_bytes = BASE64_STANDARD.decode(encoded.as_bytes()).map_err(|e| {

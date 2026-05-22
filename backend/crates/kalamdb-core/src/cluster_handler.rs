@@ -357,8 +357,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let statements = match kalamdb_sql::split_statements(&req.sql) {
             Ok(v) if !v.is_empty() => v,
             Ok(_) => {
-                let _ = request_transaction_guard
-                    .rollback_if_active(&request_transaction_coordinator);
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(
                     400,
                     "EMPTY_SQL",
@@ -368,15 +368,14 @@ impl ClusterMessageHandler for CoreClusterHandler {
             },
             Err(e) => {
                 let message = e.to_string();
-                let _ = request_transaction_guard
-                    .rollback_if_active(&request_transaction_coordinator);
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(400, "BATCH_PARSE_ERROR", &message, started_at));
             },
         };
 
         if !scalar_params.is_empty() && statements.len() > 1 {
-            let _ = request_transaction_guard
-                .rollback_if_active(&request_transaction_coordinator);
+            let _ = request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
             return Ok(Self::error_payload(
                 400,
                 "PARAMS_WITH_BATCH",
@@ -447,8 +446,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
                     .as_ref()
                     .map(|table_id| table_id.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                let _ = request_transaction_guard
-                    .rollback_if_active(&request_transaction_coordinator);
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
                 return Ok(Self::error_payload(
                     400,
                     "SQL_EXECUTION_ERROR",
@@ -521,7 +520,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
             request_transaction_guard.sync(&request_transaction_coordinator);
         }
 
-        if let Err(err) = request_transaction_guard.ensure_closed(&request_transaction_coordinator) {
+        if let Err(err) = request_transaction_guard.ensure_closed(&request_transaction_coordinator)
+        {
             let err = map_request_transaction_error(err);
             let message = err.user_message();
             return Ok(Self::error_payload(

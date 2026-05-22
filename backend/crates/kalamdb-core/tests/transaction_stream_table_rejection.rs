@@ -127,7 +127,9 @@ async fn explicit_transaction_rejects_stream_table_writes_with_missing_prepared_
     let error = executor
         .execute_with_metadata(&prepared_without_table_type, &exec_ctx, vec![])
         .await
-        .expect_err("stream-table write should still be rejected when prepared metadata omits table_type");
+        .expect_err(
+            "stream-table write should still be rejected when prepared metadata omits table_type",
+        );
     assert!(
         error
             .to_string()

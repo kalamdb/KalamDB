@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransactionOwnerParseError {
-    InvalidPgSessionId { session_id: String, reason: &'static str },
+    InvalidPgSessionId {
+        session_id: String,
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for TransactionOwnerParseError {
@@ -20,10 +23,7 @@ impl fmt::Display for TransactionOwnerParseError {
 impl Error for TransactionOwnerParseError {}
 
 #[inline]
-fn invalid_pg_session_id(
-    session_id: &str,
-    reason: &'static str,
-) -> TransactionOwnerParseError {
+fn invalid_pg_session_id(session_id: &str, reason: &'static str) -> TransactionOwnerParseError {
     TransactionOwnerParseError::InvalidPgSessionId {
         session_id: session_id.to_string(),
         reason,
@@ -64,10 +64,7 @@ fn parse_u64_hex(value: &[u8], session_id: &str) -> Result<u64, TransactionOwner
             b'a'..=b'f' => (byte - b'a' + 10) as u64,
             b'A'..=b'F' => (byte - b'A' + 10) as u64,
             _ => {
-                return Err(invalid_pg_session_id(
-                    session_id,
-                    "config hash must be hexadecimal",
-                ));
+                return Err(invalid_pg_session_id(session_id, "config hash must be hexadecimal"));
             },
         };
 
@@ -184,8 +181,7 @@ mod tests {
     #[test]
     fn parses_uuid_pg_session_handles() {
         let owner =
-            ExecutionOwnerKey::from_pg_session_id("019dabfa-1538-7c23-8e61-de751d8c1c38")
-                .unwrap();
+            ExecutionOwnerKey::from_pg_session_id("019dabfa-1538-7c23-8e61-de751d8c1c38").unwrap();
         assert_eq!(
             owner,
             ExecutionOwnerKey::PgSessionUuid {

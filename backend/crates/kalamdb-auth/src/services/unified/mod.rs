@@ -15,7 +15,8 @@ use tracing::Instrument;
 pub use types::{AuthMethod, AuthRequest, AuthenticationResult};
 
 use crate::{
-    errors::error::{AuthError, AuthResult},
+    errors::error::AuthResult,
+    helpers::authorization_header::extract_bearer_token,
     models::context::AuthenticatedUser,
     providers::jwt_config,
     repository::user_repo::UserRepository,
@@ -103,32 +104,14 @@ async fn authenticate_header(
     connection_info: &kalamdb_commons::models::ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
-    let mut parts = auth_header.splitn(2, ' ');
-    let scheme = parts.next().unwrap_or_default().trim();
-    let token = parts.next().unwrap_or_default().trim();
+    let token = extract_bearer_token(auth_header)?;
+    let user = authenticate_bearer(token, connection_info, repo).await?;
+    record_authenticated_span(&user);
 
-    if scheme.eq_ignore_ascii_case("Basic") {
-        Err(AuthError::InvalidCredentials(
-            "Basic authentication is not supported. Use Bearer token or login endpoint."
-                .to_string(),
-        ))
-    } else if scheme.eq_ignore_ascii_case("Bearer") {
-        if token.is_empty() {
-            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
-        }
-
-        let user = authenticate_bearer(token, connection_info, repo).await?;
-        record_authenticated_span(&user);
-
-        Ok(AuthenticationResult {
-            user,
-            method: AuthMethod::Bearer,
-        })
-    } else {
-        Err(AuthError::MalformedAuthorization(
-            "Authorization header must start with 'Basic ' or 'Bearer '".to_string(),
-        ))
-    }
+    Ok(AuthenticationResult {
+        user,
+        method: AuthMethod::Bearer,
+    })
 }
 
 async fn authenticate_credentials(

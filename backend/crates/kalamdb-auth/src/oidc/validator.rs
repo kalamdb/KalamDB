@@ -1,27 +1,33 @@
-use std::{collections::HashMap, sync::Arc};
+use std::time::Duration;
 
 use jsonwebtoken::{
     decode, decode_header,
     jwk::{Jwk, JwkSet},
     Algorithm, DecodingKey, Validation,
 };
+use moka::sync::Cache;
 use serde::Deserialize;
-use tokio::sync::RwLock;
 
 use crate::oidc::{OidcConfig, OidcError};
+
+const JWKS_CACHE_MAX_KEYS: u64 = 128;
+const JWKS_CACHE_TTL_SECS: u64 = 60 * 60;
 
 /// OIDC JWT validator with per-issuer JWKS caching.
 #[derive(Clone)]
 pub(crate) struct OidcValidator {
     config: OidcConfig,
-    jwks_cache: Arc<RwLock<HashMap<String, Jwk>>>,
+    jwks_cache: Cache<String, Jwk>,
 }
 
 impl OidcValidator {
     pub fn new(config: OidcConfig) -> Self {
         Self {
             config,
-            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            jwks_cache: Cache::builder()
+                .max_capacity(JWKS_CACHE_MAX_KEYS)
+                .time_to_live(Duration::from_secs(JWKS_CACHE_TTL_SECS))
+                .build(),
         }
     }
 
@@ -114,17 +120,13 @@ impl OidcValidator {
     }
 
     async fn get_jwk(&self, kid: &str) -> Result<Jwk, OidcError> {
-        {
-            let cache = self.jwks_cache.read().await;
-            if let Some(jwk) = cache.get(kid) {
-                return Ok(jwk.clone());
-            }
+        if let Some(jwk) = self.jwks_cache.get(kid) {
+            return Ok(jwk);
         }
 
         self.refresh_jwks_cache().await?;
 
-        let cache = self.jwks_cache.read().await;
-        cache.get(kid).cloned().ok_or_else(|| OidcError::KeyNotFound(kid.to_string()))
+        self.jwks_cache.get(kid).ok_or_else(|| OidcError::KeyNotFound(kid.to_string()))
     }
 
     pub async fn refresh_jwks_cache(&self) -> Result<(), OidcError> {
@@ -132,34 +134,26 @@ impl OidcValidator {
 
         let new_jwks = self.fetch_jwks().await?;
 
-        let needs_update = {
-            let cache = self.jwks_cache.read().await;
-            if new_jwks.keys.len() != cache.len() {
-                true
-            } else {
-                new_jwks.keys.iter().any(|jwk| {
-                    jwk.common.key_id.as_ref().is_some_and(|kid| !cache.contains_key(kid))
-                })
-            }
-        };
-
-        if needs_update {
-            let mut new_cache = HashMap::new();
-            for jwk in new_jwks.keys {
-                if let Some(kid) = jwk.common.key_id.clone() {
-                    log::debug!("Caching key: {}", kid);
-                    new_cache.insert(kid, jwk);
-                }
-            }
-
-            let mut cache = self.jwks_cache.write().await;
-            *cache = new_cache;
-            log::info!(
-                "JWKS cache refreshed with {} keys for {}",
-                cache.len(),
-                self.config.issuer_url
-            );
+        if new_jwks.keys.len() > JWKS_CACHE_MAX_KEYS as usize {
+            return Err(OidcError::JwksFetchFailed(format!(
+                "JWKS response from '{}' contained {} keys, exceeding the configured limit of {}",
+                self.config.jwks_uri,
+                new_jwks.keys.len(),
+                JWKS_CACHE_MAX_KEYS
+            )));
         }
+
+        let mut cached_keys = 0usize;
+        self.jwks_cache.invalidate_all();
+        for jwk in new_jwks.keys {
+            if let Some(kid) = jwk.common.key_id.clone() {
+                log::debug!("Caching key: {}", kid);
+                self.jwks_cache.insert(kid, jwk);
+                cached_keys += 1;
+            }
+        }
+
+        log::info!("JWKS cache refreshed with {} keys for {}", cached_keys, self.config.issuer_url);
 
         Ok(())
     }

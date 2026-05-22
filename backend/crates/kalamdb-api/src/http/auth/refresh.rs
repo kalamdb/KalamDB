@@ -8,13 +8,14 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
     create_and_sign_token, create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
+    extract_refresh_or_bearer_token,
     providers::jwt_auth::{create_and_sign_refresh_token, validate_jwt_token, TokenType},
     CookieConfig, UserRepository,
 };
 use kalamdb_configs::AuthSettings;
 
 use super::{
-    extract_refresh_or_bearer_token, map_auth_error_to_response,
+    map_auth_error_to_response,
     models::{AuthErrorResponse, LoginResponse, UserInfo},
 };
 use crate::limiter::RateLimiter;

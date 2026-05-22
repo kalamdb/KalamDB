@@ -415,8 +415,8 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
-        let mut request_state =
-            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "BEGIN requires a request-scoped execution context".to_string(),
                 )
@@ -436,8 +436,8 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
-        let mut request_state =
-            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "COMMIT requires a request-scoped execution context".to_string(),
                 )
@@ -458,8 +458,8 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
-        let mut request_state =
-            RequestTransactionState::from_request_id(exec_ctx.request_id()).ok_or_else(|| {
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "ROLLBACK requires a request-scoped execution context".to_string(),
                 )
@@ -717,8 +717,7 @@ impl SqlExecutor {
 
                 // Native DataFusion DML path (provider insert/update/delete hooks)
                 SqlStatementKind::Insert(_) => {
-                    self
-                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
                         .await?;
                     if params.is_empty() {
                         if let Some(result) = self
@@ -752,8 +751,7 @@ impl SqlExecutor {
                     }
                 },
                 SqlStatementKind::Update(_) => {
-                    self
-                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
                         .await?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
@@ -765,8 +763,7 @@ impl SqlExecutor {
                     .await
                 },
                 SqlStatementKind::Delete(_) => {
-                    self
-                        .reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
+                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)
                         .await?;
                     self.execute_dml_via_datafusion(
                         classified.as_str(),
@@ -859,8 +856,8 @@ impl SqlExecutor {
 
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
-        let mut request_state =
-            RequestTransactionState::from_request_id(dml_exec_ctx.request_id()).ok_or_else(|| {
+        let mut request_state = RequestTransactionState::from_request_id(dml_exec_ctx.request_id())
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "autocommit DML requires a request-scoped execution context".to_string(),
                 )

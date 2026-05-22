@@ -266,7 +266,13 @@ mod tests {
         let second = write_set
             .latest_mutation_for_scope(&table_id, Some(&second_user), "1")
             .expect("second user mutation");
-        assert_eq!(first.payload.values.get("name"), Some(&ScalarValue::Utf8(Some("alice".to_string()))));
-        assert_eq!(second.payload.values.get("name"), Some(&ScalarValue::Utf8(Some("bob".to_string()))));
+        assert_eq!(
+            first.payload.values.get("name"),
+            Some(&ScalarValue::Utf8(Some("alice".to_string())))
+        );
+        assert_eq!(
+            second.payload.values.get("name"),
+            Some(&ScalarValue::Utf8(Some("bob".to_string())))
+        );
     }
 }

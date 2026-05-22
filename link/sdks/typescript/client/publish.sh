@@ -37,6 +37,34 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
 fi
 export NODE_AUTH_TOKEN
 
+PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL:-https://registry.npmjs.org}"
+PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL%/}"
+PUBLISH_REGISTRY_NAME="${PUBLISH_REGISTRY_NAME:-npm}"
+PUBLISH_ACCESS="${PUBLISH_ACCESS-public}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_URL#https://}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST#http://}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST%/}"
+REGISTRY_FLAG="--registry $PUBLISH_REGISTRY_URL"
+ACCESS_FLAG=""
+if [[ -n "$PUBLISH_ACCESS" ]]; then
+  ACCESS_FLAG="--access $PUBLISH_ACCESS"
+fi
+PUBLISH_SCOPE_SOURCE="${PUBLISH_SCOPE_SOURCE:-@kalamdb}"
+PUBLISH_SCOPE_OVERRIDE="${PUBLISH_SCOPE_OVERRIDE:-}"
+STAGED_PUBLISH_DIR=""
+LOCAL_NPMRC=""
+
+cleanup_publish_artifacts() {
+  if [[ -n "$LOCAL_NPMRC" ]]; then
+    rm -f "$LOCAL_NPMRC"
+  fi
+  if [[ -n "$STAGED_PUBLISH_DIR" ]]; then
+    rm -rf "$STAGED_PUBLISH_DIR"
+  fi
+}
+
+trap cleanup_publish_artifacts EXIT
+
 # ─── Defaults ────────────────────────────────────────────────────────────────
 FORCE_PUBLISH=false
 SKIP_BUILD=false
@@ -86,7 +114,6 @@ if [[ -n "$VERSION_OVERRIDE" ]]; then
   VERSION="$VERSION_OVERRIDE"
   echo "📌 Using overridden version: $VERSION"
 else
-  PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).name" "$PACKAGE_JSON")"
   VERSION="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$PACKAGE_JSON")"
   if [[ -z "$VERSION" ]]; then
     echo "❌ Failed to read version from $PACKAGE_JSON"
@@ -94,23 +121,6 @@ else
   fi
   echo "📋 Version read from package.json: $VERSION"
 fi
-
-if [[ -z "${PACKAGE_NAME:-}" ]]; then
-  PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).name" "$PACKAGE_JSON")"
-fi
-
-PACKAGE_REGISTRY_URL="https://registry.npmjs.org/${PACKAGE_NAME}"
-PACKAGE_NPM_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
-
-echo ""
-echo "══════════════════════════════════════════════════════"
-echo "  $PACKAGE_NAME npm publish"
-echo "  Version  : $VERSION"
-echo "  Force    : $FORCE_PUBLISH"
-echo "  Dry-run  : $DRY_RUN"
-echo "  Skip-build: $SKIP_BUILD"
-echo "══════════════════════════════════════════════════════"
-echo ""
 
 cd "$SDK_DIR"
 
@@ -138,6 +148,39 @@ fi
 # npm version "$VERSION" --no-git-tag-version --allow-same-version
 # echo "   $(grep '"version"' package.json | head -n1 | xargs)"
 
+PUBLISH_DIR="$SDK_DIR"
+PUBLISH_PACKAGE_JSON="$PACKAGE_JSON"
+if [[ -n "$PUBLISH_SCOPE_OVERRIDE" && "$PUBLISH_SCOPE_OVERRIDE" != "$PUBLISH_SCOPE_SOURCE" ]]; then
+  STAGED_PUBLISH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-ts-publish.XXXXXX")"
+  node "$SDK_DIR/../scripts/prepare-publish-dir.mjs" \
+    "$SDK_DIR" \
+    "$STAGED_PUBLISH_DIR" \
+    "$PUBLISH_SCOPE_SOURCE" \
+    "$PUBLISH_SCOPE_OVERRIDE"
+  PUBLISH_DIR="$STAGED_PUBLISH_DIR"
+  PUBLISH_PACKAGE_JSON="$PUBLISH_DIR/package.json"
+  echo "📦 Prepared staged publish package in $PUBLISH_DIR with scope $PUBLISH_SCOPE_OVERRIDE"
+fi
+
+PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).name" "$PUBLISH_PACKAGE_JSON")"
+PACKAGE_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${PACKAGE_NAME}"
+PACKAGE_PAGE_URL=""
+if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
+  PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
+fi
+
+echo ""
+echo "══════════════════════════════════════════════════════"
+echo "  $PACKAGE_NAME $PUBLISH_REGISTRY_NAME publish"
+echo "  Version  : $VERSION"
+echo "  Force    : $FORCE_PUBLISH"
+echo "  Dry-run  : $DRY_RUN"
+echo "  Skip-build: $SKIP_BUILD"
+echo "══════════════════════════════════════════════════════"
+echo ""
+
+cd "$PUBLISH_DIR"
+
 # ─── Determine npm dist-tags for pre-release versions ────────────────────────
 # Always publish to latest, and preserve a prerelease tag like rc/beta as an
 # additional dist-tag when the version contains a prerelease segment.
@@ -160,7 +203,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo "   Would also add dist-tag: $PRERELEASE_TAG"
   fi
   # shellcheck disable=SC2086
-  npm publish --access public $NPM_TAG_FLAG --dry-run --ignore-scripts
+  npm publish $ACCESS_FLAG $NPM_TAG_FLAG --dry-run --ignore-scripts $REGISTRY_FLAG
   exit 0
 fi
 
@@ -175,18 +218,16 @@ fi
 
 # ─── Write a local .npmrc with the auth token (mirrors what CI setup-node does)
 # Use a trap to always remove it on exit so the token isn't left on disk.
-LOCAL_NPMRC="$SDK_DIR/.npmrc"
-cleanup_npmrc() { rm -f "$LOCAL_NPMRC"; }
-trap cleanup_npmrc EXIT
-npm config set "//registry.npmjs.org/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
+npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
 
 # ─── Publish ──────────────────────────────────────────────────────────────────
 echo ""
-echo "🚀 Publishing $PACKAGE_NAME@$VERSION to npm..."
+echo "🚀 Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
 # --skip-build means the user has pre-built dist/; skip npm lifecycle scripts so
 # prepublishOnly doesn't re-run the full build (including wasm-pack).
 PUBLISH_SCRIPTS_FLAG=""
-if [[ "$SKIP_BUILD" == "true" ]]; then
+if [[ "$SKIP_BUILD" == "true" || -n "$STAGED_PUBLISH_DIR" ]]; then
   PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
 fi
 
@@ -199,27 +240,27 @@ fi
 add_prerelease_dist_tag() {
   if [[ -n "$PRERELEASE_TAG" ]]; then
     # shellcheck disable=SC2086
-    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG
+    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG $REGISTRY_FLAG
     echo "✅ Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
   fi
 }
 
 add_latest_dist_tag() {
   # shellcheck disable=SC2086
-  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG
+  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG $REGISTRY_FLAG
   echo "✅ Set dist-tag 'latest' for $PACKAGE_NAME@$VERSION"
 }
 
 # Check existence via npm itself so the scoped package name stays human-readable.
-if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
+if npm view "$PACKAGE_NAME@$VERSION" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
   if [[ "$FORCE_PUBLISH" == "true" ]]; then
     echo "⚠️  Version $VERSION exists. Force publish enabled — attempting to unpublish..."
-    if npm unpublish "$PACKAGE_NAME@$VERSION" --force 2>/dev/null; then
+    if npm unpublish "$PACKAGE_NAME@$VERSION" --force $REGISTRY_FLAG 2>/dev/null; then
       echo "✅ Successfully unpublished $PACKAGE_NAME@$VERSION"
       # shellcheck disable=SC2086
-      npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG
+      npm publish $ACCESS_FLAG $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG $REGISTRY_FLAG
       add_prerelease_dist_tag
-      echo "✅ Successfully republished $PACKAGE_NAME@$VERSION to npm!"
+      echo "✅ Successfully republished $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME!"
     else
       echo "❌ Failed to unpublish (version may be >72 hours old)"
       echo "💡 Tip: npm doesn't allow unpublishing after 72 hours."
@@ -227,7 +268,7 @@ if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
       exit 1
     fi
   else
-    echo "ℹ️  Version $VERSION already exists on npm — updating dist-tags instead of republishing."
+    echo "ℹ️  Version $VERSION already exists on $PUBLISH_REGISTRY_NAME — updating dist-tags instead of republishing."
     add_latest_dist_tag
     add_prerelease_dist_tag
     exit 0
@@ -235,10 +276,12 @@ if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
 else
   # shellcheck disable=SC2086
   # shellcheck disable=SC2086
-  if npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG 2>&1; then
+  if npm publish $ACCESS_FLAG $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG $REGISTRY_FLAG 2>&1; then
     add_prerelease_dist_tag
-    echo "✅ Successfully published $PACKAGE_NAME@$VERSION to npm!"
-    echo "   npm page    : $PACKAGE_NPM_PAGE_URL"
+    echo "✅ Successfully published $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME!"
+    if [[ -n "$PACKAGE_PAGE_URL" ]]; then
+      echo "   package page: $PACKAGE_PAGE_URL"
+    fi
     echo "   registry API: $PACKAGE_REGISTRY_URL"
   else
     NPM_PUBLISH_EXIT=$?
