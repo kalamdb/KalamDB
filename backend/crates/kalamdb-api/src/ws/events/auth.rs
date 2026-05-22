@@ -197,7 +197,13 @@ async fn authenticate_ws_request(
 
         let auth_result = match authenticate(auth_request, connection_info, user_repo).await {
             Ok(result) => result.user,
-            Err(_e) => {
+            Err(e) => {
+                log::debug!(
+                    "WebSocket authentication failed: connection_id={}, user_id={}, error={}",
+                    connection_id,
+                    user_id_for_log.as_str(),
+                    e
+                );
                 let _ = send_auth_error(session.clone(), "Invalid credentials").await;
                 return Err("Authentication failed".to_string());
             },

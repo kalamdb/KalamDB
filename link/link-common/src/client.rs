@@ -71,6 +71,9 @@ pub struct KalamLinkClient {
     connection: Arc<Mutex<Option<Arc<SharedConnection>>>>,
 }
 
+/// Borrowed file upload tuple used by query helpers.
+pub type QueryUploadFile<'a> = (&'a str, &'a str, Vec<u8>, Option<&'a str>);
+
 /// Builder for configuring [`KalamLinkClient`] instances.
 pub struct KalamLinkClientBuilder {
     base_url: Option<String>,

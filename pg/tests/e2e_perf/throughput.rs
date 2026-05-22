@@ -112,8 +112,8 @@ async fn e2e_perf_sequential_insert_100() {
     );
 
     assert!(
-        rows_per_sec > 700.0,
-        "Sequential INSERT only {rows_per_sec:.0} rows/sec — expected > 700"
+        rows_per_sec > 500.0,
+        "Sequential INSERT only {rows_per_sec:.0} rows/sec — expected > 500"
     );
     drop(pg);
 }

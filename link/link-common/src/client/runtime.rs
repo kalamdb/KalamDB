@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{KalamLinkClient, KalamLinkClientBuilder};
+use super::{KalamLinkClient, KalamLinkClientBuilder, QueryUploadFile};
 #[cfg(feature = "consumer")]
 use crate::consumer::ConsumerBuilder;
 use crate::{
@@ -46,7 +46,7 @@ impl KalamLinkClient {
     pub async fn execute_query(
         &self,
         sql: &str,
-        files: Option<Vec<(&str, &str, Vec<u8>, Option<&str>)>>,
+        files: Option<Vec<QueryUploadFile<'_>>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
@@ -57,7 +57,7 @@ impl KalamLinkClient {
     pub async fn execute_query_with_progress(
         &self,
         sql: &str,
-        files: Option<Vec<(&str, &str, Vec<u8>, Option<&str>)>>,
+        files: Option<Vec<QueryUploadFile<'_>>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
@@ -89,7 +89,7 @@ impl KalamLinkClient {
     pub async fn execute_with_files(
         &self,
         sql: &str,
-        files: Vec<(&str, &str, Vec<u8>, Option<&str>)>,
+        files: Vec<QueryUploadFile<'_>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
@@ -101,7 +101,7 @@ impl KalamLinkClient {
     pub async fn execute_with_files_with_progress(
         &self,
         sql: &str,
-        files: Vec<(&str, &str, Vec<u8>, Option<&str>)>,
+        files: Vec<QueryUploadFile<'_>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
@@ -140,26 +140,22 @@ impl KalamLinkClient {
             }
         }
 
-        // Phase 1: Send the protocol subscribe command while holding the lock (fast —
-        // only enqueues a channel message).  Grab the unsub/progress senders
-        // and the oneshot for the Ready ack, then release the lock so other
-        // callers can pipeline their own subscribes concurrently.
-        let pending = {
+        let conn = {
             let conn_guard = self.connection.lock().await;
-            if let Some(ref conn) = *conn_guard {
-                let (event_rx, result_rx) =
-                    conn.subscribe_send(config.id.clone(), config.sql, config.options).await?;
-                let shared_control = conn.subscription_control();
-                Some((event_rx, result_rx, shared_control))
-            } else {
-                None
-            }
+            conn_guard.clone()
         };
-        // Lock released here ↑
 
-        // Phase 2: Wait for the server ack without the lock held. Initial
-        // snapshot batches continue through the returned subscription stream.
-        if let Some((event_rx, result_rx, shared_control)) = pending {
+        if let Some(conn) = conn {
+            // Send the protocol subscribe command without holding the client
+            // connection mutex. The command channel is bounded and can apply
+            // backpressure, so awaiting it while locked would serialize or
+            // stall unrelated connection operations.
+            let (event_rx, result_rx) =
+                conn.subscribe_send(config.id.clone(), config.sql, config.options).await?;
+            let shared_control = conn.subscription_control();
+
+            // Wait for the server ack without the lock held. Initial snapshot
+            // batches continue through the returned subscription stream.
             let (generation, resume_from) = result_rx.await.map_err(|_| {
                 KalamLinkError::WebSocketError(
                     "Connection task died before confirming subscribe".to_string(),
@@ -214,9 +210,11 @@ impl KalamLinkClient {
     /// After calling this, all subsequent [`live_events()`](Self::live_events)
     /// and [`live()`](Self::live) calls will multiplex over the single connection.
     pub async fn connect(&self) -> Result<()> {
-        let mut conn_guard = self.connection.lock().await;
-        if conn_guard.is_some() {
-            return Ok(());
+        {
+            let conn_guard = self.connection.lock().await;
+            if conn_guard.is_some() {
+                return Ok(());
+            }
         }
 
         let resolved_auth = match self.fresh_auth().await? {
@@ -228,16 +226,24 @@ impl KalamLinkClient {
         };
         self.update_shared_auth(resolved_auth);
 
-        let conn = crate::connection::SharedConnection::connect(
-            self.base_url.clone(),
-            self.shared_resolved_auth.clone(),
-            self.timeouts.clone(),
-            self.connection_options.clone(),
-            self.event_handlers.clone(),
-        )
-        .await?;
+        let conn = Arc::new(
+            crate::connection::SharedConnection::connect(
+                self.base_url.clone(),
+                self.shared_resolved_auth.clone(),
+                self.timeouts.clone(),
+                self.connection_options.clone(),
+                self.event_handlers.clone(),
+            )
+            .await?,
+        );
 
-        *conn_guard = Some(Arc::new(conn));
+        let mut conn_guard = self.connection.lock().await;
+        if conn_guard.is_none() {
+            *conn_guard = Some(conn);
+        } else {
+            drop(conn_guard);
+            conn.disconnect().await;
+        }
         Ok(())
     }
 
@@ -254,8 +260,11 @@ impl KalamLinkClient {
 
     /// Cancel / unsubscribe a subscription by ID on the shared connection.
     pub async fn cancel_subscription(&self, id: &str) -> Result<()> {
-        let guard = self.connection.lock().await;
-        if let Some(ref conn) = *guard {
+        let conn = {
+            let guard = self.connection.lock().await;
+            guard.clone()
+        };
+        if let Some(conn) = conn {
             conn.unsubscribe(id).await?;
         }
         Ok(())
@@ -273,8 +282,11 @@ impl KalamLinkClient {
 
     /// List all active subscriptions on the shared connection.
     pub async fn subscriptions(&self) -> Vec<SubscriptionInfo> {
-        let guard = self.connection.lock().await;
-        match guard.as_ref() {
+        let conn = {
+            let guard = self.connection.lock().await;
+            guard.clone()
+        };
+        match conn.as_ref() {
             Some(conn) => conn.list_subscriptions().await,
             None => Vec::new(),
         }

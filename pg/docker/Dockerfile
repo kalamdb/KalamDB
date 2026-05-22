@@ -66,6 +66,7 @@ COPY backend/crates/kalamdb-commons/Cargo.toml     backend/crates/kalamdb-common
 COPY backend/crates/kalamdb-macros/Cargo.toml      backend/crates/kalamdb-macros/Cargo.toml
 COPY backend/crates/kalamdb-pg/Cargo.toml          backend/crates/kalamdb-pg/Cargo.toml
 COPY backend/crates/kalamdb-server-auth/Cargo.toml backend/crates/kalamdb-server-auth/Cargo.toml
+COPY backend/crates/kalamdb-row-filter/Cargo.toml  backend/crates/kalamdb-row-filter/Cargo.toml
 
 # Remaining workspace members — resolver needs the manifest, not the source
 COPY backend/Cargo.toml backend/Cargo.toml
@@ -81,6 +82,7 @@ COPY backend/crates/kalamdb-api/Cargo.toml           backend/crates/kalamdb-api/
 COPY backend/crates/kalamdb-session/Cargo.toml       backend/crates/kalamdb-session/Cargo.toml
 COPY backend/crates/kalamdb-session-datafusion/Cargo.toml backend/crates/kalamdb-session-datafusion/Cargo.toml
 COPY backend/crates/kalamdb-transactions/Cargo.toml  backend/crates/kalamdb-transactions/Cargo.toml
+COPY backend/crates/kalamdb-datafusion-sources/Cargo.toml backend/crates/kalamdb-datafusion-sources/Cargo.toml
 COPY backend/crates/kalamdb-observability/Cargo.toml backend/crates/kalamdb-observability/Cargo.toml
 COPY backend/crates/kalamdb-publisher/Cargo.toml     backend/crates/kalamdb-publisher/Cargo.toml
 COPY backend/crates/kalamdb-raft/Cargo.toml          backend/crates/kalamdb-raft/Cargo.toml
@@ -114,9 +116,10 @@ RUN set -e \
     && mkdir -p link/kalam-client/src && touch link/kalam-client/src/lib.rs \
     && mkdir -p link/kalam-consumer-wasm/src && touch link/kalam-consumer-wasm/src/lib.rs \
     && mkdir -p link/kalam-link-dart/src && touch link/kalam-link-dart/src/lib.rs \
-    && for c in kalamdb-configs kalamdb-store kalamdb-system kalamdb-filestore \
-         kalamdb-core kalamdb-tables kalamdb-streams kalamdb-auth \
-         kalamdb-api kalamdb-session kalamdb-session-datafusion kalamdb-transactions \
+        && for c in kalamdb-row-filter kalamdb-configs kalamdb-store kalamdb-system kalamdb-filestore \
+            kalamdb-core kalamdb-tables kalamdb-streams kalamdb-auth \
+            kalamdb-api kalamdb-session kalamdb-session-datafusion kalamdb-transactions \
+            kalamdb-datafusion-sources \
          kalamdb-observability kalamdb-publisher \
          kalamdb-raft kalamdb-sharding kalamdb-views kalamdb-vector kalamdb-dba \
          kalamdb-live kalamdb-jobs kalamdb-plan-cache kalamdb-dialect; do \

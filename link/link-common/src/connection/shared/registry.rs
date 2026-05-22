@@ -18,6 +18,9 @@ use crate::{
     SeqId,
 };
 
+pub(super) type SubscriptionReady = Result<(u64, Option<SeqId>)>;
+type SubscriptionReadySender = oneshot::Sender<SubscriptionReady>;
+
 #[inline]
 pub(super) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
@@ -102,7 +105,7 @@ pub(super) fn register_subscription_entry(
     mut options: SubscriptionOptions,
     request_initial_data: bool,
     event_tx: mpsc::Sender<Result<ChangeEvent>>,
-    result_tx: oneshot::Sender<Result<(u64, Option<SeqId>)>>,
+    result_tx: SubscriptionReadySender,
 ) -> (u64, Option<SeqId>) {
     let effective_from = merge_resume_from(&mut options, seq_id_cache.remove(&id));
     let generation = *next_generation;
@@ -244,9 +247,13 @@ pub(super) fn resolve_subscription_key(
     if subs.contains_key(sub_id) {
         Some(SubscriptionKeyMatch::Direct)
     } else {
-        subs.keys()
-            .find(|client_id| sub_id.ends_with(client_id.as_str()))
-            .map(|client_id| SubscriptionKeyMatch::Fallback(client_id.clone()))
+        let mut suffix_matches =
+            subs.keys().filter(|client_id| sub_id.ends_with(client_id.as_str()));
+        let first_match = suffix_matches.next()?.clone();
+        if suffix_matches.next().is_some() {
+            return None;
+        }
+        Some(SubscriptionKeyMatch::Fallback(first_match))
     }
 }
 
@@ -257,7 +264,7 @@ pub(super) enum ConnCmd {
         options: SubscriptionOptions,
         request_initial_data: bool,
         event_tx: mpsc::Sender<Result<ChangeEvent>>,
-        result_tx: oneshot::Sender<Result<(u64, Option<SeqId>)>>,
+        result_tx: SubscriptionReadySender,
     },
     Unsubscribe {
         id: String,
@@ -287,7 +294,7 @@ pub(super) struct SubEntry {
     pub(super) generation: u64,
     pub(super) created_at_ms: u64,
     pub(super) last_event_time_ms: Option<u64>,
-    pub(super) pending_result_tx: Option<oneshot::Sender<Result<(u64, Option<SeqId>)>>>,
+    pub(super) pending_result_tx: Option<SubscriptionReadySender>,
     pub(super) ready_deadline: Option<TokioInstant>,
     pub(super) reconnect_resubscribe_pending: bool,
 }

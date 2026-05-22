@@ -13,6 +13,8 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SERVER_URL,
+  ADMIN_USER,
+  ADMIN_PASS,
   connectJwtClient,
   uniqueName,
   ensureNamespace,
@@ -20,7 +22,7 @@ import {
   jwtAuthProvider,
   sleep,
 } from '../helpers.mjs';
-import { createClient } from '../../../dist/src/index.js';
+import { createClient, Auth } from '../../../dist/src/index.js';
 
 async function waitFor(predicate, timeoutMs = 10_000, intervalMs = 100) {
   const start = Date.now();
@@ -675,5 +677,193 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
     assert.ok(res2.results?.length > 0, 'query after reconnect');
 
     await shutdownClient(c);
+  });
+
+  test('basic auth refresh and re-login resume typed live workflow without replay', async () => {
+    const tblTyped = `${ns}.typed_auth_resume`;
+    const sql = `SELECT id, category, active, score, attempt_count, created_at FROM ${tblTyped} WHERE active = true`;
+    const runtimeStart = Date.now();
+
+    const phaseOneRows = [
+      { id: 51001, category: 'seed', score: 1.25, attemptCount: 10n, createdAt: '2026-04-01T10:00:00Z' },
+      { id: 51002, category: 'seed', score: 2.5, attemptCount: 20n, createdAt: '2026-04-01T10:01:00Z' },
+      { id: 51003, category: 'seed', score: 3.75, attemptCount: 30n, createdAt: '2026-04-01T10:02:00Z' },
+    ];
+    const gapRow = {
+      id: 51004,
+      category: 'gap',
+      score: 4.5,
+      attemptCount: 40n,
+      createdAt: '2026-04-01T10:03:00Z',
+    };
+    const phaseTwoRows = [
+      { id: 51005, category: 'post', score: 5.5, attemptCount: 50n, createdAt: '2026-04-01T10:04:00Z' },
+      { id: 51006, category: 'post', score: 6.75, attemptCount: 60n, createdAt: '2026-04-01T10:05:00Z' },
+      { id: 51007, category: 'post', score: 7.0, attemptCount: 70n, createdAt: '2026-04-01T10:06:00Z' },
+      { id: 51008, category: 'post', score: 8.125, attemptCount: 80n, createdAt: '2026-04-01T10:07:00Z' },
+    ];
+
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS ${tblTyped} (
+        id INT PRIMARY KEY,
+        category TEXT NOT NULL,
+        active BOOLEAN NOT NULL,
+        score DOUBLE,
+        attempt_count BIGINT,
+        created_at TIMESTAMP
+      )`,
+    );
+
+    const writer = await connectJwtClient();
+    const basicClient = createClient({
+      url: SERVER_URL,
+      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      wsLazyConnect: true,
+    });
+
+    try {
+      const firstLogin = await basicClient.login();
+      assert.ok(firstLogin.access_token, 'expected initial access token');
+      assert.ok(firstLogin.refresh_token, 'expected initial refresh token');
+
+      const preEvents = [];
+      const stopPre = await basicClient.liveEvents(
+        sql,
+        (event) => preEvents.push(event),
+        { lastRows: 0 },
+      );
+
+      await waitFor(() => preEvents.some((event) => event.type === 'subscription_ack'));
+
+      for (const row of phaseOneRows) {
+        await writer.query(
+          `INSERT INTO ${tblTyped} (id, category, active, score, attempt_count, created_at)
+           VALUES (${row.id}, '${row.category}', true, ${row.score}, ${row.attemptCount.toString()}, '${row.createdAt}')`,
+        );
+
+        await waitFor(() => hasRowId(preEvents, row.id));
+
+        const fetched = await basicClient.queryOne(
+          `SELECT id, category, active, score, attempt_count, created_at FROM ${tblTyped} WHERE id = ${row.id}`,
+        );
+        assert.equal(fetched.id.asInt(), row.id);
+        assert.equal(fetched.category.asString(), row.category);
+        assert.equal(fetched.active.asBool(), true);
+        assert.equal(fetched.score.asFloat(), row.score);
+        assert.equal(fetched.attempt_count.asBigInt(), row.attemptCount);
+        assert.equal(fetched.created_at.asDate().toISOString(), `${row.createdAt.replace('Z', '.000Z')}`);
+
+        await sleep(900);
+      }
+
+      const refreshed = await basicClient.refreshToken(firstLogin.refresh_token);
+      assert.ok(refreshed.access_token, 'expected refreshed access token');
+
+      await writer.query(
+        `UPDATE ${tblTyped}
+         SET score = 11.25, attempt_count = 11
+         WHERE id = ${phaseOneRows[0].id}`,
+      );
+      await waitFor(() => extractRows(preEvents).some((row) => unwrapCell(row.id) === phaseOneRows[0].id));
+
+      const refreshedRow = await basicClient.queryOne(
+        `SELECT score, attempt_count FROM ${tblTyped} WHERE id = ${phaseOneRows[0].id}`,
+      );
+      assert.equal(refreshedRow.score.asFloat(), 11.25);
+      assert.equal(refreshedRow.attempt_count.asBigInt(), 11n);
+
+      await sleep(900);
+
+      await waitFor(() => {
+        const sub = basicClient.getSubscriptions().find((entry) => entry.tableName === sql);
+        return !!sub?.lastSeqId;
+      });
+      const checkpoint = basicClient.getSubscriptions().find((entry) => entry.tableName === sql)?.lastSeqId;
+      assert.ok(checkpoint, 'expected checkpoint before re-login');
+
+      await stopPre();
+
+      const secondLogin = await basicClient.login();
+      assert.ok(secondLogin.access_token, 'expected re-login access token');
+
+      const countBeforeDisconnect = await basicClient.queryOne(
+        `SELECT COUNT(*) AS total FROM ${tblTyped} WHERE active = true`,
+      );
+      assert.equal(countBeforeDisconnect.total.asInt(), phaseOneRows.length);
+
+      await basicClient.disconnect();
+      assert.equal(basicClient.isConnected(), false, 'basic client should disconnect before resume');
+
+      await writer.query(
+        `INSERT INTO ${tblTyped} (id, category, active, score, attempt_count, created_at)
+         VALUES (${gapRow.id}, '${gapRow.category}', true, ${gapRow.score}, ${gapRow.attemptCount.toString()}, '${gapRow.createdAt}')`,
+      );
+      await writer.query(`DELETE FROM ${tblTyped} WHERE id = ${phaseOneRows[1].id}`);
+
+      await sleep(900);
+
+      const resumedEvents = [];
+      const stopResumed = await basicClient.liveEvents(
+        sql,
+        (event) => resumedEvents.push(event),
+        { from: checkpoint, lastRows: 0 },
+      );
+
+      try {
+        await waitFor(() => resumedEvents.some((event) => event.type === 'subscription_ack'));
+        await waitFor(() => hasRowId(resumedEvents, gapRow.id));
+
+        for (const row of phaseTwoRows) {
+          await writer.query(
+            `INSERT INTO ${tblTyped} (id, category, active, score, attempt_count, created_at)
+             VALUES (${row.id}, '${row.category}', true, ${row.score}, ${row.attemptCount.toString()}, '${row.createdAt}')`,
+          );
+
+          await waitFor(() => hasRowId(resumedEvents, row.id));
+
+          const fetched = await basicClient.queryOne(
+            `SELECT id, category, active, score, attempt_count, created_at FROM ${tblTyped} WHERE id = ${row.id}`,
+          );
+          assert.equal(fetched.id.asInt(), row.id);
+          assert.equal(fetched.category.asString(), row.category);
+          assert.equal(fetched.active.asBool(), true);
+          assert.equal(fetched.score.asFloat(), row.score);
+          assert.equal(fetched.attempt_count.asBigInt(), row.attemptCount);
+          assert.equal(fetched.created_at.asDate().toISOString(), `${row.createdAt.replace('Z', '.000Z')}`);
+
+          await sleep(1_000);
+        }
+
+        assertRowsStrictlyAfter(resumedEvents, checkpoint, 'basic-auth-refresh-resume');
+        assertNoDuplicateSeqRows(resumedEvents, 'basic-auth-refresh-resume');
+        assert.ok(!hasRowId(resumedEvents, phaseOneRows[0].id), 'should not replay pre-checkpoint row 51001');
+        assert.ok(!hasRowId(resumedEvents, phaseOneRows[1].id), 'should not replay deleted pre-checkpoint row 51002');
+        assert.ok(!hasRowId(resumedEvents, phaseOneRows[2].id), 'should not replay pre-checkpoint row 51003');
+
+        const finalRows = await basicClient.queryAll(
+          `SELECT id, category, active, score, attempt_count, created_at FROM ${tblTyped} ORDER BY id`,
+        );
+        assert.deepEqual(
+          finalRows.map((row) => row.id.asInt()),
+          [51001, 51003, 51004, 51005, 51006, 51007, 51008],
+        );
+        assert.equal(finalRows[0].score.asFloat(), 11.25);
+        assert.equal(finalRows[0].attempt_count.asBigInt(), 11n);
+        assert.equal(finalRows[0].category.asString(), 'seed');
+        assert.equal(finalRows[2].category.asString(), 'gap');
+        assert.equal(finalRows.at(-1).created_at.asDate().toISOString(), '2026-04-01T10:07:00.000Z');
+
+        assert.ok(
+          Date.now() - runtimeStart >= 8_000,
+          'workflow should exercise a long-running multi-iteration path',
+        );
+      } finally {
+        await stopResumed();
+      }
+    } finally {
+      await dropTable(client, tblTyped);
+      await shutdownClient(writer);
+      await shutdownClient(basicClient);
+    }
   });
 });

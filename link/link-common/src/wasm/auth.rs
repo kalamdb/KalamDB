@@ -1,4 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
+use wasm_bindgen::prelude::JsValue;
+use wasm_bindgen_futures::JsFuture;
 
 use crate::models::{ClientMessage, ProtocolOptions, WsAuthCredentials};
 
@@ -45,4 +47,40 @@ impl WasmAuthProvider {
             WasmAuthProvider::None => None,
         }
     }
+}
+
+pub(crate) async fn resolve_auth_provider(
+    auth_provider_cb: Option<js_sys::Function>,
+    fallback: WasmAuthProvider,
+) -> Result<WasmAuthProvider, JsValue> {
+    let Some(cb) = auth_provider_cb else {
+        return Ok(fallback);
+    };
+
+    let result = JsFuture::from(js_sys::Promise::resolve(
+        &cb.call0(&JsValue::NULL)
+            .map_err(|error| JsValue::from_str(&format!("authProvider threw: {:?}", error)))?,
+    ))
+    .await?;
+
+    auth_from_js_value(result)
+}
+
+fn auth_from_js_value(value: JsValue) -> Result<WasmAuthProvider, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(WasmAuthProvider::None);
+    }
+
+    let jwt_obj = js_sys::Reflect::get(&value, &"jwt".into()).ok();
+    if let Some(jwt) = jwt_obj.filter(|jwt| !jwt.is_undefined() && !jwt.is_null()) {
+        let token = js_sys::Reflect::get(&jwt, &"token".into())
+            .ok()
+            .and_then(|token| token.as_string())
+            .ok_or_else(|| {
+                JsValue::from_str("authProvider result must have shape { jwt: { token: string } }")
+            })?;
+        return Ok(WasmAuthProvider::Jwt { token });
+    }
+
+    Ok(WasmAuthProvider::None)
 }

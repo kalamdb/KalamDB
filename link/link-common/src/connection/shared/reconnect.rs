@@ -333,7 +333,6 @@ pub(super) async fn connection_task(
             }
         },
         Err(error) => {
-            log::warn!("Initial connection failed (will connect on first subscribe): {}", error);
             if let Some(tx) = ready_tx {
                 let _ = tx.send(Err(error));
             }

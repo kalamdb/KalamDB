@@ -3,8 +3,11 @@ use std::sync::Arc;
 use jsonwebtoken::Algorithm;
 use kalamdb_commons::{
     models::{ConnectionInfo, UserId},
-    AuthType,
+    AuthType, Role,
 };
+use kalamdb_system::providers::storages::models::StorageMode;
+use kalamdb_system::{AuthData, User};
+use sha2::{Digest, Sha256};
 use tracing::Instrument;
 
 use crate::{
@@ -34,7 +37,15 @@ pub(super) async fn authenticate_bearer(
 
         jwt_auth::verify_issuer(&issuer, &config.trusted_issuers)?;
 
-        let claims = validate_bearer_token(token, &alg, &issuer, config).await?;
+        tracing::debug!(
+            issuer = %issuer,
+            algorithm = ?alg,
+            oauth_auto_provision = config.oauth_auto_provision,
+            trusted_issuer_count = config.trusted_issuers.len(),
+            "Bearer JWT issuer accepted"
+        );
+
+        let claims = validate_bearer_token(token, &alg, &issuer, &config).await?;
 
         let is_internal = jwt_auth::is_internal_issuer(&claims.iss);
 
@@ -73,11 +84,16 @@ pub(super) async fn authenticate_bearer(
             }
         }
 
-        // Internal and trusted external tokens both resolve directly by canonical sub.
-        let token_user_id = UserId::try_new(claims.sub.clone()).map_err(|_| {
-            AuthError::MalformedAuthorization("Token contains an invalid user claim".to_string())
-        })?;
-        let user = repo.get_user_by_id(&token_user_id).await?;
+        let user = if is_internal {
+            let token_user_id = UserId::try_new(claims.sub.clone()).map_err(|_| {
+                AuthError::MalformedAuthorization(
+                    "Token contains an invalid user claim".to_string(),
+                )
+            })?;
+            repo.get_user_by_id(&token_user_id).await?
+        } else {
+            resolve_external_user(repo, &config, &claims).await?
+        };
 
         if user.deleted_at.is_some() {
             return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
@@ -124,7 +140,7 @@ async fn validate_bearer_token(
     token: &str,
     alg: &Algorithm,
     issuer: &str,
-    config: &'static JwtConfig,
+    config: &JwtConfig,
 ) -> AuthResult<jwt_auth::JwtClaims> {
     match alg {
         Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512 => {
@@ -179,5 +195,84 @@ async fn validate_bearer_token(
             "Unsupported JWT algorithm: {:?}",
             alg
         ))),
+    }
+}
+
+async fn resolve_external_user(
+    repo: &Arc<dyn UserRepository>,
+    config: &JwtConfig,
+    claims: &jwt_auth::JwtClaims,
+) -> AuthResult<User> {
+    let user_id = oidc_user_id(&claims.iss, &claims.sub)?;
+
+    match repo.get_user_by_id(&user_id).await {
+        Ok(user) => Ok(user),
+        Err(AuthError::UserNotFound(_)) if config.oauth_auto_provision => {
+            auto_provision_external_user(repo, config.oauth_default_role, claims, user_id).await
+        },
+        Err(AuthError::UserNotFound(_)) => {
+            Err(AuthError::InvalidCredentials("Invalid credentials".to_string()))
+        },
+        Err(err) => Err(err),
+    }
+}
+
+async fn auto_provision_external_user(
+    repo: &Arc<dyn UserRepository>,
+    default_role: Role,
+    claims: &jwt_auth::JwtClaims,
+    user_id: UserId,
+) -> AuthResult<User> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let user = User {
+        created_at: now,
+        updated_at: now,
+        locked_until: None,
+        last_login_at: None,
+        last_seen: None,
+        deleted_at: None,
+        user_id: user_id.clone(),
+        password_hash: String::new(),
+        email: claims.email.clone(),
+        auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
+        storage_id: None,
+        failed_login_attempts: 0,
+        role: default_role,
+        auth_type: AuthType::OAuth,
+        storage_mode: StorageMode::Table,
+    };
+
+    match repo.create_user(user).await {
+        Ok(()) => repo.get_user_by_id(&user_id).await,
+        Err(create_err) => match repo.get_user_by_id(&user_id).await {
+            Ok(user) => Ok(user),
+            Err(_) => Err(create_err),
+        },
+    }
+}
+
+fn oidc_user_id(issuer: &str, subject: &str) -> AuthResult<UserId> {
+    let digest = Sha256::digest(format!("{issuer}:{subject}").as_bytes());
+    let candidate = format!("u_oidc_{}", &hex::encode(digest)[..16]);
+    UserId::try_new(candidate).map_err(|_| {
+        AuthError::MalformedAuthorization(
+            "Token contains an invalid external identity claim".to_string(),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::oidc_user_id;
+
+    #[test]
+    fn test_oidc_user_id_is_deterministic() {
+        let first = oidc_user_id("https://issuer.example", "subject-123").unwrap();
+        let second = oidc_user_id("https://issuer.example", "subject-123").unwrap();
+        let different = oidc_user_id("https://issuer.example", "subject-456").unwrap();
+
+        assert_eq!(first, second);
+        assert_ne!(first, different);
+        assert!(first.as_str().starts_with("u_oidc_"));
     }
 }

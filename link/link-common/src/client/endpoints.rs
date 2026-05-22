@@ -4,6 +4,12 @@ use std::time::Instant;
 use super::KalamLinkClient;
 #[cfg(feature = "healthcheck")]
 use super::HEALTH_CHECK_TTL;
+#[cfg(any(
+    feature = "healthcheck",
+    feature = "cluster",
+    feature = "auth-flows",
+    feature = "setup"
+))]
 use crate::error::{KalamLinkError, Result};
 #[cfg(feature = "cluster")]
 use crate::models::ClusterHealthResponse;

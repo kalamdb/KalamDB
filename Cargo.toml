@@ -155,6 +155,7 @@ hostname = "0.4"
 tempfile = "3.27.0"
 wait-timeout = "0.2"
 serial_test = "3.3.1"
+testcontainers-modules = { version = "0.15.0", default-features = false, features = ["dex"] }
 
 # Benchmarking
 criterion = { version = "0.8.2", features = ["html_reports"] }

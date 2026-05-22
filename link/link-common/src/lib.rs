@@ -36,7 +36,7 @@ pub mod wasm;
 #[cfg(feature = "tokio-runtime")]
 pub use auth::{ArcDynAuthProvider, AuthProvider, DynamicAuthProvider, ResolvedAuth};
 #[cfg(feature = "tokio-runtime")]
-pub use client::KalamLinkClient;
+pub use client::{KalamLinkClient, QueryUploadFile};
 #[cfg(all(feature = "tokio-runtime", feature = "consumer"))]
 pub use consumer::ConsumerConfig;
 #[cfg(feature = "consumer")]

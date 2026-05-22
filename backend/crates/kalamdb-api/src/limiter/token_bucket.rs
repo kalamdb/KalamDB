@@ -76,7 +76,7 @@ impl TokenBucket {
         let tokens_to_add = (self.tokens_per_sec * elapsed_secs) as u32;
 
         if tokens_to_add > 0 {
-            self.tokens = self.capacity.min(self.tokens + tokens_to_add);
+            self.tokens = self.capacity.min(self.tokens.saturating_add(tokens_to_add));
             self.last_refill = now;
         }
     }
@@ -146,5 +146,13 @@ mod tests {
         // Should have some tokens but not full
         let available = bucket.available_tokens();
         assert!(available > 0 && available < 100);
+    }
+
+    #[test]
+    fn test_token_bucket_refill_saturates_without_overflow() {
+        let mut bucket = TokenBucket::new(u32::MAX, u32::MAX, Duration::from_secs(1));
+        bucket.last_refill = Instant::now() - Duration::from_millis(20);
+
+        assert_eq!(bucket.available_tokens(), u32::MAX);
     }
 }

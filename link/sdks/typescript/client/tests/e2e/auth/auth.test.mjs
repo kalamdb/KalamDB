@@ -106,6 +106,22 @@ describe('Auth', { timeout: 30_000 }, () => {
     await client.disconnect();
   });
 
+  test('basic auth eager initialize connects without deadlocking', async () => {
+    const client = createClient({
+      url: SERVER_URL,
+      authProvider: async () => Auth.basic(ADMIN_USER, ADMIN_PASS),
+      wsLazyConnect: false,
+    });
+
+    await client.initialize();
+    assert.equal(client.isConnected(), true);
+
+    const row = await client.queryOne('SELECT 1 AS ready');
+    assert.equal(row.ready.asInt(), 1);
+
+    await client.disconnect();
+  });
+
   // -----------------------------------------------------------------------
   // Initial auth state
   // -----------------------------------------------------------------------

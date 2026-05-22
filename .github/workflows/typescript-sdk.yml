@@ -216,6 +216,7 @@ jobs:
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          PLAYWRIGHT_INSTALL_DEPS: ${{ matrix.slug == 'client' && 'true' || 'false' }}
           KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
           TS_SDK_PACKAGES: ${{ matrix.slug }}
           TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.slug }}-server.log

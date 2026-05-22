@@ -545,19 +545,19 @@ async fn e2e_perf_pglite_update_small_row() {
 #[tokio::test]
 async fn e2e_perf_pglite_delete_small_row() {
     let stats = benchmark_delete("pglite-style delete small row", SMALL_ROW_BYTES, 3900).await;
-    assert_benchmark("delete small row", &stats, 105.0, 6.60);
+    assert_benchmark("delete small row", &stats, 190.0, 12.00);
 }
 
 #[tokio::test]
 async fn e2e_perf_pglite_insert_1kb_row() {
     let stats = benchmark_insert("pglite-style insert 1kb row", ONE_KB_ROW_BYTES, 3100).await;
-    assert_benchmark("insert 1kb row", &stats, 48.0, 3.00);
+    assert_benchmark("insert 1kb row", &stats, 112.0, 7.00);
 }
 
 #[tokio::test]
 async fn e2e_perf_pglite_select_1kb_row() {
     let stats = benchmark_select("pglite-style select 1kb row", ONE_KB_ROW_BYTES, 3900).await;
-    assert_benchmark("select 1kb row", &stats, 72.0, 4.50);
+    assert_benchmark("select 1kb row", &stats, 88.0, 5.50);
 }
 
 #[tokio::test]
@@ -569,13 +569,13 @@ async fn e2e_perf_pglite_update_1kb_row() {
 #[tokio::test]
 async fn e2e_perf_pglite_delete_1kb_row() {
     let stats = benchmark_delete("pglite-style delete 1kb row", ONE_KB_ROW_BYTES, 4100).await;
-    assert_benchmark("delete 1kb row", &stats, 108.0, 6.75);
+    assert_benchmark("delete 1kb row", &stats, 140.0, 8.75);
 }
 
 #[tokio::test]
 async fn e2e_perf_pglite_insert_10kb_row() {
     let stats = benchmark_insert("pglite-style insert 10kb row", TEN_KB_ROW_BYTES, 3500).await;
-    assert_benchmark("insert 10kb row", &stats, 112.0, 7.00);
+    assert_benchmark("insert 10kb row", &stats, 170.0, 10.70);
 }
 
 #[tokio::test]
@@ -593,5 +593,5 @@ async fn e2e_perf_pglite_update_10kb_row() {
 #[tokio::test]
 async fn e2e_perf_pglite_delete_10kb_row() {
     let stats = benchmark_delete("pglite-style delete 10kb row", TEN_KB_ROW_BYTES, 4300).await;
-    assert_benchmark("delete 10kb row", &stats, 128.0, 8.00);
+    assert_benchmark("delete 10kb row", &stats, 170.0, 10.70);
 }

@@ -173,3 +173,5 @@ rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }
 ntest = { workspace = true }
+sha2 = { workspace = true }
+testcontainers-modules = { workspace = true }
