@@ -1,25 +1,6 @@
 name: React SDK e2e
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'link/sdks/typescript/react/**'
-      - 'link/sdks/typescript/client/**'
-      - 'link/sdks/typescript/orm/**'
-      - 'link/link-common/**'
-      - 'link/kalam-client/**'
-      - 'link/kalam-consumer-wasm/**'
-      - '.github/workflows/react-e2e.yml'
-  pull_request:
-    paths:
-      - 'link/sdks/typescript/react/**'
-      - 'link/sdks/typescript/client/**'
-      - 'link/sdks/typescript/orm/**'
-      - 'link/link-common/**'
-      - 'link/kalam-client/**'
-      - 'link/kalam-consumer-wasm/**'
-      - '.github/workflows/react-e2e.yml'
   workflow_dispatch: {}
 
 permissions:
@@ -30,6 +11,7 @@ env:
   RUST_VERSION: "1.92.0"
   WASM_PACK_VERSION: "0.15.0"
   KALAMDB_URL: "http://127.0.0.1:2900"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   e2e:
@@ -55,7 +37,7 @@ jobs:
           python-version: '3.11'
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 

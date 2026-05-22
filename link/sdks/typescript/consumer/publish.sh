@@ -23,6 +23,8 @@ PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_URL#https://}"
 PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST#http://}"
 PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST%/}"
 BUILD_REGISTRY_URL="${BUILD_REGISTRY_URL:-https://registry.npmjs.org}"
+PUBLISH_DEPENDENCY_WAIT_ATTEMPTS="${PUBLISH_DEPENDENCY_WAIT_ATTEMPTS:-15}"
+PUBLISH_DEPENDENCY_WAIT_SECONDS="${PUBLISH_DEPENDENCY_WAIT_SECONDS:-4}"
 REGISTRY_FLAG="--registry $PUBLISH_REGISTRY_URL"
 ACCESS_FLAG=""
 if [[ -n "$PUBLISH_ACCESS" ]]; then
@@ -134,12 +136,7 @@ PACKAGE_PAGE_URL=""
 if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
   PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
 fi
-CLIENT_PACKAGE_NAME="$(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).peerDependencies ?? {}).find((name) => name.endsWith('/client')) || ''" "$PUBLISH_PACKAGE_JSON")"
-if [[ -z "$CLIENT_PACKAGE_NAME" ]]; then
-  echo "❌ Could not determine the required app-facing client package from peerDependencies."
-  exit 1
-fi
-CLIENT_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${CLIENT_PACKAGE_NAME}"
+INTERNAL_PEER_DEPENDENCIES="$(node -p "const pkg=JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const packageName=process.argv[2]; const scope = packageName.startsWith('@') ? packageName.split('/')[0] : ''; console.log(Object.keys(pkg.peerDependencies ?? {}).filter((name) => scope && name.startsWith(scope + '/') && name !== packageName).join('\n'))" "$PUBLISH_PACKAGE_JSON" "$PACKAGE_NAME")"
 
 echo ""
 echo "══════════════════════════════════════════════════════"
@@ -153,6 +150,37 @@ echo ""
 
 cd "$PUBLISH_DIR"
 
+ensure_registry_auth_configured() {
+  if [[ -n "${NODE_AUTH_TOKEN:-}" ]]; then
+    LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
+    npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+  fi
+}
+
+wait_for_dependency_version() {
+  local dependency_name="$1"
+  local dependency_registry_url="${PUBLISH_REGISTRY_URL}/${dependency_name}"
+  local attempt
+
+  for ((attempt=1; attempt<=PUBLISH_DEPENDENCY_WAIT_ATTEMPTS; attempt++)); do
+    if npm view "$dependency_name@$VERSION" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
+      echo "✅ Internal dependency ${dependency_name}@$VERSION is available on $PUBLISH_REGISTRY_NAME."
+      return 0
+    fi
+
+    if [[ "$attempt" -lt "$PUBLISH_DEPENDENCY_WAIT_ATTEMPTS" ]]; then
+      echo "⏳ Waiting for ${dependency_name}@$VERSION to appear on $PUBLISH_REGISTRY_NAME (${attempt}/${PUBLISH_DEPENDENCY_WAIT_ATTEMPTS})..."
+      sleep "$PUBLISH_DEPENDENCY_WAIT_SECONDS"
+    fi
+  done
+
+  echo "❌ ${dependency_name}@$VERSION is not published yet on $PUBLISH_REGISTRY_NAME. Publish it first."
+  echo "   registry API: $dependency_registry_url"
+  exit 1
+}
+
+ensure_registry_auth_configured
+
 NPM_TAG_FLAG="--tag latest"
 PRERELEASE_TAG=""
 if [[ "$VERSION" == *"-"* ]]; then
@@ -162,10 +190,11 @@ if [[ "$VERSION" == *"-"* ]]; then
   echo "🏷️  Pre-release version detected — publishing to latest and adding dist-tag: $PRERELEASE_TAG"
 fi
 
-if ! npm view "$CLIENT_PACKAGE_NAME@$VERSION" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
-  echo "❌ ${CLIENT_PACKAGE_NAME}@$VERSION is not published yet on $PUBLISH_REGISTRY_NAME. Publish the main package first."
-  echo "   registry API: $CLIENT_REGISTRY_URL"
-  exit 1
+if [[ -n "$INTERNAL_PEER_DEPENDENCIES" ]]; then
+  while IFS= read -r dependency_name; do
+    [[ -z "$dependency_name" ]] && continue
+    wait_for_dependency_version "$dependency_name"
+  done <<< "$INTERNAL_PEER_DEPENDENCIES"
 fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -188,8 +217,7 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
   exit 1
 fi
 
-LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
-npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+ensure_registry_auth_configured
 
 echo ""
 echo "🚀 Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."

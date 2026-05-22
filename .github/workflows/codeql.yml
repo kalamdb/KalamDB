@@ -12,8 +12,12 @@
 name: "CodeQL Advanced"
 
 on:
-  schedule:
-    - cron: '18 9 * * 0'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   analyze:

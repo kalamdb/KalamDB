@@ -11,15 +11,6 @@ on:
       - 'versions.json'
       - 'nextest.toml'
       - '.github/workflows/cli-cluster-e2e.yml'
-  pull_request:
-    paths:
-      - 'cli/**'
-      - 'scripts/cluster.sh'
-      - 'scripts/download-release-server.sh'
-      - 'scripts/resolve-latest-release-asset.py'
-      - 'versions.json'
-      - 'nextest.toml'
-      - '.github/workflows/cli-cluster-e2e.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +21,7 @@ env:
   RUST_VERSION: "1.92.0"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   resolve_versions:
