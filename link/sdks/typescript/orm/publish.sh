@@ -48,6 +48,21 @@ ACCESS_FLAG=""
 if [[ -n "$PUBLISH_ACCESS" ]]; then
   ACCESS_FLAG="--access $PUBLISH_ACCESS"
 fi
+PUBLISH_SCOPE_SOURCE="${PUBLISH_SCOPE_SOURCE:-@kalamdb}"
+PUBLISH_SCOPE_OVERRIDE="${PUBLISH_SCOPE_OVERRIDE:-}"
+STAGED_PUBLISH_DIR=""
+LOCAL_NPMRC=""
+
+cleanup_publish_artifacts() {
+  if [[ -n "$LOCAL_NPMRC" ]]; then
+    rm -f "$LOCAL_NPMRC"
+  fi
+  if [[ -n "$STAGED_PUBLISH_DIR" ]]; then
+    rm -rf "$STAGED_PUBLISH_DIR"
+  fi
+}
+
+trap cleanup_publish_artifacts EXIT
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 FORCE_PUBLISH=false
@@ -94,7 +109,6 @@ if [[ ! -f "$PACKAGE_JSON" ]]; then
   exit 1
 fi
 
-PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).name" "$PACKAGE_JSON")"
 if [[ -n "$VERSION_OVERRIDE" ]]; then
   VERSION="$VERSION_OVERRIDE"
   echo "📌 Using overridden version: $VERSION"
@@ -102,30 +116,6 @@ else
   VERSION="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$PACKAGE_JSON")"
   echo "📋 Version read from package.json: $VERSION"
 fi
-
-PACKAGE_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${PACKAGE_NAME}"
-PACKAGE_PAGE_URL=""
-if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
-  PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
-fi
-
-# ─── Resolve required peer dependency (@kalamdb/client) ──────────────────────
-CLIENT_PACKAGE_NAME="$(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).peerDependencies ?? {})[0] || ''" "$PACKAGE_JSON")"
-if [[ -z "$CLIENT_PACKAGE_NAME" ]]; then
-  echo "❌ Could not determine the required peer package from peerDependencies."
-  exit 1
-fi
-CLIENT_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${CLIENT_PACKAGE_NAME}"
-
-echo ""
-echo "══════════════════════════════════════════════════════"
-echo "  $PACKAGE_NAME $PUBLISH_REGISTRY_NAME publish"
-echo "  Version   : $VERSION"
-echo "  Force     : $FORCE_PUBLISH"
-echo "  Dry-run   : $DRY_RUN"
-echo "  Skip-build: $SKIP_BUILD"
-echo "══════════════════════════════════════════════════════"
-echo ""
 
 cd "$SDK_DIR"
 
@@ -146,6 +136,47 @@ else
     exit 1
   fi
 fi
+
+PUBLISH_DIR="$SDK_DIR"
+PUBLISH_PACKAGE_JSON="$PACKAGE_JSON"
+if [[ -n "$PUBLISH_SCOPE_OVERRIDE" && "$PUBLISH_SCOPE_OVERRIDE" != "$PUBLISH_SCOPE_SOURCE" ]]; then
+  STAGED_PUBLISH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-ts-publish.XXXXXX")"
+  node "$SDK_DIR/../scripts/prepare-publish-dir.mjs" \
+    "$SDK_DIR" \
+    "$STAGED_PUBLISH_DIR" \
+    "$PUBLISH_SCOPE_SOURCE" \
+    "$PUBLISH_SCOPE_OVERRIDE"
+  PUBLISH_DIR="$STAGED_PUBLISH_DIR"
+  PUBLISH_PACKAGE_JSON="$PUBLISH_DIR/package.json"
+  echo "📦 Prepared staged publish package in $PUBLISH_DIR with scope $PUBLISH_SCOPE_OVERRIDE"
+fi
+
+PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).name" "$PUBLISH_PACKAGE_JSON")"
+PACKAGE_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${PACKAGE_NAME}"
+PACKAGE_PAGE_URL=""
+if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
+  PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
+fi
+
+# ─── Resolve required peer dependency (@kalamdb/client) ──────────────────────
+CLIENT_PACKAGE_NAME="$(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).peerDependencies ?? {}).find((name) => name.endsWith('/client')) || ''" "$PUBLISH_PACKAGE_JSON")"
+if [[ -z "$CLIENT_PACKAGE_NAME" ]]; then
+  echo "❌ Could not determine the required peer package from peerDependencies."
+  exit 1
+fi
+CLIENT_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${CLIENT_PACKAGE_NAME}"
+
+echo ""
+echo "══════════════════════════════════════════════════════"
+echo "  $PACKAGE_NAME $PUBLISH_REGISTRY_NAME publish"
+echo "  Version   : $VERSION"
+echo "  Force     : $FORCE_PUBLISH"
+echo "  Dry-run   : $DRY_RUN"
+echo "  Skip-build: $SKIP_BUILD"
+echo "══════════════════════════════════════════════════════"
+echo ""
+
+cd "$PUBLISH_DIR"
 
 # ─── Determine npm dist-tags for pre-release versions ────────────────────────
 NPM_TAG_FLAG="--tag latest"
@@ -189,16 +220,14 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
 fi
 
 # ─── Write a local .npmrc with the auth token ────────────────────────────────
-LOCAL_NPMRC="$SDK_DIR/.npmrc"
-cleanup_npmrc() { rm -f "$LOCAL_NPMRC"; }
-trap cleanup_npmrc EXIT
+LOCAL_NPMRC="$PUBLISH_DIR/.npmrc"
 npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
 
 # ─── Publish ──────────────────────────────────────────────────────────────────
 echo ""
 echo "🚀 Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
 PUBLISH_SCRIPTS_FLAG=""
-if [[ "$SKIP_BUILD" == "true" ]]; then
+if [[ "$SKIP_BUILD" == "true" || -n "$STAGED_PUBLISH_DIR" ]]; then
   PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
 fi
 

@@ -166,7 +166,7 @@ The script checks for a clean git state, runs `dart analyze`, optionally runs te
 to [pub.dev](https://pub.dev/packages/kalam_link).
 
 Before a new release:
-1. Bump `version` in `pubspec.yaml`
+1. Update `[workspace.package].version` in the repo root `Cargo.toml`, then run `bash link/sdks/sync-versions.sh`
 2. Add an entry to `CHANGELOG.md`
 3. Rebuild native libs: `./build.sh all` (commit all artefacts)
 4. Commit + tag (`git tag dart-v0.x.y`)

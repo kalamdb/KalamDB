@@ -50,6 +50,7 @@ DOCS_VERSIONED_SECTIONS: dict[str, dict[str, Any]] = {
             {"source_group": "typescript", "package_name": "@kalamdb/client"},
             {"source_group": "typescript", "package_name": "@kalamdb/consumer"},
             {"source_group": "typescript", "package_name": "@kalamdb/orm"},
+            {"source_group": "typescript", "package_name": "@kalamdb/react"},
         ),
         "archived": (
             {"slug": "0-4-2-rc-1", "label": "0.4.2-rc.1"},

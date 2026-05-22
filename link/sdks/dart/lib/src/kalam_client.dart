@@ -808,7 +808,8 @@ class KalamClient {
         :final subscriptionId,
         :final rowsJson,
         :final lastSeqId,
-      ) => () {
+      ) =>
+        () {
           if (lastSeqId != null) {
             onCheckpoint?.call(
               LiveCheckpoint(
@@ -843,21 +844,25 @@ class KalamClient {
       gen.DartChangeEvent_InitialDataBatch(
         :final subscriptionId,
         :final rowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson),
       gen.DartChangeEvent_Insert(
         :final subscriptionId,
         :final rowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson),
       gen.DartChangeEvent_Update(
         :final subscriptionId,
         :final rowsJson,
         :final oldRowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson) ??
-          _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson) ??
+            _checkpointFromRowsJson(subscriptionId, oldRowsJson),
       gen.DartChangeEvent_Delete(
         :final subscriptionId,
         :final oldRowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, oldRowsJson),
       gen.DartChangeEvent_Ack() || gen.DartChangeEvent_Error() => null,
     };
   }

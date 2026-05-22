@@ -484,6 +484,7 @@ jobs:
       PUBLISH_REGISTRY_URL: 'https://npm.pkg.github.com'
       PUBLISH_REGISTRY_NAME: 'GitHub Packages'
       PUBLISH_ACCESS: ''
+      PUBLISH_SCOPE_OVERRIDE: '@kalamstack'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -493,7 +494,7 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@kalamdb'
+          scope: '@kalamstack'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -514,7 +515,7 @@ jobs:
           shared-key: github-packages-publish
           cache-on-failure: true
 
-      - name: Publish @kalamdb/client to GitHub Packages
+      - name: Publish @kalamstack/client to GitHub Packages
         shell: bash
         working-directory: link/sdks/typescript/client
         env:
@@ -529,7 +530,7 @@ jobs:
           chmod +x ./publish.sh
           ./publish.sh --version "$VERSION" $FORCE_FLAG
 
-      - name: Publish @kalamdb/consumer to GitHub Packages
+      - name: Publish @kalamstack/consumer to GitHub Packages
         shell: bash
         working-directory: link/sdks/typescript/consumer
         env:
@@ -544,7 +545,7 @@ jobs:
           chmod +x ./publish.sh
           ./publish.sh --version "$VERSION" $FORCE_FLAG
 
-      - name: Publish @kalamdb/orm to GitHub Packages
+      - name: Publish @kalamstack/orm to GitHub Packages
         shell: bash
         working-directory: link/sdks/typescript/orm
         env:
@@ -559,7 +560,7 @@ jobs:
           chmod +x ./publish.sh
           ./publish.sh --version "$VERSION" $FORCE_FLAG
 
-      - name: Publish @kalamdb/react to GitHub Packages
+      - name: Publish @kalamstack/react to GitHub Packages
         shell: bash
         working-directory: link/sdks/typescript/react
         env:
