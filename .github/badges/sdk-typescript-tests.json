@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "typescript sdk tests (336)",
-  "message": "336/336 passed",
-  "color": "brightgreen"
+  "message": "335/336 passed, 1 failed",
+  "color": "red"
 }
