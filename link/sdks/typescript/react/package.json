@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/react",
   "type": "module",
-  "version": "0.5.1-beta.1",
+  "version": "0.5.1-beta.2",
   "description": "React bindings for KalamDB live queries and mutation state",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
