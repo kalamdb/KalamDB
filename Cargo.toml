@@ -57,7 +57,7 @@ edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
 license = "Apache-2.0"
-repository = "https://github.com/kalamstack/KalamDB"
+repository = "https://github.com/kalamdb/KalamDB"
 
 # Shared dependencies for all crates
 [workspace.dependencies]

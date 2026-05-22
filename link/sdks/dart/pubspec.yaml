@@ -1,8 +1,8 @@
 name: kalam_link
 description: KalamDB client SDK for Dart and Flutter — queries, live subscriptions, and authentication
 version: 0.5.1-beta.1
-homepage: https://github.com/kalamstack/KalamDB
-repository: https://github.com/kalamstack/KalamDB
+homepage: https://github.com/kalamdb/KalamDB
+repository: https://github.com/kalamdb/KalamDB
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

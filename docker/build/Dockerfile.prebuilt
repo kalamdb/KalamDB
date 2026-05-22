@@ -32,7 +32,7 @@ FROM ubuntu:24.04
 ARG OCI_IMAGE_TITLE="KalamDB"
 ARG OCI_IMAGE_DESCRIPTION="KalamDB database server"
 ARG OCI_IMAGE_URL="https://kalamdb.org"
-ARG OCI_IMAGE_SOURCE="https://github.com/kalamstack/KalamDB"
+ARG OCI_IMAGE_SOURCE="https://github.com/kalamdb/KalamDB"
 ARG OCI_IMAGE_DOCUMENTATION="https://kalamdb.org/docs"
 ARG OCI_IMAGE_VENDOR="KalamDB"
 ARG OCI_IMAGE_AUTHORS="Jamal Saad"
