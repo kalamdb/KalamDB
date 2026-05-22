@@ -161,7 +161,7 @@ PACKAGE_PAGE_URL=""
 if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
   PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
 fi
-INTERNAL_PEER_DEPENDENCIES="$(node -p "const pkg=JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const packageName=process.argv[2]; const scope = packageName.startsWith('@') ? packageName.split('/')[0] : ''; console.log(Object.keys(pkg.peerDependencies ?? {}).filter((name) => scope && name.startsWith(scope + '/') && name !== packageName).join('\n'))" "$PUBLISH_PACKAGE_JSON" "$PACKAGE_NAME")"
+INTERNAL_PEER_DEPENDENCIES="$(node -p "(() => { const pkg = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); const packageName = process.argv[2]; const scope = packageName.startsWith('@') ? packageName.split('/')[0] : ''; return Object.keys(pkg.peerDependencies ?? {}).filter((name) => scope && name.startsWith(scope + '/') && name !== packageName).join('\n'); })()" "$PUBLISH_PACKAGE_JSON" "$PACKAGE_NAME")"
 
 echo ""
 echo "══════════════════════════════════════════════════════"

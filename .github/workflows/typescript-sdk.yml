@@ -104,9 +104,9 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            echo 'test_matrix={"package":["client","consumer","orm"]}' >> "$GITHUB_OUTPUT"
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"}]}' >> "$GITHUB_OUTPUT"
           else
-            echo 'test_matrix={"package":["client","consumer","orm","react"]}' >> "$GITHUB_OUTPUT"
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"react","package_name":"@kalamdb/react"}]}' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve latest released server asset
@@ -151,7 +151,7 @@ jobs:
           if-no-files-found: error
 
   test_packages:
-    name: TypeScript SDK Tests (${{ matrix.package }})
+    name: TypeScript SDK Tests (${{ matrix.package_name }})
     runs-on: ubuntu-latest
     needs:
       - resolve_versions
@@ -217,9 +217,9 @@ jobs:
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
           KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
-          TS_SDK_PACKAGES: ${{ matrix.package }}
-          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.package }}-server.log
-          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output-${{ matrix.package }}.txt
+          TS_SDK_PACKAGES: ${{ matrix.slug }}
+          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.slug }}-server.log
+          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output-${{ matrix.slug }}.txt
         run: |
           set -euo pipefail
           ./scripts/test-typescript-sdk-release.sh
@@ -229,9 +229,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="ts-sdk-test-output-${{ matrix.package }}.txt"
-          if ! grep -q "Running @kalamdb/${{ matrix.package }} tests" "$output"; then
-            echo "Missing @kalamdb/${{ matrix.package }} npm package test run in ${output}" >&2
+          output="ts-sdk-test-output-${{ matrix.slug }}.txt"
+          if ! grep -q "Running ${{ matrix.package_name }} tests" "$output"; then
+            echo "Missing ${{ matrix.package_name }} npm package test run in ${output}" >&2
             exit 1
           fi
 
@@ -240,29 +240,29 @@ jobs:
         shell: bash
         run: |
           echo "=== TypeScript SDK server log ==="
-          cat "ts-sdk-${{ matrix.package }}-server.log" || true
+          cat "ts-sdk-${{ matrix.slug }}-server.log" || true
 
       - name: Upload server log
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ts-sdk-server-log-${{ matrix.package }}
-          path: ts-sdk-${{ matrix.package }}-server.log
+          name: ts-sdk-server-log-${{ matrix.slug }}
+          path: ts-sdk-${{ matrix.slug }}-server.log
           if-no-files-found: ignore
 
       - name: Upload TypeScript SDK test output
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ts-sdk-test-output-${{ matrix.package }}
-          path: ts-sdk-test-output-${{ matrix.package }}.txt
+          name: ts-sdk-test-output-${{ matrix.slug }}
+          path: ts-sdk-test-output-${{ matrix.slug }}.txt
           if-no-files-found: ignore
 
       - name: Fail if TypeScript SDK tests failed
         if: always() && steps.run_tests.outcome != 'success'
         shell: bash
         run: |
-          echo "TypeScript SDK tests failed for ${{ matrix.package }}" >&2
+          echo "TypeScript SDK tests failed for ${{ matrix.package_name }}" >&2
           exit 1
 
   summarize_tests:
@@ -301,7 +301,10 @@ jobs:
           from pathlib import Path
 
           artifacts_dir = Path("ts-sdk-test-artifacts")
-          expected_packages = set(json.loads(os.environ["EXPECTED_PACKAGES_JSON"]).get("package", []))
+            expected_packages = {
+              entry["slug"]
+              for entry in json.loads(os.environ["EXPECTED_PACKAGES_JSON"]).get("include", [])
+            }
           found_packages = set()
           total = 0
           passed = 0
