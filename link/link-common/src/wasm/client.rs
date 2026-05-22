@@ -1481,7 +1481,25 @@ impl KalamClient {
 
         // T063E: Properly close WebSocket and cleanup resources
         if let Some(ws) = self.ws.borrow_mut().take() {
+            ws.set_onclose(None);
+            ws.set_onerror(None);
+            ws.set_onmessage(None);
             ws.close()?;
+
+            if let Some(cb) = self.on_disconnect_cb.borrow().as_ref() {
+                let reason_obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &reason_obj,
+                    &"message".into(),
+                    &JsValue::from_str("manual disconnect"),
+                );
+                let _ = js_sys::Reflect::set(
+                    &reason_obj,
+                    &"code".into(),
+                    &JsValue::from_f64(1000.0),
+                );
+                let _ = cb.call1(&JsValue::NULL, &reason_obj);
+            }
         }
 
         // Clear all subscriptions
