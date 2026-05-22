@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use super::login_request::{validate_password_length, validate_user_length};
+use kalamdb_auth::models::login_request::{validate_password_length, validate_user_length};
 
 /// Server setup request body
 #[derive(Debug, Deserialize)]

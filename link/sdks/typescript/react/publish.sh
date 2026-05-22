@@ -15,6 +15,19 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
 fi
 export NODE_AUTH_TOKEN
 
+PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL:-https://registry.npmjs.org}"
+PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL%/}"
+PUBLISH_REGISTRY_NAME="${PUBLISH_REGISTRY_NAME:-npm}"
+PUBLISH_ACCESS="${PUBLISH_ACCESS-public}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_URL#https://}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST#http://}"
+PUBLISH_REGISTRY_HOST="${PUBLISH_REGISTRY_HOST%/}"
+REGISTRY_FLAG="--registry $PUBLISH_REGISTRY_URL"
+ACCESS_FLAG=""
+if [[ -n "$PUBLISH_ACCESS" ]]; then
+  ACCESS_FLAG="--access $PUBLISH_ACCESS"
+fi
+
 FORCE_PUBLISH=false
 SKIP_BUILD=false
 DRY_RUN=false
@@ -66,18 +79,21 @@ else
   echo "Version read from package.json: $VERSION"
 fi
 
-PACKAGE_REGISTRY_URL="https://registry.npmjs.org/${PACKAGE_NAME}"
-PACKAGE_NPM_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
+PACKAGE_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${PACKAGE_NAME}"
+PACKAGE_PAGE_URL=""
+if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" ]]; then
+  PACKAGE_PAGE_URL="https://www.npmjs.com/package/${PACKAGE_NAME}"
+fi
 CLIENT_PACKAGE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).peerDependencies?.['@kalamdb/client'] ? '@kalamdb/client' : ''" "$PACKAGE_JSON")"
 if [[ -z "$CLIENT_PACKAGE_NAME" ]]; then
   echo "Could not determine the required client peer dependency."
   exit 1
 fi
-CLIENT_REGISTRY_URL="https://registry.npmjs.org/${CLIENT_PACKAGE_NAME}"
+CLIENT_REGISTRY_URL="${PUBLISH_REGISTRY_URL}/${CLIENT_PACKAGE_NAME}"
 
 echo ""
 echo "══════════════════════════════════════════════════════"
-echo "  $PACKAGE_NAME npm publish"
+echo "  $PACKAGE_NAME $PUBLISH_REGISTRY_NAME publish"
 echo "  Version   : $VERSION"
 echo "  Force     : $FORCE_PUBLISH"
 echo "  Dry-run   : $DRY_RUN"
@@ -113,12 +129,12 @@ if [[ "$VERSION" == *"-"* ]]; then
   echo "Pre-release version detected — publishing to latest and adding dist-tag: $PRERELEASE_TAG"
 fi
 
-if ! npm view "$CLIENT_PACKAGE_NAME" version --silent >/dev/null 2>&1; then
-  echo "${CLIENT_PACKAGE_NAME} is not published on npm. Publish the client package first."
+if ! npm view "$CLIENT_PACKAGE_NAME" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
+  echo "${CLIENT_PACKAGE_NAME} is not published on $PUBLISH_REGISTRY_NAME. Publish the client package first."
   echo "   registry API: $CLIENT_REGISTRY_URL"
   exit 1
 fi
-echo "Peer dependency ${CLIENT_PACKAGE_NAME} is available on npm."
+echo "Peer dependency ${CLIENT_PACKAGE_NAME} is available on $PUBLISH_REGISTRY_NAME."
 
 if [[ "$DRY_RUN" == "true" ]]; then
   echo ""
@@ -128,7 +144,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo "   Would also add dist-tag: $PRERELEASE_TAG"
   fi
   # shellcheck disable=SC2086
-  npm publish --access public $NPM_TAG_FLAG --dry-run --ignore-scripts
+  npm publish $ACCESS_FLAG $NPM_TAG_FLAG --dry-run --ignore-scripts $REGISTRY_FLAG
   exit 0
 fi
 
@@ -143,10 +159,10 @@ fi
 LOCAL_NPMRC="$SDK_DIR/.npmrc"
 cleanup_npmrc() { rm -f "$LOCAL_NPMRC"; }
 trap cleanup_npmrc EXIT
-npm config set "//registry.npmjs.org/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
+npm config set "//${PUBLISH_REGISTRY_HOST}/:_authToken" "${NODE_AUTH_TOKEN}" --location=project
 
 echo ""
-echo "Publishing $PACKAGE_NAME@$VERSION to npm..."
+echo "Publishing $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME..."
 PUBLISH_SCRIPTS_FLAG=""
 if [[ "$SKIP_BUILD" == "true" ]]; then
   PUBLISH_SCRIPTS_FLAG="--ignore-scripts"
@@ -160,43 +176,45 @@ fi
 add_prerelease_dist_tag() {
   if [[ -n "$PRERELEASE_TAG" ]]; then
     # shellcheck disable=SC2086
-    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG
+    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG $REGISTRY_FLAG
     echo "Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
   fi
 }
 
 add_latest_dist_tag() {
   # shellcheck disable=SC2086
-  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG
+  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG $REGISTRY_FLAG
   echo "Set dist-tag 'latest' for $PACKAGE_NAME@$VERSION"
 }
 
-if npm view "$PACKAGE_NAME@$VERSION" version --silent >/dev/null 2>&1; then
+if npm view "$PACKAGE_NAME@$VERSION" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
   if [[ "$FORCE_PUBLISH" == "true" ]]; then
     echo "Version $VERSION exists. Force publish enabled — attempting to unpublish..."
-    if npm unpublish "$PACKAGE_NAME@$VERSION" --force 2>/dev/null; then
+    if npm unpublish "$PACKAGE_NAME@$VERSION" --force $REGISTRY_FLAG 2>/dev/null; then
       echo "Successfully unpublished $PACKAGE_NAME@$VERSION"
       # shellcheck disable=SC2086
-      npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG
+      npm publish $ACCESS_FLAG $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG $REGISTRY_FLAG
       add_prerelease_dist_tag
-      echo "Successfully republished $PACKAGE_NAME@$VERSION to npm"
+      echo "Successfully republished $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME"
     else
       echo "Failed to unpublish (version may be >72 hours old)"
       echo "Use a different version number in package.json and try again."
       exit 1
     fi
   else
-    echo "Version $VERSION already exists on npm — updating dist-tags instead of republishing."
+    echo "Version $VERSION already exists on $PUBLISH_REGISTRY_NAME — updating dist-tags instead of republishing."
     add_latest_dist_tag
     add_prerelease_dist_tag
     exit 0
   fi
 else
   # shellcheck disable=SC2086
-  if npm publish --access public $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG 2>&1; then
+  if npm publish $ACCESS_FLAG $NPM_TAG_FLAG $PUBLISH_SCRIPTS_FLAG $OTP_FLAG $REGISTRY_FLAG 2>&1; then
     add_prerelease_dist_tag
-    echo "Successfully published $PACKAGE_NAME@$VERSION to npm"
-    echo "   npm page    : $PACKAGE_NPM_PAGE_URL"
+    echo "Successfully published $PACKAGE_NAME@$VERSION to $PUBLISH_REGISTRY_NAME"
+    if [[ -n "$PACKAGE_PAGE_URL" ]]; then
+      echo "   package page: $PACKAGE_PAGE_URL"
+    fi
     echo "   registry API: $PACKAGE_REGISTRY_URL"
   else
     NPM_PUBLISH_EXIT=$?

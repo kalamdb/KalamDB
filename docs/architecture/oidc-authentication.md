@@ -13,8 +13,8 @@ This document reflects the current implementation across:
 - [backend/crates/kalamdb-auth/src/services/unified/bearer.rs](../../backend/crates/kalamdb-auth/src/services/unified/bearer.rs)
 - [backend/crates/kalamdb-auth/src/providers/jwt_auth.rs](../../backend/crates/kalamdb-auth/src/providers/jwt_auth.rs)
 - [backend/crates/kalamdb-auth/src/providers/jwt_config.rs](../../backend/crates/kalamdb-auth/src/providers/jwt_config.rs)
-- [backend/crates/kalamdb-oidc/src/validator.rs](../../backend/crates/kalamdb-oidc/src/validator.rs)
-- [backend/crates/kalamdb-oidc/src/config.rs](../../backend/crates/kalamdb-oidc/src/config.rs)
+- [backend/crates/kalamdb-auth/src/oidc/validator.rs](../../backend/crates/kalamdb-auth/src/oidc/validator.rs)
+- [backend/crates/kalamdb-auth/src/oidc/config.rs](../../backend/crates/kalamdb-auth/src/oidc/config.rs)
 
 ---
 
@@ -135,20 +135,20 @@ This means OIDC Discovery is performed at most **once per issuer per process lif
 
 ### Layer 2 — JWKS key cache (per `OidcValidator`)
 
-Each `OidcValidator` holds its own `Arc<RwLock<HashMap<String, Jwk>>>` keyed by `kid` (key ID from the token header).
+Each `OidcValidator` holds its own bounded `moka::sync::Cache<String, Jwk>` keyed by `kid` (key ID from the token header). The cache is capped at 128 keys per issuer and entries expire after 1 hour. Oversized JWKS responses are rejected rather than cached so a provider or malicious upstream cannot grow process memory without bound.
 
 ```
 Token arrives with kid = "abc-123":
 
   ── Hot path (99% of requests) ──────────────────────────────
-  Read lock → kid found → return JWK immediately
+  Cache lookup → kid found → return JWK immediately
 
   ── Cache miss (key not seen before, or after rotation) ─────
-  1. Read lock → miss
+  1. Cache lookup → miss
   2. GET {jwks_uri}  (Keycloak's public key endpoint)
-  3. Compare new key set vs cached set (size + kid presence)
-  4. If changed: write lock, replace entire cache
-  5. Retry read → found → return JWK
+  3. Reject response if it contains more than 128 keys
+  4. Replace cached key set with returned keys that include a kid
+  5. Retry cache lookup → found → return JWK
   6. Still not found → OidcError::KeyNotFound
 ```
 
@@ -156,12 +156,12 @@ Key rotation is handled automatically. When Keycloak rotates its signing key, th
 
 ### Shared cache across clones
 
-`OidcValidator` is `Clone` — but cloning it shares the same inner `Arc`, not a copy. All clones of a validator for the same issuer read from and write to the same JWKS HashMap.
+`OidcValidator` is `Clone`; cloning it shares the same inner Moka cache, not a copy. All clones of a validator for the same issuer read from and write to the same bounded JWKS cache.
 
 ```
                          ┌──────────────────────────┐
-  clone A ─────────────► │  Arc<RwLock<HashMap>>    │
-  clone B ─────────────► │  (single shared JWKS map)│
+  clone A ─────────────► │  moka::sync::Cache      │
+  clone B ─────────────► │  (bounded JWKS cache)   │
   clone C ─────────────► │                          │
                          └──────────────────────────┘
 ```

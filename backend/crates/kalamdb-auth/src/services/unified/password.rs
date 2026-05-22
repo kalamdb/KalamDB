@@ -7,24 +7,10 @@ use tracing::Instrument;
 use super::LOGIN_TRACKER;
 use crate::{
     errors::error::{AuthError, AuthResult},
-    helpers::basic_auth,
     models::context::AuthenticatedUser,
     repository::user_repo::UserRepository,
     security::password,
 };
-
-/// Authenticate using Basic Auth header.
-///
-/// The Basic header carries `user_id:password` (base64-encoded).
-#[allow(dead_code)]
-pub(super) async fn authenticate_basic(
-    auth_header: &str,
-    connection_info: &ConnectionInfo,
-    repo: &Arc<dyn UserRepository>,
-) -> AuthResult<AuthenticatedUser> {
-    let (user, password) = basic_auth::parse_basic_auth_header(auth_header)?;
-    authenticate_user_password(&user, &password, connection_info, repo).await
-}
 
 /// Core authentication logic for user/password.
 pub(super) async fn authenticate_user_password(

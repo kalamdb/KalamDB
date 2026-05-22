@@ -651,8 +651,7 @@ pub(super) async fn execute_batch_path(
                         transaction_id,
                     ) {
                         Ok(Some(results)) => {
-                            let batch_rows: usize =
-                                results.iter().map(|r| r.affected_rows()).sum();
+                            let batch_rows: usize = results.iter().map(|r| r.affected_rows()).sum();
                             let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
                             log::debug!(
                                 target: "sql::exec",
@@ -702,8 +701,8 @@ pub(super) async fn execute_batch_path(
             && stmt.prepared_statement.table_type == Some(TableType::Shared)
         {
             if let Some(table_id) = stmt.prepared_statement.table_id.as_ref() {
-                let _ = request_transaction_guard
-                    .rollback_if_active(&request_transaction_coordinator);
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
                 return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                     ErrorCode::SqlExecutionError,
                     &format!(
@@ -888,8 +887,8 @@ pub(super) async fn execute_batch_path(
                 );
             },
             Err(err) => {
-                let _ = request_transaction_guard
-                    .rollback_if_active(&request_transaction_coordinator);
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
 
                 if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
                     if let Some(response) = handle_not_leader_error(

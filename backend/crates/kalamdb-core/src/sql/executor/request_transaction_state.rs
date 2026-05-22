@@ -46,7 +46,8 @@ impl RequestTransactionCoordinator for AppContextRequestTransactionCoordinator<'
         transaction_id: &'a TransactionId,
     ) -> impl Future<Output = Result<TransactionId, Self::Error>> + Send + 'a {
         async move {
-            let committed = self.app_context.transaction_coordinator().commit(transaction_id).await?;
+            let committed =
+                self.app_context.transaction_coordinator().commit(transaction_id).await?;
             Ok(committed.transaction_id)
         }
     }
@@ -59,9 +60,7 @@ impl RequestTransactionCoordinator for AppContextRequestTransactionCoordinator<'
     }
 }
 
-pub fn map_request_transaction_error(
-    error: RequestTransactionError<KalamDbError>,
-) -> KalamDbError {
+pub fn map_request_transaction_error(error: RequestTransactionError<KalamDbError>) -> KalamDbError {
     match error {
         RequestTransactionError::AlreadyActive {
             owner_id,
@@ -70,12 +69,15 @@ pub fn map_request_transaction_error(
             "request owner '{}' already has an active transaction '{}'",
             owner_id, transaction_id
         )),
-        RequestTransactionError::NoActiveTransaction { operation } => KalamDbError::InvalidOperation(
-            format!("{} requires an active explicit SQL transaction", operation),
-        ),
-        RequestTransactionError::RequestCompletedOpen => KalamDbError::InvalidOperation(
-            OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE.to_string(),
-        ),
+        RequestTransactionError::NoActiveTransaction { operation } => {
+            KalamDbError::InvalidOperation(format!(
+                "{} requires an active explicit SQL transaction",
+                operation
+            ))
+        },
+        RequestTransactionError::RequestCompletedOpen => {
+            KalamDbError::InvalidOperation(OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE.to_string())
+        },
         RequestTransactionError::Coordinator(error) => error,
     }
 }

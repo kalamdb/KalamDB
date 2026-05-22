@@ -5,11 +5,14 @@
 use std::sync::Arc;
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use kalamdb_auth::{authenticate, extract_client_ip_secure, AuthRequest, UserRepository};
+use kalamdb_auth::{
+    authenticate, extract_bearer_or_cookie_token, extract_client_ip_secure, AuthRequest,
+    UserRepository,
+};
 use kalamdb_commons::Role;
 
 use super::{
-    extract_bearer_or_cookie_token, map_auth_error_to_response,
+    map_auth_error_to_response,
     models::{CurrentUserResponse, UserInfo},
 };
 

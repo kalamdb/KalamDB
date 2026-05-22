@@ -30,8 +30,8 @@ pub use owner::{ExecutionOwnerKey, TransactionOwnerParseError};
 pub use query_context::{TransactionMutationSink, TransactionOverlayView, TransactionQueryContext};
 pub use query_extension::{extract_transaction_query_context, TransactionQueryExtension};
 pub use request::{
-	RequestTransactionBatchGuard, RequestTransactionCoordinator, RequestTransactionError,
-	RequestTransactionState, OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE,
+    RequestTransactionBatchGuard, RequestTransactionCoordinator, RequestTransactionError,
+    RequestTransactionState, OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE,
 };
 pub use staged_mutation::{build_insert_staged_mutations, StagedInsertBuildError, StagedMutation};
 pub use write_set::TransactionWriteSet;
