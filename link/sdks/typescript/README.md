@@ -13,12 +13,12 @@ Use each package directory as the source of truth for its build, test, and publi
 
 | Directory | Source package | npm publish name | GitHub Packages name |
 | --- | --- | --- | --- |
-| `client/` | `@kalamdb/client` | `@kalamdb/client` | `@kalamstack/client` |
-| `consumer/` | `@kalamdb/consumer` | `@kalamdb/consumer` | `@kalamstack/consumer` |
-| `orm/` | `@kalamdb/orm` | `@kalamdb/orm` | `@kalamstack/orm` |
-| `react/` | `@kalamdb/react` | `@kalamdb/react` | `@kalamstack/react` |
+| `client/` | `@kalamdb/client` | `@kalamdb/client` | `@kalamdb/client` |
+| `consumer/` | `@kalamdb/consumer` | `@kalamdb/consumer` | `@kalamdb/consumer` |
+| `orm/` | `@kalamdb/orm` | `@kalamdb/orm` | `@kalamdb/orm` |
+| `react/` | `@kalamdb/react` | `@kalamdb/react` | `@kalamdb/react` |
 
-The source manifests stay on `@kalamdb/*`. The GitHub Packages publish lane stages temporary `@kalamstack/*` manifests during publish because GitHub Packages requires the package scope to match the repository owner namespace.
+The source manifests stay on `@kalamdb/*`. The GitHub Packages publish lane stages temporary `@kalamdb/*` manifests during publish because GitHub Packages requires the package scope to match the repository owner namespace.
 
 ## Version maintenance
 
@@ -73,7 +73,7 @@ Full package builds also compile/copy the package-specific WASM artifacts.
 The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` owns publish automation for the TypeScript SDKs.
 
 - Manual input `publish=true` publishes the npm packages under `@kalamdb/*`.
-- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamstack/*`.
+- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamdb/*`.
 - Manual input `force_publish=true` asks each package `publish.sh` to attempt an unpublish and republish when the registry allows it.
 - Both publish lanes run only after the `client`, `consumer`, `orm`, and `react` test matrix passes.
 - Publish order matters: `client` first, then `consumer`, then `orm`, then `react`.

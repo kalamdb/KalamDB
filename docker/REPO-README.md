@@ -65,13 +65,13 @@ curl -X POST http://localhost:2900/v1/api/sql \
 
 ### 📄 Single-node compose file
 
-- GitHub view: https://github.com/kalamstack/KalamDB/blob/main/docker/run/single/docker-compose.yml
-- Raw file: https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/single/docker-compose.yml
+- GitHub view: https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
+- Raw file: https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml
 
 ### 🧱 3-node cluster compose file
 
-- GitHub view: https://github.com/kalamstack/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
-- Raw file: https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/cluster/docker-compose.yml
+- GitHub view: https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
+- Raw file: https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml
 
 ### ⚡ Start single node with compose
 
@@ -103,14 +103,14 @@ Single node:
 
 ```bash
 KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
-curl -sSL https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/single/docker-compose.yml | docker compose -f - up -d
+curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml | docker compose -f - up -d
 ```
 
 3-node cluster:
 
 ```bash
 KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
-curl -sSL https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/cluster/docker-compose.yml | docker compose -f - up -d
+curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml | docker compose -f - up -d
 ```
 
 ## 🖥️ Open the UI
@@ -271,7 +271,7 @@ docker volume rm kalamdb_data
 ## 🔗 Links
 
 - Docker Hub: https://hub.docker.com/r/jamals86/kalamdb
-- GitHub: https://github.com/kalamstack/KalamDB
+- GitHub: https://github.com/kalamdb/KalamDB
 - Docs: https://kalamdb.org/docs
-- Single-node compose: https://github.com/kalamstack/KalamDB/blob/main/docker/run/single/docker-compose.yml
-- Cluster compose: https://github.com/kalamstack/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
+- Single-node compose: https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
+- Cluster compose: https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml

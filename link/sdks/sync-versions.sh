@@ -55,6 +55,7 @@ python3 - \
   "$ROOT_VERSION" \
   "$INTERNAL_RANGE" \
   "$ROOT_DIR" \
+    "${PUBLISH_SCOPE_OVERRIDE:-}" \
   "$DART_PUBSPEC" \
   "$PYTHON_PYPROJECT" \
   "$PYTHON_CARGO" \
@@ -67,10 +68,11 @@ from pathlib import Path
 root_version = sys.argv[1]
 internal_range = sys.argv[2]
 root_dir = Path(sys.argv[3])
-dart_pubspec = Path(sys.argv[4])
-python_pyproject = Path(sys.argv[5])
-python_cargo = Path(sys.argv[6])
-typescript_packages = [Path(value) for value in sys.argv[7:]]
+typescript_scope_override = sys.argv[4].strip()
+dart_pubspec = Path(sys.argv[5])
+python_pyproject = Path(sys.argv[6])
+python_cargo = Path(sys.argv[7])
+typescript_packages = [Path(value) for value in sys.argv[8:]]
 internal_packages = {
     "@kalamdb/client",
     "@kalamdb/consumer",
@@ -84,6 +86,14 @@ def display(path: Path) -> str:
         return str(path.relative_to(root_dir))
     except ValueError:
         return str(path)
+
+
+def display_package_name(package_name: str) -> str:
+    if not typescript_scope_override or not package_name.startswith("@") or "/" not in package_name:
+        return package_name
+
+    _, package_suffix = package_name.split("/", 1)
+    return f"{typescript_scope_override}/{package_suffix}"
 
 
 def update_yaml_version(path: Path, new_version: str) -> None:
@@ -121,6 +131,8 @@ def update_toml_section_version(path: Path, section_name: str, new_version: str)
 
 for package_path in typescript_packages:
     package_data = json.loads(package_path.read_text(encoding="utf-8"))
+    package_name = package_data["name"]
+    rendered_package_name = display_package_name(package_name)
     package_data["version"] = root_version
 
     peer_dependencies = package_data.get("peerDependencies")
@@ -130,7 +142,7 @@ for package_path in typescript_packages:
                 peer_dependencies[dependency_name] = internal_range
 
     package_path.write_text(f"{json.dumps(package_data, indent=2)}\n", encoding="utf-8")
-    print(f"Updated {display(package_path)}: version -> {root_version}")
+    print(f"Updated {rendered_package_name} ({display(package_path)}): version -> {root_version}")
 
 update_yaml_version(dart_pubspec, root_version)
 update_toml_section_version(python_pyproject, "project", root_version)

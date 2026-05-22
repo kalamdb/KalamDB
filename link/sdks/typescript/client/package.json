@@ -7,11 +7,11 @@
   "author": "KalamDB Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kalamstack/KalamDB"
+    "url": "https://github.com/kalamdb/KalamDB"
   },
-  "homepage": "https://github.com/kalamstack/KalamDB#readme",
+  "homepage": "https://github.com/kalamdb/KalamDB#readme",
   "bugs": {
-    "url": "https://github.com/kalamstack/KalamDB/issues"
+    "url": "https://github.com/kalamdb/KalamDB/issues"
   },
   "main": "dist/src/index.js",
   "module": "dist/src/index.js",

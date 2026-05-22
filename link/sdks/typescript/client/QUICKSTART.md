@@ -134,4 +134,4 @@ main().catch(console.error);
 
 - Full SDK docs: [README.md](README.md)
 - SQL reference: https://kalamdb.org/docs/reference/sql
-- Workspace examples: https://github.com/kalamstack/KalamDB/tree/main/examples
+- Workspace examples: https://github.com/kalamdb/KalamDB/tree/main/examples

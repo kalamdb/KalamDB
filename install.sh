@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ── Configurable ────────────────────────────────────────────────────────────
-GITHUB_REPO="kalamstack/KalamDB"
+GITHUB_REPO="kalamdb/KalamDB"
 BINARY_NAME="kalam"
 ARTIFACT_PREFIX="kalamcli"
 INSTALL_DIR="${KALAM_INSTALL_DIR:-$HOME/.kalam/bin}"

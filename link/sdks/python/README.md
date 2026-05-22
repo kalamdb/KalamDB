@@ -1,6 +1,6 @@
 # KalamDB Python SDK
 
-Official Python SDK for [KalamDB](https://github.com/kalamstack/KalamDB) — a SQL-first realtime database for AI agents, chat products, and multi-tenant SaaS.
+Official Python SDK for [KalamDB](https://github.com/kalamdb/KalamDB) — a SQL-first realtime database for AI agents, chat products, and multi-tenant SaaS.
 
 Built on top of the Rust `kalam-client` core via PyO3, so the networking, reconnection, and protocol logic is shared with the TypeScript and Dart SDKs.
 
