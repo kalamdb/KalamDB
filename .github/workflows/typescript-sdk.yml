@@ -301,10 +301,10 @@ jobs:
           from pathlib import Path
 
           artifacts_dir = Path("ts-sdk-test-artifacts")
-            expected_packages = {
+          expected_packages = {
               entry["slug"]
               for entry in json.loads(os.environ["EXPECTED_PACKAGES_JSON"]).get("include", [])
-            }
+          }
           found_packages = set()
           total = 0
           passed = 0
