@@ -1068,7 +1068,11 @@ jobs:
             -e PG_EXTENSION_FLAVOR \
             pg-kalam-builder-x86 \
             bash -c '
-              cd /src && \
+              WORKDIR=/tmp/kalamdb-src && \
+              rm -rf "$WORKDIR" && \
+              mkdir -p "$WORKDIR" && \
+              cp -a /src/. "$WORKDIR"/ && \
+              cd "$WORKDIR" && \
               cargo pgrx install \
                 -p kalam-pg-extension \
                 -c "/usr/lib/postgresql/${PG_EXTENSION_MAJOR}/bin/pg_config" \
