@@ -104,9 +104,9 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"}]}' >> "$GITHUB_OUTPUT"
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"cli","package_name":"@kalamdb/cli"}]}' >> "$GITHUB_OUTPUT"
           else
-            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"react","package_name":"@kalamdb/react"}]}' >> "$GITHUB_OUTPUT"
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"react","package_name":"@kalamdb/react"},{"slug":"cli","package_name":"@kalamdb/cli"}]}' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve latest released server asset

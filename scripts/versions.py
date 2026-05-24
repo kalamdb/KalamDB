@@ -98,6 +98,7 @@ DOCS_COMPATIBILITY_MATRIX: tuple[dict[str, Any], ...] = (
 WORKSPACE_CARGO = ROOT / "Cargo.toml"
 BACKEND_CARGO = ROOT / "backend" / "Cargo.toml"
 CLI_CARGO = ROOT / "cli" / "Cargo.toml"
+CLI_NPM_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "cli" / "package.json"
 PG_CARGO = ROOT / "pg" / "Cargo.toml"
 RUST_SDK_CARGO = ROOT / "link" / "kalam-client" / "Cargo.toml"
 PYTHON_PYPROJECT = ROOT / "link" / "sdks" / "python" / "pyproject.toml"
@@ -341,6 +342,11 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
         )
 
     dart_name, dart_version = read_pubspec_name_and_version(DART_PUBSPEC)
+    cli_npm_package = get_package_json(CLI_NPM_PACKAGE)
+    if cli_npm_package.get("version") != core_version:
+        raise VersionError(
+            "link/sdks/typescript/cli/package.json must use the same version as the workspace root"
+        )
 
     ts_client = get_package_json(TS_CLIENT_PACKAGE)
     ts_consumer = get_package_json(TS_CONSUMER_PACKAGE)
@@ -410,6 +416,12 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
                 python_package["name"]: build_package_entry(
                     python_package["version"],
                     compatible_core,
+                )
+            },
+            "npm": {
+                cli_npm_package["name"]: build_package_entry(
+                    cli_npm_package["version"],
+                    core_version,
                 )
             },
             "rust": {
@@ -484,6 +496,7 @@ def github_outputs(repository: str | None) -> dict[str, str]:
         "typescript_version": manifest["packages"]["typescript"]["@kalamdb/client"]["version"],
         "dart_version": next(iter(manifest["packages"]["dart"].values()))["version"],
         "python_version": next(iter(manifest["packages"]["python"].values()))["version"],
+        "npm_cli_version": manifest["packages"]["npm"]["@kalamdb/cli"]["version"],
         "rust_sdk_version": next(iter(manifest["packages"]["rust"].values()))["version"],
         "release_server_asset_name": f"kalamdb-server-{core_version}-linux-x86_64.tar.gz",
     }

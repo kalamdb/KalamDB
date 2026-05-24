@@ -376,14 +376,14 @@ impl RaftManager {
             return Ok(());
         }
 
-        log::info!(
+        log::debug!(
             "[CLUSTER] Node {} starting Raft services (rpc={}, api={})",
             self.node_id,
             self.config.rpc_addr,
             self.config.api_addr
         );
         if self.config.peers.is_empty() {
-            log::info!("[CLUSTER] No other configured cluster nodes");
+            log::debug!("[CLUSTER] No other configured cluster nodes");
         } else {
             log::info!(
                 "[CLUSTER] Other configured cluster nodes ({}): {}",
@@ -476,7 +476,7 @@ impl RaftManager {
 
         if already_initialized {
             let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
-            log::info!(
+            log::debug!(
                 "[CLUSTER] Membership already initialized on node {} (meta last_applied={}); \
                  skipping bootstrap",
                 self.node_id,

@@ -5080,6 +5080,10 @@ pub fn get_storage_dir() -> std::path::PathBuf {
 
     if let Ok(storage_dir) = std::env::var("KALAMDB_STORAGE_DIR") {
         let path = PathBuf::from(storage_dir);
+        let nested_storage_path = path.join("storage");
+        if nested_storage_path.exists() {
+            return nested_storage_path;
+        }
         if path.exists() {
             return path;
         }
@@ -5146,7 +5150,7 @@ impl FlushStorageVerificationResult {
         );
         assert!(
             self.parquet_file_count > 0,
-            "{}: at least one batch-*.parquet file should exist after flush",
+            "{}: at least one Parquet segment should exist after flush",
             context
         );
         assert!(
@@ -5159,7 +5163,7 @@ impl FlushStorageVerificationResult {
 }
 
 /// Verify flush storage files for a SHARED table
-/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// Checks that manifest.json and Parquet segment files exist with non-zero size
 /// in the expected storage path for a shared table.
 ///
 /// # Arguments
@@ -5182,7 +5186,7 @@ pub fn verify_flush_storage_files_shared(
 
 /// Verify flush storage files for a USER table
 ///
-/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// Checks that manifest.json and Parquet segment files exist with non-zero size
 /// in the expected storage path for a user table. Since user tables have per-user
 /// subdirectories, this function searches through all user directories.
 ///
@@ -5239,7 +5243,7 @@ pub fn verify_flush_storage_files_user(
 
 /// Verify flush storage files in a specific directory
 ///
-/// Internal helper that checks for manifest.json and batch-*.parquet files in a directory.
+/// Internal helper that checks for manifest.json and segment Parquet files in a directory.
 fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerificationResult {
     use std::fs;
 
@@ -5266,12 +5270,14 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
         }
     }
 
-    // Check for batch-*.parquet files
+    // Check for flush and compaction Parquet files
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
-            if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
+            let is_parquet_segment = filename_str.ends_with(".parquet")
+                && (filename_str.starts_with("batch-") || filename_str.starts_with("compact-"));
+            if is_parquet_segment {
                 if let Ok(metadata) = entry.metadata() {
                     result.parquet_file_count += 1;
                     result.parquet_total_size += metadata.len();

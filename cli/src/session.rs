@@ -15,6 +15,7 @@ use std::{
 
 use crate::{
     config::CLIConfiguration, error::Result, formatter::OutputFormatter, parser::CommandParser,
+    update_check::UpdateAvailability,
 };
 use clap::ValueEnum;
 use colored::*;
@@ -132,6 +133,9 @@ pub struct CLISession {
 
     /// Server build date
     server_build_date: Option<String>,
+
+    /// Latest CLI update available for this local binary
+    update_available: Option<UpdateAvailability>,
 
     /// Instance name for credential management
     instance: Option<String>,
@@ -298,6 +302,7 @@ impl CLISession {
             server_version,
             server_api_version,
             server_build_date,
+            update_available: None,
             instance,
             cluster_name: None, // Will be fetched lazily from system.cluster
             credential_store,

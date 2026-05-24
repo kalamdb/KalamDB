@@ -193,6 +193,24 @@ pub fn default_config_path() -> PathBuf {
 }
 
 impl CLIConfiguration {
+    /// Load configuration only if the file already exists.
+    ///
+    /// Unlike [`Self::load`], this does not create a default file. It is useful for
+    /// diagnostic commands that should report configuration state without changing it.
+    pub fn load_existing(path: &Path) -> Result<Option<Self>> {
+        let expanded_path = expand_config_path(path);
+        if !expanded_path.exists() {
+            return Ok(None);
+        }
+
+        let contents = std::fs::read_to_string(&expanded_path).map_err(|e| {
+            CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
+        })?;
+
+        let config: CLIConfiguration = toml::from_str(&contents)?;
+        Ok(Some(config))
+    }
+
     /// Load configuration from file
     ///
     /// Creates a default configuration file if it doesn't exist.

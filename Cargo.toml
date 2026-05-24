@@ -12,6 +12,7 @@ members = [
     "backend/crates/kalamdb-row-filter",
     "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
+    "backend/crates/kalamdb-flush",
     "backend/crates/kalamdb-streams",
     "backend/crates/kalamdb-sharding",
     "backend/crates/kalamdb-session",
@@ -213,7 +214,7 @@ syn = { version = "2.0.117", features = ["full", "extra-traits"] }
 object_store = { version = "0.13.2" }
  
 # Vector ANN engines
-usearch = "2.25.2"
+usearch = "2.25.3"
 
 parking_lot = "0.12"
 tokio-util = "0.7.18"
@@ -224,12 +225,12 @@ storekey = "0.11"
 moka = { version = "0.12.15", features = ["future", "sync"] }
 ntest = "0.9.5"
 ipnet = "2.11.0"
-wasm-bindgen = { version = "0.2.121" }
-wasm-bindgen-futures = { version = "0.4.71" }
-js-sys = { version = "0.3.98" }
+wasm-bindgen = { version = "0.2.122" }
+wasm-bindgen-futures = { version = "0.4.72" }
+js-sys = { version = "0.3.99" }
 libc = "0.2.186"
-libmimalloc-sys = { version = "0.1.48", features = ["extended"] }
-web-sys = { version = "0.3.98" }
+libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
+web-sys = { version = "0.3.99" }
 tsify = { version = "0.5.6", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6.5"
 flate2 = "1.1.9"

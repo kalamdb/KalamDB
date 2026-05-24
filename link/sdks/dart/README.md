@@ -76,8 +76,15 @@ Typical local source setup uses:
 1. Start KalamDB with Docker or a local binary.
 2. Complete bootstrap/login: [https://kalamdb.org/docs/getting-started/authentication](https://kalamdb.org/docs/getting-started/authentication)
 3. Open the Admin UI at `/ui` or `/ui/sql` to verify the server is healthy.
-4. Run the Dart example from this package: `dart run example/main.dart`
+4. Run one of the Dart examples from this package:
+  - `dart run example/simple-events/main.dart`
+  - `dart run example/chat-app/main.dart`
 5. Replace the example credentials and URL with your app's config, then connect with `KalamClient.connect(...)`.
+
+### Included examples
+
+- `dart run example/simple-events/main.dart` demonstrates login, queries, token refresh, and low-level `liveEvents()` handling.
+- `dart run example/chat-app/main.dart` demonstrates a small chat flow with `conversations`, `messages`, and a `typing` stream table using `live()` and `liveTable()`.
 
 ## View Data in the Admin UI
 

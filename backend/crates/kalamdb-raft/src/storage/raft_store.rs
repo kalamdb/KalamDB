@@ -409,7 +409,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             self.state_machine.restore(sm_snapshot).await?;
             let restore_ms = restore_start.elapsed().as_secs_f64() * 1000.0;
 
-            log::info!(
+            log::debug!(
                 "KalamRaftStorage[{}]: Restart recovery loaded the in-memory state-machine \
                  tracker from snapshot (snapshot_applied={}/{}, persisted_last_applied={}, \
                  persisted_committed={}, deserialize={:.2}ms, restore={:.2}ms, total={:.2}ms)",
@@ -435,7 +435,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         }
 
         if let Some((from_index, to_index)) = self.reconcile_state_machine_progress() {
-            log::info!(
+            log::debug!(
                 "KalamRaftStorage[{}]: Restart recovery advanced the in-memory apply watermark \
                  from {} to {} using persisted last_applied metadata",
                 self.group_id,

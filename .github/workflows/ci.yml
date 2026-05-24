@@ -421,6 +421,20 @@ jobs:
           cd link/sdks/typescript/client
           npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/sdk-licenses.json"
 
+      - name: Install npm CLI dependencies
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Generate npm CLI production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript/cli
+          npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/npm-cli-licenses.json"
+
       - name: Validate licenses and generate third-party report
         shell: bash
         run: |
@@ -430,6 +444,7 @@ jobs:
             --rust-report target/license/rust-runtime-licenses.json \
             --ui-report target/license/ui-licenses.json \
             --sdk-report target/license/sdk-licenses.json \
+            --cli-report target/license/npm-cli-licenses.json \
             --output target/license/THIRD_PARTY_LICENSES.md
 
       - name: Upload license reports

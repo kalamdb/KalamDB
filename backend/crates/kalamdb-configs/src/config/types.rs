@@ -542,8 +542,9 @@ pub struct PerformanceSettings {
     /// Set to 0 for auto-detection, or an explicit count for Docker/constrained environments.
     #[serde(default)]
     pub tokio_worker_threads: usize,
-    /// Max blocking threads per worker for CPU-intensive operations (default: 32)
-    /// Used for RocksDB and other synchronous operations
+    /// Max blocking threads for synchronous operations (default: 32).
+    /// Applied to the outer Tokio runtime blocking pool and Actix worker blocking pools.
+    /// Used for RocksDB, Parquet, and other synchronous operations.
     #[serde(default = "default_worker_max_blocking_threads")]
     pub worker_max_blocking_threads: usize,
     /// Client request timeout in seconds (default: 5)
@@ -601,6 +602,46 @@ pub struct FlushSettings {
     /// pending writes and creates flush jobs (default: 60s). Set to 0 to disable.
     #[serde(default = "default_flush_check_interval")]
     pub check_interval_seconds: u64,
+
+    /// Optional post-flush compaction of trailing Parquet segments.
+    #[serde(default)]
+    pub compaction: FlushCompactionSettings,
+}
+
+/// Optional post-flush compaction of trailing Parquet segments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlushCompactionSettings {
+    /// Enable post-flush compaction of trailing segments.
+    #[serde(default = "default_flush_compaction_enabled")]
+    pub enabled: bool,
+
+    /// Minimum number of trailing small segments before compaction is considered.
+    #[serde(default = "default_flush_compaction_min_eligible_segments")]
+    pub min_eligible_segments: usize,
+
+    /// Maximum number of trailing segments compacted in a single run.
+    #[serde(default = "default_flush_compaction_max_segments_per_run")]
+    pub max_segments_per_run: usize,
+
+    /// User-table segments with fewer rows than this are considered compactable.
+    #[serde(default = "default_flush_compaction_user_max_segment_rows")]
+    pub user_max_segment_rows: u64,
+
+    /// Shared-table segments with fewer rows than this are considered compactable.
+    #[serde(default = "default_flush_compaction_shared_max_segment_rows")]
+    pub shared_max_segment_rows: u64,
+}
+
+impl Default for FlushCompactionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_flush_compaction_enabled(),
+            min_eligible_segments: default_flush_compaction_min_eligible_segments(),
+            max_segments_per_run: default_flush_compaction_max_segments_per_run(),
+            user_max_segment_rows: default_flush_compaction_user_max_segment_rows(),
+            shared_max_segment_rows: default_flush_compaction_shared_max_segment_rows(),
+        }
+    }
 }
 
 /// Manifest cache settings (Phase 4 - US6)
@@ -645,10 +686,6 @@ impl Default for ManifestCacheSettings {
 /// Retention policy defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetentionSettings {
-    /// Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
-    #[serde(default = "default_deleted_retention_hours")]
-    pub default_deleted_retention_hours: i32,
-
     /// Enable periodic dba.stats collection (default: true)
     /// When false, the background stats recorder is not started, saving memory
     /// and CPU in resource-constrained environments (e.g. Docker containers).
@@ -1044,6 +1081,7 @@ impl Default for FlushSettings {
             default_time_interval: default_flush_time_interval(),
             flush_batch_size: default_flush_batch_size(),
             check_interval_seconds: default_flush_check_interval(),
+            compaction: FlushCompactionSettings::default(),
         }
     }
 }
@@ -1051,7 +1089,6 @@ impl Default for FlushSettings {
 impl Default for RetentionSettings {
     fn default() -> Self {
         Self {
-            default_deleted_retention_hours: default_deleted_retention_hours(),
             enable_dba_stats: true,
             dba_stats_retention_days: default_dba_stats_retention_days(),
         }

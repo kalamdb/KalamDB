@@ -212,6 +212,7 @@ impl LeaderFailoverHandler {
             | JobType::VectorIndex
             | JobType::Cleanup
             | JobType::Compact
+            | JobType::SegmentCompact
             | JobType::StreamEviction
             | JobType::JobCleanup
             | JobType::ManifestEviction

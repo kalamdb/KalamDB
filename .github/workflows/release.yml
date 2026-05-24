@@ -186,6 +186,20 @@ jobs:
           cd link/sdks/typescript/client
           npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/sdk-licenses.json"
 
+      - name: Install npm CLI dependencies
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Generate npm CLI production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript/cli
+          npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/npm-cli-licenses.json"
+
       - name: Validate and generate third-party report
         shell: bash
         run: |
@@ -195,6 +209,7 @@ jobs:
             --rust-report target/license/rust-runtime-licenses.json \
             --ui-report target/license/ui-licenses.json \
             --sdk-report target/license/sdk-licenses.json \
+            --cli-report target/license/npm-cli-licenses.json \
             --output target/license/THIRD_PARTY_LICENSES.md
 
       - name: Build release license bundle
@@ -1598,6 +1613,53 @@ jobs:
             dist/${{ needs.read_version.outputs.version }}/NOTICE
             dist/${{ needs.read_version.outputs.version }}/THIRD_PARTY_LICENSES.md
             versions.json
+
+  publish_npm_cli:
+    name: Publish npm CLI
+    runs-on: ubuntu-latest
+    needs:
+      - sync_versions_manifest
+      - read_version
+      - release
+
+    if: ${{ github.event_name == 'push' || github.event.inputs.github_release == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Validate npm CLI package
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "${{ needs.read_version.outputs.version }}"
+          bash ./test.sh
+
+      - name: Publish @kalamdb/cli
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "NPM_TOKEN is not configured; skipping npm publish"
+            exit 0
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "${{ needs.read_version.outputs.version }}"
 
   docker:
     name: Push Docker image (Docker Hub)

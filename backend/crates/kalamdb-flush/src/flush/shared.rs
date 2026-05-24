@@ -6,21 +6,17 @@
 use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::{
-    constants::SystemColumnNames, ids::SharedTableRowId, models::TableId, StorageKey,
-};
+use kalamdb_commons::{ids::SharedTableRowId, models::TableId, StorageKey};
+use kalamdb_filestore::StorageCached;
 use kalamdb_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 
-use super::base::{config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, TableFlush};
-use super::scope_writer::FlushScopeWriter;
-use crate::{
-    app_context::AppContext,
-    error::KalamDbError,
-    error_extensions::KalamDbResultExt,
-    manifest::{FlushManifestHelper, ManifestService},
-    schema_registry::SchemaRegistry,
+use super::base::{
+    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
+    FlushScopeHook, FlushTableMetadata, TableFlush,
 };
+use super::scope_writer::FlushScopeWriter;
+use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestService};
 
 /// Shared table flush job
 ///
@@ -30,75 +26,59 @@ pub struct SharedTableFlushJob {
     store: Arc<SharedTableIndexedStore>,
     table_id: Arc<TableId>,
     schema: SchemaRef,
-    unified_cache: Arc<SchemaRegistry>,
-    app_context: Arc<AppContext>,
+    storage_cached: Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
-    bloom_filter_columns: Vec<String>,
-    /// Indexed columns with column_id for stats extraction (column_id, column_name)
-    indexed_columns: Vec<(u64, String)>,
+    metadata: FlushTableMetadata,
+    scan_batch_size: usize,
+    scope_hook: Arc<dyn FlushScopeHook>,
 }
 
 impl SharedTableFlushJob {
     /// Create a new shared table flush job
     pub fn new(
-        app_context: Arc<AppContext>,
         table_id: Arc<TableId>,
         store: Arc<SharedTableIndexedStore>,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaRegistry>,
+        storage_cached: Arc<StorageCached>,
         manifest_service: Arc<ManifestService>,
+        metadata: FlushTableMetadata,
+        scan_batch_size: usize,
+        scope_hook: Arc<dyn FlushScopeHook>,
     ) -> Self {
         let manifest_helper = FlushManifestHelper::new(manifest_service);
 
-        // Get cached values from CachedTableData (computed once at cache entry creation)
-        // This avoids any recomputation - values are already cached in the schema registry
-        let (bloom_filter_columns, indexed_columns) = unified_cache
-            .get(&table_id)
-            .map(|cached| {
-                (cached.bloom_filter_columns().to_vec(), cached.indexed_columns().to_vec())
-            })
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "⚠️  Table {} not in cache. Using default Bloom filter columns (_seq only)",
-                    table_id
-                );
-                (vec![SystemColumnNames::SEQ.to_string()], vec![])
-            });
-
         log::debug!(
             "🌸 [SharedTableFlushJob] Bloom filter columns: {:?}, indexed columns: {} entries",
-            bloom_filter_columns,
-            indexed_columns.len()
+            &metadata.bloom_filter_columns,
+            metadata.indexed_columns.len()
         );
 
         Self {
             store,
             table_id,
             schema,
-            unified_cache,
-            app_context,
+            storage_cached,
             manifest_helper,
-            bloom_filter_columns,
-            indexed_columns,
+            metadata,
+            scan_batch_size: helpers::normalize_scan_batch_size(scan_batch_size),
+            scope_hook,
         }
     }
 
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
         FlushScopeWriter::new(
-            &self.app_context,
             &self.table_id,
             kalamdb_commons::schemas::TableType::Shared,
             &self.schema,
-            &self.unified_cache,
+            &self.storage_cached,
             &self.manifest_helper,
-            &self.bloom_filter_columns,
-            &self.indexed_columns,
+            &self.metadata,
+            self.scope_hook.as_ref(),
         )
     }
 
     /// Delete flushed rows from RocksDB after successful Parquet write
-    fn delete_flushed_rows(&self, keys: &[Vec<u8>]) -> Result<(), KalamDbError> {
+    fn delete_flushed_rows(&self, keys: &[Vec<u8>]) -> Result<(), FlushError> {
         if keys.is_empty() {
             return Ok(());
         }
@@ -115,7 +95,7 @@ impl SharedTableFlushJob {
 
             self.store
                 .delete_batch(&parsed_keys)
-                .into_kalamdb_error("Failed to delete flushed rows")?;
+                .into_flush_error("Failed to delete flushed rows")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -124,7 +104,7 @@ impl SharedTableFlushJob {
 }
 
 impl TableFlush for SharedTableFlushJob {
-    fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
+    fn execute(&self) -> Result<FlushJobResult, FlushError> {
         log::debug!("🔄 Starting shared table flush: table={}", self.table_id);
 
         // Get primary key field name from schema
@@ -139,14 +119,14 @@ impl TableFlush for SharedTableFlushJob {
 
         // Batched scan with cursor
         let mut cursor: Option<SharedTableRowId> = None;
-        let scan_batch_size = helpers::scan_batch_size(&self.app_context);
+        let scan_batch_size = self.scan_batch_size;
         loop {
             let batch = self
                 .store
                 .scan_typed_with_prefix_and_start(None, cursor.as_ref(), scan_batch_size)
                 .map_err(|e| {
                     log::error!("❌ Failed to scan rows for shared table={}: {}", self.table_id, e);
-                    KalamDbError::Other(format!("Failed to scan rows: {}", e))
+                    FlushError::Other(format!("Failed to scan rows: {}", e))
                 })?;
 
             if batch.is_empty() {
@@ -205,6 +185,7 @@ impl TableFlush for SharedTableFlushJob {
             return Ok(FlushJobResult {
                 rows_flushed: 0,
                 parquet_files: vec![],
+                scope_hints: vec![],
                 metadata: FlushMetadata::shared_table(),
             });
         }
@@ -239,6 +220,7 @@ impl TableFlush for SharedTableFlushJob {
         Ok(FlushJobResult {
             rows_flushed: rows_count,
             parquet_files: vec![write_result.destination_path],
+            scope_hints: vec![FlushScopeHint::Shared],
             metadata: FlushMetadata::shared_table(),
         })
     }

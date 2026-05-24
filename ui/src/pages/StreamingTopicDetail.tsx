@@ -113,6 +113,61 @@ export default function StreamingTopicDetail() {
     [messages, selectedMessageKey],
   );
 
+  const sqlShortcuts = useMemo(() => {
+    const effectiveGroupId = groupId.trim() || "ui-debug-admin";
+    const effectiveOffset = Number(offsetValue);
+    const effectiveLimit = Number(limitValue) || 100;
+    const effectivePartitionId = Number(partitionId) || 0;
+
+    return [
+      {
+        key: "topic",
+        buttonLabel: "Open Topic SQL",
+        title: `Topic ${selectedTopic?.topicId ?? topicId}`,
+        summary: "Review the topic metadata and current committed offsets.",
+        sql: buildTopicSqlSnippet(selectedTopic?.topicId ?? topicId),
+      },
+      {
+        key: "inspect",
+        buttonLabel: "Open Inspect SQL",
+        title: `Inspect ${selectedTopic?.topicId ?? topicId}`,
+        summary: "Run the same inspect query implied by the current inspector controls.",
+        sql: buildConsumeSqlSnippet(
+          selectedTopic?.topicId ?? topicId,
+          null,
+          startMode,
+          effectiveOffset,
+          effectiveLimit,
+        ),
+      },
+      {
+        key: "group",
+        buttonLabel: "Open Group SQL",
+        title: `Group consume ${selectedTopic?.topicId ?? topicId}`,
+        summary: "Open the group-aware consume statement for the active consumer group.",
+        sql: buildConsumeSqlSnippet(
+          selectedTopic?.topicId ?? topicId,
+          effectiveGroupId,
+          startMode,
+          effectiveOffset,
+          effectiveLimit,
+        ),
+      },
+      {
+        key: "reset",
+        buttonLabel: "Open Reset SQL",
+        title: `Reset ${effectiveGroupId}`,
+        summary: "Reset the selected group and partition to the chosen next offset.",
+        sql: buildResetConsumerGroupSqlSnippet(
+          selectedTopic?.topicId ?? topicId,
+          effectiveGroupId,
+          effectivePartitionId,
+          Number(offsetValue) || 0,
+        ),
+      },
+    ];
+  }, [groupId, limitValue, offsetValue, partitionId, selectedTopic?.topicId, startMode, topicId]);
+
   const decodedPayload = useMemo(
     () => (selectedMessage ? decodeTopicPayload(selectedMessage.payloadBase64, decodeMode) : null),
     [decodeMode, selectedMessage],
@@ -221,92 +276,43 @@ export default function StreamingTopicDetail() {
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Updated</p>
                 <p className="font-mono text-xs">{formatNullableTimestamp(selectedTopic.updatedAt)}</p>
               </div>
-              <div className="flex flex-wrap gap-1.5 border-t pt-2 md:col-span-4">
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() =>
-                    navigate("/sql", {
-                      state: {
-                        prefillSql: buildTopicSqlSnippet(selectedTopic.topicId),
-                        prefillTitle: `Topic ${selectedTopic.topicId}`,
-                      },
-                    })
-                  }
-                >
-                  <FileCode2 data-icon="inline-start" />
-                  Open Topic SQL
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() =>
-                    navigate("/sql", {
-                      state: {
-                        prefillSql: buildConsumeSqlSnippet(
-                          selectedTopic.topicId,
-                          null,
-                          startMode,
-                          Number(offsetValue),
-                          Number(limitValue) || 100,
-                        ),
-                        prefillTitle: `Inspect ${selectedTopic.topicId}`,
-                      },
-                    })
-                  }
-                >
-                  <FileCode2 data-icon="inline-start" />
-                  Open Inspect SQL
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() =>
-                    navigate("/sql", {
-                      state: {
-                        prefillSql: buildConsumeSqlSnippet(
-                          selectedTopic.topicId,
-                          groupId.trim() || "ui-debug-admin",
-                          startMode,
-                          Number(offsetValue),
-                          Number(limitValue) || 100,
-                        ),
-                        prefillTitle: `Group consume ${selectedTopic.topicId}`,
-                      },
-                    })
-                  }
-                >
-                  <FileCode2 data-icon="inline-start" />
-                  Open Group SQL
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() =>
-                    navigate("/sql", {
-                      state: {
-                        prefillSql: buildResetConsumerGroupSqlSnippet(
-                          selectedTopic.topicId,
-                          groupId.trim() || "ui-debug-admin",
-                          Number(partitionId) || 0,
-                          Number(offsetValue) || 0,
-                        ),
-                        prefillTitle: `Reset ${groupId.trim() || "ui-debug-admin"}`,
-                      },
-                    })
-                  }
-                >
-                  <FileCode2 data-icon="inline-start" />
-                  Open Reset SQL
-                </Button>
-              </div>
             </CardContent>
           </Card>
 
           <Tabs defaultValue="messages" className="gap-4">
-            <TabsList variant="line" className="w-full justify-start overflow-x-auto">
-              <TabsTrigger value="messages">Inspect Messages</TabsTrigger>
-              <TabsTrigger value="offsets">Committed Offsets</TabsTrigger>
+            <TabsList
+              className="h-auto w-full flex-wrap items-stretch justify-start gap-2 rounded-2xl border border-border/60 bg-muted/40 p-2 shadow-sm"
+            >
+              <TabsTrigger
+                value="messages"
+                aria-label="Inspect Messages"
+                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                <div className="flex min-w-0 flex-col items-start gap-1">
+                  <span className="text-sm font-semibold leading-none">Inspect Messages</span>
+                  <span className="text-xs text-muted-foreground">Pull a batch and inspect decoded payloads.</span>
+                </div>
+              </TabsTrigger>
+              <TabsTrigger
+                value="offsets"
+                aria-label="Committed Offsets"
+                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                <div className="flex min-w-0 flex-col items-start gap-1">
+                  <span className="text-sm font-semibold leading-none">Committed Offsets</span>
+                  <span className="text-xs text-muted-foreground">Inspect stored cursors for every consumer group.</span>
+                </div>
+              </TabsTrigger>
+              <TabsTrigger
+                value="sql"
+                aria-label="SQL Studio Shortcuts"
+                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
+              >
+                <div className="flex min-w-0 flex-col items-start gap-1">
+                  <span className="text-sm font-semibold leading-none">SQL Studio Shortcuts</span>
+                  <span className="text-xs text-muted-foreground">Open prepared queries and preview the exact SQL first.</span>
+                </div>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="messages" className="mt-0 flex flex-col gap-4">
@@ -582,6 +588,44 @@ export default function StreamingTopicDetail() {
                       </TableBody>
                     </Table>
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="sql" className="mt-0">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">SQL Studio Shortcuts</CardTitle>
+                  <CardDescription>Each shortcut opens SQL Studio with the exact query shown beside it.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  {sqlShortcuts.map((shortcut) => (
+                    <section
+                      key={shortcut.key}
+                      className="grid gap-3 rounded-xl border border-border/60 bg-card p-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-start"
+                    >
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="justify-start"
+                          onClick={() =>
+                            navigate("/sql", {
+                              state: {
+                                prefillSql: shortcut.sql,
+                                prefillTitle: shortcut.title,
+                              },
+                            })
+                          }
+                        >
+                          <FileCode2 data-icon="inline-start" />
+                          {shortcut.buttonLabel}
+                        </Button>
+                        <p className="text-xs text-muted-foreground">{shortcut.summary}</p>
+                      </div>
+                      <CodeBlock value={shortcut.sql} jsonPreferred={false} maxHeightClassName="max-h-40" />
+                    </section>
+                  ))}
                 </CardContent>
               </Card>
             </TabsContent>

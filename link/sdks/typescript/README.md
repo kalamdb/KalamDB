@@ -2,6 +2,7 @@
 
 This folder contains the publishable TypeScript SDK packages:
 
+- `cli/` for `@kalamdb/cli`: npm wrapper that installs the released native `kalam` binary, verifies `SHA256SUMS`, and exposes the `kalam` command.
 - `client/` for `@kalamdb/client`: auth, SQL, FILE columns, live queries, subscriptions, and typed cell values.
 - `consumer/` for `@kalamdb/consumer`: topic polling, acknowledgements, and the agent/worker runtime.
 - `orm/` for `@kalamdb/orm`: Drizzle ORM driver, KalamDB table helpers, FILE/BYTES/EMBEDDING columns, live table helpers, and schema generation.
@@ -13,6 +14,7 @@ Use each package directory as the source of truth for its build, test, and publi
 
 | Directory | Source package | npm publish name | GitHub Packages name |
 | --- | --- | --- | --- |
+| `cli/` | `@kalamdb/cli` | `@kalamdb/cli` | `@kalamdb/cli` |
 | `client/` | `@kalamdb/client` | `@kalamdb/client` | `@kalamdb/client` |
 | `consumer/` | `@kalamdb/consumer` | `@kalamdb/consumer` | `@kalamdb/consumer` |
 | `orm/` | `@kalamdb/orm` | `@kalamdb/orm` | `@kalamdb/orm` |
@@ -30,7 +32,7 @@ bash link/sdks/sync-versions.sh
 
 That script:
 
-- sets all four TypeScript package `version` fields to the root Cargo workspace version,
+- sets all five TypeScript package `version` fields to the root Cargo workspace version,
 - updates `link/sdks/dart/pubspec.yaml` to the same version,
 - updates `link/sdks/python/pyproject.toml` and `link/sdks/python/Cargo.toml` to the same version,
 - updates the internal peer dependency floors to the current cohort range,
@@ -49,17 +51,18 @@ Internal peer dependency ranges follow the shared cohort. For prerelease lanes l
 
 ## Build and test
 
-The release-lane test script in `scripts/test-typescript-sdk-release.sh` is the maintainer-facing source of truth. By default it runs all four packages: `client consumer orm react`.
+The release-lane test script in `scripts/test-typescript-sdk-release.sh` is the maintainer-facing source of truth. By default it runs all five packages: `client consumer orm react cli`.
 
 ```bash
 ./scripts/test-typescript-sdk-release.sh
-TS_SDK_PACKAGES="client react" ./scripts/test-typescript-sdk-release.sh
+TS_SDK_PACKAGES="client react cli" ./scripts/test-typescript-sdk-release.sh
 python3 scripts/versions.py verify
 ```
 
 For short local loops you can still run package-local commands:
 
 ```bash
+cd link/sdks/typescript/cli && npm test
 cd link/sdks/typescript/client && npm run build:ts
 cd link/sdks/typescript/orm && npm run build
 cd link/sdks/typescript/react && npm run build
@@ -70,13 +73,14 @@ Full package builds also compile/copy the package-specific WASM artifacts.
 
 ## Publishing and release checks
 
-The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` owns publish automation for the TypeScript SDKs.
+The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` owns the shared TypeScript package test matrix and the publish automation for the app/runtime SDKs.
 
-- Manual input `publish=true` publishes the npm packages under `@kalamdb/*`.
-- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamdb/*`.
+- Manual input `publish=true` publishes the npm packages under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
+- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
 - Manual input `force_publish=true` asks each package `publish.sh` to attempt an unpublish and republish when the registry allows it.
-- Both publish lanes run only after the `client`, `consumer`, `orm`, and `react` test matrix passes.
-- Publish order matters: `client` first, then `consumer`, then `orm`, then `react`.
+- The shared test matrix now runs `client`, `consumer`, `orm`, `react`, and `cli`.
+- Publish order matters for the app/runtime SDKs: `client` first, then `consumer`, then `orm`, then `react`.
+- `@kalamdb/cli` publishes after GitHub release assets exist, so its automation stays in `.github/workflows/release.yml` and uses the package-local `link/sdks/typescript/cli/publish.sh` entrypoint.
 
 Expected registry secrets and tokens:
 

@@ -1,0 +1,28 @@
+# @kalamdb/cli
+
+Install the KalamDB CLI with npm:
+
+```sh
+npm install -g @kalamdb/cli
+```
+
+Use the global install if you want `kalam` on your shell `PATH`. A local `npm install` only refreshes the package's own `dist/kalam` binary and does not replace some other `kalam` already earlier on `PATH`.
+
+The package downloads the matching KalamDB CLI release artifact from GitHub, verifies it against `SHA256SUMS`, and exposes the `kalam` command.
+
+If `dist/kalam` (or `dist/kalam.exe`) already exists and reports the same version as the npm package, postinstall reuses that binary instead of downloading it again.
+
+Supported binary targets are `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, and `windows-x86_64`.
+
+Useful commands:
+
+```sh
+kalam version
+kalam doctor
+kalam login --instance prod --url https://db.example.com
+kalam whoami
+kalam token create --name ci-prod
+kalam update
+```
+
+Set `KALAM_CLI_VERSION` during install to download a specific release version, or `KALAM_SKIP_DOWNLOAD=1` to skip binary download for packaging workflows. Package validation also checks that every supported release asset exists and has a `SHA256SUMS` entry.

@@ -557,7 +557,7 @@ impl KalamStateMachine for SharedDataStateMachine {
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
         self.publish_last_applied(snapshot.last_applied_index);
 
-        log::info!(
+        log::debug!(
             "SharedDataStateMachine[{}]: Loaded in-memory shared-shard tracker from snapshot \
              (applied={}, term={}, pending_meta_waiters={})",
             self.shard,

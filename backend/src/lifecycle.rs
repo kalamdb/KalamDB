@@ -56,6 +56,16 @@ fn effective_workers(configured: usize) -> usize {
     }
 }
 
+/// Resolve the configured blocking-pool cap used by Actix workers and the
+/// outer Tokio runtime.
+pub fn effective_max_blocking_threads(configured: usize) -> usize {
+    if configured == 0 {
+        kalamdb_configs::defaults::default_worker_max_blocking_threads()
+    } else {
+        configured
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShutdownSignal {
     CtrlC,
@@ -521,7 +531,7 @@ pub async fn run(
         effective_workers(config.server.workers),
         config.performance.max_connections,
         config.performance.backlog,
-        config.performance.worker_max_blocking_threads,
+        effective_max_blocking_threads(config.performance.worker_max_blocking_threads),
         config.rate_limit.request_body_limit_bytes / (1024 * 1024)
     );
 
@@ -645,7 +655,9 @@ pub async fn run(
     // Per-worker max concurrent connections (default: 25000)
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
-    .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+    .worker_max_blocking_threads(effective_max_blocking_threads(
+        config.performance.worker_max_blocking_threads,
+    ))
     // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
     // Connections stay open for reuse, reducing TCP handshake overhead
     .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
@@ -870,7 +882,9 @@ pub async fn run_for_tests(
         .listen(listener)?
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .worker_max_blocking_threads(effective_max_blocking_threads(
+            config.performance.worker_max_blocking_threads,
+        ))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
             config.performance.client_request_timeout,
@@ -961,7 +975,9 @@ pub async fn run_detached(
     let server = server
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .worker_max_blocking_threads(effective_max_blocking_threads(
+            config.performance.worker_max_blocking_threads,
+        ))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
             config.performance.client_request_timeout,

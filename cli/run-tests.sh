@@ -105,7 +105,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
     echo "         using features: kalam-cli/e2e-tests and kalamdb-server/e2e-tests."
     echo "         Untargeted full runs also execute"
-    echo "         TypeScript SDK, example, React Playwright, UI, and Dart test suites."
+    echo "         TypeScript SDK unit/browser/e2e, example, UI, and Dart test suites."
     echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
@@ -499,7 +499,7 @@ if [ -z "$TEST_FILTER" ] \
     && [ -z "$TEST_TARGET" ] \
     && [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
     RUN_SUPPLEMENTARY_SUITES=true
-    SUPPLEMENTARY_MODE="TypeScript SDKs, examples, React Playwright, UI, and Dart"
+    SUPPLEMENTARY_MODE="TypeScript SDK unit/browser/e2e, examples, UI, and Dart"
 fi
 
 # Display configuration
@@ -847,6 +847,12 @@ run_supplementary_suites() {
     export KALAMDB_TEST_PASSWORD="$KALAMDB_ADMIN_PASSWORD"
 
     run_npm_suite "link/sdks/typescript/client" "Running TypeScript client SDK tests" "test"
+    run_npm_suite \
+        "link/sdks/typescript/client" \
+        "Running TypeScript client SDK Playwright tests" \
+        "test:browser" \
+        "test:browser:install"
+    run_npm_suite "link/sdks/typescript/cli" "Running TypeScript CLI package tests" "test"
     run_npm_suite "link/sdks/typescript/consumer" "Running TypeScript consumer SDK tests" "test"
     run_npm_suite "link/sdks/typescript/orm" "Running TypeScript ORM SDK tests" "test"
     run_npm_suite "link/sdks/typescript/react" "Running TypeScript React SDK unit tests" "test"

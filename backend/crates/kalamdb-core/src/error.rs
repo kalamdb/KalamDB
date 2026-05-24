@@ -211,6 +211,28 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
     }
 }
 
+impl From<kalamdb_flush::FlushError> for KalamDbError {
+    fn from(err: kalamdb_flush::FlushError) -> Self {
+        match err {
+            kalamdb_flush::FlushError::Storage(error) => KalamDbError::from(error),
+            kalamdb_flush::FlushError::Filestore(error) => KalamDbError::from(error),
+            kalamdb_flush::FlushError::InvalidOperation(message) => {
+                KalamDbError::InvalidOperation(message)
+            },
+            kalamdb_flush::FlushError::NotFound(message) => KalamDbError::NotFound(message),
+            kalamdb_flush::FlushError::TableNotFound(message) => {
+                KalamDbError::TableNotFound(message)
+            },
+            kalamdb_flush::FlushError::SchemaError(message) => KalamDbError::SchemaError(message),
+            kalamdb_flush::FlushError::SerializationError(message) => {
+                KalamDbError::SerializationError(message)
+            },
+            kalamdb_flush::FlushError::Arrow(message)
+            | kalamdb_flush::FlushError::Other(message) => KalamDbError::Other(message),
+        }
+    }
+}
+
 // Convert kalamdb_filestore::FilestoreError to KalamDbError (Phase 13.8)
 impl From<kalamdb_filestore::FilestoreError> for KalamDbError {
     fn from(err: kalamdb_filestore::FilestoreError) -> Self {

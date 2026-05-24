@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use humantime::parse_duration;
 use kalam_cli::OutputFormat;
 
@@ -44,33 +44,37 @@ macro_rules! version_string {
 #[command(version = version_string!())]
 #[command(about = "Interactive SQL terminal for KalamDB", long_about = None)]
 pub struct Cli {
+    /// Command to run (for example: login, logout, whoami, doctor, update)
+    #[command(subcommand)]
+    pub subcommand: Option<CliCommand>,
+
     /// Server URL (e.g., http://localhost:3000)
-    #[arg(short = 'u', long = "url")]
+    #[arg(short = 'u', long = "url", global = true)]
     pub url: Option<String>,
 
     /// Host address (alternative to URL)
-    #[arg(short = 'H', long = "host")]
+    #[arg(short = 'H', long = "host", global = true)]
     pub host: Option<String>,
 
     /// Port number (default: 3000)
-    #[arg(short = 'p', long = "port", default_value = "3000")]
+    #[arg(short = 'p', long = "port", default_value = "3000", global = true)]
     pub port: u16,
 
     /// JWT authentication token (avoid in shared shells; may appear in process list/history)
-    #[arg(long = "token")]
+    #[arg(long = "token", global = true)]
     pub token: Option<String>,
 
     /// HTTP Basic Auth user identifier
-    #[arg(long = "user")]
+    #[arg(long = "user", global = true)]
     pub user: Option<String>,
 
     /// HTTP Basic Auth password (if flag is present without value, prompts interactively;
     /// avoid passing inline secrets in shared shells)
-    #[arg(long = "password", num_args = 0..=1, default_missing_value = "")]
+    #[arg(long = "password", num_args = 0..=1, default_missing_value = "", global = true)]
     pub password: Option<String>,
 
     /// Database instance name (for credential storage)
-    #[arg(long = "instance", default_value = "local")]
+    #[arg(long = "instance", default_value = "local", global = true)]
     pub instance: String,
 
     /// Execute SQL from file and exit
@@ -82,55 +86,71 @@ pub struct Cli {
     pub command: Option<Vec<String>>,
 
     /// Output format
-    #[arg(long = "format", default_value = "table")]
+    #[arg(long = "format", default_value = "table", global = true)]
     pub format: OutputFormat,
 
     /// Enable JSON output (shorthand for --format=json)
-    #[arg(long = "json", conflicts_with = "format")]
+    #[arg(long = "json", conflicts_with = "format", global = true)]
     pub json: bool,
 
     /// Enable CSV output (shorthand for --format=csv)
-    #[arg(long = "csv", conflicts_with = "format")]
+    #[arg(long = "csv", conflicts_with = "format", global = true)]
     pub csv: bool,
 
     /// Disable colored output
-    #[arg(long = "no-color")]
+    #[arg(long = "no-color", global = true)]
     pub no_color: bool,
 
     /// Disable spinners/animations
-    #[arg(long = "no-spinner")]
+    #[arg(long = "no-spinner", global = true)]
     pub no_spinner: bool,
 
     /// Loading indicator threshold in ms (0 to always show)
-    #[arg(long = "loading-threshold-ms")]
+    #[arg(long = "loading-threshold-ms", global = true)]
     pub loading_threshold_ms: Option<u64>,
 
     /// Configuration file path
-    #[arg(long = "config", default_value = "~/.kalam/config.toml")]
+    #[arg(long = "config", default_value = "~/.kalam/config.toml", global = true)]
     pub config: PathBuf,
 
     /// Enable verbose logging
-    #[arg(short = 'v', long = "verbose")]
+    #[arg(short = 'v', long = "verbose", global = true)]
     pub verbose: bool,
 
     /// HTTP request timeout in seconds (default: 30)
-    #[arg(long = "timeout", value_name = "SECONDS", default_value_t = 30)]
+    #[arg(
+        long = "timeout",
+        value_name = "SECONDS",
+        default_value_t = 30,
+        global = true
+    )]
     pub timeout: u64,
 
     /// Connection timeout in seconds (TCP + TLS handshake, default: 10)
     #[arg(
         long = "connection-timeout",
         value_name = "SECONDS",
-        default_value_t = 10
+        default_value_t = 10,
+        global = true
     )]
     pub connection_timeout: u64,
 
     /// Receive timeout in seconds (default: 30)
-    #[arg(long = "receive-timeout", value_name = "SECONDS", default_value_t = 30)]
+    #[arg(
+        long = "receive-timeout",
+        value_name = "SECONDS",
+        default_value_t = 30,
+        global = true
+    )]
     pub receive_timeout: u64,
 
     /// WebSocket authentication timeout in seconds (default: 5)
-    #[arg(long = "auth-timeout", value_name = "SECONDS", default_value_t = 5)]
+    #[arg(
+        long = "auth-timeout",
+        value_name = "SECONDS",
+        default_value_t = 5,
+        global = true
+    )]
     pub auth_timeout: u64,
 
     // Credential management commands
@@ -179,11 +199,11 @@ pub struct Cli {
     pub initial_data_timeout: u64,
 
     /// Use fast timeout preset (optimized for local development)
-    #[arg(long = "fast-timeouts")]
+    #[arg(long = "fast-timeouts", global = true)]
     pub fast_timeouts: bool,
 
     /// Use relaxed timeout preset (optimized for high-latency networks)
-    #[arg(long = "relaxed-timeouts")]
+    #[arg(long = "relaxed-timeouts", global = true)]
     pub relaxed_timeouts: bool,
 
     /// Watch schema metadata and run a command when `system.tables` changes
@@ -258,6 +278,122 @@ pub struct Cli {
     pub consume_timeout: Option<u64>,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum CliCommand {
+    /// Update this kalam binary from signed release assets and checksums
+    Update(UpdateArgs),
+
+    /// Print version information
+    Version,
+
+    /// Run local, server, and authentication diagnostics
+    Doctor(DoctorArgs),
+
+    /// Login and save credentials for an instance
+    Login(LoginArgs),
+
+    /// Delete saved credentials for an instance
+    Logout(LogoutArgs),
+
+    /// Show the currently authenticated user
+    Whoami,
+
+    /// Manage service tokens
+    Token(TokenArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct UpdateArgs {
+    /// Install a specific version instead of the latest release
+    #[arg(long = "version", value_name = "VERSION")]
+    pub version: Option<String>,
+
+    /// Use the latest GitHub prerelease
+    #[arg(long = "pre-release")]
+    pub pre_release: bool,
+
+    /// Show the resolved update without replacing the binary
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
+    /// Reinstall even when the requested version matches the current version
+    #[arg(long = "force")]
+    pub force: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DoctorArgs {
+    /// Exit non-zero when any diagnostic check fails
+    #[arg(long = "strict")]
+    pub strict: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct LoginArgs {
+    /// Do not save credentials after login
+    #[arg(long = "no-save")]
+    pub no_save: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct LogoutArgs {
+    /// Delete credentials for every saved instance
+    #[arg(long = "all")]
+    pub all: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TokenArgs {
+    #[command(subcommand)]
+    pub command: TokenCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum TokenCommand {
+    /// Create a service account and print a fresh access/refresh token pair
+    Create(TokenCreateArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TokenCreateArgs {
+    /// Token/service account name
+    #[arg(long = "name")]
+    pub name: String,
+
+    /// Role for the generated account
+    #[arg(long = "role", value_enum, default_value_t = TokenRole::Service)]
+    pub role: TokenRole,
+
+    /// Save the generated token pair as a local credential instance with the same name
+    #[arg(long = "save")]
+    pub save: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TokenRole {
+    User,
+    Service,
+    Dba,
+    System,
+}
+
+impl TokenRole {
+    #[allow(dead_code)]
+    pub fn as_sql(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Service => "service",
+            Self::Dba => "dba",
+            Self::System => "system",
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn version_report() -> &'static str {
+    version_string!()
+}
+
 impl Cli {
     pub fn command_text(&self) -> Option<String> {
         self.command.as_ref().map(|parts| parts.join(" "))
@@ -268,7 +404,7 @@ impl Cli {
 mod tests {
     use clap::Parser;
 
-    use super::{parse_watch_interval, Cli};
+    use super::{parse_watch_interval, Cli, CliCommand, TokenCommand, TokenRole};
     use std::{path::Path, time::Duration};
 
     #[test]
@@ -335,5 +471,64 @@ mod tests {
         assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
         assert_eq!(cli.port, 2900);
         assert_eq!(cli.file.as_deref(), Some(Path::new("./queries.sql")));
+    }
+
+    #[test]
+    fn version_subcommand_parses() {
+        let cli = Cli::try_parse_from(["kalam", "version"]).expect("version should parse");
+
+        assert!(matches!(cli.subcommand, Some(CliCommand::Version)));
+    }
+
+    #[test]
+    fn login_subcommand_accepts_instance_and_url_after_command() {
+        let cli = Cli::try_parse_from([
+            "kalam",
+            "login",
+            "--instance",
+            "prod",
+            "--url",
+            "https://db.example.com",
+            "--user",
+            "root",
+            "--password",
+            "secret",
+        ])
+        .expect("login should parse");
+
+        assert!(matches!(cli.subcommand, Some(CliCommand::Login(_))));
+        assert_eq!(cli.instance, "prod");
+        assert_eq!(cli.url.as_deref(), Some("https://db.example.com"));
+        assert_eq!(cli.user.as_deref(), Some("root"));
+        assert_eq!(cli.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn token_create_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "kalam", "token", "create", "--name", "ci-prod", "--role", "dba", "--save",
+        ])
+        .expect("token create should parse");
+
+        let Some(CliCommand::Token(args)) = cli.subcommand else {
+            panic!("expected token command");
+        };
+        let TokenCommand::Create(create) = args.command;
+        assert_eq!(create.name, "ci-prod");
+        assert_eq!(create.role, TokenRole::Dba);
+        assert!(create.save);
+    }
+
+    #[test]
+    fn utility_subcommands_parse() {
+        for args in [
+            &["doctor"][..],
+            &["logout"][..],
+            &["whoami"][..],
+            &["update", "--dry-run"][..],
+        ] {
+            Cli::try_parse_from(std::iter::once("kalam").chain(args.iter().copied()))
+                .expect("utility command should parse");
+        }
     }
 }

@@ -15,7 +15,10 @@ use std::{
 
 use kalam_client::models::ResponseStatus;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
-use kalamdb_core::manifest::{FlushJobResult, SharedTableFlushJob, TableFlush, UserTableFlushJob};
+use kalamdb_core::manifest::{
+    FlushJobResult, FlushTableMetadata, NoopFlushScopeHook, SharedTableFlushJob, TableFlush,
+    UserTableFlushJob,
+};
 use kalamdb_tables::new_indexed_user_table_store;
 use tokio::time::sleep;
 
@@ -62,10 +65,21 @@ pub async fn execute_flush_synchronously(
         .to_arrow_schema()
         .map_err(|e| format!("Failed to convert to Arrow schema: {}", e))?;
 
-    // Table metadata scan not needed for flush execution
-
-    // Get store and registry from AppContext (use per-table store)
-    let unified_cache = server.app_context.schema_registry();
+    // Get store and cached table metadata from AppContext (use per-table store)
+    let schema_registry = server.app_context.schema_registry();
+    let cached_table = schema_registry
+        .get(&table_id)
+        .ok_or_else(|| format!("Cached table {} not found", table_id))?;
+    let storage_cached = cached_table
+        .storage_cached(&server.app_context.storage_registry())
+        .map_err(|e| format!("Failed to resolve storage cache: {}", e))?;
+    let metadata = FlushTableMetadata::new(
+        cached_table.schema_version,
+        cached_table.bloom_filter_columns().to_vec(),
+        cached_table.indexed_columns().to_vec(),
+    );
+    let scan_batch_size = server.app_context.config().flush.flush_batch_size;
+    let scope_hook = Arc::new(NoopFlushScopeHook);
     let table_id_arc = Arc::new(table_id.clone());
 
     // Determine PK field name from schema
@@ -85,12 +99,14 @@ pub async fn execute_flush_synchronously(
     ));
 
     let flush_job = UserTableFlushJob::new(
-        server.app_context.clone(),
         table_id_arc,
         user_table_store,
         arrow_schema.clone(),
-        unified_cache,
+        storage_cached,
         server.app_context.manifest_service(),
+        metadata,
+        scan_batch_size,
+        scope_hook,
     );
 
     flush_job.execute().map_err(|e| format!("Flush execution failed: {}", e))
@@ -117,14 +133,25 @@ pub async fn execute_shared_flush_synchronously(
         return Err(format!("No columns defined for table '{}.{}'", namespace, table_name));
     }
 
-    // Table metadata scan not needed for flush execution
-
     let arrow_schema = table_def
         .to_arrow_schema()
         .map_err(|e| format!("Failed to convert to Arrow schema: {}", e))?;
 
-    // Get per-table SharedTableIndexedStore and registry from AppContext
-    let unified_cache = server.app_context.schema_registry();
+    // Get per-table SharedTableIndexedStore and cached metadata from AppContext
+    let schema_registry = server.app_context.schema_registry();
+    let cached_table = schema_registry
+        .get(&table_id)
+        .ok_or_else(|| format!("Cached table {} not found", table_id))?;
+    let storage_cached = cached_table
+        .storage_cached(&server.app_context.storage_registry())
+        .map_err(|e| format!("Failed to resolve storage cache: {}", e))?;
+    let metadata = FlushTableMetadata::new(
+        cached_table.schema_version,
+        cached_table.bloom_filter_columns().to_vec(),
+        cached_table.indexed_columns().to_vec(),
+    );
+    let scan_batch_size = server.app_context.config().flush.flush_batch_size;
+    let scope_hook = Arc::new(NoopFlushScopeHook);
 
     // Determine PK field name
     let pk_field = arrow_schema
@@ -141,12 +168,14 @@ pub async fn execute_shared_flush_synchronously(
     ));
 
     let flush_job = SharedTableFlushJob::new(
-        server.app_context.clone(),
         Arc::new(table_id.clone()),
         shared_table_store,
         arrow_schema.clone(),
-        unified_cache,
+        storage_cached,
         server.app_context.manifest_service(),
+        metadata,
+        scan_batch_size,
+        scope_hook,
     );
 
     flush_job

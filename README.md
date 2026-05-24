@@ -105,6 +105,18 @@ cd KalamDB/backend
 cargo run --bin kalamdb-server
 ```
 
+### CLI
+
+```bash
+npm install -g @kalamdb/cli
+
+# or
+curl -fsSL https://kalamdb.org/install.sh | sh
+
+kalam doctor
+kalam login --instance local --url http://localhost:2900
+```
+
 ## Browser/Frontend Client Example
 
 ```ts

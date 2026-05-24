@@ -447,20 +447,6 @@ impl VirtualView for SettingsView {
                 ]
             );
 
-            // Retention Settings
-            add_settings!(
-                names,
-                values,
-                descriptions,
-                categories,
-                [(
-                    "retention.default_deleted_retention_hours",
-                    config.retention.default_deleted_retention_hours,
-                    "Default retention hours for soft-deleted rows",
-                    "retention"
-                ),]
-            );
-
             // Stream Settings
             add_settings!(
                 names,

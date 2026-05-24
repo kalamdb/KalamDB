@@ -16,6 +16,7 @@ Always refer to `AGENTS.md` for the most up-to-date guidelines and best practice
 Priority reminders from `AGENTS.md`:
 - Keep performance as a primary constraint, including compile-time and hot-path costs.
 - Batch related edits before running `cargo check` or `cargo build`.
+- When user-facing commands, syntax, SDK entry points, or operational workflows change, update the canonical KalamDB skills in `../kalamdb-skills` too.
 - For performance tests, report per-test runtime in seconds.
 - When adding dependencies, enable only the minimal required features.
 

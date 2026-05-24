@@ -7,24 +7,21 @@ use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
-    constants::SystemColumnNames,
     ids::UserTableRowId,
     models::{TableId, UserId},
     schemas::TableType,
     StorageKey,
 };
+use kalamdb_filestore::StorageCached;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableIndexedStore, UserTableRow};
 
-use super::base::{config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, TableFlush};
-use super::scope_writer::FlushScopeWriter;
-use crate::{
-    app_context::AppContext,
-    error::KalamDbError,
-    error_extensions::KalamDbResultExt,
-    manifest::{FlushManifestHelper, ManifestService},
-    schema_registry::SchemaRegistry,
+use super::base::{
+    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
+    FlushScopeHook, FlushTableMetadata, TableFlush,
 };
+use super::scope_writer::FlushScopeWriter;
+use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestService};
 
 /// User table flush job
 ///
@@ -35,66 +32,50 @@ pub struct UserTableFlushJob {
     store: Arc<UserTableIndexedStore>,
     table_id: Arc<TableId>,
     schema: SchemaRef,
-    unified_cache: Arc<SchemaRegistry>,
-    app_context: Arc<AppContext>,
+    storage_cached: Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    /// Bloom filter columns (PRIMARY KEY + _seq) - fetched once per job for efficiency
-    bloom_filter_columns: Vec<String>,
-    /// Indexed columns with column_id for stats extraction (column_id, column_name)
-    indexed_columns: Vec<(u64, String)>,
+    metadata: FlushTableMetadata,
+    scan_batch_size: usize,
+    scope_hook: Arc<dyn FlushScopeHook>,
 }
 
 impl UserTableFlushJob {
     /// Create a new user table flush job
     pub fn new(
-        app_context: Arc<AppContext>,
         table_id: Arc<TableId>,
         store: Arc<UserTableIndexedStore>,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaRegistry>,
+        storage_cached: Arc<StorageCached>,
         manifest_service: Arc<ManifestService>,
+        metadata: FlushTableMetadata,
+        scan_batch_size: usize,
+        scope_hook: Arc<dyn FlushScopeHook>,
     ) -> Self {
         let manifest_helper = FlushManifestHelper::new(manifest_service);
 
-        // Get cached values from CachedTableData (computed once at cache entry creation)
-        // This avoids any recomputation - values are already cached in the schema registry
-        let (bloom_filter_columns, indexed_columns) = unified_cache
-            .get(&table_id)
-            .map(|cached| {
-                (cached.bloom_filter_columns().to_vec(), cached.indexed_columns().to_vec())
-            })
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "⚠️  Table {} not in cache. Using default Bloom filter columns (_seq only)",
-                    table_id
-                );
-                (vec![SystemColumnNames::SEQ.to_string()], vec![])
-            });
-
-        log::debug!("🌸 Bloom filters enabled for columns: {:?}", bloom_filter_columns);
+        log::debug!("🌸 Bloom filters enabled for columns: {:?}", &metadata.bloom_filter_columns);
 
         Self {
             store,
             table_id,
             schema,
-            unified_cache,
-            app_context,
+            storage_cached,
             manifest_helper,
-            bloom_filter_columns,
-            indexed_columns,
+            metadata,
+            scan_batch_size: helpers::normalize_scan_batch_size(scan_batch_size),
+            scope_hook,
         }
     }
 
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
         FlushScopeWriter::new(
-            &self.app_context,
             &self.table_id,
             TableType::User,
             &self.schema,
-            &self.unified_cache,
+            &self.storage_cached,
             &self.manifest_helper,
-            &self.bloom_filter_columns,
-            &self.indexed_columns,
+            &self.metadata,
+            self.scope_hook.as_ref(),
         )
     }
 
@@ -105,7 +86,7 @@ impl UserTableFlushJob {
         keys_to_delete: Vec<Vec<u8>>,
         parquet_files: &mut Vec<String>,
         stats: &mut FlushDedupStats,
-    ) -> Result<usize, KalamDbError> {
+    ) -> Result<usize, FlushError> {
         stats.rows_after_dedup += latest_versions.len();
 
         let (rows, preserved_tombstone_keys) =
@@ -133,7 +114,7 @@ impl UserTableFlushJob {
     }
 
     /// Delete flushed rows from RocksDB
-    fn delete_flushed_keys(&self, keys: &[Vec<u8>]) -> Result<(), KalamDbError> {
+    fn delete_flushed_keys(&self, keys: &[Vec<u8>]) -> Result<(), FlushError> {
         if keys.is_empty() {
             return Ok(());
         }
@@ -150,7 +131,7 @@ impl UserTableFlushJob {
 
             self.store
                 .delete_batch(&parsed_keys)
-                .into_kalamdb_error("Failed to delete flushed rows")?;
+                .into_flush_error("Failed to delete flushed rows")?;
         }
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -159,7 +140,7 @@ impl UserTableFlushJob {
 }
 
 impl TableFlush for UserTableFlushJob {
-    fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
+    fn execute(&self) -> Result<FlushJobResult, FlushError> {
         log::debug!(
             "🔄 Starting user table flush: table={}, partition={}",
             self.table_id,
@@ -177,10 +158,11 @@ impl TableFlush for UserTableFlushJob {
         let mut keys_to_delete: Vec<Vec<u8>> = Vec::with_capacity(1024);
         let mut stats = FlushDedupStats::default();
         let mut parquet_files: Vec<String> = Vec::new();
+        let mut scope_hints: Vec<FlushScopeHint> = Vec::new();
         let mut total_rows_flushed = 0;
         let mut users_count = 0;
         let mut error_messages: Vec<String> = Vec::new();
-        let scan_batch_size = helpers::scan_batch_size(&self.app_context);
+        let scan_batch_size = self.scan_batch_size;
 
         // Batched scan with cursor
         let mut cursor: Option<UserTableRowId> = None;
@@ -190,7 +172,7 @@ impl TableFlush for UserTableFlushJob {
                 .scan_typed_with_prefix_and_start(None, cursor.as_ref(), scan_batch_size)
                 .map_err(|e| {
                     log::error!("❌ Failed to scan table={}: {}", self.table_id, e);
-                    KalamDbError::Other(format!("Failed to scan table: {}", e))
+                    FlushError::Other(format!("Failed to scan table: {}", e))
                 })?;
 
             if batch.is_empty() {
@@ -224,6 +206,7 @@ impl TableFlush for UserTableFlushJob {
                         Ok(rows_count) => {
                             total_rows_flushed += rows_count;
                             if rows_count > 0 {
+                                scope_hints.push(FlushScopeHint::User(finished_user.clone()));
                                 users_count += 1;
                             }
                         },
@@ -268,6 +251,7 @@ impl TableFlush for UserTableFlushJob {
                 Ok(rows_count) => {
                     total_rows_flushed += rows_count;
                     if rows_count > 0 {
+                        scope_hints.push(FlushScopeHint::User(finished_user.clone()));
                         users_count += 1;
                     }
                 },
@@ -297,6 +281,7 @@ impl TableFlush for UserTableFlushJob {
             return Ok(FlushJobResult {
                 rows_flushed: 0,
                 parquet_files: vec![],
+                scope_hints: vec![],
                 metadata: FlushMetadata::user_table(0, vec![]),
             });
         }
@@ -311,7 +296,7 @@ impl TableFlush for UserTableFlushJob {
                 error_messages.first().cloned().unwrap_or_else(|| "unknown error".to_string())
             );
             log::error!("❌ User table flush failed: table={} — {}", self.table_id, summary);
-            return Err(KalamDbError::Other(summary));
+            return Err(FlushError::Other(summary));
         }
 
         log::debug!(
@@ -326,6 +311,7 @@ impl TableFlush for UserTableFlushJob {
         Ok(FlushJobResult {
             rows_flushed: total_rows_flushed,
             parquet_files,
+            scope_hints,
             metadata: FlushMetadata::user_table(users_count, error_messages),
         })
     }
