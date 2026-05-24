@@ -46,7 +46,6 @@ flush_batch_size = 10000
 check_interval_seconds = 60
 
 [retention]
-default_deleted_retention_hours = 168
 enable_dba_stats = false
 dba_stats_retention_days = 7
 

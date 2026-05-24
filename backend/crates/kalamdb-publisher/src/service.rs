@@ -1106,7 +1106,7 @@ impl TopicPublisherService {
                     Ok(Some(last_offset)) => {
                         let next = last_offset + 1;
                         self.offset_allocator.seed(&topic.topic_id, partition_id, next);
-                        log::info!(
+                        log::debug!(
                             "Restored offset counter for topic={} partition={}: next_offset={}",
                             topic.topic_id.as_str(),
                             partition_id,

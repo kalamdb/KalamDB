@@ -201,6 +201,13 @@
         "protocol": "v1"
       }
     },
+    "npm": {
+      "@kalamdb/cli": {
+        "version": "0.5.1-beta.2",
+        "compatible_core": "0.5.1-beta.2",
+        "protocol": "v1"
+      }
+    },
     "rust": {
       "kalam-client": {
         "version": "0.5.1-beta.2",

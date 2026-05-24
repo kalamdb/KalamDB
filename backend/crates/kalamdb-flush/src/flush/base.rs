@@ -18,9 +18,21 @@
 //! Implementations (users.rs, shared.rs, streams.rs)
 //! ```
 
+use std::sync::Arc;
+
+use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_commons::{schemas::TableType, TableId, UserId};
+use kalamdb_filestore::StorageCached;
 use serde::{Deserialize, Serialize};
 
-use crate::error::KalamDbError;
+use crate::Result;
+
+/// Scope touched by a flush operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlushScopeHint {
+    Shared,
+    User(UserId),
+}
 
 /// Metadata for user table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -96,8 +108,61 @@ pub struct FlushJobResult {
     /// Parquet files written (relative paths)
     pub parquet_files: Vec<String>,
 
+    /// Table scopes that wrote new Parquet files.
+    pub scope_hints: Vec<FlushScopeHint>,
+
     /// Type-safe metadata specific to table type
     pub metadata: FlushMetadata,
+}
+
+/// Cached table metadata needed by the flush writer.
+#[derive(Debug, Clone)]
+pub struct FlushTableMetadata {
+    pub schema_version: u32,
+    pub bloom_filter_columns: Vec<String>,
+    pub indexed_columns: Vec<(u64, String)>,
+}
+
+impl FlushTableMetadata {
+    pub fn new(
+        schema_version: u32,
+        bloom_filter_columns: Vec<String>,
+        indexed_columns: Vec<(u64, String)>,
+    ) -> Self {
+        Self {
+            schema_version,
+            bloom_filter_columns,
+            indexed_columns,
+        }
+    }
+}
+
+/// Higher-level side effects that run after a scope is durably flushed.
+pub trait FlushScopeHook: Send + Sync {
+    fn after_scope_write(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        schema: &SchemaRef,
+        storage_cached: &Arc<StorageCached>,
+    ) -> Result<()>;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopFlushScopeHook;
+
+impl FlushScopeHook for NoopFlushScopeHook {
+    fn after_scope_write(
+        &self,
+        _table_type: TableType,
+        _table_id: &TableId,
+        _user_id: Option<&UserId>,
+        _schema: &SchemaRef,
+        _storage_cached: &Arc<StorageCached>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Statistics from version resolution during flush
@@ -173,8 +238,8 @@ pub trait TableFlush: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns `KalamDbError` if flush fails (I/O error, invalid data, etc.)
-    fn execute(&self) -> Result<FlushJobResult, KalamDbError>;
+    /// Returns `FlushError` if flush fails (I/O error, invalid data, etc.)
+    fn execute(&self) -> Result<FlushJobResult>;
 
     /// Get table identifier for logging
     ///
@@ -202,16 +267,14 @@ pub mod helpers {
         scalar::ScalarValue,
     };
     use kalamdb_commons::{
-        constants::SystemColumnNames, models::rows::Row, next_storage_key_bytes,
+        constants::SystemColumnNames, conversions::arrow_json_conversion::json_rows_to_arrow_batch,
+        models::rows::Row, next_storage_key_bytes,
     };
     use kalamdb_tables::{SharedTableRow, UserTableRow};
 
-    use crate::{
-        app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt,
-        providers::arrow_json_conversion::json_rows_to_arrow_batch,
-    };
+    use crate::{error::FlushResultExt, Result};
 
-    use super::FlushDedupStats;
+    use super::{FlushDedupStats, FlushTableMetadata};
 
     pub type LatestVersions<R> = HashMap<String, (Vec<u8>, R, i64)>;
 
@@ -281,8 +344,8 @@ pub mod helpers {
 
     /// Configured row scan batch size, clamped to a valid minimum.
     #[inline]
-    pub fn scan_batch_size(app_context: &AppContext) -> usize {
-        app_context.config().flush.flush_batch_size.max(1)
+    pub fn normalize_scan_batch_size(scan_batch_size: usize) -> usize {
+        scan_batch_size.max(1)
     }
 
     /// Update cursor for next batch (append null byte to skip current key)
@@ -303,16 +366,12 @@ pub mod helpers {
     ///
     /// This is the common pattern used by both user and shared table flush.
     /// Adds _seq and _deleted columns to each row before conversion.
-    pub fn rows_to_arrow_batch(
-        schema: &SchemaRef,
-        rows: &[(Vec<u8>, Row)],
-    ) -> Result<RecordBatch, KalamDbError> {
+    pub fn rows_to_arrow_batch(schema: &SchemaRef, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch> {
         // Avoid cloning: collect references, then build columnar arrays directly.
         // The JSON conversion function requires owned Rows (it consumes the BTreeMap),
         // so we must clone — but we skip cloning the key bytes.
         let arrow_rows: Vec<Row> = rows.iter().map(|(_, row)| row.clone()).collect();
-        json_rows_to_arrow_batch(schema, arrow_rows)
-            .into_kalamdb_error("Failed to build RecordBatch")
+        json_rows_to_arrow_batch(schema, arrow_rows).into_flush_error("Failed to build RecordBatch")
     }
 
     /// Convert owned rows (consuming the key bytes) to Arrow RecordBatch.
@@ -322,21 +381,17 @@ pub mod helpers {
     pub fn rows_into_arrow_batch(
         schema: &SchemaRef,
         rows: Vec<(Vec<u8>, Row)>,
-    ) -> Result<RecordBatch, KalamDbError> {
+    ) -> Result<RecordBatch> {
         let arrow_rows: Vec<Row> = rows.into_iter().map(|(_, row)| row).collect();
-        json_rows_to_arrow_batch(schema, arrow_rows)
-            .into_kalamdb_error("Failed to build RecordBatch")
+        json_rows_to_arrow_batch(schema, arrow_rows).into_flush_error("Failed to build RecordBatch")
     }
 
     /// Get schema version from cached table data
     pub fn get_schema_version(
-        unified_cache: &crate::schema_registry::SchemaRegistry,
-        table_id: &kalamdb_commons::models::TableId,
+        metadata: &FlushTableMetadata,
+        _table_id: &kalamdb_commons::models::TableId,
     ) -> u32 {
-        unified_cache
-            .get(table_id)
-            .map(|cached| cached.table.schema_version)
-            .unwrap_or(1)
+        metadata.schema_version
     }
 
     /// Extract PK value from row fields with _seq fallback
@@ -429,6 +484,8 @@ pub mod helpers {
 
 #[cfg(test)]
 mod tests {
+    use crate::FlushError;
+
     use super::*;
 
     struct MockFlushJob {
@@ -437,14 +494,15 @@ mod tests {
     }
 
     impl TableFlush for MockFlushJob {
-        fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
+        fn execute(&self) -> Result<FlushJobResult> {
             if self.should_fail {
-                return Err(KalamDbError::Other("Mock failure".to_string()));
+                return Err(FlushError::Other("Mock failure".to_string()));
             }
 
             Ok(FlushJobResult {
                 rows_flushed: self.rows_count,
                 parquet_files: vec!["batch-123.parquet".to_string()],
+                scope_hints: vec![FlushScopeHint::Shared],
                 metadata: FlushMetadata::shared_table(),
             })
         }

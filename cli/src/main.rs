@@ -25,8 +25,8 @@ mod commands;
 mod connect;
 mod terminal_input;
 
-use args::Cli;
-use commands::handle_pre_session_commands;
+use args::{Cli, CliCommand};
+use commands::{handle_early_commands, handle_pre_session_commands};
 use connect::create_session;
 use terminal_input::prompt_password;
 
@@ -46,8 +46,12 @@ async fn run() -> Result<()> {
     // If the password is explicitly set to an empty string, only prompt in interactive mode.
     // In non-interactive modes (--command/--file), an empty password may be valid (e.g. default
     // root).
-    let is_interactive_mode = cli.command.is_none() && cli.file.is_none();
-    if cli.password.as_deref() == Some("") && is_interactive_mode && std::io::stdin().is_terminal()
+    let password_prompt_mode =
+        matches!(
+            cli.subcommand,
+            Some(CliCommand::Login(_)) | Some(CliCommand::Token(_)) | Some(CliCommand::Whoami)
+        ) || (cli.subcommand.is_none() && cli.command.is_none() && cli.file.is_none());
+    if cli.password.as_deref() == Some("") && password_prompt_mode && std::io::stdin().is_terminal()
     {
         let password = prompt_password("Password: ")
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
@@ -59,9 +63,11 @@ async fn run() -> Result<()> {
         eprintln!("Verbose mode enabled");
     }
 
-    // Load configuration early to ensure config file exists
-    // This will create a default config file if it doesn't exist
-    let _config = CLIConfiguration::load(&cli.config)?;
+    // Commands such as version/update/doctor should not fail because local
+    // credentials are missing or malformed.
+    if handle_early_commands(&cli).await? {
+        return Ok(());
+    }
 
     // Load credential store
     let mut credential_store = FileCredentialStore::new()?;
@@ -69,6 +75,12 @@ async fn run() -> Result<()> {
     // Handle modes that do not use the regular command/file/interactive session path.
     if handle_pre_session_commands(&cli, &mut credential_store).await? {
         return Ok(());
+    }
+
+    if cli.subcommand.is_some() {
+        return Err(CLIError::ConfigurationError(
+            "Unhandled command. Run `kalam --help` for available commands.".into(),
+        ));
     }
 
     // Load configuration

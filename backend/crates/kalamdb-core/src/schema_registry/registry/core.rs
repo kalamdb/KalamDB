@@ -173,7 +173,7 @@ impl SchemaRegistry {
             }
         }
 
-        log::info!(
+        log::debug!(
             "SchemaRegistry initialized. Loaded: {}, Skipped (cached): {}, Failed: {}",
             loaded_count,
             skipped_count,
@@ -550,7 +550,7 @@ impl SchemaRegistry {
             .into_kalamdb_error("Failed to persist table definition")?;
 
         if persisted_new_version {
-            log::info!("Registering table {}", table_id);
+            log::debug!("Registering table {}", table_id);
         } else {
             log::debug!(
                 "Table {} already has identical persisted schema; refreshing cache/provider only",

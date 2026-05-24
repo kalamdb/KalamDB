@@ -442,7 +442,7 @@ pub async fn start_rpc_server(
     let (addr, bind_addr) = match advertise_addr.parse::<std::net::SocketAddr>() {
         Ok(addr) => {
             if addr.ip().is_unspecified() {
-                log::info!(
+                log::debug!(
                     "RPC address '{}' uses a wildcard bind — listening on all interfaces",
                     advertise_addr
                 );
@@ -538,7 +538,7 @@ pub async fn start_rpc_server(
     // Wait for startup confirmation (with timeout)
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), rx).await {
         Ok(Ok(Ok(()))) => {
-            log::info!(
+            log::debug!(
                 "[CLUSTER] Node {} RPC listener is up on {} and advertising {}",
                 manager.config().node_id,
                 bind_addr,

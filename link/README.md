@@ -7,6 +7,7 @@ This directory contains:
 - the shared Rust implementation crate `link-common`
 - the app-facing Rust/WASM entry crate `kalam-client`
 - the consumer-only WebAssembly wrapper crate `kalam-consumer-wasm`
+- the publishable TypeScript CLI wrapper package in [sdks/typescript/cli](sdks/typescript/cli/README.md) as `@kalamdb/cli`
 - the publishable TypeScript app-facing package in [sdks/typescript/client](sdks/typescript/client/README.md) as `@kalamdb/client`
 - the publishable TypeScript worker package in [sdks/typescript/consumer](sdks/typescript/consumer/README.md) as `@kalamdb/consumer`
 - the publishable Dart/Flutter package in [sdks/dart](sdks/dart/README.md) as `kalam_link`
@@ -17,6 +18,7 @@ Use the package-specific READMEs as the source of truth for public APIs:
 
 - TypeScript / JavaScript app client: [sdks/typescript/client/README.md](sdks/typescript/client/README.md)
 - TypeScript / JavaScript worker client: [sdks/typescript/consumer/README.md](sdks/typescript/consumer/README.md)
+- TypeScript / JavaScript CLI wrapper: [sdks/typescript/cli/README.md](sdks/typescript/cli/README.md)
 - Dart / Flutter SDK: [sdks/dart/README.md](sdks/dart/README.md)
 
 Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM `KalamClient(...)` snippets are not accurate for the current SDKs.
@@ -27,6 +29,7 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 
 - Use `@kalamdb/client` for `createClient({ url, authProvider, ... })`, SQL, auth flows, realtime subscriptions, live rows, and file helpers
 - Use `@kalamdb/consumer` for topic workers: `consumer()`, `consumeBatch()`, `ack()`, and `runConsumer()`; `runAgent()` remains as a deprecated compatibility alias
+- Use `@kalamdb/cli` when you want npm-based distribution of the native `kalam` binary without relying on the curl installer
 - `authProvider` is required and can return `Auth.basic(...)` or `Auth.jwt(...)`
 - `Auth.basic(...)` is a login bootstrap only: the SDK exchanges those credentials on `POST /v1/api/auth/login` and uses JWT auth for subsequent protected traffic
 - WebSocket connection management is automatic; with `wsLazyConnect: true` the client connects on the first realtime call
@@ -48,6 +51,7 @@ link/
 |-- kalam-consumer-wasm/  # wasm-bindgen wrapper for @kalamdb/consumer
 `-- sdks/
     |-- typescript/
+    |   |-- cli/          # npm package: @kalamdb/cli
     |   |-- client/       # npm package: @kalamdb/client
     |   `-- consumer/     # npm package: @kalamdb/consumer
     `-- dart/             # pub package: kalam_link
@@ -59,6 +63,7 @@ Package-specific build, test, and publish instructions live with each SDK:
 
 - TypeScript / JavaScript app client: [sdks/typescript/client/README.md](sdks/typescript/client/README.md)
 - TypeScript / JavaScript worker client: [sdks/typescript/consumer/README.md](sdks/typescript/consumer/README.md)
+- TypeScript / JavaScript CLI wrapper: [sdks/typescript/cli/README.md](sdks/typescript/cli/README.md)
 - Dart / Flutter: [sdks/dart/README.md](sdks/dart/README.md)
 
 If you change the shared Rust implementation in `link-common` or the `kalam-client` WASM entry crate, validate the affected SDK package afterward.

@@ -1,13 +1,20 @@
 use kalam_cli::{FileCredentialStore, Result};
 
-use crate::args::Cli;
+use crate::args::{Cli, CliCommand};
 
+pub mod auth;
 pub mod credentials;
+pub mod doctor;
 pub mod subscriptions;
+pub mod update;
 pub mod watch_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreSessionCommand {
+    Login,
+    Logout,
+    Whoami,
+    Token,
     CredentialManagement,
     CredentialLogin,
     WatchSchema,
@@ -20,6 +27,16 @@ pub struct CommandContext<'a> {
 }
 
 fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
+    if let Some(command) = &cli.subcommand {
+        return match command {
+            CliCommand::Login(_) => Some(PreSessionCommand::Login),
+            CliCommand::Logout(_) => Some(PreSessionCommand::Logout),
+            CliCommand::Whoami => Some(PreSessionCommand::Whoami),
+            CliCommand::Token(_) => Some(PreSessionCommand::Token),
+            CliCommand::Version | CliCommand::Update(_) | CliCommand::Doctor(_) => None,
+        };
+    }
+
     if cli.list_instances || cli.show_credentials || cli.delete_credentials {
         Some(PreSessionCommand::CredentialManagement)
     } else if cli.update_credentials {
@@ -38,6 +55,27 @@ async fn run_pre_session_command(
     context: CommandContext<'_>,
 ) -> Result<bool> {
     match command {
+        PreSessionCommand::Login => {
+            let Some(CliCommand::Login(args)) = &context.cli.subcommand else {
+                return Ok(false);
+            };
+            auth::handle_login(context.cli, args, context.credential_store).await
+        },
+        PreSessionCommand::Logout => {
+            let Some(CliCommand::Logout(args)) = &context.cli.subcommand else {
+                return Ok(false);
+            };
+            auth::handle_logout(context.cli, args, context.credential_store).await
+        },
+        PreSessionCommand::Whoami => {
+            auth::handle_whoami(context.cli, context.credential_store).await
+        },
+        PreSessionCommand::Token => {
+            let Some(CliCommand::Token(args)) = &context.cli.subcommand else {
+                return Ok(false);
+            };
+            auth::handle_token_command(context.cli, &args.command, context.credential_store).await
+        },
         PreSessionCommand::CredentialManagement => {
             credentials::handle_credentials(context.cli, context.credential_store)
         },
@@ -50,6 +88,22 @@ async fn run_pre_session_command(
         PreSessionCommand::Subscriptions => {
             subscriptions::handle_subscriptions(context.cli, context.credential_store).await
         },
+    }
+}
+
+pub async fn handle_early_commands(cli: &Cli) -> Result<bool> {
+    match &cli.subcommand {
+        Some(CliCommand::Version) => {
+            println!("{}", crate::args::version_report());
+            Ok(true)
+        },
+        Some(CliCommand::Update(args)) => update::handle_update(cli, args).await,
+        Some(CliCommand::Doctor(args)) => {
+            let credential_store_result =
+                FileCredentialStore::new().map_err(|error| error.to_string());
+            doctor::handle_doctor(cli, credential_store_result, args.strict).await
+        },
+        _ => Ok(false),
     }
 }
 
@@ -93,6 +147,51 @@ mod tests {
 
             assert_eq!(pre_session_command(&cli), Some(PreSessionCommand::CredentialManagement));
         }
+    }
+
+    #[test]
+    fn top_level_auth_handlers_match_commands() {
+        for (args, expected) in [
+            (
+                &["login", "--user", "root", "--password", "secret"][..],
+                PreSessionCommand::Login,
+            ),
+            (&["logout"][..], PreSessionCommand::Logout),
+            (&["whoami"][..], PreSessionCommand::Whoami),
+            (&["token", "create", "--name", "ci-prod"][..], PreSessionCommand::Token),
+        ] {
+            let cli = parse_cli(args);
+
+            assert_eq!(pre_session_command(&cli), Some(expected));
+        }
+    }
+
+    #[test]
+    fn early_commands_do_not_match_regular_pre_session_dispatch() {
+        for args in [
+            &["version"][..],
+            &["doctor"][..],
+            &["update", "--dry-run"][..],
+        ] {
+            let cli = parse_cli(args);
+
+            assert_eq!(pre_session_command(&cli), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn early_command_handlers_cover_version_and_update_dry_run() {
+        let version_cli = parse_cli(&["version"]);
+        assert!(handle_early_commands(&version_cli).await.expect("version command"));
+
+        let update_cli = parse_cli(&[
+            "update",
+            "--version",
+            env!("CARGO_PKG_VERSION"),
+            "--dry-run",
+            "--no-spinner",
+        ]);
+        assert!(handle_early_commands(&update_cli).await.expect("update dry run"));
     }
 
     #[test]

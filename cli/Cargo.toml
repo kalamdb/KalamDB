@@ -111,6 +111,7 @@ colored = { workspace = true }
 # Config file parsing
 toml = { workspace = true }
 url = { workspace = true }
+reqwest = { workspace = true }
 
 # Secure password input
 rpassword = { workspace = true }
@@ -139,6 +140,11 @@ crossterm = { workspace = true }
 # Date/time formatting
 chrono = { workspace = true }
 rand.workspace = true
+sha2 = { workspace = true }
+hex = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
 
 # Base64 encoding for history preservation
 base64 = { workspace = true }

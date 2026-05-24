@@ -123,10 +123,22 @@ flush_batch_size = 10000
 # and creates flush jobs (default: 60 seconds). Set to 0 to disable.
 check_interval_seconds = 60
 
-[retention]
-# Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
-# Rows with _deleted=true will be kept in Parquet files for this duration
-default_deleted_retention_hours = 168
+[flush.compaction]
+# Optional post-flush Parquet compaction for trailing small segments.
+# Disabled by default so flush latency and cold-storage writes stay unchanged.
+enabled = false
+
+# Compact only when the newest trailing run has at least this many small segments.
+min_eligible_segments = 5
+
+# Maximum number of newest trailing segments rewritten by one compaction job.
+max_segments_per_run = 8
+
+# User-table segments below this row count are considered small.
+user_max_segment_rows = 10000
+
+# Shared tables generally collect more rows per scope, so the default limit is higher.
+shared_max_segment_rows = 25000
 
 [stream]
 # Default TTL for stream table rows in seconds (default: 10 seconds)

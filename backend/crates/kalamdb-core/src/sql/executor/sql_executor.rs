@@ -1042,7 +1042,10 @@ impl SqlExecutor {
 
         let collect_start = std::time::Instant::now();
         let batches = df.collect().await.map_err(Self::datafusion_to_execution_error)?;
-        tracing::debug!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
+        tracing::debug!(
+            collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0,
+            "sql.dml_collect"
+        );
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
         tracing::Span::current().record("rows_affected", rows_affected);

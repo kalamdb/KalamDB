@@ -13,7 +13,7 @@ use kalamdb_store::StorageError;
 use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
 
 use super::ManifestService;
-use crate::error::KalamDbError;
+use crate::error::FlushError;
 
 /// Helper for manifest operations during flush
 pub struct FlushManifestHelper {
@@ -53,11 +53,11 @@ impl FlushManifestHelper {
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-    ) -> Result<(), KalamDbError> {
+    ) -> Result<(), FlushError> {
         self.manifest_service
             .mark_syncing_in_locked_scope(table_id, user_id)
             .map_err(|e| {
-                KalamDbError::Other(format!(
+                FlushError::Other(format!(
                     "Failed to mark manifest as syncing for {}: {}",
                     table_id, e
                 ))
@@ -71,7 +71,7 @@ impl FlushManifestHelper {
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-    ) -> Result<u64, KalamDbError> {
+    ) -> Result<u64, FlushError> {
         if let Ok(Some(entry)) = self.manifest_service.get_or_load(table_id, user_id) {
             return Ok(if entry.manifest.segments.is_empty() {
                 0
@@ -88,16 +88,16 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
         f: F,
-    ) -> Result<T, KalamDbError>
+    ) -> Result<T, FlushError>
     where
-        F: FnOnce() -> Result<T, KalamDbError>,
+        F: FnOnce() -> Result<T, FlushError>,
     {
         self.manifest_service
             .with_flush_scope_lock(table_id, user_id, || {
                 f().map_err(|err| StorageError::Other(err.to_string()))
             })
             .map_err(|e| {
-                KalamDbError::Other(format!(
+                FlushError::Other(format!(
                     "Failed to run locked flush scope for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(UserId::as_str),
@@ -185,7 +185,7 @@ impl FlushManifestHelper {
         file_size_bytes: u64,
         indexed_columns: &[(u64, String)],
         schema_version: u32,
-    ) -> Result<Manifest, KalamDbError> {
+    ) -> Result<Manifest, FlushError> {
         // Extract metadata from batch (batch-level)
         let (min_seq, max_seq) = Self::extract_seq_range(batch);
         let column_stats = Self::extract_column_stats(batch, indexed_columns);
@@ -220,7 +220,7 @@ impl FlushManifestHelper {
             .manifest_service
             .persist_flushed_segment(table_id, user_id, segment)
             .map_err(|e| {
-                KalamDbError::Other(format!(
+                FlushError::Other(format!(
                     "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),
@@ -257,7 +257,7 @@ impl FlushManifestHelper {
         row_count: u64,
         file_size_bytes: u64,
         schema_version: u32,
-    ) -> Result<Manifest, KalamDbError> {
+    ) -> Result<Manifest, FlushError> {
         let segment_id = batch_filename.clone();
         let relative_path = batch_filename;
 
@@ -276,7 +276,7 @@ impl FlushManifestHelper {
             .manifest_service
             .persist_flushed_segment(table_id, user_id, segment)
             .map_err(|e| {
-                KalamDbError::Other(format!(
+                FlushError::Other(format!(
                     "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),
@@ -307,7 +307,7 @@ impl FlushManifestHelper {
         row_count: u64,
         file_size_bytes: u64,
         schema_version: u32,
-    ) -> Result<Manifest, KalamDbError> {
+    ) -> Result<Manifest, FlushError> {
         let segment_id = batch_filename.clone();
         let relative_path = batch_filename;
 
@@ -326,7 +326,7 @@ impl FlushManifestHelper {
             .manifest_service
             .persist_flushed_segment_in_locked_scope(table_id, user_id, segment)
             .map_err(|e| {
-                KalamDbError::Other(format!(
+                FlushError::Other(format!(
                     "Failed to persist flushed manifest for {} (user_id={:?}): {}",
                     table_id,
                     user_id.map(|u| u.as_str()),

@@ -9,6 +9,7 @@ pub enum JobType {
     Flush,
     VectorIndex,
     Compact,
+    SegmentCompact,
     Cleanup,
     JobCleanup,
     Backup,
@@ -30,6 +31,7 @@ impl JobType {
             JobType::Flush => "flush",
             JobType::VectorIndex => "vector_index",
             JobType::Compact => "compact",
+            JobType::SegmentCompact => "segment_compact",
             JobType::Cleanup => "cleanup",
             JobType::JobCleanup => "job_cleanup",
             JobType::Backup => "backup",
@@ -51,6 +53,7 @@ impl JobType {
     /// - FL: Flush
     /// - VI: VectorIndex
     /// - CO: Compact
+    /// - SC: SegmentCompact
     /// - CL: Cleanup
     /// - BK: Backup
     /// - RS: Restore
@@ -66,6 +69,7 @@ impl JobType {
             JobType::Flush => "FL",
             JobType::VectorIndex => "VI",
             JobType::Compact => "CO",
+            JobType::SegmentCompact => "SC",
             JobType::Cleanup => "CL",
             JobType::JobCleanup => "JC",
             JobType::Backup => "BK",
@@ -86,6 +90,7 @@ impl JobType {
             "flush" => Some(JobType::Flush),
             "vector_index" => Some(JobType::VectorIndex),
             "compact" => Some(JobType::Compact),
+            "segment_compact" => Some(JobType::SegmentCompact),
             "cleanup" => Some(JobType::Cleanup),
             "job_cleanup" => Some(JobType::JobCleanup),
             "backup" => Some(JobType::Backup),
@@ -115,6 +120,7 @@ impl JobType {
         matches!(
             self,
             JobType::Flush |        // Parquet upload + manifest update
+            JobType::SegmentCompact | // Parquet segment rewrite + manifest swap
             JobType::VectorIndex |  // Vector snapshot persistence to cold storage
             JobType::Cleanup |      // Delete external Parquet + metadata
             JobType::Backup |       // External storage upload
@@ -179,6 +185,7 @@ impl From<&str> for JobType {
             "flush" => JobType::Flush,
             "vector_index" => JobType::VectorIndex,
             "compact" => JobType::Compact,
+            "segment_compact" => JobType::SegmentCompact,
             "cleanup" => JobType::Cleanup,
             "job_cleanup" => JobType::JobCleanup,
             "backup" => JobType::Backup,
@@ -199,5 +206,20 @@ impl From<&str> for JobType {
 impl From<String> for JobType {
     fn from(s: String) -> Self {
         JobType::from(s.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segment_compact_is_leader_only_for_cluster_safety() {
+        assert_eq!(JobType::SegmentCompact.as_str(), "segment_compact");
+        assert_eq!(JobType::SegmentCompact.short_prefix(), "SC");
+        assert!(JobType::SegmentCompact.has_leader_actions());
+        assert!(!JobType::SegmentCompact.has_local_work());
+        assert!(JobType::SegmentCompact.is_leader_only());
+        assert_eq!(JobType::from("segment_compact"), JobType::SegmentCompact);
     }
 }

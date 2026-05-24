@@ -13,6 +13,7 @@ PYTHON_CARGO="$SDKS_DIR/python/Cargo.toml"
 DART_PUBSPEC="$SDKS_DIR/dart/pubspec.yaml"
 
 TS_PACKAGE_JSON_FILES=(
+    "$TS_DIR/cli/package.json"
   "$TS_DIR/client/package.json"
   "$TS_DIR/consumer/package.json"
   "$TS_DIR/orm/package.json"

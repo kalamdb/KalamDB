@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use kalamdb_commons::{ids::SeqId, ManifestId, TableId, UserId};
 use kalamdb_configs::ManifestCacheSettings;
 use kalamdb_filestore::{FilestoreError, StorageCached, StorageRegistry};
@@ -52,6 +52,13 @@ pub struct ManifestService {
     /// persistence, otherwise later flushes can overwrite earlier segment metadata.
     flush_scope_locks: DashMap<ManifestId, Arc<Mutex<()>>>,
 
+    /// Per-scope compaction guards.
+    ///
+    /// Compaction intentionally does not hold the flush manifest lock while it reads and writes
+    /// Parquet data. This guard prevents duplicate compaction jobs for the same scope from doing
+    /// duplicate heavy work; the final manifest swap is still protected by `flush_scope_locks`.
+    active_compactions: Arc<DashSet<ManifestId>>,
+
     /// Provider wrapping the store
     provider: Arc<ManifestTableProvider>,
 
@@ -65,7 +72,34 @@ pub struct ManifestService {
     storage_registry: Option<Arc<StorageRegistry>>,
 }
 
+pub(crate) struct ManifestCompactionScopeGuard {
+    active_compactions: Arc<DashSet<ManifestId>>,
+    manifest_id: ManifestId,
+}
+
+impl Drop for ManifestCompactionScopeGuard {
+    fn drop(&mut self) {
+        self.active_compactions.remove(&self.manifest_id);
+    }
+}
+
 impl ManifestService {
+    pub(crate) fn try_begin_compaction_scope(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Option<ManifestCompactionScopeGuard> {
+        let manifest_id = Self::manifest_id(table_id, user_id);
+        if !self.active_compactions.insert(manifest_id.clone()) {
+            return None;
+        }
+
+        Some(ManifestCompactionScopeGuard {
+            active_compactions: Arc::clone(&self.active_compactions),
+            manifest_id,
+        })
+    }
+
     pub(crate) fn with_flush_scope_lock<T, F>(
         &self,
         table_id: &TableId,
@@ -103,6 +137,7 @@ impl ManifestService {
         Self {
             memory_cache: DashMap::with_capacity(config.max_entries.min(1024)),
             flush_scope_locks: DashMap::with_capacity(128),
+            active_compactions: Arc::new(DashSet::with_capacity(128)),
             provider,
             config,
             schema_registry: None,
@@ -732,7 +767,6 @@ impl ManifestService {
             table_id,
             prefix.len()
         );
-
         // Use scan_keys_with_raw_prefix to only fetch keys (no value deserialization)
         let keys: Vec<ManifestId> = self.provider.scan_manifest_ids_with_raw_prefix(
             &prefix,
@@ -900,6 +934,53 @@ impl ManifestService {
         Ok(manifest)
     }
 
+    pub(crate) fn replace_segments_with_compacted_segment_in_locked_scope(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        expected_segments: &[SegmentMetadata],
+        replacement: Option<SegmentMetadata>,
+    ) -> Result<bool, StorageError> {
+        let mut manifest = self.ensure_manifest_initialized(table_id, user_id)?;
+
+        if manifest.segments.len() < expected_segments.len() {
+            return Ok(false);
+        }
+
+        let start = manifest.segments.len() - expected_segments.len();
+        for (current, expected) in manifest.segments[start..].iter().zip(expected_segments.iter()) {
+            if current.id != expected.id
+                || current.path != expected.path
+                || current.min_seq != expected.min_seq
+                || current.max_seq != expected.max_seq
+                || current.row_count != expected.row_count
+                || current.size_bytes != expected.size_bytes
+                || current.schema_version != expected.schema_version
+                || current.status != expected.status
+            {
+                return Ok(false);
+            }
+        }
+
+        manifest.segments.truncate(start);
+        if let Some(replacement) = replacement {
+            manifest.add_segment(replacement);
+        }
+
+        self.write_manifest_to_storage(table_id, user_id, &manifest)?;
+
+        let next_sync_state = self
+            .cached_entry_snapshot(&Self::manifest_id(table_id, user_id))?
+            .map(|entry| match entry.sync_state {
+                SyncState::PendingWrite => SyncState::PendingWrite,
+                _ => SyncState::InSync,
+            })
+            .unwrap_or(SyncState::InSync);
+
+        self.upsert_cache_entry(table_id, user_id, &manifest, None, next_sync_state)?;
+        Ok(true)
+    }
+
     fn flush_scope_lock(&self, table_id: &TableId, user_id: Option<&UserId>) -> Arc<Mutex<()>> {
         let manifest_id = Self::manifest_id(table_id, user_id);
         let entry = self
@@ -959,7 +1040,7 @@ impl ManifestService {
         Ok(())
     }
 
-    fn storage_cached_for_table(
+    pub(crate) fn storage_cached_for_table(
         &self,
         table_id: &TableId,
     ) -> Result<(kalamdb_commons::schemas::TableType, Arc<StorageCached>), StorageError> {
@@ -1277,6 +1358,98 @@ mod tests {
 
     fn build_table_id(ns: &str, tbl: &str) -> TableId {
         TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+    }
+
+    fn test_segment(path: &str, min_seq: i64, max_seq: i64, row_count: u64) -> SegmentMetadata {
+        SegmentMetadata::new(
+            path.to_string(),
+            path.to_string(),
+            HashMap::new(),
+            SeqId::from(min_seq),
+            SeqId::from(max_seq),
+            row_count,
+            row_count.saturating_mul(128),
+        )
+    }
+
+    #[test]
+    fn compaction_scope_guard_rejects_duplicate_active_scope() {
+        let service = create_test_service();
+        let table_id = build_table_id("app", "events");
+        let user_id = UserId::from("user-1");
+
+        let guard = service
+            .try_begin_compaction_scope(&table_id, Some(&user_id))
+            .expect("first compaction should acquire scope");
+        assert!(service.try_begin_compaction_scope(&table_id, Some(&user_id)).is_none());
+        assert!(service.try_begin_compaction_scope(&table_id, None).is_some());
+
+        drop(guard);
+        assert!(service.try_begin_compaction_scope(&table_id, Some(&user_id)).is_some());
+    }
+
+    #[test]
+    fn compacted_segment_replacement_requires_unchanged_trailing_suffix() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let table_id = build_table_id("app", "events");
+        let (service, _storage_registry) =
+            create_test_service_with_storage(backend, &table_id, TableType::Shared, &temp_dir);
+        let first = test_segment("batch-1.parquet", 1, 10, 10);
+        let second = test_segment("batch-2.parquet", 11, 20, 10);
+        let appended = test_segment("batch-3.parquet", 21, 30, 10);
+        let replacement = test_segment("compact-1.parquet", 11, 30, 20);
+
+        service
+            .persist_flushed_segment_in_locked_scope(&table_id, None, first.clone())
+            .expect("persist first segment");
+        service
+            .persist_flushed_segment_in_locked_scope(&table_id, None, second.clone())
+            .expect("persist second segment");
+        service
+            .persist_flushed_segment_in_locked_scope(&table_id, None, appended.clone())
+            .expect("persist appended segment");
+
+        let stale_swap = service
+            .replace_segments_with_compacted_segment_in_locked_scope(
+                &table_id,
+                None,
+                &[first.clone(), second.clone()],
+                Some(replacement.clone()),
+            )
+            .expect("attempt stale compacted swap");
+        assert!(!stale_swap);
+
+        let manifest_after_stale_swap = service
+            .get_or_load(&table_id, None)
+            .expect("load manifest")
+            .expect("manifest exists")
+            .manifest
+            .clone();
+        assert_eq!(manifest_after_stale_swap.segments.len(), 3);
+        assert_eq!(manifest_after_stale_swap.segments[0].path, first.path);
+        assert_eq!(manifest_after_stale_swap.segments[1].path, second.path);
+        assert_eq!(manifest_after_stale_swap.segments[2].path, appended.path);
+
+        let current_tail_swap = service
+            .replace_segments_with_compacted_segment_in_locked_scope(
+                &table_id,
+                None,
+                &[second, appended],
+                Some(replacement.clone()),
+            )
+            .expect("replace current compacted suffix");
+        assert!(current_tail_swap);
+
+        let final_manifest = service
+            .get_or_load(&table_id, None)
+            .expect("load final manifest")
+            .expect("manifest exists")
+            .manifest
+            .clone();
+        assert_eq!(final_manifest.segments.len(), 2);
+        assert_eq!(final_manifest.segments[0].path, first.path);
+        assert_eq!(final_manifest.segments[1].path, replacement.path);
     }
 
     fn create_test_storage_registry(

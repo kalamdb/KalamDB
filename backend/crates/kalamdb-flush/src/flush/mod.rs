@@ -12,7 +12,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use crate::manifest::flush::{UserTableFlushJob, FlushJobResult};
+//! use kalamdb_flush::flush::{FlushJobResult, UserTableFlushJob};
 //!
 //! let flush_job = UserTableFlushJob::new(/* ... */);
 //! let result = flush_job.execute()?;
@@ -23,11 +23,10 @@ pub(crate) mod scope_writer;
 pub mod shared;
 pub mod users;
 
-// Re-export common types
-// Re-export common configuration and helpers
 pub use base::{
-    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, SharedTableFlushMetadata,
-    TableFlush, UserTableFlushMetadata,
+    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
+    FlushScopeHook, FlushTableMetadata, NoopFlushScopeHook, SharedTableFlushMetadata, TableFlush,
+    UserTableFlushMetadata,
 };
 pub use shared::SharedTableFlushJob;
 pub use users::UserTableFlushJob;

@@ -614,7 +614,7 @@ impl AppContext {
                 });
                 sessions_view.set_snapshot_callback(sessions_snapshot_callback);
                 raft_executor.set_pg_service(pg_service);
-                log::info!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
+                log::debug!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
             }
 
             // Job manager is initialized externally by kalamdb-jobs (via set_job_manager)

@@ -12,6 +12,7 @@ description = "Job management system for KalamDB: executors, schedulers, and orc
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-flush = { path = "../kalamdb-flush" }
 kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }

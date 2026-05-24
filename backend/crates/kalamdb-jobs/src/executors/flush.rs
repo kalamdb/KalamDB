@@ -31,17 +31,18 @@ use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::{schemas::TableType, TableId};
+use kalamdb_commons::{models::UserId, schemas::TableType, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
-    manifest::{
-        flush::{FlushJobResult, SharedTableFlushJob, TableFlush, UserTableFlushJob},
-        ManifestService,
-    },
+    manifest::{CoreFlushScopeHook, ManifestService},
     providers::{SharedTableProvider, UserTableProvider},
     schema_registry::SchemaRegistry,
+};
+use kalamdb_flush::flush::{
+    FlushJobResult, FlushScopeHint, FlushTableMetadata, SharedTableFlushJob, TableFlush,
+    UserTableFlushJob,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_system::JobType;
@@ -50,9 +51,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
 use crate::executors::{
+    segment_compact::SegmentCompactParams,
     shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
     table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
 };
+use crate::AppContextJobsExt;
 
 const MAX_POST_FLUSH_TASKS: usize = 2;
 
@@ -183,11 +186,12 @@ impl FlushExecutor {
         error_context: &'static str,
     ) -> Result<FlushJobResult, KalamDbError>
     where
-        F: FnOnce() -> Result<FlushJobResult, KalamDbError> + Send + 'static,
+        F: FnOnce() -> kalamdb_flush::Result<FlushJobResult> + Send + 'static,
     {
         tokio::task::spawn_blocking(task)
             .await
             .map_err(|err| KalamDbError::InvalidOperation(format!("Flush task panicked: {}", err)))?
+            .map_err(KalamDbError::from)
             .into_kalamdb_error(error_context)
     }
 
@@ -199,15 +203,31 @@ impl FlushExecutor {
         schema_registry: Arc<SchemaRegistry>,
         manifest_service: Arc<ManifestService>,
     ) -> Result<FlushJobResult, KalamDbError> {
+        let cached = schema_registry
+            .get(&table_id)
+            .ok_or_else(|| KalamDbError::TableNotFound(format!("Table not found: {}", table_id)))?;
+        let storage_cached = cached
+            .storage_cached(&app_ctx.storage_registry())
+            .into_kalamdb_error("Failed to get storage cache for flush")?;
+        let metadata = FlushTableMetadata::new(
+            cached.schema_version,
+            cached.bloom_filter_columns().to_vec(),
+            cached.indexed_columns().to_vec(),
+        );
+        let scan_batch_size = app_ctx.config().flush.flush_batch_size;
+        let scope_hook = Arc::new(CoreFlushScopeHook::new(app_ctx));
+
         match target {
             FlushTarget::User(store) => {
                 let flush_job = UserTableFlushJob::new(
-                    app_ctx,
                     table_id,
                     store,
                     schema,
-                    schema_registry,
+                    storage_cached,
                     manifest_service,
+                    metadata,
+                    scan_batch_size,
+                    scope_hook,
                 );
 
                 Self::run_blocking_flush(move || flush_job.execute(), "User table flush failed")
@@ -215,12 +235,14 @@ impl FlushExecutor {
             },
             FlushTarget::Shared(store) => {
                 let flush_job = SharedTableFlushJob::new(
-                    app_ctx,
                     table_id,
                     store,
                     schema,
-                    schema_registry,
+                    storage_cached,
                     manifest_service,
+                    metadata,
+                    scan_batch_size,
+                    scope_hook,
                 );
 
                 Self::run_blocking_flush(move || flush_job.execute(), "Shared table flush failed")
@@ -248,6 +270,112 @@ impl FlushExecutor {
         tokio::task::spawn(async move {
             let _permit = permit;
             future.await;
+        });
+    }
+
+    fn segment_compaction_idempotency_key(
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+    ) -> String {
+        match (table_type, user_id) {
+            (TableType::User, Some(user_id)) => {
+                format!("SC:{}:user:{}", table_id, user_id.as_str())
+            },
+            (TableType::Shared, None) => format!("SC:{}:shared", table_id),
+            _ => format!("SC:{}:{:?}", table_id, table_type),
+        }
+    }
+
+    fn maybe_spawn_segment_compaction(
+        &self,
+        app_ctx: Arc<AppContext>,
+        table_id: &TableId,
+        table_type: TableType,
+        scope_hints: &[FlushScopeHint],
+    ) {
+        if !app_ctx.config().flush.compaction.enabled || scope_hints.is_empty() {
+            return;
+        }
+
+        let params_by_scope = scope_hints
+            .iter()
+            .filter_map(|scope_hint| match (table_type, scope_hint) {
+                (TableType::Shared, FlushScopeHint::Shared) => Some(SegmentCompactParams {
+                    table_id: table_id.clone(),
+                    table_type,
+                    user_id: None,
+                }),
+                (TableType::User, FlushScopeHint::User(user_id)) => Some(SegmentCompactParams {
+                    table_id: table_id.clone(),
+                    table_type,
+                    user_id: Some(user_id.clone()),
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if params_by_scope.is_empty() {
+            return;
+        }
+
+        let compact_app_ctx = app_ctx.clone();
+        let compact_table_id = table_id.clone();
+
+        // This enqueue path is lightweight and should not be dropped behind
+        // heavier post-flush maintenance such as RocksDB partition compaction.
+        tokio::task::spawn(async move {
+            for params in params_by_scope {
+                let idempotency_key = Self::segment_compaction_idempotency_key(
+                    &compact_table_id,
+                    table_type,
+                    params.user_id.as_ref(),
+                );
+
+                let should_enqueue = match kalamdb_core::manifest::preview_small_segment_compaction(
+                    &compact_app_ctx,
+                    &compact_table_id,
+                    table_type,
+                    params.user_id.as_ref(),
+                )
+                .await
+                {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(error) => {
+                        log::warn!(
+                            "Post-flush segment compaction preview failed for {}: {}",
+                            compact_table_id,
+                            error
+                        );
+                        false
+                    },
+                };
+
+                if !should_enqueue {
+                    continue;
+                }
+
+                let job_manager = compact_app_ctx.job_manager();
+                match job_manager
+                    .create_job_typed(JobType::SegmentCompact, params, Some(idempotency_key), None)
+                    .await
+                {
+                    Ok(job_id) => log::trace!(
+                        "Queued segment compaction job {} for {}",
+                        job_id,
+                        compact_table_id
+                    ),
+                    Err(KalamDbError::IdempotentConflict(_)) => {
+                        log::trace!("Segment compaction already queued for {}", compact_table_id)
+                    },
+                    Err(error) => log::warn!(
+                        "Failed to enqueue segment compaction for {}: {}",
+                        compact_table_id,
+                        error
+                    ),
+                }
+            }
         });
     }
 
@@ -336,17 +464,6 @@ impl FlushExecutor {
             result.parquet_files.len()
         );
 
-        if result.rows_flushed > 0 {
-            if let Some(sql_executor) = app_ctx.try_sql_executor() {
-                sql_executor.clear_plan_cache();
-                log::trace!(
-                    "Cleared SQL plan cache after flush for {} (rows_flushed={})",
-                    table_id,
-                    result.rows_flushed
-                );
-            }
-        }
-
         // Fire-and-forget: check if the shared table scope is empty and clean
         // up cold segments if so.  Also non-blocking to avoid stalling.
         if matches!(table_type, TableType::Shared) {
@@ -396,6 +513,13 @@ impl FlushExecutor {
                 }
             });
         }
+
+        self.maybe_spawn_segment_compaction(
+            app_ctx.clone(),
+            &table_id,
+            table_type,
+            &result.scope_hints,
+        );
 
         Ok(JobDecision::Completed {
             message: Some(format!(
@@ -539,5 +663,38 @@ mod tests {
         };
 
         assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn segment_compaction_idempotency_keys_are_scope_specific() {
+        let table_id =
+            TableId::new(NamespaceId::new("app"), kalamdb_commons::TableName::new("events"));
+        let user_a = UserId::from("user-a");
+        let user_b = UserId::from("user-b");
+
+        assert_eq!(
+            FlushExecutor::segment_compaction_idempotency_key(&table_id, TableType::Shared, None),
+            format!("SC:{}:shared", table_id)
+        );
+        assert_eq!(
+            FlushExecutor::segment_compaction_idempotency_key(
+                &table_id,
+                TableType::User,
+                Some(&user_a)
+            ),
+            format!("SC:{}:user:user-a", table_id)
+        );
+        assert_ne!(
+            FlushExecutor::segment_compaction_idempotency_key(
+                &table_id,
+                TableType::User,
+                Some(&user_a)
+            ),
+            FlushExecutor::segment_compaction_idempotency_key(
+                &table_id,
+                TableType::User,
+                Some(&user_b)
+            )
+        );
     }
 }

@@ -1,5 +1,5 @@
 // Snowflake ID generator
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 
@@ -24,6 +24,9 @@ pub struct SnowflakeGenerator {
 struct GeneratorState {
     /// Last timestamp used.
     last_timestamp: u64,
+
+    /// Last physical wall-clock timestamp observed.
+    last_observed_timestamp: u64,
 
     /// Last sequence emitted for `last_timestamp`.
     sequence: u16,
@@ -60,6 +63,7 @@ impl SnowflakeGenerator {
             epoch,
             state: Mutex::new(GeneratorState {
                 last_timestamp: 0,
+                last_observed_timestamp: 0,
                 sequence: 0,
             }),
         }
@@ -69,13 +73,13 @@ impl SnowflakeGenerator {
     #[inline]
     pub fn next_id(&self) -> Result<i64, String> {
         let mut state = self.state.lock();
-        let mut timestamp = self.reconcile_timestamp(state.last_timestamp)?;
+        let mut timestamp = self.reconcile_timestamp(&mut state)?;
 
         if timestamp == state.last_timestamp {
             state.sequence = (state.sequence + 1) & Self::MAX_SEQUENCE;
 
             if state.sequence == 0 {
-                timestamp = self.wait_next_millis(state.last_timestamp)?;
+                timestamp = Self::next_logical_millis(state.last_timestamp)?;
             }
         } else {
             state.sequence = 0;
@@ -119,14 +123,12 @@ impl SnowflakeGenerator {
         Ok((timestamp_component | worker_component | sequence_component) as i64)
     }
 
-    /// Wait until next millisecond
+    /// Advance to the next logical millisecond without sleeping or spinning.
     #[inline]
-    fn wait_next_millis(&self, last_timestamp: u64) -> Result<u64, String> {
-        let mut timestamp = self.current_timestamp()?;
-        while timestamp <= last_timestamp {
-            timestamp = self.current_timestamp()?;
-        }
-        Ok(timestamp)
+    fn next_logical_millis(last_timestamp: u64) -> Result<u64, String> {
+        last_timestamp
+            .checked_add(1)
+            .ok_or_else(|| "Snowflake timestamp overflow".to_string())
     }
 
     /// Extract timestamp from a Snowflake ID
@@ -182,10 +184,10 @@ impl SnowflakeGenerator {
         while generated < count {
             let remaining = count - generated;
 
-            let mut timestamp = self.reconcile_timestamp(state.last_timestamp)?;
+            let mut timestamp = self.reconcile_timestamp(&mut state)?;
             let (start_sequence, chunk_len) = if timestamp == state.last_timestamp {
                 if state.sequence == Self::MAX_SEQUENCE {
-                    timestamp = self.wait_next_millis(state.last_timestamp)?;
+                    timestamp = Self::next_logical_millis(state.last_timestamp)?;
                     let chunk_len = remaining.min((Self::MAX_SEQUENCE as usize) + 1);
                     state.sequence = (chunk_len - 1) as u16;
                     (0_u64, chunk_len)
@@ -211,22 +213,22 @@ impl SnowflakeGenerator {
     }
 
     #[inline]
-    fn reconcile_timestamp(&self, last_timestamp: u64) -> Result<u64, String> {
+    fn reconcile_timestamp(&self, state: &mut GeneratorState) -> Result<u64, String> {
         let timestamp = self.current_timestamp()?;
-        if timestamp >= last_timestamp {
-            return Ok(timestamp);
+
+        if state.last_observed_timestamp > 0 && timestamp < state.last_observed_timestamp {
+            let drift_ms = state.last_observed_timestamp - timestamp;
+            if drift_ms > Self::MAX_BACKWARD_DRIFT_MS {
+                return Err(format!(
+                    "Clock moved backwards. Refusing to generate id for {} milliseconds",
+                    drift_ms
+                ));
+            }
+        } else if timestamp > state.last_observed_timestamp {
+            state.last_observed_timestamp = timestamp;
         }
 
-        let drift_ms = last_timestamp - timestamp;
-        if drift_ms > Self::MAX_BACKWARD_DRIFT_MS {
-            return Err(format!(
-                "Clock moved backwards. Refusing to generate id for {} milliseconds",
-                drift_ms
-            ));
-        }
-
-        std::thread::sleep(Duration::from_millis(drift_ms));
-        self.wait_next_millis(last_timestamp)
+        Ok(timestamp.max(state.last_timestamp))
     }
 
     #[inline]
@@ -297,13 +299,14 @@ mod tests {
     }
 
     #[test]
-    fn test_small_clock_regression_waits_for_recovery() {
+    fn test_small_clock_regression_uses_logical_time_without_blocking() {
         let gen = SnowflakeGenerator::new(1);
         let current = gen.current_timestamp().unwrap();
 
         {
             let mut state = gen.state.lock();
             state.last_timestamp = current + 2;
+            state.last_observed_timestamp = current + 2;
             state.sequence = 0;
         }
 
@@ -321,6 +324,7 @@ mod tests {
         {
             let mut state = gen.state.lock();
             state.last_timestamp = current + SnowflakeGenerator::MAX_BACKWARD_DRIFT_MS + 5;
+            state.last_observed_timestamp = current + SnowflakeGenerator::MAX_BACKWARD_DRIFT_MS + 5;
             state.sequence = 0;
         }
 

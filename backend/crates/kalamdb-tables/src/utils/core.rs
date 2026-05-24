@@ -320,8 +320,21 @@ impl TableProviderCore {
             _ => return,
         };
 
-        if let Err(e) = topic_pub.publish_for_table(table_id, op, row, user_id) {
-            log::warn!("Topic publish failed for table {}: {}", table_id, e);
+        let topic_pub = Arc::clone(topic_pub);
+        let table_id_for_task = table_id.clone();
+        let table_id_for_log = table_id.clone();
+        let row = row.clone();
+        let user_id = user_id.cloned();
+
+        let result = tokio::task::spawn_blocking(move || {
+            topic_pub.publish_for_table(&table_id_for_task, op, &row, user_id.as_ref())
+        })
+        .await;
+
+        match result {
+            Ok(Ok(_)) => {},
+            Ok(Err(e)) => log::warn!("Topic publish failed for table {}: {}", table_id_for_log, e),
+            Err(e) => log::warn!("Topic publish task failed for table {}: {}", table_id_for_log, e),
         }
     }
 
@@ -346,8 +359,25 @@ impl TableProviderCore {
             _ => return,
         };
 
-        if let Err(e) = topic_pub.publish_batch_for_table(table_id, op, rows, user_id) {
-            log::warn!("Topic batch publish failed for table {}: {}", table_id, e);
+        let topic_pub = Arc::clone(topic_pub);
+        let table_id_for_task = table_id.clone();
+        let table_id_for_log = table_id.clone();
+        let rows = rows.to_vec();
+        let user_id = user_id.cloned();
+
+        let result = tokio::task::spawn_blocking(move || {
+            topic_pub.publish_batch_for_table(&table_id_for_task, op, &rows, user_id.as_ref())
+        })
+        .await;
+
+        match result {
+            Ok(Ok(_)) => {},
+            Ok(Err(e)) => {
+                log::warn!("Topic batch publish failed for table {}: {}", table_id_for_log, e)
+            },
+            Err(e) => {
+                log::warn!("Topic batch publish task failed for table {}: {}", table_id_for_log, e)
+            },
         }
     }
 }

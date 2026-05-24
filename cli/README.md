@@ -16,6 +16,18 @@ Interactive command-line client for KalamDB - a real-time database with WebSocke
 
 ## Installation
 
+### npm
+
+```bash
+npm install -g @kalamdb/cli
+```
+
+### curl
+
+```bash
+curl -fsSL https://kalamdb.org/install.sh | sh
+```
+
 ### From Source
 
 ```bash
@@ -121,7 +133,16 @@ SUBSCRIBE TO app.messages WHERE user_id = 'user123';
 ### Command-Line Options
 
 ```
-kalam [OPTIONS]
+kalam [OPTIONS] [COMMAND]
+
+COMMANDS:
+    update                         Update this kalam binary from release assets
+    version                        Print version information
+    doctor                         Run local, server, and authentication diagnostics
+    login                          Login and save credentials for an instance
+    logout                         Delete saved credentials for an instance
+    whoami                         Show the authenticated user
+    token create --name <NAME>     Create a service account and print tokens
 
 CONNECTION:
     -u, --url <URL>                 Server URL (e.g., http://localhost:3000)
@@ -187,9 +208,20 @@ kalam --file setup.sql
 kalam --subscribe "SUBSCRIBE TO app.messages WHERE user_id = 'alice'"
 
 # Manage stored credentials
-kalam --update-credentials --instance local --user root --password ""
+kalam login --instance local --user root --password ""
+kalam whoami --instance local
+kalam logout --instance local
 kalam --show-credentials --instance local
 kalam --list-instances
+
+# Create a CI service token
+kalam token create --name ci-prod
+
+# Check the local install and configured server
+kalam doctor
+
+# Update the installed binary
+kalam update
 ```
 
 ### Interactive Commands
@@ -342,11 +374,24 @@ kalam --token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ```bash
 # Login and store credentials
-kalam --user root --password "" --save-credentials
+kalam login --instance local --user root --password ""
 
-# Update stored credentials explicitly
+# Login to a named production instance
+kalam login --instance prod --url https://db.example.com --user root --password
+
+# Show current identity
+kalam whoami --instance prod
+
+# Remove saved credentials
+kalam logout --instance prod
+
+# Legacy credential flags still work for scripts that already use them
 kalam --update-credentials --instance local --user root --password ""
 ```
+
+### Service Tokens
+
+`kalam token create --name ci-prod` creates a service account with a generated password, logs in once, and prints an access/refresh token pair. The generated password is not stored or shown. Use `--json` for automation and `--save` if you also want the token stored locally as a credential instance named after the token.
 
 ## Advanced Features
 

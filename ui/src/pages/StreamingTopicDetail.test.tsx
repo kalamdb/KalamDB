@@ -148,6 +148,7 @@ describe("StreamingTopicDetail", () => {
     expect(screen.queryByRole("link", { name: "Consumers" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Inspect Messages" })).toHaveAttribute("data-state", "active");
     expect(screen.getByRole("tab", { name: "Committed Offsets" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "SQL Studio Shortcuts" })).toBeInTheDocument();
   });
 
   it("defaults the inspector to the first partition and offset start mode", () => {
@@ -214,5 +215,26 @@ describe("StreamingTopicDetail", () => {
     });
     expect(screen.getByText("41")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
+  it("shows the SQL shortcuts tab with the exact previewed queries", async () => {
+    renderTopicDetail();
+
+    const sqlTab = screen.getByRole("tab", { name: "SQL Studio Shortcuts" });
+    sqlTab.focus();
+    fireEvent.keyDown(sqlTab, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(sqlTab).toHaveAttribute("data-state", "active");
+      expect(screen.getByRole("button", { name: "Open Topic SQL" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Inspect SQL" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Group SQL" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open Reset SQL" })).toBeInTheDocument();
+    });
+
+    expect(document.body.textContent).toContain("SELECT * FROM system.topics WHERE topic_id = 'blog.summarizer';");
+    expect(document.body.textContent).toContain("CONSUME FROM blog.summarizer FROM 0 LIMIT 100;");
+    expect(document.body.textContent).toContain("CONSUME FROM blog.summarizer GROUP 'ui-debug-admin' FROM 0 LIMIT 100;");
+    expect(document.body.textContent).toContain("RESET CONSUMER GROUP 'ui-debug-admin' ON blog.summarizer PARTITION 0 TO 0;");
   });
 });
