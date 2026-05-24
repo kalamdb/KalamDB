@@ -375,6 +375,13 @@ query_parallelism = 2
 max_partitions = 4
 batch_size = 1024
 
+[flush.compaction]
+enabled = true
+min_eligible_segments = 5
+max_segments_per_run = 8
+user_max_segment_rows = 10000
+shared_max_segment_rows = 25000
+
 [logging]
 level = "info"
 logs_path = "$data_dir/logs"
