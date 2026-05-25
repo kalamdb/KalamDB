@@ -50,6 +50,11 @@ pub fn init_auth_config(
             issuer_audiences.insert(oauth.providers.azure.issuer.clone(), client_id.clone());
         }
     }
+    if let Some(client_id) = &oauth.providers.openid.client_id {
+        if !oauth.providers.openid.issuer.is_empty() {
+            issuer_audiences.insert(oauth.providers.openid.issuer.clone(), client_id.clone());
+        }
+    }
     if let Some(client_id) = &oauth.providers.firebase.client_id {
         if !oauth.providers.firebase.issuer.is_empty() {
             issuer_audiences.insert(oauth.providers.firebase.issuer.clone(), client_id.clone());

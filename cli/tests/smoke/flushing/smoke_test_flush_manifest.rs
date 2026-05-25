@@ -90,6 +90,14 @@ fn wait_for_latest_job_id(job_type: &str, timeout: Duration) -> String {
     }
 }
 
+fn post_flush_compaction_smoke_enabled() -> bool {
+    std::env::var("KALAMDB_TEST_FLUSH_COMPACTION")
+        .map(|value| {
+            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 /// Test manifest.json creation after flushing USER table
 ///
 /// Verifies:
@@ -389,6 +397,13 @@ fn smoke_test_manifest_updated_on_second_flush() {
 fn smoke_test_post_flush_compaction_rewrites_small_segments() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    if !post_flush_compaction_smoke_enabled() {
+        eprintln!(
+            "⚠️  Post-flush compaction smoke disabled; set KALAMDB_TEST_FLUSH_COMPACTION=1 for servers with [flush.compaction].enabled=true."
+        );
         return;
     }
 

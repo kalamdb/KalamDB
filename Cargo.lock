@@ -4282,11 +4282,11 @@ dependencies = [
  "mime_guess",
  "moka",
  "parking_lot",
+ "reqwest 0.13.3",
  "rmp-serde",
  "rust-embed",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -4404,20 +4404,16 @@ dependencies = [
  "ntest",
  "once_cell",
  "parking_lot",
- "parquet",
- "regex",
  "serde",
  "serde_json",
  "sqlparser",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-util",
  "tonic",
  "tracing",
  "ulid",
  "uuid",
- "zip",
 ]
 
 [[package]]
@@ -4428,13 +4424,8 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "datafusion",
- "datafusion-common",
- "datafusion-expr",
  "futures-util",
  "kalamdb-commons",
- "parquet",
- "thiserror 2.0.18",
- "tokio",
  "tracing",
 ]
 
@@ -4471,7 +4462,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlparser",
- "tempfile",
 ]
 
 [[package]]
@@ -4553,7 +4543,6 @@ version = "0.5.1-beta.2"
 dependencies = [
  "arrow",
  "chrono",
- "datafusion",
  "kalamdb-commons",
  "kalamdb-core",
  "kalamdb-dialect",
@@ -4615,7 +4604,6 @@ dependencies = [
  "kalamdb-commons",
  "kalamdb-core",
  "kalamdb-dialect",
- "kalamdb-filestore",
  "kalamdb-session",
  "kalamdb-system",
  "log",
@@ -4634,7 +4622,6 @@ dependencies = [
  "kalamdb-dialect",
  "kalamdb-handlers-support",
  "kalamdb-system",
- "log",
  "serde_json",
  "tokio",
 ]
@@ -4687,7 +4674,6 @@ dependencies = [
  "ntest",
  "once_cell",
  "parking_lot",
- "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -4798,7 +4784,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -4824,7 +4809,6 @@ dependencies = [
  "actix-cors",
  "actix-web",
  "anyhow",
- "arrow",
  "base64",
  "bcrypt",
  "cc",
@@ -4840,13 +4824,11 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-core",
  "kalamdb-dba",
- "kalamdb-dialect",
  "kalamdb-handlers",
  "kalamdb-jobs",
  "kalamdb-live",
  "kalamdb-observability",
  "kalamdb-raft",
- "kalamdb-sharding",
  "kalamdb-store",
  "kalamdb-system",
  "kalamdb-tables",
@@ -4894,7 +4876,6 @@ name = "kalamdb-session"
 version = "0.5.1-beta.2"
 dependencies = [
  "kalamdb-commons",
- "tokio",
 ]
 
 [[package]]
@@ -4906,7 +4887,6 @@ dependencies = [
  "datafusion",
  "kalamdb-commons",
  "kalamdb-session",
- "tokio",
  "tracing",
 ]
 
@@ -4926,7 +4906,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "criterion 0.8.2",
  "datafusion",
  "kalamdb-commons",
  "kalamdb-configs",
@@ -4974,10 +4953,8 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
 ]
 
 [[package]]

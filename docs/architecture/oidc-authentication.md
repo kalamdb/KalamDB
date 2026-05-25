@@ -45,6 +45,35 @@ jwt_trusted_issuers = "https://keycloak.example.com/realms/myrealm,https://accou
 
 The internal issuer `"kalamdb"` is always implicitly trusted regardless of this setting.
 
+External browser login for the Admin UI is configured under `[oauth]`. KalamDB
+exposes public, no-secret provider metadata at `/v1/api/auth/oauth/providers` so
+the UI can build an external OIDC authorization URL when at least one provider is
+enabled and has a `client_id`.
+
+```toml
+[oauth]
+enabled = true
+auto_provision = true
+default_role = "dba"
+
+[oauth.providers.openid]
+enabled = true
+issuer = "https://idp.example.com/realms/kalamdb"
+client_id = "kalamdb-admin-ui"
+```
+
+Configure the provider's redirect URI to point back to the Admin UI callback:
+
+```text
+https://your-kalamdb-host.example/ui/oauth/callback
+```
+
+The callback consumes an OIDC ID token and sends it to KalamDB as the same
+`Authorization: Bearer <token>` value accepted by SQL, REST, and WebSocket
+authentication. Admin UI access still requires the resolved KalamDB user to have
+the `dba` or `system` role, either through `default_role = "dba"` during
+auto-provisioning or by pre-provisioning the external user.
+
 ---
 
 ## Request Flow

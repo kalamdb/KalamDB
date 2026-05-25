@@ -7,6 +7,297 @@
 
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
+struct OAuthProviderMetadata {
+    provider: OAuthProvider,
+    canonical: &'static str,
+    prefix: &'static str,
+    aliases: &'static [&'static str],
+    issuer_patterns: &'static [&'static str],
+    issuer_requires_all: bool,
+}
+
+const OAUTH_PROVIDER_METADATA: &[OAuthProviderMetadata] = &[
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Keycloak,
+        canonical: "keycloak",
+        prefix: "kcl",
+        aliases: &["keycloak"],
+        issuer_patterns: &["keycloak", "/realms/"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Google,
+        canonical: "google",
+        prefix: "ggl",
+        aliases: &["google"],
+        issuer_patterns: &["accounts.google.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::AzureAd,
+        canonical: "azure_ad",
+        prefix: "msf",
+        aliases: &["azure_ad", "azure", "microsoft"],
+        issuer_patterns: &["login.microsoftonline.com", "sts.windows.net"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Cognito,
+        canonical: "cognito",
+        prefix: "cgn",
+        aliases: &["cognito", "aws_cognito"],
+        issuer_patterns: &["cognito-idp", "amazonaws.com"],
+        issuer_requires_all: true,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::AwsIam,
+        canonical: "aws_iam",
+        prefix: "aws",
+        aliases: &["aws_iam"],
+        issuer_patterns: &[],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::GitHub,
+        canonical: "github",
+        prefix: "ghb",
+        aliases: &["github"],
+        issuer_patterns: &["github.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::GitLab,
+        canonical: "gitlab",
+        prefix: "glb",
+        aliases: &["gitlab"],
+        issuer_patterns: &["gitlab.com", "gitlab"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Facebook,
+        canonical: "facebook",
+        prefix: "fbk",
+        aliases: &["facebook", "meta"],
+        issuer_patterns: &["facebook.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::X,
+        canonical: "x",
+        prefix: "xco",
+        aliases: &["x", "twitter"],
+        issuer_patterns: &["twitter.com", "x.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Apple,
+        canonical: "apple",
+        prefix: "apl",
+        aliases: &["apple"],
+        issuer_patterns: &["appleid.apple.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Firebase,
+        canonical: "firebase",
+        prefix: "fbs",
+        aliases: &["firebase", "google_identity_platform"],
+        issuer_patterns: &["securetoken.google.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Okta,
+        canonical: "okta",
+        prefix: "okt",
+        aliases: &["okta"],
+        issuer_patterns: &["okta.com", "oktapreview.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Auth0,
+        canonical: "auth0",
+        prefix: "a0x",
+        aliases: &["auth0"],
+        issuer_patterns: &["auth0.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Supabase,
+        canonical: "supabase",
+        prefix: "sbs",
+        aliases: &["supabase"],
+        issuer_patterns: &["supabase"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::OneLogin,
+        canonical: "onelogin",
+        prefix: "olg",
+        aliases: &["onelogin"],
+        issuer_patterns: &["onelogin.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::PingIdentity,
+        canonical: "ping_identity",
+        prefix: "png",
+        aliases: &["ping_identity", "ping", "pingfederate"],
+        issuer_patterns: &["pingidentity.com", "pingone.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Salesforce,
+        canonical: "salesforce",
+        prefix: "sfc",
+        aliases: &["salesforce"],
+        issuer_patterns: &["salesforce.com", "force.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Oracle,
+        canonical: "oracle",
+        prefix: "orc",
+        aliases: &["oracle"],
+        issuer_patterns: &["identity.oraclecloud.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Ibm,
+        canonical: "ibm",
+        prefix: "ibm",
+        aliases: &["ibm"],
+        issuer_patterns: &["verify.ibm.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::JumpCloud,
+        canonical: "jumpcloud",
+        prefix: "jcl",
+        aliases: &["jumpcloud"],
+        issuer_patterns: &["jumpcloud.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Duo,
+        canonical: "duo",
+        prefix: "duo",
+        aliases: &["duo"],
+        issuer_patterns: &["duosecurity.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::FusionAuth,
+        canonical: "fusionauth",
+        prefix: "fsa",
+        aliases: &["fusionauth"],
+        issuer_patterns: &["fusionauth"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Authentik,
+        canonical: "authentik",
+        prefix: "atk",
+        aliases: &["authentik"],
+        issuer_patterns: &["authentik"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Zitadel,
+        canonical: "zitadel",
+        prefix: "zit",
+        aliases: &["zitadel"],
+        issuer_patterns: &["zitadel"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Casdoor,
+        canonical: "casdoor",
+        prefix: "csd",
+        aliases: &["casdoor"],
+        issuer_patterns: &["casdoor"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Logto,
+        canonical: "logto",
+        prefix: "lgt",
+        aliases: &["logto"],
+        issuer_patterns: &["logto"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Clerk,
+        canonical: "clerk",
+        prefix: "clk",
+        aliases: &["clerk"],
+        issuer_patterns: &["clerk"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Stytch,
+        canonical: "stytch",
+        prefix: "sty",
+        aliases: &["stytch"],
+        issuer_patterns: &["stytch.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::WorkOS,
+        canonical: "workos",
+        prefix: "wos",
+        aliases: &["workos"],
+        issuer_patterns: &["workos.com"],
+        issuer_requires_all: false,
+    },
+    OAuthProviderMetadata {
+        provider: OAuthProvider::Descope,
+        canonical: "descope",
+        prefix: "dsc",
+        aliases: &["descope"],
+        issuer_patterns: &["descope.com"],
+        issuer_requires_all: false,
+    },
+];
+
+fn provider_metadata(provider: &OAuthProvider) -> Option<&'static OAuthProviderMetadata> {
+    OAUTH_PROVIDER_METADATA.iter().find(|metadata| metadata.provider == *provider)
+}
+
+fn provider_from_prefix(prefix: &str) -> Option<OAuthProvider> {
+    OAUTH_PROVIDER_METADATA
+        .iter()
+        .find(|metadata| metadata.prefix == prefix)
+        .map(|metadata| metadata.provider.clone())
+}
+
+fn provider_from_alias(alias: &str) -> Option<OAuthProvider> {
+    OAUTH_PROVIDER_METADATA
+        .iter()
+        .find(|metadata| metadata.aliases.contains(&alias))
+        .map(|metadata| metadata.provider.clone())
+}
+
+fn provider_from_issuer(lower_issuer: &str) -> Option<OAuthProvider> {
+    OAUTH_PROVIDER_METADATA
+        .iter()
+        .find(|metadata| {
+            !metadata.issuer_patterns.is_empty()
+                && if metadata.issuer_requires_all {
+                    metadata.issuer_patterns.iter().all(|pattern| lower_issuer.contains(pattern))
+                } else {
+                    metadata.issuer_patterns.iter().any(|pattern| lower_issuer.contains(pattern))
+                }
+        })
+        .map(|metadata| metadata.provider.clone())
+}
+
+fn custom_provider_prefix(identifier: &str) -> String {
+    let hash = hex::encode(Sha256::digest(identifier.as_bytes()));
+    hash[..3].to_string()
+}
+
 /// Well-known OAuth / OIDC identity providers.
 ///
 /// Serialises as a lowercase snake_case string.  Unknown provider strings
@@ -83,39 +374,12 @@ pub enum OAuthProvider {
 impl OAuthProvider {
     /// Canonical string representation (matches the serde serialisation).
     pub fn as_str(&self) -> &str {
-        match self {
-            Self::Keycloak => "keycloak",
-            Self::Google => "google",
-            Self::AzureAd => "azure_ad",
-            Self::Cognito => "cognito",
-            Self::AwsIam => "aws_iam",
-            Self::GitHub => "github",
-            Self::GitLab => "gitlab",
-            Self::Facebook => "facebook",
-            Self::X => "x",
-            Self::Apple => "apple",
-            Self::Firebase => "firebase",
-            Self::Okta => "okta",
-            Self::Auth0 => "auth0",
-            Self::Supabase => "supabase",
-            Self::OneLogin => "onelogin",
-            Self::PingIdentity => "ping_identity",
-            Self::Salesforce => "salesforce",
-            Self::Oracle => "oracle",
-            Self::Ibm => "ibm",
-            Self::JumpCloud => "jumpcloud",
-            Self::Duo => "duo",
-            Self::FusionAuth => "fusionauth",
-            Self::Authentik => "authentik",
-            Self::Zitadel => "zitadel",
-            Self::Casdoor => "casdoor",
-            Self::Logto => "logto",
-            Self::Clerk => "clerk",
-            Self::Stytch => "stytch",
-            Self::WorkOS => "workos",
-            Self::Descope => "descope",
-            Self::Custom(s) => s.as_str(),
-        }
+        provider_metadata(self)
+            .map(|metadata| metadata.canonical)
+            .unwrap_or_else(|| match self {
+                Self::Custom(value) => value.as_str(),
+                _ => unreachable!("known OAuth providers must have metadata"),
+            })
     }
 
     /// 3-character prefix used in `oidc:{prefix}:{subject}` usernames.
@@ -124,44 +388,12 @@ impl OAuthProvider {
     /// Custom providers get the first 3 hex characters of the SHA-256 hash
     /// of their identifier string.
     pub fn prefix(&self) -> String {
-        let static_prefix = match self {
-            Self::Keycloak => "kcl",
-            Self::Google => "ggl",
-            Self::AzureAd => "msf",
-            Self::Cognito => "cgn",
-            Self::AwsIam => "aws",
-            Self::GitHub => "ghb",
-            Self::GitLab => "glb",
-            Self::Facebook => "fbk",
-            Self::X => "xco",
-            Self::Apple => "apl",
-            Self::Firebase => "fbs",
-            Self::Okta => "okt",
-            Self::Auth0 => "a0x",
-            Self::Supabase => "sbs",
-            Self::OneLogin => "olg",
-            Self::PingIdentity => "png",
-            Self::Salesforce => "sfc",
-            Self::Oracle => "orc",
-            Self::Ibm => "ibm",
-            Self::JumpCloud => "jcl",
-            Self::Duo => "duo",
-            Self::FusionAuth => "fsa",
-            Self::Authentik => "atk",
-            Self::Zitadel => "zit",
-            Self::Casdoor => "csd",
-            Self::Logto => "lgt",
-            Self::Clerk => "clk",
-            Self::Stytch => "sty",
-            Self::WorkOS => "wos",
-            Self::Descope => "dsc",
-            Self::Custom(s) => {
-                use sha2::Digest;
-                let hash = hex::encode(sha2::Sha256::digest(s.as_bytes()));
-                return hash[..3].to_string();
-            },
-        };
-        static_prefix.to_string()
+        provider_metadata(self)
+            .map(|metadata| metadata.prefix.to_string())
+            .unwrap_or_else(|| match self {
+                Self::Custom(value) => custom_provider_prefix(value),
+                _ => unreachable!("known OAuth providers must have metadata"),
+            })
     }
 
     /// Reverse-lookup a provider from its 3-character username prefix.
@@ -170,77 +402,13 @@ impl OAuthProvider {
     /// as the identifier (lossy — the original issuer URL is not recoverable
     /// from a hash prefix).
     pub fn from_prefix(prefix: &str) -> Self {
-        match prefix {
-            "kcl" => Self::Keycloak,
-            "ggl" => Self::Google,
-            "msf" => Self::AzureAd,
-            "cgn" => Self::Cognito,
-            "aws" => Self::AwsIam,
-            "ghb" => Self::GitHub,
-            "glb" => Self::GitLab,
-            "fbk" => Self::Facebook,
-            "xco" => Self::X,
-            "apl" => Self::Apple,
-            "fbs" => Self::Firebase,
-            "okt" => Self::Okta,
-            "a0x" => Self::Auth0,
-            "sbs" => Self::Supabase,
-            "olg" => Self::OneLogin,
-            "png" => Self::PingIdentity,
-            "sfc" => Self::Salesforce,
-            "orc" => Self::Oracle,
-            "ibm" => Self::Ibm,
-            "jcl" => Self::JumpCloud,
-            "duo" => Self::Duo,
-            "fsa" => Self::FusionAuth,
-            "atk" => Self::Authentik,
-            "zit" => Self::Zitadel,
-            "csd" => Self::Casdoor,
-            "lgt" => Self::Logto,
-            "clk" => Self::Clerk,
-            "sty" => Self::Stytch,
-            "wos" => Self::WorkOS,
-            "dsc" => Self::Descope,
-            other => Self::Custom(other.to_string()),
-        }
+        provider_from_prefix(prefix).unwrap_or_else(|| Self::Custom(prefix.to_string()))
     }
 
     /// Parse from a string, falling back to [`Custom`](Self::Custom) for
     /// unknown values.
     pub fn from_str_lossy(s: &str) -> Self {
-        match s {
-            "keycloak" => Self::Keycloak,
-            "google" => Self::Google,
-            "azure_ad" | "azure" | "microsoft" => Self::AzureAd,
-            "cognito" | "aws_cognito" => Self::Cognito,
-            "aws_iam" => Self::AwsIam,
-            "github" => Self::GitHub,
-            "gitlab" => Self::GitLab,
-            "facebook" | "meta" => Self::Facebook,
-            "x" | "twitter" => Self::X,
-            "apple" => Self::Apple,
-            "firebase" | "google_identity_platform" => Self::Firebase,
-            "okta" => Self::Okta,
-            "auth0" => Self::Auth0,
-            "supabase" => Self::Supabase,
-            "onelogin" => Self::OneLogin,
-            "ping_identity" | "ping" | "pingfederate" => Self::PingIdentity,
-            "salesforce" => Self::Salesforce,
-            "oracle" => Self::Oracle,
-            "ibm" => Self::Ibm,
-            "jumpcloud" => Self::JumpCloud,
-            "duo" => Self::Duo,
-            "fusionauth" => Self::FusionAuth,
-            "authentik" => Self::Authentik,
-            "zitadel" => Self::Zitadel,
-            "casdoor" => Self::Casdoor,
-            "logto" => Self::Logto,
-            "clerk" => Self::Clerk,
-            "stytch" => Self::Stytch,
-            "workos" => Self::WorkOS,
-            "descope" => Self::Descope,
-            other => Self::Custom(other.to_string()),
-        }
+        provider_from_alias(s).unwrap_or_else(|| Self::Custom(s.to_string()))
     }
 
     /// Detect the provider type from an OIDC issuer URL.
@@ -249,97 +417,7 @@ impl OAuthProvider {
     /// Falls back to [`Custom`](Self::Custom) with the raw URL.
     pub fn detect_from_issuer(issuer: &str) -> Self {
         let lower = issuer.to_lowercase();
-
-        if lower.contains("keycloak") || lower.contains("/realms/") {
-            return Self::Keycloak;
-        }
-        if lower.contains("accounts.google.com") {
-            return Self::Google;
-        }
-        if lower.contains("login.microsoftonline.com") || lower.contains("sts.windows.net") {
-            return Self::AzureAd;
-        }
-        if lower.contains("cognito-idp") && lower.contains("amazonaws.com") {
-            return Self::Cognito;
-        }
-        if lower.contains("github.com") {
-            return Self::GitHub;
-        }
-        if lower.contains("gitlab.com") || lower.contains("gitlab") {
-            return Self::GitLab;
-        }
-        if lower.contains("facebook.com") {
-            return Self::Facebook;
-        }
-        if lower.contains("appleid.apple.com") {
-            return Self::Apple;
-        }
-        if lower.contains("securetoken.google.com") {
-            return Self::Firebase;
-        }
-        if lower.contains("okta.com") || lower.contains("oktapreview.com") {
-            return Self::Okta;
-        }
-        if lower.contains("auth0.com") {
-            return Self::Auth0;
-        }
-        if lower.contains("supabase") {
-            return Self::Supabase;
-        }
-        if lower.contains("onelogin.com") {
-            return Self::OneLogin;
-        }
-        if lower.contains("pingidentity.com") || lower.contains("pingone.com") {
-            return Self::PingIdentity;
-        }
-        if lower.contains("salesforce.com") || lower.contains("force.com") {
-            return Self::Salesforce;
-        }
-        if lower.contains("identity.oraclecloud.com") {
-            return Self::Oracle;
-        }
-        if lower.contains("verify.ibm.com") {
-            return Self::Ibm;
-        }
-        if lower.contains("jumpcloud.com") {
-            return Self::JumpCloud;
-        }
-        if lower.contains("duosecurity.com") {
-            return Self::Duo;
-        }
-        if lower.contains("fusionauth") {
-            return Self::FusionAuth;
-        }
-        if lower.contains("authentik") {
-            return Self::Authentik;
-        }
-        if lower.contains("zitadel") {
-            return Self::Zitadel;
-        }
-        if lower.contains("casdoor") {
-            return Self::Casdoor;
-        }
-        if lower.contains("logto") {
-            return Self::Logto;
-        }
-        if lower.contains("clerk") {
-            return Self::Clerk;
-        }
-        if lower.contains("stytch.com") {
-            return Self::Stytch;
-        }
-        if lower.contains("workos.com") {
-            return Self::WorkOS;
-        }
-        if lower.contains("descope.com") {
-            return Self::Descope;
-        }
-        // Twitter/X doesn't have a standard OIDC issuer, but handle it
-        if lower.contains("twitter.com") || lower.contains("x.com") {
-            return Self::X;
-        }
-
-        Self::Custom(issuer.to_string())
+        provider_from_issuer(&lower).unwrap_or_else(|| Self::Custom(issuer.to_string()))
     }
 }
 

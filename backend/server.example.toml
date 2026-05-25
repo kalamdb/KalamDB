@@ -492,7 +492,7 @@ jwt_trusted_issuers = ""
 # ============================================================================
 # Each provider section adds its issuer to the trusted-issuers list and
 # registers the audience (client_id) for token validation.
-# You still need to add the provider issuer to [authentication].jwt_trusted_issuers above.
+# You still need to add the provider issuer to [auth].jwt_trusted_issuers above.
 
 # [oauth]
 # # Enable OAuth / OIDC authentication globally (default: false)
@@ -523,6 +523,17 @@ jwt_trusted_issuers = ""
 # jwks_uri = "https://login.microsoftonline.com/YOUR_TENANT_ID/discovery/v2.0/keys"
 # client_id = "your-azure-client-id"
 # tenant = "your-azure-tenant-id"
+
+# ── Generic OpenID Connect provider ───────────────────────────────────────
+# Use this for Dex, Keycloak, Okta, Auth0, or any provider with standard OIDC
+# discovery and browser login. Configure the provider's allowed redirect URI as:
+#   http://YOUR_ADMIN_UI_ORIGIN/ui/oauth/callback
+# The Admin UI starts an OIDC implicit-flow login and then sends the returned
+# ID token to KalamDB as an external bearer token.
+# [oauth.providers.openid]
+# enabled = true
+# issuer = "https://idp.example.com/realms/kalamdb"
+# client_id = "your-openid-client-id"
 
 # ── Firebase Authentication ────────────────────────────────────────────────
 # Firebase issues RS256-signed ID tokens with issuer:

@@ -55,6 +55,7 @@ tracing = { workspace = true }
 # Async runtime
 tokio = { workspace = true }
 futures-util = { workspace = true }
+reqwest = { workspace = true }
 
 # Base64 encoding/decoding
 base64 = { workspace = true }
@@ -79,8 +80,6 @@ chrono = { workspace = true }
 cc = { workspace = true }
 
 [dev-dependencies]
-# Testing utilities
-tempfile = { workspace = true }
 kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
 kalamdb-store = { path = "../kalamdb-store" }
 actix-rt = { workspace = true }

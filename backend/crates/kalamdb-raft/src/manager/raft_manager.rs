@@ -12,9 +12,13 @@ use std::{
     time::Duration,
 };
 
-use kalamdb_commons::models::{NodeId, TableId};
+use kalamdb_commons::{
+    models::{NodeId, TableId, TransactionId},
+    TableType,
+};
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::{raft_storage::RAFT_PARTITION_NAME, Partition, StorageBackend};
+use kalamdb_transactions::StagedMutation;
 use openraft::RaftMetrics;
 use parking_lot::RwLock;
 use tonic::transport::{Certificate, ClientTlsConfig, Identity};
@@ -1225,9 +1229,17 @@ impl RaftManager {
     pub async fn propose_transaction_commit(
         &self,
         group_id: GroupId,
-        transaction_id: kalamdb_commons::models::TransactionId,
-        mutations: Vec<kalamdb_transactions::StagedMutation>,
+        transaction_id: TransactionId,
+        mutations: Vec<StagedMutation>,
     ) -> Result<crate::DataResponse, RaftError> {
+        let resolved_group_id = self.resolve_transaction_group_id(&mutations)?;
+        if resolved_group_id != group_id {
+            return Err(RaftError::InvalidGroup(format!(
+                "TransactionCommit target group mismatch: requested {}, resolved {}",
+                group_id, resolved_group_id
+            )));
+        }
+
         let cmd = crate::RaftCommand::TransactionCommit {
             transaction_id,
             mutations,
@@ -1319,6 +1331,67 @@ impl RaftManager {
     pub fn compute_shard(&self, table_id: &TableId) -> u32 {
         let router = ShardRouter::new(self.user_shards_count, self.shared_shards_count);
         router.table_shard_id(table_id)
+    }
+
+    /// Resolve the only data Raft group that can atomically commit a transaction.
+    ///
+    /// Explicit transactions currently commit inside exactly one data group. Keeping this
+    /// rule in the Raft layer prevents callers from accidentally proposing a write set to a
+    /// shard that cannot own all of its mutations.
+    pub fn resolve_transaction_group_id(
+        &self,
+        mutations: &[StagedMutation],
+    ) -> Result<GroupId, RaftError> {
+        if mutations.is_empty() {
+            return Err(RaftError::InvalidState(
+                "transaction commit requires at least one staged mutation".to_string(),
+            ));
+        }
+
+        let router = ShardRouter::new(self.user_shards_count, self.shared_shards_count);
+        let mut expected_group = None;
+
+        for mutation in mutations {
+            let group_id = match mutation.table_type {
+                TableType::User => {
+                    let user_id = mutation.user_id.as_ref().ok_or_else(|| {
+                        RaftError::InvalidState(
+                            "user transaction mutation missing user_id".to_string(),
+                        )
+                    })?;
+                    GroupId::DataUserShard(router.user_shard_id(user_id))
+                },
+                TableType::Shared => GroupId::DataSharedShard(router.shared_shard_id()),
+                TableType::Stream => {
+                    return Err(RaftError::InvalidState(
+                        "stream tables are not supported in explicit transactions".to_string(),
+                    ));
+                },
+                TableType::System => {
+                    return Err(RaftError::InvalidState(
+                        "system tables are not supported in explicit transactions".to_string(),
+                    ));
+                },
+            };
+
+            if let Some(existing_group) = expected_group {
+                if existing_group != group_id {
+                    return Err(RaftError::InvalidState(format!(
+                        "explicit transactions must remain within one data raft group; '{}' mapped \
+                         to {:?} while prior mutations mapped to {:?}",
+                        mutation.table_id, group_id, existing_group
+                    )));
+                }
+            } else {
+                expected_group = Some(group_id);
+            }
+        }
+
+        expected_group.ok_or_else(|| {
+            RaftError::InvalidState(
+                "failed to resolve a target raft group for transaction commit".to_string(),
+            )
+        })
     }
 
     /// Register a peer node with all groups
@@ -2027,7 +2100,9 @@ impl RaftManager {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use std::collections::BTreeMap;
+
+    use kalamdb_commons::models::{rows::Row, NamespaceId, OperationKind, TableName, UserId};
 
     use super::*;
 
@@ -2086,6 +2161,80 @@ mod tests {
 
         // Different tables may get different shards (likely but not guaranteed)
         // Just verify they're computed consistently
+    }
+
+    fn staged_user_mutation(
+        transaction_id: TransactionId,
+        table_name: &str,
+        user_id: UserId,
+    ) -> StagedMutation {
+        StagedMutation::new(
+            transaction_id,
+            TableId::new(NamespaceId::default(), TableName::from(table_name)),
+            TableType::User,
+            Some(user_id),
+            OperationKind::Insert,
+            "1",
+            Row::new(BTreeMap::new()),
+            false,
+        )
+    }
+
+    #[test]
+    fn test_resolve_transaction_group_id_user_shard() {
+        let manager = RaftManager::new(test_config());
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let user_id = UserId::new("user123");
+        let mutation = staged_user_mutation(transaction_id, "users", user_id.clone());
+        let router = ShardRouter::new(manager.user_shards(), manager.shared_shards());
+
+        let group = manager.resolve_transaction_group_id(&[mutation]).unwrap();
+
+        assert_eq!(group, GroupId::DataUserShard(router.user_shard_id(&user_id)));
+    }
+
+    #[test]
+    fn test_resolve_transaction_group_id_rejects_cross_shard_user_batch() {
+        let manager = RaftManager::new(test_config());
+        let router = ShardRouter::new(manager.user_shards(), manager.shared_shards());
+        let first_user = UserId::new("user-0");
+        let first_shard = router.user_shard_id(&first_user);
+        let second_user = (1..10_000)
+            .map(|i| UserId::new(format!("user-{}", i)))
+            .find(|candidate| router.user_shard_id(candidate) != first_shard)
+            .expect("expected to find a user mapped to a different shard");
+
+        let tx1 = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let tx2 = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let mutations = vec![
+            staged_user_mutation(tx1, "users", first_user),
+            staged_user_mutation(tx2, "users", second_user),
+        ];
+
+        let error = manager.resolve_transaction_group_id(&mutations).unwrap_err();
+
+        assert!(error.to_string().contains("one data raft group"));
+    }
+
+    #[tokio::test]
+    async fn test_transaction_commit_rejects_mismatched_target_group_before_proposal() {
+        let manager = RaftManager::new(test_config());
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let user_id = UserId::new("user123");
+        let mutation = staged_user_mutation(transaction_id.clone(), "users", user_id);
+        let resolved_group = manager.resolve_transaction_group_id(&[mutation.clone()]).unwrap();
+        let wrong_group = match resolved_group {
+            GroupId::DataUserShard(0) => GroupId::DataUserShard(1),
+            GroupId::DataUserShard(_) => GroupId::DataUserShard(0),
+            other => panic!("unexpected group: {:?}", other),
+        };
+
+        let error = manager
+            .propose_transaction_commit(wrong_group, transaction_id, vec![mutation])
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("target group mismatch"));
     }
 
     #[test]

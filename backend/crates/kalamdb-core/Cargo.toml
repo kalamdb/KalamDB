@@ -50,7 +50,6 @@ parking_lot = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
-tokio-util = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -84,17 +83,10 @@ ulid = { workspace = true }
 # Single-assignment statics
 once_cell = { workspace = true }
 
-# Regular expressions
-regex = { workspace = true }
-
-# ZIP archive creation
-zip = { workspace = true }
-
 [dev-dependencies]
 # Testing utilities
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-parquet = { workspace = true }
 ntest = { workspace = true }
 kalamdb-handlers = { path = "../kalamdb-handlers" }
 kalamdb-jobs = { path = "../kalamdb-jobs" }

@@ -1,20 +1,49 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, KeyRound, User } from "lucide-react";
+import { AlertCircle, ExternalLink, KeyRound, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { authApi, type OAuthProviderInfo } from "@/lib/api";
+import { buildOAuthAuthorizationUrl } from "@/lib/oauth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 interface LoginFormProps {
   onSuccess?: () => void;
+  returnTo?: string;
 }
 
-export default function LoginForm({ onSuccess }: LoginFormProps) {
+export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginFormProps) {
   const { login, error, isLoading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProviderInfo[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    authApi
+      .oauthProviders()
+      .then((providers) => {
+        if (!cancelled) {
+          setOauthProviders(providers.filter((provider) => provider.authorization_endpoint));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOauthProviders([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const sortedOauthProviders = useMemo(
+    () => [...oauthProviders].sort((left, right) => left.display_name.localeCompare(right.display_name)),
+    [oauthProviders],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,17 +64,42 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
 
   const displayError = localError || error;
 
+  const handleOAuthLogin = (provider: OAuthProviderInfo) => {
+    setLocalError(null);
+    try {
+      window.location.assign(buildOAuthAuthorizationUrl(provider, returnTo));
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "External login failed");
+    }
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <Button type="button" variant="secondary" className="h-11 w-full" disabled>
-        Continue with Google (Soon)
-      </Button>
+      {sortedOauthProviders.length > 0 && (
+        <>
+          <div className="space-y-2">
+            {sortedOauthProviders.map((provider) => (
+              <Button
+                key={provider.id}
+                type="button"
+                variant="secondary"
+                className="h-11 w-full"
+                disabled={isLoading}
+                onClick={() => handleOAuthLogin(provider)}
+              >
+                <ExternalLink className="h-4 w-4" />
+                Continue with {provider.display_name}
+              </Button>
+            ))}
+          </div>
 
-      <div className="flex items-center gap-3 py-2">
-        <div className="h-px flex-1 bg-border" />
-        <span className="text-xs font-medium text-muted-foreground">OR</span>
-        <div className="h-px flex-1 bg-border" />
-      </div>
+          <div className="flex items-center gap-3 py-2">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs font-medium text-muted-foreground">OR</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+        </>
+      )}
 
       {displayError && (
         <Alert variant="destructive">

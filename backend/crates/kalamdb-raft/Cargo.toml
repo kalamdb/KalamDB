@@ -56,7 +56,6 @@ kalam-pg-common = { path = "../../../pg/crates/kalam-pg-common" }
 kalamdb-pg = { path = "../kalamdb-pg" }
 ntest = { workspace = true }
 serde_json = { workspace = true }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 serial_test = { workspace = true }
 

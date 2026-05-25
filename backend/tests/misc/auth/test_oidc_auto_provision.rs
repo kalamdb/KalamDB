@@ -236,18 +236,37 @@ where
     with_http_test_server_config(|_| {}, test_fn).await
 }
 
-async fn with_dex_provider<T, F, Fut>(test_fn: F) -> Result<T>
+fn docker_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("socket not found")
+        || lower.contains("failed to initialize a docker client")
+        || lower.contains("cannot connect to the docker daemon")
+        || lower.contains("docker daemon is not running")
+}
+
+async fn with_dex_provider_if_available<T, F, Fut>(test_fn: F) -> Result<Option<T>>
 where
     F: FnOnce(DexProviderInfo) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    let container = Dex::default()
+    let container = match Dex::default()
         .with_simple_user()
         .with_simple_client()
         .with_allow_password_grants()
         .start()
         .await
-        .context("Failed to start Dex container")?;
+    {
+        Ok(container) => container,
+        Err(error) => {
+            let message = error.to_string();
+            if docker_unavailable_message(&message) {
+                eprintln!("Skipping Dex-backed OIDC test because Docker is unavailable: {message}");
+                return Ok(None);
+            }
+
+            return Err(error).context("Failed to start Dex container");
+        },
+    };
 
     let host = container.get_host().await.context("Failed to resolve Dex host")?.to_string();
     let port = container.get_host_port_ipv4(5556).await.context("Failed to resolve Dex port")?;
@@ -263,7 +282,7 @@ where
 
     let result = test_fn(provider).await;
     drop(container);
-    result
+    result.map(Some)
 }
 
 fn issue_rs256_token(
@@ -562,6 +581,40 @@ fn insert_local_user(server: &HttpTestServer, user_id: &UserId, role: Role) -> R
     users.create_user(user).context("Failed to create target user")
 }
 
+fn insert_oauth_user(
+    server: &HttpTestServer,
+    user_id: &UserId,
+    issuer: &str,
+    subject: &str,
+    role: Role,
+) -> Result<()> {
+    let users = server.app_context().system_tables().users();
+    if users.get_user_by_id(user_id).context("Failed to inspect OAuth user")?.is_some() {
+        return Ok(());
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    users
+        .create_user(User {
+            created_at: now,
+            updated_at: now,
+            locked_until: None,
+            last_login_at: None,
+            last_seen: None,
+            deleted_at: None,
+            user_id: user_id.clone(),
+            password_hash: String::new(),
+            email: Some("preprovisioned@test.local".to_string()),
+            auth_data: Some(kalamdb_system::AuthData::new(issuer.to_string(), subject.to_string())),
+            storage_id: None,
+            failed_login_attempts: 0,
+            role,
+            auth_type: AuthType::OAuth,
+            storage_mode: StorageMode::Table,
+        })
+        .context("Failed to create OAuth user")
+}
+
 async fn create_user_table(server: &HttpTestServer, namespace: &str, table: &str) -> Result<()> {
     let ns_response = server
         .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
@@ -585,7 +638,7 @@ async fn create_user_table(server: &HttpTestServer, namespace: &str, table: &str
 #[ntest::timeout(90000)]
 #[serial]
 async fn test_dex_valid_jwt_auto_provisions_user_and_select_works() -> Result<()> {
-    with_dex_provider(|provider| async move {
+    with_dex_provider_if_available(|provider| async move {
         let issuer = provider.issuer.clone();
         let client_id = provider.client_id.clone();
         let dex_provider = provider.clone();
@@ -621,14 +674,16 @@ async fn test_dex_valid_jwt_auto_provisions_user_and_select_works() -> Result<()
         })
         .await
     })
-    .await
+    .await?;
+
+    Ok(())
 }
 
 #[actix_web::test]
 #[ntest::timeout(90000)]
 #[serial]
 async fn test_dex_same_jwt_does_not_duplicate_user() -> Result<()> {
-    with_dex_provider(|provider| async move {
+    with_dex_provider_if_available(|provider| async move {
         let issuer = provider.issuer.clone();
         let client_id = provider.client_id.clone();
         let dex_provider = provider.clone();
@@ -670,7 +725,152 @@ async fn test_dex_same_jwt_does_not_duplicate_user() -> Result<()> {
         })
         .await
     })
-    .await
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_jwt_auth_me_returns_external_user() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::Dba, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+
+                let (status, body) =
+                    get_me_raw(server, Some(&format!("Bearer {token}")), None).await?;
+                assert_eq!(status, StatusCode::OK);
+                let current_user: JsonValue =
+                    serde_json::from_str(&body).context("Failed to parse Dex /auth/me response")?;
+
+                assert_eq!(current_user["user"]["id"].as_str(), Some(user_id.as_str()));
+                assert_eq!(current_user["user"]["role"].as_str(), Some("dba"));
+                assert_eq!(current_user["admin_ui_access"].as_bool(), Some(true));
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_jwt_authenticates_websocket() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::User, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+
+                let request = server.websocket_url().into_client_request()?;
+                let (mut socket, _response) = tokio_tungstenite::connect_async(request)
+                    .await
+                    .context("Failed to open websocket connection")?;
+
+                let auth_message = ClientMessage::Authenticate {
+                    credentials: WsAuthCredentials::Jwt { token },
+                    protocol: ProtocolOptions::default(),
+                };
+                socket
+                    .send(Message::Text(serde_json::to_string(&auth_message)?.into()))
+                    .await
+                    .context("Failed to send websocket auth message")?;
+
+                let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+                    .await
+                    .context("Timed out waiting for websocket auth success")?
+                    .context("websocket closed before returning auth success")??;
+
+                let text = match frame {
+                    Message::Text(text) => text.to_string(),
+                    other => {
+                        anyhow::bail!("expected websocket auth success text frame, got {:?}", other)
+                    },
+                };
+                let body: JsonValue = serde_json::from_str(&text)
+                    .context("Failed to parse websocket auth success")?;
+                assert_eq!(body.get("type").and_then(|value| value.as_str()), Some("auth_success"));
+                assert_eq!(
+                    body.get("user").and_then(|value| value.as_str()),
+                    Some(user_id.as_str())
+                );
+                assert_eq!(body.get("role").and_then(|value| value.as_str()), Some("user"));
+
+                socket.close(None).await.context("Failed to close websocket")?;
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_preprovisioned_oauth_user_is_reused() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::User, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+                insert_oauth_user(server, &user_id, &dex_provider.issuer, &claims.sub, Role::Dba)?;
+
+                let response = server
+                    .execute_sql_with_auth(
+                        "SELECT CURRENT_ROLE() AS role",
+                        &format!("Bearer {token}"),
+                    )
+                    .await
+                    .context("Pre-provisioned Dex bearer SELECT failed")?;
+                assert_success(&response, "pre-provisioned dex bearer select");
+
+                let user = server
+                    .app_context()
+                    .system_tables()
+                    .users()
+                    .get_user_by_id(&user_id)
+                    .context("Failed to fetch pre-provisioned OAuth user")?
+                    .context("Expected pre-provisioned OAuth user to exist")?;
+
+                assert_eq!(user.role, Role::Dba);
+                assert_eq!(user.email.as_deref(), Some("preprovisioned@test.local"));
+                assert_eq!(
+                    user.auth_data.as_ref().map(|data| data.subject.as_str()),
+                    Some(claims.sub.as_str())
+                );
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
 }
 
 #[actix_web::test]

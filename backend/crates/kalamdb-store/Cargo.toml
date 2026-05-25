@@ -40,5 +40,4 @@ datafusion = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-criterion = { workspace = true }
 kalamdb-system = { path = "../kalamdb-system" }

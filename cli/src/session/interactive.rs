@@ -185,7 +185,9 @@ impl CLISession {
         self.print_banner();
 
         let helper = CLIHelper::new(completer, self.color);
+        let history_size = self.config.resolved_ui().history_size;
         let config = Config::builder()
+            .max_history_size(history_size)?
             .completion_type(CompletionType::List)
             .completion_prompt_limit(100)
             .edit_mode(EditMode::Emacs)
@@ -200,7 +202,6 @@ impl CLISession {
             Cmd::AcceptLine,
         );
 
-        let history_size = self.config.resolved_ui().history_size;
         let history = CommandHistory::new(history_size);
 
         if let Ok(history_entries) = history.load() {

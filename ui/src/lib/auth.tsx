@@ -12,6 +12,7 @@ import {
   logout as logoutThunk,
   refresh as refreshThunk,
   checkAuth,
+  loginWithExternalToken as loginWithExternalTokenThunk,
 } from "../store/authSlice";
 import { ensureSyncedSqlStudioWorkspaceInitialized } from "@/services/sqlStudioWorkspaceSyncService";
 
@@ -21,6 +22,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   accessToken: string | null;
   login: (credentials: LoginRequest) => Promise<void>;
+  loginWithExternalToken: (token: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   error: string | null;
@@ -45,6 +47,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (credentials: LoginRequest) => {
       await dispatch(loginThunk(credentials)).unwrap();
+    },
+    [dispatch]
+  );
+
+  const loginWithExternalToken = useCallback(
+    async (token: string) => {
+      await dispatch(loginWithExternalTokenThunk(token)).unwrap();
     },
     [dispatch]
   );
@@ -97,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated,
     accessToken,
     login,
+    loginWithExternalToken,
     logout,
     refresh,
     error,

@@ -16,6 +16,7 @@ mod audit;
 mod login;
 mod logout;
 mod me;
+mod oauth;
 mod refresh;
 mod setup;
 
@@ -25,6 +26,7 @@ pub(crate) use login::login_handler;
 pub(crate) use logout::logout_handler;
 pub(crate) use me::me_handler;
 use models::AuthErrorResponse;
+pub(crate) use oauth::oauth_providers_handler;
 pub(crate) use refresh::refresh_handler;
 pub(crate) use setup::{server_setup_handler, setup_status_handler};
 

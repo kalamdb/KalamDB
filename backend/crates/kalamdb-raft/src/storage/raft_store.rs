@@ -578,6 +578,43 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         }
     }
 
+    fn persistent_last_log_id(&self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
+        let Some(store) = &self.persistent_store else {
+            return Ok(None);
+        };
+
+        let Some(index) = store.last_log_index().map_err(|e| StorageIOError::read_logs(&e))? else {
+            return Ok(None);
+        };
+
+        let Some(entry) = store.get_log(index).map_err(|e| StorageIOError::read_logs(&e))? else {
+            return Ok(None);
+        };
+
+        Ok(Some(LogId::new(openraft::CommittedLeaderId::new(entry.term, 0), entry.index)))
+    }
+
+    fn set_last_log_id_after_deletion(
+        &self,
+        cache_last_log_id: Option<LogId<u64>>,
+    ) -> Result<(), StorageError<u64>> {
+        let updated = if self.persistent_store.is_some() {
+            self.persistent_last_log_id()?
+        } else {
+            cache_last_log_id
+        };
+
+        let mut last_log_id = self.last_log_id.write();
+        *last_log_id = updated;
+        Ok(())
+    }
+
+    fn subtract_log_cache_bytes(&self, removed_bytes: u64) {
+        if removed_bytes > 0 {
+            self.log_cache_bytes.fetch_sub(removed_bytes, Ordering::Relaxed);
+        }
+    }
+
     fn persist_last_applied_log_id(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         if let Some(store) = &self.persistent_store {
             store
@@ -847,16 +884,21 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
         }
         self.log_cache_bytes.fetch_add(added_bytes, Ordering::Relaxed);
 
-        // Trim cache if too large (by count or bytes)
-        let max_bytes = LOG_CACHE_MAX_BYTES as u64;
-        while log.len() > LOG_CACHE_SIZE || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
-        {
-            if let Some((&first_key, entry)) = log.iter().next() {
-                let removed_bytes = entry.payload.len() as u64;
-                log.remove(&first_key);
-                self.log_cache_bytes.fetch_sub(removed_bytes, Ordering::Relaxed);
-            } else {
-                break;
+        // In persistent mode the map is only a cache, so it can be bounded.
+        // In memory-only mode it is the authoritative log and must retain
+        // entries until OpenRaft purges them.
+        if has_persistent_store {
+            let max_bytes = LOG_CACHE_MAX_BYTES as u64;
+            while log.len() > LOG_CACHE_SIZE
+                || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
+            {
+                if let Some((&first_key, entry)) = log.iter().next() {
+                    let removed_bytes = entry.payload.len() as u64;
+                    log.remove(&first_key);
+                    self.subtract_log_cache_bytes(removed_bytes);
+                } else {
+                    break;
+                }
             }
         }
 
@@ -871,10 +913,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
         &mut self,
         log_id: LogId<u64>,
     ) -> Result<(), StorageError<u64>> {
-        // Note: Persistent store doesn't have delete_conflict_logs_since,
-        // but this is typically called during log replication to remove conflicting entries.
-        // For now, we only update the in-memory cache. The persistent store will
-        // be updated when new entries are appended (overwriting old ones).
+        if let Some(store) = &self.persistent_store {
+            store
+                .delete_logs_from(log_id.index)
+                .map_err(|e| StorageIOError::write_logs(&e))?;
+        }
+
         let mut log = self.log.write();
 
         let keys_to_remove: Vec<u64> = log.range(log_id.index..).map(|(k, _)| *k).collect();
@@ -884,9 +928,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
                 removed_bytes += entry.payload.len() as u64;
             }
         }
-        self.log_cache_bytes.fetch_sub(removed_bytes, Ordering::Relaxed);
-        let mut last_log_id = self.last_log_id.write();
-        *last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+        self.subtract_log_cache_bytes(removed_bytes);
+        let cache_last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+        drop(log);
+
+        self.set_last_log_id_after_deletion(cache_last_log_id)?;
 
         Ok(())
     }
@@ -916,11 +962,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
                 removed_bytes += entry.payload.len() as u64;
             }
         }
-        self.log_cache_bytes.fetch_sub(removed_bytes, Ordering::Relaxed);
+        self.subtract_log_cache_bytes(removed_bytes);
 
         *last_purged = Some(log_id);
-        let mut last_log_id = self.last_log_id.write();
-        *last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+        let cache_last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+        drop(log);
+        drop(last_purged);
+
+        self.set_last_log_id_after_deletion(cache_last_log_id)?;
         Ok(())
     }
 
@@ -1129,12 +1178,19 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStorage<KalamTypeConfig>
 
             let keys_to_remove: Vec<u64> =
                 log.range(..=last_log_id.index).map(|(k, _)| *k).collect();
+            let mut removed_bytes: u64 = 0;
             for key in keys_to_remove {
-                log.remove(&key);
+                if let Some(entry) = log.remove(&key) {
+                    removed_bytes += entry.payload.len() as u64;
+                }
             }
+            self.subtract_log_cache_bytes(removed_bytes);
             *last_purged = Some(last_log_id);
-            let mut cached_last_log_id = self.last_log_id.write();
-            *cached_last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+            let cache_last_log_id = log.iter().next_back().map(|(_, entry)| entry.log_id);
+            drop(log);
+            drop(last_purged);
+
+            self.set_last_log_id_after_deletion(cache_last_log_id)?;
         }
 
         Ok(())
@@ -1737,6 +1793,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_in_memory_storage_retains_logs_beyond_cache_limit() {
+        let sm = MetaStateMachine::new();
+        let mut storage = Arc::new(KalamRaftStorage::new(GroupId::Meta, sm));
+        let entry_count = LOG_CACHE_SIZE as u64 + 5;
+
+        let entries: Vec<_> = (1..=entry_count)
+            .map(|index| Entry {
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                payload: EntryPayload::Blank,
+            })
+            .collect();
+        storage.append_to_log(entries).await.unwrap();
+
+        let mut reader = storage.get_log_reader().await;
+        let logs = reader.try_get_log_entries(1..entry_count + 1).await.unwrap();
+
+        assert_eq!(logs.len(), entry_count as usize);
+        assert_eq!(logs.first().unwrap().log_id.index, 1);
+        assert_eq!(logs.last().unwrap().log_id.index, entry_count);
+    }
+
+    #[tokio::test]
+    async fn test_persistent_conflict_log_deletion_survives_restart() {
+        let backend = create_test_backend();
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            let mut storage = Arc::new(storage);
+
+            let entries: Vec<_> = (1..=10)
+                .map(|index| Entry {
+                    log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                    payload: EntryPayload::Blank,
+                })
+                .collect();
+            storage.append_to_log(entries).await.unwrap();
+            storage
+                .delete_conflict_logs_since(LogId::new(openraft::CommittedLeaderId::new(1, 1), 6))
+                .await
+                .unwrap();
+
+            let state = storage.get_log_state().await.unwrap();
+            assert_eq!(state.last_log_id.map(|id| id.index), Some(5));
+        }
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage =
+                KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend, test_snapshots_dir())
+                    .unwrap();
+            let mut storage = Arc::new(storage);
+
+            let state = storage.get_log_state().await.unwrap();
+            assert_eq!(state.last_log_id.map(|id| id.index), Some(5));
+
+            let mut reader = storage.get_log_reader().await;
+            let logs = reader.try_get_log_entries(1..11).await.unwrap();
+            assert_eq!(logs.len(), 5);
+            assert_eq!(logs.last().unwrap().log_id.index, 5);
+        }
+    }
+
+    #[tokio::test]
     async fn test_persistent_commit_survives_restart() {
         let backend = create_test_backend();
 
@@ -1825,6 +1951,32 @@ mod tests {
             assert_eq!(logs.len(), 5); // indices 6, 7, 8, 9, 10
             assert_eq!(logs[0].log_id.index, 6);
         }
+    }
+
+    #[tokio::test]
+    async fn test_purge_updates_log_cache_byte_accounting() {
+        let backend = create_test_backend();
+        let sm = MetaStateMachine::new();
+        let storage =
+            KalamRaftStorage::new_persistent(GroupId::Meta, sm, backend, test_snapshots_dir())
+                .unwrap();
+        let mut storage = Arc::new(storage);
+
+        let entries: Vec<_> = (1..=5)
+            .map(|index| Entry {
+                log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+                payload: EntryPayload::Blank,
+            })
+            .collect();
+        storage.append_to_log(entries).await.unwrap();
+        assert!(storage.log_cache_bytes.load(Ordering::Relaxed) > 0);
+
+        storage
+            .purge_logs_upto(LogId::new(openraft::CommittedLeaderId::new(1, 1), 5))
+            .await
+            .unwrap();
+
+        assert_eq!(storage.log_cache_bytes.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

@@ -13,6 +13,187 @@
 /// - **Views**: Computed on-demand, no storage backing
 use crate::constants::ColumnFamilyNames;
 use crate::models::TableId;
+use crate::storage::Partition;
+use once_cell::sync::Lazy;
+
+struct SystemTableMetadata {
+    table: SystemTable,
+    sql_name: &'static str,
+    aliases: &'static [&'static str],
+    is_view: bool,
+    column_family_name: Option<&'static str>,
+}
+
+const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
+    SystemTableMetadata {
+        table: SystemTable::Users,
+        sql_name: "users",
+        aliases: &["users", "system_users"],
+        is_view: false,
+        column_family_name: Some("system_users"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Namespaces,
+        sql_name: "namespaces",
+        aliases: &["namespaces", "system_namespaces"],
+        is_view: false,
+        column_family_name: Some("system_namespaces"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Schemas,
+        sql_name: "schemas",
+        aliases: &["schemas", "system_schemas"],
+        is_view: false,
+        column_family_name: Some("system_schemas"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::TableSchemas,
+        sql_name: "table_schemas",
+        aliases: &["table_schemas", "system_table_schemas"],
+        is_view: false,
+        column_family_name: Some("system_table_schemas"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Storages,
+        sql_name: "storages",
+        aliases: &["storages", "system_storages"],
+        is_view: false,
+        column_family_name: Some("system_storages"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Jobs,
+        sql_name: "jobs",
+        aliases: &["jobs", "system_jobs"],
+        is_view: false,
+        column_family_name: Some("system_jobs"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::JobNodes,
+        sql_name: "job_nodes",
+        aliases: &["job_nodes", "system_job_nodes"],
+        is_view: false,
+        column_family_name: Some("system_job_nodes"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::AuditLog,
+        sql_name: "audit_log",
+        aliases: &["audit_log", "system_audit_log"],
+        is_view: false,
+        column_family_name: Some("system_audit_log"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Manifest,
+        sql_name: "manifest",
+        aliases: &["manifest", "manifest_cache"],
+        is_view: false,
+        column_family_name: Some("manifest_cache"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Topics,
+        sql_name: "topics",
+        aliases: &["topics", "system_topics"],
+        is_view: false,
+        column_family_name: Some("system_topics"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::TopicOffsets,
+        sql_name: "topic_offsets",
+        aliases: &["topic_offsets", "system_topic_offsets"],
+        is_view: false,
+        column_family_name: Some("system_topic_offsets"),
+    },
+    SystemTableMetadata {
+        table: SystemTable::Stats,
+        sql_name: "stats",
+        aliases: &["stats"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Live,
+        sql_name: "live",
+        aliases: &["live"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Sessions,
+        sql_name: "sessions",
+        aliases: &["sessions"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Transactions,
+        sql_name: "transactions",
+        aliases: &["transactions"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Settings,
+        sql_name: "settings",
+        aliases: &["settings"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::ServerLogs,
+        sql_name: "server_logs",
+        aliases: &["server_logs"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Cluster,
+        sql_name: "cluster",
+        aliases: &["cluster"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::ClusterGroups,
+        sql_name: "cluster_groups",
+        aliases: &["cluster_groups"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Datatypes,
+        sql_name: "datatypes",
+        aliases: &["datatypes"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Describe,
+        sql_name: "describe",
+        aliases: &["describe"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Tables,
+        sql_name: "tables",
+        aliases: &["tables", "system_tables"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table: SystemTable::Columns,
+        sql_name: "columns",
+        aliases: &["columns", "system_columns"],
+        is_view: true,
+        column_family_name: None,
+    },
+];
+
+fn system_table_metadata(table: SystemTable) -> &'static SystemTableMetadata {
+    SYSTEM_TABLE_METADATA
+        .iter()
+        .find(|metadata| metadata.table == table)
+        .expect("system table metadata must exist")
+}
 
 /// Memory/performance profile applied to a storage partition or physical RocksDB CF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,32 +267,7 @@ pub enum SystemTable {
 impl SystemTable {
     /// Get the table name as used in SQL (e.g., "users", "tables")
     pub fn table_name(&self) -> &'static str {
-        match self {
-            SystemTable::Users => "users",
-            SystemTable::Namespaces => "namespaces",
-            SystemTable::Schemas => "schemas",
-            SystemTable::TableSchemas => "table_schemas",
-            SystemTable::Storages => "storages",
-            SystemTable::Jobs => "jobs",
-            SystemTable::JobNodes => "job_nodes",
-            SystemTable::AuditLog => "audit_log",
-            SystemTable::Manifest => "manifest",
-            SystemTable::Topics => "topics",
-            SystemTable::TopicOffsets => "topic_offsets",
-            // Views
-            SystemTable::Stats => "stats",
-            SystemTable::Live => "live",
-            SystemTable::Sessions => "sessions",
-            SystemTable::Transactions => "transactions",
-            SystemTable::Settings => "settings",
-            SystemTable::ServerLogs => "server_logs",
-            SystemTable::Cluster => "cluster",
-            SystemTable::ClusterGroups => "cluster_groups",
-            SystemTable::Datatypes => "datatypes",
-            SystemTable::Describe => "describe",
-            SystemTable::Tables => "tables",
-            SystemTable::Columns => "columns",
-        }
+        system_table_metadata(*self).sql_name
     }
 
     /// Get the fully-qualified TableId for this system table/view
@@ -121,52 +277,13 @@ impl SystemTable {
 
     /// Returns true if this is a virtual view (computed on-demand, not persisted)
     pub fn is_view(&self) -> bool {
-        matches!(
-            self,
-            SystemTable::Stats
-                | SystemTable::Live
-                | SystemTable::Sessions
-                | SystemTable::Transactions
-                | SystemTable::Settings
-                | SystemTable::ServerLogs
-                | SystemTable::Cluster
-                | SystemTable::ClusterGroups
-                | SystemTable::Datatypes
-                | SystemTable::Describe
-                | SystemTable::Tables
-                | SystemTable::Columns
-        )
+        system_table_metadata(*self).is_view
     }
 
     /// Get the logical storage partition name (e.g., "system_users").
     /// Returns None for views because they have no storage backing.
     pub fn column_family_name(&self) -> Option<&'static str> {
-        match self {
-            SystemTable::Users => Some("system_users"),
-            SystemTable::Namespaces => Some("system_namespaces"),
-            SystemTable::Schemas => Some("system_schemas"),
-            SystemTable::TableSchemas => Some("system_table_schemas"),
-            SystemTable::Storages => Some("system_storages"),
-            SystemTable::Jobs => Some("system_jobs"),
-            SystemTable::JobNodes => Some("system_job_nodes"),
-            SystemTable::AuditLog => Some("system_audit_log"),
-            SystemTable::Manifest => Some("manifest_cache"),
-            SystemTable::Topics => Some("system_topics"),
-            SystemTable::TopicOffsets => Some("system_topic_offsets"),
-            // Views have no column family
-            SystemTable::Stats
-            | SystemTable::Live
-            | SystemTable::Sessions
-            | SystemTable::Transactions
-            | SystemTable::Settings
-            | SystemTable::ServerLogs
-            | SystemTable::Cluster
-            | SystemTable::ClusterGroups
-            | SystemTable::Datatypes
-            | SystemTable::Describe
-            | SystemTable::Tables
-            | SystemTable::Columns => None,
-        }
+        system_table_metadata(*self).column_family_name
     }
 
     /// Returns the RocksDB tuning profile for this persisted system table.
@@ -178,35 +295,11 @@ impl SystemTable {
     pub fn from_name(name: &str) -> Result<Self, String> {
         // Remove "system." prefix if present
         let name = name.strip_prefix("system.").unwrap_or(name);
-
-        match name {
-            // Tables
-            "users" | "system_users" => Ok(SystemTable::Users),
-            "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
-            "schemas" | "system_schemas" => Ok(SystemTable::Schemas),
-            "table_schemas" | "system_table_schemas" => Ok(SystemTable::TableSchemas),
-            "storages" | "system_storages" => Ok(SystemTable::Storages),
-            "live" => Ok(SystemTable::Live),
-            "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
-            "job_nodes" | "system_job_nodes" => Ok(SystemTable::JobNodes),
-            "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
-            "manifest" | "manifest_cache" => Ok(SystemTable::Manifest),
-            "topics" | "system_topics" => Ok(SystemTable::Topics),
-            "topic_offsets" | "system_topic_offsets" => Ok(SystemTable::TopicOffsets),
-            // Views
-            "stats" => Ok(SystemTable::Stats),
-            "sessions" => Ok(SystemTable::Sessions),
-            "transactions" => Ok(SystemTable::Transactions),
-            "settings" => Ok(SystemTable::Settings),
-            "server_logs" => Ok(SystemTable::ServerLogs),
-            "cluster" => Ok(SystemTable::Cluster),
-            "cluster_groups" => Ok(SystemTable::ClusterGroups),
-            "datatypes" => Ok(SystemTable::Datatypes),
-            "describe" => Ok(SystemTable::Describe),
-            "tables" | "system_tables" => Ok(SystemTable::Tables),
-            "columns" | "system_columns" => Ok(SystemTable::Columns),
-            _ => Err(format!("Unknown system table or view: {}", name)),
-        }
+        SYSTEM_TABLE_METADATA
+            .iter()
+            .find(|metadata| metadata.aliases.contains(&name))
+            .map(|metadata| metadata.table)
+            .ok_or_else(|| format!("Unknown system table or view: {}", name))
     }
 
     /// Get all system tables (persisted only, excludes views)
@@ -286,10 +379,6 @@ impl SystemTable {
     /// Allocates each Partition once and returns a reference,
     /// avoiding repeated String allocations across the codebase.
     pub fn partition(&self) -> Option<&'static crate::storage::Partition> {
-        use once_cell::sync::Lazy;
-
-        use crate::storage::Partition;
-
         static USERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_users"));
         static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new("system_namespaces"));
         static SCHEMAS: Lazy<Partition> = Lazy::new(|| Partition::new("system_schemas"));

@@ -7,9 +7,16 @@ import LoginForm from "@/components/auth/LoginForm";
 
 const mockLogin = vi.fn();
 const mockUseAuth = vi.fn();
+const mockOauthProviders = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   useAuth: () => mockUseAuth(),
+}));
+
+vi.mock("@/lib/api", () => ({
+  authApi: {
+    oauthProviders: () => mockOauthProviders(),
+  },
 }));
 
 describe("LoginForm", () => {
@@ -25,6 +32,7 @@ describe("LoginForm", () => {
       error: null,
       isLoading: false,
     });
+    mockOauthProviders.mockResolvedValue([]);
   });
 
   it("submits canonical credentials with user + password", async () => {

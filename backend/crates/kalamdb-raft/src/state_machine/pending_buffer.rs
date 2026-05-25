@@ -119,6 +119,9 @@ impl PendingBuffer {
     /// Load commands from persistence (on startup)
     pub fn load_from(&self, commands: Vec<PendingCommand>) {
         let mut guard = self.by_required_meta.write();
+        guard.clear();
+        self.pending_count.store(0, std::sync::atomic::Ordering::Relaxed);
+
         for cmd in commands {
             let required = cmd.required_meta_index;
             guard.entry(required).or_default().push(cmd);
@@ -225,5 +228,30 @@ mod tests {
         assert_eq!(drained[0].log_index, 13);
         assert_eq!(drained[1].log_index, 14);
         assert_eq!(drained[2].log_index, 15);
+    }
+
+    #[test]
+    fn test_load_from_replaces_existing_commands() {
+        let buffer = PendingBuffer::new();
+
+        buffer.add(PendingCommand {
+            log_index: 1,
+            log_term: 1,
+            required_meta_index: 100,
+            command_bytes: vec![1],
+        });
+
+        buffer.load_from(vec![PendingCommand {
+            log_index: 2,
+            log_term: 1,
+            required_meta_index: 5,
+            command_bytes: vec![2],
+        }]);
+
+        assert_eq!(buffer.len(), 1);
+        let drained = buffer.drain_satisfied(100);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].log_index, 2);
+        assert_eq!(drained[0].command_bytes, vec![2]);
     }
 }

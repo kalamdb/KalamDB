@@ -988,6 +988,9 @@ pub struct OAuthProvidersSettings {
     pub github: OAuthProviderConfig,
     #[serde(default)]
     pub azure: OAuthProviderConfig,
+    /// Generic OpenID Connect provider for self-hosted IdPs such as Dex, Keycloak, Okta, or Auth0.
+    #[serde(default)]
+    pub openid: OAuthProviderConfig,
     /// Firebase Authentication (backed by Google Identity Platform / securetoken.google.com)
     #[serde(default)]
     pub firebase: OAuthProviderConfig,

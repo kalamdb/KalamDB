@@ -11,6 +11,7 @@ const NO_AUTH_ENDPOINTS = new Set([
   "/auth/refresh",
   "/auth/setup",
   "/auth/status",
+  "/auth/oauth/providers",
 ]);
 
 export interface ApiError {
@@ -189,6 +190,20 @@ export interface AuthStatusResponse {
   message?: string;
 }
 
+export interface CurrentUserResponse {
+  user: UserInfo;
+  admin_ui_access: boolean;
+}
+
+export interface OAuthProviderInfo {
+  id: string;
+  display_name: string;
+  issuer: string;
+  client_id: string;
+  authorization_endpoint: string | null;
+  scopes: string[];
+}
+
 export const authApi = {
   status: () => api.get<AuthStatusResponse>("/auth/status"),
 
@@ -199,7 +214,9 @@ export const authApi = {
   
   refresh: () => api.post<LoginResponse>("/auth/refresh"),
   
-  me: () => api.get<UserInfo>("/auth/me"),
+  me: () => api.get<CurrentUserResponse>("/auth/me"),
+
+  oauthProviders: () => api.get<OAuthProviderInfo[]>("/auth/oauth/providers"),
 };
 
 export async function probeBackendReachability(): Promise<AuthStatusResponse> {

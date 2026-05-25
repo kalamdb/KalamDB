@@ -20,6 +20,7 @@ use crate::{http, ui, ws};
 /// - POST /v1/api/auth/refresh - Refresh auth token
 /// - POST /v1/api/auth/logout - Logout and clear cookie
 /// - GET /v1/api/auth/me - Get current user info
+/// - GET /v1/api/auth/oauth/providers - Public OAuth/OIDC provider metadata
 /// - POST /v1/api/auth/setup - Initial server setup (localhost only, requires no password on root)
 /// - GET /v1/api/auth/status - Check server setup status (localhost only)
 /// - POST /v1/api/topics/consume - Consume messages from a topic (long polling)
@@ -54,6 +55,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                                 )
                                 .route("/logout", web::post().to(http::auth::logout_handler))
                                 .route("/me", web::get().to(http::auth::me_handler))
+                                .route(
+                                    "/oauth/providers",
+                                    web::get().to(http::auth::oauth_providers_handler),
+                                )
                                 .route(
                                     "/setup",
                                     web::post().to(http::auth::server_setup_handler),
