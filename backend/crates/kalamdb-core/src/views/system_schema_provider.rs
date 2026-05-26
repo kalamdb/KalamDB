@@ -28,6 +28,7 @@ use kalamdb_views::{
     server_logs::create_server_logs_provider,
     sessions::{SessionsTableProvider, SessionsView},
     settings::{SettingsTableProvider, SettingsView},
+    slow_queries::create_slow_queries_provider,
     stats::{StatsTableProvider, StatsView},
     tables_view::create_tables_view_provider,
     transactions::{TransactionsTableProvider, TransactionsView},
@@ -178,6 +179,10 @@ impl SystemSchemaProvider {
             },
             SystemTable::ServerLogs => {
                 let provider = Arc::new(create_server_logs_provider(&self.view_config.logs_path));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::SlowQueries => {
+                let provider = Arc::new(create_slow_queries_provider(&self.view_config.logs_path));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::Datatypes => {

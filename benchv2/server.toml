@@ -45,10 +45,6 @@ default_time_interval = 300
 flush_batch_size = 10000
 check_interval_seconds = 60
 
-[retention]
-enable_dba_stats = false
-dba_stats_retention_days = 7
-
 [stream]
 default_ttl_seconds = 10
 default_max_buffer = 10000
@@ -120,16 +116,18 @@ client_timeout_secs = 120
 auth_timeout_secs = 15
 heartbeat_interval_secs = 30
 
-[authentication]
+[auth]
 bcrypt_cost = 4
 min_password_length = 8
 max_password_length = 72
 disable_common_password_check = false
 jwt_secret = "kalamdb-bench-local-2026-04-03-jwt-secret-32-plus"
 jwt_trusted_issuers = ""
-auto_create_users_from_provider = false
 
-[oauth]
+[auth.local]
+enabled = true
+
+[auth.oidc]
 enabled = false
 auto_provision = false
 default_role = "user"

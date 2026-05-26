@@ -11,7 +11,7 @@ const NO_AUTH_ENDPOINTS = new Set([
   "/auth/refresh",
   "/auth/setup",
   "/auth/status",
-  "/auth/oauth/providers",
+  "/auth/login-options",
 ]);
 
 export interface ApiError {
@@ -195,13 +195,35 @@ export interface CurrentUserResponse {
   admin_ui_access: boolean;
 }
 
-export interface OAuthProviderInfo {
-  id: string;
+export interface AuthLoginOptions {
+  local: LocalLoginOptions;
+  oidc?: OidcLoginOptions | null;
+}
+
+export interface LocalLoginOptions {
+  enabled: boolean;
+}
+
+export interface OidcLoginOptions {
+  enabled: boolean;
   display_name: string;
   issuer: string;
   client_id: string;
-  authorization_endpoint: string | null;
+  authorization_endpoint?: string | null;
+  token_endpoint?: string | null;
+  device_authorization_endpoint?: string | null;
   scopes: string[];
+  admin_redirect_uri?: string | null;
+  cli_redirect_uri?: string | null;
+  device_flow?: OidcDeviceFlowOptions | null;
+}
+
+export interface OidcDeviceFlowOptions {
+  direct_supported: boolean;
+  broker_supported: boolean;
+  device_authorization_endpoint?: string | null;
+  broker_start_endpoint?: string | null;
+  broker_poll_endpoint?: string | null;
 }
 
 export const authApi = {
@@ -216,7 +238,7 @@ export const authApi = {
   
   me: () => api.get<CurrentUserResponse>("/auth/me"),
 
-  oauthProviders: () => api.get<OAuthProviderInfo[]>("/auth/oauth/providers"),
+  loginOptions: () => api.get<AuthLoginOptions>("/auth/login-options"),
 };
 
 export async function probeBackendReachability(): Promise<AuthStatusResponse> {

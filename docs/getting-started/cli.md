@@ -83,9 +83,11 @@ kalam login --instance dev --user alice --password Secret123!
 # JWT
 kalam --token "<JWT_TOKEN>"
 
-# Save credentials (stores JWT token for future sessions)
+# Save credentials and drop into the shell immediately when run from a terminal
 kalam login --instance dev --user alice --password Secret123!
 ```
+
+When `kalam login` runs in an interactive terminal, it enters the normal SQL shell immediately after a successful local or OIDC login. Non-interactive invocations still save credentials and exit so shell scripts can keep treating `login` as a one-shot command.
 
 ### Run SQL
 
@@ -149,7 +151,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `kalam version` – print CLI version/build metadata
 - `kalam update [--version <version>] [--pre-release]` – replace the current binary with a verified GitHub release artifact
 - `kalam doctor [--strict]` – inspect binary path, config, credentials, healthcheck, and auth reachability
-- `kalam login --instance <name> --url <url>` – login and save access/refresh tokens for an instance
+- `kalam login --instance <name> --url <url>` – login, save access/refresh tokens, and enter the interactive shell immediately when run from a terminal
 - `kalam logout [--all]` – remove saved credentials locally and best-effort notify the server
 - `kalam whoami` – call `/v1/api/auth/me` with the resolved credentials
 - `kalam token create --name <name>` – create a service account and print a fresh access/refresh token pair
@@ -495,7 +497,7 @@ SELECT * FROM system.jobs WHERE status = 'running';
 View server metrics using the `\stats` command (alias: `\metrics`). This runs:
 
 ```sql
-SELECT * FROM system.stats ORDER BY key;
+SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name;
 ```
 
 ```bash
@@ -504,6 +506,15 @@ kalam> \stats
 
 # Or use the alias
 kalam> \metrics
+```
+
+Recent slow queries are available as a system view:
+
+```sql
+SELECT timestamp, duration_ms, user_id, table_name, query
+FROM system.slow_queries
+ORDER BY timestamp_ms DESC
+LIMIT 20;
 ```
 
 

@@ -53,6 +53,7 @@ kalam-client = { path = "../link/kalam-client", default-features = false, featur
 kalamdb-commons = { path = "../backend/crates/kalamdb-commons", default-features = false, features = ["rows"] }
 kalamdb-pg = { path = "../backend/crates/kalamdb-pg", features = ["server"] }
 ntest = { workspace = true }
+reqwest = { workspace = true }
 kalam-pg-api = { path = "crates/kalam-pg-api" }
 kalam-pg-client = { path = "crates/kalam-pg-client" }
 kalam-pg-common = { path = "crates/kalam-pg-common" }

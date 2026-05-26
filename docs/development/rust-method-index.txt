@@ -3406,13 +3406,6 @@ cli/tests/tables/test_user_tables.rs:241:fn test_cli_multiline_query() {
 cli/tests/tables/test_user_tables.rs:286:fn test_cli_query_with_comments() {
 cli/tests/tables/test_user_tables.rs:319:fn test_cli_empty_query() {
 cli/tests/tables/test_user_tables.rs:346:fn test_cli_result_pagination() {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:18:pub async fn start_stats_recorder(app_context: Arc<AppContext>) -> Result<JoinHandle<()>> {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:58:pub async fn record_stats_snapshot(app_context: Arc<AppContext>) -> Result<usize> {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:85:async fn prune_expired_stats(app_context: Arc<AppContext>) -> Result<usize> {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:135:async fn insert_stats_rows_local(app_context: &AppContext, models: Vec<StatsRow>) -> Result<()> {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:165:async fn delete_stats_rows_local(
-backend/crates/kalamdb-dba/src/stats_recorder.rs:173:fn parse_numeric_metric(value: &str) -> Option<f64> {
-backend/crates/kalamdb-dba/src/stats_recorder.rs:182:fn infer_metric_unit(metric_name: &str) -> Option<String> {
 backend/tests/misc/sql/test_dml_complex.rs:18:async fn test_update_complex_predicate_and() {
 backend/tests/misc/sql/test_dml_complex.rs:91:async fn test_update_complex_predicate_or() {
 backend/tests/misc/sql/test_dml_complex.rs:156:async fn test_delete_complex_predicate() {
@@ -4002,7 +3995,6 @@ backend/crates/kalamdb-dba/src/repository/mod.rs:19:    fn primary_key(&self) ->
 backend/crates/kalamdb-dba/src/repository/mod.rs:22:fn current_definition<M: RepositoryModel>(
 backend/crates/kalamdb-dba/src/repository/mod.rs:39:    pub fn new(app_context: Arc<AppContext>) -> Self {
 backend/crates/kalamdb-dba/src/repository/mod.rs:46:    pub fn notifications(&self) -> &NotificationsRepository {
-backend/crates/kalamdb-dba/src/repository/mod.rs:50:    pub fn stats(&self) -> &StatsRepository {
 backend/crates/kalamdb-commons/src/helpers/security.rs:25:pub fn redact_sensitive_sql(sql: &str) -> String {
 backend/crates/kalamdb-commons/src/helpers/security.rs:46:fn redact_pattern(sql: &str, pattern: &str, quotes: &[char]) -> String {
 backend/crates/kalamdb-commons/src/helpers/security.rs:79:fn find_closing_quote(s: &str, quote: char) -> Option<usize> {
@@ -7294,7 +7286,6 @@ backend/crates/kalamdb-configs/src/config/defaults.rs:161:pub fn default_manifes
 backend/crates/kalamdb-configs/src/config/defaults.rs:165:pub fn default_manifest_cache_max_entries() -> usize {
 backend/crates/kalamdb-configs/src/config/defaults.rs:171:pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:183:pub fn default_deleted_retention_hours() -> i32 {
-backend/crates/kalamdb-configs/src/config/defaults.rs:187:pub fn default_dba_stats_retention_days() -> u64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:192:pub fn default_stream_ttl() -> u64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:196:pub fn default_stream_max_buffer() -> usize {
 backend/crates/kalamdb-configs/src/config/defaults.rs:200:pub fn default_stream_eviction_interval() -> u64 {
@@ -7322,20 +7313,22 @@ backend/crates/kalamdb-configs/src/config/defaults.rs:288:pub fn default_rate_li
 backend/crates/kalamdb-configs/src/config/defaults.rs:295:pub fn default_rate_limit_cache_ttl_seconds() -> u64 {
 backend/crates/kalamdb-configs/src/config/defaults.rs:311:pub fn default_auth_jwt_secret() -> String {
 backend/crates/kalamdb-configs/src/config/defaults.rs:316:pub fn default_auth_jwt_trusted_issuers() -> String {
-backend/crates/kalamdb-configs/src/config/defaults.rs:321:pub fn default_auth_jwt_expiry_hours() -> i64 {
-backend/crates/kalamdb-configs/src/config/defaults.rs:326:pub fn default_auth_cookie_secure() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:331:pub fn default_auth_min_password_length() -> usize {
-backend/crates/kalamdb-configs/src/config/defaults.rs:336:pub fn default_auth_max_password_length() -> usize {
-backend/crates/kalamdb-configs/src/config/defaults.rs:341:pub fn default_auth_bcrypt_cost() -> u32 {
-backend/crates/kalamdb-configs/src/config/defaults.rs:346:pub fn default_auth_enforce_password_complexity() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:351:pub fn default_auth_allow_remote_setup() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:356:pub fn default_auth_auto_create_users_from_provider() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:361:pub fn default_oauth_enabled() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:365:pub fn default_oauth_auto_provision() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:369:pub fn default_oauth_default_role() -> String {
-backend/crates/kalamdb-configs/src/config/defaults.rs:373:pub fn default_oauth_provider_enabled() -> bool {
-backend/crates/kalamdb-configs/src/config/defaults.rs:378:pub fn default_websocket_client_timeout() -> Option<u64> {
-backend/crates/kalamdb-configs/src/config/defaults.rs:382:pub fn default_websocket_auth_timeout() -> Option<u64> {
+backend/crates/kalamdb-configs/src/config/defaults.rs:351:pub fn default_auth_jwt_expiry_hours() -> i64 {
+backend/crates/kalamdb-configs/src/config/defaults.rs:356:pub fn default_auth_cookie_secure() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:361:pub fn default_auth_min_password_length() -> usize {
+backend/crates/kalamdb-configs/src/config/defaults.rs:366:pub fn default_auth_max_password_length() -> usize {
+backend/crates/kalamdb-configs/src/config/defaults.rs:371:pub fn default_auth_bcrypt_cost() -> u32 {
+backend/crates/kalamdb-configs/src/config/defaults.rs:376:pub fn default_auth_enforce_password_complexity() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:381:pub fn default_auth_allow_remote_setup() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:385:pub fn default_auth_local_enabled() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:389:pub fn default_auth_oidc_enabled() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:393:pub fn default_auth_oidc_display_name() -> String {
+backend/crates/kalamdb-configs/src/config/defaults.rs:397:pub fn default_auth_oidc_scopes() -> Vec<String> {
+backend/crates/kalamdb-configs/src/config/defaults.rs:405:pub fn default_auth_oidc_broker_device_flow_enabled() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:409:pub fn default_auth_oidc_auto_provision() -> bool {
+backend/crates/kalamdb-configs/src/config/defaults.rs:413:pub fn default_auth_oidc_default_role() -> String {
+backend/crates/kalamdb-configs/src/config/defaults.rs:418:pub fn default_websocket_client_timeout() -> Option<u64> {
+backend/crates/kalamdb-configs/src/config/defaults.rs:422:pub fn default_websocket_auth_timeout() -> Option<u64> {
 backend/crates/kalamdb-configs/src/config/defaults.rs:386:pub fn default_websocket_heartbeat_interval() -> Option<u64> {
 backend/crates/kalamdb-configs/src/config/defaults.rs:391:pub fn default_rocksdb_system_meta_write_buffer_size() -> usize {
 backend/crates/kalamdb-configs/src/config/defaults.rs:395:pub fn default_rocksdb_system_meta_max_write_buffers() -> i32 {

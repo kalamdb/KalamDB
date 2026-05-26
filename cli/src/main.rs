@@ -26,7 +26,7 @@ mod connect;
 mod terminal_input;
 
 use args::{Cli, CliCommand};
-use commands::{handle_early_commands, handle_pre_session_commands};
+use commands::{handle_early_commands, handle_pre_session_commands, PreSessionResult};
 use connect::create_session;
 use terminal_input::prompt_password;
 
@@ -73,8 +73,16 @@ async fn run() -> Result<()> {
     let mut credential_store = FileCredentialStore::new()?;
 
     // Handle modes that do not use the regular command/file/interactive session path.
-    if handle_pre_session_commands(&cli, &mut credential_store).await? {
-        return Ok(());
+    match handle_pre_session_commands(&cli, &mut credential_store).await? {
+        PreSessionResult::NotHandled => {},
+        PreSessionResult::Exit => return Ok(()),
+        PreSessionResult::ContinueToSession(login_continuation) => {
+            cli.subcommand = None;
+            cli.url = Some(login_continuation.server_url);
+            cli.token = login_continuation.access_token;
+            cli.user = None;
+            cli.password = None;
+        },
     }
 
     if cli.subcommand.is_some() {

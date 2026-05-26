@@ -32,7 +32,7 @@ interface UserFormProps {
 }
 
 const ROLES = ["user", "service", "dba", "system"] as const;
-const AUTH_TYPES = ["password", "oauth", "internal"] as const;
+const AUTH_TYPES = ["password", "oidc"] as const;
 const STORAGE_MODES = ["table", "region"] as const;
 const NONE_STORAGE_ID = "__none__";
 
@@ -145,7 +145,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
   }, [open, user]);
 
   const showPasswordField = (!isEditing && formData.authType === "password") || isEditing;
-  const showAuthDataField = !isEditing && formData.authType === "oauth";
+  const showAuthDataField = !isEditing && formData.authType === "oidc";
   const canSubmit = useMemo(() => {
     if (isEditing) {
       return true;
@@ -157,8 +157,27 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
     if (formData.authType === "password" && !formData.password.trim()) {
       return false;
     }
+    if (formData.authType === "oidc" && !formData.authData.trim()) {
+      return false;
+    }
     return true;
-  }, [isEditing, formData.username, formData.authType, formData.password]);
+  }, [
+    isEditing,
+    formData.username,
+    formData.authType,
+    formData.password,
+    formData.authData,
+  ]);
+
+  const usernameHelpText = useMemo(() => {
+    if (isEditing) {
+      return "Username cannot be changed after creation.";
+    }
+    if (formData.authType === "oidc") {
+      return "For OIDC users, use the OIDC subject claim as the user ID.";
+    }
+    return "Unique user login name.";
+  }, [isEditing, formData.authType]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -195,8 +214,9 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
         await createUserMutation({
           username: formData.username.trim(),
           password: formData.authType === "password" ? formData.password.trim() : undefined,
-          auth_type: formData.authType as "password" | "oauth" | "internal",
-          auth_data: formData.authType === "oauth" ? formData.authData.trim() || undefined : undefined,
+          auth_type: formData.authType as "password" | "oidc",
+          auth_data:
+            formData.authType === "oidc" ? formData.authData.trim() || undefined : undefined,
           role: formData.role,
           email: formData.email.trim() || undefined,
           storage_mode: formData.storageMode,
@@ -244,7 +264,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
                 placeholder="e.g. analyst_01"
                 autoFocus={!isEditing}
               />
-              <FieldHelp text={isEditing ? "Username cannot be changed after creation." : "Unique user login name."} />
+              <FieldHelp text={usernameHelpText} />
             </div>
 
             <div className="space-y-2">
@@ -285,7 +305,7 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldHelp text="Authentication mode used by this user (password, oauth, or internal)." />
+                <FieldHelp text="Authentication mode used by this user (password or oidc)." />
               </div>
             )}
 
@@ -306,15 +326,15 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
 
             {showAuthDataField && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Auth Data (OAuth payload)</label>
+                <label className="text-sm font-medium">Auth Data (OIDC payload)</label>
                 <Textarea
                   value={formData.authData}
                   onChange={(event) => setFormData((prev) => ({ ...prev, authData: event.target.value }))}
-                  placeholder='e.g. {"provider":"google","subject":"user-123"}'
+                  placeholder='e.g. {"issuer":"https://idp.example.com/realms/kalamdb","subject":"user-123"}'
                   rows={4}
                   className="font-mono text-xs"
                 />
-                <FieldHelp text="Optional auth payload stored with OAuth users." />
+                <FieldHelp text="Issuer and subject link for this OIDC user. Subject must match the user ID." />
               </div>
             )}
 

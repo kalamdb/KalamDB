@@ -135,6 +135,7 @@ ulid = "1.1"
 
 # JWT authentication
 jsonwebtoken = { version = "10.4.0", default-features = false, features = ["aws_lc_rs"] }
+openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 # Configuration
 toml = "1.1.2"

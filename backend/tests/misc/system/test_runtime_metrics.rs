@@ -53,3 +53,43 @@ async fn test_system_stats_expose_memory_breakdown_and_allocator_metrics() {
         assert_eq!(source, "physical_footprint");
     }
 }
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+#[serial(runtime_metric_rates)]
+async fn test_system_stats_expose_query_and_storage_rate_metrics() {
+    let server = TestServer::new_shared().await;
+
+    let response = server
+        .execute_sql(
+            "SELECT metric_name FROM system.stats WHERE metric_name IN \
+             ('queries_per_second','select_queries_per_second','insert_queries_per_second','\
+             update_queries_per_second','delete_queries_per_second','manifest_reads_per_second','\
+             manifest_writes_per_second','parquet_files_written_per_second','\
+             parquet_files_read_per_second') ORDER BY metric_name",
+        )
+        .await;
+
+    assert_eq!(response.status, ResponseStatus::Success, "{:?}", response.error);
+
+    let metric_names: std::collections::HashSet<String> = response
+        .rows_as_maps()
+        .iter()
+        .filter_map(|row| row.get("metric_name").and_then(|value| value.as_str()))
+        .map(ToOwned::to_owned)
+        .collect();
+
+    for required in [
+        "queries_per_second",
+        "select_queries_per_second",
+        "insert_queries_per_second",
+        "update_queries_per_second",
+        "delete_queries_per_second",
+        "manifest_reads_per_second",
+        "manifest_writes_per_second",
+        "parquet_files_written_per_second",
+        "parquet_files_read_per_second",
+    ] {
+        assert!(metric_names.contains(required), "missing metric: {required}");
+    }
+}

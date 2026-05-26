@@ -1,0 +1,114 @@
+# Shared local Dex config for KalamDB development.
+# Example users all use password: kalamdb123
+
+issuer: http://127.0.0.1:5556
+
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+telemetry:
+  http: 0.0.0.0:5558
+
+oauth2:
+  skipApprovalScreen: true
+  passwordConnector: local
+
+enablePasswordDB: true
+
+connectors:
+  - type: google
+    id: google
+    name: Google
+    config:
+      # Copy docker/utils/.env.example to docker/utils/.env and set these values.
+      # Dex reads connector values starting with "$" from the container environment.
+      clientID: $GOOGLE_CLIENT_ID
+      clientSecret: $GOOGLE_CLIENT_SECRET
+      # Must also be registered as an authorized redirect URI in Google Cloud.
+      redirectURI: $GOOGLE_REDIRECT_URI
+
+staticClients:
+  - id: client
+    name: KalamDB Dev Client
+    public: true
+    redirectURIs:
+      - http://127.0.0.1:2900/ui/oauth/callback
+      - http://localhost:2900/ui/oauth/callback
+      - http://127.0.0.1:4175/ui/oauth/callback
+      - http://localhost:4175/ui/oauth/callback
+      - http://127.0.0.1:8787/callback
+      - http://localhost:8787/callback
+      - /device/callback
+
+  - id: kalamdb-admin-ui
+    name: KalamDB Admin UI PKCE
+    public: true
+    redirectURIs:
+      - http://127.0.0.1:2900/ui/oauth/callback
+      - http://localhost:2900/ui/oauth/callback
+      - http://127.0.0.1:4175/ui/oauth/callback
+      - http://localhost:4175/ui/oauth/callback
+
+  - id: kalam-cli-device
+    name: Kalam CLI Device Flow
+    public: true
+    redirectURIs:
+      - http://127.0.0.1/device/callback
+      - http://localhost/device/callback
+      - /device/callback
+
+staticPasswords:
+  - email: alice@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: alice
+    userID: "dev-alice"
+
+  - email: bob@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: bob
+    userID: "dev-bob"
+
+  - email: carol@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: carol
+    userID: "dev-carol"
+
+  - email: dave@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: dave
+    userID: "dev-dave"
+
+  - email: erin@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: erin
+    userID: "dev-erin"
+
+  - email: frank@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: frank
+    userID: "dev-frank"
+
+  - email: grace@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: grace
+    userID: "dev-grace"
+
+  - email: heidi@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: heidi
+    userID: "dev-heidi"
+
+  - email: ivan@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: ivan
+    userID: "dev-ivan"
+
+  - email: judy@example.org
+    hash: "$2y$10$D59OlUnzKfYZd9b3BXk12ei932uSkEAIBKmjivA4WdmnXjaanJfgS"
+    username: judy
+    userID: "dev-judy"

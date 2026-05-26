@@ -3,13 +3,14 @@ import { useAuth } from "@/lib/auth";
 import { useEffect } from "react";
 import LoginForm from "@/components/auth/LoginForm";
 import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
+import { safeReturnTo } from "@/lib/oauth";
 
 export default function Login() {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/dashboard";
+  const from = safeReturnTo((location.state as { from?: { pathname: string } })?.from?.pathname);
 
   useEffect(() => {
     if (isAuthenticated) {

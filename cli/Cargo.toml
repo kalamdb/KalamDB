@@ -112,6 +112,7 @@ colored = { workspace = true }
 toml = { workspace = true }
 url = { workspace = true }
 reqwest = { workspace = true }
+openidconnect = { workspace = true }
 
 # Secure password input
 rpassword = { workspace = true }
@@ -170,3 +171,4 @@ kalamdb-server = { workspace = true }
 object_store = { workspace = true }
 jsonwebtoken = { workspace = true }
 sysinfo = { workspace = true }
+testcontainers-modules = { workspace = true }

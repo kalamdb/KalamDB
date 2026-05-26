@@ -26,8 +26,8 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// - `password_hash`: bcrypt hash of password (cost factor 12)
 /// - `role`: User role (User, Service, DBA, System)
 /// - `email`: Optional email address
-/// - `auth_type`: Authentication method (Password, OAuth, Internal)
-/// - `auth_data`: Linked OIDC/OAuth provider connections (typed [`AuthData`])
+/// - `auth_type`: Authentication method (Password or OIDC)
+/// - `auth_data`: Linked OIDC issuer/subject identity (typed [`AuthData`])
 /// - `storage_mode`: Preferred storage partitioning mode (Table, Region)
 /// - `storage_id`: Optional preferred storage configuration ID
 /// - `failed_login_attempts`: Number of consecutive failed login attempts
@@ -175,7 +175,7 @@ pub struct User {
         nullable = true,
         primary_key = false,
         default = "None",
-        comment = "Authentication data (JSON for OAuth provider/subject)"
+        comment = "Authentication data (JSON for OIDC issuer/subject)"
     )]
     pub auth_data: Option<AuthData>,
     #[column(
@@ -217,7 +217,7 @@ pub struct User {
         nullable = false,
         primary_key = false,
         default = "None",
-        comment = "Authentication type: Password, OAuth, ApiKey"
+        comment = "Authentication type: password or oidc"
     )]
     pub auth_type: AuthType,
     #[column(

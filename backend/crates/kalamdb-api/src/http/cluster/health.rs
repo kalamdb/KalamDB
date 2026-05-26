@@ -4,10 +4,8 @@ use std::sync::Arc;
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::extract_client_ip_secure;
-use kalamdb_core::{
-    app_context::AppContext,
-    metrics::{BUILD_DATE, SERVER_VERSION},
-};
+use kalamdb_core::app_context::AppContext;
+use kalamdb_observability::{BUILD_DATE, SERVER_VERSION};
 use kalamdb_raft::{NodeStatus, RaftExecutor, ServerStateExt};
 
 use super::models::{ClusterHealthResponse, NodeHealth};

@@ -45,7 +45,7 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some("complexity@kalamdb.local".to_string()),
-        auth_type: AuthType::Internal,
+        auth_type: AuthType::Password,
         auth_data: None,
         storage_mode: StorageMode::Table,
         storage_id: Some(StorageId::local()),

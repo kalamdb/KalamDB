@@ -20,6 +20,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:ci": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "test:sql-studio": "vitest run src/services/sqlStudioService.test.ts src/pages/SqlStudio.test.tsx src/components/sql-studio-v2/input-form/sqlCompletionCatalog.test.ts",
     "test:flows": "vitest run src/components/auth/LoginForm.test.tsx src/components/auth/ProtectedRoute.test.tsx src/components/auth/SetupGuard.test.tsx src/pages/SetupWizard.test.tsx src/pages/SqlStudio.test.tsx"
   },
@@ -50,6 +52,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.9.1",

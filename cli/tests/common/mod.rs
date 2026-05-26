@@ -74,6 +74,31 @@ pub use kalam_client::{
 };
 pub use tempfile::TempDir;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestTokenClaims {
+    pub sub: String,
+    pub iss: String,
+    pub aud: serde_json::Value,
+    pub exp: Option<i64>,
+}
+
+pub fn decode_unverified_token_claims(
+    token: &str,
+) -> Result<TestTokenClaims, Box<dyn std::error::Error>> {
+    let mut parts = token.split('.');
+    let _header = parts.next().ok_or("token is missing header")?;
+    let payload = parts.next().ok_or("token is missing payload")?;
+
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let decoded = URL_SAFE_NO_PAD.decode(payload)?;
+    Ok(serde_json::from_slice(&decoded)?)
+}
+
+pub fn assert_token_subject(token: &str, expected_subject: &str) {
+    let claims = decode_unverified_token_claims(token).expect("token claims should decode");
+    assert_eq!(claims.sub, expected_subject);
+}
+
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static ADMIN_PASSWORD: OnceLock<String> = OnceLock::new();
@@ -89,6 +114,7 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
+static SERVER_BIN_BUILD_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
@@ -1223,7 +1249,12 @@ pub async fn force_auto_test_server_url_async() -> String {
     server_url().to_string()
 }
 
-fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let _guard = SERVER_BIN_BUILD_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "server binary build lock poisoned")?;
+
     if let Ok(path) = std::env::var("KALAMDB_SERVER_BIN") {
         return Ok(PathBuf::from(path));
     }
@@ -1251,6 +1282,12 @@ fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 
     Ok(path)
+}
+
+pub async fn ensure_test_server_ready_for_url(
+    base_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    test_auth_manager().ensure_ready(base_url).await
 }
 
 fn workspace_root() -> PathBuf {

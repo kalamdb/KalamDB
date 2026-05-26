@@ -21,7 +21,7 @@ export default function OAuthCallback() {
 
     const completeLogin = async () => {
       try {
-        const result = consumeOAuthRedirect(window.location.hash, window.location.search);
+        const result = await consumeOAuthRedirect(window.location.hash, window.location.search);
         await loginWithExternalToken(result.token);
         navigate(result.returnTo, { replace: true });
       } catch (err) {

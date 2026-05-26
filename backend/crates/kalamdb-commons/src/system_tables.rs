@@ -145,6 +145,13 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: None,
     },
     SystemTableMetadata {
+        table: SystemTable::SlowQueries,
+        sql_name: "slow_queries",
+        aliases: &["slow_queries"],
+        is_view: true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
         table: SystemTable::Cluster,
         sql_name: "cluster",
         aliases: &["cluster"],
@@ -249,6 +256,8 @@ pub enum SystemTable {
     Settings,
     /// system.server_logs - Server log entries (computed from log files)
     ServerLogs,
+    /// system.slow_queries - Slow query log entries (computed from bounded JSONL tail)
+    SlowQueries,
     /// system.cluster - Raft cluster status and metrics (computed on-demand)
     Cluster,
     /// system.cluster_groups - Per-Raft-group membership and replication status (computed
@@ -328,6 +337,7 @@ impl SystemTable {
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
+            SystemTable::SlowQueries,
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
@@ -359,6 +369,7 @@ impl SystemTable {
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
+            SystemTable::SlowQueries,
             SystemTable::Cluster,
             SystemTable::ClusterGroups,
             SystemTable::Datatypes,
@@ -412,6 +423,7 @@ impl SystemTable {
             | SystemTable::Transactions
             | SystemTable::Settings
             | SystemTable::ServerLogs
+            | SystemTable::SlowQueries
             | SystemTable::Cluster
             | SystemTable::ClusterGroups
             | SystemTable::Datatypes
@@ -706,7 +718,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 23); // 11 tables + 12 views
+        assert_eq!(all.len(), 24); // 11 tables + 13 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -716,6 +728,7 @@ mod tests {
         assert!(all.contains(&SystemTable::Sessions));
         assert!(all.contains(&SystemTable::Cluster));
         assert!(all.contains(&SystemTable::ClusterGroups));
+        assert!(all.contains(&SystemTable::Datatypes));
         assert!(all.contains(&SystemTable::Tables));
         assert!(all.contains(&SystemTable::Columns));
     }
@@ -730,8 +743,9 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 12);
+        assert_eq!(views.len(), 13);
         assert!(views.iter().all(|v| v.is_view()));
+        assert!(views.contains(&SystemTable::Datatypes));
     }
 
     #[test]

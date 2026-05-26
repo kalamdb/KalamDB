@@ -102,27 +102,29 @@ mod tests {
     use datafusion::scalar::ScalarValue;
 
     use super::{model_to_row, row_to_model};
-    use crate::models::StatsRow;
+    use crate::models::NotificationRow;
 
     #[test]
     fn dba_timestamp_models_store_microseconds_and_decode_milliseconds() {
-        let row = StatsRow {
-            id: "1700000000000:node:metric".to_string(),
-            node_id: "node".to_string(),
-            metric_name: "metric".to_string(),
-            metric_value: 42.0,
-            metric_unit: None,
-            sampled_at: 1_700_000_000_000,
+        let row = NotificationRow {
+            id: "notif-1".to_string(),
+            user_id: kalamdb_commons::models::UserId::new("user-1"),
+            title: "Maintenance complete".to_string(),
+            body: None,
+            is_read: false,
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_500,
         };
 
-        let encoded = model_to_row(&row, &StatsRow::definition()).expect("encode stats row");
+        let encoded = model_to_row(&row, &NotificationRow::definition()).expect("encode row");
         assert!(matches!(
-            encoded.values.get("sampled_at"),
+            encoded.values.get("created_at"),
             Some(ScalarValue::TimestampMicrosecond(Some(1_700_000_000_000_000), None))
         ));
 
-        let decoded: StatsRow =
-            row_to_model(&encoded, &StatsRow::definition()).expect("decode row");
-        assert_eq!(decoded.sampled_at, row.sampled_at);
+        let decoded: NotificationRow =
+            row_to_model(&encoded, &NotificationRow::definition()).expect("decode row");
+        assert_eq!(decoded.created_at, row.created_at);
+        assert_eq!(decoded.updated_at, row.updated_at);
     }
 }

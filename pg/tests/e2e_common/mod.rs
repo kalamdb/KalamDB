@@ -338,6 +338,10 @@ impl TestEnv {
             .unwrap_or_else(|e| panic!("connect to PostgreSQL at {pg_host}:{pg_port}: {e}"))
     }
 
+    pub fn kalamdb_base_url(&self) -> String {
+        kalamdb_auth_config().base_url
+    }
+
     pub async fn kalamdb_sql(&self, sql: &str) -> Value {
         let text = self.kalamdb_sql_text(sql).await;
         serde_json::from_str(&text).unwrap_or(Value::Null)
@@ -681,6 +685,28 @@ pub async fn create_shared_kalam_table_in_schema(
         "create shared Kalam table",
     )
     .await;
+
+    rebind_shared_table_to_leader(client, schema, table, columns).await;
+}
+
+pub async fn create_shared_public_kalam_table_in_schema(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+    columns: &str,
+) {
+    ensure_schema_exists(client, schema).await;
+    client
+        .batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {schema}.{table};"))
+        .await
+        .ok();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {schema}.{table} ({columns}) USING kalamdb WITH (type = 'shared', \
+             access_level = 'public');"
+        ))
+        .await
+        .expect("create public shared Kalam table");
 
     rebind_shared_table_to_leader(client, schema, table, columns).await;
 }

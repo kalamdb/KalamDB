@@ -191,6 +191,55 @@ fn validate_cluster_tls(config: &ServerConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn reject_legacy_oauth_config(content: &str) -> anyhow::Result<()> {
+    let Ok(value) = toml::from_str::<toml::Value>(content) else {
+        return Ok(());
+    };
+
+    if value.get("oauth").is_some() {
+        return Err(anyhow::anyhow!(
+            "legacy [oauth] and [oauth.providers.*] configuration is no longer supported; use [auth.oidc] for the single external OpenID Connect provider and [auth.local] for username/password login"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_auth(config: &ServerConfig) -> anyhow::Result<()> {
+    let oidc = &config.auth.oidc;
+    if !oidc.enabled {
+        return Ok(());
+    }
+
+    let issuer = oidc.issuer_str().ok_or_else(|| {
+        anyhow::anyhow!("auth.oidc.issuer is required when auth.oidc.enabled = true")
+    })?;
+    if !(issuer.starts_with("http://") || issuer.starts_with("https://")) {
+        return Err(anyhow::anyhow!("auth.oidc.issuer must start with http:// or https://"));
+    }
+
+    oidc.client_id_str().ok_or_else(|| {
+        anyhow::anyhow!("auth.oidc.client_id is required when auth.oidc.enabled = true")
+    })?;
+
+    if oidc.scopes.iter().all(|scope| scope.trim() != "openid") {
+        return Err(anyhow::anyhow!("auth.oidc.scopes must include the 'openid' scope"));
+    }
+
+    if let Some(endpoint) = oidc.device_authorization_endpoint.as_deref() {
+        let endpoint = endpoint.trim();
+        if !endpoint.is_empty()
+            && !(endpoint.starts_with("http://") || endpoint.starts_with("https://"))
+        {
+            return Err(anyhow::anyhow!(
+                "auth.oidc.device_authorization_endpoint must start with http:// or https://"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn is_non_local_http_exposure(config: &ServerConfig) -> bool {
     if !is_localhost_host(&config.server.host) {
         return true;
@@ -217,6 +266,12 @@ impl ServerConfig {
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
+
+        Self::from_toml_str(&content)
+    }
+
+    pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
+        reject_legacy_oauth_config(content)?;
 
         let mut config: ServerConfig = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
@@ -263,6 +318,7 @@ impl ServerConfig {
         validate_limits(self)?;
         validate_user_management(self)?;
         validate_topics(self)?;
+        validate_auth(self)?;
         validate_security(self)?;
         validate_cluster_tls(self)?;
         Ok(())
@@ -306,6 +362,70 @@ mod tests {
     fn test_default_config_is_valid() {
         let config = ServerConfig::default();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_local_and_oidc_parse() {
+        let auth: super::super::types::AuthSettings = toml::from_str(
+            r#"
+            [local]
+            enabled = false
+
+            [oidc]
+            enabled = true
+            display_name = "Dex"
+            issuer = "http://127.0.0.1:5556/dex"
+            client_id = "kalamdb"
+            scopes = ["openid", "email"]
+            device_authorization_endpoint = "http://127.0.0.1:5556/dex/device/code"
+            broker_device_flow_enabled = true
+            auto_provision = true
+            default_role = "dba"
+            "#,
+        )
+        .expect("auth settings should parse");
+
+        assert!(!auth.local.enabled);
+        assert!(auth.oidc.enabled);
+        assert_eq!(auth.oidc.display_name, "Dex");
+        assert_eq!(auth.oidc.issuer_str(), Some("http://127.0.0.1:5556/dex"));
+        assert_eq!(auth.oidc.client_id_str(), Some("kalamdb"));
+        assert!(auth.oidc.broker_device_flow_enabled);
+
+        let mut config = ServerConfig::default();
+        config.auth = auth;
+        config.validate().expect("unified auth config should validate");
+    }
+
+    #[test]
+    fn test_auth_oidc_requires_issuer_and_client_id_when_enabled() {
+        let mut config = ServerConfig::default();
+        config.auth.oidc.enabled = true;
+
+        let err = config.validate().expect_err("missing issuer should be rejected");
+        assert!(err.to_string().contains("auth.oidc.issuer"));
+
+        config.auth.oidc.issuer = Some("https://idp.example.com".to_string());
+        let err = config.validate().expect_err("missing client id should be rejected");
+        assert!(err.to_string().contains("auth.oidc.client_id"));
+    }
+
+    #[test]
+    fn test_legacy_oauth_config_is_rejected() {
+        let mut value = toml::Value::try_from(ServerConfig::default()).unwrap();
+        value.as_table_mut().unwrap().insert(
+            "oauth".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enabled".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+        let content = toml::to_string(&value).unwrap();
+
+        let err = ServerConfig::from_toml_str(&content)
+            .expect_err("legacy oauth config should be rejected");
+        assert!(err.to_string().contains("legacy [oauth]"));
+        assert!(err.to_string().contains("[auth.oidc]"));
     }
 
     #[test]

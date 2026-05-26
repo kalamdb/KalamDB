@@ -48,6 +48,13 @@ pub async fn login_handler(
         ));
     }
 
+    if !config.local.enabled {
+        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
+            "local_auth_disabled",
+            "Local username/password login is disabled. Use the configured OIDC login method.",
+        ));
+    }
+
     // Authenticate using unified auth flow (includes localhost/empty password rules)
     let auth_request = AuthRequest::Credentials {
         user: body.user.clone(),

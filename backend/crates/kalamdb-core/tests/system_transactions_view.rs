@@ -85,7 +85,7 @@ async fn open_session(
     service: &KalamPgService,
     session_label: &str,
 ) -> String {
-    init_auth_config(&app_ctx.config().auth, &app_ctx.config().oauth);
+    init_auth_config(&app_ctx.config().auth);
 
     let bridge_user_id = UserId::new(format!("{}_bridge_dba", session_label.replace('-', "_")));
     let bridge_user = User {

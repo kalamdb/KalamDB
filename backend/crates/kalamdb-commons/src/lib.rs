@@ -100,7 +100,6 @@ pub use models::{
     ManifestId,
     NamespaceId,
     NodeId,
-    OAuthProvider,
     OperationKind,
     Role,
     SchemaField,

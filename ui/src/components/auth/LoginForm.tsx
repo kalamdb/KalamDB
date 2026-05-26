@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertCircle, ExternalLink, KeyRound, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { authApi, type OAuthProviderInfo } from "@/lib/api";
+import { authApi, type AuthLoginOptions, type OidcLoginOptions } from "@/lib/api";
 import { buildOAuthAuthorizationUrl } from "@/lib/oauth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -18,20 +18,24 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
-  const [oauthProviders, setOauthProviders] = useState<OAuthProviderInfo[]>([]);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [loginOptions, setLoginOptions] = useState<AuthLoginOptions>({
+    local: { enabled: true },
+    oidc: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
     authApi
-      .oauthProviders()
-      .then((providers) => {
+      .loginOptions()
+      .then((options) => {
         if (!cancelled) {
-          setOauthProviders(providers.filter((provider) => provider.authorization_endpoint));
+          setLoginOptions(options);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setOauthProviders([]);
+          setLoginOptions({ local: { enabled: true }, oidc: null });
         }
       });
 
@@ -40,10 +44,24 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
     };
   }, []);
 
-  const sortedOauthProviders = useMemo(
-    () => [...oauthProviders].sort((left, right) => left.display_name.localeCompare(right.display_name)),
-    [oauthProviders],
-  );
+  const oidcOption = useMemo<OidcLoginOptions | null>(() => {
+    const oidc = loginOptions.oidc;
+    if (!oidc?.enabled || !oidc.authorization_endpoint || !oidc.token_endpoint) {
+      return null;
+    }
+    return oidc;
+  }, [loginOptions.oidc]);
+
+  const oidcConfigurationError = useMemo(() => {
+    const oidc = loginOptions.oidc;
+    if (!oidc?.enabled || oidcOption) {
+      return null;
+    }
+
+    return `${oidc.display_name} login is enabled on the server, but the Admin UI could not load the provider login endpoints. Check that ${oidc.issuer}/.well-known/openid-configuration is reachable from the KalamDB server.`;
+  }, [loginOptions.oidc, oidcOption]);
+
+  const localLoginEnabled = loginOptions.local.enabled;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,40 +82,37 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
 
   const displayError = localError || error;
 
-  const handleOAuthLogin = (provider: OAuthProviderInfo) => {
+  const handleOAuthLogin = async (provider: OidcLoginOptions) => {
     setLocalError(null);
+    setIsRedirecting(true);
     try {
-      window.location.assign(buildOAuthAuthorizationUrl(provider, returnTo));
+      window.location.assign(await buildOAuthAuthorizationUrl(provider, returnTo));
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "External login failed");
+      setIsRedirecting(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {sortedOauthProviders.length > 0 && (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {oidcOption && (
         <>
-          <div className="space-y-2">
-            {sortedOauthProviders.map((provider) => (
-              <Button
-                key={provider.id}
-                type="button"
-                variant="secondary"
-                className="h-11 w-full"
-                disabled={isLoading}
-                onClick={() => handleOAuthLogin(provider)}
-              >
-                <ExternalLink className="h-4 w-4" />
-                Continue with {provider.display_name}
-              </Button>
-            ))}
-          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            className="h-11 w-full"
+            disabled={isLoading || isRedirecting}
+            onClick={() => void handleOAuthLogin(oidcOption)}
+          >
+            <ExternalLink data-icon="inline-start" />
+            Continue with {oidcOption.display_name}
+          </Button>
 
-          <div className="flex items-center gap-3 py-2">
+          {localLoginEnabled && <div className="flex items-center gap-3 py-2">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs font-medium text-muted-foreground">OR</span>
             <div className="h-px flex-1 bg-border" />
-          </div>
+          </div>}
         </>
       )}
 
@@ -108,8 +123,16 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
         </Alert>
       )}
 
-      <div className="space-y-3">
-        <div className="space-y-2">
+      {oidcConfigurationError && !displayError && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{oidcConfigurationError}</AlertDescription>
+        </Alert>
+      )}
+
+      {localLoginEnabled && <>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
           <label htmlFor="username" className="text-sm font-medium">
             Username
           </label>
@@ -129,7 +152,7 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           <label htmlFor="password" className="text-sm font-medium">
             Password
           </label>
@@ -152,8 +175,9 @@ export default function LoginForm({ onSuccess, returnTo = "/dashboard" }: LoginF
       <Button type="submit" className="h-11 w-full" disabled={isLoading}>
         {isLoading ? "Signing in..." : "Log in"}
       </Button>
+      </>}
 
-      <div className="space-y-1 text-center text-sm text-muted-foreground">
+      <div className="flex flex-col gap-1 text-center text-sm text-muted-foreground">
         <p>
           Need setup on an unconfigured node?{" "}
           <Link to="/setup" className="font-medium text-primary hover:underline">

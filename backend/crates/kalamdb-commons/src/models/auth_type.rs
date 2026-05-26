@@ -6,26 +6,26 @@ use serde::{Deserialize, Serialize};
 /// Enum representing authentication types in KalamDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum AuthType {
+    #[cfg_attr(feature = "serde", serde(alias = "internal"))]
     Password,
-    OAuth,
-    Internal,
+    #[cfg_attr(feature = "serde", serde(alias = "oauth"))]
+    Oidc,
 }
 
 impl AuthType {
     pub fn as_str(&self) -> &'static str {
         match self {
             AuthType::Password => "password",
-            AuthType::OAuth => "oauth",
-            AuthType::Internal => "internal",
+            AuthType::Oidc => "oidc",
         }
     }
 
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "password" => Some(AuthType::Password),
-            "oauth" => Some(AuthType::OAuth),
-            "internal" => Some(AuthType::Internal),
+            "password" | "internal" => Some(AuthType::Password),
+            "oidc" | "oauth" => Some(AuthType::Oidc),
             _ => None,
         }
     }
@@ -47,9 +47,8 @@ impl fmt::Display for AuthType {
 impl From<&str> for AuthType {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "password" => AuthType::Password,
-            "oauth" => AuthType::OAuth,
-            "internal" => AuthType::Internal,
+            "password" | "internal" => AuthType::Password,
+            "oidc" | "oauth" => AuthType::Oidc,
             _ => AuthType::Password,
         }
     }

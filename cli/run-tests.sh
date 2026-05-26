@@ -604,6 +604,104 @@ require_cmd() {
     }
 }
 
+package_filters_include() {
+    local expected="$1"
+    local package
+
+    for package in "${PACKAGE_FILTERS[@]}"; do
+        if [ "$package" = "$expected" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+should_start_dex_for_oidc_tests() {
+    if [ "${KALAMDB_SKIP_DOCKER_DEX:-false}" = "true" ]; then
+        return 1
+    fi
+
+    case "$TEST_TARGET:$TEST_FILTER" in
+        *auth*|*oidc*|*OIDC*|*dex*|*Dex*)
+            return 0
+            ;;
+    esac
+
+    if [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
+        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+test_list_includes_cli_oidc() {
+    if [ -z "$TEST_LIST_FILE" ]; then
+        return 1
+    fi
+
+    if [ "$TEST_LIST_FILE" = "-" ]; then
+        return 0
+    fi
+
+    grep -q 'oidc_cli_' "$TEST_LIST_FILE"
+}
+
+should_prebuild_cli_oidc_server_binary() {
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+        return 1
+    fi
+
+    if [ -n "$TEST_LIST_FILE" ]; then
+        test_list_includes_cli_oidc
+        return $?
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        [[ "$TEST_FILTER" == *oidc_cli_* ]]
+        return $?
+    fi
+
+    if [ -n "$TEST_TARGET" ]; then
+        [ "$TEST_TARGET" = "auth" ]
+        return $?
+    fi
+
+    return 0
+}
+
+prebuild_cli_oidc_server_binary_if_needed() {
+    if ! should_prebuild_cli_oidc_server_binary; then
+        return 0
+    fi
+
+    step "Prebuilding kalamdb-server for CLI OIDC tests"
+    (
+        cd "$REPO_ROOT"
+        cargo build -p kalamdb-server --bin kalamdb-server
+    )
+    export KALAMDB_SERVER_BIN="$REPO_ROOT/target/debug/kalamdb-server"
+}
+
+ensure_dex_for_oidc_tests() {
+    if ! should_start_dex_for_oidc_tests; then
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker is not available; Dex-backed OIDC tests may skip." >&2
+        return 0
+    fi
+
+    step "Starting shared Dex for OIDC tests"
+    (
+        cd "$REPO_ROOT/docker/utils"
+        docker compose up -d --force-recreate dex
+    ) || echo "Warning: could not start docker/utils Dex; Dex-backed OIDC tests may skip." >&2
+}
+
 npm_install_dir() {
     if [ -f package-lock.json ]; then
         npm ci --no-audit --no-fund
@@ -867,6 +965,11 @@ run_supplementary_suites() {
     run_npm_suite "examples/simple-typescript" "Running simple-typescript Playwright tests" "test"
     run_npm_suite "examples/summarizer-agent" "Running summarizer-agent example tests" "test"
     run_npm_suite "ui" "Running admin UI tests" "test:ci"
+    run_npm_suite \
+        "ui" \
+        "Running admin UI Playwright tests" \
+        "test:e2e" \
+        "test:e2e:install"
 
     step "Running Dart SDK tests"
     (
@@ -1000,6 +1103,9 @@ single_package_name() {
 
 # Run tests from workspace root
 cd "$REPO_ROOT"
+
+prebuild_cli_oidc_server_binary_if_needed
+ensure_dex_for_oidc_tests
 
 if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"

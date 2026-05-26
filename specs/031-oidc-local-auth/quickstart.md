@@ -7,24 +7,24 @@ Use only `[auth]` in `server.toml`.
 ```toml
 [auth]
 jwt_secret = "replace-with-strong-secret"
-jwt_expiration_hours = 24
+jwt_expiry_hours = 24
+jwt_trusted_issuers = "kalamdb,http://127.0.0.1:5556"
+allow_remote_setup = false
 
 [auth.local]
 enabled = false
-allow_initial_setup = false
 
 [auth.oidc]
 enabled = true
 display_name = "Dex"
-issuer = "http://127.0.0.1:5556/dex"
-client_id = "kalamdb-admin"
+issuer = "http://127.0.0.1:5556"
+client_id = "client"
 scopes = ["openid", "email", "profile"]
 auto_provision = true
 default_role = "dba"
-admin_redirect_uri = "http://127.0.0.1:2900/ui/oauth/callback"
-cli_redirect_uri = "http://127.0.0.1:8787/callback"
 # Optional when provider discovery does not expose it.
-device_authorization_endpoint = "http://127.0.0.1:5556/dex/device/code"
+device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
+broker_device_flow_enabled = true
 ```
 
 For local development with both login modes:
@@ -32,7 +32,6 @@ For local development with both login modes:
 ```toml
 [auth.local]
 enabled = true
-allow_initial_setup = true
 
 [auth.oidc]
 enabled = true
@@ -46,14 +45,18 @@ For device-flow tests, prefer Dex when the selected Dex image exposes a device a
 
 ## 3. Run Focused Backend Validation
 
-Confirm `openidconnect` is present only where OIDC protocol work is implemented and that feature selection stays minimal. The preferred dependency shape is `openidconnect = { version = "4.0.1", default-features = false }` plus a redirect-disabled adapter to KalamDB's workspace `reqwest` client:
+Confirm `openidconnect` is present only where OIDC protocol work is implemented and that feature selection stays minimal. The preferred dependency shape is `openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }`:
 
 ```bash
+cargo fmt --all --check
 cargo tree -i openidconnect
+cargo check -p kalamdb-auth -p kalamdb-api -p kalamdb-system -p kalamdb-commons -p kalamdb-handlers-user --tests
 ```
 
 ```bash
-cargo nextest run -p kalamdb-server --test test_misc auth::test_oidc_auto_provision
+for filter in test_oidc_token_validation test_dex_fresh_tokens_do_not_duplicate_user test_login_options_; do
+	cargo nextest run -p kalamdb-server "$filter" --no-fail-fast
+done
 ```
 
 Expected coverage:
@@ -71,14 +74,13 @@ Expected coverage:
 ## 4. Run CLI Validation
 
 ```bash
-cd cli
-cargo nextest run --features e2e-tests auth_oidc
+cargo test -p kalam-cli --features e2e-tests --test auth --no-fail-fast oidc_
 ```
 
 Expected coverage:
 - `kalam login --local` works only when local auth is enabled
-- `kalam login --oidc` completes browser login against Dex
-- `kalam login --oidc --no-browser` completes direct device-code login against Dex/provider when the CLI can reach the provider
+- `kalam login --oidc` completes browser login against Dex and saves KalamDB access/refresh tokens from `/v1/api/auth/oidc/exchange-code`
+- `kalam login --oidc --no-browser` completes direct device-code login against Dex/provider and saves KalamDB access/refresh tokens from `/v1/api/auth/oidc/exchange-token`
 - `kalam login --oidc --no-browser` completes brokered device-code login by talking only to KalamDB while KalamDB reaches Dex/provider
 - invalid external tokens are not stored
 
@@ -87,19 +89,20 @@ Expected coverage:
 ```bash
 cd ui
 npm exec tsc -- --noEmit
-npm exec vitest run src/components/auth/LoginForm.test.tsx src/store/authSlice.test.ts
+npm exec vitest run src/components/auth/LoginForm.test.tsx src/lib/oauth.test.ts src/pages/OAuthCallback.test.tsx
+npm run test:e2e -- tests/e2e/oidc-admin-auth.spec.ts
 ```
 
 Expected coverage:
 - login form hides username/password when local login is disabled
 - login form shows OIDC login when OIDC is configured
 - callback rejects invalid state/token responses
-- successful OIDC callback stores an authenticated session
+- successful OIDC callback exchanges through KalamDB and stores an authenticated session
+- Playwright exercises the Admin UI button, local Dex login form, `/ui/oauth/callback`, and backend exchange contract
 
 ## 6. Run Config and Documentation Checks
 
 ```bash
-cargo check -p kalamdb-configs -p kalamdb-auth -p kalamdb-api --tests
 ./scripts/check-auth-config-docs.sh
 ./scripts/check-auth-oidc-cleanup.sh
 ```
@@ -111,19 +114,8 @@ Also update and review:
 - any Firebase/provider-specific docs that should be removed or redirected
 - `../kalamdb-skills` auth and server-configuration references
 
-The cleanup guard must prove the old provider-family path and custom KalamDB OIDC/JWKS implementation are not active anymore: no `/auth/oauth/providers` route, no `[oauth.providers.*]` accepted config, no `OidcValidator`/`OidcConfig::discover` custom validator path, and no `reqwest::get` OIDC discovery/JWKS fetches in `backend/crates/kalamdb-auth/src/oidc/`.
+The cleanup guard must prove the old provider-family path and custom KalamDB OIDC/JWKS implementation are not active anymore: no old plural provider metadata route, no provider-specific OAuth config accepted, no custom validator/discovery path, and no raw OIDC discovery/JWKS fetches in `backend/crates/kalamdb-auth/src/oidc/`.
 
 ## 7. Migration Acceptance
 
-A server configuration containing any of these old sections must fail validation with a migration message:
-
-```toml
-[oauth]
-[oauth.providers.google]
-[oauth.providers.github]
-[oauth.providers.azure]
-[oauth.providers.firebase]
-[oauth.providers.openid]
-```
-
-The migration message should point to `[auth.oidc]` and explain that only one OIDC provider is supported at a time.
+A server configuration containing the old split OAuth section or any old provider-specific OAuth section must fail validation with a migration message. The migration message should point to `[auth.oidc]` and explain that only one OIDC provider is supported at a time.

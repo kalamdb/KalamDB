@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 
@@ -30,6 +30,10 @@ function renderProtectedRoute(initialPath = "/dashboard") {
 }
 
 describe("ProtectedRoute", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     mockUseAuth.mockReset();
   });
@@ -63,11 +67,25 @@ describe("ProtectedRoute", () => {
     expect(logout).toHaveBeenCalledTimes(1);
   });
 
-  it("renders protected content for system and dba roles", () => {
+  it("shows access denied for authenticated OIDC service users", () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
       isLoading: false,
-      user: { role: "system" },
+      user: { id: "e_service", role: "service", email: "service@example.org" },
+      logout: vi.fn(),
+    });
+
+    renderProtectedRoute();
+
+    expect(screen.getByText("Access Denied")).toBeTruthy();
+    expect(screen.getByText(/current role:/i).textContent).toContain("service");
+  });
+
+  it.each(["system", "dba"])("renders protected content for authenticated %s users", (role) => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isLoading: false,
+      user: { id: `e_${role}`, role, email: `${role}@example.org` },
       logout: vi.fn(),
     });
 

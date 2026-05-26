@@ -26,6 +26,12 @@ pub struct CommandContext<'a> {
     pub credential_store: &'a mut FileCredentialStore,
 }
 
+pub enum PreSessionResult {
+    NotHandled,
+    Exit,
+    ContinueToSession(auth::LoginShellContinuation),
+}
+
 fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
     if let Some(command) = &cli.subcommand {
         return match command {
@@ -53,41 +59,80 @@ fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
 async fn run_pre_session_command(
     command: PreSessionCommand,
     context: CommandContext<'_>,
-) -> Result<bool> {
+) -> Result<PreSessionResult> {
     match command {
         PreSessionCommand::Login => {
             let Some(CliCommand::Login(args)) = &context.cli.subcommand else {
-                return Ok(false);
+                return Ok(PreSessionResult::NotHandled);
             };
-            auth::handle_login(context.cli, args, context.credential_store).await
+            Ok(match auth::handle_login(context.cli, args, context.credential_store).await? {
+                auth::LoginCommandResult::Exit => PreSessionResult::Exit,
+                auth::LoginCommandResult::ContinueToSession(login_continuation) => {
+                    PreSessionResult::ContinueToSession(login_continuation)
+                },
+            })
         },
         PreSessionCommand::Logout => {
             let Some(CliCommand::Logout(args)) = &context.cli.subcommand else {
-                return Ok(false);
+                return Ok(PreSessionResult::NotHandled);
             };
-            auth::handle_logout(context.cli, args, context.credential_store).await
+            Ok(if auth::handle_logout(context.cli, args, context.credential_store).await? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            })
         },
         PreSessionCommand::Whoami => {
-            auth::handle_whoami(context.cli, context.credential_store).await
+            Ok(if auth::handle_whoami(context.cli, context.credential_store).await? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            })
         },
         PreSessionCommand::Token => {
             let Some(CliCommand::Token(args)) = &context.cli.subcommand else {
-                return Ok(false);
+                return Ok(PreSessionResult::NotHandled);
             };
-            auth::handle_token_command(context.cli, &args.command, context.credential_store).await
+            Ok(
+                if auth::handle_token_command(context.cli, &args.command, context.credential_store)
+                    .await?
+                {
+                    PreSessionResult::Exit
+                } else {
+                    PreSessionResult::NotHandled
+                },
+            )
         },
         PreSessionCommand::CredentialManagement => {
-            credentials::handle_credentials(context.cli, context.credential_store)
+            Ok(if credentials::handle_credentials(context.cli, context.credential_store)? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            })
         },
-        PreSessionCommand::CredentialLogin => {
-            credentials::login_and_store_credentials(context.cli, context.credential_store).await
-        },
-        PreSessionCommand::WatchSchema => {
-            watch_schema::handle_watch_schema(context.cli, context.credential_store).await
-        },
-        PreSessionCommand::Subscriptions => {
-            subscriptions::handle_subscriptions(context.cli, context.credential_store).await
-        },
+        PreSessionCommand::CredentialLogin => Ok(
+            if credentials::login_and_store_credentials(context.cli, context.credential_store)
+                .await?
+            {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            },
+        ),
+        PreSessionCommand::WatchSchema => Ok(
+            if watch_schema::handle_watch_schema(context.cli, context.credential_store).await? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            },
+        ),
+        PreSessionCommand::Subscriptions => Ok(
+            if subscriptions::handle_subscriptions(context.cli, context.credential_store).await? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            },
+        ),
     }
 }
 
@@ -110,9 +155,9 @@ pub async fn handle_early_commands(cli: &Cli) -> Result<bool> {
 pub async fn handle_pre_session_commands(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
-) -> Result<bool> {
+) -> Result<PreSessionResult> {
     let Some(command) = pre_session_command(cli) else {
-        return Ok(false);
+        return Ok(PreSessionResult::NotHandled);
     };
 
     run_pre_session_command(

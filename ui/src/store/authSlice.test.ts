@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import authReducer, { login, refresh, checkAuth } from "@/store/authSlice";
+import authReducer, { login, refresh, checkAuth, loginWithExternalToken } from "@/store/authSlice";
 
 const basePayload = {
   user: {
@@ -52,5 +52,21 @@ describe("authSlice user normalization", () => {
 
     expect(refreshState.user?.username).toBe("admin");
     expect(checkAuthState.user?.username).toBe("admin");
+  });
+
+  it("stores external bearer sessions on OIDC login fulfillment", () => {
+    const state = authReducer(undefined, {
+      type: loginWithExternalToken.fulfilled.type,
+      payload: {
+        ...basePayload,
+        access_token: "provider.id.token",
+        refresh_token: "",
+      },
+    });
+
+    expect(state.isAuthenticated).toBe(true);
+    expect(state.accessToken).toBe("provider.id.token");
+    expect(state.user?.username).toBe("root");
+    expect(state.error).toBeNull();
   });
 });

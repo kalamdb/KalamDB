@@ -17,13 +17,13 @@
 
 **Purpose**: Prepare dependency, fixture, module, and cleanup-check scaffolding without changing behavior.
 
-- [ ] T001 Add `openidconnect = { version = "4.0.1", default-features = false }` as the single external OIDC protocol dependency with minimal features in Cargo.toml, backend/crates/kalamdb-auth/Cargo.toml, and cli/Cargo.toml
-- [ ] T002 [P] Create openidconnect-backed auth module scaffolding in backend/crates/kalamdb-auth/src/oidc/client.rs, backend/crates/kalamdb-auth/src/oidc/http.rs, backend/crates/kalamdb-auth/src/oidc/device.rs, and backend/crates/kalamdb-auth/src/oidc/mod.rs
-- [ ] T003 [P] Create CLI OIDC browser test module placeholders in cli/tests/auth.rs and cli/tests/auth/test_oidc_browser_login.rs
-- [ ] T004 [P] Create CLI OIDC device-flow test placeholder in cli/tests/auth/test_oidc_device_login.rs
-- [ ] T005 [P] Create backend local-auth policy test placeholder in backend/tests/misc/auth/test_local_auth_policy.rs
-- [ ] T006 [P] Create Admin UI OIDC callback test placeholder in ui/src/pages/OAuthCallback.test.tsx
-- [ ] T007 [P] Create auth cleanup guard script placeholder in scripts/check-auth-oidc-cleanup.sh
+- [X] T001 Add `openidconnect = { version = "4.0.1", default-features = false }` as the single external OIDC protocol dependency with minimal features in Cargo.toml, backend/crates/kalamdb-auth/Cargo.toml, and cli/Cargo.toml
+- [X] T002 [P] Create openidconnect-backed auth module scaffolding in backend/crates/kalamdb-auth/src/oidc/client.rs, backend/crates/kalamdb-auth/src/oidc/http.rs, backend/crates/kalamdb-auth/src/oidc/device.rs, and backend/crates/kalamdb-auth/src/oidc/mod.rs
+- [X] T003 [P] Create CLI OIDC browser test module placeholders in cli/tests/auth.rs and cli/tests/auth/test_oidc_browser_login.rs
+- [X] T004 [P] Create CLI OIDC device-flow test placeholder in cli/tests/auth/test_oidc_device_login.rs
+- [X] T005 [P] Create backend local-auth policy test placeholder in backend/tests/misc/auth/test_local_auth_policy.rs
+- [X] T006 [P] Create Admin UI OIDC callback test placeholder in ui/src/pages/OAuthCallback.test.tsx
+- [X] T007 [P] Create auth cleanup guard script placeholder in scripts/check-auth-oidc-cleanup.sh
 
 ---
 
@@ -33,17 +33,17 @@
 
 **Critical**: No user story implementation should begin until these tasks are complete.
 
-- [ ] T008 Define public login-options response DTOs in backend/crates/kalamdb-api/src/http/auth/models/login_options.rs
-- [ ] T009 Define OIDC device-broker response DTOs in backend/crates/kalamdb-api/src/http/auth/models/oidc_device.rs
-- [ ] T010 Export login-options and device-broker DTOs from backend/crates/kalamdb-api/src/http/auth/models/mod.rs
-- [ ] T011 Define Admin UI login-options TypeScript types in ui/src/lib/api.ts
-- [ ] T012 Define CLI login-options model, direct device-flow metadata, broker endpoint model, and fetcher shell in cli/src/session/auth_options.rs
-- [ ] T013 Implement redirect-disabled `openidconnect` HTTP adapter over workspace `reqwest` in backend/crates/kalamdb-auth/src/oidc/http.rs
-- [ ] T014 Define openidconnect-backed OIDC client/cache types and custom device endpoint metadata parsing in backend/crates/kalamdb-auth/src/oidc/client.rs
-- [ ] T015 Define bounded broker-session state types and TTL cleanup hooks in backend/crates/kalamdb-auth/src/oidc/device.rs
-- [ ] T016 Add reusable Dex OIDC configuration helpers, including device authorization endpoint fixtures modeled on upstream `okta_device_grant`, in backend/tests/misc/auth/test_oidc_auto_provision.rs
-- [ ] T017 Add reusable CLI auth test helpers for token assertions in cli/tests/common/mod.rs
-- [ ] T018 Update auth API module declarations for login-options and OIDC device-broker files in backend/crates/kalamdb-api/src/http/auth/mod.rs
+- [X] T008 Define public login-options response DTOs in backend/crates/kalamdb-api/src/http/auth/models/login_options.rs
+- [X] T009 Define OIDC device-broker response DTOs in backend/crates/kalamdb-api/src/http/auth/models/oidc_device.rs
+- [X] T010 Export login-options and device-broker DTOs from backend/crates/kalamdb-api/src/http/auth/models/mod.rs
+- [X] T011 Define Admin UI login-options TypeScript types in ui/src/lib/api.ts
+- [X] T012 Define CLI login-options model, direct device-flow metadata, broker endpoint model, and fetcher shell in cli/src/session/auth_options.rs
+- [X] T013 Implement redirect-disabled `openidconnect` HTTP adapter over workspace `reqwest` in backend/crates/kalamdb-auth/src/oidc/http.rs
+- [X] T014 Define openidconnect-backed OIDC client/cache types and custom device endpoint metadata parsing in backend/crates/kalamdb-auth/src/oidc/client.rs
+- [X] T015 Define bounded broker-session state types and TTL cleanup hooks in backend/crates/kalamdb-auth/src/oidc/device.rs
+- [X] T016 Add reusable Dex OIDC configuration helpers, including device authorization endpoint fixtures modeled on upstream `okta_device_grant`, in backend/tests/misc/auth/test_oidc_auto_provision.rs
+- [X] T017 Add reusable CLI auth test helpers for token assertions in cli/tests/common/mod.rs
+- [X] T018 Update auth API module declarations for login-options and OIDC device-broker files in backend/crates/kalamdb-api/src/http/auth/mod.rs
 
 **Checkpoint**: Shared contracts, openidconnect primitives, and test fixtures exist; user-story tasks can proceed.
 
@@ -57,24 +57,24 @@
 
 ### Tests for User Story 1
 
-- [ ] T019 [P] [US1] Add config parsing tests for `[auth.local]`, `[auth.oidc]`, missing required OIDC fields, and device endpoint overrides in backend/crates/kalamdb-configs/src/config/loader.rs
-- [ ] T020 [P] [US1] Add environment override tests for unified auth keys in backend/crates/kalamdb-configs/src/config/override.rs
-- [ ] T021 [P] [US1] Add login-options API contract tests for local-only, OIDC-only, mixed configs, direct device-flow metadata, and brokered device-flow metadata in backend/tests/misc/auth/test_oidc_auto_provision.rs
-- [ ] T022 [P] [US1] Add legacy `[oauth.providers.*]` rejection tests in backend/tests/misc/auth/test_local_auth_policy.rs
-- [ ] T023 [P] [US1] Add openidconnect metadata discovery and issuer/audience verifier tests in backend/crates/kalamdb-auth/src/oidc/client.rs
+- [X] T019 [P] [US1] Add config parsing tests for `[auth.local]`, `[auth.oidc]`, missing required OIDC fields, and device endpoint overrides in backend/crates/kalamdb-configs/src/config/loader.rs
+- [X] T020 [P] [US1] Add environment override tests for unified auth keys in backend/crates/kalamdb-configs/src/config/override.rs
+- [X] T021 [P] [US1] Add login-options API contract tests for local-only, OIDC-only, mixed configs, direct device-flow metadata, and brokered device-flow metadata in backend/tests/misc/auth/test_oidc_auto_provision.rs
+- [X] T022 [P] [US1] Add legacy `[oauth.providers.*]` rejection tests in backend/tests/misc/auth/test_local_auth_policy.rs
+- [X] T023 [P] [US1] Add openidconnect metadata discovery and issuer/audience verifier tests in backend/crates/kalamdb-auth/src/oidc/client.rs
 
 ### Implementation for User Story 1
 
-- [ ] T024 [US1] Replace split OAuth config structs with unified `[auth.local]` and `[auth.oidc]` settings in backend/crates/kalamdb-configs/src/config/types.rs
-- [ ] T025 [US1] Implement `[auth]` config loading and legacy `[oauth]` migration diagnostics in backend/crates/kalamdb-configs/src/config/loader.rs
-- [ ] T026 [US1] Implement unified auth environment overrides in backend/crates/kalamdb-configs/src/config/override.rs
-- [ ] T027 [US1] Initialize `openidconnect` provider metadata with `CoreProviderMetadata::discover_async`, `CoreClient::from_provider_metadata`, issuer/audience validation, ID-token verifier construction, and custom device endpoint metadata from `[auth.oidc]` in backend/crates/kalamdb-auth/src/oidc/client.rs and backend/crates/kalamdb-auth/src/providers/jwt_config.rs
-- [ ] T028 [US1] Replace provider-family `init_auth_config` audience registration with single `[auth.oidc]` initialization in backend/crates/kalamdb-auth/src/services/unified/mod.rs
-- [ ] T029 [US1] Implement `GET /v1/api/auth/login-options` handler in backend/crates/kalamdb-api/src/http/auth/login_options.rs
-- [ ] T030 [US1] Implement OIDC device-broker start and poll handlers in backend/crates/kalamdb-api/src/http/auth/oidc_device.rs and backend/crates/kalamdb-auth/src/oidc/device.rs
-- [ ] T031 [US1] Route `GET /v1/api/auth/login-options`, `POST /v1/api/auth/oidc/device/start`, and `POST /v1/api/auth/oidc/device/poll` in backend/crates/kalamdb-api/src/routes.rs
-- [ ] T032 [US1] Update auth module exports for login-options and OIDC device broker in backend/crates/kalamdb-api/src/http/auth/mod.rs
-- [ ] T033 [US1] Replace auth examples with unified `[auth]`, `[auth.local]`, and `[auth.oidc]` examples in backend/server.example.toml
+- [X] T024 [US1] Replace split OAuth config structs with unified `[auth.local]` and `[auth.oidc]` settings in backend/crates/kalamdb-configs/src/config/types.rs
+- [X] T025 [US1] Implement `[auth]` config loading and legacy `[oauth]` migration diagnostics in backend/crates/kalamdb-configs/src/config/loader.rs
+- [X] T026 [US1] Implement unified auth environment overrides in backend/crates/kalamdb-configs/src/config/override.rs
+- [X] T027 [US1] Initialize `openidconnect` provider metadata with `CoreProviderMetadata::discover_async`, `CoreClient::from_provider_metadata`, issuer/audience validation, ID-token verifier construction, and custom device endpoint metadata from `[auth.oidc]` in backend/crates/kalamdb-auth/src/oidc/client.rs and backend/crates/kalamdb-auth/src/providers/jwt_config.rs
+- [X] T028 [US1] Replace provider-family `init_auth_config` audience registration with single `[auth.oidc]` initialization in backend/crates/kalamdb-auth/src/services/unified/mod.rs
+- [X] T029 [US1] Implement `GET /v1/api/auth/login-options` handler in backend/crates/kalamdb-api/src/http/auth/login_options.rs
+- [X] T030 [US1] Implement OIDC device-broker start and poll handlers in backend/crates/kalamdb-api/src/http/auth/oidc_device.rs and backend/crates/kalamdb-auth/src/oidc/device.rs
+- [X] T031 [US1] Route `GET /v1/api/auth/login-options`, `POST /v1/api/auth/oidc/device/start`, and `POST /v1/api/auth/oidc/device/poll` in backend/crates/kalamdb-api/src/routes.rs
+- [X] T032 [US1] Update auth module exports for login-options and OIDC device broker in backend/crates/kalamdb-api/src/http/auth/mod.rs
+- [X] T033 [US1] Replace auth examples with unified `[auth]`, `[auth.local]`, and `[auth.oidc]` examples in backend/server.example.toml
 
 **Checkpoint**: User Story 1 is independently testable as the MVP.
 
@@ -88,19 +88,19 @@
 
 ### Tests for User Story 2
 
-- [ ] T034 [P] [US2] Add Admin UI login-options tests for OIDC button visibility and local login visibility in ui/src/components/auth/LoginForm.test.tsx
-- [ ] T035 [P] [US2] Add Web Crypto PKCE/state helper tests for authorization URL and callback parsing in ui/src/lib/oauth.test.ts
-- [ ] T036 [P] [US2] Add OAuth callback page success and invalid-state tests in ui/src/pages/OAuthCallback.test.tsx
-- [ ] T037 [P] [US2] Add external-token auth state tests in ui/src/store/authSlice.test.ts
+- [X] T034 [P] [US2] Add Admin UI login-options tests for OIDC button visibility and local login visibility in ui/src/components/auth/LoginForm.test.tsx
+- [X] T035 [P] [US2] Add Web Crypto PKCE/state helper tests for authorization URL and callback parsing in ui/src/lib/oauth.test.ts
+- [X] T036 [P] [US2] Add OAuth callback page success and invalid-state tests in ui/src/pages/OAuthCallback.test.tsx
+- [X] T037 [P] [US2] Add external-token auth state tests in ui/src/store/authSlice.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T038 [US2] Replace Admin UI provider-list API usage with login-options usage in ui/src/lib/api.ts
-- [ ] T039 [US2] Implement Admin UI Authorization Code with PKCE browser helpers using Web Crypto in ui/src/lib/oauth.ts
-- [ ] T040 [US2] Update login form to render OIDC external login and local login from login-options in ui/src/components/auth/LoginForm.tsx
-- [ ] T041 [US2] Update OAuth callback page to exchange and consume PKCE login results in ui/src/pages/OAuthCallback.tsx
-- [ ] T042 [US2] Wire callback routing and safe return paths in ui/src/App.tsx and ui/src/pages/Login.tsx
-- [ ] T043 [US2] Update auth state and context for external bearer-token sessions in ui/src/store/authSlice.ts and ui/src/lib/auth.tsx
+- [X] T038 [US2] Replace Admin UI provider-list API usage with login-options usage in ui/src/lib/api.ts
+- [X] T039 [US2] Implement Admin UI Authorization Code with PKCE browser helpers using Web Crypto in ui/src/lib/oauth.ts
+- [X] T040 [US2] Update login form to render OIDC external login and local login from login-options in ui/src/components/auth/LoginForm.tsx
+- [X] T041 [US2] Update OAuth callback page to exchange and consume PKCE login results in ui/src/pages/OAuthCallback.tsx
+- [X] T042 [US2] Wire callback routing and safe return paths in ui/src/App.tsx and ui/src/pages/Login.tsx
+- [X] T043 [US2] Update auth state and context for external bearer-token sessions in ui/src/store/authSlice.ts and ui/src/lib/auth.tsx
 
 **Checkpoint**: User Story 2 can be validated with mocked login-options and provider callback inputs.
 
@@ -114,21 +114,21 @@
 
 ### Tests for User Story 3
 
-- [ ] T044 [P] [US3] Add CLI browser OIDC smoke test covering `CoreClient::authorize_url` and `exchange_code` behavior in cli/tests/auth/test_oidc_browser_login.rs
-- [ ] T045 [P] [US3] Add CLI direct device-code OIDC smoke test covering `exchange_device_code` and `exchange_device_access_token` in cli/tests/auth/test_oidc_device_login.rs
-- [ ] T046 [P] [US3] Add CLI KalamDB-brokered no-IdP-egress device-code smoke test in cli/tests/auth/test_oidc_device_login.rs
-- [ ] T047 [P] [US3] Add CLI invalid OIDC token storage test in cli/tests/auth/test_oidc_token_validation.rs
+- [X] T044 [P] [US3] Add CLI browser OIDC smoke test covering `CoreClient::authorize_url` and `exchange_code` behavior in cli/tests/auth/test_oidc_browser_login.rs
+- [X] T045 [P] [US3] Add CLI direct device-code OIDC smoke test covering `exchange_device_code` and `exchange_device_access_token` in cli/tests/auth/test_oidc_device_login.rs
+- [X] T046 [P] [US3] Add CLI KalamDB-brokered no-IdP-egress device-code smoke test in cli/tests/auth/test_oidc_device_login.rs
+- [X] T047 [P] [US3] Add CLI invalid OIDC token storage test in cli/tests/auth/test_oidc_token_validation.rs
 
 ### Implementation for User Story 3
 
-- [ ] T048 [US3] Add CLI login mode flags for local, OIDC, and no-browser flows in cli/src/args.rs and cli/src/args/parsers.rs
-- [ ] T049 [US3] Implement CLI login-options fetcher and broker endpoint client in cli/src/session/auth_options.rs
-- [ ] T050 [US3] Implement CLI browser Authorization Code with PKCE flow using `CoreClient::authorize_url`, `PkceCodeChallenge::new_random_sha256`, `exchange_code`, and `id_token_verifier` in cli/src/session/oidc_browser.rs
-- [ ] T051 [US3] Implement CLI direct OAuth device-code flow with `set_device_authorization_url`, `exchange_device_code`, and `exchange_device_access_token` in cli/src/session/oidc_device.rs
-- [ ] T052 [US3] Implement CLI KalamDB-brokered no-IdP-egress device flow against `/v1/api/auth/oidc/device/start` and `/v1/api/auth/oidc/device/poll` in cli/src/session/oidc_device.rs
-- [ ] T053 [US3] Integrate CLI login method selection into interactive session login in cli/src/session/interactive.rs
-- [ ] T054 [US3] Persist validated external bearer tokens using existing credential storage in cli/src/credentials.rs and cli/src/session/credentials.rs
-- [ ] T055 [US3] Register CLI OIDC auth tests in cli/tests/auth.rs
+- [X] T048 [US3] Add CLI login mode flags for local, OIDC, and no-browser flows in cli/src/args.rs and cli/src/args/parsers.rs
+- [X] T049 [US3] Implement CLI login-options fetcher and broker endpoint client in cli/src/session/auth_options.rs
+- [X] T050 [US3] Implement CLI browser Authorization Code with PKCE flow using `CoreClient::authorize_url`, `PkceCodeChallenge::new_random_sha256`, `exchange_code`, and `id_token_verifier` in cli/src/session/oidc_browser.rs
+- [X] T051 [US3] Implement CLI direct OAuth device-code flow with `set_device_authorization_url`, `exchange_device_code`, and `exchange_device_access_token` in cli/src/session/oidc_device.rs
+- [X] T052 [US3] Implement CLI KalamDB-brokered no-IdP-egress device flow against `/v1/api/auth/oidc/device/start` and `/v1/api/auth/oidc/device/poll` in cli/src/session/oidc_device.rs
+- [X] T053 [US3] Integrate CLI login method selection into interactive session login in cli/src/session/interactive.rs
+- [X] T054 [US3] Persist validated external bearer tokens using existing credential storage in cli/src/credentials.rs and cli/src/session/credentials.rs
+- [X] T055 [US3] Register CLI OIDC auth tests in cli/tests/auth.rs
 
 **Checkpoint**: User Story 3 can be tested from the CLI without Admin UI changes.
 
@@ -142,17 +142,17 @@
 
 ### Tests for User Story 4
 
-- [ ] T056 [P] [US4] Add backend local-enabled and local-disabled login tests in backend/tests/misc/auth/test_local_auth_policy.rs
-- [ ] T057 [P] [US4] Add CLI local-disabled explanation test in cli/tests/auth/test_oidc_local_policy.rs
-- [ ] T058 [P] [US4] Add Admin UI local login hidden/visible tests in ui/src/components/auth/LoginForm.test.tsx
+- [X] T056 [P] [US4] Add backend local-enabled and local-disabled login tests in backend/tests/misc/auth/test_local_auth_policy.rs
+- [X] T057 [P] [US4] Add CLI local-disabled explanation test in cli/tests/auth/test_oidc_local_policy.rs
+- [X] T058 [P] [US4] Add Admin UI local login hidden/visible tests in ui/src/components/auth/LoginForm.test.tsx
 
 ### Implementation for User Story 4
 
-- [ ] T059 [US4] Enforce local-auth policy in password login handler in backend/crates/kalamdb-api/src/http/auth/login.rs
-- [ ] T060 [US4] Enforce setup/local bootstrap policy in backend/crates/kalamdb-api/src/http/auth/setup.rs
-- [ ] T061 [US4] Surface authoritative local-login availability from login-options in backend/crates/kalamdb-api/src/http/auth/login_options.rs
-- [ ] T062 [US4] Prevent CLI password prompts when local login is disabled in cli/src/session/interactive.rs
-- [ ] T063 [US4] Hide or disable Admin UI username/password controls from login-options in ui/src/components/auth/LoginForm.tsx
+- [X] T059 [US4] Enforce local-auth policy in password login handler in backend/crates/kalamdb-api/src/http/auth/login.rs
+- [X] T060 [US4] Enforce setup/local bootstrap policy in backend/crates/kalamdb-api/src/http/auth/setup.rs
+- [X] T061 [US4] Surface authoritative local-login availability from login-options in backend/crates/kalamdb-api/src/http/auth/login_options.rs
+- [X] T062 [US4] Prevent CLI password prompts when local login is disabled in cli/src/session/interactive.rs
+- [X] T063 [US4] Hide or disable Admin UI username/password controls from login-options in ui/src/components/auth/LoginForm.tsx
 
 **Checkpoint**: User Story 4 can be validated independently by toggling local authentication.
 
@@ -166,27 +166,27 @@
 
 ### Tests for User Story 5
 
-- [ ] T064 [P] [US5] Add Dex repeated-login and duplicate-user prevention tests in backend/tests/misc/auth/test_oidc_auto_provision.rs
-- [ ] T065 [P] [US5] Add Dex invalid issuer, invalid audience, and expired token tests in backend/tests/misc/auth/test_oidc_token_validation.rs
-- [ ] T066 [P] [US5] Add docs/config search check for old auth provider sections in scripts/check-auth-config-docs.sh
-- [ ] T067 [P] [US5] Add auth-code cleanup guard that fails on `OidcValidator`, `OidcConfig::discover`, `reqwest::get` in auth OIDC code, provider-family branches, or `/auth/oauth/providers` routing in scripts/check-auth-oidc-cleanup.sh
+- [X] T064 [P] [US5] Add Dex repeated-login and duplicate-user prevention tests in backend/tests/misc/auth/test_oidc_auto_provision.rs
+- [X] T065 [P] [US5] Add Dex invalid issuer, invalid audience, and expired token tests in backend/tests/misc/auth/test_oidc_token_validation.rs
+- [X] T066 [P] [US5] Add docs/config search check for old auth provider sections in scripts/check-auth-config-docs.sh
+- [X] T067 [P] [US5] Add auth-code cleanup guard that fails on `OidcValidator`, `OidcConfig::discover`, `reqwest::get` in auth OIDC code, provider-family branches, or `/auth/oauth/providers` routing in scripts/check-auth-oidc-cleanup.sh
 
 ### Implementation for User Story 5
 
-- [ ] T068 [US5] Remove provider-specific `OAuthProvidersSettings` and old `[oauth.providers.*]` structs from backend/crates/kalamdb-configs/src/config/types.rs
-- [ ] T069 [US5] Move shared internal JWT claims out of backend/crates/kalamdb-auth/src/oidc/claims.rs into backend/crates/kalamdb-auth/src/providers/jwt_claims.rs and update backend/crates/kalamdb-auth/src/providers/jwt_auth.rs
-- [ ] T070 [US5] Replace `JwtConfig` OIDC validator registry with the single openidconnect-backed provider client/verifier cache in backend/crates/kalamdb-auth/src/providers/jwt_config.rs
-- [ ] T071 [US5] Replace external bearer-token validation with openidconnect ID-token verification and KalamDB identity mapping in backend/crates/kalamdb-auth/src/services/unified/bearer.rs
-- [ ] T072 [US5] Remove custom OIDC discovery and JWKS modules from backend/crates/kalamdb-auth/src/oidc/config.rs, backend/crates/kalamdb-auth/src/oidc/validator.rs, and backend/crates/kalamdb-auth/src/oidc/utils.rs
-- [ ] T073 [US5] Narrow OIDC module exports to openidconnect-backed client/http/device/error helpers in backend/crates/kalamdb-auth/src/oidc/mod.rs and backend/crates/kalamdb-auth/src/oidc/error.rs
-- [ ] T074 [US5] Remove stale `OidcError` conversion paths and update generic auth error mapping in backend/crates/kalamdb-auth/src/errors/error.rs
-- [ ] T075 [US5] Delete or replace old plural OAuth provider metadata handler in backend/crates/kalamdb-api/src/http/auth/oauth.rs and backend/crates/kalamdb-api/src/http/auth/mod.rs
-- [ ] T076 [US5] Remove `/v1/api/auth/oauth/providers` routing and replace any route references with `/v1/api/auth/login-options` in backend/crates/kalamdb-api/src/routes.rs
-- [ ] T077 [US5] Replace provider-family identity classification with generic OIDC issuer/subject storage in backend/crates/kalamdb-commons/src/models/oauth_provider.rs and backend/crates/kalamdb-system/src/providers/users/models/auth_data.rs
-- [ ] T078 [US5] Remove provider-family auth references from Admin UI API/client code in ui/src/lib/api.ts, ui/src/lib/oauth.ts, and ui/src/components/auth/LoginForm.tsx
-- [ ] T079 [US5] Update auth docs to the single OIDC model in docs/architecture/oidc-authentication.md, docs/security/README.md, docs/security/backend-hardening.md, docs/security/security-checklist.md, docs/security/firebase-auth.md, and docs/reference/sql.md
-- [ ] T080 [US5] Update canonical KalamDB skills for auth configuration in ../kalamdb-skills/skills/kalamdb/references/auth.md and ../kalamdb-skills/skills/kalamdb/references/server-configuration.md
-- [ ] T081 [US5] Audit generated in-repo skill mirrors for old auth config references in .agents/skills/ and update skills-lock.json if skill generation changes it
+- [X] T068 [US5] Remove provider-specific `OAuthProvidersSettings` and old `[oauth.providers.*]` structs from backend/crates/kalamdb-configs/src/config/types.rs
+- [X] T069 [US5] Move shared internal JWT claims out of backend/crates/kalamdb-auth/src/oidc/claims.rs into backend/crates/kalamdb-auth/src/providers/jwt_claims.rs and update backend/crates/kalamdb-auth/src/providers/jwt_auth.rs
+- [X] T070 [US5] Replace `JwtConfig` OIDC validator registry with the single openidconnect-backed provider client/verifier cache in backend/crates/kalamdb-auth/src/providers/jwt_config.rs
+- [X] T071 [US5] Replace external bearer-token validation with openidconnect ID-token verification and KalamDB identity mapping in backend/crates/kalamdb-auth/src/services/unified/bearer.rs
+- [X] T072 [US5] Remove custom OIDC discovery and JWKS modules from backend/crates/kalamdb-auth/src/oidc/config.rs, backend/crates/kalamdb-auth/src/oidc/validator.rs, and backend/crates/kalamdb-auth/src/oidc/utils.rs
+- [X] T073 [US5] Narrow OIDC module exports to openidconnect-backed client/http/device/error helpers in backend/crates/kalamdb-auth/src/oidc/mod.rs and backend/crates/kalamdb-auth/src/oidc/error.rs
+- [X] T074 [US5] Remove stale `OidcError` conversion paths and update generic auth error mapping in backend/crates/kalamdb-auth/src/errors/error.rs
+- [X] T075 [US5] Delete or replace old plural OAuth provider metadata handler in backend/crates/kalamdb-api/src/http/auth/oauth.rs and backend/crates/kalamdb-api/src/http/auth/mod.rs
+- [X] T076 [US5] Remove `/v1/api/auth/oauth/providers` routing and replace any route references with `/v1/api/auth/login-options` in backend/crates/kalamdb-api/src/routes.rs
+- [X] T077 [US5] Replace provider-family identity classification with generic OIDC issuer/subject storage in backend/crates/kalamdb-commons/src/models/oauth_provider.rs and backend/crates/kalamdb-system/src/providers/users/models/auth_data.rs
+- [X] T078 [US5] Remove provider-family auth references from Admin UI API/client code in ui/src/lib/api.ts, ui/src/lib/oauth.ts, and ui/src/components/auth/LoginForm.tsx
+- [X] T079 [US5] Update auth docs to the single OIDC model in docs/architecture/oidc-authentication.md, docs/security/README.md, docs/security/backend-hardening.md, docs/security/security-checklist.md, docs/security/firebase-auth.md, and docs/reference/sql.md
+- [X] T080 [US5] Update canonical KalamDB skills for auth configuration in ../kalamdb-skills/skills/kalamdb/references/auth.md and ../kalamdb-skills/skills/kalamdb/references/server-configuration.md
+- [X] T081 [US5] Audit generated in-repo skill mirrors for old auth config references in .agents/skills/ and update skills-lock.json if skill generation changes it
 
 **Checkpoint**: User Story 5 proves the old provider-family model and duplicated custom OIDC/JWKS implementation are gone from active code, docs, and skills.
 
@@ -196,14 +196,14 @@
 
 **Purpose**: Final consistency, validation, and cleanup across the completed stories.
 
-- [ ] T082 [P] Update implementation command drift in specs/031-oidc-local-auth/quickstart.md
-- [ ] T083 [P] Update architecture notes for final auth boundary decisions in docs/architecture/oidc-authentication.md and docs/architecture/decisions/adr-015-enum-usage-policy.md
-- [ ] T084 Run Rust formatting, focused backend checks, and `openidconnect` dependency-tree review documented in specs/031-oidc-local-auth/quickstart.md
-- [ ] T085 Run Dex-backed backend auth validation documented in specs/031-oidc-local-auth/quickstart.md
-- [ ] T086 Run CLI auth validation documented in specs/031-oidc-local-auth/quickstart.md
-- [ ] T087 Run Admin UI typecheck and focused auth tests documented in specs/031-oidc-local-auth/quickstart.md
-- [ ] T088 Run KalamDB skill build and verify after auth skill edits using ../kalamdb-skills/package.json
-- [ ] T089 Run final legacy-provider and custom-OIDC cleanup guards from scripts/check-auth-config-docs.sh and scripts/check-auth-oidc-cleanup.sh
+- [X] T082 [P] Update implementation command drift in specs/031-oidc-local-auth/quickstart.md
+- [X] T083 [P] Update architecture notes for final auth boundary decisions in docs/architecture/oidc-authentication.md and docs/architecture/decisions/adr-015-enum-usage-policy.md
+- [X] T084 Run Rust formatting, focused backend checks, and `openidconnect` dependency-tree review documented in specs/031-oidc-local-auth/quickstart.md
+- [X] T085 Run Dex-backed backend auth validation documented in specs/031-oidc-local-auth/quickstart.md
+- [X] T086 Run CLI auth validation documented in specs/031-oidc-local-auth/quickstart.md
+- [X] T087 Run Admin UI typecheck and focused auth tests documented in specs/031-oidc-local-auth/quickstart.md
+- [X] T088 Run KalamDB skill build and verify after auth skill edits using ../kalamdb-skills/package.json
+- [X] T089 Run final legacy-provider and custom-OIDC cleanup guards from scripts/check-auth-config-docs.sh and scripts/check-auth-oidc-cleanup.sh
 
 ---
 

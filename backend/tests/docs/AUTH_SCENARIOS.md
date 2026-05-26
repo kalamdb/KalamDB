@@ -13,10 +13,10 @@ This document outlines the test scenarios for authentication, authorization, and
   2. Receive a JWT token.
   3. Use Bearer token for Subsequent requests.
   4. Verify token expiration and invalidation.
-- **Scenario C**: OAuth Integration (Simulated).
-  1. Initiate OAuth flow with provider (Google/GitHub/Entra).
-  2. Exchange provider token for KalamDB session.
-- **Agent Friendly**: Check `backend/tests/misc/auth/test_jwt_auth.rs` and `backend/tests/misc/auth/test_oauth.rs`.
+- **Scenario C**: OIDC Integration (Simulated).
+  1. Initiate OIDC flow with issuer (Google/Keycloak/Entra/etc.).
+  2. Exchange provider ID token for a KalamDB session.
+- **Agent Friendly**: Check `backend/tests/misc/auth/test_jwt_auth.rs`, `backend/tests/misc/auth/test_oauth.rs` (legacy file name), and `backend/tests/misc/auth/test_oidc_auto_provision.rs`.
 
 ## 2. RBAC (Role-Based Access Control)
 **Goal**: Enforce permissions across system roles.

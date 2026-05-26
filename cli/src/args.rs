@@ -321,6 +321,22 @@ pub struct LoginArgs {
     /// Do not save credentials after login
     #[arg(long = "no-save")]
     pub no_save: bool,
+
+    /// Use local username/password authentication explicitly
+    #[arg(long = "local", conflicts_with = "oidc")]
+    pub local: bool,
+
+    /// Use the configured OIDC provider instead of local username/password authentication
+    #[arg(long = "oidc")]
+    pub oidc: bool,
+
+    /// Use OIDC device-code login instead of opening a local browser callback
+    #[arg(long = "no-browser", requires = "oidc")]
+    pub no_browser: bool,
+
+    /// Force KalamDB-brokered OIDC device-code login
+    #[arg(long = "brokered", requires = "no_browser")]
+    pub brokered: bool,
 }
 
 #[derive(Args, Debug, Clone)]

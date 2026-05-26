@@ -15,6 +15,7 @@ kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-jobs = { path = "../kalamdb-jobs" }
 kalamdb-live = { path = "../kalamdb-live" }
+kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 kalamdb-auth = { path = "../kalamdb-auth" }
@@ -56,6 +57,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
+openidconnect = { workspace = true }
 
 # Base64 encoding/decoding
 base64 = { workspace = true }

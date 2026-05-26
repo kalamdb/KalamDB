@@ -14,7 +14,10 @@ pub mod activity;
 pub mod allocator_metrics;
 pub mod cpu;
 pub mod health_monitor;
+pub mod query_metrics;
 pub mod runtime_metrics;
+pub mod storage_metrics;
+pub mod system_stats;
 
 pub use activity::{idle_duration, initialize_activity_now, last_activity_ms, record_activity_now};
 pub use allocator_metrics::{
@@ -25,7 +28,21 @@ pub use health_monitor::{
     decrement_websocket_sessions, get_websocket_session_count, get_websocket_session_peak_count,
     increment_websocket_sessions, HealthCounts, HealthMetrics, HealthMonitor,
 };
+pub use query_metrics::{
+    observe_query, query_metrics_snapshot, should_observe_query_namespace, QueryMetricKind,
+    QueryMetricsSnapshot,
+};
 pub use runtime_metrics::{
     collect_runtime_metrics, RuntimeMetrics, BUILD_DATE, GIT_BRANCH, GIT_COMMIT_HASH,
     SERVER_VERSION,
+};
+pub use storage_metrics::{
+    decrement_manifest_cache_rocksdb_entries, increment_manifest_cache_rocksdb_entries,
+    initialize_manifest_cache_rocksdb_entries, record_manifest_read, record_manifest_write,
+    record_parquet_file_read, record_parquet_files_written, set_manifest_cache_memory_entries,
+    storage_metrics_snapshot, StorageMetricsSnapshot,
+};
+pub use system_stats::{
+    collect_system_stats, CacheMetrics, ClusterMetrics, EntityCounts, LiveQueryMetrics,
+    ServerConfigMetrics, SystemStatsSource,
 };

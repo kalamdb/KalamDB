@@ -15,6 +15,7 @@ categories = ["database"]
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-observability = { path = "../kalamdb-observability" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }

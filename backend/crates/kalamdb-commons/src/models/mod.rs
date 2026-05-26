@@ -38,7 +38,6 @@ mod kalam_cell_value;
 // Standalone type modules (not IDs, not system tables)
 mod auth_type;
 mod connection;
-mod oauth_provider;
 mod payload_mode;
 mod read_context;
 mod role;
@@ -59,7 +58,6 @@ pub use connection::ConnectionInfo;
 pub use datatypes::KalamDataType;
 pub use ids::*;
 pub use kalam_cell_value::KalamCellValue;
-pub use oauth_provider::OAuthProvider;
 pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;

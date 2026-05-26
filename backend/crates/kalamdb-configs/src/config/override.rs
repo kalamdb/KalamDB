@@ -78,8 +78,17 @@ impl ServerConfig {
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
-    /// - KALAMDB_OAUTH_AUTO_PROVISION: Override oauth.auto_provision
-    ///   oauth.auto_provision (kept for backward compatibility)
+    /// - KALAMDB_AUTH_LOCAL_ENABLED: Override auth.local.enabled
+    /// - KALAMDB_AUTH_OIDC_ENABLED: Override auth.oidc.enabled
+    /// - KALAMDB_AUTH_OIDC_DISPLAY_NAME: Override auth.oidc.display_name
+    /// - KALAMDB_AUTH_OIDC_ISSUER: Override auth.oidc.issuer
+    /// - KALAMDB_AUTH_OIDC_CLIENT_ID: Override auth.oidc.client_id
+    /// - KALAMDB_AUTH_OIDC_CLIENT_SECRET: Override auth.oidc.client_secret
+    /// - KALAMDB_AUTH_OIDC_SCOPES: Override auth.oidc.scopes
+    /// - KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT: Override auth.oidc.device_authorization_endpoint
+    /// - KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED: Override auth.oidc.broker_device_flow_enabled
+    /// - KALAMDB_AUTH_OIDC_AUTO_PROVISION: Override auth.oidc.auto_provision
+    /// - KALAMDB_AUTH_OIDC_DEFAULT_ROLE: Override auth.oidc.default_role
     /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a
     ///   comma-separated list or "*"
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
@@ -204,13 +213,44 @@ impl ServerConfig {
         if let Some(allow_remote_setup) = env_truthy("KALAMDB_ALLOW_REMOTE_SETUP") {
             self.auth.allow_remote_setup = allow_remote_setup;
         }
-        if let Some(auto_provision) = env_truthy("KALAMDB_OAUTH_AUTO_PROVISION")
-            .or_else(|| env_truthy("KALAMDB_AUTH_AUTO_CREATE_USERS_FROM_PROVIDER"))
-        {
-            self.oauth.auto_provision = auto_provision;
-        }
         if let Ok(token) = env::var("KALAMDB_PG_AUTH_TOKEN") {
             self.auth.pg_auth_token = Some(token);
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_LOCAL_ENABLED") {
+            self.auth.local.enabled = enabled;
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_OIDC_ENABLED") {
+            self.auth.oidc.enabled = enabled;
+        }
+        if let Ok(display_name) = env::var("KALAMDB_AUTH_OIDC_DISPLAY_NAME") {
+            self.auth.oidc.display_name = display_name;
+        }
+        if let Ok(issuer) = env::var("KALAMDB_AUTH_OIDC_ISSUER") {
+            self.auth.oidc.issuer = Some(issuer);
+        }
+        if let Ok(client_id) = env::var("KALAMDB_AUTH_OIDC_CLIENT_ID") {
+            self.auth.oidc.client_id = Some(client_id);
+        }
+        if let Ok(client_secret) = env::var("KALAMDB_AUTH_OIDC_CLIENT_SECRET") {
+            self.auth.oidc.client_secret = Some(client_secret);
+        }
+        if let Ok(scopes) = env::var("KALAMDB_AUTH_OIDC_SCOPES") {
+            self.auth.oidc.scopes = parse_csv_env_list(&scopes);
+        }
+        if let Ok(endpoint) = env::var("KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT") {
+            self.auth.oidc.device_authorization_endpoint = Some(endpoint);
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED") {
+            self.auth.oidc.broker_device_flow_enabled = enabled;
+        }
+        if let Some(auto_provision) = env_truthy("KALAMDB_AUTH_OIDC_AUTO_PROVISION") {
+            self.auth.oidc.auto_provision = auto_provision;
+        }
+        if let Ok(default_role) = env::var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE") {
+            self.auth.oidc.default_role = default_role;
+        }
+        if let Ok(audience) = env::var("KALAMDB_AUTH_OIDC_AUDIENCE") {
+            self.auth.oidc.audience = Some(audience);
         }
         Ok(())
     }
@@ -448,6 +488,55 @@ mod tests {
         );
 
         env::remove_var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS");
+    }
+
+    #[test]
+    fn test_env_override_unified_auth_oidc_settings() {
+        let _guard = acquire_env_lock();
+        env::set_var("KALAMDB_AUTH_LOCAL_ENABLED", "false");
+        env::set_var("KALAMDB_AUTH_OIDC_ENABLED", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_DISPLAY_NAME", "Dex");
+        env::set_var("KALAMDB_AUTH_OIDC_ISSUER", "https://idp.example.com");
+        env::set_var("KALAMDB_AUTH_OIDC_CLIENT_ID", "kalamdb");
+        env::set_var("KALAMDB_AUTH_OIDC_CLIENT_SECRET", "secret");
+        env::set_var("KALAMDB_AUTH_OIDC_SCOPES", "openid,email");
+        env::set_var(
+            "KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT",
+            "https://idp.example.com/device",
+        );
+        env::set_var("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_AUTO_PROVISION", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE", "dba");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert!(!config.auth.local.enabled);
+        assert!(config.auth.oidc.enabled);
+        assert_eq!(config.auth.oidc.display_name, "Dex");
+        assert_eq!(config.auth.oidc.issuer_str(), Some("https://idp.example.com"));
+        assert_eq!(config.auth.oidc.client_id_str(), Some("kalamdb"));
+        assert_eq!(config.auth.oidc.client_secret.as_deref(), Some("secret"));
+        assert_eq!(config.auth.oidc.scopes, vec!["openid".to_string(), "email".to_string()]);
+        assert_eq!(
+            config.auth.oidc.device_authorization_endpoint.as_deref(),
+            Some("https://idp.example.com/device")
+        );
+        assert!(config.auth.oidc.broker_device_flow_enabled);
+        assert!(config.auth.oidc.auto_provision);
+        assert_eq!(config.auth.oidc.default_role, "dba");
+
+        env::remove_var("KALAMDB_AUTH_LOCAL_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_DISPLAY_NAME");
+        env::remove_var("KALAMDB_AUTH_OIDC_ISSUER");
+        env::remove_var("KALAMDB_AUTH_OIDC_CLIENT_ID");
+        env::remove_var("KALAMDB_AUTH_OIDC_CLIENT_SECRET");
+        env::remove_var("KALAMDB_AUTH_OIDC_SCOPES");
+        env::remove_var("KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT");
+        env::remove_var("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_AUTO_PROVISION");
+        env::remove_var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE");
     }
 
     #[test]

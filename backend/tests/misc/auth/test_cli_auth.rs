@@ -4,7 +4,7 @@
 //!
 //! These tests verify that:
 //! - Database bootstrap creates default "root" system user
-//! - System user has correct auth_type (internal) and role (system)
+//! - System user has correct local auth_type (password) and role (system)
 //! - System user can authenticate from localhost
 //! - System user credentials are generated securely
 
@@ -29,11 +29,7 @@ async fn test_init_creates_system_user() {
 
     // Verify user properties
     assert_eq!(user.user_id.as_str(), AuthConstants::DEFAULT_ROOT_USER_ID);
-    assert_eq!(
-        user.auth_type,
-        AuthType::Internal,
-        "System user should have 'internal' auth type"
-    );
+    assert_eq!(user.auth_type, AuthType::Password, "System user should use local password auth");
     assert_eq!(user.role, Role::System, "System user should have 'system' role");
 
     // Verify password hash is set (not empty)

@@ -78,7 +78,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             None
         };
 
-        // Hash password if auth_type = Password, or extract auth_data for OAuth
+        // Hash password if auth_type = Password, or extract auth_data for OIDC.
         let (password_hash, auth_data) = match statement.auth_type {
             AuthType::Password => {
                 let raw = statement.password.clone().ok_or_else(|| {
@@ -103,23 +103,23 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 })?;
                 (hash, None)
             },
-            AuthType::OAuth => {
-                // For OAuth, the 'password' field contains the JSON payload
+            AuthType::Oidc => {
+                // For OIDC, the 'password' field contains the JSON payload
                 let payload = statement.password.clone().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
-                        "OAuth user requires JSON payload with provider and subject".to_string(),
+                        "OIDC user requires JSON payload with issuer and subject".to_string(),
                     )
                 })?;
 
                 let json: serde_json::Value =
-                    serde_json::from_str(&payload).into_invalid_operation("Invalid OAuth JSON")?;
+                    serde_json::from_str(&payload).into_invalid_operation("Invalid OIDC JSON")?;
 
-                let provider = json
-                    .get("provider")
+                let issuer = json
+                    .get("issuer")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(
-                            "OAuth user requires 'provider' field".to_string(),
+                            "OIDC user requires 'issuer' field".to_string(),
                         )
                     })?
                     .to_string();
@@ -129,15 +129,20 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(
-                            "OAuth user requires 'subject' field".to_string(),
+                            "OIDC user requires 'subject' field".to_string(),
                         )
                     })?
                     .to_string();
 
-                let auth_data = AuthData::new(provider, subject);
+                if subject != user_id.as_str() {
+                    return Err(KalamDbError::InvalidOperation(
+                        "OIDC user_id must match the OIDC subject claim".to_string(),
+                    ));
+                }
+
+                let auth_data = AuthData::new(issuer, subject);
                 ("".to_string(), Some(auth_data))
             },
-            AuthType::Internal => ("".to_string(), None),
         };
 
         let now = chrono::Utc::now().timestamp_millis();

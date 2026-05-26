@@ -168,7 +168,7 @@ default_query_limit = 50
 level = "debug"
 
 # Directory for all log files (default: "./logs")
-# Server will create app.log, slow.log, and other log files in this directory
+# Server will create app.log, slow.jsonl, and other log files in this directory
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
@@ -178,7 +178,7 @@ log_to_console = true
 format = "json"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
-# Queries taking longer than this threshold will be logged to slow.log
+# Queries taking longer than this threshold will be logged to slow.jsonl
 # AND displayed as WARN in the console
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
@@ -279,8 +279,8 @@ max_age = 3600
 # Enables Access-Control-Request-Private-Network header support
 allow_private_network = false
 
-[authentication]
-# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+[auth]
+# Bcrypt cost factor for password hashing (default: 12, range: 4-31)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
 bcrypt_cost = 12
@@ -292,10 +292,8 @@ min_password_length = 8
 # Note: Passwords longer than 72 bytes are truncated by bcrypt
 max_password_length = 72
 
-# Disable common password checking (default: false)
-# If true, allows passwords like "password", "123456", etc.
-# WARNING: Only disable for testing/development environments!
-disable_common_password_check = false
+# Enforce uppercase/lowercase/digit/special password complexity (default: false)
+enforce_password_complexity = false
 
 # JWT configuration (for JWT Bearer token authentication)
 # Secret key for JWT signature validation (minimum 32 characters recommended)
@@ -307,15 +305,23 @@ jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
 # WARNING: Only enable in trusted environments.
 allow_remote_setup = false
 
-# List of trusted JWT issuers (leave empty to accept any issuer)
-# Add your OAuth provider domains here (e.g., "https://accounts.google.com", "https://github.com")
-# Example for Google OAuth: ["https://accounts.google.com"]
-# Example for GitHub OAuth: ["https://github.com"]
-# Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
-jwt_trusted_issuers = ""
+# Trusted JWT issuers for internal KalamDB tokens and the configured OIDC provider.
+jwt_trusted_issuers = "kalamdb,http://127.0.0.1:5556"
 
-# Auto-create local OAuth users from trusted provider subject/issuer when not found (default: false)
-auto_create_users_from_provider = false
+[auth.local]
+enabled = true
+
+[auth.oidc]
+enabled = true
+display_name = "Dex"
+issuer = "http://127.0.0.1:5556"
+client_id = "client"
+scopes = ["openid", "email", "profile"]
+auto_provision = true
+default_role = "user"
+broker_device_flow_enabled = false
+# Enable only when your Dex/provider config advertises or supports device auth.
+# device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
 
 [shutdown]
 # Timeout settings for graceful shutdown

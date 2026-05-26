@@ -2,8 +2,6 @@
 
 use thiserror::Error;
 
-use crate::oidc::OidcError;
-
 /// Errors that can occur during authentication and authorization.
 #[derive(Error, Debug)]
 pub enum AuthError {
@@ -79,21 +77,3 @@ pub enum AuthError {
 
 /// Result type for authentication operations
 pub type AuthResult<T> = Result<T, AuthError>;
-
-/// Convert an `OidcError` into an `AuthError`.
-///
-/// Used by the `?` operator in bearer authentication when OIDC discovery,
-/// JWKS lookup, or external token validation fails.
-impl From<OidcError> for AuthError {
-    fn from(e: OidcError) -> Self {
-        match e {
-            OidcError::JwtValidationFailed(ref msg) if msg.contains("expired") => {
-                AuthError::TokenExpired
-            },
-            OidcError::JwtValidationFailed(ref msg) if msg.contains("signature") => {
-                AuthError::InvalidSignature
-            },
-            _ => AuthError::MalformedAuthorization(e.to_string()),
-        }
-    }
-}

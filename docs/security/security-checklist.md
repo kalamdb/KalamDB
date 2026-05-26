@@ -6,8 +6,10 @@ Use this checklist before production rollout and during operations.
 
 - [ ] API is exposed over HTTPS only (TLS termination at edge)
 - [ ] `KALAMDB_JWT_SECRET` is strong and rotated from defaults
-- [ ] Trusted issuers configured (`jwt_trusted_issuers`) when using external IdP
-- [ ] `authentication.allow_remote_setup = false`
+- [ ] Trusted issuers configured (`auth.jwt_trusted_issuers`) when using external IdP
+- [ ] `auth.allow_remote_setup = false`
+- [ ] Local password login policy set explicitly with `auth.local.enabled`
+- [ ] OIDC issuer, client ID, and auto-provisioning policy set under `[auth.oidc]`
 - [ ] Password policy defaults preserved or strengthened
 - [ ] CORS origins restricted to known domains
 - [ ] WebSocket origin rules set (`strict_ws_origin_check = true` where appropriate)

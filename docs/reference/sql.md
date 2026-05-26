@@ -235,12 +235,23 @@ Rules:
 
 ```sql
 CREATE USER '<username>'
-  WITH <PASSWORD '<password>' | OAUTH | INTERNAL>
+  WITH <PASSWORD '<password>' | OIDC '<oidc_json>'>
   ROLE <user|service|dba|system>
   [EMAIL '<email>']
   [STORAGE_MODE <table|region>]
   [STORAGE_ID '<storage_id>'];
 ```
+
+`WITH OIDC` creates an external OIDC user. The payload must contain the OIDC issuer and subject. `WITH OAUTH` is still accepted as a compatibility alias for older scripts.
+
+```sql
+CREATE USER 'provider-subject'
+  WITH OIDC '{"issuer": "https://idp.example.com/realms/kalamdb", "subject": "provider-subject"}'
+  ROLE user
+  EMAIL 'alice@example.com';
+```
+
+For OIDC users, the `CREATE USER` id must match the OIDC `subject`. KalamDB uses that subject directly as the authenticated user id.
 
 ### ALTER USER
 

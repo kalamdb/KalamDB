@@ -193,11 +193,6 @@ pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
     7 // 7 days
 }
 
-// Retention defaults
-pub fn default_dba_stats_retention_days() -> u64 {
-    7
-}
-
 // Stream defaults
 pub fn default_stream_ttl() -> u64 {
     10 // 10 seconds
@@ -382,21 +377,36 @@ pub fn default_auth_allow_remote_setup() -> bool {
     false
 }
 
-// OAuth defaults
-pub fn default_oauth_enabled() -> bool {
+pub fn default_auth_local_enabled() -> bool {
+    true
+}
+
+pub fn default_auth_oidc_enabled() -> bool {
     false
 }
 
-pub fn default_oauth_auto_provision() -> bool {
+pub fn default_auth_oidc_display_name() -> String {
+    "OpenID Connect".to_string()
+}
+
+pub fn default_auth_oidc_scopes() -> Vec<String> {
+    vec![
+        "openid".to_string(),
+        "email".to_string(),
+        "profile".to_string(),
+    ]
+}
+
+pub fn default_auth_oidc_broker_device_flow_enabled() -> bool {
     false
 }
 
-pub fn default_oauth_default_role() -> String {
+pub fn default_auth_oidc_auto_provision() -> bool {
+    false
+}
+
+pub fn default_auth_oidc_default_role() -> String {
     "user".to_string()
-}
-
-pub fn default_oauth_provider_enabled() -> bool {
-    false
 }
 
 // WebSocket defaults

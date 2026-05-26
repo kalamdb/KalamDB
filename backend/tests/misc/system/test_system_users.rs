@@ -7,10 +7,10 @@
 //! - T100: System users CANNOT authenticate remotely without password even if allow_remote=true
 //!
 //! **System User Requirements**:
-//! - auth_type='internal' users are restricted to localhost by default
+//! - system-role local-password users are restricted to localhost by default when the password is empty
 //! - Per-user metadata {"allow_remote": true} enables remote access
 //! - Remote-enabled system users MUST have a password set
-//! - Localhost connections can skip password for internal users
+//! - Localhost root can skip password until initial setup assigns one
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -35,7 +35,7 @@ async fn create_system_user(
         password_hash,
         role: Role::System,
         email: Some(format!("{}@system.local", username)),
-        auth_type: AuthType::Internal, // System users use internal auth type
+        auth_type: AuthType::Password,
         auth_data: None,
         storage_mode: StorageMode::Table,
         storage_id: Some(StorageId::local()),

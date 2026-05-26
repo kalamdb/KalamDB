@@ -41,11 +41,15 @@ pub use helpers::request_tokens::{
 pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
 pub use models::login_request::LoginRequest;
 pub use providers::jwt_auth::{
-    create_and_sign_refresh_token, create_and_sign_token, generate_jwt_token, refresh_jwt_token,
-    JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
+    create_and_sign_refresh_token, create_and_sign_refresh_token_with_auth_type,
+    create_and_sign_token, create_and_sign_token_with_auth_type, generate_jwt_token,
+    refresh_jwt_token, JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
 };
 pub use repository::user_repo::{CachedUsersRepo, CoreUsersRepo, UserRepository};
 pub use services::{
     login_tracker::{LoginTracker, LoginTrackingConfig},
-    unified::{authenticate, extract_user_id_for_audit, AuthRequest, AuthenticationResult},
+    unified::{
+        authenticate, extract_user_id_for_audit, resolve_refresh_token_user, AuthRequest,
+        AuthenticationResult,
+    },
 };

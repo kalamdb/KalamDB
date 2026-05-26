@@ -1,11 +1,8 @@
 //! Type-safe authentication data for User entities.
 //!
 //! Replaces the raw `Option<String>` JSON blob previously stored in `User::auth_data`.
-//! Stores the OIDC/OAuth provider identity for a user.  KalamDB supports
-//! **one provider per user** — if multi-provider linking is needed, use an
-//! identity hub (Keycloak, Auth0, Okta, etc.) in front of KalamDB.
+//! Stores one external OIDC identity link as an issuer URL plus subject claim.
 
-use kalamdb_commons::OAuthProvider;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -14,13 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// Type-safe authentication data stored per-user.
 ///
-/// Represents a single OIDC/OAuth provider identity (e.g. one Google account,
-/// one Keycloak realm user) linked to a KalamDB user.
+/// Represents a single OIDC identity linked to a KalamDB user.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AuthData {
-    /// The detected provider type (well-known or custom).
-    pub provider_type: OAuthProvider,
-
     /// The issuer URL verbatim from the OIDC token `iss` claim
     /// (e.g. `"https://keycloak.example.com/realms/myrealm"`).
     pub issuer: String,
@@ -65,14 +58,9 @@ pub struct AuthData {
 
 impl AuthData {
     /// Create a minimal `AuthData` from issuer and subject.
-    ///
-    /// The provider type is auto-detected from the issuer URL.
     pub fn new(issuer: impl Into<String>, subject: impl Into<String>) -> Self {
-        let issuer = issuer.into();
-        let provider_type = OAuthProvider::detect_from_issuer(&issuer);
         Self {
-            provider_type,
-            issuer,
+            issuer: issuer.into(),
             subject: subject.into(),
             provider_display_name: None,
             avatar_url: None,
@@ -96,7 +84,6 @@ mod tests {
     #[test]
     fn test_auth_data_roundtrip() {
         let data = AuthData {
-            provider_type: OAuthProvider::Keycloak,
             issuer: "https://kc.example.com/realms/test".to_string(),
             subject: "user-uuid-123".to_string(),
             provider_display_name: Some("Alice".to_string()),
@@ -114,18 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_data_new_detects_provider() {
+    fn test_auth_data_new_stores_issuer_and_subject() {
         let ad = AuthData::new("https://keycloak.example.com/realms/myrealm", "sub-1");
-        assert_eq!(ad.provider_type, OAuthProvider::Keycloak);
+        assert_eq!(ad.issuer, "https://keycloak.example.com/realms/myrealm");
+        assert_eq!(ad.subject, "sub-1");
 
         let ad = AuthData::new("https://accounts.google.com", "sub-2");
-        assert_eq!(ad.provider_type, OAuthProvider::Google);
-
-        let ad = AuthData::new("https://my-corp-idp.internal", "sub-3");
-        assert_eq!(
-            ad.provider_type,
-            OAuthProvider::Custom("https://my-corp-idp.internal".to_string())
-        );
+        assert_eq!(ad.issuer, "https://accounts.google.com");
+        assert_eq!(ad.subject, "sub-2");
     }
 
     #[test]

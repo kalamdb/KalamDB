@@ -1,6 +1,5 @@
 mod notifications_repository;
 mod shared_repository;
-mod stats_repository;
 
 use std::sync::Arc;
 
@@ -9,7 +8,6 @@ use kalamdb_core::app_context::AppContext;
 pub use notifications_repository::NotificationsRepository;
 use serde::Serialize;
 pub use shared_repository::SharedTableRepository;
-pub use stats_repository::StatsRepository;
 
 use crate::error::{DbaError, Result};
 
@@ -31,22 +29,16 @@ fn current_definition<M: RepositoryModel>(
 #[derive(Clone)]
 pub struct DbaRegistry {
     notifications: NotificationsRepository,
-    stats: StatsRepository,
 }
 
 impl DbaRegistry {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self {
-            notifications: NotificationsRepository::new(app_context.clone()),
-            stats: StatsRepository::new(app_context),
+            notifications: NotificationsRepository::new(app_context),
         }
     }
 
     pub fn notifications(&self) -> &NotificationsRepository {
         &self.notifications
-    }
-
-    pub fn stats(&self) -> &StatsRepository {
-        &self.stats
     }
 }
