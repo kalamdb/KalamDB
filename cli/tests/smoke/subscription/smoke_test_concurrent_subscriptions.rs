@@ -15,6 +15,7 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(15);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const LIVE_QUERY_COUNT_TIMEOUT: Duration = Duration::from_secs(20);
+const LIVE_QUERY_COUNT_QUERY_LIMIT: usize = 1000;
 
 #[ntest::timeout(120000)]
 #[test]
@@ -42,10 +43,7 @@ fn smoke_test_concurrent_subscription_fanout() {
     ))
     .expect("create table");
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
 
     let namespace_for_cleanup = namespace.clone();
     let full_table_name_for_cleanup = full_table_name.clone();
@@ -102,11 +100,20 @@ fn smoke_test_concurrent_subscription_fanout() {
                 &subscription_prefix,
                 subscription_count,
                 LIVE_QUERY_COUNT_TIMEOUT,
-            );
+            )
+            .await;
             if registered != subscription_count {
+                let client_registered = client
+                    .subscriptions()
+                    .await
+                    .into_iter()
+                    .filter(|subscription| {
+                        !subscription.closed && subscription.id.starts_with(&subscription_prefix)
+                    })
+                    .count();
                 return Err(format!(
-                    "expected {} live subscriptions in system.live, found {}",
-                    subscription_count, registered
+                    "expected {} live subscriptions in system.live, found {}; client registry has {}",
+                    subscription_count, registered, client_registered
                 ));
             }
 
@@ -147,7 +154,7 @@ fn smoke_test_concurrent_subscription_fanout() {
         drop(subscriptions);
         client.disconnect().await;
         let remaining_live_queries =
-            wait_for_live_query_count(&subscription_prefix, 0, LIVE_QUERY_COUNT_TIMEOUT);
+            wait_for_live_query_count(&subscription_prefix, 0, LIVE_QUERY_COUNT_TIMEOUT).await;
 
         let (open_elapsed, delivery_elapsed) = match result {
             Ok(metrics) => metrics,
@@ -275,23 +282,46 @@ async fn close_all_subscriptions(subscriptions: &mut [SubscriptionManager]) -> V
     .collect()
 }
 
-fn wait_for_live_query_count(prefix: &str, expected: usize, timeout: Duration) -> usize {
-    let start = Instant::now();
+async fn wait_for_live_query_count(prefix: &str, expected: usize, timeout: Duration) -> usize {
+    let start = tokio::time::Instant::now();
 
     loop {
-        let current = count_live_query_rows(prefix);
+        let current = count_live_query_rows(prefix).await;
         if current == expected || start.elapsed() >= timeout {
             return current;
         }
-        std::thread::sleep(Duration::from_millis(150));
+        tokio::time::sleep(Duration::from_millis(150)).await;
     }
 }
 
-fn count_live_query_rows(prefix: &str) -> usize {
-    execute_sql_as_root_via_client("SELECT subscription_id FROM system.live")
-        .unwrap_or_default()
-        .matches(prefix)
-        .count()
+async fn count_live_query_rows(prefix: &str) -> usize {
+    let prefix = prefix.to_string();
+    let sql = format!(
+        "SELECT subscription_id FROM system.live LIMIT {}",
+        LIVE_QUERY_COUNT_QUERY_LIMIT
+    );
+
+    tokio::task::spawn_blocking(move || {
+        execute_sql_as_root_via_client_json(&sql)
+            .map_err(|error| format!("{}", error))
+    })
+    .await
+    .expect("spawn_blocking join failure")
+    .map(|json_str| {
+        let value: serde_json::Value = serde_json::from_str(&json_str)
+            .unwrap_or_else(|error| panic!("Failed to parse system.live JSON: {}", error));
+        let rows = get_rows_as_hashmaps(&value).unwrap_or_default();
+        rows.iter()
+            .filter(|row| {
+                let id_value = row
+                    .get("subscription_id")
+                    .map(extract_typed_value)
+                    .unwrap_or(serde_json::Value::Null);
+                id_value.as_str().map(|id| id.starts_with(&prefix)).unwrap_or(false)
+            })
+            .count()
+    })
+    .expect("system.live JSON query should succeed")
 }
 
 fn sample_errors(errors: &[String]) -> String {
