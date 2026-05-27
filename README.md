@@ -117,36 +117,43 @@ kalam doctor
 kalam login --instance local --url http://localhost:2900
 ```
 
-## Browser/Frontend Client Example
+## TypeScript Live + ORM Example
 
 ```ts
-import { createClient, Auth } from '@kalamdb/client';
+import { Auth, createClient } from '@kalamdb/client';
+import { eq } from 'drizzle-orm';
+import { kalamDriver, liveTable } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
+import { chatMessages } from './schema.generated';
 
 const client = createClient({
   url: 'http://localhost:2900',
   authProvider: async () => Auth.jwt('<user-token>'),
 });
+const db = drizzle(kalamDriver(client));
 
-const threadSql = `
-  SELECT id, role, content, created_at
-  FROM chat.messages
-  WHERE thread_id = 'thread_42'
-`;
+await db.insert(chatMessages).values({
+  room: 'main',
+  role: 'user',
+  author: 'alice',
+  sender_username: 'alice',
+  content: 'hello from frontend',
+});
 
-await client.query(`
-  INSERT INTO chat.messages (thread_id, role, content)
-  VALUES ('thread_42', 'user', 'hello from frontend');
-`);
-
-const unsubscribe = await client.live(
-  threadSql,
+const unsubscribe = await liveTable(
+  client,
+  chatMessages,
   (rows) => {
-    // If `chat.messages` is a USER table, each signed-in user only sees
-    // their own rows even though the SQL text is identical for everyone.
+    // If `chatMessages` is a USER table, every signed-in user can subscribe
+    // with the same code and still only receive their own rows.
     console.log('live rows', rows);
   },
   {
-    subscriptionOptions: { last_rows: 20 },
+    where: eq(chatMessages.room, 'main'),
+    lastRows: 50,
+    limit: 50,
+    // Need raw subscription frames for event listeners or protocol tooling?
+    // Use `client.liveEvents()` from `@kalamdb/client`.
   },
 );
 
@@ -155,57 +162,55 @@ await unsubscribe();
 await client.disconnect();
 ```
 
-## AI Agent Example (Topic Subscription)
+## `runConsumer()` + ORM Example
 
-Subscribe a worker to a KalamDB topic and process each change with managed retries, backpressure, and at-least-once delivery via `runConsumer`.
+Subscribe a worker to a KalamDB topic and use the ORM to write the reply back through `EXECUTE AS USER`.
 
 ```ts
-import { createClient, Auth } from '@kalamdb/client';
-import { runConsumer } from '@kalamdb/consumer';
+import { Auth } from '@kalamdb/client';
+import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
+import { executeAsUser, kalamDriver } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
+import { chatMessages, type ChatMessageRow } from './schema.generated';
 
-const client = createClient({
+const client = createConsumerClient({
   url: 'http://localhost:2900',
-  authProvider: async () => Auth.basic('root', 'kalamdb123'),
+  authProvider: async () => Auth.basic('service-agent', 'Secret123!'),
 });
+const db = drizzle(kalamDriver(client));
 
 const abort = new AbortController();
 process.on('SIGINT', () => abort.abort());
 
-await runConsumer<{ title: string; body: string }>({
+await runConsumer<ChatMessageRow>({
   client,
-  name: 'summarizer-agent',
-  topic: 'blog.posts',       // KalamDB topic to consume
-  groupId: 'summarizer-v1',  // consumer group — tracks per-agent offset
-  start: 'earliest',
-  batchSize: 20,
-  timeoutSeconds: 30,
+  name: 'chat-ai-agent',
+  topic: 'chat_demo.ai_inbox',
+  groupId: 'chat-ai-agent',
   stopSignal: abort.signal,
 
-  // Called for every inserted, updated, or deleted topic change
-  onChange: async (ctx, change) => {
+  onChange: async (_ctx, change) => {
     const row = change.data;
-    const summary = await myLlm.summarize(row.body);
-    console.log(`[${change.op ?? 'change'}:${row.title}] →`, summary);
-  },
+    if (row.role !== 'user') return;
 
-  onFailed: async (ctx, change) => {
-    const row = change.data;
-    console.error('failed row', row, ctx.error);
+    await executeAsUser(
+      client,
+      db.insert(chatMessages).values({
+        room: row.room,
+        role: 'assistant',
+        author: 'KalamDB Copilot',
+        sender_username: row.sender_username,
+        content: `AI reply: ${row.content}`,
+      }),
+      row.sender_username,
+    );
   },
-
-  retry: {
-    maxAttempts: 3,
-    initialBackoffMs: 250,
-    maxBackoffMs: 1500,
-    multiplier: 2,
-  },
-  ackOnFailed: true,    // commit offset even on permanent failure
 });
 
 await client.disconnect();
 ```
 
-See [`examples/summarizer-agent/`](examples/summarizer-agent/) for a full working example with Gemini integration.
+See [`examples/chat-with-ai/`](examples/chat-with-ai/) for a full working example that combines browser live queries, generated ORM schema, and `runConsumer()` agent writes.
 
 ## SQL Example
 
