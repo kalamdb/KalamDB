@@ -57,3 +57,4 @@ doctest = false
 [dev-dependencies]
 kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
 tempfile = { workspace = true }
+ntest = { workspace = true }
