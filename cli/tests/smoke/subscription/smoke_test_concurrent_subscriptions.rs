@@ -177,7 +177,10 @@ fn smoke_test_concurrent_subscription_fanout() {
         );
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name_for_cleanup));
+    let _ = execute_sql_as_root_via_client(&format!(
+        "DROP TABLE IF EXISTS {}",
+        full_table_name_for_cleanup
+    ));
     let _ = execute_sql_as_root_via_client(&format!(
         "DROP NAMESPACE IF EXISTS {} CASCADE",
         namespace_for_cleanup
@@ -208,9 +211,8 @@ async fn wait_for_ack(subscription: &mut SubscriptionManager) -> Result<(), Stri
     let deadline = tokio::time::Instant::now() + ACK_TIMEOUT;
 
     while tokio::time::Instant::now() < deadline {
-        let remaining = deadline
-            .checked_duration_since(tokio::time::Instant::now())
-            .unwrap_or_default();
+        let remaining =
+            deadline.checked_duration_since(tokio::time::Instant::now()).unwrap_or_default();
 
         match tokio::time::timeout(remaining, subscription.next()).await {
             Ok(Some(Ok(ChangeEvent::Ack { .. }))) => return Ok(()),
@@ -232,9 +234,8 @@ async fn wait_for_insert_value(
     let deadline = tokio::time::Instant::now() + DELIVERY_TIMEOUT;
 
     while tokio::time::Instant::now() < deadline {
-        let remaining = deadline
-            .checked_duration_since(tokio::time::Instant::now())
-            .unwrap_or_default();
+        let remaining =
+            deadline.checked_duration_since(tokio::time::Instant::now()).unwrap_or_default();
 
         match tokio::time::timeout(remaining, subscription.next()).await {
             Ok(Some(Ok(ChangeEvent::Insert { rows, .. }))) => {
@@ -247,10 +248,7 @@ async fn wait_for_insert_value(
                 }
             },
             Ok(Some(Ok(ChangeEvent::Error { code, message, .. }))) => {
-                return Err(format!(
-                    "subscription {} returned error {}: {}",
-                    index, code, message
-                ));
+                return Err(format!("subscription {} returned error {}: {}", index, code, message));
             },
             Ok(Some(Ok(_))) => continue,
             Ok(Some(Err(error))) => {
@@ -296,14 +294,11 @@ async fn wait_for_live_query_count(prefix: &str, expected: usize, timeout: Durat
 
 async fn count_live_query_rows(prefix: &str) -> usize {
     let prefix = prefix.to_string();
-    let sql = format!(
-        "SELECT subscription_id FROM system.live LIMIT {}",
-        LIVE_QUERY_COUNT_QUERY_LIMIT
-    );
+    let sql =
+        format!("SELECT subscription_id FROM system.live LIMIT {}", LIVE_QUERY_COUNT_QUERY_LIMIT);
 
     tokio::task::spawn_blocking(move || {
-        execute_sql_as_root_via_client_json(&sql)
-            .map_err(|error| format!("{}", error))
+        execute_sql_as_root_via_client_json(&sql).map_err(|error| format!("{}", error))
     })
     .await
     .expect("spawn_blocking join failure")
@@ -326,12 +321,7 @@ async fn count_live_query_rows(prefix: &str) -> usize {
 
 fn sample_errors(errors: &[String]) -> String {
     let sample_count = errors.len().min(5);
-    let sample = errors
-        .iter()
-        .take(sample_count)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" | ");
+    let sample = errors.iter().take(sample_count).cloned().collect::<Vec<_>>().join(" | ");
 
     if errors.len() > sample_count {
         format!("{} total errors; first {}: {}", errors.len(), sample_count, sample)

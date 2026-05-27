@@ -4822,6 +4822,7 @@ dependencies = [
  "kalamdb-system",
  "kalamdb-tables",
  "log",
+ "ntest",
  "parking_lot",
  "serde",
  "serde_json",

@@ -194,7 +194,6 @@ pub fn observe_query(kind: QueryMetricKind, latency: Duration, failed: bool) {
 
     let latency_micros = latency.as_micros().min(u64::MAX as u128) as u64;
     TOTAL_QUERY_LATENCY_MICROS.fetch_add(latency_micros, Ordering::Relaxed);
-
 }
 
 /// Snapshot SQL query counters without taking locks or scanning query state.

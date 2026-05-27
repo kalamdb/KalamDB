@@ -11,10 +11,15 @@ use serde::{Deserialize, Serialize};
     serde(rename_all = "lowercase")
 )]
 pub enum Role {
+    #[cfg_attr(feature = "serde", serde(alias = "Anonymous"))]
     Anonymous,
+    #[cfg_attr(feature = "serde", serde(alias = "User"))]
     User,
+    #[cfg_attr(feature = "serde", serde(alias = "Service"))]
     Service,
+    #[cfg_attr(feature = "serde", serde(alias = "Dba"))]
     Dba,
+    #[cfg_attr(feature = "serde", serde(alias = "System"))]
     System,
 }
 
@@ -70,5 +75,34 @@ impl From<&str> for Role {
 impl From<String> for Role {
     fn from(s: String) -> Self {
         Role::from(s.as_str())
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_to_lowercase_wire_values() {
+        assert_eq!(serde_json::to_string(&Role::Anonymous).unwrap(), "\"anonymous\"");
+        assert_eq!(serde_json::to_string(&Role::User).unwrap(), "\"user\"");
+        assert_eq!(serde_json::to_string(&Role::Service).unwrap(), "\"service\"");
+        assert_eq!(serde_json::to_string(&Role::Dba).unwrap(), "\"dba\"");
+        assert_eq!(serde_json::to_string(&Role::System).unwrap(), "\"system\"");
+    }
+
+    #[test]
+    fn deserializes_legacy_title_case_wire_values() {
+        let anonymous: Role = serde_json::from_str("\"Anonymous\"").unwrap();
+        let user: Role = serde_json::from_str("\"User\"").unwrap();
+        let service: Role = serde_json::from_str("\"Service\"").unwrap();
+        let dba: Role = serde_json::from_str("\"Dba\"").unwrap();
+        let system: Role = serde_json::from_str("\"System\"").unwrap();
+
+        assert_eq!(anonymous, Role::Anonymous);
+        assert_eq!(user, Role::User);
+        assert_eq!(service, Role::Service);
+        assert_eq!(dba, Role::Dba);
+        assert_eq!(system, Role::System);
     }
 }

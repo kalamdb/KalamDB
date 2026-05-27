@@ -9,6 +9,33 @@ test-threads = 15
 # concurrency budget.
 stateful-heavy = { max-threads = 1 }
 proxied-reconnect = { max-threads = 2 }
+# Each OIDC e2e test spawns a fresh KalamDB server subprocess (debug binary).
+# Running all five concurrently causes RocksDB init / file-I/O contention that
+# pushes every server startup near the 30-second wait_for_auth_status deadline.
+# Allowing at most two at a time gives each server enough CPU and I/O headroom
+# to start in ~5-10 s instead of ~25-30 s, dropping per-test time well below
+# the 60-second SLOW threshold.
+oidc-fresh-server = { max-threads = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(oidc_cli_dex_bearer_token_works_with_fresh_server)'
+test-group = "oidc-fresh-server"
+
+[[profile.default.overrides]]
+filter = 'test(oidc_cli_browser_login_with_dex_works_and_auto_provisions_user)'
+test-group = "oidc-fresh-server"
+
+[[profile.default.overrides]]
+filter = 'test(oidc_cli_headless_direct_device_login_works)'
+test-group = "oidc-fresh-server"
+
+[[profile.default.overrides]]
+filter = 'test(oidc_cli_headless_direct_device_login_with_local_dex_works)'
+test-group = "oidc-fresh-server"
+
+[[profile.default.overrides]]
+filter = 'test(oidc_cli_headless_brokered_device_login_works)'
+test-group = "oidc-fresh-server"
 
 # [[profile.default.overrides]]
 # filter = 'test(test_scenario_08_subscription_reconnect)'

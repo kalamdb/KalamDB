@@ -145,12 +145,20 @@ impl JobExecutor for StreamEvictionExecutor {
         let store = stream_provider.store_arc();
         let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
 
-        store.has_logs_before(cutoff_ms).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to scan stream logs during pre-validation: {}",
-                e
-            ))
-        })
+        tokio::task::spawn_blocking(move || store.has_logs_before(cutoff_ms))
+            .await
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Stream eviction pre-validation task panicked: {}",
+                    e
+                ))
+            })?
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to scan stream logs during pre-validation: {}",
+                    e
+                ))
+            })
     }
 
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
@@ -201,9 +209,17 @@ impl JobExecutor for StreamEvictionExecutor {
                 ))
             })?;
         let store = stream_provider.store_arc();
-        let deleted_count = store.delete_old_logs(cutoff_ms).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to delete old stream logs: {}", e))
-        })?;
+        let deleted_count = tokio::task::spawn_blocking(move || store.delete_old_logs(cutoff_ms))
+            .await
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Stream eviction cleanup task panicked: {}",
+                    e
+                ))
+            })?
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to delete old stream logs: {}", e))
+            })?;
 
         if deleted_count == 0 {
             ctx.log_info("No expired rows found; nothing to evict");
@@ -213,13 +229,13 @@ impl JobExecutor for StreamEvictionExecutor {
         }
 
         ctx.log_info(&format!(
-            "Stream eviction completed - {} log files removed from {}",
+            "Stream eviction completed - {} stream log window(s)/legacy file(s) removed from {}",
             deleted_count, table_id
         ));
 
         Ok(JobDecision::Completed {
             message: Some(format!(
-                "Evicted {} expired log files from {} (ttl: {}s)",
+                "Evicted {} expired stream log window(s)/legacy file(s) from {} (ttl: {}s)",
                 deleted_count, table_id, ttl_seconds
             )),
         })
@@ -240,15 +256,22 @@ impl Default for StreamEvictionExecutor {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use chrono::Utc;
-    use datafusion::datasource::TableProvider;
+    use datafusion::{datasource::TableProvider, scalar::ScalarValue};
     use kalamdb_commons::{
+        ids::StreamTableRowId,
         models::{
             datatypes::KalamDataType,
+            rows::Row,
             schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-            TableId, TableName, UserId,
+            StreamTableRow, TableId, TableName, UserId,
         },
         ChangeNotification, JobId, NamespaceId, NodeId,
     };
@@ -299,10 +322,19 @@ mod tests {
         namespace: NamespaceId,
         table_name_value: String,
         provider: Arc<StreamTableProvider>,
+        stream_base_dir: PathBuf,
         _stream_temp_dir: tempfile::TempDir,
     }
 
     fn setup_stream_table(app_ctx: &Arc<AppContext>) -> StreamTestHarness {
+        setup_stream_table_with_mode(app_ctx, kalamdb_tables::StreamTableStorageMode::Memory, 1)
+    }
+
+    fn setup_stream_table_with_mode(
+        app_ctx: &Arc<AppContext>,
+        storage_mode: kalamdb_tables::StreamTableStorageMode,
+        ttl_seconds: u64,
+    ) -> StreamTestHarness {
         let namespace = NamespaceId::new("chat_stream_jobs");
         let table_name_value =
             format!("typing_events_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
@@ -317,7 +349,7 @@ mod tests {
                 ColumnDefinition::primary_key(1, "event_id", 1, KalamDataType::Text),
                 ColumnDefinition::simple(2, "payload", 2, KalamDataType::Text),
             ],
-            TableOptions::stream(1),
+            TableOptions::stream(ttl_seconds),
             None,
         )
         .expect("table definition");
@@ -325,18 +357,19 @@ mod tests {
         app_ctx.schema_registry().put(table_def).expect("Failed to put table def");
 
         let stream_temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let stream_base_dir = stream_temp_dir
+            .path()
+            .join("streams")
+            .join(namespace.as_str())
+            .join(table_name_value.as_str());
         let stream_store = Arc::new(kalamdb_tables::new_stream_table_store(
             &table_id,
             StreamTableStoreConfig {
-                base_dir: stream_temp_dir
-                    .path()
-                    .join("streams")
-                    .join(namespace.as_str())
-                    .join(table_name_value.as_str()),
+                base_dir: stream_base_dir.clone(),
                 max_rows_per_user: 256, // Default per-user retention limit
                 shard_router: ShardRouter::default_config(),
-                ttl_seconds: Some(1),
-                storage_mode: kalamdb_tables::StreamTableStorageMode::Memory,
+                ttl_seconds: Some(ttl_seconds),
+                storage_mode,
             },
         ));
         let tables_schema_registry =
@@ -374,7 +407,36 @@ mod tests {
             namespace,
             table_name_value,
             provider,
+            stream_base_dir,
             _stream_temp_dir: stream_temp_dir,
+        }
+    }
+
+    fn count_regular_files(path: &Path) -> usize {
+        let Ok(entries) = fs::read_dir(path) else {
+            return 0;
+        };
+
+        let mut count = 0usize;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                count += count_regular_files(&path);
+            } else if path.is_file() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn stream_row(user: &UserId, seq: SeqId) -> StreamTableRow {
+        let mut values = BTreeMap::new();
+        values.insert("event_id".to_string(), ScalarValue::Utf8(Some("old-event".to_string())));
+        values.insert("payload".to_string(), ScalarValue::Utf8(Some("expired".to_string())));
+        StreamTableRow {
+            user_id: user.clone(),
+            _seq: seq,
+            fields: Row::new(values),
         }
     }
 
@@ -428,6 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ntest::timeout(5000)]
     async fn test_execute_evicts_expired_rows_from_provider_store() {
         let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
@@ -482,6 +545,70 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ntest::timeout(5000)]
+    async fn test_execute_removes_file_backed_expired_window_completely() {
+        let app_ctx = test_app_context_simple();
+        let harness = setup_stream_table_with_mode(
+            &app_ctx,
+            kalamdb_tables::StreamTableStorageMode::File,
+            60,
+        );
+
+        let user = UserId::new("user-file-ttl");
+        let old_ts = (Utc::now().timestamp_millis() as u64).saturating_sub(3 * 60 * 1000);
+        let old_seq = SeqId::new(
+            SnowflakeGenerator::max_id_for_timestamp(old_ts).expect("max_id_for_timestamp failed"),
+        );
+        let row_id = StreamTableRowId::new(user.clone(), old_seq);
+        let row = stream_row(&user, old_seq);
+        let store = harness.provider.store_arc();
+        store.put(&row_id, &row).expect("put old file-backed row");
+        store.flush().expect("flush file-backed row");
+
+        assert!(
+            count_regular_files(&harness.stream_base_dir) > 0,
+            "expected stream log file before eviction"
+        );
+
+        let mut job =
+            make_job("SE-file-evict", JobType::StreamEviction, harness.namespace.as_str());
+        job.parameters = Some(serde_json::json!({
+            "namespace_id": harness.namespace.as_str(),
+            "table_name": harness.table_name_value.clone(),
+            "table_type": "Stream",
+            "ttl_seconds": 60,
+            "batch_size": 100
+        }));
+
+        let params = StreamEvictionParams {
+            table_id: harness.table_id.clone(),
+            table_type: TableType::Stream,
+            ttl_seconds: 60,
+            batch_size: 100,
+        };
+
+        let ctx = JobContext::new(app_ctx.clone(), job.job_id.as_str().to_string(), params);
+        let executor = StreamEvictionExecutor::new();
+        let decision = executor.execute(&ctx).await.expect("execute file-backed eviction");
+
+        match decision {
+            JobDecision::Completed { message } => {
+                assert!(message.unwrap().contains("Evicted"));
+            },
+            other => panic!("Expected Completed decision, got {:?}", other),
+        }
+
+        assert_eq!(
+            count_regular_files(&harness.stream_base_dir),
+            0,
+            "expired stream files should be removed completely"
+        );
+        let remaining_rows = store.scan_all(None).expect("scan store after file eviction");
+        assert_eq!(remaining_rows.len(), 0, "Expired file-backed rows should be removed");
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(5000)]
     async fn test_pre_validate_skips_when_no_expired_rows() {
         let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
@@ -508,6 +635,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ntest::timeout(5000)]
     async fn test_pre_validate_detects_expired_rows() {
         let app_ctx = test_app_context_simple();
         let harness = setup_stream_table(&app_ctx);
