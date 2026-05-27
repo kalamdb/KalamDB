@@ -52,18 +52,76 @@ pub async fn create_test_client() -> KalamLinkClient {
 }
 
 pub async fn execute_sql(sql: &str) -> Result<(), String> {
-    let response = common::execute_sql_via_http_as_root(sql).await.map_err(|e| e.to_string())?;
-    let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("");
-    if status.eq_ignore_ascii_case("success") {
-        Ok(())
-    } else {
-        let err_msg = response
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown error");
-        Err(format!("SQL failed: {}", err_msg))
+    let max_attempts = 8;
+    let mut attempt = 0usize;
+
+    loop {
+        match execute_sql_via_pooled_client(sql).await {
+            Ok(response) => {
+                let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                if status.eq_ignore_ascii_case("success") {
+                    return Ok(());
+                }
+
+                let err_msg = response
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown error");
+
+                if is_retryable_sql_helper_error(err_msg) && attempt + 1 < max_attempts {
+                    attempt += 1;
+                    tokio::time::sleep(retry_delay_for_attempt(attempt)).await;
+                    continue;
+                }
+
+                return Err(format!("SQL failed: {}", err_msg));
+            },
+            Err(message) => {
+                if is_retryable_sql_helper_error(&message) && attempt + 1 < max_attempts {
+                    attempt += 1;
+                    tokio::time::sleep(retry_delay_for_attempt(attempt)).await;
+                    continue;
+                }
+                return Err(message);
+            },
+        }
     }
+}
+
+async fn execute_sql_via_pooled_client(sql: &str) -> Result<serde_json::Value, String> {
+    let sql = sql.to_string();
+    let response = tokio::task::spawn_blocking(move || {
+        common::execute_sql_as_root_via_client_json(&sql).map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| format!("pooled SQL helper task failed: {}", err))??;
+
+    serde_json::from_str(&response)
+        .map_err(|err| format!("failed to parse pooled SQL response: {}", err))
+}
+
+fn retry_delay_for_attempt(attempt: usize) -> Duration {
+    let millis = (attempt as u64 * 100).min(750);
+    Duration::from_millis(millis)
+}
+
+fn is_retryable_sql_helper_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    is_retryable_consumer_poll_error(&normalized)
+        || normalized.contains("error sending request")
+        || normalized.contains("connection reset")
+        || normalized.contains("connection refused")
+        || normalized.contains("connection aborted")
+        || normalized.contains("broken pipe")
+        || normalized.contains("timed out")
+        || normalized.contains("timeout")
+        || normalized.contains("too many")
+        || normalized.contains("429")
+        || normalized.contains("503")
+        || normalized.contains("504")
+        || normalized.contains("service unavailable")
+        || normalized.contains("gateway timeout")
 }
 
 pub async fn wait_for_topic_ready(topic: &str, expected_routes: usize) {

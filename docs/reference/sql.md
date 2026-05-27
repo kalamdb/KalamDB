@@ -72,11 +72,19 @@ CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
   STORAGE_ID = '<storage_id>',
   USE_USER_STORAGE = <TRUE|FALSE>,
   FLUSH_POLICY = '<rows:N|interval:N|rows:N,interval:N>',
-  DELETED_RETENTION_HOURS = <hours>,
   TTL_SECONDS = <seconds>,
-  ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>'
+  ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED|DBA>',
+  EVICTION_STRATEGY = '<time_based|size_based|hybrid>',
+  MAX_STREAM_SIZE_BYTES = <bytes>,
+  COMPRESSION = '<snappy|none|lz4|zstd>'
 )];
 ```
+
+Table options are type-specific:
+
+- `USER`: `STORAGE_ID`, `USE_USER_STORAGE`, `FLUSH_POLICY`, `COMPRESSION`
+- `SHARED`: `STORAGE_ID`, `ACCESS_LEVEL`, `FLUSH_POLICY`, `COMPRESSION`
+- `STREAM`: `TTL_SECONDS`, `EVICTION_STRATEGY`, `MAX_STREAM_SIZE_BYTES`, `COMPRESSION`
 
 Examples:
 
@@ -90,7 +98,10 @@ CREATE TABLE app.messages (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   TYPE = 'USER',
-  FLUSH_POLICY = 'rows:1000,interval:60'
+  STORAGE_ID = 'local',
+  USE_USER_STORAGE = false,
+  FLUSH_POLICY = 'rows:1000,interval:60',
+  COMPRESSION = 'snappy'
 );
 
 CREATE SHARED TABLE app.config (
@@ -98,7 +109,8 @@ CREATE SHARED TABLE app.config (
   value TEXT NOT NULL,
   updated_at TIMESTAMP DEFAULT NOW()
 ) WITH (
-  ACCESS_LEVEL = 'PUBLIC'
+  ACCESS_LEVEL = 'PUBLIC',
+  COMPRESSION = 'zstd'
 );
 
 CREATE STREAM TABLE app.events (
@@ -106,7 +118,10 @@ CREATE STREAM TABLE app.events (
   payload TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 ) WITH (
-  TTL_SECONDS = 30
+  TTL_SECONDS = 30,
+  EVICTION_STRATEGY = 'hybrid',
+  MAX_STREAM_SIZE_BYTES = 1048576,
+  COMPRESSION = 'lz4'
 );
 ```
 
@@ -116,7 +131,27 @@ CREATE STREAM TABLE app.events (
 ALTER TABLE [<namespace>.]<table_name> ADD COLUMN <name> <type> [NOT NULL|NULL] [DEFAULT <value>];
 ALTER TABLE [<namespace>.]<table_name> DROP COLUMN <name>;
 ALTER TABLE [<namespace>.]<table_name> MODIFY COLUMN <name> <type> [NOT NULL|NULL];
-ALTER TABLE [<namespace>.]<table_name> SET TBLPROPERTIES (ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED>');
+ALTER TABLE [<namespace>.]<table_name> SET TBLPROPERTIES (<table_option> = <value>, ...);
+```
+
+`SET TBLPROPERTIES` supports the same type-specific persisted options as `CREATE TABLE`.
+Use `FLUSH_POLICY = NULL` to clear a user/shared flush policy.
+
+Examples:
+
+```sql
+ALTER TABLE app.config
+  SET TBLPROPERTIES (ACCESS_LEVEL = 'PUBLIC', COMPRESSION = 'zstd');
+
+ALTER TABLE app.messages
+  SET TBLPROPERTIES (FLUSH_POLICY = 'rows:5000', USE_USER_STORAGE = true);
+
+ALTER TABLE app.events
+  SET TBLPROPERTIES (
+    TTL_SECONDS = 3600,
+    EVICTION_STRATEGY = 'size_based',
+    MAX_STREAM_SIZE_BYTES = 1048576
+  );
 ```
 
 ### DROP TABLE

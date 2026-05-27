@@ -9,7 +9,7 @@ use kalamdb_commons::{
         schemas::{ColumnDefinition, TableDefinition},
         NamespaceId, TableId, UserId,
     },
-    schemas::{ColumnDefault, TableType},
+    schemas::{ColumnDefault, TableOptions, TableType},
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -19,7 +19,7 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
+use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
 use kalamdb_store::Partition;
 use kalamdb_system::{VectorEngine, VectorIndexState, VectorMetric};
 use kalamdb_vector::{
@@ -436,8 +436,12 @@ impl AlterTableHandler {
         }
 
         // Apply operation and get change description + whether anything actually changed
-        let (change_desc, changed) =
-            apply_alter_operation(&mut table_def, &statement.operation, &table_id)?;
+        let (change_desc, changed) = apply_alter_operation(
+            &self.app_context,
+            &mut table_def,
+            &statement.operation,
+            &table_id,
+        )?;
 
         // Only increment version if actual changes were made
         if changed {
@@ -579,6 +583,7 @@ fn is_system_column(column_name: &str) -> bool {
 /// Apply an ALTER TABLE operation to a table definition
 /// Returns (description, changed) tuple where changed is false if no actual modifications were made
 fn apply_alter_operation(
+    app_context: &Arc<AppContext>,
     table_def: &mut TableDefinition,
     operation: &ColumnOperation,
     table_id: &TableId,
@@ -907,6 +912,9 @@ fn apply_alter_operation(
             }
             Ok((format!("SET ACCESS LEVEL {:?}", access_level), changed))
         },
+        ColumnOperation::SetTableOptions { updates } => {
+            apply_table_property_updates(app_context, table_def, updates)
+        },
         ColumnOperation::CreateVectorIndex {
             column_name,
             metric,
@@ -914,6 +922,172 @@ fn apply_alter_operation(
         ColumnOperation::DropVectorIndex { column_name } => {
             Ok((format!("DROP INDEX {}", column_name), false))
         },
+    }
+}
+
+fn apply_table_property_updates(
+    app_context: &Arc<AppContext>,
+    table_def: &mut TableDefinition,
+    updates: &TablePropertyUpdates,
+) -> Result<(String, bool), KalamDbError> {
+    if let Some(storage_id) = &updates.storage_id {
+        let storages_provider = app_context.system_tables().storages();
+        if storages_provider.get_storage_by_id(storage_id)?.is_none() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage '{}' does not exist",
+                storage_id.as_str()
+            )));
+        }
+    }
+
+    match &mut table_def.table_options {
+        TableOptions::User(opts) => {
+            ensure_no_shared_only_properties(updates, "USER")?;
+            ensure_no_stream_only_properties(updates, "USER")?;
+
+            let mut changed = false;
+            let mut changes = Vec::new();
+
+            if let Some(storage_id) = &updates.storage_id {
+                changed |= &opts.storage_id != storage_id;
+                opts.storage_id = storage_id.clone();
+                changes.push(format!("STORAGE_ID={}", storage_id.as_str()));
+            }
+            if let Some(use_user_storage) = updates.use_user_storage {
+                changed |= opts.use_user_storage != use_user_storage;
+                opts.use_user_storage = use_user_storage;
+                changes.push(format!("USE_USER_STORAGE={}", use_user_storage));
+            }
+            if let Some(flush_policy) = &updates.flush_policy {
+                changed |= &opts.flush_policy != flush_policy;
+                opts.flush_policy = flush_policy.clone();
+                changes.push("FLUSH_POLICY".to_string());
+            }
+            if let Some(compression) = &updates.compression {
+                changed |= &opts.compression != compression;
+                opts.compression = compression.clone();
+                changes.push(format!("COMPRESSION={}", compression));
+            }
+
+            Ok((format_table_property_change(changes), changed))
+        },
+        TableOptions::Shared(opts) => {
+            if updates.use_user_storage.is_some() {
+                return Err(unsupported_table_property("USE_USER_STORAGE", "SHARED"));
+            }
+            ensure_no_stream_only_properties(updates, "SHARED")?;
+
+            let mut changed = false;
+            let mut changes = Vec::new();
+
+            if let Some(storage_id) = &updates.storage_id {
+                changed |= &opts.storage_id != storage_id;
+                opts.storage_id = storage_id.clone();
+                changes.push(format!("STORAGE_ID={}", storage_id.as_str()));
+            }
+            if let Some(access_level) = updates.access_level {
+                let new_level = Some(access_level);
+                changed |= opts.access_level != new_level;
+                opts.access_level = new_level;
+                changes.push(format!("ACCESS_LEVEL={:?}", access_level));
+            }
+            if let Some(flush_policy) = &updates.flush_policy {
+                changed |= &opts.flush_policy != flush_policy;
+                opts.flush_policy = flush_policy.clone();
+                changes.push("FLUSH_POLICY".to_string());
+            }
+            if let Some(compression) = &updates.compression {
+                changed |= &opts.compression != compression;
+                opts.compression = compression.clone();
+                changes.push(format!("COMPRESSION={}", compression));
+            }
+
+            Ok((format_table_property_change(changes), changed))
+        },
+        TableOptions::Stream(opts) => {
+            if updates.storage_id.is_some() {
+                return Err(unsupported_table_property("STORAGE_ID", "STREAM"));
+            }
+            if updates.use_user_storage.is_some() {
+                return Err(unsupported_table_property("USE_USER_STORAGE", "STREAM"));
+            }
+            if updates.flush_policy.is_some() {
+                return Err(unsupported_table_property("FLUSH_POLICY", "STREAM"));
+            }
+            if updates.access_level.is_some() {
+                return Err(unsupported_table_property("ACCESS_LEVEL", "STREAM"));
+            }
+
+            let mut changed = false;
+            let mut changes = Vec::new();
+
+            if let Some(ttl_seconds) = updates.ttl_seconds {
+                changed |= opts.ttl_seconds != ttl_seconds;
+                opts.ttl_seconds = ttl_seconds;
+                changes.push(format!("TTL_SECONDS={}", ttl_seconds));
+            }
+            if let Some(eviction_strategy) = &updates.eviction_strategy {
+                changed |= &opts.eviction_strategy != eviction_strategy;
+                opts.eviction_strategy = eviction_strategy.clone();
+                changes.push(format!("EVICTION_STRATEGY={}", eviction_strategy));
+            }
+            if let Some(max_stream_size_bytes) = updates.max_stream_size_bytes {
+                changed |= opts.max_stream_size_bytes != max_stream_size_bytes;
+                opts.max_stream_size_bytes = max_stream_size_bytes;
+                changes.push(format!("MAX_STREAM_SIZE_BYTES={}", max_stream_size_bytes));
+            }
+            if let Some(compression) = &updates.compression {
+                changed |= &opts.compression != compression;
+                opts.compression = compression.clone();
+                changes.push(format!("COMPRESSION={}", compression));
+            }
+
+            Ok((format_table_property_change(changes), changed))
+        },
+        TableOptions::System(_) => Err(KalamDbError::InvalidOperation(
+            "SYSTEM table options cannot be altered".to_string(),
+        )),
+    }
+}
+
+fn ensure_no_shared_only_properties(
+    updates: &TablePropertyUpdates,
+    table_type: &str,
+) -> Result<(), KalamDbError> {
+    if updates.access_level.is_some() {
+        return Err(unsupported_table_property("ACCESS_LEVEL", table_type));
+    }
+    Ok(())
+}
+
+fn ensure_no_stream_only_properties(
+    updates: &TablePropertyUpdates,
+    table_type: &str,
+) -> Result<(), KalamDbError> {
+    if updates.ttl_seconds.is_some() {
+        return Err(unsupported_table_property("TTL_SECONDS", table_type));
+    }
+    if updates.eviction_strategy.is_some() {
+        return Err(unsupported_table_property("EVICTION_STRATEGY", table_type));
+    }
+    if updates.max_stream_size_bytes.is_some() {
+        return Err(unsupported_table_property("MAX_STREAM_SIZE_BYTES", table_type));
+    }
+    Ok(())
+}
+
+fn unsupported_table_property(property: &str, table_type: &str) -> KalamDbError {
+    KalamDbError::InvalidOperation(format!(
+        "{} is not supported for {} tables",
+        property, table_type
+    ))
+}
+
+fn format_table_property_change(changes: Vec<String>) -> String {
+    if changes.is_empty() {
+        "SET TBLPROPERTIES".to_string()
+    } else {
+        format!("SET TBLPROPERTIES ({})", changes.join(", "))
     }
 }
 
@@ -957,6 +1131,7 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
         ColumnOperation::SetAccessLevel { access_level } => {
             format!("SET ACCESS LEVEL {:?}", access_level)
         },
+        ColumnOperation::SetTableOptions { .. } => "SET TBLPROPERTIES".to_string(),
         ColumnOperation::CreateVectorIndex {
             column_name,
             metric,

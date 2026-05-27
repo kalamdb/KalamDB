@@ -31,6 +31,12 @@ pub struct CreateTableStatement {
     pub deleted_retention_hours: Option<u32>,
     /// TTL for stream tables in seconds (STREAM tables only)
     pub ttl_seconds: Option<u64>,
+    /// Compression algorithm (none, snappy, lz4, zstd)
+    pub compression: Option<String>,
+    /// Stream eviction strategy (time_based, size_based, hybrid)
+    pub eviction_strategy: Option<String>,
+    /// Maximum stream size in bytes (0 = unlimited)
+    pub max_stream_size_bytes: Option<u64>,
     /// If true, don't error if table already exists
     pub if_not_exists: bool,
     /// Access level for SHARED tables (public, private, restricted)

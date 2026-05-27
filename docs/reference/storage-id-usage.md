@@ -96,7 +96,18 @@ WHERE namespace_id = 'app' AND is_latest = true
 ORDER BY table_name;
 ```
 
-## 4) Per-user storage routing (`USE_USER_STORAGE`)
+## 4) Change table storage metadata
+
+For `USER` and `SHARED` tables, admins can update `STORAGE_ID` with `ALTER TABLE ... SET TBLPROPERTIES`:
+
+```sql
+ALTER TABLE app.messages
+    SET TBLPROPERTIES (STORAGE_ID = 's3_prod');
+```
+
+The new storage ID must already exist in `system.storages`.
+
+## 5) Per-user storage routing (`USE_USER_STORAGE`)
 
 For `USER` tables, you can enable per-user storage routing metadata:
 
@@ -112,12 +123,19 @@ CREATE TABLE app.geo_events (
 );
 ```
 
+You can also toggle this after creation:
+
+```sql
+ALTER TABLE app.geo_events
+    SET TBLPROPERTIES (USE_USER_STORAGE = false);
+```
+
 Important rules:
 - `USE_USER_STORAGE` is valid only for `TYPE = 'USER'`.
 - `STORAGE_ID` is still the fallback storage for the table.
 - User preference fields exist in `system.users` (`storage_mode`, `storage_id`).
 
-## 5) Changing storage per user
+## 6) Changing storage per user
 
 Use `CREATE USER` or `ALTER USER` to set per-user storage preferences without writing directly to `system.users`:
 
@@ -138,7 +156,7 @@ Notes:
 - `STORAGE_ID` must reference an existing row in `system.storages`.
 - `SET STORAGE_ID NULL` clears the stored preference while preserving the current `storage_mode`.
 
-## 6) Common failures
+## 7) Common failures
 
 ### Unknown storage ID
 

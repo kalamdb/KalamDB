@@ -384,6 +384,9 @@ pub fn build_table_definition(
             opts.storage_id = storage_id.clone();
             opts.use_user_storage = stmt.use_user_storage;
             opts.flush_policy = stmt.flush_policy.clone();
+            if let Some(compression) = &stmt.compression {
+                opts.compression = compression.clone();
+            }
         },
         (TableOptions::Shared(opts), TableType::Shared) => {
             opts.storage_id = storage_id.clone();
@@ -393,10 +396,22 @@ pub fn build_table_definition(
                 opts.access_level = Some(access);
             }
             opts.flush_policy = stmt.flush_policy.clone();
+            if let Some(compression) = &stmt.compression {
+                opts.compression = compression.clone();
+            }
         },
         (TableOptions::Stream(opts), TableType::Stream) => {
             if let Some(ttl) = stmt.ttl_seconds {
                 opts.ttl_seconds = ttl;
+            }
+            if let Some(compression) = &stmt.compression {
+                opts.compression = compression.clone();
+            }
+            if let Some(eviction_strategy) = &stmt.eviction_strategy {
+                opts.eviction_strategy = eviction_strategy.clone();
+            }
+            if let Some(max_stream_size_bytes) = stmt.max_stream_size_bytes {
+                opts.max_stream_size_bytes = max_stream_size_bytes;
             }
         },
         _ => {},

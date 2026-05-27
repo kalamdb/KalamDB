@@ -234,6 +234,9 @@ mod tests {
             } else {
                 None
             },
+            compression: None,
+            eviction_strategy: None,
+            max_stream_size_bytes: None,
             if_not_exists: false,
             access_level: None,
         }

@@ -137,7 +137,8 @@ function toQueryLogEntry(
   createdAt: string,
 ): QueryLogEntry {
   const rowCount = typeof result.row_count === "number" ? result.row_count : 0;
-  const explicitMessage = typeof result.message === "string" ? result.message.trim() : "";
+  const explicitMessage =
+    typeof result.message === "string" ? result.message.trim() : "";
 
   let message = explicitMessage;
   if (!message) {
@@ -148,7 +149,8 @@ function toQueryLogEntry(
     }
   }
 
-  const asUser = typeof result.as_user === "string" ? result.as_user : undefined;
+  const asUser =
+    typeof result.as_user === "string" ? result.as_user : undefined;
 
   return {
     id: `${createdAt}-stmt-${statementIndex}`,
@@ -162,13 +164,17 @@ function toQueryLogEntry(
   };
 }
 
-function buildQueryLogs(statementResults: RawSqlStatementResult[] | undefined): QueryLogEntry[] {
+function buildQueryLogs(
+  statementResults: RawSqlStatementResult[] | undefined,
+): QueryLogEntry[] {
   if (!statementResults || statementResults.length === 0) {
     return [];
   }
 
   const createdAt = new Date().toISOString();
-  return statementResults.map((result, index) => toQueryLogEntry(result, index, createdAt));
+  return statementResults.map((result, index) =>
+    toQueryLogEntry(result, index, createdAt),
+  );
 }
 
 function hasTabularPayload(result: RawSqlStatementResult): boolean {
@@ -215,6 +221,8 @@ function ensureTable(
       tableType,
       columns: [],
       storageId: null,
+      accessLevel: null,
+      useUserStorage: null,
       version: null,
       options: null,
       comment: null,
@@ -276,6 +284,32 @@ function normalizeNumericValue(value: unknown): number | null {
 
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function normalizeBooleanValue(value: unknown): boolean | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
   }
 
   return null;
@@ -347,9 +381,23 @@ function normalizeTimestampValue(value: unknown): string | number | null {
 
 function applyTableMetadata(
   table: StudioTable,
-  row: Partial<Pick<SystemSchemaRow, "storage_id" | "schema_version" | "options" | "table_comment" | "updated_at" | "created_at">>,
+  row: Partial<
+    Pick<
+      SystemSchemaRow,
+      | "storage_id"
+      | "access_level"
+      | "use_user_storage"
+      | "schema_version"
+      | "options"
+      | "table_comment"
+      | "updated_at"
+      | "created_at"
+    >
+  >,
 ): void {
   table.storageId = normalizeTextValue(row.storage_id);
+  table.accessLevel = normalizeTextValue(row.access_level);
+  table.useUserStorage = normalizeBooleanValue(row.use_user_storage);
   table.version = normalizeNumericValue(row.schema_version);
   table.options = normalizeTableOptions(row.options);
   table.comment = normalizeTextValue(row.table_comment);
@@ -357,16 +405,19 @@ function applyTableMetadata(
   table.createdAt = normalizeTimestampValue(row.created_at);
 }
 
-function normalizeSchemaColumns(value: SystemSchemaRow["columns"]): StudioTable["columns"] {
-  const parsedValue = typeof value === "string"
-    ? (() => {
-      try {
-        return JSON.parse(value) as unknown;
-      } catch {
-        return null;
-      }
-    })()
-    : value;
+function normalizeSchemaColumns(
+  value: SystemSchemaRow["columns"],
+): StudioTable["columns"] {
+  const parsedValue =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : value;
 
   if (!Array.isArray(parsedValue)) {
     return [];
@@ -389,10 +440,14 @@ function normalizeSchemaColumns(value: SystemSchemaRow["columns"]): StudioTable[
         dataType: normalizeTextValue(record.data_type) ?? "unknown",
         isNullable: normalizeNullable(record.is_nullable ?? record.nullable),
         isPrimaryKey: Boolean(record.is_primary_key ?? record.primary_key),
-        ordinal: normalizeNumericValue(record.ordinal_position ?? record.ordinal) ?? index + 1,
+        ordinal:
+          normalizeNumericValue(record.ordinal_position ?? record.ordinal) ??
+          index + 1,
       };
     })
-    .filter((column): column is StudioTable["columns"][number] => column !== null)
+    .filter(
+      (column): column is StudioTable["columns"][number] => column !== null,
+    )
     .sort((left, right) => left.ordinal - right.ordinal);
 }
 
@@ -410,8 +465,14 @@ function inferExplorerTableType(
     return "system";
   }
 
-  const normalizedTableType = String(tableType ?? "").trim().toLowerCase();
-  if (normalizedTableType === "stream" || normalizedTableType === "shared" || normalizedTableType === "user") {
+  const normalizedTableType = String(tableType ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    normalizedTableType === "stream" ||
+    normalizedTableType === "shared" ||
+    normalizedTableType === "user"
+  ) {
     return normalizedTableType;
   }
   if (normalizedTableType.includes("view")) {
@@ -468,7 +529,9 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
       tables: namespace.tables
         .map((table) => ({
           ...table,
-          columns: [...table.columns].sort((left, right) => left.ordinal - right.ordinal),
+          columns: [...table.columns].sort(
+            (left, right) => left.ordinal - right.ordinal,
+          ),
         }))
         .sort((left, right) => left.name.localeCompare(right.name)),
     }))
@@ -477,7 +540,9 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
   return sortedNamespaces;
 }
 
-export async function executeSqlStudioQuery(sql: string): Promise<QueryResultData> {
+export async function executeSqlStudioQuery(
+  sql: string,
+): Promise<QueryResultData> {
   const response = await executeQuery(sql);
 
   if (response.status === "error" && response.error) {
@@ -488,13 +553,15 @@ export async function executeSqlStudioQuery(sql: string): Promise<QueryResultDat
       schema: [],
       tookMs: response.took ?? 0,
       rowCount: 0,
-      logs: [{
-        id: `${createdAt}-error`,
-        level: "error",
-        message: response.error.message,
-        response: response.error,
-        createdAt,
-      }],
+      logs: [
+        {
+          id: `${createdAt}-error`,
+          level: "error",
+          message: response.error.message,
+          response: response.error,
+          createdAt,
+        },
+      ],
       errorMessage: response.error.message,
     };
   }
@@ -504,7 +571,11 @@ export async function executeSqlStudioQuery(sql: string): Promise<QueryResultDat
   const firstResult = statementResults[0];
 
   const schema = normalizeSchema(tabularResult?.schema);
-  const rows = rowsToObjects(schema, tabularResult?.rows, tabularResult?.named_rows);
+  const rows = rowsToObjects(
+    schema,
+    tabularResult?.rows,
+    tabularResult?.named_rows,
+  );
   const logs = buildQueryLogs(statementResults);
 
   return {
