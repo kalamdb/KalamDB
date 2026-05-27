@@ -6,8 +6,8 @@
 //! - ALTER TABLE messages MODIFY COLUMN age BIGINT
 
 use kalamdb_commons::{
-    models::{datatypes::KalamDataType, NamespaceId, TableAccess, TableName},
-    schemas::ColumnDefault,
+    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableAccess, TableName},
+    schemas::{policy::FlushPolicy, ColumnDefault},
 };
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
@@ -58,6 +58,8 @@ pub enum ColumnOperation {
     },
     /// Set access level (SHARED tables only)
     SetAccessLevel { access_level: TableAccess },
+    /// Set one or more table-level options.
+    SetTableOptions { updates: TablePropertyUpdates },
     /// Create or enable a vector index for an embedding column.
     CreateVectorIndex {
         column_name: String,
@@ -67,8 +69,45 @@ pub enum ColumnOperation {
     DropVectorIndex { column_name: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TablePropertyUpdates {
+    pub storage_id: Option<StorageId>,
+    pub use_user_storage: Option<bool>,
+    pub flush_policy: Option<Option<FlushPolicy>>,
+    pub ttl_seconds: Option<u64>,
+    pub access_level: Option<TableAccess>,
+    pub compression: Option<String>,
+    pub eviction_strategy: Option<String>,
+    pub max_stream_size_bytes: Option<u64>,
+}
+
+impl TablePropertyUpdates {
+    fn is_empty(&self) -> bool {
+        self.storage_id.is_none()
+            && self.use_user_storage.is_none()
+            && self.flush_policy.is_none()
+            && self.ttl_seconds.is_none()
+            && self.access_level.is_none()
+            && self.compression.is_none()
+            && self.eviction_strategy.is_none()
+            && self.max_stream_size_bytes.is_none()
+    }
+
+    fn is_access_level_only(&self) -> bool {
+        self.access_level.is_some()
+            && self.storage_id.is_none()
+            && self.use_user_storage.is_none()
+            && self.flush_policy.is_none()
+            && self.ttl_seconds.is_none()
+            && self.compression.is_none()
+            && self.eviction_strategy.is_none()
+            && self.max_stream_size_bytes.is_none()
+    }
+}
+
 static SET_ACCESS_LEVEL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)SET\s+ACCESS\s+LEVEL\s+(PUBLIC|PRIVATE|RESTRICTED)").unwrap());
+static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
 static ALTER_CREATE_VECTOR_INDEX_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)^\s*ALTER\s+TABLE\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)\s+CREATE\s+(?:VECTOR\s+)?INDEX\s+([a-zA-Z_][\w]*)\s*(?:USING\s+(COSINE|L2|DOT))?\s*;?\s*$",
@@ -281,7 +320,7 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
             new_column_name: new_column_name.value.clone(),
         }),
         AlterTableOperation::SetTblProperties { table_properties } => {
-            build_set_access_level_operation(table_properties)
+            build_set_table_properties_operation(table_properties)
         },
         _ => Err("Unsupported ALTER TABLE operation".to_string()),
     }
@@ -365,13 +404,71 @@ fn build_alter_column_operation(
     }
 }
 
-fn build_set_access_level_operation(table_properties: &[SqlOption]) -> DdlResult<ColumnOperation> {
-    for option in table_properties {
-        if let Some(access_level) = extract_access_level(option)? {
+fn build_set_table_properties_operation(
+    table_properties: &[SqlOption],
+) -> DdlResult<ColumnOperation> {
+    let updates = extract_table_property_updates(table_properties)?;
+    if updates.is_empty() {
+        return Err("At least one table property is required".to_string());
+    }
+
+    if updates.is_access_level_only() {
+        if let Some(access_level) = updates.access_level {
             return Ok(ColumnOperation::SetAccessLevel { access_level });
         }
     }
-    Err("ACCESS_LEVEL property is required for SET ACCESS LEVEL".to_string())
+
+    Ok(ColumnOperation::SetTableOptions { updates })
+}
+
+fn extract_table_property_updates(
+    table_properties: &[SqlOption],
+) -> DdlResult<TablePropertyUpdates> {
+    let mut updates = TablePropertyUpdates::default();
+
+    for option in table_properties {
+        let SqlOption::KeyValue { key, value } = option else {
+            return Err("Only key/value table properties are supported".to_string());
+        };
+
+        match key.value.to_uppercase().as_str() {
+            "ACCESS_LEVEL" => {
+                updates.access_level = Some(parse_access_level_value(value)?);
+            },
+            "STORAGE_ID" => {
+                let storage_id = expr_to_literal(value);
+                if !RE_STORAGE_ID.is_match(&storage_id) {
+                    return Err(format!(
+                        "Invalid STORAGE_ID '{}'. Only alphanumeric, underscore, and hyphen allowed.",
+                        storage_id
+                    ));
+                }
+                updates.storage_id = Some(StorageId::from(storage_id));
+            },
+            "USE_USER_STORAGE" => {
+                updates.use_user_storage = Some(parse_bool_property(value)?);
+            },
+            "FLUSH_POLICY" => {
+                updates.flush_policy = Some(parse_optional_flush_policy(value)?);
+            },
+            "TTL_SECONDS" => {
+                updates.ttl_seconds = Some(parse_u64_property(value, "TTL_SECONDS")?);
+            },
+            "COMPRESSION" => {
+                updates.compression = Some(parse_compression_property(value)?);
+            },
+            "EVICTION_STRATEGY" => {
+                updates.eviction_strategy = Some(parse_eviction_strategy_property(value)?);
+            },
+            "MAX_STREAM_SIZE_BYTES" => {
+                updates.max_stream_size_bytes =
+                    Some(parse_u64_property(value, "MAX_STREAM_SIZE_BYTES")?);
+            },
+            other => return Err(format!("Unknown table property '{}'", other)),
+        }
+    }
+
+    Ok(updates)
 }
 
 fn extract_column_options(
@@ -509,27 +606,96 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-fn extract_access_level(option: &SqlOption) -> DdlResult<Option<TableAccess>> {
-    if let SqlOption::KeyValue { key, value } = option {
-        if key.value.eq_ignore_ascii_case("ACCESS_LEVEL") {
-            let normalized = expr_to_literal(value).to_uppercase();
-            let access_level = match normalized.as_str() {
-                "PUBLIC" => TableAccess::Public,
-                "PRIVATE" => TableAccess::Private,
-                "RESTRICTED" => TableAccess::Restricted,
-                "DBA" => TableAccess::Dba,
-                other => {
-                    return Err(format!(
-                        "Invalid ACCESS_LEVEL '{}'. Supported values: PUBLIC, PRIVATE, \
-                         RESTRICTED, DBA",
-                        other
-                    ))
-                },
-            };
-            return Ok(Some(access_level));
+fn parse_access_level_value(value: &Expr) -> DdlResult<TableAccess> {
+    let normalized = expr_to_literal(value).to_uppercase();
+    match normalized.as_str() {
+        "PUBLIC" => Ok(TableAccess::Public),
+        "PRIVATE" => Ok(TableAccess::Private),
+        "RESTRICTED" => Ok(TableAccess::Restricted),
+        "DBA" => Ok(TableAccess::Dba),
+        other => Err(format!(
+            "Invalid ACCESS_LEVEL '{}'. Supported values: PUBLIC, PRIVATE, RESTRICTED, DBA",
+            other
+        )),
+    }
+}
+
+fn parse_bool_property(value: &Expr) -> DdlResult<bool> {
+    match expr_to_literal(value).to_uppercase().as_str() {
+        "TRUE" => Ok(true),
+        "FALSE" => Ok(false),
+        other => Err(format!("Invalid boolean table property '{}'", other)),
+    }
+}
+
+fn parse_optional_flush_policy(value: &Expr) -> DdlResult<Option<FlushPolicy>> {
+    let literal = expr_to_literal(value);
+    if literal.eq_ignore_ascii_case("NULL") || literal.eq_ignore_ascii_case("DEFAULT") {
+        return Ok(None);
+    }
+    parse_flush_policy_literal(&literal).map(Some)
+}
+
+fn parse_flush_policy_literal(value: &str) -> DdlResult<FlushPolicy> {
+    let mut row_limit = None;
+    let mut interval_seconds = None;
+
+    for part in value.split(',') {
+        let mut pieces = part.splitn(2, ':');
+        let key = pieces.next().unwrap_or_default().trim().to_ascii_lowercase();
+        let entry = pieces.next().unwrap_or_default().trim();
+        if key.is_empty() || entry.is_empty() {
+            return Err(format!(
+                "Invalid FLUSH_POLICY format '{}'. Expected rows:N, interval:N, or rows:N,interval:N",
+                value
+            ));
+        }
+
+        match key.as_str() {
+            "rows" | "row_limit" => {
+                row_limit =
+                    Some(entry.parse::<u32>().map_err(|_| "Invalid row limit in FLUSH_POLICY")?);
+            },
+            "interval" | "interval_seconds" => {
+                interval_seconds =
+                    Some(entry.parse::<u32>().map_err(|_| "Invalid interval in FLUSH_POLICY")?);
+            },
+            other => return Err(format!("Unknown FLUSH_POLICY key '{}'", other)),
         }
     }
-    Ok(None)
+
+    match (row_limit, interval_seconds) {
+        (Some(rows), Some(interval)) => FlushPolicy::combined(rows, interval),
+        (Some(rows), None) => FlushPolicy::row_limit(rows),
+        (None, Some(interval)) => FlushPolicy::time_interval(interval),
+        (None, None) => Err("FLUSH_POLICY must specify 'rows' or 'interval'".to_string()),
+    }
+}
+
+fn parse_u64_property(value: &Expr, property_name: &str) -> DdlResult<u64> {
+    expr_to_literal(value).parse().map_err(|_| format!("Invalid {}", property_name))
+}
+
+fn parse_compression_property(value: &Expr) -> DdlResult<String> {
+    let normalized = expr_to_literal(value).trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "none" | "snappy" | "lz4" | "zstd" => Ok(normalized),
+        _ => Err(format!(
+            "Invalid COMPRESSION '{}'. Supported: none, snappy, lz4, zstd",
+            normalized
+        )),
+    }
+}
+
+fn parse_eviction_strategy_property(value: &Expr) -> DdlResult<String> {
+    let normalized = expr_to_literal(value).trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "time_based" | "size_based" | "hybrid" => Ok(normalized),
+        _ => Err(format!(
+            "Invalid EVICTION_STRATEGY '{}'. Supported: time_based, size_based, hybrid",
+            normalized
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -842,6 +1008,44 @@ mod tests {
             &test_namespace(),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_set_tblproperties_user_options() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE profiles SET TBLPROPERTIES (STORAGE_ID='local-ssd', USE_USER_STORAGE=true, FLUSH_POLICY='rows:500', COMPRESSION='zstd')",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetTableOptions { updates } => {
+                assert_eq!(updates.storage_id.unwrap().as_str(), "local-ssd");
+                assert_eq!(updates.use_user_storage, Some(true));
+                assert!(matches!(updates.flush_policy, Some(Some(FlushPolicy::RowLimit { .. }))));
+                assert_eq!(updates.compression.as_deref(), Some("zstd"));
+            },
+            _ => panic!("Expected SetTableOptions operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_tblproperties_stream_options() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE events SET TBLPROPERTIES (TTL_SECONDS=7200, EVICTION_STRATEGY='hybrid', MAX_STREAM_SIZE_BYTES=1048576, COMPRESSION='lz4')",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetTableOptions { updates } => {
+                assert_eq!(updates.ttl_seconds, Some(7200));
+                assert_eq!(updates.eviction_strategy.as_deref(), Some("hybrid"));
+                assert_eq!(updates.max_stream_size_bytes, Some(1_048_576));
+                assert_eq!(updates.compression.as_deref(), Some("lz4"));
+            },
+            _ => panic!("Expected SetTableOptions operation"),
+        }
     }
 
     #[test]

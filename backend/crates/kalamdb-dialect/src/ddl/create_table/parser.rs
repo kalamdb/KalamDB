@@ -113,6 +113,9 @@ impl CreateTableStatement {
                 let mut flush_policy = None;
                 let mut deleted_retention_hours = None;
                 let mut ttl_seconds = None;
+                let mut compression = None;
+                let mut eviction_strategy = None;
+                let mut max_stream_size_bytes = None;
                 let mut access_level = None;
 
                 // Handle options (was with_options)
@@ -248,6 +251,19 @@ impl CreateTableStatement {
                                     },
                                 };
                             },
+                            "COMPRESSION" => {
+                                compression = Some(parse_compression_option(&value_str)?);
+                            },
+                            "EVICTION_STRATEGY" => {
+                                eviction_strategy =
+                                    Some(parse_eviction_strategy_option(&value_str)?);
+                            },
+                            "MAX_STREAM_SIZE_BYTES" => {
+                                let bytes: u64 = value_str
+                                    .parse()
+                                    .map_err(|_| "Invalid MAX_STREAM_SIZE_BYTES")?;
+                                max_stream_size_bytes = Some(bytes);
+                            },
                             _ => return Err(format!("Unknown table option '{}'", key_str)),
                         }
                     }
@@ -263,8 +279,26 @@ impl CreateTableStatement {
                 if table_type != TableType::Shared && access_level.is_some() {
                     return Err("ACCESS_LEVEL is only supported for SHARED tables".to_string());
                 }
+                if table_type == TableType::Stream && storage_id.is_some() {
+                    return Err(
+                        "STORAGE_ID is only supported for USER and SHARED tables".to_string()
+                    );
+                }
+                if table_type == TableType::Stream && flush_policy.is_some() {
+                    return Err(
+                        "FLUSH_POLICY is only supported for USER and SHARED tables".to_string()
+                    );
+                }
                 if table_type != TableType::User && use_user_storage {
                     return Err("USE_USER_STORAGE is only supported for USER tables".to_string());
+                }
+                if table_type != TableType::Stream && eviction_strategy.is_some() {
+                    return Err("EVICTION_STRATEGY is only supported for STREAM tables".to_string());
+                }
+                if table_type != TableType::Stream && max_stream_size_bytes.is_some() {
+                    return Err(
+                        "MAX_STREAM_SIZE_BYTES is only supported for STREAM tables".to_string()
+                    );
                 }
 
                 // 4. Parse columns and constraints
@@ -441,12 +475,34 @@ impl CreateTableStatement {
                     flush_policy,
                     deleted_retention_hours,
                     ttl_seconds,
+                    compression,
+                    eviction_strategy,
+                    max_stream_size_bytes,
                     if_not_exists,
                     access_level,
                 })
             },
             _ => Err("Not a CREATE TABLE statement".to_string()),
         }
+    }
+}
+
+fn parse_compression_option(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "none" | "snappy" | "lz4" | "zstd" => Ok(normalized),
+        _ => Err(format!("Invalid COMPRESSION '{}'. Supported: none, snappy, lz4, zstd", value)),
+    }
+}
+
+fn parse_eviction_strategy_option(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "time_based" | "size_based" | "hybrid" => Ok(normalized),
+        _ => Err(format!(
+            "Invalid EVICTION_STRATEGY '{}'. Supported: time_based, size_based, hybrid",
+            value
+        )),
     }
 }
 
@@ -579,6 +635,64 @@ WITH (
         assert_eq!(stmt.namespace_id.as_str(), "sales");
         assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
         assert!(matches!(stmt.flush_policy, Some(FlushPolicy::Combined { .. })));
+    }
+
+    #[test]
+    fn create_table_parses_type_specific_options() {
+        let user_sql = r#"
+CREATE TABLE sales.user_profile (
+    id BIGINT PRIMARY KEY,
+    name TEXT
+) WITH (
+    TYPE = 'USER',
+    STORAGE_ID = 'local-ssd',
+    USE_USER_STORAGE = true,
+    FLUSH_POLICY = 'rows:1000',
+    COMPRESSION = 'zstd'
+);
+"#;
+        let stmt = CreateTableStatement::parse(user_sql, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.storage_id.unwrap().as_str(), "local-ssd");
+        assert!(stmt.use_user_storage);
+        assert!(matches!(stmt.flush_policy, Some(FlushPolicy::RowLimit { .. })));
+        assert_eq!(stmt.compression.as_deref(), Some("zstd"));
+
+        let stream_sql = r#"
+CREATE TABLE sales.events (
+    event_id TEXT,
+    payload JSON
+) WITH (
+    TYPE = 'STREAM',
+    TTL_SECONDS = 3600,
+    EVICTION_STRATEGY = 'hybrid',
+    MAX_STREAM_SIZE_BYTES = 1048576,
+    COMPRESSION = 'lz4'
+);
+"#;
+        let stmt = CreateTableStatement::parse(stream_sql, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.table_type, TableType::Stream);
+        assert_eq!(stmt.ttl_seconds, Some(3600));
+        assert_eq!(stmt.eviction_strategy.as_deref(), Some("hybrid"));
+        assert_eq!(stmt.max_stream_size_bytes, Some(1_048_576));
+        assert_eq!(stmt.compression.as_deref(), Some("lz4"));
+    }
+
+    #[test]
+    fn create_table_rejects_unsupported_type_options() {
+        let err = CreateTableStatement::parse(
+            "CREATE TABLE sales.bad_user (id BIGINT PRIMARY KEY) WITH (TYPE='USER', TTL_SECONDS=60)",
+            DEFAULT_NS,
+        )
+        .unwrap_err();
+        assert!(err.contains("TTL_SECONDS is only supported for STREAM tables"));
+
+        let err = CreateTableStatement::parse(
+            "CREATE TABLE sales.bad_stream (id TEXT) WITH (TYPE='STREAM', TTL_SECONDS=60, ACCESS_LEVEL='PUBLIC')",
+            DEFAULT_NS,
+        )
+        .unwrap_err();
+        assert!(err.contains("ACCESS_LEVEL is only supported for SHARED tables"));
     }
 
     #[test]

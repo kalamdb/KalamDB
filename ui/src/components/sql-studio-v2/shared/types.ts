@@ -23,6 +23,8 @@ export interface StudioTable {
   tableType: string;
   columns: StudioColumn[];
   storageId?: string | null;
+  accessLevel?: string | null;
+  useUserStorage?: boolean | null;
   version?: number | null;
   options?: StudioTableOptions | null;
   comment?: string | null;

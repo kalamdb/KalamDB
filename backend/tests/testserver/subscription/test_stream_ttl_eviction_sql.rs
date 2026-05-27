@@ -29,8 +29,7 @@ async fn test_stream_ttl_eviction_from_sql_script() -> anyhow::Result<()> {
                         timestamp BIGINT
                     ) WITH (
                         TYPE = 'STREAM',
-                        TTL_SECONDS = 2,
-                        STORAGE_ID = 'local'
+                        TTL_SECONDS = 2
                     )",
             ns, table
         ))

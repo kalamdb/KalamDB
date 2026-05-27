@@ -3,6 +3,14 @@ import { Plus, AlertCircle, Trash2, Pencil } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/toaster-provider";
 import {
   selectEditorMode,
@@ -10,11 +18,32 @@ import {
   selectEditorOriginal,
   selectEditorSelectedTableKey,
 } from "@/features/sql-studio/state/selectors";
-import type { StudioNamespace, StudioTable } from "@/components/sql-studio-v2/shared/types";
-import { discardEdit, setDraft, startEditTable } from "@/features/sql-studio/state/editorTabSlice";
+import type {
+  StudioNamespace,
+  StudioTable,
+} from "@/components/sql-studio-v2/shared/types";
+import {
+  discardEdit,
+  setDraft,
+  startEditTable,
+} from "@/features/sql-studio/state/editorTabSlice";
 import { ColumnRow } from "./ColumnRow";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { isReadOnlyNamespace, newDraftColumn, tableToDraft, type DraftColumn } from "./types";
+import {
+  ACCESS_LEVEL_OPTIONS,
+  COMPRESSION_OPTIONS,
+  EVICTION_STRATEGY_OPTIONS,
+  FLUSH_POLICY_KINDS,
+  TABLE_TYPES,
+  defaultTableOptions,
+  isReadOnlyNamespace,
+  newDraftColumn,
+  tableToDraft,
+  type DraftColumn,
+  type DraftTable,
+  type DraftTableOptions,
+  type DraftTableType,
+} from "./types";
 import {
   generateAlterTableSql,
   generateCreateTableSql,
@@ -32,16 +61,248 @@ import {
 import equal from "fast-deep-equal";
 import { executeSqlStudioQuery } from "@/services/sqlStudioService";
 
-function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function MetaRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div className="flex items-baseline gap-2 overflow-hidden">
       <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
-      <span className={`truncate ${mono ? "font-mono text-[11px]" : ""}`} title={value}>
+      <span
+        className={`truncate ${mono ? "font-mono text-[11px]" : ""}`}
+        title={value}
+      >
         {value}
       </span>
     </div>
+  );
+}
+
+function titleCase(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1).replace(/_/g, " ")}`;
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+  testId,
+}: {
+  label: string;
+  value: string;
+  options: readonly string[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  testId?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger size="sm" className="h-8 text-xs" data-testid={testId}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {titleCase(option)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
+
+function TableOptionsEditor({
+  draft,
+  disabled,
+  onChange,
+}: {
+  draft: DraftTable;
+  disabled?: boolean;
+  onChange: (options: DraftTableOptions) => void;
+}) {
+  const options = draft.options;
+  const update = (patch: Partial<DraftTableOptions>) =>
+    onChange({ ...options, ...patch });
+  const showFlushRows =
+    options.flushPolicyKind === "rows" ||
+    options.flushPolicyKind === "combined";
+  const showFlushInterval =
+    options.flushPolicyKind === "interval" ||
+    options.flushPolicyKind === "combined";
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium">Options</h3>
+      <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/10 p-3 sm:grid-cols-2 lg:grid-cols-3">
+        {(draft.tableType === "user" || draft.tableType === "shared") && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              Storage ID
+            </span>
+            <Input
+              value={options.storageId}
+              onChange={(e) => update({ storageId: e.target.value })}
+              disabled={disabled}
+              className="h-8 text-xs"
+              data-testid="table-option-storage-id"
+            />
+          </label>
+        )}
+
+        {draft.tableType === "user" && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              Use user storage
+            </span>
+            <Switch
+              size="sm"
+              checked={options.useUserStorage}
+              disabled={disabled}
+              onCheckedChange={(checked) => update({ useUserStorage: checked })}
+              aria-label="Use user storage"
+              data-testid="table-option-use-user-storage"
+            />
+          </div>
+        )}
+
+        {draft.tableType === "shared" && (
+          <SelectField
+            label="Access level"
+            value={options.accessLevel}
+            options={ACCESS_LEVEL_OPTIONS}
+            disabled={disabled}
+            onChange={(value) =>
+              update({ accessLevel: value as DraftTableOptions["accessLevel"] })
+            }
+            testId="table-option-access-level"
+          />
+        )}
+
+        {(draft.tableType === "user" || draft.tableType === "shared") && (
+          <SelectField
+            label="Flush policy"
+            value={options.flushPolicyKind}
+            options={FLUSH_POLICY_KINDS}
+            disabled={disabled}
+            onChange={(value) =>
+              update({
+                flushPolicyKind: value as DraftTableOptions["flushPolicyKind"],
+              })
+            }
+            testId="table-option-flush-policy"
+          />
+        )}
+
+        {(draft.tableType === "user" || draft.tableType === "shared") &&
+          showFlushRows && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Flush rows
+              </span>
+              <Input
+                type="number"
+                min={1}
+                max={999999}
+                value={options.flushRows}
+                onChange={(e) => update({ flushRows: e.target.value })}
+                disabled={disabled}
+                className="h-8 text-xs"
+                data-testid="table-option-flush-rows"
+              />
+            </label>
+          )}
+
+        {(draft.tableType === "user" || draft.tableType === "shared") &&
+          showFlushInterval && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Flush interval
+              </span>
+              <Input
+                type="number"
+                min={1}
+                max={86399}
+                value={options.flushIntervalSeconds}
+                onChange={(e) =>
+                  update({ flushIntervalSeconds: e.target.value })
+                }
+                disabled={disabled}
+                className="h-8 text-xs"
+                data-testid="table-option-flush-interval"
+              />
+            </label>
+          )}
+
+        {draft.tableType === "stream" && (
+          <>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                TTL seconds
+              </span>
+              <Input
+                type="number"
+                min={1}
+                value={options.ttlSeconds}
+                onChange={(e) => update({ ttlSeconds: e.target.value })}
+                disabled={disabled}
+                className="h-8 text-xs"
+                data-testid="table-option-ttl-seconds"
+              />
+            </label>
+            <SelectField
+              label="Eviction strategy"
+              value={options.evictionStrategy}
+              options={EVICTION_STRATEGY_OPTIONS}
+              disabled={disabled}
+              onChange={(value) =>
+                update({
+                  evictionStrategy:
+                    value as DraftTableOptions["evictionStrategy"],
+                })
+              }
+              testId="table-option-eviction-strategy"
+            />
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Max stream size
+              </span>
+              <Input
+                type="number"
+                min={0}
+                value={options.maxStreamSizeBytes}
+                onChange={(e) => update({ maxStreamSizeBytes: e.target.value })}
+                disabled={disabled}
+                className="h-8 text-xs"
+                data-testid="table-option-max-stream-size"
+              />
+            </label>
+          </>
+        )}
+
+        <SelectField
+          label="Compression"
+          value={options.compression}
+          options={COMPRESSION_OPTIONS}
+          disabled={disabled}
+          onChange={(value) =>
+            update({ compression: value as DraftTableOptions["compression"] })
+          }
+          testId="table-option-compression"
+        />
+      </div>
+    </section>
   );
 }
 
@@ -65,7 +326,11 @@ interface EditTableFormProps {
   isSchemaRefreshing?: boolean;
 }
 
-export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditTableFormProps) {
+export function EditTableForm({
+  schema,
+  onAfterSave,
+  isSchemaRefreshing,
+}: EditTableFormProps) {
   const dispatch = useAppDispatch();
   const mode = useAppSelector(selectEditorMode);
   const draft = useAppSelector(selectEditorDraft);
@@ -125,7 +390,9 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
   const [showErrors, setShowErrors] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
-  const [reloadKeyAfterRefresh, setReloadKeyAfterRefresh] = useState<string | null>(null);
+  const [reloadKeyAfterRefresh, setReloadKeyAfterRefresh] = useState<
+    string | null
+  >(null);
   const { notify } = useToast();
   const { openSqlPreview } = useSqlPreview();
   useEffect(() => {
@@ -136,7 +403,9 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
     if (!reloadKeyAfterRefresh) return;
     if (isSchemaRefreshing) return;
     const [ns, name] = reloadKeyAfterRefresh.split(".");
-    const fresh = schema.find((n) => n.name === ns)?.tables.find((t) => t.name === name);
+    const fresh = schema
+      .find((n) => n.name === ns)
+      ?.tables.find((t) => t.name === name);
     if (fresh) {
       dispatch(
         startEditTable({
@@ -158,7 +427,10 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
         </div>
         <p className="text-base font-medium">No table selected</p>
         <p className="max-w-md text-sm text-muted-foreground">
-          Pick a table from the sidebar to edit its schema, or use the <span className="font-medium">+</span> next to <span className="font-medium">Tables</span> in the sidebar to create one.
+          Pick a table from the sidebar to edit its schema, or use the{" "}
+          <span className="font-medium">+</span> next to{" "}
+          <span className="font-medium">Tables</span> in the sidebar to create
+          one.
         </p>
       </div>
     );
@@ -199,6 +471,22 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
     } else {
       updateDraftColumn({ ...col, isDeleted: !col.isDeleted });
     }
+  };
+
+  const handleTableTypeChange = (value: string) => {
+    const tableType = value as DraftTableType;
+    const defaults = defaultTableOptions(tableType);
+    dispatch(
+      setDraft({
+        ...draft,
+        tableType,
+        options: {
+          ...defaults,
+          storageId: draft.options.storageId || defaults.storageId,
+          compression: draft.options.compression,
+        },
+      }),
+    );
   };
 
   const handleSave = () => {
@@ -255,7 +543,8 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
     openSqlPreview({
       sql,
       title: `Drop ${fqn}`,
-      description: "This will permanently delete the table and all of its data.",
+      description:
+        "This will permanently delete the table and all of its data.",
       onExecute: executeSqlPreviewStatement,
       onComplete: async () => {
         notify({ title: `Dropped ${fqn}`, variant: "success" });
@@ -272,7 +561,11 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
       <div className="flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold">
-            {isReadOnly ? "View Table" : isCreating ? "New Table" : "Edit Table"}
+            {isReadOnly
+              ? "View Table"
+              : isCreating
+                ? "New Table"
+                : "Edit Table"}
           </h2>
           <p className="text-xs text-muted-foreground">
             {isCreating
@@ -336,7 +629,8 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
         <div className="space-y-6 px-6 py-4">
           {isReadOnly && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              <strong>Read-only:</strong> {draft.namespace} is a KalamDB-managed namespace. You can browse the schema but not modify it.
+              <strong>Read-only:</strong> {draft.namespace} is a KalamDB-managed
+              namespace. You can browse the schema but not modify it.
             </div>
           )}
 
@@ -363,27 +657,50 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                 </span>
               )}
             </div>
+            <SelectField
+              label="Table type"
+              value={draft.tableType}
+              options={TABLE_TYPES}
+              disabled={isEditing || isReadOnly}
+              onChange={handleTableTypeChange}
+              testId="table-type-select"
+            />
             <label className="flex flex-col gap-1.5">
               <h3 className="text-sm font-medium">Table name</h3>
               <Input
                 value={draft.name}
-                onChange={(e) => dispatch(setDraft({ ...draft, name: e.target.value }))}
+                onChange={(e) =>
+                  dispatch(setDraft({ ...draft, name: e.target.value }))
+                }
                 disabled={isEditing}
                 placeholder="e.g. users"
                 className="h-9 text-sm"
                 autoFocus={isCreating}
               />
               {showErrors && validation?.name && (
-                <span className="text-[11px] text-destructive">{validation.name}</span>
+                <span className="text-[11px] text-destructive">
+                  {validation.name}
+                </span>
               )}
             </label>
+            <TableOptionsEditor
+              draft={draft}
+              disabled={isReadOnly}
+              onChange={(options) => dispatch(setDraft({ ...draft, options }))}
+            />
           </section>
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">Columns</h3>
               {!isReadOnly && (
-                <Button type="button" variant="secondary" size="sm" onClick={addColumn} className="gap-1.5 text-xs">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={addColumn}
+                  className="gap-1.5 text-xs"
+                >
                   <Plus className="h-3.5 w-3.5" />
                   Add column
                 </Button>
@@ -410,7 +727,11 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                       isEditingExistingTable={isEditing}
                       readOnly={isReadOnly}
                       autoFocusName={col.id === focusColumnId}
-                      error={showErrors ? validation?.columns[col.id] ?? null : null}
+                      error={
+                        showErrors
+                          ? (validation?.columns[col.id] ?? null)
+                          : null
+                      }
                       onChange={updateDraftColumn}
                       onDelete={() => deleteColumn(col)}
                     />
@@ -422,7 +743,12 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                           <p className="text-xs text-muted-foreground">
                             This table has no columns yet.
                           </p>
-                          <Button type="button" size="sm" onClick={addColumn} className="gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={addColumn}
+                            className="gap-1.5"
+                          >
                             <Plus className="h-3.5 w-3.5" />
                             Add your first column
                           </Button>
@@ -432,7 +758,10 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                   )}
                   {liveColumns.length === 0 && isReadOnly && (
                     <tr>
-                      <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                      <td
+                        colSpan={7}
+                        className="px-3 py-6 text-center text-muted-foreground"
+                      >
                         No columns.
                       </td>
                     </tr>
@@ -442,9 +771,9 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
             </div>
             {isEditing && (
               <p className="text-[11px] text-muted-foreground">
-                Note: primary-key and unique flags can't be changed on existing columns
-                (KalamDB doesn't support those ALTERs). You can rename columns, change type,
-                nullable and default, or add/drop columns.
+                Note: primary-key and unique flags can't be changed on existing
+                columns (KalamDB doesn't support those ALTERs). You can rename
+                columns, change type, nullable and default, or add/drop columns.
               </p>
             )}
           </section>
@@ -466,7 +795,11 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
                 />
                 <MetaRow
                   label="Version"
-                  value={selectedTable.version != null ? String(selectedTable.version) : "—"}
+                  value={
+                    selectedTable.version != null
+                      ? String(selectedTable.version)
+                      : "—"
+                  }
                 />
                 <MetaRow
                   label="Storage ID"
@@ -484,7 +817,6 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
               </div>
             </section>
           )}
-
         </div>
       </div>
 
@@ -509,8 +841,6 @@ export function EditTableForm({ schema, onAfterSave, isSchemaRefreshing }: EditT
         }}
         onClose={() => setShowDiscardConfirm(false)}
       />
-
     </div>
   );
 }
-

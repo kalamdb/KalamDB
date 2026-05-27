@@ -123,6 +123,8 @@ mod smoke_test_backup_restore;
 mod smoke_test_datatype_preservation;
 #[path = "smoke/ddl/smoke_test_ddl_alter.rs"]
 mod smoke_test_ddl_alter;
+#[path = "smoke/ddl/smoke_test_table_option_alters.rs"]
+mod smoke_test_table_option_alters;
 #[path = "smoke/ddl/smoke_test_export_user_data.rs"]
 mod smoke_test_export_user_data;
 

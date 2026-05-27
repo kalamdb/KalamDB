@@ -35,7 +35,7 @@ pub mod user_commands;
 pub type DdlResult<T> = Result<T, String>;
 
 pub use alter_namespace::AlterNamespaceStatement;
-pub use alter_table::{AlterTableStatement, ColumnOperation};
+pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use compact_commands::{CompactAllTablesStatement, CompactTableStatement};
 pub use create_namespace::CreateNamespaceStatement;

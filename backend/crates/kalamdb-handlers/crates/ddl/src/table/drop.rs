@@ -405,6 +405,9 @@ mod tests {
             flush_policy: None,
             deleted_retention_hours: None,
             ttl_seconds: None,
+            compression: None,
+            eviction_strategy: None,
+            max_stream_size_bytes: None,
             if_not_exists: false,
             access_level: None,
         }

@@ -13,7 +13,10 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { executeQuery } from "@/lib/kalam-client";
-import { executeSqlStudioQuery, fetchSqlStudioSchemaTree } from "@/services/sqlStudioService";
+import {
+  executeSqlStudioQuery,
+  fetchSqlStudioSchemaTree,
+} from "@/services/sqlStudioService";
 
 const executeQueryMock = vi.mocked(executeQuery);
 
@@ -29,63 +32,68 @@ describe("fetchSqlStudioSchemaTree", () => {
     mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
-      {
-        namespace_id: "default",
-        table_name: "events",
-        table_type: "shared",
-        schema_version: 1,
-        columns: [
           {
-            column_name: "id",
-            data_type: "BigInt",
-            is_nullable: false,
-            is_primary_key: true,
-            ordinal_position: 1,
+            namespace_id: "default",
+            table_name: "events",
+            table_type: "shared",
+            schema_version: 1,
+            columns: [
+              {
+                column_name: "id",
+                data_type: "BigInt",
+                is_nullable: false,
+                is_primary_key: true,
+                ordinal_position: 1,
+              },
+            ],
           },
-        ],
-      },
-      {
-        namespace_id: "system",
-        table_name: "jobs",
-        table_type: "system",
-        schema_version: 1,
-        columns: [
           {
-            column_name: "job_id",
-            data_type: "Utf8",
-            is_nullable: false,
-            ordinal_position: 1,
+            namespace_id: "system",
+            table_name: "jobs",
+            table_type: "system",
+            schema_version: 1,
+            columns: [
+              {
+                column_name: "job_id",
+                data_type: "Utf8",
+                is_nullable: false,
+                ordinal_position: 1,
+              },
+            ],
           },
-        ],
-      },
-      {
-        namespace_id: "system",
-        table_name: "users",
-        table_type: "system",
-        schema_version: 1,
-        columns: [
           {
-            column_name: "user_id",
-            data_type: "Utf8",
-            is_nullable: false,
-            ordinal_position: 1,
+            namespace_id: "system",
+            table_name: "users",
+            table_type: "system",
+            schema_version: 1,
+            columns: [
+              {
+                column_name: "user_id",
+                data_type: "Utf8",
+                is_nullable: false,
+                ordinal_position: 1,
+              },
+            ],
           },
-        ],
-      },
         ]),
       }),
     });
 
     const schema = await fetchSqlStudioSchemaTree();
 
-    expect(schema.map((namespace) => namespace.name)).toEqual(["default", "system"]);
+    expect(schema.map((namespace) => namespace.name)).toEqual([
+      "default",
+      "system",
+    ]);
 
     expect(schema[0]).toMatchObject({
       name: "default",
-      tables: [{
-        name: "events",
-        tableType: "shared",
-      }],
+      tables: [
+        {
+          name: "events",
+          tableType: "shared",
+        },
+      ],
     });
 
     expect(schema[1]).toMatchObject({
@@ -121,31 +129,33 @@ describe("fetchSqlStudioSchemaTree", () => {
     mockDb.select.mockReturnValueOnce({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
-      {
-        namespace_id: "default",
-        table_name: "events",
-        table_type: "stream",
-        storage_id: "archive",
-        schema_version: 7,
-        options: {
-          table_type: "STREAM",
-          ttl_seconds: 3600,
-          compression: "zstd",
-          max_stream_size_bytes: 1024,
-        },
-        table_comment: "Operational event stream",
-        updated_at: "2026-04-21T10:00:00Z",
-        created_at: "2026-04-20T09:00:00Z",
-        columns: [
           {
-            column_name: "id",
-            data_type: "BigInt",
-            is_nullable: false,
-            is_primary_key: true,
-            ordinal_position: 1,
+            namespace_id: "default",
+            table_name: "events",
+            table_type: "stream",
+            storage_id: "archive",
+            access_level: "PUBLIC",
+            use_user_storage: true,
+            schema_version: 7,
+            options: {
+              table_type: "STREAM",
+              ttl_seconds: 3600,
+              compression: "zstd",
+              max_stream_size_bytes: 1024,
+            },
+            table_comment: "Operational event stream",
+            updated_at: "2026-04-21T10:00:00Z",
+            created_at: "2026-04-20T09:00:00Z",
+            columns: [
+              {
+                column_name: "id",
+                data_type: "BigInt",
+                is_nullable: false,
+                is_primary_key: true,
+                ordinal_position: 1,
+              },
+            ],
           },
-        ],
-      },
         ]),
       }),
     });
@@ -157,6 +167,8 @@ describe("fetchSqlStudioSchemaTree", () => {
       name: "events",
       tableType: "stream",
       storageId: "archive",
+      accessLevel: "PUBLIC",
+      useUserStorage: true,
       version: 7,
       comment: "Operational event stream",
       updatedAt: "2026-04-21T10:00:00Z",
@@ -199,7 +211,9 @@ describe("executeSqlStudioQuery", () => {
       ],
     } as never);
 
-    const result = await executeSqlStudioQuery("SELECT * FROM system.audit_log");
+    const result = await executeSqlStudioQuery(
+      "SELECT * FROM system.audit_log",
+    );
 
     expect(result.rows).toEqual([
       {
