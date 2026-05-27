@@ -11,7 +11,7 @@ use log::{debug, info};
 
 /// Initialize global auth/proxy runtime state from the already-finalized config.
 pub fn configure_auth_runtime(config: &ServerConfig) -> Result<()> {
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
     kalamdb_auth::init_trusted_proxy_ranges(&config.security.trusted_proxy_ranges)?;
     Ok(())
 }

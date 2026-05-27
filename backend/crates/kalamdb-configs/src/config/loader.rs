@@ -37,6 +37,209 @@ fn uses_wildcard_origin_policy(origins: &[String]) -> bool {
     origins.iter().any(|origin| origin.trim() == "*")
 }
 
+fn ensure_non_zero_u16(value: u16, field_name: &str) -> anyhow::Result<()> {
+    if value == 0 {
+        return Err(anyhow::anyhow!("{field_name} cannot be 0"));
+    }
+    Ok(())
+}
+
+fn ensure_non_zero_usize(value: usize, field_name: &str) -> anyhow::Result<()> {
+    if value == 0 {
+        return Err(anyhow::anyhow!("{field_name} cannot be 0"));
+    }
+    Ok(())
+}
+
+fn ensure_positive_i64(value: i64, field_name: &str) -> anyhow::Result<()> {
+    if value <= 0 {
+        return Err(anyhow::anyhow!("{field_name} must be greater than 0"));
+    }
+    Ok(())
+}
+
+fn ensure_valid_choice(value: &str, valid_values: &[&str], field_name: &str) -> anyhow::Result<()> {
+    if valid_values.contains(&value) {
+        return Ok(());
+    }
+
+    Err(anyhow::anyhow!(
+        "Invalid {field_name} '{value}'. Must be one of: {}",
+        valid_values.join(", ")
+    ))
+}
+
+fn validate_public_origin(config: &ServerConfig) -> anyhow::Result<()> {
+    if let Some(public_origin) = config
+        .server
+        .public_origin
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let valid_scheme =
+            public_origin.starts_with("http://") || public_origin.starts_with("https://");
+        if !valid_scheme {
+            return Err(anyhow::anyhow!(
+                "server.public_origin must start with http:// or https://"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_logging(config: &ServerConfig) -> anyhow::Result<()> {
+    const VALID_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
+    const VALID_FORMATS: &[&str] = &["compact", "pretty", "json"];
+
+    ensure_valid_choice(&config.logging.level, VALID_LEVELS, "log level")?;
+    ensure_valid_choice(&config.logging.format, VALID_FORMATS, "log format")?;
+
+    for (target, level) in &config.logging.targets {
+        if !VALID_LEVELS.contains(&level.as_str()) {
+            return Err(anyhow::anyhow!(
+                "Invalid log level '{}' for target '{}'. Must be one of: {}",
+                level,
+                target,
+                VALID_LEVELS.join(", ")
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_limits(config: &ServerConfig) -> anyhow::Result<()> {
+    ensure_non_zero_usize(config.limits.max_message_size, "max_message_size")?;
+    ensure_non_zero_usize(config.limits.max_query_limit, "max_query_limit")?;
+
+    if config.limits.default_query_limit > config.limits.max_query_limit {
+        return Err(anyhow::anyhow!(
+            "default_query_limit ({}) cannot exceed max_query_limit ({})",
+            config.limits.default_query_limit,
+            config.limits.max_query_limit
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_user_management(config: &ServerConfig) -> anyhow::Result<()> {
+    if config.user_management.deletion_grace_period_days < 0 {
+        return Err(anyhow::anyhow!("deletion_grace_period_days cannot be negative"));
+    }
+
+    if config.user_management.cleanup_job_schedule.trim().is_empty() {
+        return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
+    }
+
+    Ok(())
+}
+
+fn validate_topics(config: &ServerConfig) -> anyhow::Result<()> {
+    ensure_positive_i64(
+        config.topics.default_retention_seconds,
+        "topics.default_retention_seconds",
+    )?;
+    ensure_positive_i64(
+        config.topics.default_retention_max_bytes,
+        "topics.default_retention_max_bytes",
+    )?;
+    ensure_non_zero_usize(config.topics.retention_batch_size, "topics.retention_batch_size")?;
+    Ok(())
+}
+
+fn validate_security(config: &ServerConfig) -> anyhow::Result<()> {
+    parse_trusted_proxy_entries(&config.security.trusted_proxy_ranges).map_err(|error| {
+        anyhow::anyhow!("Invalid security.trusted_proxy_ranges configuration: {}", error)
+    })?;
+
+    if is_non_local_http_exposure(config)
+        && !has_configured_origin_policy(&config.security.cors.allowed_origins)
+    {
+        return Err(anyhow::anyhow!(
+            "Non-localhost HTTP exposure requires security.cors.allowed_origins to be \
+             configured (empty is not allowed)"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_cluster_tls(config: &ServerConfig) -> anyhow::Result<()> {
+    config
+        .rpc_tls
+        .validate()
+        .map_err(|error| anyhow::anyhow!("Invalid rpc_tls configuration: {}", error))?;
+
+    if let Some(cluster) = &config.cluster {
+        cluster
+            .validate()
+            .map_err(|error| anyhow::anyhow!("Invalid cluster configuration: {}", error))?;
+
+        if !config.rpc_tls.enabled
+            && !cluster.peers.is_empty()
+            && cluster_uses_non_local_networking(cluster)
+        {
+            return Err(anyhow::anyhow!(
+                "Non-localhost multi-node clusters require rpc_tls.enabled = true"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn reject_legacy_oauth_config(content: &str) -> anyhow::Result<()> {
+    let Ok(value) = toml::from_str::<toml::Value>(content) else {
+        return Ok(());
+    };
+
+    if value.get("oauth").is_some() {
+        return Err(anyhow::anyhow!(
+            "legacy [oauth] and [oauth.providers.*] configuration is no longer supported; use [auth.oidc] for the single external OpenID Connect provider and [auth.local] for username/password login"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_auth(config: &ServerConfig) -> anyhow::Result<()> {
+    let oidc = &config.auth.oidc;
+    if !oidc.enabled {
+        return Ok(());
+    }
+
+    let issuer = oidc.issuer_str().ok_or_else(|| {
+        anyhow::anyhow!("auth.oidc.issuer is required when auth.oidc.enabled = true")
+    })?;
+    if !(issuer.starts_with("http://") || issuer.starts_with("https://")) {
+        return Err(anyhow::anyhow!("auth.oidc.issuer must start with http:// or https://"));
+    }
+
+    oidc.client_id_str().ok_or_else(|| {
+        anyhow::anyhow!("auth.oidc.client_id is required when auth.oidc.enabled = true")
+    })?;
+
+    if oidc.scopes.iter().all(|scope| scope.trim() != "openid") {
+        return Err(anyhow::anyhow!("auth.oidc.scopes must include the 'openid' scope"));
+    }
+
+    if let Some(endpoint) = oidc.device_authorization_endpoint.as_deref() {
+        let endpoint = endpoint.trim();
+        if !endpoint.is_empty()
+            && !(endpoint.starts_with("http://") || endpoint.starts_with("https://"))
+        {
+            return Err(anyhow::anyhow!(
+                "auth.oidc.device_authorization_endpoint must start with http:// or https://"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn is_non_local_http_exposure(config: &ServerConfig) -> bool {
     if !is_localhost_host(&config.server.host) {
         return true;
@@ -63,6 +266,12 @@ impl ServerConfig {
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
+
+        Self::from_toml_str(&content)
+    }
+
+    pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
+        reject_legacy_oauth_config(content)?;
 
         let mut config: ServerConfig = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
@@ -103,132 +312,15 @@ impl ServerConfig {
 
     /// Validate configuration settings
     pub fn validate(&self) -> anyhow::Result<()> {
-        // Validate port range
-        if self.server.port == 0 {
-            return Err(anyhow::anyhow!("Server port cannot be 0"));
-        }
-
-        if let Some(public_origin) = self
-            .server
-            .public_origin
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let valid_scheme =
-                public_origin.starts_with("http://") || public_origin.starts_with("https://");
-            if !valid_scheme {
-                return Err(anyhow::anyhow!(
-                    "server.public_origin must start with http:// or https://"
-                ));
-            }
-        }
-
-        // Validate log level
-        let valid_levels = ["error", "warn", "info", "debug", "trace"];
-        if !valid_levels.contains(&self.logging.level.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Invalid log level '{}'. Must be one of: {}",
-                self.logging.level,
-                valid_levels.join(", ")
-            ));
-        }
-
-        // Validate log format
-        let valid_formats = ["compact", "pretty", "json"];
-        if !valid_formats.contains(&self.logging.format.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Invalid log format '{}'. Must be one of: {}",
-                self.logging.format,
-                valid_formats.join(", ")
-            ));
-        }
-
-        // Validate per-target log levels if provided
-        let valid_levels = ["error", "warn", "info", "debug", "trace"];
-        for (target, level) in &self.logging.targets {
-            if !valid_levels.contains(&level.as_str()) {
-                return Err(anyhow::anyhow!(
-                    "Invalid log level '{}' for target '{}'. Must be one of: {}",
-                    level,
-                    target,
-                    valid_levels.join(", ")
-                ));
-            }
-        }
-
-        // Validate message size limit
-        if self.limits.max_message_size == 0 {
-            return Err(anyhow::anyhow!("max_message_size cannot be 0"));
-        }
-
-        // Validate query limits
-        if self.limits.max_query_limit == 0 {
-            return Err(anyhow::anyhow!("max_query_limit cannot be 0"));
-        }
-
-        if self.limits.default_query_limit > self.limits.max_query_limit {
-            return Err(anyhow::anyhow!(
-                "default_query_limit ({}) cannot exceed max_query_limit ({})",
-                self.limits.default_query_limit,
-                self.limits.max_query_limit
-            ));
-        }
-
-        if self.user_management.deletion_grace_period_days < 0 {
-            return Err(anyhow::anyhow!("deletion_grace_period_days cannot be negative"));
-        }
-
-        if self.user_management.cleanup_job_schedule.trim().is_empty() {
-            return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
-        }
-
-        if self.topics.default_retention_seconds <= 0 {
-            return Err(anyhow::anyhow!("topics.default_retention_seconds must be greater than 0"));
-        }
-
-        if self.topics.default_retention_max_bytes <= 0 {
-            return Err(anyhow::anyhow!(
-                "topics.default_retention_max_bytes must be greater than 0"
-            ));
-        }
-
-        if self.topics.retention_batch_size == 0 {
-            return Err(anyhow::anyhow!("topics.retention_batch_size cannot be 0"));
-        }
-
-        parse_trusted_proxy_entries(&self.security.trusted_proxy_ranges).map_err(|error| {
-            anyhow::anyhow!("Invalid security.trusted_proxy_ranges configuration: {}", error)
-        })?;
-
-        self.rpc_tls
-            .validate()
-            .map_err(|error| anyhow::anyhow!("Invalid rpc_tls configuration: {}", error))?;
-
-        if let Some(cluster) = &self.cluster {
-            cluster
-                .validate()
-                .map_err(|error| anyhow::anyhow!("Invalid cluster configuration: {}", error))?;
-
-            if !self.rpc_tls.enabled
-                && !cluster.peers.is_empty()
-                && cluster_uses_non_local_networking(cluster)
-            {
-                return Err(anyhow::anyhow!(
-                    "Non-localhost multi-node clusters require rpc_tls.enabled = true"
-                ));
-            }
-        }
-
-        if is_non_local_http_exposure(self)
-            && !has_configured_origin_policy(&self.security.cors.allowed_origins)
-        {
-            return Err(anyhow::anyhow!(
-                "Non-localhost HTTP exposure requires security.cors.allowed_origins to be \
-                 configured (empty is not allowed)"
-            ));
-        }
-
+        ensure_non_zero_u16(self.server.port, "Server port")?;
+        validate_public_origin(self)?;
+        validate_logging(self)?;
+        validate_limits(self)?;
+        validate_user_management(self)?;
+        validate_topics(self)?;
+        validate_auth(self)?;
+        validate_security(self)?;
+        validate_cluster_tls(self)?;
         Ok(())
     }
 }
@@ -270,6 +362,70 @@ mod tests {
     fn test_default_config_is_valid() {
         let config = ServerConfig::default();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_local_and_oidc_parse() {
+        let auth: super::super::types::AuthSettings = toml::from_str(
+            r#"
+            [local]
+            enabled = false
+
+            [oidc]
+            enabled = true
+            display_name = "Dex"
+            issuer = "http://127.0.0.1:5556/dex"
+            client_id = "kalamdb"
+            scopes = ["openid", "email"]
+            device_authorization_endpoint = "http://127.0.0.1:5556/dex/device/code"
+            broker_device_flow_enabled = true
+            auto_provision = true
+            default_role = "dba"
+            "#,
+        )
+        .expect("auth settings should parse");
+
+        assert!(!auth.local.enabled);
+        assert!(auth.oidc.enabled);
+        assert_eq!(auth.oidc.display_name, "Dex");
+        assert_eq!(auth.oidc.issuer_str(), Some("http://127.0.0.1:5556/dex"));
+        assert_eq!(auth.oidc.client_id_str(), Some("kalamdb"));
+        assert!(auth.oidc.broker_device_flow_enabled);
+
+        let mut config = ServerConfig::default();
+        config.auth = auth;
+        config.validate().expect("unified auth config should validate");
+    }
+
+    #[test]
+    fn test_auth_oidc_requires_issuer_and_client_id_when_enabled() {
+        let mut config = ServerConfig::default();
+        config.auth.oidc.enabled = true;
+
+        let err = config.validate().expect_err("missing issuer should be rejected");
+        assert!(err.to_string().contains("auth.oidc.issuer"));
+
+        config.auth.oidc.issuer = Some("https://idp.example.com".to_string());
+        let err = config.validate().expect_err("missing client id should be rejected");
+        assert!(err.to_string().contains("auth.oidc.client_id"));
+    }
+
+    #[test]
+    fn test_legacy_oauth_config_is_rejected() {
+        let mut value = toml::Value::try_from(ServerConfig::default()).unwrap();
+        value.as_table_mut().unwrap().insert(
+            "oauth".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enabled".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+        let content = toml::to_string(&value).unwrap();
+
+        let err = ServerConfig::from_toml_str(&content)
+            .expect_err("legacy oauth config should be rejected");
+        assert!(err.to_string().contains("legacy [oauth]"));
+        assert!(err.to_string().contains("[auth.oidc]"));
     }
 
     #[test]

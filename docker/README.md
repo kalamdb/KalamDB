@@ -25,6 +25,11 @@ docker/
         ├── server1.toml
         ├── server2.toml
         └── server3.toml
+
+docker/utils/
+├── docker-compose.yml         # Local utility services (Dex, MinIO, Jaeger)
+├── .env.example               # Optional Google connector values for Dex
+└── dex/config.yaml            # Shared Dex dev config with static clients, users, and Google connector
 ```
 
 ## Quick Start
@@ -204,6 +209,49 @@ Important environment variables used by the compose files:
 - `KALAMDB_PORT`: host port override for the single-node compose setup
 - `KALAMDB_LOG_LEVEL`: server log level
 
+## Local Auth Utilities
+
+The utility compose stack under `docker/utils` now includes Dex on `http://127.0.0.1:5556` using the checked-in config at `docker/utils/dex/config.yaml`.
+
+Start Dex only:
+
+```bash
+cd docker/utils
+docker compose up -d dex
+```
+
+The shared dev client matches the KalamDB OIDC examples:
+
+- public client id: `client`
+- no client secret for Admin UI or CLI browser PKCE login
+- Admin UI callbacks for `http://127.0.0.1:2900/ui/oauth/callback`, `http://127.0.0.1:4175/ui/oauth/callback`, and localhost equivalents
+- CLI browser callback `http://127.0.0.1:8787/callback`
+- device-flow completion callback `/device/callback`
+- example user password: `kalamdb123`
+
+The Dex config seeds 10 example users: `alice`, `bob`, `carol`, `dave`, `erin`, `frank`, `grace`, `heidi`, `ivan`, and `judy` with `@example.org` email addresses.
+
+To test Google sign-in through Dex, create a Google OAuth client and add this authorized redirect URI:
+
+```text
+http://127.0.0.1:5556/callback
+```
+
+Then copy the local env template and fill in the Google OAuth client values:
+
+```bash
+cd docker/utils
+cp .env.example .env
+$EDITOR .env
+docker compose up -d dex
+```
+
+The `.env` file is intentionally ignored by Git. Compose reads it from the same directory as `docker-compose.yml` and exports `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` into the Dex container. Dex then reads those values from `docker/utils/dex/config.yaml` through the Google connector's `$GOOGLE_*` settings.
+
+Dex local static `userID` values are OIDC `sub` claims and KalamDB uses that same subject as the final `user_id`. For the default local Dex Alice user, the KalamDB user id is `dev-alice`.
+
+If you sign in through Google, the subject is Google's stable account id as emitted by Dex. If you change the Dex userID values or switch to another issuer/provider that emits different subjects, KalamDB treats those subjects as different users.
+
 ## Persistence
 
 The default compose setup stores data in Docker-managed volumes.
@@ -320,10 +368,10 @@ healthcheck:
 
 ## Related Documentation
 
-- [Quick Start Guide](../../specs/006-docker-wasm-examples/quickstart.md)
-- [Data Model](../../specs/006-docker-wasm-examples/data-model.md)
-- [HTTP Auth Contract](../../specs/006-docker-wasm-examples/contracts/http-auth.md)
-- [Backend Documentation](../../backend/README.md)
+- [Quick Start Guide](../specs/006-docker-wasm-examples/quickstart.md)
+- [Data Model](../specs/006-docker-wasm-examples/data-model.md)
+- [HTTP Auth Contract](../specs/006-docker-wasm-examples/contracts/http-auth.md)
+- [Backend Documentation](../backend/README.md)
 
 ---
 

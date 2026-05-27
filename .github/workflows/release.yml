@@ -1217,6 +1217,7 @@ jobs:
           sed -i 's|default_storage_path = "./data/storage"|default_storage_path = "./test-data/storage"|g' server.toml
           sed -i 's|logs_path = "./logs"|logs_path = "./test-data/logs"|g' server.toml
           sed -i 's|jwt_secret = ".*"|jwt_secret = "smoke-test-secret-key-minimum-32-characters-long-for-ci"|g' server.toml
+          sed -i '/^\[flush\.compaction\]/,/^\[/{s/^enabled = false/enabled = true/}' server.toml
           sed -E -i 's|max_queries_per_sec = [0-9]+|max_queries_per_sec = 10000|g' server.toml
           sed -E -i 's|max_messages_per_sec = [0-9]+|max_messages_per_sec = 1000|g' server.toml
 
@@ -1252,6 +1253,7 @@ jobs:
         env:
           KALAMDB_SERVER_URL: "http://localhost:2900"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          KALAMDB_TEST_FLUSH_COMPACTION: "1"
         run: |
           set -euo pipefail
           cd cli

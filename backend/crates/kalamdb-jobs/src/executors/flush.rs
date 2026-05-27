@@ -457,6 +457,11 @@ impl FlushExecutor {
         )
         .await?;
 
+        kalamdb_observability::record_parquet_files_written(
+            result.parquet_files.len(),
+            result.rows_flushed,
+        );
+
         log::debug!(
             "[{}] Flush operation completed: {} rows flushed, {} files created",
             ctx.job_id,

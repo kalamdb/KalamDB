@@ -210,8 +210,7 @@ pub(crate) fn try_build_literal_insert_rows(
         kalamdb_session::permissions::check_shared_table_write_access_level(
             exec_ctx.user_role(),
             access_level,
-            table_id.namespace_id(),
-            table_id.table_name(),
+            table_id,
         )
         .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
     }
@@ -377,8 +376,7 @@ pub(crate) fn try_batch_inserts_in_transaction(
         kalamdb_session::permissions::check_shared_table_write_access_level(
             exec_ctx.user_role(),
             access_level,
-            table_id.namespace_id(),
-            table_id.table_name(),
+            table_id,
         )
         .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
     }

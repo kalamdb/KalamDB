@@ -77,6 +77,13 @@ pub async fn server_setup_handler(
         ));
     }
 
+    if !config.local.enabled {
+        return HttpResponse::Forbidden().json(AuthErrorResponse::new(
+            "local_auth_disabled",
+            "Local username/password setup is disabled by configuration.",
+        ));
+    }
+
     // Check if root user exists and has empty password
     let root_user_id = UserId::root();
     let root_user = match user_repo.get_user_by_id(&root_user_id).await {
@@ -263,11 +270,14 @@ pub async fn setup_status_handler(
         },
     };
 
-    let needs_setup = root_user.password_hash.is_empty();
+    let needs_setup = config.local.enabled && root_user.password_hash.is_empty();
 
     HttpResponse::Ok().json(serde_json::json!({
         "needs_setup": needs_setup,
-        "message": if needs_setup {
+        "local_auth_enabled": config.local.enabled,
+        "message": if !config.local.enabled {
+            "Local username/password setup is disabled by configuration."
+        } else if needs_setup {
             "Server requires initial setup. Call POST /v1/api/auth/setup with user, password, root_password, and optional email."
         } else {
             "Server is configured and ready."

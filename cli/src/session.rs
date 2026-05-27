@@ -26,6 +26,7 @@ use kalam_client::{
     KalamLinkTimeouts, TimestampFormatter,
 };
 
+pub mod auth_options;
 mod batch;
 mod cluster;
 mod commands;
@@ -34,6 +35,8 @@ mod health;
 mod info;
 mod interactive;
 mod namespace;
+pub mod oidc_browser;
+pub mod oidc_device;
 mod query;
 mod subscriptions;
 
@@ -1097,7 +1100,7 @@ mod tests {
         .expect("create session");
 
         session
-            .execute("SELECT count(*) FROM dba.stats")
+            .execute("SELECT count(*) FROM system.stats")
             .await
             .expect("query should succeed after token refresh");
 

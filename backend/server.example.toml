@@ -170,16 +170,6 @@ user_max_segment_rows = 10000
 # Shared tables generally collect more rows per scope, so the default limit is higher.
 shared_max_segment_rows = 25000
 
-[retention]
-# Enable periodic dba.stats collection (default: true)
-# Set to false to disable the background stats recorder, saving memory and CPU
-# in resource-constrained environments (e.g. Docker containers).
-enable_dba_stats = false
-
-# Number of days to preserve samples in dba.stats (default: 7 days)
-# Set to 0 to disable automatic cleanup of historical DBA metrics
-dba_stats_retention_days = 7
-
 [stream]
 # Default TTL for stream table rows in seconds (default: 10 seconds)
 # Stream tables are ephemeral - rows expire after this duration
@@ -223,7 +213,7 @@ default_query_limit = 50
 level = "info"
 
 # Directory for all log files (default: "./logs")
-# Server will create server.log (or server.jsonl for JSON format), slow.log, etc.
+# Server will create server.log (or server.jsonl for JSON format), slow.jsonl, etc.
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
@@ -237,7 +227,7 @@ log_to_console = true
 format = "compact"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
-# Queries taking longer than this threshold will be logged to slow.log
+# Queries taking longer than this threshold will be logged to slow.jsonl
 # AND displayed as WARN in the console
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
@@ -440,7 +430,7 @@ auth_timeout_secs = 3
 # once every heartbeat_interval × 4 seconds.
 heartbeat_interval_secs = 5
 
-[authentication]
+[auth]
 # Optional root password for remote root access.
 # Prefer KALAMDB_ROOT_PASSWORD in production.
 # root_password = "change-me"
@@ -476,74 +466,37 @@ jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
 # WARNING: Only enable in trusted environments.
 allow_remote_setup = false
 
-# Comma-separated list of trusted JWT issuers (leave empty to accept any issuer)
-# Add your OAuth provider domains here
-# Example for Google OAuth: "https://accounts.google.com"
-# Example for GitHub OAuth: "https://github.com"
-# Example for Firebase Auth: "https://securetoken.google.com/YOUR_PROJECT_ID"
-# Multiple issuers (comma-separated): "https://accounts.google.com,https://securetoken.google.com/my-app"
+# Comma-separated list of trusted JWT issuers for external bearer tokens.
+# The configured auth.oidc issuer is registered for audience validation at startup.
 jwt_trusted_issuers = ""
 
 # Optional pre-shared token required by pg_kalam gRPC connections.
 # pg_auth_token = "change-me"
 
-# ============================================================================
-# OAuth / OIDC Provider Configuration
-# ============================================================================
-# Each provider section adds its issuer to the trusted-issuers list and
-# registers the audience (client_id) for token validation.
-# You still need to add the provider issuer to [authentication].jwt_trusted_issuers above.
+# Local username/password login (default: true).
+[auth.local]
+enabled = true
 
-# [oauth]
-# # Enable OAuth / OIDC authentication globally (default: false)
+# Single external OpenID Connect provider.
+# Use this for Dex, Keycloak, Okta, Auth0, Entra ID, Google, Firebase, or any
+# provider with standards-compliant OIDC discovery.
+#
+# Configure browser redirect URIs at the provider, for example:
+#   http://YOUR_ADMIN_UI_ORIGIN/ui/oauth/callback
+#
+# [auth.oidc]
 # enabled = true
-# # Auto-provision a KalamDB user on first successful login (default: false)
+# display_name = "Dex"
+# issuer = "http://127.0.0.1:5556"
+# client_id = "client"
+# Local Dex development normally uses a public PKCE client, so leave client_secret unset.
+# client_secret = "optional-confidential-client-secret"
+# scopes = ["openid", "email", "profile"]
 # auto_provision = true
-# # Default role assigned to auto-provisioned users (default: "user")
 # default_role = "user"
-
-# ── Google / Google Workspace ──────────────────────────────────────────────
-# [oauth.providers.google]
-# enabled = true
-# issuer = "https://accounts.google.com"
-# jwks_uri = "https://www.googleapis.com/oauth2/v3/certs"
-# client_id = "your-google-client-id.apps.googleusercontent.com"
-
-# ── GitHub OAuth ───────────────────────────────────────────────────────────
-# [oauth.providers.github]
-# enabled = true
-# issuer = "https://token.actions.githubusercontent.com"
-# jwks_uri = "https://token.actions.githubusercontent.com/.well-known/jwks"
-# client_id = "your-github-oauth-app-client-id"
-
-# ── Microsoft Azure AD / Entra ID ─────────────────────────────────────────
-# [oauth.providers.azure]
-# enabled = true
-# issuer = "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0"
-# jwks_uri = "https://login.microsoftonline.com/YOUR_TENANT_ID/discovery/v2.0/keys"
-# client_id = "your-azure-client-id"
-# tenant = "your-azure-tenant-id"
-
-# ── Firebase Authentication ────────────────────────────────────────────────
-# Firebase issues RS256-signed ID tokens with issuer:
-#   https://securetoken.google.com/{PROJECT_ID}
-# JWKS endpoint (static, no discovery needed):
-#   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
-#
-# Steps:
-#   1. Set enabled = true and fill in your Firebase project ID.
-#   2. Add the issuer to [authentication].jwt_trusted_issuers.
-#   3. Optionally enable auto_provision so first-time Firebase users get a
-#      KalamDB account created automatically.
-#   4. On the client, obtain a Firebase ID token and pass it as:
-#        Authorization: Bearer <firebase-id-token>
-#
-# [oauth.providers.firebase]
-# enabled = true
-# issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
-# jwks_uri = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
-# # client_id must match the Firebase project ID (aud claim in the token)
-# client_id = "YOUR_PROJECT_ID"
+# broker_device_flow_enabled = false
+# Enable only when your provider advertises or supports device auth.
+# device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
 
 [user_management]
 # Days to keep a soft-deleted user before permanent purge (default: 30)

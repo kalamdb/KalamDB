@@ -10,6 +10,6 @@ pub mod models;
 pub mod users_indexes;
 pub mod users_provider;
 
-pub use models::{AuthData, AuthType, OAuthProvider, Role, User};
+pub use models::{AuthData, AuthType, Role, User};
 pub use users_indexes::{create_users_indexes, UserRoleIndex};
 pub use users_provider::{UsersStore, UsersTableProvider};

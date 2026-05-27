@@ -388,7 +388,7 @@ impl AppContext {
             );
 
             // Create slow query logger (Phase 11)
-            let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
+            let slow_log_path = format!("{}/slow.jsonl", config.logging.logs_path);
             let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
                 slow_log_path,
                 config.logging.slow_query_threshold_ms,
@@ -1206,7 +1206,7 @@ impl AppContext {
     /// Get the slow query logger
     ///
     /// Returns an Arc reference to the lightweight slow query logger that writes
-    /// to a separate slow.log file for queries exceeding the configured threshold.
+    /// to a separate slow-query JSONL file for queries exceeding the configured threshold.
     pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
         self.slow_query_logger.clone()
     }

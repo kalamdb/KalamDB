@@ -14,17 +14,23 @@ pub mod models;
 
 mod audit;
 mod login;
+mod login_options;
 mod logout;
 mod me;
+mod oidc_device;
+mod oidc_exchange;
 mod refresh;
 mod setup;
 
 use actix_web::HttpResponse;
 use kalamdb_auth::AuthError;
 pub(crate) use login::login_handler;
+pub(crate) use login_options::login_options_handler;
 pub(crate) use logout::logout_handler;
 pub(crate) use me::me_handler;
 use models::AuthErrorResponse;
+pub(crate) use oidc_device::{oidc_device_poll_handler, oidc_device_start_handler};
+pub(crate) use oidc_exchange::{oidc_code_exchange_handler, oidc_token_exchange_handler};
 pub(crate) use refresh::refresh_handler;
 pub(crate) use setup::{server_setup_handler, setup_status_handler};
 

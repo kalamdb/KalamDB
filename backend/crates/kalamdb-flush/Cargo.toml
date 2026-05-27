@@ -13,6 +13,7 @@ description = "Manifest, flush, and cold segment compaction logic for KalamDB"
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }

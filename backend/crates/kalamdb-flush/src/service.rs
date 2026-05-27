@@ -128,13 +128,19 @@ impl ManifestService {
             for key in keys {
                 self.memory_cache.remove(&key);
             }
+            kalamdb_observability::decrement_manifest_cache_rocksdb_entries(deleted);
+            self.publish_manifest_memory_metrics();
         }
         Ok(deleted)
     }
 
+    fn publish_manifest_memory_metrics(&self) {
+        kalamdb_observability::set_manifest_cache_memory_entries(self.memory_cache.len());
+    }
+
     /// Create a new ManifestService
     pub fn new(provider: Arc<ManifestTableProvider>, config: ManifestCacheSettings) -> Self {
-        Self {
+        let service = Self {
             memory_cache: DashMap::with_capacity(config.max_entries.min(1024)),
             flush_scope_locks: DashMap::with_capacity(128),
             active_compactions: Arc::new(DashSet::with_capacity(128)),
@@ -142,7 +148,12 @@ impl ManifestService {
             config,
             schema_registry: None,
             storage_registry: None,
+        };
+        if let Ok(entries) = service.provider.count_entries() {
+            kalamdb_observability::initialize_manifest_cache_rocksdb_entries(entries);
         }
+        service.publish_manifest_memory_metrics();
+        service
     }
 
     /// Create a ManifestService with injected registries (compat helper for tests).
@@ -427,8 +438,17 @@ impl ManifestService {
         user_id: Option<&UserId>,
     ) -> Result<(), StorageError> {
         let rocksdb_key = Self::manifest_id(table_id, user_id);
+        let existed = matches!(
+            self.cached_entry_snapshot(&rocksdb_key),
+            Ok(Some(_)) | Err(StorageError::SerializationError(_))
+        );
         self.memory_cache.remove(&rocksdb_key);
-        self.provider.delete_cache_entry(&rocksdb_key)
+        self.publish_manifest_memory_metrics();
+        let result = self.provider.delete_cache_entry(&rocksdb_key);
+        if result.is_ok() && existed {
+            kalamdb_observability::decrement_manifest_cache_rocksdb_entries(1);
+        }
+        result
     }
 
     /// Invalidate all cache entries for a table (all users + shared).
@@ -825,11 +845,13 @@ impl ManifestService {
     fn insert_memory_entry(&self, manifest_id: ManifestId, entry: Arc<ManifestCacheEntry>) {
         if !self.should_cache_in_memory(&manifest_id) {
             self.memory_cache.remove(&manifest_id);
+            self.publish_manifest_memory_metrics();
             return;
         }
 
         self.memory_cache.insert(manifest_id, entry);
         self.prune_memory_cache_if_needed();
+        self.publish_manifest_memory_metrics();
     }
 
     fn should_cache_in_memory(&self, manifest_id: &ManifestId) -> bool {
@@ -840,6 +862,7 @@ impl ManifestService {
         let max_entries = self.config.max_entries;
         if max_entries == 0 {
             self.memory_cache.clear();
+            self.publish_manifest_memory_metrics();
             return;
         }
         if self.memory_cache.len() <= max_entries {
@@ -880,6 +903,7 @@ impl ManifestService {
         for (key, _) in candidates.into_iter().take(overflow) {
             self.memory_cache.remove(&key);
         }
+        self.publish_manifest_memory_metrics();
     }
 
     fn upsert_entry(
@@ -887,12 +911,14 @@ impl ManifestService {
         manifest_id: ManifestId,
         entry: ManifestCacheEntry,
     ) -> Result<Arc<ManifestCacheEntry>, StorageError> {
-        match self.cached_entry_snapshot(&manifest_id) {
+        let inserted_new_entry = match self.cached_entry_snapshot(&manifest_id) {
             Ok(Some(old_entry)) => {
                 self.provider.update_cache_entry_with_old(&manifest_id, &old_entry, &entry)?;
+                false
             },
             Ok(None) => {
                 self.provider.put_cache_entry(&manifest_id, &entry)?;
+                true
             },
             Err(StorageError::SerializationError(err)) => {
                 warn!(
@@ -902,8 +928,12 @@ impl ManifestService {
                 );
                 let _ = self.provider.delete_cache_entry(&manifest_id);
                 self.provider.put_cache_entry(&manifest_id, &entry)?;
+                false
             },
             Err(err) => return Err(err),
+        };
+        if inserted_new_entry {
+            kalamdb_observability::increment_manifest_cache_rocksdb_entries(1);
         }
 
         let entry = Arc::new(entry);
@@ -1093,13 +1123,16 @@ impl ManifestService {
             return Ok(None);
         };
 
-        serde_json::from_value(manifest_value).map(Some).map_err(|e| {
+        let manifest = serde_json::from_value(manifest_value).map_err(|e| {
             StorageError::SerializationError(format!(
                 "failed to deserialize manifest.json for {}: {}",
                 Self::manifest_id(table_id, user_id),
                 e
             ))
-        })
+        })?;
+
+        kalamdb_observability::record_manifest_read();
+        Ok(Some(manifest))
     }
 
     async fn read_manifest_from_storage_async(
@@ -1119,13 +1152,16 @@ impl ManifestService {
             Err(err) => return Err(StorageError::IoError(err.to_string())),
         };
 
-        serde_json::from_slice(&result.data).map(Some).map_err(|e| {
+        let manifest = serde_json::from_slice(&result.data).map_err(|e| {
             StorageError::SerializationError(format!(
                 "failed to deserialize manifest.json for {}: {}",
                 Self::manifest_id(table_id, user_id),
                 e
             ))
-        })
+        })?;
+
+        kalamdb_observability::record_manifest_read();
+        Ok(Some(manifest))
     }
 
     fn load_from_storage_and_hydrate(
@@ -1171,7 +1207,9 @@ impl ManifestService {
         let (table_type, storage_cached) = self.storage_cached_for_table(table_id)?;
         storage_cached
             .write_manifest_sync(table_type, table_id, user_id, manifest)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        kalamdb_observability::record_manifest_write();
+        Ok(())
     }
 
     // ========== File Subfolder State Methods ==========

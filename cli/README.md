@@ -224,6 +224,8 @@ kalam doctor
 kalam update
 ```
 
+When `kalam login` is run from an interactive terminal, a successful local or OIDC login now drops straight into the normal SQL shell. Piped or otherwise non-interactive invocations keep the one-shot behavior and exit after saving credentials so automation does not hang.
+
 ### Interactive Commands
 
 Special commands starting with backslash (`\`):

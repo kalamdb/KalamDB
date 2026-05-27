@@ -1,16 +1,17 @@
 import { getDb } from "@/lib/db";
-import type { DbaStatRow as DbaStatRecord, SystemSettingRow } from "@/lib/models";
-import { system_settings, system_stats, dba_stats } from "@/lib/schema";
-import { asc } from "drizzle-orm";
+import type { SystemSettingRow, SystemSlowQueryRow } from "@/lib/models";
+import { system_settings, system_slow_queries, system_stats } from "@/lib/schema";
+import { desc } from "drizzle-orm";
 
 export type Setting = SystemSettingRow;
 export type SystemStatsMap = Record<string, string>;
 
-export interface DbaStatRow {
+export interface DashboardMetricSample {
   sampled_at: number;
-  metric_name: string;
-  metric_value: number;
+  [metricName: string]: number;
 }
+
+export type SlowQuery = SystemSlowQueryRow;
 
 export async function fetchSystemSettings(): Promise<Setting[]> {
   const db = getDb();
@@ -32,7 +33,7 @@ export function mapSettingsRows(rows: Setting[]): Setting[] {
 
 export async function fetchSystemStats(): Promise<SystemStatsMap> {
   const db = getDb();
-  const rows = await db.select().from(system_stats);
+  const rows = await db.select().from(system_stats).limit(100);
   const stats: SystemStatsMap = {};
   for (const row of rows) {
     if (row.metric_name) {
@@ -42,36 +43,25 @@ export async function fetchSystemStats(): Promise<SystemStatsMap> {
   return stats;
 }
 
-const SUPPORTED_DBA_METRICS = new Set([
+export const DASHBOARD_METRIC_KEYS = [
   "active_connections",
   "active_subscriptions",
+  "active_subscriptions_peak",
+  "websocket_sessions_peak",
   "memory_usage_mb",
   "cpu_usage_percent",
-  "total_jobs",
-  "jobs_running",
-  "jobs_queued",
-  "total_tables",
-  "total_namespaces",
+  "select_queries_per_second",
+  "insert_queries_per_second",
+  "update_queries_per_second",
+  "delete_queries_per_second",
   "open_files_total",
-  "open_files_regular",
-]);
-
-function normalizeEpochMillis(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    let epochMillis = value;
-    while (Math.abs(epochMillis) >= 1e15) {
-      epochMillis /= 1000;
-    }
-    return Math.trunc(epochMillis);
-  }
-  if (typeof value === "string") {
-    const numeric = Number(value.trim());
-    if (Number.isFinite(numeric)) return normalizeEpochMillis(numeric);
-    const parsed = new Date(value.trim()).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-}
+  "open_files_directories",
+  "manifest_cache_rocksdb_entries",
+  "manifest_reads_per_second",
+  "manifest_writes_per_second",
+  "parquet_files_written_per_second",
+  "parquet_files_read_per_second",
+];
 
 function normalizeMetricValue(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : Number.NaN;
@@ -82,7 +72,7 @@ function normalizeMetricValue(value: unknown): number {
   return Number.NaN;
 }
 
-function getTimeRangeCutoff(timeRange: string): number {
+export function getTimeRangeCutoff(timeRange: string): number {
   const match = timeRange.trim().match(/^(\d+)\s+(HOUR|HOURS|DAY|DAYS)$/i);
   if (!match) return 0;
   const amount = Number(match[1]);
@@ -92,20 +82,26 @@ function getTimeRangeCutoff(timeRange: string): number {
   return Date.now() - amount * multiplier;
 }
 
-export async function fetchDbaStats(timeRange: string = "24 HOURS"): Promise<DbaStatRow[]> {
-  const db = getDb();
-  const rows: DbaStatRecord[] = await db.select().from(dba_stats).orderBy(asc(dba_stats.sampled_at));
-  const cutoff = getTimeRangeCutoff(timeRange);
+export function statsMapToDashboardSample(stats: SystemStatsMap, sampledAt = Date.now()): DashboardMetricSample | null {
+  const sample: DashboardMetricSample = { sampled_at: sampledAt };
+  let hasMetric = false;
 
-  return rows
-    .map((row) => ({
-      sampled_at: normalizeEpochMillis(row.sampled_at),
-      metric_name: String(row.metric_name ?? ""),
-      metric_value: normalizeMetricValue(row.metric_value),
-    }))
-    .filter((row) => {
-      if (!row.metric_name || !SUPPORTED_DBA_METRICS.has(row.metric_name)) return false;
-      if (!Number.isFinite(row.metric_value) || row.sampled_at <= 0) return false;
-      return cutoff === 0 || row.sampled_at >= cutoff;
-    });
+  for (const key of DASHBOARD_METRIC_KEYS) {
+    const metricValue = normalizeMetricValue(stats[key]);
+    if (Number.isFinite(metricValue)) {
+      sample[key] = metricValue;
+      hasMetric = true;
+    }
+  }
+
+  return hasMetric ? sample : null;
+}
+
+export async function fetchSlowQueries(limit = 20): Promise<SlowQuery[]> {
+  const db = getDb();
+  return db
+    .select()
+    .from(system_slow_queries)
+    .orderBy(desc(system_slow_queries.timestamp_ms))
+    .limit(limit);
 }

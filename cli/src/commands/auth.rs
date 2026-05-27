@@ -14,12 +14,28 @@ use crate::{
     connect::{build_timeouts, resolve_server_url},
     terminal_input::{prompt_line, prompt_password},
 };
+use kalam_cli::session::{
+    auth_options::{fetch_login_options, ExternalLoginSession},
+    oidc_browser, oidc_device,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthContext {
     pub server_url: String,
     pub access_token: String,
     pub source: AuthSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoginShellContinuation {
+    pub server_url: String,
+    pub access_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LoginCommandResult {
+    Exit,
+    ContinueToSession(LoginShellContinuation),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -113,6 +129,7 @@ pub(crate) async fn resolve_auth_context(
     }
 
     if let Some(user) = &cli.user {
+        reject_local_login_when_disabled(cli, &server_url).await?;
         let password = password_from_cli_or_prompt(cli)?;
         let login_response = login_with_password(&server_url, user, &password, cli.timeout).await?;
         return Ok(Some(AuthContext {
@@ -183,6 +200,20 @@ pub(crate) async fn resolve_auth_context(
     }))
 }
 
+fn should_continue_to_session_after_login(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> bool {
+    stdin_is_terminal && stdout_is_terminal
+}
+
+fn should_continue_to_session_after_login_in_current_terminal() -> bool {
+    should_continue_to_session_after_login(
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
 pub(crate) fn authed_client(
     cli: &Cli,
     config: &CLIConfiguration,
@@ -244,8 +275,13 @@ pub async fn handle_login(
     cli: &Cli,
     args: &LoginArgs,
     credential_store: &mut FileCredentialStore,
-) -> Result<bool> {
+) -> Result<LoginCommandResult> {
+    if args.oidc {
+        return handle_oidc_login(cli, args, credential_store).await;
+    }
+
     let server_url = resolve_server_url(cli, credential_store)?;
+    reject_local_login_when_disabled(cli, &server_url).await?;
     let user = if let Some(user) = &cli.user {
         user.clone()
     } else if std::io::stdin().is_terminal() {
@@ -263,11 +299,12 @@ pub async fn handle_login(
 
     let password = password_from_cli_or_prompt(cli)?;
     let login_response = login_with_password(&server_url, &user, &password, cli.timeout).await?;
+    let access_token = login_response.access_token.clone();
 
     if !args.no_save {
         let creds = Credentials::with_refresh_token(
             cli.instance.clone(),
-            login_response.access_token.clone(),
+            access_token.clone(),
             login_response.user.id.to_string(),
             login_response.expires_at.clone(),
             Some(server_url.clone()),
@@ -290,7 +327,135 @@ pub async fn handle_login(
         println!("Refresh token expires: {}", refresh_expires_at);
     }
 
-    Ok(true)
+    if should_continue_to_session_after_login_in_current_terminal() {
+        return Ok(LoginCommandResult::ContinueToSession(LoginShellContinuation {
+            server_url,
+            access_token: args.no_save.then_some(access_token),
+        }));
+    }
+
+    Ok(LoginCommandResult::Exit)
+}
+
+async fn reject_local_login_when_disabled(cli: &Cli, server_url: &str) -> Result<()> {
+    let client = api_http_client(cli.timeout)?;
+    match fetch_login_options(&client, server_url).await {
+        Ok(options) if !options.local.enabled => Err(CLIError::ConfigurationError(
+            "local username/password login is disabled; use `kalam login --oidc`".to_string(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+async fn handle_oidc_login(
+    cli: &Cli,
+    args: &LoginArgs,
+    credential_store: &mut FileCredentialStore,
+) -> Result<LoginCommandResult> {
+    let server_url = resolve_server_url(cli, credential_store)?;
+    let api_client = api_http_client(cli.timeout)?;
+    let login_options = fetch_login_options(&api_client, &server_url).await?;
+    let oidc = login_options
+        .oidc
+        .filter(|oidc| oidc.enabled)
+        .ok_or_else(|| CLIError::ConfigurationError("OIDC login is not enabled".to_string()))?;
+
+    let session = if args.no_browser {
+        let device_flow = oidc.device_flow.as_ref();
+        let can_broker =
+            device_flow.map(|device_flow| device_flow.broker_supported).unwrap_or(false);
+        let can_direct =
+            device_flow.map(|device_flow| device_flow.direct_supported).unwrap_or(false);
+
+        if args.brokered || (!can_direct && can_broker) {
+            oidc_device::login_with_brokered_device(&api_client, &server_url, &oidc, !cli.no_color)
+                .await?
+        } else if can_direct {
+            let oidc_client = oidc_http_client(cli.timeout)?;
+            oidc_device::login_with_direct_device(
+                &oidc_client,
+                &api_client,
+                &server_url,
+                &oidc,
+                !cli.no_color,
+            )
+            .await?
+        } else {
+            return Err(CLIError::ConfigurationError(
+                "OIDC device login is not advertised by the server".to_string(),
+            ));
+        }
+    } else {
+        let oidc_client = oidc_http_client(cli.timeout)?;
+        oidc_browser::login_with_browser(
+            &oidc_client,
+            &api_client,
+            &server_url,
+            &oidc,
+            !cli.no_color,
+        )
+        .await?
+    };
+
+    if !args.no_save {
+        save_external_session(cli, credential_store, &server_url, &session)?;
+    }
+
+    println!("Logged in with {} as {}", oidc.display_name, session.user_id);
+    println!("Instance: {}", cli.instance);
+    println!("Server: {}", server_url);
+    if !args.no_save {
+        println!("Credentials saved: {}", credential_store.path().display());
+    }
+    println!("Access token expires: {}", session.expires_at);
+
+    if should_continue_to_session_after_login_in_current_terminal() {
+        return Ok(LoginCommandResult::ContinueToSession(LoginShellContinuation {
+            server_url,
+            access_token: args.no_save.then_some(session.access_token),
+        }));
+    }
+
+    Ok(LoginCommandResult::Exit)
+}
+
+fn save_external_session(
+    cli: &Cli,
+    credential_store: &mut FileCredentialStore,
+    server_url: &str,
+    session: &ExternalLoginSession,
+) -> Result<()> {
+    let credentials = Credentials::with_refresh_token(
+        cli.instance.clone(),
+        session.access_token.clone(),
+        session.user_id.clone(),
+        session.expires_at.clone(),
+        Some(server_url.to_string()),
+        session.refresh_token.clone(),
+        session.refresh_expires_at.clone(),
+    );
+    credential_store.set_credentials(&credentials).map_err(|error| {
+        CLIError::ConfigurationError(format!("Failed to save credentials: {}", error))
+    })
+}
+
+fn oidc_http_client(timeout_secs: u64) -> Result<openidconnect::reqwest::Client> {
+    openidconnect::reqwest::ClientBuilder::new()
+        .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!("Failed to create OIDC HTTP client: {error}"))
+        })
+}
+
+fn api_http_client(timeout_secs: u64) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!("Failed to create HTTP client: {error}"))
+        })
 }
 
 pub async fn handle_logout(
@@ -720,9 +885,11 @@ mod tests {
             panic!("expected login command");
         };
 
-        handle_login(&cli, args, &mut store)
+        let outcome = handle_login(&cli, args, &mut store)
             .await
             .expect("login command should succeed");
+
+        assert_eq!(outcome, LoginCommandResult::Exit);
 
         let credentials = store
             .get_credentials("prod")
@@ -730,6 +897,14 @@ mod tests {
             .expect("credentials saved");
         assert_eq!(credentials.jwt_token, "access-root");
         assert_eq!(credentials.refresh_token.as_deref(), Some("refresh-root"));
+    }
+
+    #[test]
+    fn login_only_continues_to_session_for_interactive_terminals() {
+        assert!(should_continue_to_session_after_login(true, true));
+        assert!(!should_continue_to_session_after_login(true, false));
+        assert!(!should_continue_to_session_after_login(false, true));
+        assert!(!should_continue_to_session_after_login(false, false));
     }
 
     #[tokio::test]

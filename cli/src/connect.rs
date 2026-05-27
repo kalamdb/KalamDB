@@ -1076,10 +1076,8 @@ pub async fn create_session(
             .connection_options(connection_options.clone());
 
         let test_client = test_builder.build()?;
-        // Try to list namespaces - this requires authentication
-        test_client
-            .execute_query("SELECT name FROM system.namespaces LIMIT 1", None, None, None)
-            .await
+        // Verify authentication without requiring system table privileges.
+        test_client.execute_query("SELECT 1 AS auth_check", None, None, None).await
     };
 
     // Check if auth test failed

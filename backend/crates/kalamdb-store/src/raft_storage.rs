@@ -283,6 +283,33 @@ impl RaftPartitionStore {
         Ok(())
     }
 
+    /// Deletes all log entries with index >= `from_index`.
+    ///
+    /// Used by Raft conflict resolution when a follower receives a divergent
+    /// suffix from the leader. This must be durable so stale entries do not
+    /// reappear after restart.
+    pub fn delete_logs_from(&self, from_index: u64) -> Result<()> {
+        let prefix = self.make_key("log:");
+        let start_key = self.log_key(from_index);
+
+        let iter = self.backend.scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
+
+        let ops: Vec<Operation> = iter
+            .filter_map(|(key, _)| {
+                Self::parse_log_index_from_key(&key).map(|_| Operation::Delete {
+                    partition: self.partition.clone(),
+                    key,
+                })
+            })
+            .collect();
+
+        if !ops.is_empty() {
+            self.backend.batch(ops)?;
+        }
+
+        Ok(())
+    }
+
     /// Returns the last (highest) log index, or None if log is empty.
     pub fn last_log_index(&self) -> Result<Option<u64>> {
         // Scan all log entries and find the max index
@@ -602,6 +629,32 @@ mod tests {
         let scanned = store.scan_logs(5, 6).unwrap();
         assert_eq!(scanned.len(), 1);
         assert_eq!(scanned[0].index, 5);
+    }
+
+    #[test]
+    fn test_delete_logs_from() {
+        let store = create_test_store(GroupId::DataUserShard(5));
+
+        let entries: Vec<RaftLogEntry> = (1..=10)
+            .map(|i| RaftLogEntry {
+                index: i,
+                term: 1,
+                payload: vec![i as u8],
+            })
+            .collect();
+
+        store.append_logs(&entries).unwrap();
+        store.delete_logs_from(6).unwrap();
+
+        for i in 1..6 {
+            assert!(store.get_log(i).unwrap().is_some());
+        }
+
+        for i in 6..=10 {
+            assert!(store.get_log(i).unwrap().is_none());
+        }
+
+        assert_eq!(store.last_log_index().unwrap(), Some(5));
     }
 
     #[test]

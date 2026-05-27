@@ -89,9 +89,6 @@ log_to_console = false
 [auth]
 jwt_secret = "kalamdb-test-jwt-secret-please-change-32chars"
 
-[retention]
-enable_dba_stats = false
-
 [shutdown.flush]
 timeout = 5
 "#,

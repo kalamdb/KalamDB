@@ -1,20 +1,11 @@
 /// Errors produced by the OIDC validator.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OidcError {
+    #[error("OIDC configuration error: {0}")]
+    Configuration(String),
+
     #[error("OIDC discovery failed: {0}")]
     DiscoveryFailed(String),
-
-    #[error("JWKS fetch failed: {0}")]
-    JwksFetchFailed(String),
-
-    #[error("Token is missing the 'kid' header")]
-    MissingKid,
-
-    #[error("No key found for kid '{0}'")]
-    KeyNotFound(String),
-
-    #[error("Invalid JWK format: {0}")]
-    InvalidKeyFormat(String),
 
     #[error("JWT validation failed: {0}")]
     JwtValidationFailed(String),

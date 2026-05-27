@@ -1,17 +1,50 @@
 // JWT authentication and validation module
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use jsonwebtoken::{
     decode, decode_header, encode, errors::ErrorKind, Algorithm, DecodingKey, EncodingKey, Header,
     Validation,
 };
-use kalamdb_commons::{Role, UserId};
+use kalamdb_commons::{AuthType, Role, UserId};
 
 use crate::errors::error::{AuthError, AuthResult};
-pub(crate) use crate::oidc::{extract_algorithm_unverified, extract_issuer_unverified};
-pub use crate::oidc::{JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS};
+pub use crate::providers::jwt_claims::{JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS};
 
 /// Default issuer for KalamDB-issued tokens.
 pub const KALAMDB_ISSUER: &str = "kalamdb";
+
+/// Extract the `alg` field from the JWT header without verifying the signature.
+pub(crate) fn extract_algorithm_unverified(token: &str) -> AuthResult<Algorithm> {
+    let header = decode_header(token).map_err(|error| {
+        AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", error))
+    })?;
+
+    Ok(header.alg)
+}
+
+/// Extract the `iss` claim from the JWT payload without verifying the signature.
+pub(crate) fn extract_issuer_unverified(token: &str) -> AuthResult<String> {
+    let parts: Vec<&str> = token.splitn(3, '.').collect();
+    if parts.len() < 2 {
+        return Err(AuthError::MalformedAuthorization(
+            "Invalid JWT format: less than 2 segments".to_string(),
+        ));
+    }
+
+    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).map_err(|error| {
+        AuthError::MalformedAuthorization(format!("Invalid JWT payload base64: {}", error))
+    })?;
+
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).map_err(|error| {
+        AuthError::MalformedAuthorization(format!("Invalid JWT payload JSON: {}", error))
+    })?;
+
+    payload
+        .get("iss")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| AuthError::MalformedAuthorization("Missing 'iss' claim".to_string()))
+}
 
 /// Generate a new JWT token.
 pub fn generate_jwt_token(claims: &JwtClaims, secret: &str) -> AuthResult<String> {
@@ -30,12 +63,32 @@ pub fn create_and_sign_token(
     expiry_hours: Option<i64>,
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
-    let claims = JwtClaims::with_token_type(
+    create_and_sign_token_with_auth_type(
+        user_id,
+        role,
+        email,
+        expiry_hours,
+        secret,
+        AuthType::Password,
+    )
+}
+
+/// Create and sign a JWT access token with an explicit session auth type.
+pub fn create_and_sign_token_with_auth_type(
+    user_id: &UserId,
+    role: &Role,
+    email: Option<&str>,
+    expiry_hours: Option<i64>,
+    secret: &str,
+    auth_type: AuthType,
+) -> AuthResult<(String, JwtClaims)> {
+    let claims = JwtClaims::with_token_type_and_auth_type(
         user_id,
         role,
         email,
         expiry_hours,
         TokenType::Access,
+        auth_type,
         KALAMDB_ISSUER,
     );
     let token = generate_jwt_token(&claims, secret)?;
@@ -50,12 +103,32 @@ pub fn create_and_sign_refresh_token(
     expiry_hours: Option<i64>,
     secret: &str,
 ) -> AuthResult<(String, JwtClaims)> {
-    let claims = JwtClaims::with_token_type(
+    create_and_sign_refresh_token_with_auth_type(
+        user_id,
+        role,
+        email,
+        expiry_hours,
+        secret,
+        AuthType::Password,
+    )
+}
+
+/// Create and sign a JWT refresh token with an explicit session auth type.
+pub fn create_and_sign_refresh_token_with_auth_type(
+    user_id: &UserId,
+    role: &Role,
+    email: Option<&str>,
+    expiry_hours: Option<i64>,
+    secret: &str,
+    auth_type: AuthType,
+) -> AuthResult<(String, JwtClaims)> {
+    let claims = JwtClaims::with_token_type_and_auth_type(
         user_id,
         role,
         email,
         expiry_hours,
         TokenType::Refresh,
+        auth_type,
         KALAMDB_ISSUER,
     );
     let token = generate_jwt_token(&claims, secret)?;
@@ -164,6 +237,7 @@ mod tests {
             iat: now,
             email: Some("test@example.com".to_string()),
             role: Some(Role::User),
+            auth_type: None,
             token_type,
         };
 
@@ -318,6 +392,7 @@ mod tests {
             iat: now,
             email: None,
             role: None,
+            auth_type: None,
             token_type: Some(TokenType::Access),
         };
 

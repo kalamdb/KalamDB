@@ -2,12 +2,8 @@
 
 use kalam_client::models::ResponseStatus;
 use kalamdb_commons::models::UserId;
-use kalamdb_dba::{
-    models::{NotificationRow, StatsRow},
-    DbaRegistry,
-};
+use kalamdb_dba::{models::NotificationRow, DbaRegistry};
 use ntest::timeout;
-use tokio::time::{sleep, Duration, Instant};
 
 use super::test_support::TestServer;
 
@@ -45,32 +41,11 @@ async fn test_dba_namespace_and_tables_created_on_startup() {
     );
 
     let rows = tables_response.rows_as_maps();
-    assert_eq!(rows.len(), 2, "Expected 2 dba bootstrap tables");
+    assert_eq!(rows.len(), 1, "Expected 1 dba bootstrap table");
     assert_eq!(
         rows[0].get("table_name").and_then(|value| value.as_str()),
         Some("notifications")
     );
-    assert_eq!(rows[1].get("table_name").and_then(|value| value.as_str()), Some("stats"));
-
-    let stats_deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let stats_response = server
-            .execute_sql(
-                "SELECT metric_name FROM dba.stats WHERE metric_name = 'memory_usage_mb' LIMIT 1",
-            )
-            .await;
-        assert_eq!(stats_response.status, ResponseStatus::Success);
-
-        if stats_response.rows_as_maps().len() == 1 {
-            break;
-        }
-
-        assert!(
-            Instant::now() < stats_deadline,
-            "Expected startup stats snapshot to be recorded"
-        );
-        sleep(Duration::from_millis(100)).await;
-    }
 }
 
 #[tokio::test]
@@ -78,18 +53,6 @@ async fn test_dba_namespace_and_tables_created_on_startup() {
 async fn test_dba_repositories_write_through_normal_table_paths() {
     let server = TestServer::new_shared().await;
     let dba = DbaRegistry::new(server.app_context.clone());
-
-    let sampled_at = chrono::Utc::now().timestamp_millis();
-
-    let statistic = StatsRow {
-        id: format!("node-1:memory_usage_mb:{}", sampled_at),
-        node_id: "node-1".to_string(),
-        metric_name: "memory_usage_mb".to_string(),
-        metric_value: 512.0,
-        metric_unit: Some("MB".to_string()),
-        sampled_at,
-    };
-    dba.stats().upsert(statistic).await.expect("upsert stat sample");
 
     let notification = NotificationRow {
         id: "notif-1".to_string(),
@@ -104,15 +67,6 @@ async fn test_dba_repositories_write_through_normal_table_paths() {
         .upsert(notification.clone())
         .await
         .expect("upsert notification");
-
-    let statistics_response = server
-        .execute_sql(
-            "SELECT metric_name, metric_value FROM dba.stats WHERE metric_name = \
-             'memory_usage_mb' AND node_id = 'node-1'",
-        )
-        .await;
-    assert_eq!(statistics_response.status, ResponseStatus::Success);
-    assert_eq!(statistics_response.rows_as_maps().len(), 1);
 
     let notification_response = server
         .execute_sql("SELECT id, title FROM dba.notifications WHERE id = 'notif-1'")

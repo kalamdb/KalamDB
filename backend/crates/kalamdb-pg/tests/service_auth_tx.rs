@@ -10,7 +10,7 @@ use kalamdb_auth::{
     UserRepository,
 };
 use kalamdb_commons::models::TransactionId;
-use kalamdb_configs::{AuthSettings, OAuthSettings};
+use kalamdb_configs::AuthSettings;
 use kalamdb_pg::{
     BeginTransactionRequest, CloseSessionRequest, CommitTransactionRequest, DeleteRequest,
     ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRequest, KalamPgService, LivePgTransaction,
@@ -30,7 +30,7 @@ const TX_ID_WRONG: &str = "01960f7b-3d1a-7d6d-b26c-7e4db6f25f8d";
 
 fn init_test_auth_settings() -> AuthSettings {
     let auth = AuthSettings::default();
-    init_auth_config(&auth, &OAuthSettings::default());
+    init_auth_config(&auth);
     auth
 }
 

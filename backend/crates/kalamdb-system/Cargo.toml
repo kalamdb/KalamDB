@@ -42,7 +42,6 @@ chrono = { workspace = true }
 
 # Logging
 log = { workspace = true }
-tracing = { workspace = true }
 
 # OnceCell for lazy caches
 once_cell = { workspace = true }
@@ -51,6 +50,3 @@ once_cell = { workspace = true }
 name = "kalamdb_system"
 path = "src/lib.rs"
 doctest = false
-
-[dev-dependencies]
-tempfile = { workspace = true }

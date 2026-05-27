@@ -21,7 +21,7 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::{initialize_dba_namespace, start_startup_stats_snapshot, start_stats_recorder};
+use kalamdb_dba::initialize_dba_namespace;
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_store::open_storage_backend;
@@ -234,17 +234,6 @@ pub async fn prepare_components(
         use_root_password_env,
     )
     .await?;
-    if config.retention.enable_dba_stats {
-        if let Err(error) = start_stats_recorder(app_context.clone()) {
-            log::error!("Failed to start DBA stats recorder: {}", error);
-        }
-    } else {
-        start_startup_stats_snapshot(app_context.clone());
-        log::info!(
-            "DBA periodic stats recorder disabled via config (retention.enable_dba_stats = false); recording startup snapshot only"
-        );
-    }
-
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -1079,7 +1068,7 @@ async fn create_default_system_user(
                 password_hash,
                 role,
                 email: Some(email),
-                auth_type: AuthType::Internal, // System user uses Internal auth
+                auth_type: AuthType::Password,
                 auth_data: None,
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),

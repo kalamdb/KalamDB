@@ -8,13 +8,13 @@
  *  1. Sign a Firebase "custom token" with the service-account private key.
  *  2. Exchange it for a real Firebase ID token via the Auth REST API.
  *  3. Send the ID token to a running KalamDB instance as a Bearer token.
- *  4. Verify SELECT CURRENT_USER() returns the expected provider username.
+ *  4. Verify KalamDB authenticates the Firebase subject directly.
  *
  * Usage:
  *   node backend/tests/firebase_auth_test.mjs
  */
 
-import { createHash, createSign } from "node:crypto";
+import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -80,12 +80,6 @@ async function exchangeCustomToken(customToken) {
 function decodeJwtPayload(token) {
   const part = token.split(".")[1];
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
-}
-
-/** Match KalamDB's deterministic external OIDC user id mapping. */
-function oidcUserId(issuer, subject) {
-  const digest = createHash("sha256").update(`${issuer}:${subject}`).digest("hex");
-  return `u_oidc_${digest.slice(0, 16)}`;
 }
 
 /** Run a SQL query against KalamDB with a Bearer token. */
@@ -170,7 +164,7 @@ if (claims.aud !== FIREBASE_PROJECT_ID) {
 ok(`Claims look correct`);
 
 section("Step 4: Test Firebase token against KalamDB");
-const expectedUsername = oidcUserId(claims.iss, claims.sub);
+const expectedUsername = claims.sub;
 
 let result;
 try {
@@ -182,16 +176,16 @@ try {
     "\n  Make sure KalamDB is running with the Firebase issuer configured:"
   );
   console.error(`    jwt_trusted_issuers = "${expectedIss}"`);
-  console.error(`    [oauth] auto_provision = true`);
+  console.error(`    [auth.oidc] auto_provision = true`);
   process.exit(1);
 }
 
-section("Step 5: Verify query succeeded and user was provisioned");
+section("Step 5: Verify query succeeded with direct subject identity");
 const rawResult = JSON.stringify(result);
 console.log(`     Response: ${rawResult}`);
 
 // The KalamDB SQL response includes `as_user` in each resultset, which reflects
-// the authenticated identity. Verify it matches the expected Firebase username.
+// the authenticated identity. Verify it matches the Firebase `sub` claim.
 if (rawResult.includes(expectedUsername)) {
   ok(`Authenticated as '${expectedUsername}' (verified via as_user claim in response)`);
 } else if (rawResult.includes('"1"') || rawResult.includes('"ok"')) {
@@ -202,8 +196,9 @@ if (rawResult.includes(expectedUsername)) {
   process.exit(1);
 }
 
-// Double-check user was provisioned by querying the system users table
-section("Step 6: Verify user was provisioned in system.users");
+// Regular OIDC users with default_role=user are stateless and may not have a
+// system.users row. If one exists, it must use the same direct subject id.
+section("Step 6: Check optional system.users row");
 let usersResult;
 try {
   const rootToken = await kalamLogin("root", KALAMDB_ROOT_PASSWORD);
@@ -215,9 +210,7 @@ try {
   if (usersJson.includes(expectedUsername)) {
     ok(`User '${expectedUsername}' exists in system.users`);
   } else {
-    throw new Error(
-      `User not found in system.users after auto-provision. Response: ${usersJson}`
-    );
+    ok(`No persisted system.users row for regular OIDC user '${expectedUsername}'`);
   }
 } catch (e) {
   console.error(`  ❌  ${e.message}`);

@@ -408,10 +408,25 @@ impl ManifestAccessPlanner {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
-    use kalamdb_commons::models::rows::StoredScalarValue;
-    use kalamdb_system::{ColumnStats, SegmentMetadata};
+    use datafusion::arrow::{
+        array::{BooleanArray, Int64Array, StringArray},
+        datatypes::{DataType, Field, Schema},
+    };
+    use kalamdb_commons::{
+        models::{
+            datatypes::KalamDataType,
+            rows::StoredScalarValue,
+            schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
+        },
+        NamespaceId, StorageId, TableName,
+    };
+    use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
+    use kalamdb_system::{
+        ColumnStats, SegmentMetadata, Storage, StorageType, StoragesTableProvider,
+    };
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -421,6 +436,119 @@ mod tests {
             Some(StoredScalarValue::Int64(Some(max.to_string()))),
             Some(0),
         )
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestSchemaRegistry {
+        table_id: TableId,
+        table_def: Arc<TableDefinition>,
+        schema: SchemaRef,
+        storage_id: StorageId,
+    }
+
+    impl SchemaRegistryTrait for TestSchemaRegistry {
+        type Error = KalamDbError;
+
+        fn get_arrow_schema(&self, table_id: &TableId) -> Result<SchemaRef, Self::Error> {
+            if &self.table_id == table_id {
+                Ok(Arc::clone(&self.schema))
+            } else {
+                Err(KalamDbError::TableNotFound(table_id.to_string()))
+            }
+        }
+
+        fn get_table_if_exists(
+            &self,
+            table_id: &TableId,
+        ) -> Result<Option<Arc<TableDefinition>>, Self::Error> {
+            if &self.table_id == table_id {
+                Ok(Some(Arc::clone(&self.table_def)))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn get_arrow_schema_for_version(
+            &self,
+            table_id: &TableId,
+            _schema_version: u32,
+        ) -> Result<SchemaRef, Self::Error> {
+            self.get_arrow_schema(table_id)
+        }
+
+        fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, Self::Error> {
+            if &self.table_id == table_id {
+                Ok(self.storage_id.clone())
+            } else {
+                Err(KalamDbError::TableNotFound(table_id.to_string()))
+            }
+        }
+    }
+
+    fn build_storage_registry(temp_dir: &TempDir) -> Arc<kalamdb_filestore::StorageRegistry> {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let storages_provider = Arc::new(StoragesTableProvider::new(backend));
+        let base_directory = temp_dir.path().to_string_lossy().into_owned();
+
+        storages_provider
+            .create_storage(Storage {
+                storage_id: StorageId::local(),
+                storage_name: "Local Storage".to_string(),
+                description: Some("planner pruning test storage".to_string()),
+                storage_type: StorageType::Filesystem,
+                base_directory: base_directory.clone(),
+                credentials: None,
+                config_json: None,
+                shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
+                user_tables_template: "user/{namespace}/{tableName}/{userId}".to_string(),
+                created_at: 1_000,
+                updated_at: 1_000,
+            })
+            .expect("seed local storage");
+
+        Arc::new(kalamdb_filestore::StorageRegistry::new(
+            storages_provider,
+            base_directory,
+            Default::default(),
+        ))
+    }
+
+    fn create_scan_test_table_def() -> TableDefinition {
+        TableDefinition {
+            namespace_id: NamespaceId::new("test"),
+            table_name: TableName::new("events"),
+            table_type: TableType::Shared,
+            table_options: kalamdb_commons::schemas::TableOptions::Shared(Default::default()),
+            columns: vec![
+                ColumnDefinition::new(
+                    1,
+                    "id".to_string(),
+                    1,
+                    KalamDataType::BigInt,
+                    false,
+                    true,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    2,
+                    "body".to_string(),
+                    2,
+                    KalamDataType::Text,
+                    true,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                ),
+            ],
+            next_column_id: 3,
+            schema_version: 1,
+            table_comment: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
     }
 
     #[test]
@@ -600,5 +728,113 @@ mod tests {
 
         let all = planner.plan_all_files(&manifest);
         assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(5000)]
+    async fn scan_parquet_files_uses_manifest_to_skip_unneeded_files() {
+        let table_def = Arc::new(create_scan_test_table_def());
+        let table_id = TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("body", DataType::Utf8, true),
+            Field::new("_seq", DataType::Int64, false),
+            Field::new("_deleted", DataType::Boolean, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2])),
+                Arc::new(StringArray::from(vec![Some("one"), Some("two")])),
+                Arc::new(Int64Array::from(vec![5, 6])),
+                Arc::new(BooleanArray::from(vec![false, false])),
+            ],
+        )
+        .expect("create record batch");
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let storage_registry = build_storage_registry(&temp_dir);
+        let storage_cached = storage_registry
+            .get_cached(&StorageId::local())
+            .expect("lookup storage")
+            .expect("local storage exists");
+
+        storage_cached
+            .write_parquet_sync(
+                TableType::Shared,
+                &table_id,
+                None,
+                "batch-in-range.parquet",
+                Arc::clone(&schema),
+                vec![batch],
+                None,
+            )
+            .expect("write in-range parquet");
+
+        let skipped_path = storage_cached.get_file_path(
+            TableType::Shared,
+            &table_id,
+            None,
+            "batch-skipped-invalid.parquet",
+        );
+        fs::create_dir_all(
+            Path::new(&skipped_path.full_path)
+                .parent()
+                .expect("skipped parquet parent exists"),
+        )
+        .expect("create skipped parquet parent");
+        fs::write(&skipped_path.full_path, b"not a parquet file")
+            .expect("write invalid skipped parquet");
+
+        let mut manifest = Manifest::new(table_id.clone(), None);
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "batch-in-range.parquet".to_string(),
+            "batch-in-range.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(1i64),
+            SeqId::from(10i64),
+            2,
+            128,
+            1,
+        ));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "batch-skipped-invalid.parquet".to_string(),
+            "batch-skipped-invalid.parquet".to_string(),
+            HashMap::new(),
+            SeqId::from(100i64),
+            SeqId::from(200i64),
+            2,
+            24,
+            1,
+        ));
+
+        let schema_registry = TestSchemaRegistry {
+            table_id: table_id.clone(),
+            table_def,
+            schema: Arc::clone(&schema),
+            storage_id: StorageId::local(),
+        };
+
+        let planner = ManifestAccessPlanner::new();
+        let (combined, (total, skipped, scanned)) = planner
+            .scan_parquet_files_async(
+                Some(&manifest),
+                storage_cached,
+                TableType::Shared,
+                &table_id,
+                None,
+                Some((SeqId::from(1i64), SeqId::from(10i64))),
+                false,
+                Arc::clone(&schema),
+                &schema_registry,
+                None,
+            )
+            .await
+            .expect("planner should not open manifest-pruned invalid parquet");
+
+        assert_eq!(total, 2);
+        assert_eq!(skipped, 1);
+        assert_eq!(scanned, 1);
+        assert_eq!(combined.num_rows(), 2);
     }
 }

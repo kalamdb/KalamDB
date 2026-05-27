@@ -5,7 +5,7 @@
 //! `kalamdb-session-datafusion`.
 
 use kalamdb_commons::{
-    models::{NamespaceId, Role, TableName, UserId},
+    models::{Role, TableId, UserId},
     schemas::{TableDefinition, TableOptions, TableType},
     TableAccess,
 };
@@ -157,15 +157,14 @@ pub fn can_write_user_table(role: Role) -> bool {
 /// Check user table write access using table identity.
 pub fn check_user_table_write_access_level(
     role: Role,
-    namespace_id: &NamespaceId,
-    table_name: &TableName,
+    table_id: &TableId,
 ) -> Result<(), SessionError> {
     if can_write_user_table(role) {
         Ok(())
     } else {
         Err(SessionError::AccessDenied {
-            namespace_id: namespace_id.clone(),
-            table_name: table_name.clone(),
+            namespace_id: table_id.namespace_id().clone(),
+            table_name: table_id.table_name().clone(),
             role,
             reason: "User table write denied due to insufficient privileges.".to_string(),
         })
@@ -181,10 +180,9 @@ pub fn can_write_stream_table(role: Role) -> bool {
 /// Check stream table write access using table identity.
 pub fn check_stream_table_write_access_level(
     role: Role,
-    namespace_id: &NamespaceId,
-    table_name: &TableName,
+    table_id: &TableId,
 ) -> Result<(), SessionError> {
-    check_user_table_write_access_level(role, namespace_id, table_name)
+    check_user_table_write_access_level(role, table_id)
 }
 
 /// Check if a role can impersonate another user.
@@ -266,15 +264,14 @@ pub fn can_write_shared_table(access_level: TableAccess, role: Role) -> bool {
 pub fn check_shared_table_write_access_level(
     role: Role,
     access_level: TableAccess,
-    namespace_id: &NamespaceId,
-    table_name: &TableName,
+    table_id: &TableId,
 ) -> Result<(), SessionError> {
     if can_write_shared_table(access_level, role) {
         Ok(())
     } else {
         Err(SessionError::AccessDenied {
-            namespace_id: namespace_id.clone(),
-            table_name: table_name.clone(),
+            namespace_id: table_id.namespace_id().clone(),
+            table_name: table_id.table_name().clone(),
             role,
             reason: format!("Shared table write denied (access_level={:?})", access_level),
         })
@@ -284,6 +281,7 @@ pub fn check_shared_table_write_access_level(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{NamespaceId, TableName};
 
     #[test]
     fn test_can_access_system_table() {

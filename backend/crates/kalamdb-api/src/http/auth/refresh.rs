@@ -7,11 +7,13 @@ use std::sync::Arc;
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    create_and_sign_token, create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
+    create_and_sign_refresh_token_with_auth_type, create_and_sign_token_with_auth_type,
+    create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
     extract_refresh_or_bearer_token,
-    providers::jwt_auth::{create_and_sign_refresh_token, validate_jwt_token, TokenType},
-    CookieConfig, UserRepository,
+    providers::jwt_auth::{validate_jwt_token, TokenType},
+    resolve_refresh_token_user, CookieConfig, UserRepository,
 };
+use kalamdb_commons::Role;
 use kalamdb_configs::AuthSettings;
 
 use super::{
@@ -59,48 +61,20 @@ pub async fn refresh_handler(
         ));
     }
 
-    let user_id = match kalamdb_commons::UserId::try_new(claims.sub.clone()) {
-        Ok(user_id) => user_id,
-        Err(_) => {
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "Invalid credentials"));
-        },
-    };
-
-    // Verify user still exists and is active by user_id
-    let user = match user_repo.get_user_by_id(&user_id).await {
-        Ok(user) if user.deleted_at.is_none() => user,
-        _ => {
-            return HttpResponse::Unauthorized()
-                .json(AuthErrorResponse::new("unauthorized", "User no longer valid"));
-        },
-    };
-
-    // SECURITY: Verify the claimed role in the token matches the user's actual
-    // DB role. This prevents a stale token (e.g., after a role downgrade) from
-    // being used to mint new tokens with the old elevated role.
-    if let Some(ref claimed_role) = claims.role {
-        if *claimed_role != user.role {
-            log::warn!(
-                "Refresh token role mismatch: claimed={:?}, actual={:?} for user={}",
-                claimed_role,
-                user.role,
-                user.user_id.as_str()
-            );
-            return HttpResponse::Unauthorized().json(AuthErrorResponse::new(
-                "unauthorized",
-                "Token role does not match user role",
-            ));
-        }
-    }
+    let user =
+        match resolve_refresh_token_user(user_repo.get_ref(), &claims, &connection_info).await {
+            Ok(user) => user,
+            Err(err) => return map_auth_error_to_response(err),
+        };
 
     // Generate new access token
-    let (new_token, _new_claims) = match create_and_sign_token(
+    let (new_token, _new_claims) = match create_and_sign_token_with_auth_type(
         &user.user_id,
         &user.role,
         user.email.as_deref(),
         Some(config.jwt_expiry_hours),
         &config.jwt_secret,
+        user.auth_type,
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -114,12 +88,13 @@ pub async fn refresh_handler(
     // SECURITY: Uses create_and_sign_refresh_token to set token_type="refresh",
     // preventing refresh tokens from being used as access tokens.
     let refresh_expiry_hours = config.jwt_expiry_hours * 7;
-    let (new_refresh_token, _refresh_claims) = match create_and_sign_refresh_token(
+    let (new_refresh_token, _refresh_claims) = match create_and_sign_refresh_token_with_auth_type(
         &user.user_id,
         &user.role,
         user.email.as_deref(),
         Some(refresh_expiry_hours),
         &config.jwt_secret,
+        user.auth_type,
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -144,8 +119,7 @@ pub async fn refresh_handler(
 
     let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
     let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
-    let admin_ui_access =
-        matches!(user.role, kalamdb_commons::Role::Dba | kalamdb_commons::Role::System);
+    let admin_ui_access = matches!(user.role, Role::Dba | Role::System);
 
     // Convert timestamps properly
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)
@@ -176,9 +150,8 @@ pub async fn refresh_handler(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_auth::providers::jwt_auth::JwtClaims;
-
     use super::*;
+    use kalamdb_auth::JwtClaims;
 
     #[test]
     fn refresh_endpoint_only_accepts_refresh_token_type() {
@@ -190,6 +163,7 @@ mod tests {
             iat: now,
             email: None,
             role: None,
+            auth_type: None,
             token_type: Some(TokenType::Refresh),
         };
         let access_claims = JwtClaims {

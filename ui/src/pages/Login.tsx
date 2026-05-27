@@ -3,13 +3,14 @@ import { useAuth } from "@/lib/auth";
 import { useEffect } from "react";
 import LoginForm from "@/components/auth/LoginForm";
 import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
+import { safeReturnTo } from "@/lib/oauth";
 
 export default function Login() {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/dashboard";
+  const from = safeReturnTo((location.state as { from?: { pathname: string } })?.from?.pathname);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -28,7 +29,7 @@ export default function Login() {
       panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user namespaces."
       panelFootnote="Enterprise Admin UI"
     >
-      <LoginForm onSuccess={handleLoginSuccess} />
+      <LoginForm onSuccess={handleLoginSuccess} returnTo={from} />
     </AuthSplitLayout>
   );
 }

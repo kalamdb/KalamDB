@@ -403,7 +403,10 @@ impl StorageCached {
         let store = self.object_store_internal()?;
         let pr = self.get_file_path(table_type, table_id, user_id, file);
         let object_path = self.to_object_path(&pr.relative_path)?;
-        crate::parquet::reader::parse_parquet_stream(store, &object_path, columns).await
+        let stream =
+            crate::parquet::reader::parse_parquet_stream(store, &object_path, columns).await?;
+        kalamdb_observability::record_parquet_file_read();
+        Ok(stream)
     }
 
     /// Write `RecordBatch`es as Parquet with bloom filters.

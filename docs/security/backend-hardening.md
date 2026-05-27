@@ -18,7 +18,7 @@ Use this as your baseline before exposing the service to user traffic:
 
 - Bind HTTP API behind a TLS termination proxy (Nginx/Caddy/Ingress)
 - Set `server.host` to a non-local address **only** after setting a strong JWT secret
-- Keep `authentication.allow_remote_setup = false` unless in controlled bootstrap windows
+- Keep `auth.allow_remote_setup = false` unless in controlled bootstrap windows
 - Keep `rate_limit.enable_connection_protection = true`
 - Restrict CORS origins to exact domains (no wildcard in production)
 - Keep setup and health endpoints reachable only through trusted network paths
@@ -32,20 +32,35 @@ KalamDB supports authentication and enforces auth in API handlers (for example S
 In `backend/server.toml`:
 
 ```toml
-[authentication]
+[auth]
 bcrypt_cost = 12
 min_password_length = 8
 max_password_length = 72
 disable_common_password_check = false
 jwt_secret = "replace-with-strong-random-secret"
-jwt_trusted_issuers = "https://accounts.google.com,https://your-idp.example.com"
+jwt_trusted_issuers = "kalamdb,https://your-idp.example.com"
 allow_remote_setup = false
+cookie_secure = true
+
+[auth.local]
+enabled = true
+
+[auth.oidc]
+enabled = true
+display_name = "Company SSO"
+issuer = "https://your-idp.example.com"
+client_id = "kalamdb"
+scopes = ["openid", "email", "profile"]
+auto_provision = false
+default_role = "user"
 ```
 
 ### Important behaviors to rely on
 
 - Insecure/short JWT secrets are rejected for non-localhost startup.
 - JWT validation includes signature/expiry checks.
+- `auth.local.enabled = false` disables password login and setup server-side.
+- External OIDC ID tokens are validated against the configured `[auth.oidc]` issuer and audience.
 - If a JWT includes `role`, KalamDB validates it against the user’s role in storage (prevents claim tampering privilege escalation).
 - Refresh tokens are not accepted as access tokens for regular API auth.
 
@@ -137,6 +152,8 @@ KalamDB includes localhost-only protections for specific operational endpoints (
 - [ ] TLS enabled at edge (HTTPS only)
 - [ ] Strong `jwt_secret` (32+ chars random)
 - [ ] Trusted JWT issuers configured
+- [ ] Local auth policy set explicitly under `[auth.local]`
+- [ ] OIDC issuer, client ID, and auto-provisioning policy set under `[auth.oidc]`
 - [ ] `allow_remote_setup = false`
 - [ ] CORS origins are explicit
 - [ ] Rate limiting enabled and tuned

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::models::{NamespaceId, TableId, TableName};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_system::Namespace;
 
@@ -11,10 +11,22 @@ use crate::{
 
 pub fn initialize_dba_namespace(app_context: Arc<AppContext>) -> Result<()> {
     ensure_namespace_exists(app_context.as_ref())?;
+    remove_retired_stats_table(app_context.as_ref())?;
 
     for mut table_def in bootstrap_table_definitions()? {
         app_context.system_columns_service().add_system_columns(&mut table_def)?;
         ensure_table_exists(app_context.as_ref(), table_def)?;
+    }
+
+    Ok(())
+}
+
+fn remove_retired_stats_table(app_context: &AppContext) -> Result<()> {
+    let table_id = TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("stats"));
+    if app_context.system_tables().tables().get_table_by_id(&table_id)?.is_some() {
+        app_context.system_tables().tables().delete_table(&table_id)?;
+        app_context.schema_registry().invalidate_all_versions(&table_id);
+        log::info!("Removed retired DBA stats table metadata");
     }
 
     Ok(())

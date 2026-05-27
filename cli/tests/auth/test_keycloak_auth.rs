@@ -3,7 +3,7 @@
 //! These tests validate:
 //! - Keycloak realm is reachable and issues asymmetric (RS256) tokens
 //! - Real RS256 tokens from Keycloak are verified via JWKS (not the shared HS256 secret)
-//! - Trusted bearer auth resolves a pre-created OAuth user by canonical token subject
+//! - Trusted bearer auth resolves a pre-created OIDC user by canonical token subject
 //! - Subsequent requests reuse the same canonical user account
 //! - HS256 tokens claiming an external issuer are rejected
 //!
@@ -267,11 +267,11 @@ fn test_keycloak_realm_configured() {
 ///
 /// This is the correct, cryptographically sound flow:
 /// 1. Get a real RS256 token from Keycloak (signed with Keycloak's RSA private key).
-/// 2. Pre-create an OAuth user whose `user_id` exactly matches the token `sub`.
+/// 2. Pre-create an OIDC user whose `user_id` exactly matches the token `sub`.
 /// 3. Send it to KalamDB as a Bearer token.
 /// 4. KalamDB reads `iss`, fetches Keycloak's JWKS, verifies the RS256 signature using Keycloak's
 ///    *public* key. Only Keycloak can produce a valid signature.
-/// 5. First request: resolve the pre-created OAuth user directly by canonical `sub`.
+/// 5. First request: resolve the pre-created OIDC user directly by canonical `sub`.
 /// 6. Second request: reuse the same canonical user via the user_id index.
 ///
 /// Server must be started with:
@@ -304,12 +304,12 @@ fn test_preprovisioned_oauth_user_via_bearer() {
     );
 
     let escaped_user_id = escape_sql_literal(&expected_user_id);
-    let oauth_payload = serde_json::to_string(&json!({
-        "provider": "keycloak",
+    let oidc_payload = serde_json::to_string(&json!({
+        "issuer": keycloak_issuer(),
         "subject": subject,
     }))
-    .expect("Failed to encode Keycloak OAuth payload");
-    let escaped_payload = escape_sql_literal(&oauth_payload);
+    .expect("Failed to encode Keycloak OIDC payload");
+    let escaped_payload = escape_sql_literal(&oidc_payload);
 
     let _ = rt.block_on(execute_sql_via_http_as_root(&format!(
         "DROP USER IF EXISTS '{}'",
@@ -317,9 +317,9 @@ fn test_preprovisioned_oauth_user_via_bearer() {
     )));
 
     let create_sql =
-        format!("CREATE USER '{}' WITH OAUTH '{}' ROLE 'user'", escaped_user_id, escaped_payload);
+        format!("CREATE USER '{}' WITH OIDC '{}' ROLE 'user'", escaped_user_id, escaped_payload);
     rt.block_on(execute_sql_via_http_as_root(&create_sql))
-        .expect("Failed to pre-create Keycloak OAuth user");
+        .expect("Failed to pre-create Keycloak OIDC user");
 
     // Step 2: send to KalamDB — verifies RS256 via JWKS and resolves the canonical user
     let result1 = rt.block_on(execute_sql_with_bearer(&access_token, "SELECT 1 AS probe"));
@@ -345,7 +345,7 @@ fn test_preprovisioned_oauth_user_via_bearer() {
                 e
             );
         },
-        Ok(_) => eprintln!("[keycloak] First request OK — canonical OAuth user resolved by sub."),
+        Ok(_) => eprintln!("[keycloak] First request OK — canonical OIDC user resolved by sub."),
     }
 
     // Step 3: same token again — must reuse the existing user via index
@@ -373,10 +373,10 @@ fn test_preprovisioned_oauth_user_via_bearer() {
         let row = &rows.unwrap()[0];
         assert_eq!(
             row.get("auth_type").and_then(|v| v.as_str()),
-            Some("OAuth"),
-            "auth_type should be OAuth"
+            Some("oidc"),
+            "auth_type should be oidc"
         );
-        eprintln!("[keycloak] Verified user '{}' with auth_type=OAuth.", expected_user_id);
+        eprintln!("[keycloak] Verified user '{}' with auth_type=oidc.", expected_user_id);
     }
 
     // Cleanup

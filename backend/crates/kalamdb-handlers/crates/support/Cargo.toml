@@ -11,7 +11,6 @@ description = "Shared support utilities for nested KalamDB handler crates"
 [dependencies]
 kalamdb-commons = { path = "../../../kalamdb-commons", default-features = false, features = ["conversions", "table-definition"] }
 kalamdb-core = { path = "../../../kalamdb-core" }
-kalamdb-filestore = { path = "../../../kalamdb-filestore" }
 kalamdb-session = { path = "../../../kalamdb-session" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-system = { path = "../../../kalamdb-system" }

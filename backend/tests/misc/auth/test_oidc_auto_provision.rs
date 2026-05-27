@@ -18,7 +18,6 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use serial_test::serial;
-use sha2::{Digest, Sha256};
 use testcontainers_modules::{dex::Dex, testcontainers::runners::AsyncRunner};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 use uuid::Uuid;
@@ -30,25 +29,29 @@ const TEST_RSA_JWK_N: &str = "wwphfTBE9LBOHdPUXacsmeuDad-rjh81B5MH_74eelEcs3Z-jU
 const TEST_RSA_JWK_E: &str = "AQAB";
 const TEST_KEY_ID: &str = "test-key-1";
 const DEX_CLIENT_ID: &str = "client";
-const DEX_CLIENT_SECRET: &str = "secret";
-const DEX_USERNAME: &str = "user@example.org";
-const DEX_PASSWORD: &str = "user";
-const TEST_OIDC_CLIENT_ID: &str = "oidc-test-client";
+const DEX_FALLBACK_CLIENT_SECRET: &str = "secret";
+const DEX_ISSUER: &str = "http://127.0.0.1:5556";
+const DEX_USERNAME: &str = "alice@example.org";
+const DEX_PASSWORD: &str = "kalamdb123";
+const DEX_FALLBACK_USERNAME: &str = "user@example.org";
+const DEX_FALLBACK_PASSWORD: &str = "user";
+pub(super) const TEST_OIDC_CLIENT_ID: &str = "oidc-test-client";
 
 #[derive(Clone)]
 struct DexProviderInfo {
     issuer: String,
     token_url: String,
     client_id: String,
-    client_secret: String,
+    client_secret: Option<String>,
     username: String,
     password: String,
 }
 
 #[derive(Clone)]
-struct TestOidcProvider {
+pub(super) struct TestOidcProvider {
     issuer: String,
     client_id: String,
+    device_authorization_endpoint: String,
     handle: actix_web::dev::ServerHandle,
 }
 
@@ -113,13 +116,35 @@ impl Drop for TestOidcProvider {
 }
 
 impl TestOidcProvider {
-    async fn start(client_id: &str) -> Result<Self> {
+    pub(super) async fn start(client_id: &str) -> Result<Self> {
         let listener =
             TcpListener::bind("127.0.0.1:0").context("Failed to bind OIDC test server")?;
         let address = listener.local_addr().context("Failed to inspect OIDC server address")?;
         let issuer = format!("http://{}", address);
         let jwks_uri = format!("{issuer}/jwks");
-        let discovery = json!({ "jwks_uri": jwks_uri });
+        let authorization_endpoint = format!("{issuer}/authorize");
+        let token_endpoint = format!("{issuer}/token");
+        let device_authorization_endpoint = format!("{issuer}/device/code");
+        let device_id_token = issue_rs256_token(
+            &issuer,
+            client_id,
+            Some("device-subject"),
+            Some("device@example.org"),
+            None,
+            3600,
+        )?;
+        let discovery = json!({
+            "issuer": issuer.clone(),
+            "authorization_endpoint": authorization_endpoint.clone(),
+            "token_endpoint": token_endpoint.clone(),
+            "jwks_uri": jwks_uri,
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "scopes_supported": ["openid", "email", "profile"],
+            "grant_types_supported": ["authorization_code", "urn:ietf:params:oauth:grant-type:device_code"],
+            "device_authorization_endpoint": device_authorization_endpoint.clone(),
+        });
         let jwks = json!({
             "keys": [
                 {
@@ -136,6 +161,7 @@ impl TestOidcProvider {
         let server = HttpServer::new(move || {
             let discovery = discovery.clone();
             let jwks = jwks.clone();
+            let device_id_token = device_id_token.clone();
             App::new()
                 .route(
                     "/.well-known/openid-configuration",
@@ -155,6 +181,37 @@ impl TestOidcProvider {
                         async move { HttpResponse::Ok().json(jwks) }
                     }),
                 )
+                .route(
+                    "/authorize",
+                    web::get().to(|| async { HttpResponse::Ok().finish() }),
+                )
+                .route(
+                    "/token",
+                    web::post().to(move || {
+                        let device_id_token = device_id_token.clone();
+                        async move {
+                            HttpResponse::Ok().json(json!({
+                                "access_token": "provider-access-token",
+                                "token_type": "Bearer",
+                                "expires_in": 3600,
+                                "id_token": device_id_token,
+                            }))
+                        }
+                    }),
+                )
+                .route(
+                    "/device/code",
+                    web::post().to(|| async {
+                        HttpResponse::Ok().json(json!({
+                            "device_code": "test-device-code",
+                            "user_code": "ABCD-EFGH",
+                            "verification_uri": "https://idp.example.com/device",
+                            "verification_uri_complete": "https://idp.example.com/device?user_code=ABCD-EFGH",
+                            "expires_in": 600,
+                            "interval": 5
+                        }))
+                    }),
+                )
         })
         .listen(listener)
         .context("Failed to start OIDC test server listener")?
@@ -166,11 +223,16 @@ impl TestOidcProvider {
         Ok(Self {
             issuer,
             client_id: client_id.to_string(),
+            device_authorization_endpoint,
             handle,
         })
     }
 
-    fn issue_token(
+    pub(super) fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
+    pub(super) fn issue_token(
         &self,
         subject: Option<&str>,
         email: Option<&str>,
@@ -187,15 +249,25 @@ impl TestOidcProvider {
             expiry_offset_secs,
         )
     }
+
+    pub(super) fn issue_token_for_audience(
+        &self,
+        audience: &str,
+        subject: Option<&str>,
+        email: Option<&str>,
+        role: Option<Role>,
+        expiry_offset_secs: i64,
+    ) -> Result<String> {
+        issue_rs256_token(&self.issuer, audience, subject, email, role, expiry_offset_secs)
+    }
 }
 
 fn unique_name(prefix: &str) -> String {
     format!("{}_{}", prefix, Uuid::new_v4().simple())
 }
 
-fn oidc_user_id(issuer: &str, subject: &str) -> UserId {
-    let digest = Sha256::digest(format!("{issuer}:{subject}").as_bytes());
-    UserId::new(format!("u_oidc_{}", &hex::encode(digest)[..16]))
+fn oidc_user_id(_issuer: &str, subject: &str) -> UserId {
+    UserId::new(subject)
 }
 
 fn configure_oidc_auth(
@@ -204,16 +276,15 @@ fn configure_oidc_auth(
     client_id: &str,
     default_role: Role,
 ) {
-    config.oauth.enabled = true;
-    config.oauth.auto_provision = true;
-    config.oauth.default_role = default_role.as_str().to_string();
-    config.oauth.providers.github.enabled = true;
-    config.oauth.providers.github.issuer = issuer.to_string();
-    config.oauth.providers.github.client_id = Some(client_id.to_string());
+    config.auth.oidc.enabled = true;
+    config.auth.oidc.auto_provision = true;
+    config.auth.oidc.default_role = default_role.as_str().to_string();
+    config.auth.oidc.issuer = Some(issuer.to_string());
+    config.auth.oidc.client_id = Some(client_id.to_string());
     config.auth.jwt_trusted_issuers = format!("kalamdb,{issuer}");
 }
 
-async fn with_configured_oidc_server<T, F>(
+pub(super) async fn with_configured_oidc_server<T, F>(
     issuer: &str,
     client_id: &str,
     default_role: Role,
@@ -236,18 +307,41 @@ where
     with_http_test_server_config(|_| {}, test_fn).await
 }
 
-async fn with_dex_provider<T, F, Fut>(test_fn: F) -> Result<T>
+fn docker_unavailable_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("socket not found")
+        || lower.contains("failed to initialize a docker client")
+        || lower.contains("cannot connect to the docker daemon")
+        || lower.contains("docker daemon is not running")
+}
+
+async fn with_dex_provider_if_available<T, F, Fut>(test_fn: F) -> Result<Option<T>>
 where
     F: FnOnce(DexProviderInfo) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    let container = Dex::default()
+    if let Some(provider) = local_dex_provider_if_available().await? {
+        return test_fn(provider).await.map(Some);
+    }
+
+    let container = match Dex::default()
         .with_simple_user()
         .with_simple_client()
         .with_allow_password_grants()
         .start()
         .await
-        .context("Failed to start Dex container")?;
+    {
+        Ok(container) => container,
+        Err(error) => {
+            let message = error.to_string();
+            if docker_unavailable_message(&message) {
+                eprintln!("Skipping Dex-backed OIDC test because Docker is unavailable: {message}");
+                return Ok(None);
+            }
+
+            return Err(error).context("Failed to start Dex container");
+        },
+    };
 
     let host = container.get_host().await.context("Failed to resolve Dex host")?.to_string();
     let port = container.get_host_port_ipv4(5556).await.context("Failed to resolve Dex port")?;
@@ -256,14 +350,42 @@ where
         issuer: format!("http://{host}:{port}"),
         token_url: format!("http://{host}:{port}/token"),
         client_id: DEX_CLIENT_ID.to_string(),
-        client_secret: DEX_CLIENT_SECRET.to_string(),
-        username: DEX_USERNAME.to_string(),
-        password: DEX_PASSWORD.to_string(),
+        client_secret: Some(DEX_FALLBACK_CLIENT_SECRET.to_string()),
+        username: DEX_FALLBACK_USERNAME.to_string(),
+        password: DEX_FALLBACK_PASSWORD.to_string(),
     };
 
     let result = test_fn(provider).await;
     drop(container);
-    result
+    result.map(Some)
+}
+
+async fn local_dex_provider_if_available() -> Result<Option<DexProviderInfo>> {
+    let discovery_url = format!("{DEX_ISSUER}/.well-known/openid-configuration");
+    let response = match reqwest::Client::new().get(&discovery_url).send().await {
+        Ok(response) => response,
+        Err(_) => return Ok(None),
+    };
+
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+
+    let discovery: JsonValue =
+        response.json().await.context("Failed to parse local Dex discovery response")?;
+    let token_url = discovery["token_endpoint"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{DEX_ISSUER}/token"));
+
+    Ok(Some(DexProviderInfo {
+        issuer: DEX_ISSUER.to_string(),
+        token_url,
+        client_id: DEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        username: DEX_USERNAME.to_string(),
+        password: DEX_PASSWORD.to_string(),
+    }))
 }
 
 fn issue_rs256_token(
@@ -298,18 +420,21 @@ fn issue_rs256_token(
 }
 
 async fn issue_dex_token(provider: &DexProviderInfo) -> Result<String> {
-    let response = reqwest::Client::new()
-        .post(&provider.token_url)
-        .basic_auth(&provider.client_id, Some(&provider.client_secret))
-        .form(&[
-            ("grant_type", "password"),
-            ("scope", "openid email profile"),
-            ("username", provider.username.as_str()),
-            ("password", provider.password.as_str()),
-        ])
-        .send()
-        .await
-        .context("Failed to request Dex token")?;
+    let mut form = vec![
+        ("grant_type", "password"),
+        ("scope", "openid email profile"),
+        ("username", provider.username.as_str()),
+        ("password", provider.password.as_str()),
+    ];
+    if provider.client_secret.is_none() {
+        form.push(("client_id", provider.client_id.as_str()));
+    }
+
+    let mut request = reqwest::Client::new().post(&provider.token_url);
+    if let Some(client_secret) = &provider.client_secret {
+        request = request.basic_auth(&provider.client_id, Some(client_secret));
+    }
+    let response = request.form(&form).send().await.context("Failed to request Dex token")?;
 
     let status = response.status();
     let body = response.text().await.context("Failed to read Dex token response")?;
@@ -331,7 +456,7 @@ fn decode_jwt_payload(token: &str) -> Result<JwtPayloadView> {
     serde_json::from_slice(&decoded).context("Failed to parse JWT payload")
 }
 
-async fn post_sql_raw(
+pub(super) async fn post_sql_raw(
     server: &HttpTestServer,
     auth_header: &str,
     sql: &str,
@@ -458,6 +583,74 @@ async fn get_me_raw(
     Ok((status, body))
 }
 
+async fn get_login_options(server: &HttpTestServer) -> Result<JsonValue> {
+    let response = reqwest::Client::new()
+        .get(format!("{}/v1/api/auth/login-options", server.base_url()))
+        .send()
+        .await
+        .context("Failed to call /auth/login-options")?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("Failed to read /auth/login-options response body")?;
+    anyhow::ensure!(
+        status == StatusCode::OK,
+        "login-options failed with status {}: {}",
+        status,
+        body
+    );
+    serde_json::from_str(&body).context("Failed to parse login-options response")
+}
+
+async fn post_oidc_device_start(server: &HttpTestServer) -> Result<JsonValue> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/api/auth/oidc/device/start", server.base_url()))
+        .json(&json!({ "scopes": ["openid", "email"] }))
+        .send()
+        .await
+        .context("Failed to call /auth/oidc/device/start")?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("Failed to read /auth/oidc/device/start response body")?;
+    anyhow::ensure!(
+        status == StatusCode::OK,
+        "device start failed with status {}: {}",
+        status,
+        body
+    );
+    serde_json::from_str(&body).context("Failed to parse OIDC device start response")
+}
+
+async fn post_oidc_device_poll(
+    server: &HttpTestServer,
+    device_session_id: &str,
+) -> Result<JsonValue> {
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/api/auth/oidc/device/poll", server.base_url()))
+        .json(&json!({ "device_session_id": device_session_id }))
+        .send()
+        .await
+        .context("Failed to call /auth/oidc/device/poll")?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("Failed to read /auth/oidc/device/poll response body")?;
+    anyhow::ensure!(
+        status == StatusCode::OK,
+        "device poll failed with status {}: {}",
+        status,
+        body
+    );
+    serde_json::from_str(&body).context("Failed to parse OIDC device poll response")
+}
+
 async fn logout_and_collect_cookies(
     server: &HttpTestServer,
     cookie_header: &str,
@@ -562,6 +755,40 @@ fn insert_local_user(server: &HttpTestServer, user_id: &UserId, role: Role) -> R
     users.create_user(user).context("Failed to create target user")
 }
 
+fn insert_oauth_user(
+    server: &HttpTestServer,
+    user_id: &UserId,
+    issuer: &str,
+    subject: &str,
+    role: Role,
+) -> Result<()> {
+    let users = server.app_context().system_tables().users();
+    if users.get_user_by_id(user_id).context("Failed to inspect OAuth user")?.is_some() {
+        return Ok(());
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    users
+        .create_user(User {
+            created_at: now,
+            updated_at: now,
+            locked_until: None,
+            last_login_at: None,
+            last_seen: None,
+            deleted_at: None,
+            user_id: user_id.clone(),
+            password_hash: String::new(),
+            email: Some("preprovisioned@test.local".to_string()),
+            auth_data: Some(kalamdb_system::AuthData::new(issuer.to_string(), subject.to_string())),
+            storage_id: None,
+            failed_login_attempts: 0,
+            role,
+            auth_type: AuthType::Oidc,
+            storage_mode: StorageMode::Table,
+        })
+        .context("Failed to create OAuth user")
+}
+
 async fn create_user_table(server: &HttpTestServer, namespace: &str, table: &str) -> Result<()> {
     let ns_response = server
         .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
@@ -584,8 +811,170 @@ async fn create_user_table(server: &HttpTestServer, namespace: &str, table: &str
 #[actix_web::test]
 #[ntest::timeout(90000)]
 #[serial]
-async fn test_dex_valid_jwt_auto_provisions_user_and_select_works() -> Result<()> {
-    with_dex_provider(|provider| async move {
+async fn test_login_options_local_only_contract() -> Result<()> {
+    with_http_server(|server| {
+        Box::pin(async move {
+            let options = get_login_options(server).await?;
+
+            assert_eq!(options["local"]["enabled"], true);
+            assert!(options.get("oidc").is_none());
+            Ok(())
+        })
+    })
+    .await
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_login_options_oidc_only_contract() -> Result<()> {
+    let provider = TestOidcProvider::start(TEST_OIDC_CLIENT_ID).await?;
+    let issuer = provider.issuer.clone();
+    let client_id = provider.client_id.clone();
+    let device_endpoint = provider.device_authorization_endpoint.clone();
+
+    with_http_test_server_config(
+        move |config| {
+            config.auth.local.enabled = false;
+            config.auth.oidc.enabled = true;
+            config.auth.oidc.display_name = "Dex".to_string();
+            config.auth.oidc.issuer = Some(issuer);
+            config.auth.oidc.client_id = Some(client_id);
+            config.auth.oidc.scopes = vec!["openid".to_string(), "email".to_string()];
+            config.auth.oidc.device_authorization_endpoint = Some(device_endpoint);
+            config.auth.oidc.broker_device_flow_enabled = true;
+        },
+        |server| {
+            Box::pin(async move {
+                let options = get_login_options(server).await?;
+
+                assert_eq!(options["local"]["enabled"], false);
+                assert_eq!(options["oidc"]["enabled"], true);
+                assert_eq!(options["oidc"]["display_name"], "Dex");
+                assert_eq!(options["oidc"]["client_id"], TEST_OIDC_CLIENT_ID);
+                assert_eq!(options["oidc"]["scopes"], json!(["openid", "email"]));
+                assert_eq!(options["oidc"]["device_flow"]["direct_supported"], true);
+                assert_eq!(options["oidc"]["device_flow"]["broker_supported"], true);
+                assert_eq!(
+                    options["oidc"]["device_flow"]["broker_start_endpoint"],
+                    "/v1/api/auth/oidc/device/start"
+                );
+                assert_eq!(
+                    options["oidc"]["device_flow"]["broker_poll_endpoint"],
+                    "/v1/api/auth/oidc/device/poll"
+                );
+                Ok(())
+            })
+        },
+    )
+    .await
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_login_options_mixed_contract() -> Result<()> {
+    let provider = TestOidcProvider::start(TEST_OIDC_CLIENT_ID).await?;
+    let issuer = provider.issuer.clone();
+    let client_id = provider.client_id.clone();
+
+    with_http_test_server_config(
+        move |config| {
+            config.auth.local.enabled = true;
+            config.auth.oidc.enabled = true;
+            config.auth.oidc.issuer = Some(issuer);
+            config.auth.oidc.client_id = Some(client_id);
+        },
+        |server| {
+            Box::pin(async move {
+                let options = get_login_options(server).await?;
+
+                assert_eq!(options["local"]["enabled"], true);
+                assert_eq!(options["oidc"]["enabled"], true);
+                assert_eq!(options["oidc"]["device_flow"]["direct_supported"], true);
+                assert_eq!(options["oidc"]["device_flow"]["broker_supported"], false);
+                Ok(())
+            })
+        },
+    )
+    .await
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_oidc_device_broker_authorizes_and_returns_kalamdb_tokens() -> Result<()> {
+    let provider = TestOidcProvider::start(TEST_OIDC_CLIENT_ID).await?;
+    let issuer = provider.issuer.clone();
+    let expected_issuer = provider.issuer.clone();
+    let client_id = provider.client_id.clone();
+    let device_endpoint = provider.device_authorization_endpoint.clone();
+
+    with_http_test_server_config(
+        move |config| {
+            config.auth.local.enabled = false;
+            config.auth.oidc.enabled = true;
+            config.auth.oidc.issuer = Some(issuer);
+            config.auth.oidc.client_id = Some(client_id);
+            config.auth.oidc.scopes = vec!["openid".to_string(), "email".to_string()];
+            config.auth.oidc.device_authorization_endpoint = Some(device_endpoint);
+            config.auth.oidc.broker_device_flow_enabled = true;
+            config.auth.oidc.auto_provision = true;
+            config.auth.oidc.default_role = "user".to_string();
+            config.auth.jwt_trusted_issuers =
+                format!("kalamdb,{}", config.auth.oidc.issuer.as_deref().unwrap_or_default());
+        },
+        |server| {
+            let expected_issuer = expected_issuer.clone();
+            Box::pin(async move {
+                let start = post_oidc_device_start(server).await?;
+                let device_session_id = start["device_session_id"]
+                    .as_str()
+                    .context("device start response missing device_session_id")?;
+
+                assert_eq!(start["verification_uri"], "https://idp.example.com/device");
+                assert_eq!(start["user_code"], "ABCD-EFGH");
+                assert!(start.get("device_code").is_none());
+
+                let mut authorized = None;
+                for _ in 0..20 {
+                    let poll = post_oidc_device_poll(server, device_session_id).await?;
+                    match poll["status"].as_str() {
+                        Some("authorized") => {
+                            authorized = Some(poll);
+                            break;
+                        },
+                        Some("pending") => tokio::time::sleep(Duration::from_millis(50)).await,
+                        other => anyhow::bail!("unexpected device poll status: {:?}", other),
+                    }
+                }
+
+                let authorized = authorized.context("device broker did not authorize in time")?;
+                let access_token = authorized["access_token"]
+                    .as_str()
+                    .context("authorized poll response missing access_token")?;
+                assert_eq!(authorized["token_type"], "bearer");
+                assert!(authorized["refresh_token"].as_str().is_some());
+
+                let expected_user_id = oidc_user_id(&expected_issuer, "device-subject");
+                assert_eq!(authorized["user"]["id"].as_str(), Some(expected_user_id.as_str()));
+
+                let (status, body) =
+                    get_me_raw(server, Some(&format!("Bearer {access_token}")), None).await?;
+                assert_eq!(status, StatusCode::OK, "unexpected /auth/me response: {body}");
+
+                Ok(())
+            })
+        },
+    )
+    .await
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_valid_jwt_authenticates_regular_user_without_persisting() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
         let issuer = provider.issuer.clone();
         let client_id = provider.client_id.clone();
         let dex_provider = provider.clone();
@@ -605,30 +994,24 @@ async fn test_dex_valid_jwt_auto_provisions_user_and_select_works() -> Result<()
                 let users = server.app_context().system_tables().users();
                 let user = users
                     .get_user_by_id(&user_id)
-                    .context("Failed to fetch auto-provisioned user")?
-                    .context("Expected auto-provisioned user to exist")?;
-
-                assert_eq!(user.auth_type, AuthType::OAuth);
-                assert_eq!(user.role, Role::User);
-                assert_eq!(user.email, claims.email);
-                assert_eq!(
-                    user.auth_data.as_ref().map(|data| data.subject.as_str()),
-                    Some(claims.sub.as_str())
-                );
+                    .context("Failed to inspect regular OIDC user")?;
+                assert!(user.is_none(), "regular OIDC users should not be persisted");
 
                 Ok(())
             })
         })
         .await
     })
-    .await
+    .await?;
+
+    Ok(())
 }
 
 #[actix_web::test]
 #[ntest::timeout(90000)]
 #[serial]
 async fn test_dex_same_jwt_does_not_duplicate_user() -> Result<()> {
-    with_dex_provider(|provider| async move {
+    with_dex_provider_if_available(|provider| async move {
         let issuer = provider.issuer.clone();
         let client_id = provider.client_id.clone();
         let dex_provider = provider.clone();
@@ -661,8 +1044,8 @@ async fn test_dex_same_jwt_does_not_duplicate_user() -> Result<()> {
                 assert_success(&count, "count oidc user");
                 assert_eq!(
                     row_count(&count),
-                    1,
-                    "same OIDC token should not duplicate the user record"
+                    0,
+                    "same regular OIDC token should not create a user record"
                 );
 
                 Ok(())
@@ -670,7 +1053,211 @@ async fn test_dex_same_jwt_does_not_duplicate_user() -> Result<()> {
         })
         .await
     })
-    .await
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_fresh_tokens_do_not_duplicate_user() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::User, |server| {
+            Box::pin(async move {
+                let first_token = issue_dex_token(&dex_provider).await?;
+                let first_claims = decode_jwt_payload(&first_token)?;
+                let first = server
+                    .execute_sql_with_auth("SELECT 1 AS ok", &format!("Bearer {first_token}"))
+                    .await
+                    .context("First fresh Dex bearer SELECT failed")?;
+                assert_success(&first, "first fresh dex bearer select");
+
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+
+                let second_token = issue_dex_token(&dex_provider).await?;
+                let second_claims = decode_jwt_payload(&second_token)?;
+                assert_eq!(first_claims.sub, second_claims.sub);
+                assert_ne!(
+                    first_token, second_token,
+                    "Dex should issue a fresh token for the repeated login"
+                );
+
+                let second = server
+                    .execute_sql_with_auth("SELECT 2 AS ok", &format!("Bearer {second_token}"))
+                    .await
+                    .context("Second fresh Dex bearer SELECT failed")?;
+                assert_success(&second, "second fresh dex bearer select");
+
+                let user_id = oidc_user_id(&dex_provider.issuer, &first_claims.sub);
+                let count = server
+                    .execute_sql(&format!(
+                        "SELECT user_id FROM system.users WHERE user_id = '{}'",
+                        user_id.as_str()
+                    ))
+                    .await
+                    .context("Failed to count repeated-login OIDC user")?;
+                assert_success(&count, "count repeated-login OIDC user");
+                assert_eq!(
+                    row_count(&count),
+                    0,
+                    "fresh regular OIDC tokens should not create user records"
+                );
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_jwt_auth_me_returns_external_user() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::Dba, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+
+                let (status, body) =
+                    get_me_raw(server, Some(&format!("Bearer {token}")), None).await?;
+                assert_eq!(status, StatusCode::OK);
+                let current_user: JsonValue =
+                    serde_json::from_str(&body).context("Failed to parse Dex /auth/me response")?;
+
+                assert_eq!(current_user["user"]["id"].as_str(), Some(user_id.as_str()));
+                assert_eq!(current_user["user"]["role"].as_str(), Some("dba"));
+                assert_eq!(current_user["admin_ui_access"].as_bool(), Some(true));
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_jwt_authenticates_websocket() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::User, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+
+                let request = server.websocket_url().into_client_request()?;
+                let (mut socket, _response) = tokio_tungstenite::connect_async(request)
+                    .await
+                    .context("Failed to open websocket connection")?;
+
+                let auth_message = ClientMessage::Authenticate {
+                    credentials: WsAuthCredentials::Jwt { token },
+                    protocol: ProtocolOptions::default(),
+                };
+                socket
+                    .send(Message::Text(serde_json::to_string(&auth_message)?.into()))
+                    .await
+                    .context("Failed to send websocket auth message")?;
+
+                let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+                    .await
+                    .context("Timed out waiting for websocket auth success")?
+                    .context("websocket closed before returning auth success")??;
+
+                let text = match frame {
+                    Message::Text(text) => text.to_string(),
+                    other => {
+                        anyhow::bail!("expected websocket auth success text frame, got {:?}", other)
+                    },
+                };
+                let body: JsonValue = serde_json::from_str(&text)
+                    .context("Failed to parse websocket auth success")?;
+                assert_eq!(body.get("type").and_then(|value| value.as_str()), Some("auth_success"));
+                assert_eq!(
+                    body.get("user").and_then(|value| value.as_str()),
+                    Some(user_id.as_str())
+                );
+                assert_eq!(body.get("role").and_then(|value| value.as_str()), Some("user"));
+
+                socket.close(None).await.context("Failed to close websocket")?;
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[actix_web::test]
+#[ntest::timeout(90000)]
+#[serial]
+async fn test_dex_preprovisioned_oauth_user_is_reused() -> Result<()> {
+    with_dex_provider_if_available(|provider| async move {
+        let issuer = provider.issuer.clone();
+        let client_id = provider.client_id.clone();
+        let dex_provider = provider.clone();
+        with_configured_oidc_server(&issuer, &client_id, Role::User, |server| {
+            Box::pin(async move {
+                let token = issue_dex_token(&dex_provider).await?;
+                let claims = decode_jwt_payload(&token)?;
+                let user_id = oidc_user_id(&dex_provider.issuer, &claims.sub);
+                insert_oauth_user(server, &user_id, &dex_provider.issuer, &claims.sub, Role::Dba)?;
+
+                let response = server
+                    .execute_sql_with_auth(
+                        "SELECT CURRENT_ROLE() AS role",
+                        &format!("Bearer {token}"),
+                    )
+                    .await
+                    .context("Pre-provisioned Dex bearer SELECT failed")?;
+                assert_success(&response, "pre-provisioned dex bearer select");
+
+                let user = server
+                    .app_context()
+                    .system_tables()
+                    .users()
+                    .get_user_by_id(&user_id)
+                    .context("Failed to fetch pre-provisioned OAuth user")?
+                    .context("Expected pre-provisioned OAuth user to exist")?;
+
+                assert_eq!(user.role, Role::Dba);
+                assert_eq!(user.email.as_deref(), Some("preprovisioned@test.local"));
+                assert_eq!(
+                    user.auth_data.as_ref().map(|data| data.subject.as_str()),
+                    Some(claims.sub.as_str())
+                );
+
+                Ok(())
+            })
+        })
+        .await
+    })
+    .await?;
+
+    Ok(())
 }
 
 #[actix_web::test]
@@ -746,7 +1333,8 @@ async fn test_oidc_expired_token_returns_401() -> Result<()> {
 #[actix_web::test]
 #[ntest::timeout(45000)]
 #[serial]
-async fn test_oidc_missing_subject_is_rejected_and_missing_email_still_provisions() -> Result<()> {
+async fn test_oidc_missing_subject_is_rejected_and_missing_email_still_authenticates() -> Result<()>
+{
     let provider = TestOidcProvider::start(TEST_OIDC_CLIENT_ID).await?;
     let issuer = provider.issuer.clone();
     let token_provider = provider.clone();
@@ -789,12 +1377,8 @@ async fn test_oidc_missing_subject_is_rejected_and_missing_email_still_provision
                 .system_tables()
                 .users()
                 .get_user_by_id(&user_id)
-                .context("Failed to fetch missing-email user")?
-                .context("Expected missing-email user to exist")?;
-            assert_eq!(
-                user.email, None,
-                "missing email claim should provision the user without an email address"
-            );
+                .context("Failed to inspect missing-email user")?;
+            assert!(user.is_none(), "regular OIDC users without email should not be persisted");
 
             Ok(())
         })

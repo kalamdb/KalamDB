@@ -1,6 +1,5 @@
 #[cfg(unix)]
 use std::io::IsTerminal;
-use std::time::Duration;
 
 use kalam_client::{
     SeqId, SqlSubscriptionDescriptor, SqlSubscriptionStatus, SubscriptionConfig,
@@ -11,6 +10,8 @@ use tokio::io::AsyncReadExt;
 
 use super::CLISession;
 use crate::error::{CLIError, Result};
+
+mod cleanup;
 
 #[cfg(unix)]
 struct TerminalRawModeGuard {
@@ -237,24 +238,7 @@ impl CLISession {
 
                     tokio::select! {
                         _ = exit_key.as_mut() => {
-                            if self.color {
-                                println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
-                            } else {
-                                println!("\n⚠ Unsubscribing...");
-                            }
-
-                            let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
-                            if close_res.is_err() {
-                                eprintln!("Warning: Timed out while closing subscription; exiting anyway");
-                            } else if let Ok(Err(e)) = close_res {
-                                eprintln!("Warning: Failed to close subscription cleanly: {}", e);
-                            }
-
-                            if self.color {
-                                println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
-                            } else {
-                                println!("✓ Unsubscribed - Back to CLI prompt");
-                            }
+                            cleanup::close_for_cli_exit(&mut subscription, self.color).await;
                             break;
                         }
 
@@ -296,22 +280,7 @@ impl CLISession {
 
             tokio::select! {
                 _ = &mut ctrl_c => {
-                    if self.color {
-                        println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
-                    } else {
-                        println!("\n⚠ Unsubscribing...");
-                    }
-                    let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
-                    if close_res.is_err() {
-                        eprintln!("Warning: Timed out while closing subscription; exiting anyway");
-                    } else if let Ok(Err(e)) = close_res {
-                        eprintln!("Warning: Failed to close subscription cleanly: {}", e);
-                    }
-                    if self.color {
-                        println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
-                    } else {
-                        println!("✓ Unsubscribed - Back to CLI prompt");
-                    }
+                    cleanup::close_for_cli_exit(&mut subscription, self.color).await;
                     break;
                 }
 
@@ -384,22 +353,7 @@ impl CLISession {
                                 if self.animations {
                                     eprintln!("\n⏱ Subscription timeout reached");
                                 }
-                                let close_res = tokio::time::timeout(
-                                    Duration::from_secs(2),
-                                    subscription.close(),
-                                )
-                                .await;
-                                if close_res.is_err() {
-                                    eprintln!(
-                                        "Warning: Timed out while closing subscription; exiting \
-                                         anyway"
-                                    );
-                                } else if let Ok(Err(e)) = close_res {
-                                    eprintln!(
-                                        "Warning: Failed to close subscription cleanly: {}",
-                                        e
-                                    );
-                                }
+                                cleanup::close_or_warn(&mut subscription).await;
                                 break;
                             }
                         }
@@ -418,22 +372,7 @@ impl CLISession {
 
                     tokio::select! {
                         _ = exit_key.as_mut() => {
-                            if self.color {
-                                println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
-                            } else {
-                                println!("\n⚠ Unsubscribing...");
-                            }
-                            let close_res = tokio::time::timeout(Duration::from_secs(2), subscription.close()).await;
-                            if close_res.is_err() {
-                                eprintln!("Warning: Timed out while closing subscription; exiting anyway");
-                            } else if let Ok(Err(e)) = close_res {
-                                eprintln!("Warning: Failed to close subscription cleanly: {}", e);
-                            }
-                            if self.color {
-                                println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
-                            } else {
-                                println!("✓ Unsubscribed - Back to CLI prompt");
-                            }
+                            cleanup::close_for_cli_exit(&mut subscription, self.color).await;
                             break;
                         }
 
@@ -491,16 +430,7 @@ impl CLISession {
                         if self.animations {
                             eprintln!("\n⏱ Subscription timeout reached");
                         }
-                        let close_res =
-                            tokio::time::timeout(Duration::from_secs(2), subscription.close())
-                                .await;
-                        if close_res.is_err() {
-                            eprintln!(
-                                "Warning: Timed out while closing subscription; exiting anyway"
-                            );
-                        } else if let Ok(Err(e)) = close_res {
-                            eprintln!("Warning: Failed to close subscription cleanly: {}", e);
-                        }
+                        cleanup::close_or_warn(&mut subscription).await;
                         break;
                     }
                 }
@@ -519,19 +449,7 @@ impl CLISession {
 
             tokio::select! {
                 _ = &mut ctrl_c => {
-                    if self.color {
-                        println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
-                    } else {
-                        println!("\n⚠ Unsubscribing...");
-                    }
-                    if let Err(e) = subscription.close().await {
-                        eprintln!("Warning: Failed to close subscription cleanly: {}", e);
-                    }
-                    if self.color {
-                        println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
-                    } else {
-                        println!("✓ Unsubscribed - Back to CLI prompt");
-                    }
+                    cleanup::close_for_cli_exit(&mut subscription, self.color).await;
                     break;
                 }
 

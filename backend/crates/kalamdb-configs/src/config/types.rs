@@ -35,8 +35,6 @@ pub struct ServerConfig {
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
     #[serde(default)]
-    pub oauth: OAuthSettings,
-    #[serde(default)]
     pub user_management: UserManagementSettings,
     #[serde(default)]
     pub shutdown: ShutdownSettings,
@@ -466,7 +464,7 @@ pub struct LoggingSettings {
     #[serde(default = "default_log_level")]
     pub level: String,
     /// Directory for all log files (default: "./logs")
-    /// Used for app.log, slow.log, and other log files
+    /// Used for app.log/server.log, slow.jsonl, and other log files
     #[serde(default = "default_logs_path")]
     pub logs_path: String,
     #[serde(default = "default_true")]
@@ -482,7 +480,7 @@ pub struct LoggingSettings {
     #[serde(default)]
     pub targets: HashMap<String, String>,
     /// Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
-    /// Queries taking longer than this threshold will be logged to slow.log
+    /// Queries taking longer than this threshold will be logged to slow.jsonl
     #[serde(default = "default_slow_query_threshold_ms")]
     pub slow_query_threshold_ms: u64,
     /// OpenTelemetry OTLP export settings (Jaeger/Tempo/Collector)
@@ -685,18 +683,7 @@ impl Default for ManifestCacheSettings {
 
 /// Retention policy defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetentionSettings {
-    /// Enable periodic dba.stats collection (default: true)
-    /// When false, the background stats recorder is not started, saving memory
-    /// and CPU in resource-constrained environments (e.g. Docker containers).
-    #[serde(default = "default_true")]
-    pub enable_dba_stats: bool,
-
-    /// Number of days to preserve dba.stats samples (default: 7 days)
-    /// Set to 0 to disable automatic cleanup.
-    #[serde(default = "default_dba_stats_retention_days")]
-    pub dba_stats_retention_days: u64,
-}
+pub struct RetentionSettings {}
 
 /// Stream table defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -957,90 +944,112 @@ pub struct AuthSettings {
     /// Override via `KALAMDB_PG_AUTH_TOKEN` env var.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pg_auth_token: Option<String>,
+
+    /// Local username/password authentication policy.
+    #[serde(default)]
+    pub local: AuthLocalSettings,
+
+    /// Single external OpenID Connect provider configuration.
+    #[serde(default)]
+    pub oidc: AuthOidcSettings,
 }
 
-/// OAuth settings (Phase 10, User Story 8)
+/// Local username/password authentication settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthSettings {
-    /// Enable OAuth authentication (default: false)
-    #[serde(default = "default_oauth_enabled")]
+pub struct AuthLocalSettings {
+    /// Enable direct local username/password login.
+    #[serde(default = "default_auth_local_enabled")]
+    pub enabled: bool,
+}
+
+/// Single OpenID Connect provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthOidcSettings {
+    /// Enable external OpenID Connect login.
+    #[serde(default = "default_auth_oidc_enabled")]
     pub enabled: bool,
 
-    /// Auto-provision users on first OAuth login (default: false)
-    #[serde(default = "default_oauth_auto_provision")]
-    pub auto_provision: bool,
+    /// Human-readable provider name shown in clients.
+    #[serde(default = "default_auth_oidc_display_name")]
+    pub display_name: String,
 
-    /// Default role for auto-provisioned OAuth users (default: "user")
-    #[serde(default = "default_oauth_default_role")]
-    pub default_role: String,
+    /// OpenID Provider issuer URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
 
-    /// OAuth providers configuration
-    #[serde(default)]
-    pub providers: OAuthProvidersSettings,
-}
-
-/// OAuth providers configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OAuthProvidersSettings {
-    #[serde(default)]
-    pub google: OAuthProviderConfig,
-    #[serde(default)]
-    pub github: OAuthProviderConfig,
-    #[serde(default)]
-    pub azure: OAuthProviderConfig,
-    /// Firebase Authentication (backed by Google Identity Platform / securetoken.google.com)
-    #[serde(default)]
-    pub firebase: OAuthProviderConfig,
-}
-
-/// Individual OAuth provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthProviderConfig {
-    /// Enable this provider (default: false)
-    #[serde(default = "default_oauth_provider_enabled")]
-    pub enabled: bool,
-
-    /// OAuth provider's issuer URL
-    #[serde(default)]
-    pub issuer: String,
-
-    /// JSON Web Key Set endpoint for public keys
-    #[serde(default)]
-    pub jwks_uri: String,
-
-    /// OAuth application client ID (optional)
-    #[serde(default)]
+    /// OAuth/OIDC client ID registered with the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
-    /// OAuth application client secret (optional, for GitHub)
-    #[serde(default)]
+    /// Optional client secret for confidential clients and device broker flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
 
-    /// Azure tenant ID (optional, for Azure)
-    #[serde(default)]
-    pub tenant: Option<String>,
+    /// Requested scopes for browser and device authorization flows.
+    #[serde(default = "default_auth_oidc_scopes")]
+    pub scopes: Vec<String>,
+
+    /// Optional device authorization endpoint override when discovery metadata omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_authorization_endpoint: Option<String>,
+
+    /// Enable KalamDB-brokered device flow for CLI hosts without direct IdP egress.
+    #[serde(default = "default_auth_oidc_broker_device_flow_enabled")]
+    pub broker_device_flow_enabled: bool,
+
+    /// Auto-provision users on first successful external OIDC login.
+    #[serde(default = "default_auth_oidc_auto_provision")]
+    pub auto_provision: bool,
+
+    /// Default role for auto-provisioned OIDC users.
+    #[serde(default = "default_auth_oidc_default_role")]
+    pub default_role: String,
+
+    /// Optional explicit audience override. Defaults to `client_id` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
 }
 
-impl Default for OAuthSettings {
+impl AuthOidcSettings {
+    pub fn issuer_str(&self) -> Option<&str> {
+        self.issuer.as_deref().map(str::trim).filter(|value| !value.is_empty())
+    }
+
+    pub fn client_id_str(&self) -> Option<&str> {
+        self.client_id.as_deref().map(str::trim).filter(|value| !value.is_empty())
+    }
+
+    pub fn audience_str(&self) -> Option<&str> {
+        self.audience
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| self.client_id_str())
+    }
+}
+
+impl Default for AuthLocalSettings {
     fn default() -> Self {
         Self {
-            enabled: default_oauth_enabled(),
-            auto_provision: default_oauth_auto_provision(),
-            default_role: default_oauth_default_role(),
-            providers: OAuthProvidersSettings::default(),
+            enabled: default_auth_local_enabled(),
         }
     }
 }
 
-impl Default for OAuthProviderConfig {
+impl Default for AuthOidcSettings {
     fn default() -> Self {
         Self {
-            enabled: default_oauth_provider_enabled(),
-            issuer: String::new(),
-            jwks_uri: String::new(),
+            enabled: default_auth_oidc_enabled(),
+            display_name: default_auth_oidc_display_name(),
+            issuer: None,
             client_id: None,
             client_secret: None,
-            tenant: None,
+            scopes: default_auth_oidc_scopes(),
+            device_authorization_endpoint: None,
+            broker_device_flow_enabled: default_auth_oidc_broker_device_flow_enabled(),
+            auto_provision: default_auth_oidc_auto_provision(),
+            default_role: default_auth_oidc_default_role(),
+            audience: None,
         }
     }
 }
@@ -1059,6 +1068,8 @@ impl Default for AuthSettings {
             enforce_password_complexity: default_auth_enforce_password_complexity(),
             allow_remote_setup: default_auth_allow_remote_setup(),
             pg_auth_token: None,
+            local: AuthLocalSettings::default(),
+            oidc: AuthOidcSettings::default(),
         }
     }
 }
@@ -1088,10 +1099,7 @@ impl Default for FlushSettings {
 
 impl Default for RetentionSettings {
     fn default() -> Self {
-        Self {
-            enable_dba_stats: true,
-            dba_stats_retention_days: default_dba_stats_retention_days(),
-        }
+        Self {}
     }
 }
 
@@ -1221,7 +1229,6 @@ impl Default for ServerConfig {
             websocket: WebSocketSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
-            oauth: OAuthSettings::default(),
             user_management: UserManagementSettings::default(),
             shutdown: ShutdownSettings::default(),
             jobs: JobsSettings::default(),

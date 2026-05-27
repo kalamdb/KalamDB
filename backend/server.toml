@@ -130,16 +130,6 @@ user_max_segment_rows = 10000
 # Shared tables generally collect more rows per scope, so the default limit is higher.
 shared_max_segment_rows = 25000
 
-[retention]
-# Enable periodic dba.stats collection (default: true)
-# Set to false to disable the background stats recorder, saving memory and CPU
-# in resource-constrained environments (e.g. Docker containers).
-enable_dba_stats = false
-
-# Number of days to preserve samples in dba.stats (default: 7 days)
-# Set to 0 to disable automatic cleanup of historical DBA metrics
-dba_stats_retention_days = 7
-
 [stream]
 # Default TTL for stream table rows in seconds (default: 10 seconds)
 # Stream tables are ephemeral - rows expire after this duration
@@ -183,7 +173,7 @@ default_query_limit = 50
 level = "info"
 
 # Directory for all log files (default: "./logs")
-# Server will create app.log, slow.log, and other log files in this directory
+# Server will create app.log, slow.jsonl, and other log files in this directory
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
@@ -193,7 +183,7 @@ log_to_console = true
 format = "json"
 
 # Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
-# Queries taking longer than this threshold will be logged to slow.log
+# Queries taking longer than this threshold will be logged to slow.jsonl
 # AND displayed as WARN in the console
 # Set to a high value (e.g., 999999) to disable slow query logging
 slow_query_threshold_ms = 1000
@@ -369,7 +359,7 @@ auth_timeout_secs = 10
 # avoid thundering-herd ping storms.
 heartbeat_interval_secs = 15
 
-[authentication]
+[auth]
 # Bcrypt cost factor for password hashing (default: 12, range: 4-31)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
@@ -392,23 +382,25 @@ enforce_password_complexity = false
 # IMPORTANT: Change this in production! Use a strong, random secret.
 jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
 
-# List of trusted JWT issuers (leave empty to accept any issuer)
-# Add your OAuth provider domains here (e.g., "https://accounts.google.com", "https://github.com")
-# Example for Google OAuth: ["https://accounts.google.com"]
-# Example for GitHub OAuth: ["https://github.com"]
-# Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
-jwt_trusted_issuers = "http://localhost:2901/realms/kalamdb,https://securetoken.google.com/masky-bb320"
+# Trusted JWT issuers for internal KalamDB tokens and the configured OIDC provider.
+# Local Dex/testcontainer-compatible development issuer:
+#   docker/test Dex: http://127.0.0.1:5556
+jwt_trusted_issuers = "kalamdb,http://127.0.0.1:5556"
 
-[oauth]
+[auth.local]
 enabled = true
+
+[auth.oidc]
+enabled = true
+display_name = "Dex"
+issuer = "http://127.0.0.1:5556"
+client_id = "client"
+scopes = ["openid", "email", "profile"]
 auto_provision = true
 default_role = "user"
-
-[oauth.providers.firebase]
-enabled = true
-issuer = "https://securetoken.google.com/masky-bb320"
-jwks_uri = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
-client_id = "masky-bb320"
+broker_device_flow_enabled = false
+# Enable only when your Dex/provider config advertises or supports device auth.
+# device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
 
 [shutdown]
 # Timeout settings for graceful shutdown

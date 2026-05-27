@@ -177,7 +177,7 @@ Because explicit writes are staged until commit, rollback does not need a compen
 
 Explicit transaction commit is currently constrained to one data Raft group.
 
-`RaftApplier::transaction_group_id()` rejects a batch that spans multiple data groups. This keeps the durable apply path single-group and avoids multi-group coordination in the current design.
+`RaftManager::resolve_transaction_group_id()` rejects a batch that spans multiple data groups, and `RaftApplier` delegates to that Raft-owned boundary before proposing `TransactionCommit`. This keeps the durable apply path single-group and avoids multi-group coordination in the current design.
 
 ### Unsupported table classes
 

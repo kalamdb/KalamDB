@@ -8,7 +8,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 - **Command path**: Handler → `CommandExecutor` (`DirectExecutor` in standalone or `RaftExecutor` in cluster) → `RaftManager` → `RaftGroup` → OpenRaft log → State machine → Applier → storage/provider.
 - **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
 - **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
-- **Storage**: Combined in-memory log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs); snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
+- **Storage**: Combined log + state machine storage in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs). Production managers use the `RaftPartitionStore` in `kalamdb-store` for durable log/vote/commit/purge metadata, with a bounded in-memory log cache; memory-only storage is reserved for tests and ephemeral standalone use. Snapshots are used for compaction. Real table writes are persisted by appliers after Raft apply.
 
 ## Topology & Sharding
 
@@ -76,9 +76,10 @@ Defined in [backend/crates/kalamdb-raft/src/manager/raft_group.rs](../../backend
 
 Implemented by `KalamRaftStorage` in [backend/crates/kalamdb-raft/src/storage/raft_store.rs](../../backend/crates/kalamdb-raft/src/storage/raft_store.rs).
 
-- Combined `RaftStorage` (log + state machine) with in-memory BTreeMap log, vote/commit tracking, and snapshot retention. Snapshot builder captures state machine bytes plus membership metadata; snapshots are served to lagging replicas and purge earlier logs.
+- Combined `RaftStorage` (log + state machine) with a durable `RaftPartitionStore` in production, in-memory recent-log cache, vote/commit/purge tracking, and snapshot retention. Snapshot builder captures state machine bytes plus membership metadata; snapshots are served to lagging replicas and purge earlier logs.
+- Conflict-log truncation deletes the divergent suffix from both the in-memory cache and durable Raft partition so stale entries cannot reappear after restart.
 - OpenRaft RPC/snapshot serialization continues to use bincode helpers in [backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs](../../backend/crates/kalamdb-raft/src/state_machine/serde_helpers.rs).
-- State machine apply runs on every node; apply errors are logged and surfaced via response payloads when possible.
+- State machine apply runs on every node. Deterministic command rejections can be surfaced as response payloads, but hard state-machine or storage apply failures must fail the OpenRaft apply call so `last_applied` is not advanced before local materialization succeeds.
 - **Current limitation**: log/state storage is in-memory; durability relies on higher layers persisting real data via appliers. Crash restart currently depends on application-level recovery.
 
 ## State Machines & Appliers
@@ -110,13 +111,13 @@ Responses are serialized FlexBuffers payloads returned after apply.
 - Leadership transfer is best-effort only during shutdown; OpenRaft re-elects leaders after a departing leader stops.
 - Automatic leader balancing across user shards is not implemented yet. OpenRaft 0.9 does not expose a direct leadership-transfer API in the current wrapper, so balancing requires either a newer OpenRaft surface or coordinated restart/election controls.
 - Strong replication (`All`) waits for every configured node to apply; cluster size drives the wait set. Misconfigured peer counts can block proposals.
-- WAL/log durability is in-memory; ensure appliers persist real data paths (RocksDB/Parquet) for crash recovery.
+- Raft log/vote/commit/purge metadata is durable in persistent manager mode. Appliers still own table-row durability (RocksDB hot path, later Parquet flush), so both Raft storage and provider apply health matter for crash recovery.
 - Snapshot size is driven by state machine caches; large snapshots can impact install_snapshot traffic. Purge thresholds (`max_in_snapshot_log_to_keep`, `purge_batch_size`) are set in `RaftGroup::start`.
 - Storage still creates per-table or per-shard lower-level storage structures in several providers. Consolidating RocksDB column families into a prefixed-key layout is a storage redesign and is not completed by the Raft routing changes.
 
 ## Proposed Reliability & Efficiency Improvements
 
-- **Persist Raft log/state**: Move `KalamRaftStorage` from in-memory BTreeMap to a disk-backed store (RocksDB or a filestore partition) so Raft itself survives process restarts without relying solely on appliers. Retain snapshots for compaction but anchor durability on disk.
+- **Storage engine hardening**: Keep the durable `RaftPartitionStore` path as the production default, then add more targeted tests and metrics around suffix truncation, purge, restart recovery, and snapshot install under fault injection.
 - **Snapshot tuning**: Enable streaming or chunked snapshot sends and compress snapshot payloads to reduce memory spikes; lower `max_in_snapshot_log_to_keep` and tune snapshot trigger thresholds per group size to minimize in-memory log growth.
 - **Stronger failover hygiene**: Add pre-vote and staggered election timeouts per group to reduce split votes; expose health probes and replication-lag metrics for each group via `RaftManager` so the API tier can drain traffic from lagging nodes.
 - **Leader balancing across data shards**: Add shard-leader placement goals and metrics first, then implement a safe transfer or drain mechanism when the OpenRaft API surface supports it. Keep the meta group stable and allow user shards to spread leaders for write throughput.

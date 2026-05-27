@@ -100,8 +100,7 @@ fn filter_tokens(tokens: Vec<Token>) -> Vec<Token> {
 /// Syntax:
 /// ```sql
 /// CREATE USER username WITH PASSWORD 'password' ROLE role_name [EMAIL 'email'];
-/// CREATE USER username WITH OAUTH ROLE role_name [EMAIL 'email'];
-/// CREATE USER username WITH INTERNAL ROLE role_name;
+/// CREATE USER username WITH OIDC '{"issuer":"https://idp.example.com","subject":"username"}' ROLE role_name [EMAIL 'email'];
 /// CREATE USER username WITH PASSWORD 'password' ROLE role_name [EMAIL 'email'] [STORAGE_MODE table|region] [STORAGE_ID 'storage'];
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -154,13 +153,11 @@ impl CreateUserStatement {
         if !is_keyword(iter.next().unwrap_or(&Token::EOF), "WITH") {
             return Err(UserCommandError {
                 message: "Expected WITH after username".to_string(),
-                hint: Some(
-                    "Syntax: CREATE USER username WITH PASSWORD|OAUTH|INTERNAL ...".to_string(),
-                ),
+                hint: Some("Syntax: CREATE USER username WITH PASSWORD|OIDC ...".to_string()),
             });
         }
 
-        // Auth type: PASSWORD, OAUTH, or INTERNAL
+        // Auth type: PASSWORD or OIDC
         let auth_token = iter.next().unwrap_or(&Token::EOF);
         let (auth_type, password) = if is_keyword(auth_token, "PASSWORD") {
             let pwd = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
@@ -170,7 +167,7 @@ impl CreateUserStatement {
                 }
             })?;
             (AuthType::Password, Some(pwd))
-        } else if is_keyword(auth_token, "OAUTH") {
+        } else if is_keyword(auth_token, "OIDC") || is_keyword(auth_token, "OAUTH") {
             // Optional JSON payload
             let payload = if let Some(token) = iter.peek() {
                 if matches!(token, Token::SingleQuotedString(_)) {
@@ -181,15 +178,11 @@ impl CreateUserStatement {
             } else {
                 None
             };
-            (AuthType::OAuth, payload)
-        } else if is_keyword(auth_token, "INTERNAL") {
-            (AuthType::Internal, None)
+            (AuthType::Oidc, payload)
         } else {
             return Err(UserCommandError {
-                message: "Expected PASSWORD, OAUTH, or INTERNAL after WITH".to_string(),
-                hint: Some(
-                    "Valid auth types: WITH PASSWORD 'pass', WITH OAUTH, WITH INTERNAL".to_string(),
-                ),
+                message: "Expected PASSWORD or OIDC after WITH".to_string(),
+                hint: Some("Valid auth types: WITH PASSWORD 'pass', WITH OIDC '{...}'".to_string()),
             });
         };
 
@@ -549,22 +542,16 @@ mod tests {
     }
 
     #[test]
-    fn test_create_user_with_oauth() {
-        let sql = "CREATE USER 'oauth_user' WITH OAUTH ROLE viewer EMAIL 'user@example.com'";
+    fn test_create_user_with_oidc() {
+        let sql = "CREATE USER 'oidc_user' WITH OIDC '{\"issuer\":\"https://idp.example.com\",\"subject\":\"oidc_user\"}' ROLE viewer EMAIL 'user@example.com'";
         let stmt = CreateUserStatement::parse(sql).unwrap();
-        assert_eq!(stmt.username, "oauth_user");
-        assert_eq!(stmt.auth_type, AuthType::OAuth);
-        assert_eq!(stmt.password, None);
+        assert_eq!(stmt.username, "oidc_user");
+        assert_eq!(stmt.auth_type, AuthType::Oidc);
+        assert_eq!(
+            stmt.password.as_deref(),
+            Some("{\"issuer\":\"https://idp.example.com\",\"subject\":\"oidc_user\"}")
+        );
         assert_eq!(stmt.role, Role::User);
-    }
-
-    #[test]
-    fn test_create_user_with_internal() {
-        let sql = "CREATE USER 'service_account' WITH INTERNAL ROLE system";
-        let stmt = CreateUserStatement::parse(sql).unwrap();
-        assert_eq!(stmt.username, "service_account");
-        assert_eq!(stmt.auth_type, AuthType::Internal);
-        assert_eq!(stmt.role, Role::System);
     }
 
     #[test]

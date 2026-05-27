@@ -152,6 +152,7 @@ impl From<String> for JobStatus {
 3. **External Integration**: Values defined by third-party systems
    - ⚠️ HTTP status codes (use established crates instead)
    - ⚠️ Error codes from external APIs (wrap if needed)
+    - ❌ OIDC provider families or identity providers. Store issuer and subject as data, because the set of providers is open-ended and controlled outside KalamDB.
 
 4. **Performance Critical Paths**: Enum-to-string conversion is bottleneck
    - ⚠️ Usually not an issue, but profile first
