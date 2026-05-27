@@ -617,6 +617,76 @@ package_filters_include() {
     return 1
 }
 
+verify_cli_test_layout() {
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+        return 0
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Warning: python3 not available; skipping CLI test layout verification." >&2
+        return 0
+    fi
+
+    local check_output
+    if ! check_output="$(python3 - "$REPO_ROOT/cli/Cargo.toml" "$REPO_ROOT/cli/tests" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+cargo_toml = Path(sys.argv[1]).resolve()
+tests_dir = Path(sys.argv[2]).resolve()
+
+test_path_re = re.compile(r'^\s*path\s*=\s*"([^"]+)"\s*$')
+path_attr_re = re.compile(r'^\s*#\[\s*path\s*=\s*"([^"]+)"\s*\]\s*$')
+
+registered_roots = set()
+for line in cargo_toml.read_text().splitlines():
+    match = test_path_re.match(line)
+    if not match:
+        continue
+    relative_path = match.group(1)
+    if relative_path.startswith("tests/") and relative_path.endswith(".rs"):
+        registered_roots.add((cargo_toml.parent / relative_path).resolve())
+
+reachable = set()
+pending = list(registered_roots)
+while pending:
+    current = pending.pop()
+    if current in reachable or not current.exists():
+        continue
+    reachable.add(current)
+    for line in current.read_text().splitlines():
+        match = path_attr_re.match(line)
+        if not match:
+            continue
+        child = (current.parent / match.group(1)).resolve()
+        if child.exists():
+            pending.append(child)
+
+all_rs_files = {path.resolve() for path in tests_dir.rglob("*.rs")}
+ignored_files = {path.resolve() for path in tests_dir.rglob("mod.rs")}
+ignored_files.add((tests_dir / "common/mod.rs").resolve())
+expected_files = {path for path in all_rs_files if path not in ignored_files}
+
+missing_files = sorted(
+    path.relative_to(cargo_toml.parent).as_posix() for path in expected_files - reachable
+)
+
+if missing_files:
+    print("The following cli/tests files are not reachable from registered Cargo test targets:")
+    for path in missing_files:
+        print(path)
+    raise SystemExit(1)
+PY
+)"; then
+        echo "Error: CLI test layout verification failed."
+        echo "$check_output"
+        echo ""
+        echo "Register new root tests in cli/Cargo.toml and wire nested test files into their aggregator targets before running run-tests.sh."
+        exit 1
+    fi
+}
+
 should_start_dex_for_oidc_tests() {
     if [ "${KALAMDB_SKIP_DOCKER_DEX:-false}" = "true" ]; then
         return 1
@@ -674,6 +744,12 @@ should_prebuild_cli_oidc_server_binary() {
 
 prebuild_cli_oidc_server_binary_if_needed() {
     if ! should_prebuild_cli_oidc_server_binary; then
+        return 0
+    fi
+
+    if [ -n "${KALAMDB_SERVER_BIN:-}" ] && [ -f "$KALAMDB_SERVER_BIN" ]; then
+        chmod +x "$KALAMDB_SERVER_BIN" 2>/dev/null || true
+        step "Using prebuilt kalamdb-server for CLI OIDC tests"
         return 0
     fi
 
@@ -1103,6 +1179,9 @@ single_package_name() {
 
 # Run tests from workspace root
 cd "$REPO_ROOT"
+
+step "Verifying CLI test layout"
+verify_cli_test_layout
 
 prebuild_cli_oidc_server_binary_if_needed
 ensure_dex_for_oidc_tests
