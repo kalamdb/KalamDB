@@ -29,6 +29,8 @@ const DEFAULT_WEBSOCKET_CONNECTIONS: usize = 8;
 const SQL_RESPONSIVENESS_BUDGET: Duration = Duration::from_secs(10);
 // Timeout for each websocket connection attempt
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
+const LIVE_QUERY_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(15);
+const LIVE_QUERY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[ntest::timeout(300_000)]
 #[test]
@@ -154,8 +156,12 @@ fn smoke_test_websocket_capacity() {
         let live_queries_snapshot = fetch_live_queries_snapshot().await;
         println!("system.live snapshot while connections active:\n{}", live_queries_snapshot);
 
-        let active_subscription_count =
-            count_live_query_subscriptions(subscription_prefix_for_rt).await;
+        let active_subscription_count = wait_for_live_query_subscriptions_at_least(
+            &subscription_prefix_for_rt,
+            close_senders.len(),
+            LIVE_QUERY_REGISTRATION_TIMEOUT,
+        )
+        .await;
         assert!(
             active_subscription_count >= close_senders.len(),
             "Expected at least {} live query rows, found {}",
@@ -188,12 +194,17 @@ fn smoke_test_websocket_capacity() {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Verify system.live entries are cleaned up after closing
-        let post_close_count =
-            count_live_query_subscriptions(subscription_prefix_for_cleanup.clone()).await;
+        let post_close_count = wait_for_live_query_subscriptions_exact(
+            &subscription_prefix_for_cleanup,
+            0,
+            LIVE_QUERY_CLEANUP_TIMEOUT,
+        )
+        .await;
         println!(
             "Live queries count after closing connections: {} (should be 0)",
             post_close_count
         );
+        assert_eq!(post_close_count, 0, "Expected live queries to be cleaned up");
     });
 
     cleanup_namespace(&namespace_for_cleanup);
@@ -363,30 +374,49 @@ async fn fetch_live_queries_snapshot() -> String {
     .expect("SELECT * FROM system.live should succeed")
 }
 
-async fn count_live_query_subscriptions(prefix: String) -> usize {
+async fn count_live_query_subscriptions(prefix: &str) -> usize {
+    let prefix = prefix.to_string();
+
     tokio::task::spawn_blocking(move || {
-        execute_sql_as_root_via_client_json(
-            "SELECT subscription_id FROM system.live ORDER BY subscription_id",
-        )
-        .map_err(|e| format!("{}", e))
+        execute_sql_as_root_via_client("SELECT subscription_id FROM system.live")
+            .map_err(|e| format!("{}", e))
     })
     .await
     .expect("spawn_blocking join failure")
-    .map(|json_str| {
-        let value: serde_json::Value = serde_json::from_str(&json_str)
-            .unwrap_or_else(|e| panic!("Failed to parse system.live JSON: {}", e));
-        let rows = get_rows_as_hashmaps(&value).unwrap_or_default();
-        rows.iter()
-            .filter(|row| {
-                let id_value = row
-                    .get("subscription_id")
-                    .map(extract_typed_value)
-                    .unwrap_or(serde_json::Value::Null);
-                id_value.as_str().map(|id| id.starts_with(&prefix)).unwrap_or(false)
-            })
-            .count()
-    })
-    .expect("system.live JSON query should succeed")
+    .map(|output| output.matches(&prefix).count())
+    .expect("system.live query should succeed")
+}
+
+async fn wait_for_live_query_subscriptions_at_least(
+    prefix: &str,
+    minimum: usize,
+    timeout: Duration,
+) -> usize {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        let current = count_live_query_subscriptions(prefix).await;
+        if current >= minimum || tokio::time::Instant::now() >= deadline {
+            return current;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
+async fn wait_for_live_query_subscriptions_exact(
+    prefix: &str,
+    expected: usize,
+    timeout: Duration,
+) -> usize {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        let current = count_live_query_subscriptions(prefix).await;
+        if current == expected || tokio::time::Instant::now() >= deadline {
+            return current;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
 }
 
 async fn wait_for_subscription_ack(

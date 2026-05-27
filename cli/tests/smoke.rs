@@ -59,6 +59,8 @@ mod smoke_test_stream_subscription;
 mod smoke_test_subscription_advanced;
 #[path = "smoke/subscription/smoke_test_subscription_close.rs"]
 mod smoke_test_subscription_close;
+#[path = "smoke/subscription/smoke_test_concurrent_subscriptions.rs"]
+mod smoke_test_concurrent_subscriptions;
 #[path = "smoke/subscription/smoke_test_subscription_delete.rs"]
 mod smoke_test_subscription_delete;
 #[path = "smoke/subscription/smoke_test_subscription_delta_updates.rs"]
