@@ -33,7 +33,7 @@ export function mapSettingsRows(rows: Setting[]): Setting[] {
 
 export async function fetchSystemStats(): Promise<SystemStatsMap> {
   const db = getDb();
-  const rows = await db.select().from(system_stats).limit(150);
+  const rows = await db.select().from(system_stats);
   const stats: SystemStatsMap = {};
   for (const row of rows) {
     if (row.metric_name) {
