@@ -425,6 +425,7 @@ jobs:
         run: |
           set -euo pipefail
           cross build \
+            -p kalam-cli \
             --profile release-dist \
             --target x86_64-pc-windows-gnu \
             --bin kalam
@@ -853,6 +854,9 @@ jobs:
         run: |
           set -euo pipefail
           cross build \
+            -p kalamdb-server \
+            --no-default-features \
+            --features embedded-ui,traceability \
             --profile release-dist \
             --target x86_64-pc-windows-gnu \
             --bin kalamdb-server

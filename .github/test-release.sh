@@ -110,7 +110,8 @@ if ! command -v cross &> /dev/null; then
     cargo install cross --locked
 fi
 rustup target add x86_64-pc-windows-gnu
-cross build --profile docker --target x86_64-pc-windows-gnu --bin kalam --bin kalamdb-server
+cross build --profile docker --target x86_64-pc-windows-gnu -p kalam-cli --bin kalam
+cross build --profile docker --target x86_64-pc-windows-gnu -p kalamdb-server --no-default-features --features embedded-ui,traceability --bin kalamdb-server
 print_success "Windows build successful"
 echo ""
 
