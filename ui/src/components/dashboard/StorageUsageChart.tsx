@@ -75,7 +75,7 @@ export function StorageUsageChart({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
         <div>
-          <CardTitle className="text-base font-medium">Storage Usage</CardTitle>
+          <CardTitle>Storage Usage</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
             Capacity and usage for the selected storage backend.
           </p>

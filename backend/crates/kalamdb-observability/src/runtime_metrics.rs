@@ -228,7 +228,9 @@ pub fn collect_runtime_metrics(start_time: Instant) -> RuntimeMetrics {
     let mut memory_virtual_mb = None;
     let mut memory_rss_gap_bytes = None;
     let mut memory_rss_gap_mb = None;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut memory_physical_footprint_bytes = None;
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut memory_physical_footprint_mb = None;
     let mut linux_memory_breakdown = None;
     let mut memory_usage_source = "rss";

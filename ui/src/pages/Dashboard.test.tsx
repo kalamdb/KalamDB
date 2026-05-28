@@ -6,6 +6,7 @@ import Dashboard from "@/pages/Dashboard";
 
 const mockUseAuth = vi.fn();
 const mockGetStatsQuery = vi.fn();
+const mockGetSlowQueriesQuery = vi.fn();
 const mockGetStoragesQuery = vi.fn();
 const mockGetClusterSnapshotQuery = vi.fn();
 const mockCheckStorageHealth = vi.fn();
@@ -17,19 +18,29 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/store/apiSlice", () => ({
   useGetStatsQuery: () => mockGetStatsQuery(),
+  useGetSlowQueriesQuery: () => mockGetSlowQueriesQuery(),
   useGetStoragesQuery: () => mockGetStoragesQuery(),
   useGetClusterSnapshotQuery: () => mockGetClusterSnapshotQuery(),
   useCheckStorageHealthMutation: () => mockCheckStorageHealthMutation(),
 }));
 
 vi.mock("@/components/dashboard/MetricsChart", () => ({
-  MetricsChart: ({ data }: { data: unknown[] }) => <div>Metrics chart {data.length}</div>,
+  MetricsChart: ({ data, trailingPanel }: { data: unknown[]; trailingPanel?: React.ReactNode }) => (
+    <>
+      <div>Metrics chart {data.length}</div>
+      {trailingPanel}
+    </>
+  ),
 }));
 
 vi.mock("@/components/dashboard/StorageUsageChart", () => ({
   StorageUsageChart: ({ selectedStorageId }: { selectedStorageId: string }) => (
     <div>Storage usage {selectedStorageId}</div>
   ),
+}));
+
+vi.mock("@/components/dashboard/SlowQueriesPanel", () => ({
+  SlowQueriesPanel: ({ queries }: { queries: unknown[] }) => <div>Slow query widget {queries.length}</div>,
 }));
 
 vi.mock("@/components/dashboard/ClusterOverview", () => ({
@@ -52,6 +63,7 @@ describe("Dashboard page", () => {
 
     mockUseAuth.mockReset();
     mockGetStatsQuery.mockReset();
+    mockGetSlowQueriesQuery.mockReset();
     mockGetStoragesQuery.mockReset();
     mockGetClusterSnapshotQuery.mockReset();
     mockCheckStorageHealth.mockReset();
@@ -67,9 +79,17 @@ describe("Dashboard page", () => {
         total_namespaces: "9",
         total_tables: "42",
         active_connections: "3",
+        active_connections_peak: "6",
         active_subscriptions: "2",
         active_subscriptions_peak: "7",
-        websocket_sessions_peak: "5",
+        subscription_changes_delivered_per_second: "9.5",
+        pubsub_messages_published_total: "1234",
+        topic_consumer_group_count: "4",
+        topic_cache_topic_count: "8",
+        pubsub_active_consumers: "1",
+        pubsub_messages_consumed_per_second: "3.5",
+        pubsub_messages_consumed_peak_per_second: "12",
+        pubsub_kb_consumed_per_second: "2.75",
         server_uptime_human: "1h 10m",
         queries_total: "12",
         queries_per_second: "1.25",
@@ -88,6 +108,23 @@ describe("Dashboard page", () => {
       },
       isFetching: false,
       error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+    });
+
+    mockGetSlowQueriesQuery.mockReturnValue({
+      data: [
+        {
+          timestamp: "2026-05-28T11:00:00Z",
+          timestamp_ms: 1_779_964_800_000,
+          duration_ms: 1200,
+          user_id: "root",
+          table_type: "user",
+          table_name: "events",
+          row_count: 1,
+          query: "SELECT * FROM events",
+        },
+      ],
+      isFetching: false,
       refetch: vi.fn().mockResolvedValue(undefined),
     });
 
@@ -165,10 +202,17 @@ describe("Dashboard page", () => {
     expect(screen.getByText("42")).toBeTruthy();
     expect(screen.getByText("9")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("6")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText("9.50")).toBeTruthy();
+    expect(screen.getByText("Pub/Sub")).toBeTruthy();
+    expect(screen.getByText("1,234")).toBeTruthy();
+    expect(screen.getByText("4")).toBeTruthy();
+    expect(screen.getByText("8")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
     expect(screen.getByText("1.25")).toBeTruthy();
     expect(screen.getByText("4.50 ms")).toBeTruthy();
+    expect(screen.getByText("Slow query widget 1")).toBeTruthy();
     expect(screen.getByText("Cluster overview 1")).toBeTruthy();
 
     await waitFor(() => {
@@ -192,6 +236,7 @@ describe("Dashboard page", () => {
 
   it("refreshes dashboard queries and rechecks storage health", async () => {
     const statsRefetch = vi.fn().mockResolvedValue(undefined);
+    const slowQueriesRefetch = vi.fn().mockResolvedValue(undefined);
     const storagesRefetch = vi.fn().mockResolvedValue(undefined);
     const clusterRefetch = vi.fn().mockResolvedValue(undefined);
 
@@ -201,9 +246,17 @@ describe("Dashboard page", () => {
         total_namespaces: "9",
         total_tables: "42",
         active_connections: "3",
+        active_connections_peak: "6",
         active_subscriptions: "2",
         active_subscriptions_peak: "7",
-        websocket_sessions_peak: "5",
+        subscription_changes_delivered_per_second: "9.5",
+        pubsub_messages_published_total: "1234",
+        topic_consumer_group_count: "4",
+        topic_cache_topic_count: "8",
+        pubsub_active_consumers: "1",
+        pubsub_messages_consumed_per_second: "3.5",
+        pubsub_messages_consumed_peak_per_second: "12",
+        pubsub_kb_consumed_per_second: "2.75",
         server_uptime_human: "1h 10m",
         queries_total: "12",
         queries_per_second: "1.25",
@@ -223,6 +276,11 @@ describe("Dashboard page", () => {
       isFetching: false,
       error: null,
       refetch: statsRefetch,
+    });
+    mockGetSlowQueriesQuery.mockReturnValue({
+      data: [],
+      isFetching: false,
+      refetch: slowQueriesRefetch,
     });
     mockGetStoragesQuery.mockReturnValue({
       data: [{ storage_id: "local", name: "Local" }],
@@ -281,6 +339,7 @@ describe("Dashboard page", () => {
 
     await waitFor(() => {
       expect(statsRefetch).toHaveBeenCalledTimes(1);
+      expect(slowQueriesRefetch).toHaveBeenCalledTimes(1);
       expect(storagesRefetch).toHaveBeenCalledTimes(1);
       expect(clusterRefetch).toHaveBeenCalledTimes(1);
       expect(mockCheckStorageHealth).toHaveBeenCalledTimes(2);

@@ -11,6 +11,7 @@ use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
+use kalamdb_observability::track_pubsub_consumer;
 use kalamdb_session::AuthSession;
 
 use super::models::{
@@ -57,6 +58,8 @@ pub async fn consume_handler(
             "Topic consumption requires service, dba, or system role",
         ));
     }
+
+    let _consumer_guard = track_pubsub_consumer();
 
     let topic_id = &body.topic_id;
     let group_id = body.group_id.as_ref();

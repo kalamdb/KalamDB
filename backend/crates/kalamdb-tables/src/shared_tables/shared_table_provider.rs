@@ -106,19 +106,18 @@ impl SharedTableProvider {
             })
             .collect();
         let backend = store.backend().clone();
-        let vector_stores: HashMap<String, Arc<SharedVectorHotStore>> = vector_columns
-            .iter()
-            .map(|(column_name, _)| {
-                (
-                    column_name.clone(),
-                    Arc::new(new_indexed_shared_vector_hot_store(
-                        backend.clone(),
-                        core.table_id(),
-                        column_name,
-                    )),
-                )
-            })
-            .collect();
+        let mut vector_stores: HashMap<String, Arc<SharedVectorHotStore>> =
+            HashMap::with_capacity(vector_columns.len());
+        for (column_name, _) in &vector_columns {
+            vector_stores.insert(
+                column_name.clone(),
+                Arc::new(new_indexed_shared_vector_hot_store(
+                    backend.clone(),
+                    core.table_id(),
+                    column_name,
+                )),
+            );
+        }
 
         Self {
             core,
@@ -1522,8 +1521,8 @@ impl SharedTableProvider {
 
         if validate_unique_pk {
             let pk_name = self.primary_key_field_name();
-            let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::new();
-            let mut seen_batch_pks = HashSet::new();
+            let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::with_capacity(row_count);
+            let mut seen_batch_pks = HashSet::with_capacity(row_count);
             for row_data in &coerced_rows {
                 if let Some(pk_value) = row_data.get(pk_name) {
                     if !matches!(pk_value, ScalarValue::Null) {
@@ -1542,12 +1541,11 @@ impl SharedTableProvider {
             }
 
             if !pk_values_to_check.is_empty() {
-                let pk_prefixes: Vec<(String, Vec<u8>)> = pk_values_to_check
-                    .iter()
-                    .map(|(pk_str, pk_value)| {
-                        (pk_str.clone(), self.pk_index.build_prefix_for_pk(pk_value))
-                    })
-                    .collect();
+                let mut pk_prefixes: Vec<(String, Vec<u8>)> =
+                    Vec::with_capacity(pk_values_to_check.len());
+                for (pk_str, pk_value) in &pk_values_to_check {
+                    pk_prefixes.push((pk_str.clone(), self.pk_index.build_prefix_for_pk(pk_value)));
+                }
 
                 let store = self.store.clone();
                 let hot_duplicate =
@@ -1607,21 +1605,19 @@ impl SharedTableProvider {
             KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
         })?;
 
-        let mut shared_rows: Vec<SharedTableRow> = Vec::with_capacity(row_count);
-        let mut row_keys: Vec<SharedTableRowId> = Vec::with_capacity(row_count);
+        let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
 
         for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
-            row_keys.push(seq_id);
-            shared_rows.push(SharedTableRow {
-                _seq: seq_id,
-                _commit_seq: commit_seq,
-                _deleted: false,
-                fields: row_data,
-            });
+            entries.push((
+                seq_id,
+                SharedTableRow {
+                    _seq: seq_id,
+                    _commit_seq: commit_seq,
+                    _deleted: false,
+                    fields: row_data,
+                },
+            ));
         }
-
-        let entries: Vec<(SharedTableRowId, SharedTableRow)> =
-            row_keys.iter().copied().zip(shared_rows.into_iter()).collect();
 
         let store = self.store.clone();
 
@@ -1678,8 +1674,8 @@ impl SharedTableProvider {
         log::debug!(
             "Batch inserted {} shared table rows with _seq range [{}, {}]",
             row_count,
-            row_keys.first().map(|k| k.as_i64()).unwrap_or(0),
-            row_keys.last().map(|k| k.as_i64()).unwrap_or(0)
+            entries.first().map(|(k, _)| k.as_i64()).unwrap_or(0),
+            entries.last().map(|(k, _)| k.as_i64()).unwrap_or(0)
         );
 
         Ok(entries)

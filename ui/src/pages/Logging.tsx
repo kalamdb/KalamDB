@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { AuditLogList } from "@/components/audit/AuditLogList";
 import { JobList } from "@/components/jobs/JobList";
 import { ServerLogList } from "@/components/logs/ServerLogList";
+import { PageHeader } from "@/components/layout/typography";
 import { cn } from "@/lib/utils";
 
 type LogTab = "audit" | "jobs" | "server";
@@ -42,10 +43,7 @@ export default function Logging() {
     <div className="flex flex-col h-full">
       {/* Tab Navigation */}
       <div className="border-b px-4 lg:px-6 pt-4">
-        <div className="mb-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Logging</h1>
-          <p className="text-sm text-muted-foreground">{activeTabData.description}</p>
-        </div>
+        <PageHeader title="Logging" description={activeTabData.description} className="mb-4" />
         <nav className="flex gap-4">
           {tabs.map((tabItem) => (
             <button

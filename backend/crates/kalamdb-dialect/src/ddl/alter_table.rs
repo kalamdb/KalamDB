@@ -7,7 +7,7 @@
 
 use kalamdb_commons::{
     models::{datatypes::KalamDataType, NamespaceId, StorageId, TableAccess, TableName},
-    schemas::{policy::FlushPolicy, ColumnDefault},
+    schemas::{policy::FlushPolicy, ColumnDefault, TableCompression},
 };
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
@@ -76,7 +76,7 @@ pub struct TablePropertyUpdates {
     pub flush_policy: Option<Option<FlushPolicy>>,
     pub ttl_seconds: Option<u64>,
     pub access_level: Option<TableAccess>,
-    pub compression: Option<String>,
+    pub compression: Option<TableCompression>,
     pub eviction_strategy: Option<String>,
     pub max_stream_size_bytes: Option<u64>,
 }
@@ -676,15 +676,8 @@ fn parse_u64_property(value: &Expr, property_name: &str) -> DdlResult<u64> {
     expr_to_literal(value).parse().map_err(|_| format!("Invalid {}", property_name))
 }
 
-fn parse_compression_property(value: &Expr) -> DdlResult<String> {
-    let normalized = expr_to_literal(value).trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "none" | "snappy" | "lz4" | "zstd" => Ok(normalized),
-        _ => Err(format!(
-            "Invalid COMPRESSION '{}'. Supported: none, snappy, lz4, zstd",
-            normalized
-        )),
-    }
+fn parse_compression_property(value: &Expr) -> DdlResult<TableCompression> {
+    expr_to_literal(value).parse()
 }
 
 fn parse_eviction_strategy_property(value: &Expr) -> DdlResult<String> {
@@ -1023,7 +1016,7 @@ mod tests {
                 assert_eq!(updates.storage_id.unwrap().as_str(), "local-ssd");
                 assert_eq!(updates.use_user_storage, Some(true));
                 assert!(matches!(updates.flush_policy, Some(Some(FlushPolicy::RowLimit { .. }))));
-                assert_eq!(updates.compression.as_deref(), Some("zstd"));
+                assert_eq!(updates.compression, Some(TableCompression::Zstd));
             },
             _ => panic!("Expected SetTableOptions operation"),
         }
@@ -1032,7 +1025,7 @@ mod tests {
     #[test]
     fn test_parse_set_tblproperties_stream_options() {
         let stmt = AlterTableStatement::parse(
-            "ALTER TABLE events SET TBLPROPERTIES (TTL_SECONDS=7200, EVICTION_STRATEGY='hybrid', MAX_STREAM_SIZE_BYTES=1048576, COMPRESSION='lz4')",
+            "ALTER TABLE events SET TBLPROPERTIES (TTL_SECONDS=7200, EVICTION_STRATEGY='hybrid', MAX_STREAM_SIZE_BYTES=1048576)",
             &test_namespace(),
         )
         .unwrap();
@@ -1042,10 +1035,33 @@ mod tests {
                 assert_eq!(updates.ttl_seconds, Some(7200));
                 assert_eq!(updates.eviction_strategy.as_deref(), Some("hybrid"));
                 assert_eq!(updates.max_stream_size_bytes, Some(1_048_576));
-                assert_eq!(updates.compression.as_deref(), Some("lz4"));
+                assert_eq!(updates.compression, None);
             },
             _ => panic!("Expected SetTableOptions operation"),
         }
+    }
+
+    #[test]
+    fn test_parse_set_tblproperties_none_compression() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE profiles SET TBLPROPERTIES (COMPRESSION='none')",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetTableOptions { updates } => {
+                assert_eq!(updates.compression, Some(TableCompression::None));
+            },
+            _ => panic!("Expected SetTableOptions operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_tblproperties_rejects_unsupported_compression() {
+        let sql = "ALTER TABLE events SET TBLPROPERTIES (COMPRESSION='lz4')";
+        let err = AlterTableStatement::parse(sql, &test_namespace()).unwrap_err();
+        assert!(err.contains("Supported: none, snappy, zstd"));
     }
 
     #[test]

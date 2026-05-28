@@ -18,6 +18,7 @@ use kalamdb_commons::{
     models::{rows::Row, ConsumerGroupId, TableId, TopicId, TopicOp, UserId},
     storage::Partition,
 };
+use kalamdb_observability::{record_pubsub_messages_consumed, record_pubsub_messages_published};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::providers::{
     topic_offsets::{TopicOffset, TopicOffsetsTableProvider},
@@ -99,6 +100,22 @@ impl GroupPartitionKey {
             topic_id: topic_id.clone(),
             group_id: group_id.clone(),
             partition_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ConsumerGroupKey {
+    topic_id: TopicId,
+    group_id: ConsumerGroupId,
+}
+
+impl ConsumerGroupKey {
+    #[inline]
+    fn new(topic_id: &TopicId, group_id: &ConsumerGroupId) -> Self {
+        Self {
+            topic_id: topic_id.clone(),
+            group_id: group_id.clone(),
         }
     }
 }
@@ -211,6 +228,8 @@ pub struct TopicPublisherService {
     /// In-memory per-(topic, group, partition) claim state used to avoid
     /// duplicate delivery and to expire stale claims from crashed consumers.
     group_claim_state: DashMap<GroupPartitionKey, ClaimState>,
+    /// Known consumer groups observed from consume/ack activity or restored offsets.
+    consumer_groups: DashMap<ConsumerGroupKey, ()>,
     /// Per-(topic, partition) write locks that serialize offset allocation +
     /// RocksDB write to guarantee messages are stored in offset order.
     partition_write_locks: DashMap<TopicPartitionKey, Arc<Mutex<()>>>,
@@ -269,6 +288,7 @@ impl TopicPublisherService {
             primary_key_lookup,
             offset_allocator: OffsetAllocator::new(),
             group_claim_state: DashMap::new(),
+            consumer_groups: DashMap::new(),
             partition_write_locks: DashMap::new(),
             retained_bytes: DashMap::new(),
             visibility_timeout,
@@ -358,6 +378,7 @@ impl TopicPublisherService {
         self.route_cache.clear();
         self.offset_allocator.clear();
         self.group_claim_state.clear();
+        self.consumer_groups.clear();
         self.partition_write_locks.clear();
         self.retained_bytes.clear();
     }
@@ -390,6 +411,16 @@ impl TopicPublisherService {
             .collect();
         for key in claim_keys {
             self.group_claim_state.remove(&key);
+        }
+
+        let consumer_keys: Vec<_> = self
+            .consumer_groups
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in consumer_keys {
+            self.consumer_groups.remove(&key);
         }
 
         let lock_keys: Vec<_> = self
@@ -452,6 +483,10 @@ impl TopicPublisherService {
             .map_err(|e| CommonError::Internal(format!("Failed to read retained bytes: {}", e)))?;
         self.retained_bytes.insert(key, bytes);
         Ok(bytes)
+    }
+
+    fn register_consumer_group(&self, topic_id: &TopicId, group_id: &ConsumerGroupId) {
+        self.consumer_groups.insert(ConsumerGroupKey::new(topic_id, group_id), ());
     }
 
     // ===== Publishing Methods =====
@@ -548,6 +583,7 @@ impl TopicPublisherService {
                     CommonError::Internal(format!("Failed to store topic message: {}", e))
                 })?;
             self.add_retained_bytes(&entry.topic_id, partition_id, message_bytes);
+            record_pubsub_messages_published(1, message_bytes);
 
             tracing::debug!(
                 topic_name = entry.topic_id.as_str(),
@@ -736,6 +772,7 @@ impl TopicPublisherService {
                         ))
                     })?;
                 self.add_retained_bytes(&entry.topic_id, *partition_id, message_bytes);
+                record_pubsub_messages_published(row_indices.len() as u64, message_bytes);
 
                 total_published += row_indices.len();
             }
@@ -774,9 +811,13 @@ impl TopicPublisherService {
             )));
         }
 
-        self.message_store
+        let messages = self
+            .message_store
             .fetch_messages(topic_id, partition_id, offset, limit)
-            .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))
+            .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
+        let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
+        record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);
+        Ok(messages)
     }
 
     /// Fetch messages for a consumer group while claiming offsets in-memory.
@@ -797,6 +838,8 @@ impl TopicPublisherService {
         if limit == 0 {
             return Ok(Vec::new());
         }
+
+        self.register_consumer_group(topic_id, group_id);
 
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
 
@@ -861,6 +904,9 @@ impl TopicPublisherService {
                 end_exclusive,
                 claimed_at,
             });
+
+            let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
+            record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);
 
             return Ok(messages);
         }
@@ -1006,6 +1052,8 @@ impl TopicPublisherService {
         partition_id: u32,
         offset: u64,
     ) -> Result<()> {
+        self.register_consumer_group(topic_id, group_id);
+
         self.offset_store
             .ack_offset(topic_id, group_id, partition_id, offset)
             .map_err(|e| CommonError::Internal(format!("Failed to ack offset: {}", e)))?;
@@ -1033,6 +1081,8 @@ impl TopicPublisherService {
         partition_id: u32,
         next_offset: u64,
     ) -> Result<()> {
+        self.register_consumer_group(topic_id, group_id);
+
         self.offset_store
             .reset_offset(topic_id, group_id, partition_id, next_offset)
             .map_err(|e| CommonError::Internal(format!("Failed to reset offset: {}", e)))?;
@@ -1077,6 +1127,31 @@ impl TopicPublisherService {
             topic_count: self.route_cache.topic_count(),
             table_route_count: self.route_cache.table_route_count(),
             total_routes: self.route_cache.total_routes(),
+            consumer_group_count: self.consumer_groups.len(),
+            consumer_partition_count: self.group_claim_state.len(),
+        }
+    }
+
+    fn restore_consumer_groups_from_offsets(&self) {
+        match self.offset_store.list_offsets() {
+            Ok(offsets) => {
+                let mut restored = 0usize;
+                for offset in offsets {
+                    if self
+                        .consumer_groups
+                        .insert(ConsumerGroupKey::new(&offset.topic_id, &offset.group_id), ())
+                        .is_none()
+                    {
+                        restored += 1;
+                    }
+                }
+                if restored > 0 {
+                    log::debug!("Restored {} topic consumer groups into runtime stats", restored);
+                }
+            },
+            Err(e) => {
+                log::warn!("Failed to restore topic consumer groups from offsets: {}", e);
+            },
         }
     }
 
@@ -1140,6 +1215,8 @@ impl TopicPublisherService {
                 }
             }
         }
+
+        self.restore_consumer_groups_from_offsets();
     }
 }
 

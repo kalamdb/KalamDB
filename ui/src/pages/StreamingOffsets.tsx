@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { fieldLabelClassName } from "@/components/layout/typography";
 import {
   Table,
   TableBody,
@@ -248,12 +249,12 @@ export default function StreamingOffsets() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Filters</CardTitle>
+          <CardTitle>Filters</CardTitle>
           <CardDescription>Limit the combined consumer cursor list by topic and/or group</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Topic</p>
+            <p className={fieldLabelClassName}>Topic</p>
             <Select value={selectedTopic} onValueChange={setSelectedTopic}>
               <SelectTrigger>
                 <SelectValue placeholder="All topics" />
@@ -267,7 +268,7 @@ export default function StreamingOffsets() {
             </Select>
           </div>
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Group</p>
+            <p className={fieldLabelClassName}>Group</p>
             <Select value={selectedGroup} onValueChange={setSelectedGroup}>
               <SelectTrigger>
                 <SelectValue placeholder="All groups" />
@@ -299,7 +300,7 @@ export default function StreamingOffsets() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Consumers</CardTitle>
+          <CardTitle>Consumers</CardTitle>
           <CardDescription>
             {filteredSummaries.length} group-topic row{filteredSummaries.length === 1 ? "" : "s"} returned. Partitions show claimed/configured coverage.
           </CardDescription>
@@ -359,8 +360,7 @@ export default function StreamingOffsets() {
               <div className="flex items-center gap-1">
                 <Button
                   variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
+                  size="icon-sm"
                   disabled={page === 0}
                   onClick={() => setPage((currentPage) => Math.max(0, currentPage - 1))}
                 >
@@ -369,8 +369,7 @@ export default function StreamingOffsets() {
                 <span className="px-2 text-sm text-muted-foreground">{page + 1} / {totalPages}</span>
                 <Button
                   variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
+                  size="icon-sm"
                   disabled={page >= totalPages - 1}
                   onClick={() => setPage((currentPage) => Math.min(totalPages - 1, currentPage + 1))}
                 >

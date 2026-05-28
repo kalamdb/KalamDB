@@ -11,7 +11,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use kalamdb_commons::{
     models::{TableId, UserId},
-    schemas::TableType,
+    schemas::{TableCompression, TableType},
 };
 use kalamdb_system::{providers::storages::models::StorageType, Storage};
 use object_store::{path::Path as ObjectPath, ObjectStore, ObjectStoreExt};
@@ -24,7 +24,7 @@ use super::operations::{
 use crate::{
     core::runtime::run_blocking,
     error::{FilestoreError, Result},
-    parquet::writer::{serialize_to_parquet, ParquetWriteResult},
+    parquet::writer::{serialize_to_parquet_with_compression, ParquetWriteResult},
     paths::{PathResolver, TemplateResolver},
 };
 
@@ -420,7 +420,38 @@ impl StorageCached {
         batches: Vec<RecordBatch>,
         bloom_filter_columns: Option<Vec<String>>,
     ) -> Result<ParquetWriteResult> {
-        let parquet_bytes = serialize_to_parquet(schema, batches, bloom_filter_columns)?;
+        self.write_parquet_with_compression(
+            table_type,
+            table_id,
+            user_id,
+            filename,
+            schema,
+            batches,
+            bloom_filter_columns,
+            TableCompression::default(),
+        )
+        .await
+    }
+
+    /// Write `RecordBatch`es as Parquet using the table's configured compression.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_parquet_with_compression(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+        schema: SchemaRef,
+        batches: Vec<RecordBatch>,
+        bloom_filter_columns: Option<Vec<String>>,
+        compression: TableCompression,
+    ) -> Result<ParquetWriteResult> {
+        let parquet_bytes = serialize_to_parquet_with_compression(
+            schema,
+            batches,
+            bloom_filter_columns,
+            compression,
+        )?;
         let size_bytes = parquet_bytes.len() as u64;
         self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
         Ok(ParquetWriteResult { size_bytes })
@@ -574,6 +605,34 @@ impl StorageCached {
                 schema,
                 batches,
                 bloom_filter_columns,
+            )
+            .await
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_parquet_with_compression_sync(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        filename: &str,
+        schema: SchemaRef,
+        batches: Vec<RecordBatch>,
+        bloom_filter_columns: Option<Vec<String>>,
+        compression: TableCompression,
+    ) -> Result<ParquetWriteResult> {
+        let (tid, uid, f) = (table_id.clone(), user_id.cloned(), filename.to_string());
+        run_blocking(|| async {
+            self.write_parquet_with_compression(
+                table_type,
+                &tid,
+                uid.as_ref(),
+                &f,
+                schema,
+                batches,
+                bloom_filter_columns,
+                compression,
             )
             .await
         })

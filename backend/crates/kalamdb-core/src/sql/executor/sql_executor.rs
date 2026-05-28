@@ -15,7 +15,6 @@ use kalamdb_commons::{
 };
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
-use tracing::Instrument;
 use uuid::Uuid;
 
 use super::{PreparedExecutionStatement, SqlExecutor};
@@ -694,15 +693,8 @@ impl SqlExecutor {
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
         let sql = metadata.sql.as_str();
-        let span = tracing::info_span!(
-            "sql.execute",
-            user_id = %exec_ctx.user_id().as_str(),
-            namespace = %exec_ctx.default_namespace().as_str(),
-            command = tracing::field::Empty,
-            rows = tracing::field::Empty,
-        );
-        // Enter the span for the entire execution
-        async {
+        kalamdb_observability::kdb_await_in_info_span!(
+            async {
             let query_start = Instant::now();
             let classified = match metadata.classified_statement.as_ref() {
                 Some(classified) => classified,
@@ -718,9 +710,11 @@ impl SqlExecutor {
                 },
             };
 
-            // Record the command kind in the span
-            let command_label = format!("{:?}", classified.kind());
-            tracing::Span::current().record("command", &command_label.as_str());
+            #[cfg(feature = "traceability")]
+            {
+                let command_label = format!("{:?}", classified.kind());
+                kalamdb_observability::kdb_record_current_span!("command", command_label.as_str());
+            }
             let query_kind = query_metric_kind(classified.kind());
             let observe_query_metrics = if matches!(exec_ctx.user_role(), Role::Dba | Role::System)
             {
@@ -885,7 +879,7 @@ impl SqlExecutor {
                 );
             }
 
-            // Record row count in the span
+            #[cfg(feature = "traceability")]
             if let Ok(ref res) = result {
                 let rows = match res {
                     ExecutionResult::Rows { row_count, .. } => *row_count,
@@ -894,13 +888,17 @@ impl SqlExecutor {
                     ExecutionResult::Deleted { rows_affected } => *rows_affected,
                     _ => 0,
                 };
-                tracing::Span::current().record("rows", rows);
+                kalamdb_observability::kdb_record_current_span!("rows", rows);
             }
 
             result
-        }
-        .instrument(span)
-        .await
+        },
+            "sql.execute",
+            user_id = %exec_ctx.user_id().as_str(),
+            namespace = %exec_ctx.default_namespace().as_str(),
+            command = tracing::field::Empty,
+            rows = tracing::field::Empty,
+        )
     }
 
     fn should_stage_autocommit_dml(
@@ -1004,11 +1002,12 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<(SessionContext, DataFrame), KalamDbError> {
         let session = self.create_session_with_transaction_context(exec_ctx)?;
+        #[cfg(feature = "traceability")]
         let plan_start = std::time::Instant::now();
 
         match session.sql(execution_sql).await {
             Ok(df) => {
-                tracing::debug!(
+                kalamdb_observability::kdb_debug!(
                     plan_ms = (plan_start.elapsed().as_micros() as f64 / 1000.0),
                     "sql.dml_plan"
                 );
@@ -1025,11 +1024,12 @@ impl SqlExecutor {
                 }
 
                 let retry_session = self.create_session_with_transaction_context(exec_ctx)?;
+                #[cfg(feature = "traceability")]
                 let retry_start = std::time::Instant::now();
                 let retry_df = retry_session.sql(execution_sql).await.map_err(|retry_error| {
                     self.log_sql_error(original_sql, exec_ctx, retry_error)
                 })?;
-                tracing::debug!(
+                kalamdb_observability::kdb_debug!(
                     plan_ms = (retry_start.elapsed().as_micros() as f64 / 1000.0),
                     reloaded_providers = true,
                     "sql.dml_plan"
@@ -1053,14 +1053,14 @@ impl SqlExecutor {
         replace_placeholders_in_plan(template_plan, params)
     }
 
-    #[tracing::instrument(
+    #[cfg_attr(feature = "traceability", tracing::instrument(
         name = "sql.dml_datafusion",
         skip_all,
         fields(
             dml_kind = %Self::dml_operation_name(dml_kind),
             rows_affected = tracing::field::Empty,
         )
-    )]
+    ))]
     async fn execute_dml_via_datafusion_inner(
         &self,
         sql: &str,
@@ -1127,15 +1127,16 @@ impl SqlExecutor {
             }
         };
 
+        #[cfg(feature = "traceability")]
         let collect_start = std::time::Instant::now();
         let batches = df.collect().await.map_err(Self::datafusion_to_execution_error)?;
-        tracing::debug!(
+        kalamdb_observability::kdb_debug!(
             collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0,
             "sql.dml_collect"
         );
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
-        tracing::Span::current().record("rows_affected", rows_affected);
+        kalamdb_observability::kdb_record_current_span!("rows_affected", rows_affected);
 
         Ok(match dml_kind {
             DmlKind::Insert => ExecutionResult::Inserted { rows_affected },
@@ -1145,11 +1146,11 @@ impl SqlExecutor {
     }
 
     /// Execute SELECT via DataFusion with per-user session
-    #[tracing::instrument(
+    #[cfg_attr(feature = "traceability", tracing::instrument(
         name = "sql.select_datafusion",
         skip_all,
         fields(row_count = tracing::field::Empty)
-    )]
+    ))]
     async fn execute_via_datafusion(
         &self,
         sql: &str,
@@ -1330,7 +1331,7 @@ impl SqlExecutor {
 
         // Calculate total row count
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
-        tracing::Span::current().record("row_count", row_count);
+        kalamdb_observability::kdb_record_current_span!("row_count", row_count);
 
         // Return batches with row count and schema (schema is needed when batches is empty)
         Ok(ExecutionResult::Rows {
@@ -1345,7 +1346,10 @@ impl SqlExecutor {
     /// These commands are passed directly to DataFusion without custom parsing.
     /// No plan caching is performed since these are diagnostic/config commands.
     /// Authorization is already checked in the classifier (admin only).
-    #[tracing::instrument(name = "sql.meta_command", skip_all)]
+    #[cfg_attr(
+        feature = "traceability",
+        tracing::instrument(name = "sql.meta_command", skip_all)
+    )]
     async fn execute_meta_command(
         &self,
         sql: &str,

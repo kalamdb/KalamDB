@@ -74,7 +74,6 @@ function tablePropertyMap(
     props.set("TTL_SECONDS", options.ttlSeconds.trim());
     props.set("EVICTION_STRATEGY", quoteLiteral(options.evictionStrategy));
     props.set("MAX_STREAM_SIZE_BYTES", options.maxStreamSizeBytes.trim());
-    props.set("COMPRESSION", quoteLiteral(options.compression));
   }
 
   return props;

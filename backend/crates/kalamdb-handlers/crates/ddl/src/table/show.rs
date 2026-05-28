@@ -21,6 +21,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::ShowTablesStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Typed handler for SHOW TABLES statements
 pub struct ShowTablesHandler {
     app_context: Arc<AppContext>,
@@ -44,7 +46,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
         // Offload sync RocksDB reads to blocking pool
         let app_ctx = self.app_context.clone();
         let ns_filter = statement.namespace_id;
-        let result = tokio::task::spawn_blocking(move || {
+        let result = run_blocking(move || {
             let tables_provider = app_ctx.system_tables().tables();
             if let Some(ns) = ns_filter {
                 let defs = tables_provider.list_tables()?;
@@ -67,8 +69,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
                 })
             }
         })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?;
+        .await?;
 
         // Log query operation
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
@@ -76,7 +77,7 @@ impl TypedStatementHandler<ShowTablesStatement> for ShowTablesHandler {
         let audit_entry = audit::log_query_operation(context, "SHOW", "TABLES", duration, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
-        result
+        Ok(result)
     }
 
     async fn check_authorization(

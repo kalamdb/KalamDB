@@ -213,6 +213,7 @@ impl FlushExecutor {
             cached.schema_version,
             cached.bloom_filter_columns().to_vec(),
             cached.indexed_columns().to_vec(),
+            cached.table.table_options.parquet_compression(),
         );
         let scan_batch_size = app_ctx.config().flush.flush_batch_size;
         let scope_hook = Arc::new(CoreFlushScopeHook::new(app_ctx));

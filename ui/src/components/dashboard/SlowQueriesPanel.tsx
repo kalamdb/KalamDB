@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -14,9 +15,41 @@ interface SlowQueriesPanelProps {
   isLoading?: boolean;
 }
 
-function formatDuration(value: unknown): string {
+type SlowQueryPriority = "low" | "medium" | "high";
+
+function normalizeDuration(value: unknown): number {
   const duration = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(duration)) {
+  return Number.isFinite(duration) ? duration : 0;
+}
+
+function getSlowQueryPriority(durationMs: unknown): SlowQueryPriority {
+  const duration = normalizeDuration(durationMs);
+  if (duration >= 5000) {
+    return "high";
+  }
+  if (duration >= 1000) {
+    return "medium";
+  }
+  return "low";
+}
+
+function priorityLabel(priority: SlowQueryPriority): string {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+
+function priorityClassName(priority: SlowQueryPriority): string {
+  if (priority === "high") {
+    return "bg-red-100 text-red-800 hover:bg-red-100";
+  }
+  if (priority === "medium") {
+    return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100";
+  }
+  return "bg-green-100 text-green-800 hover:bg-green-100";
+}
+
+function formatDuration(value: unknown): string {
+  const duration = normalizeDuration(value);
+  if (duration <= 0) {
     return "-";
   }
 
@@ -44,9 +77,9 @@ function formatTimestamp(value: unknown): string {
 
 export function SlowQueriesPanel({ queries, isLoading }: SlowQueriesPanelProps) {
   return (
-    <Card className="mt-6">
+    <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">Slow Queries</CardTitle>
+        <CardTitle>Slow Queries</CardTitle>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -58,30 +91,35 @@ export function SlowQueriesPanel({ queries, isLoading }: SlowQueriesPanelProps) 
             No slow queries recorded.
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[170px]">Time</TableHead>
-                <TableHead className="w-[110px]">Duration</TableHead>
-                <TableHead className="w-[140px]">User</TableHead>
-                <TableHead className="w-[140px]">Table</TableHead>
-                <TableHead>Query</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {queries.map((query) => (
-                <TableRow key={`${query.timestamp_ms}-${query.query}`}>
-                  <TableCell>{formatTimestamp(query.timestamp)}</TableCell>
-                  <TableCell>{formatDuration(query.duration_ms)}</TableCell>
-                  <TableCell>{query.user_id}</TableCell>
-                  <TableCell>{query.table_name ?? query.table_type}</TableCell>
-                  <TableCell className="max-w-[520px] whitespace-normal break-words font-mono text-[11px] leading-relaxed">
-                    {query.query}
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[760px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[180px]">Timestamp</TableHead>
+                  <TableHead>SQL statement</TableHead>
+                  <TableHead className="w-[120px]">Time took</TableHead>
+                  <TableHead className="w-[120px]">Priority</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {queries.map((query) => {
+                  const priority = getSlowQueryPriority(query.duration_ms);
+                  return (
+                    <TableRow key={`${query.timestamp_ms}-${query.query}`}>
+                      <TableCell>{formatTimestamp(query.timestamp)}</TableCell>
+                      <TableCell className="max-w-[680px] whitespace-normal break-words font-mono text-[11px] leading-relaxed">
+                        {query.query}
+                      </TableCell>
+                      <TableCell>{formatDuration(query.duration_ms)}</TableCell>
+                      <TableCell>
+                        <Badge className={priorityClassName(priority)}>{priorityLabel(priority)}</Badge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </CardContent>
     </Card>

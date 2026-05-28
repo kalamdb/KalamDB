@@ -404,9 +404,6 @@ pub fn build_table_definition(
             if let Some(ttl) = stmt.ttl_seconds {
                 opts.ttl_seconds = ttl;
             }
-            if let Some(compression) = &stmt.compression {
-                opts.compression = compression.clone();
-            }
             if let Some(eviction_strategy) = &stmt.eviction_strategy {
                 opts.eviction_strategy = eviction_strategy.clone();
             }

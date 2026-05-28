@@ -2,6 +2,7 @@ import { Clock3, History, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { chromeLabelClassName } from "@/components/layout/typography";
 import { formatDate } from "@/lib/formatters";
 import type {
   QueryRunSummary,
@@ -218,7 +219,7 @@ function MetadataList({ items }: { items: InspectorItem[] }) {
           key={item.label}
           className={`flex items-start justify-between gap-3 px-3 py-2 ${index === 0 ? "" : "border-t border-border"}`}
         >
-          <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          <span className={chromeLabelClassName}>
             {item.label}
           </span>
           <span className="max-w-[65%] text-right text-sm text-foreground whitespace-pre-wrap break-words">
@@ -266,7 +267,7 @@ export function StudioInspectorPanel({
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Table Information</p>
+                      <p className={chromeLabelClassName}>Table Information</p>
                       <p className="text-sm font-semibold text-foreground">
                         {selectedTable.namespace}.{selectedTable.name}
                       </p>
@@ -284,7 +285,7 @@ export function StudioInspectorPanel({
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Table Schema</p>
+                  <p className={chromeLabelClassName}>Table Schema</p>
                   {selectedTable.columns.map((column) => (
                     <div key={column.name} className="rounded-md border border-border bg-background p-2">
                       <div className="flex items-center justify-between gap-2">
@@ -300,7 +301,7 @@ export function StudioInspectorPanel({
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Table Options</p>
+                  <p className={chromeLabelClassName}>Table Options</p>
                   {tableOptionItems.length > 0 ? (
                     <MetadataList items={tableOptionItems} />
                   ) : (

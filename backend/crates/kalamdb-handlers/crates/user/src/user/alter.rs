@@ -17,6 +17,8 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use kalamdb_system::Role;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Handler for ALTER USER
 pub struct AlterUserHandler {
     app_context: Arc<AppContext>,
@@ -42,14 +44,12 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
         let app_ctx = self.app_context.clone();
         let user_id = UserId::try_new(statement.username.clone())
             .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
-        let existing = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().users().get_user_by_id(&user_id)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??
-        .ok_or_else(|| {
-            KalamDbError::NotFound(format!("User '{}' not found", statement.username))
-        })?;
+        let existing =
+            run_blocking(move || app_ctx.system_tables().users().get_user_by_id(&user_id))
+                .await?
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!("User '{}' not found", statement.username))
+                })?;
 
         let mut updated = existing.clone();
 
@@ -109,13 +109,10 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                 if let Some(storage_id) = new_storage_id {
                     let app_ctx = self.app_context.clone();
                     let storage_lookup_id = storage_id.clone();
-                    let storage = tokio::task::spawn_blocking(move || {
+                    let storage = run_blocking(move || {
                         app_ctx.system_tables().storages().get_storage_by_id(&storage_lookup_id)
                     })
-                    .await
-                    .map_err(|e| {
-                        KalamDbError::ExecutionError(format!("Task join error: {}", e))
-                    })??;
+                    .await?;
 
                     if storage.is_none() {
                         return Err(KalamDbError::InvalidOperation(format!(

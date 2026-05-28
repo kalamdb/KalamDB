@@ -21,7 +21,10 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::SchemaRef;
-use kalamdb_commons::{schemas::TableType, TableId, UserId};
+use kalamdb_commons::{
+    schemas::{TableCompression, TableType},
+    TableId, UserId,
+};
 use kalamdb_filestore::StorageCached;
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +124,7 @@ pub struct FlushTableMetadata {
     pub schema_version: u32,
     pub bloom_filter_columns: Vec<String>,
     pub indexed_columns: Vec<(u64, String)>,
+    pub compression: TableCompression,
 }
 
 impl FlushTableMetadata {
@@ -128,11 +132,13 @@ impl FlushTableMetadata {
         schema_version: u32,
         bloom_filter_columns: Vec<String>,
         indexed_columns: Vec<(u64, String)>,
+        compression: TableCompression,
     ) -> Self {
         Self {
             schema_version,
             bloom_filter_columns,
             indexed_columns,
+            compression,
         }
     }
 }

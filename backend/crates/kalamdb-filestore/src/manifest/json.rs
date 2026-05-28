@@ -40,20 +40,19 @@ pub fn write_manifest_json(
     user_id: Option<&UserId>,
     json_content: &str,
 ) -> Result<()> {
-    let span = tracing::info_span!(
+    let _span_guard = kalamdb_observability::kdb_debug_span_entered!(
         "manifest.write",
         table_type = ?table_type,
         table_id = %table_id,
         has_user_id = user_id.is_some(),
         bytes = json_content.len()
     );
-    let _span_guard = span.entered();
 
     let bytes = Bytes::from(json_content.to_string());
     storage_cached
         .put_sync(table_type, table_id, user_id, "manifest.json", bytes)
         .map(|_| {
-            tracing::debug!("Manifest write completed");
+            kalamdb_observability::kdb_debug!("Manifest write completed");
         })
 }
 

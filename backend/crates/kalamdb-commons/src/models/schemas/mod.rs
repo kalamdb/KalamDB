@@ -102,6 +102,7 @@ pub use table_access::TableAccess;
 pub use table_definition::TableDefinition;
 pub use table_name::TableName;
 pub use table_options::{
-    SharedTableOptions, StreamTableOptions, SystemTableOptions, TableOptions, UserTableOptions,
+    SharedTableOptions, StreamTableOptions, SystemTableOptions, TableCompression, TableOptions,
+    UserTableOptions,
 };
 pub use table_type::TableType;

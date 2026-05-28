@@ -517,7 +517,7 @@ mod tests {
     use kalamdb_commons::{
         models::{NamespaceId, TableId, TableName, UserId},
         schemas::{
-            table_options::{SharedTableOptions, SystemTableOptions},
+            table_options::{SharedTableOptions, SystemTableOptions, TableCompression},
             TableDefinition, TableOptions,
         },
         Role, TableAccess, TableType,
@@ -546,7 +546,7 @@ mod tests {
                 storage_id: kalamdb_commons::StorageId::from("default"),
                 access_level: Some(access),
                 flush_policy: None,
-                compression: "none".to_string(),
+                compression: TableCompression::Snappy,
             }),
             table_comment: None,
             created_at: chrono::Utc::now(),

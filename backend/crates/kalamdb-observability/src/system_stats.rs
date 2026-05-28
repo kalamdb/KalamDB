@@ -3,6 +3,7 @@ use std::time::Instant;
 use crate::{
     cpu::{get_cpu_count, get_physical_cpu_count},
     health_monitor::HealthMonitor,
+    pubsub_metrics::pubsub_metrics_snapshot,
     query_metrics::query_metrics_snapshot,
     runtime_metrics::{
         collect_runtime_metrics, BUILD_DATE, GIT_BRANCH, GIT_COMMIT_HASH, SERVER_VERSION,
@@ -65,6 +66,8 @@ pub struct CacheMetrics {
     pub topic_cache_topic_count: usize,
     pub topic_cache_table_route_count: usize,
     pub topic_cache_total_routes: usize,
+    pub topic_consumer_group_count: usize,
+    pub topic_consumer_partition_count: usize,
     pub string_interner_unique_strings: usize,
 }
 
@@ -95,6 +98,7 @@ pub fn collect_system_stats(source: &impl SystemStatsSource) -> Vec<(String, Str
     let runtime = collect_runtime_metrics(source.server_start_time());
     metrics.extend(runtime.as_pairs());
     metrics.extend(query_metrics_snapshot().as_pairs());
+    metrics.extend(pubsub_metrics_snapshot().as_pairs());
     metrics.extend(storage_metrics_snapshot().as_pairs());
 
     push_metric(&mut metrics, "cpu_logical_cores", get_cpu_count());
@@ -169,6 +173,12 @@ pub fn collect_system_stats(source: &impl SystemStatsSource) -> Vec<(String, Str
         cache.topic_cache_table_route_count,
     );
     push_metric(&mut metrics, "topic_cache_total_routes", cache.topic_cache_total_routes);
+    push_metric(&mut metrics, "topic_consumer_group_count", cache.topic_consumer_group_count);
+    push_metric(
+        &mut metrics,
+        "topic_consumer_partition_count",
+        cache.topic_consumer_partition_count,
+    );
     push_metric(
         &mut metrics,
         "string_interner_unique_strings",

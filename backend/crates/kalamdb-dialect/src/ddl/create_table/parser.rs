@@ -7,7 +7,7 @@ use arrow::datatypes::{Field, Schema};
 use kalamdb_commons::{
     conversions::with_kalam_data_type_metadata,
     models::{datatypes::ToArrowType, NamespaceId, StorageId, TableAccess, TableName},
-    schemas::{policy::FlushPolicy, ColumnDefault, TableType},
+    schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -289,6 +289,11 @@ impl CreateTableStatement {
                         "FLUSH_POLICY is only supported for USER and SHARED tables".to_string()
                     );
                 }
+                if table_type == TableType::Stream && compression.is_some() {
+                    return Err(
+                        "COMPRESSION is only supported for USER and SHARED tables".to_string()
+                    );
+                }
                 if table_type != TableType::User && use_user_storage {
                     return Err("USE_USER_STORAGE is only supported for USER tables".to_string());
                 }
@@ -487,12 +492,8 @@ impl CreateTableStatement {
     }
 }
 
-fn parse_compression_option(value: &str) -> Result<String, String> {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "none" | "snappy" | "lz4" | "zstd" => Ok(normalized),
-        _ => Err(format!("Invalid COMPRESSION '{}'. Supported: none, snappy, lz4, zstd", value)),
-    }
+fn parse_compression_option(value: &str) -> Result<TableCompression, String> {
+    value.parse()
 }
 
 fn parse_eviction_strategy_option(value: &str) -> Result<String, String> {
@@ -656,7 +657,7 @@ CREATE TABLE sales.user_profile (
         assert_eq!(stmt.storage_id.unwrap().as_str(), "local-ssd");
         assert!(stmt.use_user_storage);
         assert!(matches!(stmt.flush_policy, Some(FlushPolicy::RowLimit { .. })));
-        assert_eq!(stmt.compression.as_deref(), Some("zstd"));
+        assert_eq!(stmt.compression, Some(TableCompression::Zstd));
 
         let stream_sql = r#"
 CREATE TABLE sales.events (
@@ -666,8 +667,7 @@ CREATE TABLE sales.events (
     TYPE = 'STREAM',
     TTL_SECONDS = 3600,
     EVICTION_STRATEGY = 'hybrid',
-    MAX_STREAM_SIZE_BYTES = 1048576,
-    COMPRESSION = 'lz4'
+    MAX_STREAM_SIZE_BYTES = 1048576
 );
 "#;
         let stmt = CreateTableStatement::parse(stream_sql, DEFAULT_NS).unwrap();
@@ -675,7 +675,26 @@ CREATE TABLE sales.events (
         assert_eq!(stmt.ttl_seconds, Some(3600));
         assert_eq!(stmt.eviction_strategy.as_deref(), Some("hybrid"));
         assert_eq!(stmt.max_stream_size_bytes, Some(1_048_576));
-        assert_eq!(stmt.compression.as_deref(), Some("lz4"));
+        assert_eq!(stmt.compression, None);
+
+        let none_sql = "CREATE TABLE sales.raw (id BIGINT PRIMARY KEY) WITH (TYPE='SHARED', COMPRESSION='none')";
+        let stmt = CreateTableStatement::parse(none_sql, DEFAULT_NS).unwrap();
+        assert_eq!(stmt.table_type, TableType::Shared);
+        assert_eq!(stmt.compression, Some(TableCompression::None));
+    }
+
+    #[test]
+    fn create_table_rejects_unsupported_compression() {
+        let sql = "CREATE TABLE sales.bad_compression (id BIGINT PRIMARY KEY) WITH (TYPE='USER', COMPRESSION='lz4')";
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(err.contains("Supported: none, snappy, zstd"));
+    }
+
+    #[test]
+    fn create_table_rejects_stream_compression() {
+        let sql = "CREATE TABLE sales.bad_stream (id BIGINT PRIMARY KEY) WITH (TYPE='STREAM', TTL_SECONDS=60, COMPRESSION='snappy')";
+        let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
+        assert!(err.contains("COMPRESSION is only supported for USER and SHARED tables"));
     }
 
     #[test]

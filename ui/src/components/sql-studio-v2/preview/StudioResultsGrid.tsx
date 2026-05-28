@@ -38,6 +38,7 @@ import { classifyFieldKind, coerceFieldValue } from "@/components/sql-studio-v2/
 import { LIVE_META, LIVE_HIGHLIGHT_DURATION_MS } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import { cn } from "@/lib/utils";
 import { StudioExecutionLog } from "./logs/StudioExecutionLog";
+import { chromeLabelClassName } from "@/components/layout/typography";
 import type { QueryResultData, SqlStudioResultView, StudioTable } from "../shared/types";
 
 interface StudioResultsGridProps {
@@ -746,7 +747,7 @@ export function StudioResultsGrid({
                 <tr>
                   {isLiveMode ? (
                     <th className="w-[148px] border-r border-border bg-muted/40 px-2 py-2 text-left">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span className={chromeLabelClassName}>
                         Live
                       </span>
                     </th>
@@ -789,11 +790,11 @@ export function StudioResultsGrid({
                           onClick={() => handleSortColumn(field.name)}
                         >
                           <span>
-                            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide">
+                            <span className={cn("flex items-center gap-1.5", chromeLabelClassName, "text-foreground")}>
                               <span>{field.name}</span>
                               {field.isPrimaryKey && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded bg-amber-400/20 px-1 py-0.5 text-[9px] font-semibold tracking-normal text-amber-300"
+                                  className="inline-flex items-center gap-1 rounded bg-amber-400/20 px-1 py-0.5 text-[9px] font-semibold text-amber-300"
                                   title="Primary key column"
                                 >
                                   <KeyRound className="h-2.5 w-2.5" />
@@ -878,7 +879,7 @@ export function StudioResultsGrid({
                             {liveChangeLabel && (
                               <span
                                 className={cn(
-                                  "inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide",
+                                  "inline-flex w-fit items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase",
                                   liveChangeType === "initial" && "bg-sky-500/12 text-sky-700",
                                   liveChangeType === "insert" && "bg-sky-500/20 text-sky-700",
                                   liveChangeType === "update" && "bg-amber-500/20 text-amber-700",

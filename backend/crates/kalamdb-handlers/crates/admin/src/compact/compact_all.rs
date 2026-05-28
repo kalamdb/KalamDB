@@ -19,6 +19,8 @@ use kalamdb_jobs::{executors::compact::CompactParams, AppContextJobsExt};
 use kalamdb_sql::ddl::CompactAllTablesStatement;
 use kalamdb_system::JobType;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Handler for STORAGE COMPACT ALL
 pub struct CompactAllTablesHandler {
     app_context: Arc<AppContext>,
@@ -39,10 +41,7 @@ impl TypedStatementHandler<CompactAllTablesStatement> for CompactAllTablesHandle
     ) -> Result<ExecutionResult, KalamDbError> {
         // Offload sync RocksDB full table scan to blocking thread
         let app_ctx = self.app_context.clone();
-        let all_defs =
-            tokio::task::spawn_blocking(move || app_ctx.system_tables().tables().list_tables())
-                .await
-                .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let all_defs = run_blocking(move || app_ctx.system_tables().tables().list_tables()).await?;
         let ns = statement.namespace.clone();
         let target_tables: Vec<(TableName, TableType)> = all_defs
             .into_iter()

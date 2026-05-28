@@ -23,6 +23,7 @@ use kalamdb_sql::ddl::DropTableStatement;
 use kalamdb_system::JobType;
 
 use crate::helpers::{
+    async_blocking::run_blocking,
     audit,
     guards::{block_anonymous_write, block_system_namespace_modification},
 };
@@ -181,11 +182,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         // Offload sync RocksDB read to blocking thread
         let app_ctx = self.app_context.clone();
         let tid = table_id.clone();
-        let table_metadata = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().tables().get_table_by_id(&tid)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let table_metadata =
+            run_blocking(move || app_ctx.system_tables().tables().get_table_by_id(&tid)).await?;
         let exists = table_metadata.is_some() || registry_def.is_some();
 
         if !exists {
@@ -229,11 +227,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         let app_ctx = self.app_context.clone();
         let tid = table_id.clone();
         let at = actual_type;
-        let storage_details = tokio::task::spawn_blocking(move || {
-            capture_storage_cleanup_details(&app_ctx, &tid, at)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let storage_details =
+            run_blocking(move || capture_storage_cleanup_details(&app_ctx, &tid, at)).await?;
 
         // Cancel any active flush jobs for this table before dropping
         let job_manager = self.app_context.job_manager();

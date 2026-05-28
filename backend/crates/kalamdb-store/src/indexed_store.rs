@@ -433,7 +433,10 @@ where
     /// store.insert_batch(&entries)?;  // Single atomic write for all
     /// ```
     pub fn insert_batch(&self, entries: &[(K, V)]) -> Result<()> {
-        let _span = tracing::debug_span!("store.insert_batch", count = entries.len()).entered();
+        let _span = kalamdb_observability::kdb_debug_span_entered!(
+            "store.insert_batch",
+            count = entries.len()
+        );
         if entries.is_empty() {
             return Ok(());
         }
@@ -490,8 +493,10 @@ where
         entries: &[(K, V)],
         encoded_values: Vec<Vec<u8>>,
     ) -> Result<()> {
-        let _span =
-            tracing::debug_span!("store.insert_batch_preencoded", count = entries.len()).entered();
+        let _span = kalamdb_observability::kdb_debug_span_entered!(
+            "store.insert_batch_preencoded",
+            count = entries.len()
+        );
         if entries.is_empty() {
             return Ok(());
         }

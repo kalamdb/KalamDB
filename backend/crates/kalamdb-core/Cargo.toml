@@ -97,6 +97,13 @@ expensive_tests = []
 # Expose test helpers to other crates' test code (dev-dependencies)
 test-helpers = ["kalamdb-live/test-helpers"]
 mimalloc = ["kalamdb-observability/mimalloc", "kalamdb-raft/mimalloc"]
+traceability = [
+    "kalamdb-commons/traceability",
+    "kalamdb-filestore/traceability",
+    "kalamdb-observability/traceability",
+    "kalamdb-store/traceability",
+    "kalamdb-tables/traceability",
+]
 
 [lib]
 doctest = false

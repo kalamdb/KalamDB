@@ -260,15 +260,15 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
               <span>per page</span>
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" className="h-8 w-8" disabled={page === 0} onClick={() => handlePageChange(page - 1)}>
+              <Button variant="outline" size="icon-sm" disabled={page === 0} onClick={() => handlePageChange(page - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm text-muted-foreground px-2">{page + 1}</span>
-              <Button variant="outline" size="icon" className="h-8 w-8" disabled={jobs.length < pageSize} onClick={() => handlePageChange(page + 1)}>
+              <Button variant="outline" size="icon-sm" disabled={jobs.length < pageSize} onClick={() => handlePageChange(page + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh jobs">
+            <Button variant="outline" size="icon-sm" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh jobs">
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>

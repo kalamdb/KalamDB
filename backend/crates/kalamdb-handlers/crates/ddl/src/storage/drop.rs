@@ -12,7 +12,7 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::DropStorageStatement;
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 /// Typed handler for DROP STORAGE statements
 pub struct DropStorageHandler {
@@ -37,7 +37,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         // Check if storage exists and if any tables use it (offload sync RocksDB reads)
         let app_ctx = self.app_context.clone();
         let sid = storage_id.clone();
-        let (storage, tables_using_storage_count) = tokio::task::spawn_blocking(move || {
+        let (storage, tables_using_storage_count) = run_blocking(move || {
             let storages_provider = app_ctx.system_tables().storages();
             let tables_provider = app_ctx.system_tables().tables();
 
@@ -66,8 +66,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
             };
             Ok::<_, KalamDbError>((storage, count))
         })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        .await?;
 
         if storage.is_none() {
             if statement.if_exists {

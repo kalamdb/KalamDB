@@ -234,7 +234,7 @@ async function mockAdminApi(page: Page, executedSql: string[]) {
                 ttl_seconds: 7200,
                 eviction_strategy: "hybrid",
                 max_stream_size_bytes: 1048576,
-                compression: "lz4",
+                compression: "zstd",
               },
               columns: [
                 {
@@ -287,7 +287,7 @@ test("admin creates a stream table with stream-specific options", async ({
   await page.getByTestId("table-option-ttl-seconds").fill("7200");
   await chooseSelect(page, "table-option-eviction-strategy", /^hybrid$/i);
   await page.getByTestId("table-option-max-stream-size").fill("1048576");
-  await chooseSelect(page, "table-option-compression", /^lz4$/i);
+  await expect(page.getByTestId("table-option-compression")).toHaveCount(0);
 
   await page.getByRole("button", { name: /review & create/i }).click();
   await page.getByRole("button", { name: /^commit$/i }).click();
@@ -300,7 +300,7 @@ test("admin creates a stream table with stream-specific options", async ({
   expect(createSql).toContain("TTL_SECONDS = 7200");
   expect(createSql).toContain("EVICTION_STRATEGY = 'hybrid'");
   expect(createSql).toContain("MAX_STREAM_SIZE_BYTES = 1048576");
-  expect(createSql).toContain("COMPRESSION = 'lz4'");
+  expect(createSql).not.toContain("COMPRESSION");
 });
 
 test("admin edits shared table options", async ({ page }) => {
@@ -313,7 +313,7 @@ test("admin edits shared table options", async ({ page }) => {
   await chooseSelect(page, "table-option-flush-policy", /^combined$/i);
   await page.getByTestId("table-option-flush-rows").fill("2000");
   await page.getByTestId("table-option-flush-interval").fill("120");
-  await chooseSelect(page, "table-option-compression", /^zstd$/i);
+  await chooseSelect(page, "table-option-compression", /^none$/i);
 
   await page.getByRole("button", { name: /review & save/i }).click();
   await page.getByRole("button", { name: /^commit$/i }).click();
@@ -324,5 +324,5 @@ test("admin edits shared table options", async ({ page }) => {
   const alterSql = executedSql.find((sql) => /alter\s+table/i.test(sql)) ?? "";
   expect(alterSql).toContain("ACCESS_LEVEL = 'PUBLIC'");
   expect(alterSql).toContain("FLUSH_POLICY = 'rows:2000,interval:120'");
-  expect(alterSql).toContain("COMPRESSION = 'zstd'");
+  expect(alterSql).toContain("COMPRESSION = 'none'");
 });

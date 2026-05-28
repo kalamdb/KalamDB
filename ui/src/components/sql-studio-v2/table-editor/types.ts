@@ -71,7 +71,7 @@ export type EditorMode = "idle" | "create" | "edit";
 export const TABLE_TYPES = ["user", "shared", "stream"] as const;
 export type DraftTableType = (typeof TABLE_TYPES)[number];
 
-export const COMPRESSION_OPTIONS = ["snappy", "none", "lz4", "zstd"] as const;
+export const COMPRESSION_OPTIONS = ["none", "snappy", "zstd"] as const;
 export type DraftCompression = (typeof COMPRESSION_OPTIONS)[number];
 
 export const ACCESS_LEVEL_OPTIONS = [

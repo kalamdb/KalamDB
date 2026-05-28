@@ -33,6 +33,7 @@ rmp-serde = { workspace = true, optional = true }
 rmp = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
+kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
 tracing = { workspace = true }
 
 [dev-dependencies]
@@ -77,6 +78,7 @@ arrow-utils = [
 	]
 websocket-auth = ["serde"]
 msgpack = ["serde", "dep:rmp", "dep:rmp-serde"]
+traceability = ["kalamdb-observability/traceability"]
 # Full feature set including Arrow/DataFusion-backed utilities (for server use)
 full = [
 	"serde",

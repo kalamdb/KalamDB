@@ -21,6 +21,8 @@ use crate::{
     applier::{executor::CommandExecutorImpl, ApplierError},
 };
 
+use super::utils::run_blocking_raft;
+
 /// Unified applier that persists all metadata operations to system tables
 ///
 /// This is used by the Raft state machine on follower nodes to apply
@@ -245,7 +247,7 @@ impl MetaApplier for ProviderMetaApplier {
 
         let app_context = self.app_context.clone();
         let job = job.clone();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             app_context
                 .system_tables()
                 .jobs()
@@ -253,7 +255,6 @@ impl MetaApplier for ProviderMetaApplier {
                 .map_err(|e| RaftError::Internal(format!("Failed to create job: {}", e)))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn create_job_node(
@@ -275,15 +276,14 @@ impl MetaApplier for ProviderMetaApplier {
         };
 
         let app_context = self.app_context.clone();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             app_context
                 .system_tables()
                 .job_nodes()
                 .create_job_node(job_node)
                 .map_err(|e| RaftError::Internal(format!("Failed to create job_node: {}", e)))
         })
-        .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))??;
+        .await?;
 
         // Awake the job on THIS node for immediate execution
         // This provides instant dispatch rather than relying on polling
@@ -303,15 +303,14 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<String, RaftError> {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
-        let node = tokio::task::spawn_blocking(move || {
+        let node = run_blocking_raft(move || {
             app_context
                 .system_tables()
                 .job_nodes()
                 .get_job_node(&job_id, &node_id)
                 .map_err(|e| RaftError::Internal(format!("Failed to get job_node: {}", e)))
         })
-        .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))??;
+        .await?;
 
         if let Some(mut node) = node {
             node.status = JobStatus::Running;
@@ -341,15 +340,14 @@ impl MetaApplier for ProviderMetaApplier {
     ) -> Result<String, RaftError> {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
-        let node = tokio::task::spawn_blocking(move || {
+        let node = run_blocking_raft(move || {
             app_context
                 .system_tables()
                 .job_nodes()
                 .get_job_node(&job_id, &node_id)
                 .map_err(|e| RaftError::Internal(format!("Failed to get job_node: {}", e)))
         })
-        .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))??;
+        .await?;
 
         if let Some(mut node) = node {
             node.status = status;
@@ -388,7 +386,7 @@ impl MetaApplier for ProviderMetaApplier {
 
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -420,7 +418,6 @@ impl MetaApplier for ProviderMetaApplier {
             Err(RaftError::Internal(format!("Job {} not found for claiming", job_id)))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn update_job_status(
@@ -433,7 +430,7 @@ impl MetaApplier for ProviderMetaApplier {
 
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -469,7 +466,6 @@ impl MetaApplier for ProviderMetaApplier {
             Ok(format!("Job {} not found for status update", job_id))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn complete_job(
@@ -483,7 +479,7 @@ impl MetaApplier for ProviderMetaApplier {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
         let result = result.map(String::from);
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -513,7 +509,6 @@ impl MetaApplier for ProviderMetaApplier {
             Ok(format!("Job {} not found for completion", job_id))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn fail_job(
@@ -527,7 +522,7 @@ impl MetaApplier for ProviderMetaApplier {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
         let error_message = error_message.to_string();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -555,7 +550,6 @@ impl MetaApplier for ProviderMetaApplier {
             Ok(format!("Job {} not found for failure", job_id))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn release_job(
@@ -569,7 +563,7 @@ impl MetaApplier for ProviderMetaApplier {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
         let reason = reason.to_string();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -594,7 +588,6 @@ impl MetaApplier for ProviderMetaApplier {
             Ok(format!("Job {} not found for release", job_id))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 
     async fn cancel_job(
@@ -608,7 +601,7 @@ impl MetaApplier for ProviderMetaApplier {
         let app_context = self.app_context.clone();
         let job_id = job_id.clone();
         let reason = reason.to_string();
-        tokio::task::spawn_blocking(move || {
+        run_blocking_raft(move || {
             if let Some(mut job) = app_context
                 .system_tables()
                 .jobs()
@@ -633,6 +626,5 @@ impl MetaApplier for ProviderMetaApplier {
             Ok(format!("Job {} not found for cancellation", job_id))
         })
         .await
-        .map_err(|e| RaftError::Internal(format!("Task join error: {}", e)))?
     }
 }

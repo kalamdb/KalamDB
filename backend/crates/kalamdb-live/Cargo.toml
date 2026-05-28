@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-row-filter = { workspace = true }
 kalamdb-publisher = { path = "../kalamdb-publisher" }
 kalamdb-system = { path = "../kalamdb-system" }

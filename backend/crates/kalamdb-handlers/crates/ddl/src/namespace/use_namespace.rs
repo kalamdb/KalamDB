@@ -21,6 +21,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::UseNamespaceStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Handler for USE NAMESPACE / USE / SET NAMESPACE statements
 ///
 /// Uses DataFusion's native `datafusion.catalog.default_schema` configuration
@@ -48,11 +50,8 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
         // Verify namespace exists (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
         let ns = statement.namespace.clone();
-        let exists = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().namespaces().get_namespace(&ns)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let exists =
+            run_blocking(move || app_ctx.system_tables().namespaces().get_namespace(&ns)).await?;
 
         if exists.is_none() {
             return Err(KalamDbError::NotFound(format!(

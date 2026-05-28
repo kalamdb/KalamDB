@@ -182,5 +182,6 @@ fn small_segment_compaction_context(
         primary_key_field,
         cached.bloom_filter_columns().to_vec(),
         cached.indexed_columns().to_vec(),
+        cached.table.table_options.parquet_compression(),
     ))
 }

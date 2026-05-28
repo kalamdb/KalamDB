@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2025-10-22  
-**Updated**: 2026-05-24
+**Updated**: 2026-05-27
 **Related**: ADR-001 (Table-per-User), ADR-005 (RocksDB Metadata Only), ADR-007 (Storage Registry)
 
 ## Context
@@ -51,9 +51,14 @@ This keeps the cold write path simple while preserving correct MVCC visibility.
 
 1. Mark the manifest as `syncing`.
 2. Allocate the next `batch-N.parquet` name from `manifest.last_sequence_number`.
-3. Write `batch-N.parquet.tmp`.
+3. Write `batch-N.parquet.tmp` with the table's configured Parquet compression (`none`, `snappy`,
+   or `zstd`).
 4. Atomically rename it to `batch-N.parquet`.
 5. Compute `_seq` range, row count, schema version, size, and indexed-column stats.
+
+Parquet Bloom filters are emitted only for primary key columns. `_seq` stays in manifest stats for
+range pruning, so flush avoids maintaining an extra Bloom filter for a column that is already handled
+by segment-level sequence metadata.
 
 This keeps batch numbering serialized per scope and prevents overlapping flushes from racing the
 manifest append.
@@ -121,7 +126,8 @@ Compaction runs in two phases:
    and `_deleted`.
 2. Inspect older segments to decide which delete tombstones must be preserved to continue masking
    older cold rows.
-3. Stream only winning rows into `compact-<uuid>.parquet.tmp`.
+3. Stream only winning rows into `compact-<uuid>.parquet.tmp` using the same Parquet compression
+    configured on the USER/SHARED table.
 4. Rename to `compact-<uuid>.parquet`.
 
 The old manifest remains readable during this work.

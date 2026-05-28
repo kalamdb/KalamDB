@@ -13,8 +13,11 @@ use datafusion::arrow::{
 use datafusion::scalar::ScalarValue;
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
-    arrow_utils::array_value_to_string, constants::SystemColumnNames,
-    models::rows::StoredScalarValue, schemas::TableType, TableId, UserId,
+    arrow_utils::array_value_to_string,
+    constants::SystemColumnNames,
+    models::rows::StoredScalarValue,
+    schemas::{TableCompression, TableType},
+    TableId, UserId,
 };
 use kalamdb_configs::FlushCompactionSettings;
 use kalamdb_filestore::StorageCached;
@@ -52,6 +55,7 @@ pub struct SmallSegmentCompactionContext {
     pub primary_key_field: String,
     pub bloom_filter_columns: Vec<String>,
     pub indexed_columns: Vec<(u64, String)>,
+    pub compression: TableCompression,
 }
 
 impl SmallSegmentCompactionContext {
@@ -65,6 +69,7 @@ impl SmallSegmentCompactionContext {
         primary_key_field: String,
         bloom_filter_columns: Vec<String>,
         indexed_columns: Vec<(u64, String)>,
+        compression: TableCompression,
     ) -> Self {
         Self {
             manifest_service,
@@ -75,6 +80,7 @@ impl SmallSegmentCompactionContext {
             primary_key_field,
             bloom_filter_columns,
             indexed_columns,
+            compression,
         }
     }
 
@@ -84,6 +90,7 @@ impl SmallSegmentCompactionContext {
             primary_key_field: self.primary_key_field.clone(),
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns: self.indexed_columns.clone(),
+            compression: self.compression,
         }
     }
 }
@@ -93,6 +100,7 @@ struct CompactionSchemaContext {
     primary_key_field: String,
     bloom_filter_columns: Vec<String>,
     indexed_columns: Vec<(u64, String)>,
+    compression: TableCompression,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -557,12 +565,14 @@ async fn write_compacted_winners(
         tokio::sync::mpsc::channel::<kalamdb_filestore::Result<RecordBatch>>(2);
     let writer_schema = schema_context.schema.clone();
     let writer_bloom_columns = Some(schema_context.bloom_filter_columns.clone());
+    let writer_compression = schema_context.compression;
     let writer_handle = tokio::task::spawn_blocking(move || {
-        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet(
+        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet_with_compression(
             writer_schema,
             receiver,
             writer_bloom_columns,
             expected_output_rows,
+            writer_compression,
         )
     });
 

@@ -9,7 +9,7 @@ describe("table editor DDL generator", () => {
     draft.options.ttlSeconds = "7200";
     draft.options.evictionStrategy = "hybrid";
     draft.options.maxStreamSizeBytes = "1048576";
-    draft.options.compression = "lz4";
+    draft.options.compression = "zstd";
 
     const sql = generateCreateTableSql(draft);
 
@@ -17,7 +17,7 @@ describe("table editor DDL generator", () => {
     expect(sql).toContain("TTL_SECONDS = 7200");
     expect(sql).toContain("EVICTION_STRATEGY = 'hybrid'");
     expect(sql).toContain("MAX_STREAM_SIZE_BYTES = 1048576");
-    expect(sql).toContain("COMPRESSION = 'lz4'");
+    expect(sql).not.toContain("COMPRESSION");
   });
 
   it("alters only changed shared table options", () => {
@@ -54,14 +54,14 @@ describe("table editor DDL generator", () => {
     draft.options.flushPolicyKind = "combined";
     draft.options.flushRows = "2000";
     draft.options.flushIntervalSeconds = "120";
-    draft.options.compression = "zstd";
+    draft.options.compression = "none";
 
     const sql = generateAlterTableSql(original, draft);
 
     expect(sql).toContain("ALTER TABLE default.settings SET TBLPROPERTIES");
     expect(sql).toContain("ACCESS_LEVEL = 'PUBLIC'");
     expect(sql).toContain("FLUSH_POLICY = 'rows:2000,interval:120'");
-    expect(sql).toContain("COMPRESSION = 'zstd'");
+    expect(sql).toContain("COMPRESSION = 'none'");
     expect(sql).not.toContain("STORAGE_ID");
   });
 });

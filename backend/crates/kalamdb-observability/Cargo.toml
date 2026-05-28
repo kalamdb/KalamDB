@@ -15,9 +15,13 @@ num_cpus = { workspace = true }
 
 # Logging
 log = { workspace = true }
+tracing = { workspace = true, optional = true }
 libmimalloc-sys = { workspace = true, optional = true }
 
 [features]
+default = ["metrics"]
+metrics = []
+traceability = ["dep:tracing"]
 mimalloc = ["dep:libmimalloc-sys"]
 
 [target.'cfg(target_os = "macos")'.dependencies]

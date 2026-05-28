@@ -76,7 +76,7 @@ CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
   ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED|DBA>',
   EVICTION_STRATEGY = '<time_based|size_based|hybrid>',
   MAX_STREAM_SIZE_BYTES = <bytes>,
-  COMPRESSION = '<snappy|none|lz4|zstd>'
+  COMPRESSION = '<none|snappy|zstd>'
 )];
 ```
 
@@ -84,7 +84,14 @@ Table options are type-specific:
 
 - `USER`: `STORAGE_ID`, `USE_USER_STORAGE`, `FLUSH_POLICY`, `COMPRESSION`
 - `SHARED`: `STORAGE_ID`, `ACCESS_LEVEL`, `FLUSH_POLICY`, `COMPRESSION`
-- `STREAM`: `TTL_SECONDS`, `EVICTION_STRATEGY`, `MAX_STREAM_SIZE_BYTES`, `COMPRESSION`
+- `STREAM`: `TTL_SECONDS`, `EVICTION_STRATEGY`, `MAX_STREAM_SIZE_BYTES`
+
+`COMPRESSION` accepts only `none`, `snappy`, and `zstd`, and is valid only for `USER` and `SHARED`
+tables. It controls the Parquet codec used when table data is flushed or compacted into
+cold-storage segments. `none` writes uncompressed Parquet pages, `snappy` is the default fast codec,
+and `zstd` uses Zstandard level 1 for better density with modest CPU cost. This setting is separate
+from WebSocket gzip and RocksDB compression. `STREAM` tables use hot stream log storage and do not
+accept table Parquet compression.
 
 Examples:
 
@@ -120,8 +127,7 @@ CREATE STREAM TABLE app.events (
 ) WITH (
   TTL_SECONDS = 30,
   EVICTION_STRATEGY = 'hybrid',
-  MAX_STREAM_SIZE_BYTES = 1048576,
-  COMPRESSION = 'lz4'
+  MAX_STREAM_SIZE_BYTES = 1048576
 );
 ```
 

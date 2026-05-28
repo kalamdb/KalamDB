@@ -16,7 +16,9 @@ use kalamdb_filestore::StorageHealthService;
 use kalamdb_sql::ddl::CreateStorageStatement;
 use kalamdb_system::StorageType;
 
-use crate::helpers::{guards::require_admin, storage::ensure_filesystem_directory};
+use crate::helpers::{
+    async_blocking::run_blocking, guards::require_admin, storage::ensure_filesystem_directory,
+};
 
 /// Typed handler for CREATE STORAGE statements
 pub struct CreateStorageHandler {
@@ -43,12 +45,10 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         let storage_id = StorageId::from(statement.storage_id.as_str());
         let app_ctx = self.app_context.clone();
         let sid = storage_id.clone();
-        let existing = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().storages().get_storage_by_id(&sid)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
-        .into_kalamdb_error("Failed to check storage")?;
+        let existing =
+            run_blocking(move || app_ctx.system_tables().storages().get_storage_by_id(&sid))
+                .await
+                .into_kalamdb_error("Failed to check storage")?;
         if existing.is_some() {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' already exists",

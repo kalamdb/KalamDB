@@ -36,7 +36,7 @@ export default function AuthSplitLayout({
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
-                <h1 className="text-3xl font-semibold tracking-tight text-foreground">{panelTitle}</h1>
+                <h1 className="text-3xl font-semibold text-foreground">{panelTitle}</h1>
                 <p className="text-sm text-muted-foreground">{description}</p>
               </div>
               {children}
@@ -55,7 +55,7 @@ export default function AuthSplitLayout({
 
             <div className="absolute bottom-8 left-8 right-8 space-y-2 text-white">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">{panelFootnote}</p>
-              <h2 className="text-2xl font-semibold tracking-tight">{panelTitle}</h2>
+              <h2 className="text-2xl font-semibold">{panelTitle}</h2>
               <p className="max-w-sm text-sm text-white/80">{panelDescription}</p>
             </div>
           </aside>

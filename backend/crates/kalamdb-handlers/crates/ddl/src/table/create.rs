@@ -14,6 +14,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::CreateTableStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Typed handler for CREATE TABLE statements (all table types: USER, SHARED, STREAM)
 pub struct CreateTableHandler {
     app_context: Arc<AppContext>,
@@ -35,14 +37,14 @@ impl CreateTableHandler {
         let app_ctx = self.app_context.clone();
         let table_id = TableId::new(statement.namespace_id.clone(), statement.table_name.clone());
 
-        tokio::task::spawn_blocking(move || {
+        run_blocking(move || {
             let schema_registry = app_ctx.schema_registry();
             let existing_def = schema_registry
                 .get_table_if_exists(&table_id)
                 .into_kalamdb_error("Failed to check table existence")?;
 
             let Some(existing_def) = existing_def else {
-                return Ok(None);
+                return Ok::<Option<String>, KalamDbError>(None);
             };
 
             if schema_registry.get_provider(&table_id).is_none() {
@@ -53,7 +55,6 @@ impl CreateTableHandler {
             Ok(Some(format!("Table {} already exists (IF NOT EXISTS)", table_id)))
         })
         .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
     }
 
     fn resolve_table_type(
@@ -111,11 +112,10 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         let stmt_clone = statement.clone();
         let user_id = context.user_id().clone();
         let user_role = context.user_role();
-        let table_def = tokio::task::spawn_blocking(move || {
+        let table_def = run_blocking(move || {
             table_creation::build_table_definition(app_ctx, &stmt_clone, &user_id, user_role)
         })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        .await?;
 
         // Delegate to unified applier - pass raw parameters
         let message = self

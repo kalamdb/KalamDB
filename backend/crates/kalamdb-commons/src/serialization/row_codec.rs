@@ -731,7 +731,10 @@ fn batch_encode_user_table_rows_iter<'a, I>(rows: I, row_count: usize) -> Result
 where
     I: IntoIterator<Item = &'a UserTableRow>,
 {
-    let _span = tracing::info_span!("batch_encode_user_table_rows", count = row_count).entered();
+    let _span = kalamdb_observability::kdb_debug_span_entered!(
+        "batch_encode_user_table_rows",
+        count = row_count
+    );
     let mut results = Vec::with_capacity(row_count);
     // Reuse inner builder across rows — reset() keeps the allocated capacity
     let mut inner_builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
@@ -767,7 +770,10 @@ where
 
 /// Batch-encode multiple shared table rows, reusing internal FlatBufferBuilders.
 pub fn batch_encode_shared_table_rows(rows: &[(SeqId, u64, bool, &Row)]) -> Result<Vec<Vec<u8>>> {
-    let _span = tracing::info_span!("batch_encode_shared_table_rows", count = rows.len()).entered();
+    let _span = kalamdb_observability::kdb_debug_span_entered!(
+        "batch_encode_shared_table_rows",
+        count = rows.len()
+    );
     let mut results = Vec::with_capacity(rows.len());
     let mut inner_builder = flatbuffers::FlatBufferBuilder::with_capacity(512);
 

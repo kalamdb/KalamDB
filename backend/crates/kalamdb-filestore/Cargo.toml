@@ -76,6 +76,7 @@ default = ["cloud-aws"]
 cloud-aws = ["object_store/aws"]
 cloud-gcp = ["object_store/gcp"]
 cloud-azure = ["object_store/azure"]
+traceability = ["kalamdb-commons/traceability", "kalamdb-observability/traceability"]
 
 [dev-dependencies]
 once_cell = { workspace = true }

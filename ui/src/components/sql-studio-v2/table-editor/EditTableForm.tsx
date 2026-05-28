@@ -53,11 +53,12 @@ import {
 import { executeSqlPreviewStatement } from "./run-sql";
 import { useSqlPreview } from "@/components/sql-preview";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  PanelHeader,
+  chromeLabelClassName,
+  fieldLabelClassName,
+  sectionTitleClassName,
+} from "@/components/layout/typography";
+import { StudioIconButton } from "../shared/StudioChrome";
 import equal from "fast-deep-equal";
 import { executeSqlStudioQuery } from "@/services/sqlStudioService";
 
@@ -72,7 +73,7 @@ function MetaRow({
 }) {
   return (
     <div className="flex items-baseline gap-2 overflow-hidden">
-      <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className={`shrink-0 ${chromeLabelClassName}`}>
         {label}
       </span>
       <span
@@ -106,7 +107,7 @@ function SelectField({
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className={fieldLabelClassName}>{label}</span>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger size="sm" className="h-8 text-xs" data-testid={testId}>
           <SelectValue />
@@ -144,11 +145,11 @@ function TableOptionsEditor({
 
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-medium">Options</h3>
+      <h3 className={sectionTitleClassName}>Options</h3>
       <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/10 p-3 sm:grid-cols-2 lg:grid-cols-3">
         {(draft.tableType === "user" || draft.tableType === "shared") && (
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">
+            <span className={fieldLabelClassName}>
               Storage ID
             </span>
             <Input
@@ -163,7 +164,7 @@ function TableOptionsEditor({
 
         {draft.tableType === "user" && (
           <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
-            <span className="text-xs font-medium text-muted-foreground">
+            <span className={fieldLabelClassName}>
               Use user storage
             </span>
             <Switch
@@ -208,7 +209,7 @@ function TableOptionsEditor({
         {(draft.tableType === "user" || draft.tableType === "shared") &&
           showFlushRows && (
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className={fieldLabelClassName}>
                 Flush rows
               </span>
               <Input
@@ -227,7 +228,7 @@ function TableOptionsEditor({
         {(draft.tableType === "user" || draft.tableType === "shared") &&
           showFlushInterval && (
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className={fieldLabelClassName}>
                 Flush interval
               </span>
               <Input
@@ -248,7 +249,7 @@ function TableOptionsEditor({
         {draft.tableType === "stream" && (
           <>
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className={fieldLabelClassName}>
                 TTL seconds
               </span>
               <Input
@@ -275,7 +276,7 @@ function TableOptionsEditor({
               testId="table-option-eviction-strategy"
             />
             <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className={fieldLabelClassName}>
                 Max stream size
               </span>
               <Input
@@ -291,16 +292,18 @@ function TableOptionsEditor({
           </>
         )}
 
-        <SelectField
-          label="Compression"
-          value={options.compression}
-          options={COMPRESSION_OPTIONS}
-          disabled={disabled}
-          onChange={(value) =>
-            update({ compression: value as DraftTableOptions["compression"] })
-          }
-          testId="table-option-compression"
-        />
+        {draft.tableType !== "stream" && (
+          <SelectField
+            label="Compression"
+            value={options.compression}
+            options={COMPRESSION_OPTIONS}
+            disabled={disabled}
+            onChange={(value) =>
+              update({ compression: value as DraftTableOptions["compression"] })
+            }
+            testId="table-option-compression"
+          />
+        )}
       </div>
     </section>
   );
@@ -425,7 +428,7 @@ export function EditTableForm({
         <div className="rounded-full bg-muted p-4">
           <Pencil className="h-6 w-6 text-muted-foreground" />
         </div>
-        <p className="text-base font-medium">No table selected</p>
+        <p className={sectionTitleClassName}>No table selected</p>
         <p className="max-w-md text-sm text-muted-foreground">
           Pick a table from the sidebar to edit its schema, or use the{" "}
           <span className="font-medium">+</span> next to{" "}
@@ -559,38 +562,24 @@ export function EditTableForm({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold">
-            {isReadOnly
-              ? "View Table"
-              : isCreating
-                ? "New Table"
-                : "Edit Table"}
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            {isCreating
+        <PanelHeader
+          title={isReadOnly ? "View Table" : isCreating ? "New Table" : "Edit Table"}
+          description={
+            isCreating
               ? `Define a new table under ${draft.namespace}.`
-              : `${isReadOnly ? "Viewing" : "Editing"} ${draft.namespace}.${draft.name}`}
-          </p>
-        </div>
-        <TooltipProvider delayDuration={250}>
-          <div className="flex items-center gap-2">
+              : `${isReadOnly ? "Viewing" : "Editing"} ${draft.namespace}.${draft.name}`
+          }
+        />
+        <div className="flex items-center gap-2">
             {isEditing && !isReadOnly && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onClick={handleDropTable}
-                    aria-label="Drop table"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Drop table</TooltipContent>
-              </Tooltip>
+              <StudioIconButton
+                onClick={handleDropTable}
+                tone="destructive"
+                tooltip="Drop table"
+                aria-label="Drop table"
+              >
+                <Trash2 data-icon="only" />
+              </StudioIconButton>
             )}
             {!isReadOnly && (
               <>
@@ -622,7 +611,6 @@ export function EditTableForm({
               </>
             )}
           </div>
-        </TooltipProvider>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -647,7 +635,7 @@ export function EditTableForm({
 
           <section className="space-y-4">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-sm font-medium">Namespace</h3>
+              <h3 className={sectionTitleClassName}>Namespace</h3>
               <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                 {draft.namespace}
               </code>
@@ -666,7 +654,7 @@ export function EditTableForm({
               testId="table-type-select"
             />
             <label className="flex flex-col gap-1.5">
-              <h3 className="text-sm font-medium">Table name</h3>
+              <h3 className={sectionTitleClassName}>Table name</h3>
               <Input
                 value={draft.name}
                 onChange={(e) =>
@@ -692,7 +680,7 @@ export function EditTableForm({
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Columns</h3>
+              <h3 className={sectionTitleClassName}>Columns</h3>
               {!isReadOnly && (
                 <Button
                   type="button"
@@ -701,7 +689,7 @@ export function EditTableForm({
                   onClick={addColumn}
                   className="gap-1.5 text-xs"
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  <Plus data-icon="inline-start" />
                   Add column
                 </Button>
               )}
@@ -709,7 +697,7 @@ export function EditTableForm({
             <div className="overflow-hidden rounded-md border border-border">
               <table className="w-full text-xs">
                 <thead className="bg-muted/40">
-                  <tr className="border-b border-border text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr className={`border-b border-border ${chromeLabelClassName}`}>
                     <th className="w-8 px-2 py-2 text-center">PK</th>
                     <th className="px-2 py-2 text-left">Name</th>
                     <th className="w-32 px-2 py-2 text-left">Type</th>
@@ -749,7 +737,7 @@ export function EditTableForm({
                             onClick={addColumn}
                             className="gap-1.5"
                           >
-                            <Plus className="h-3.5 w-3.5" />
+                            <Plus data-icon="inline-start" />
                             Add your first column
                           </Button>
                         </div>
@@ -780,7 +768,7 @@ export function EditTableForm({
 
           {isEditing && selectedTable && (
             <section className="space-y-2">
-              <h3 className="text-sm font-medium">Metadata</h3>
+              <h3 className={sectionTitleClassName}>Metadata</h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-md border border-border bg-muted/20 px-4 py-3 text-xs">
                 <MetaRow label="Type" value={selectedTable.tableType ?? "—"} />
                 <MetaRow

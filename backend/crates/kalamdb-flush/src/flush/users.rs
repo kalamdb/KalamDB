@@ -26,7 +26,7 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// User table flush job
 ///
 /// Flushes user table data to Parquet files. Each user's data is written to a
-/// separate Parquet file for RLS isolation. Uses Bloom filters on PRIMARY KEY + _seq
+/// separate Parquet file for RLS isolation. Uses Bloom filters on primary key columns
 /// columns for efficient query pruning.
 pub struct UserTableFlushJob {
     store: Arc<UserTableIndexedStore>,

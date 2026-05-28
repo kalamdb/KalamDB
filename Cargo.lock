@@ -4512,6 +4512,7 @@ dependencies = [
  "flatbuffers",
  "flexbuffers",
  "hex",
+ "kalamdb-observability",
  "log",
  "nanoid",
  "once_cell",
@@ -4762,12 +4763,13 @@ dependencies = [
 name = "kalamdb-handlers-stream"
 version = "0.5.1-beta.2"
 dependencies = [
+ "arrow",
  "chrono",
- "datafusion",
  "kalamdb-commons",
  "kalamdb-core",
  "kalamdb-dialect",
  "kalamdb-handlers-support",
+ "kalamdb-observability",
  "kalamdb-system",
  "kalamdb-tables",
  "log",
@@ -4786,6 +4788,7 @@ dependencies = [
  "kalamdb-system",
  "log",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
@@ -4845,6 +4848,7 @@ dependencies = [
  "datafusion-common",
  "kalamdb-commons",
  "kalamdb-dialect",
+ "kalamdb-observability",
  "kalamdb-publisher",
  "kalamdb-row-filter",
  "kalamdb-session",
@@ -4879,6 +4883,7 @@ dependencies = [
  "log",
  "num_cpus",
  "sysinfo",
+ "tracing",
 ]
 
 [[package]]
@@ -4925,6 +4930,7 @@ dependencies = [
  "dashmap 6.2.1",
  "datafusion-common",
  "kalamdb-commons",
+ "kalamdb-observability",
  "kalamdb-row-filter",
  "kalamdb-store",
  "kalamdb-system",
@@ -5088,6 +5094,7 @@ dependencies = [
  "datafusion",
  "kalamdb-commons",
  "kalamdb-configs",
+ "kalamdb-observability",
  "kalamdb-sharding",
  "kalamdb-system",
  "log",
@@ -5150,6 +5157,7 @@ dependencies = [
  "kalamdb-datafusion-sources",
  "kalamdb-filestore",
  "kalamdb-macros",
+ "kalamdb-observability",
  "kalamdb-session",
  "kalamdb-session-datafusion",
  "kalamdb-sharding",

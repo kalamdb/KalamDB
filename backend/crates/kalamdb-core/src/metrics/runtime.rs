@@ -120,6 +120,8 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
             topic_cache_topic_count: topic_cache_stats.topic_count,
             topic_cache_table_route_count: topic_cache_stats.table_route_count,
             topic_cache_total_routes: topic_cache_stats.total_routes,
+            topic_consumer_group_count: topic_cache_stats.consumer_group_count,
+            topic_consumer_partition_count: topic_cache_stats.consumer_partition_count,
             string_interner_unique_strings: kalamdb_commons::helpers::string_interner::stats()
                 .unique_strings,
         }

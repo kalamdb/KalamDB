@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use datafusion::arrow::{
+use arrow::{
     array::{ArrayRef, BinaryBuilder, Int32Array, Int64Array, StringBuilder},
     record_batch::RecordBatch,
 };
@@ -13,6 +13,7 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
+use kalamdb_observability::track_pubsub_consumer;
 use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
 use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 
@@ -40,6 +41,7 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
         })?;
 
         let topic_publisher = self.app_context.topic_publisher();
+        let _consumer_guard = track_pubsub_consumer();
         let limit = statement.limit.unwrap_or(100) as usize;
         let partition_id = 0u32;
         let group_id =

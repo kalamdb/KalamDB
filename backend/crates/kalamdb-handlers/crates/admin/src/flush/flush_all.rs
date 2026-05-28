@@ -16,6 +16,8 @@ use kalamdb_sql::ddl::FlushAllTablesStatement;
 use kalamdb_system::JobType;
 use tokio::task::JoinSet;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Handler for STORAGE FLUSH ALL
 pub struct FlushAllTablesHandler {
     app_context: Arc<AppContext>,
@@ -64,11 +66,10 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
                 // Offload sync RocksDB read to blocking thread
                 let app_ctx_inner = app_context.clone();
                 let tid = table_id.clone();
-                let table_def = tokio::task::spawn_blocking(move || {
+                let table_def = run_blocking(move || {
                     app_ctx_inner.system_tables().tables().get_table_by_id(&tid)
                 })
-                .await
-                .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+                .await?;
 
                 let table_def = match table_def {
                     Some(def) => def,

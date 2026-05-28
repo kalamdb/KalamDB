@@ -16,6 +16,7 @@ kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-macros = { path = "../kalamdb-macros" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-streams = { path = "../kalamdb-streams" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
@@ -57,3 +58,6 @@ tempfile = { workspace = true }
 [lib]
 name = "kalamdb_tables"
 path = "src/lib.rs"
+
+[features]
+traceability = ["kalamdb-observability/traceability"]

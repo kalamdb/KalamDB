@@ -17,7 +17,7 @@ port = 2900
 # Set this when browsers reach KalamDB through a public hostname or reverse proxy.
 # Example: "https://db.example.com"
 # Empty = use "http://localhost:{port}"
-public_origin = ""
+public_origin = "http://localhost:2900"
 
 # Number of worker threads (0 = number of CPU cores)
 # Each worker adds ~2 MB idle RSS. For development, 4 workers is sufficient.

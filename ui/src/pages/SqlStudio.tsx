@@ -1229,8 +1229,8 @@ export default function SqlStudio() {
                   <div className="absolute right-2 top-1.5 z-20">
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      size="icon-sm"
+                      className="text-muted-foreground hover:text-foreground"
                       onClick={toggleInspector}
                       title={isInspectorCollapsed ? "Expand details panel" : "Collapse details panel"}
                     >

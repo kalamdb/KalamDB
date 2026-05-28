@@ -148,7 +148,7 @@ pub async fn collect_input_rows(
     state: &dyn Session,
     input: Arc<dyn ExecutionPlan>,
 ) -> DataFusionResult<Vec<Row>> {
-    tracing::debug!("dml.collect_input_rows");
+    kalamdb_observability::kdb_debug!("dml.collect_input_rows");
     if let Some(rows) = try_collect_memory_input_rows(input.as_ref())? {
         return Ok(rows);
     }
@@ -453,9 +453,11 @@ fn evaluate_expr_against_batch(
 
 fn record_batches_to_rows(batches: &[RecordBatch]) -> DataFusionResult<Vec<Row>> {
     let total_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
-    let _span =
-        tracing::debug_span!("record_batches_to_rows", total_rows, batch_count = batches.len())
-            .entered();
+    let _span = kalamdb_observability::kdb_debug_span_entered!(
+        "record_batches_to_rows",
+        total_rows,
+        batch_count = batches.len()
+    );
     let mut rows = Vec::with_capacity(total_rows);
 
     for batch in batches {

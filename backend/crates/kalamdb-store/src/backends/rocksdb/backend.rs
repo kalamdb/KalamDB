@@ -232,12 +232,11 @@ impl RocksDBBackend {
 
 impl StorageBackend for RocksDBBackend {
     fn get(&self, partition: &Partition, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let _span = tracing::trace_span!(
+        let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.get",
             partition = %partition.name(),
             physical_cf = physical_cf_for_partition(partition.name())
-        )
-        .entered();
+        );
         let cf = self.get_cf(partition)?;
         let physical_key = physical_key(partition.name(), key);
         self.db
@@ -246,13 +245,12 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
-        let _span = tracing::trace_span!(
+        let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.put",
             partition = %partition.name(),
             physical_cf = physical_cf_for_partition(partition.name()),
             value_len = value.len()
-        )
-        .entered();
+        );
         let cf = self.get_cf(partition)?;
         let physical_key = physical_key(partition.name(), key);
         self.db
@@ -261,12 +259,11 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
-        let _span = tracing::trace_span!(
+        let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.delete",
             partition = %partition.name(),
             physical_cf = physical_cf_for_partition(partition.name())
-        )
-        .entered();
+        );
         let cf = self.get_cf(partition)?;
         let physical_key = physical_key(partition.name(), key);
         self.db
@@ -275,7 +272,10 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> Result<()> {
-        let _span = tracing::debug_span!("rocksdb.batch", op_count = operations.len()).entered();
+        let _span = kalamdb_observability::kdb_debug_span_entered!(
+            "rocksdb.batch",
+            op_count = operations.len()
+        );
         use rocksdb::WriteBatch;
 
         if operations.is_empty() {
@@ -324,14 +324,13 @@ impl StorageBackend for RocksDBBackend {
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
-        let _span = tracing::trace_span!(
+        let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan",
             partition = %partition.name(),
             physical_cf = physical_cf_for_partition(partition.name()),
             has_prefix = prefix.is_some(),
             limit = ?limit
-        )
-        .entered();
+        );
         use rocksdb::Direction;
 
         let cf = self.get_cf(partition)?;
@@ -420,13 +419,12 @@ impl StorageBackend for RocksDBBackend {
         start_key: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
-        let _span = tracing::trace_span!(
+        let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan_reverse",
             partition = %partition.name(),
             has_prefix = prefix.is_some(),
             limit = ?limit
-        )
-        .entered();
+        );
         use rocksdb::Direction;
 
         let cf = self.get_cf(partition)?;
