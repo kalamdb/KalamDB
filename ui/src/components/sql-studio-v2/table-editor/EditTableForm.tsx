@@ -61,6 +61,7 @@ import {
 import { StudioIconButton } from "../shared/StudioChrome";
 import equal from "fast-deep-equal";
 import { executeSqlStudioQuery } from "@/services/sqlStudioService";
+import { TableDataTransferActions } from "./TableDataTransferActions";
 
 function MetaRow({
   label,
@@ -327,12 +328,14 @@ interface EditTableFormProps {
   schema: StudioNamespace[];
   onAfterSave?: () => void | Promise<void>;
   isSchemaRefreshing?: boolean;
+  onOpenQueryInNewTab?: (query: string, title: string) => void;
 }
 
 export function EditTableForm({
   schema,
   onAfterSave,
   isSchemaRefreshing,
+  onOpenQueryInNewTab,
 }: EditTableFormProps) {
   const dispatch = useAppDispatch();
   const mode = useAppSelector(selectEditorMode);
@@ -676,6 +679,12 @@ export function EditTableForm({
               disabled={isReadOnly}
               onChange={(options) => dispatch(setDraft({ ...draft, options }))}
             />
+            {isEditing && selectedTable && !isReadOnly && (
+              <TableDataTransferActions
+                table={selectedTable}
+                onOpenQueryInNewTab={onOpenQueryInNewTab}
+              />
+            )}
           </section>
 
           <section className="space-y-2">

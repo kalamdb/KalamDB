@@ -561,6 +561,12 @@ SHOW EXPORT;
 `/v1/exports/<user_id>/<export_id>`. Prefix it with your KalamDB server base URL
 when downloading the finished ZIP over HTTP.
 
+The Admin UI table editor also supports scoped table data transfer for `user` and
+`shared` tables. A user-table export requires a `user_id`; shared-table export omits
+the user scope. Table export ZIPs contain committed Parquet segments plus KalamDB
+manifest metadata, and table import accepts that ZIP format through the Admin UI when
+the target table already exists with matching columns.
+
 ### BACKUP DATABASE
 
 ```sql

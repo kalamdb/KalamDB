@@ -121,6 +121,23 @@ If the cache entry still has remaining hot data for that scope, the sync state s
 Only after the Parquet file and manifest commit succeed does flush remove hot rows. Cleanup happens
 in bounded delete batches so large flushes do not build unbounded RocksDB operation vectors.
 
+## Table Export and Import
+
+Admin UI table transfer uses the manifest as part of the archive contract.
+
+- `table_export` first triggers a flush for the selected `USER` or `SHARED` table scope so hot
+   RocksDB rows are materialized into Parquet.
+- The export ZIP contains committed Parquet segment files plus `kalamdb-table-export.json` with the
+   source table definition, manifest metadata, and ZIP entry mapping.
+- `table_import` accepts only this table-export ZIP format and requires the target table columns to
+   match the exported table columns. It copies the Parquet files into the target table storage with
+   import-specific filenames, rewrites segment IDs/paths and schema version to the target table,
+   then persists the merged manifest through `ManifestService`.
+- User-table transfer is scoped by `user_id`; shared-table transfer has no user scope.
+
+The importer does not replay raw RocksDB rows. Data becomes visible through cold Parquet segments
+after the target manifest is persisted.
+
 ## Post-flush small-segment compaction
 
 KalamDB now supports optional post-flush tail compaction under `[flush.compaction]`:

@@ -12,6 +12,7 @@ members = [
     "backend/crates/kalamdb-row-filter",
     "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
+    "backend/crates/kalamdb-transfer",
     "backend/crates/kalamdb-flush",
     "backend/crates/kalamdb-streams",
     "backend/crates/kalamdb-sharding",
@@ -71,7 +72,7 @@ thiserror = "2.0.18"
 anyhow = "1.0.102"
 
 # Logging
-log = "0.4.29"
+log = "0.4.30"
 
 # Async runtime
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal", "parking_lot"] }
@@ -80,7 +81,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 # HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
 # Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls", "http2", "multipart", "stream", "form"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "multipart", "stream", "form"] }
 hyper = { version = "1.8.1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["client", "client-legacy", "http1", "tokio"] }
 url = "2.5.8"
@@ -181,6 +182,7 @@ rcgen = "0.14.8"
 x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = false }
 kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
+kalamdb-transfer = { path = "backend/crates/kalamdb-transfer" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
@@ -189,7 +191,7 @@ cookie = "0.18"
 colored = "3.1.1"
 fern = "0.7"
 indicatif = "0.18.4"
-rpassword = "7.5.2"
+rpassword = "7.5.3"
 dirs = "6.0"
 term_size = "0.3"
 crossterm = "0.29.0"

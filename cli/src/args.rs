@@ -334,6 +334,10 @@ pub struct LoginArgs {
     #[arg(long = "no-browser", requires = "oidc")]
     pub no_browser: bool,
 
+    /// Override the loopback redirect URI used by OIDC browser login
+    #[arg(long = "oidc-redirect-uri", requires = "oidc", value_name = "URI")]
+    pub oidc_redirect_uri: Option<String>,
+
     /// Force KalamDB-brokered OIDC device-code login
     #[arg(long = "brokered", requires = "no_browser")]
     pub brokered: bool,

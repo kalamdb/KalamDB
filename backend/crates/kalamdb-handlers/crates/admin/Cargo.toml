@@ -17,6 +17,7 @@ kalamdb-raft = { path = "../../../kalamdb-raft" }
 kalamdb-session = { path = "../../../kalamdb-session" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-system = { path = "../../../kalamdb-system" }
+kalamdb-transfer = { workspace = true }
 
 arrow = { workspace = true }
 chrono = { workspace = true }

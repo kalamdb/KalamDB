@@ -22,6 +22,8 @@ pub enum JobType {
     TopicCleanup,
     TopicRetention,
     UserExport,
+    TableExport,
+    TableImport,
     Unknown,
 }
 
@@ -43,6 +45,8 @@ impl JobType {
             JobType::TopicCleanup => "topic_cleanup",
             JobType::TopicRetention => "topic_retention",
             JobType::UserExport => "user_export",
+            JobType::TableExport => "table_export",
+            JobType::TableImport => "table_import",
             JobType::Unknown => "unknown",
         }
     }
@@ -63,6 +67,8 @@ impl JobType {
     /// - TC: Legacy TopicCleanup
     /// - ME: ManifestEviction
     /// - TR: TopicRetention
+    /// - TE: TableExport
+    /// - TI: TableImport
     /// - UN: Unknown
     pub fn short_prefix(&self) -> &'static str {
         match self {
@@ -81,6 +87,8 @@ impl JobType {
             JobType::ManifestEviction => "ME",
             JobType::TopicRetention => "TR",
             JobType::UserExport => "UE",
+            JobType::TableExport => "TE",
+            JobType::TableImport => "TI",
             JobType::Unknown => "UN",
         }
     }
@@ -102,6 +110,8 @@ impl JobType {
             "manifest_eviction" => Some(JobType::ManifestEviction),
             "topic_retention" => Some(JobType::TopicRetention),
             "user_export" => Some(JobType::UserExport),
+            "table_export" => Some(JobType::TableExport),
+            "table_import" => Some(JobType::TableImport),
             "unknown" => Some(JobType::Unknown),
             _ => None,
         }
@@ -128,7 +138,9 @@ impl JobType {
             JobType::JobCleanup |   // Raft-replicated job table cleanup
             JobType::UserCleanup |  // Cascade via Raft
             JobType::TopicCleanup | // Delete topic messages + offsets
-            JobType::UserExport // Export user data to zip
+            JobType::UserExport | // Export user data to zip
+            JobType::TableExport | // Export one table scope to zip
+            JobType::TableImport // Import one table scope from zip
         )
     }
 
@@ -197,6 +209,8 @@ impl From<&str> for JobType {
             "topic_cleanup" => JobType::TopicCleanup,
             "topic_retention" => JobType::TopicRetention,
             "user_export" => JobType::UserExport,
+            "table_export" => JobType::TableExport,
+            "table_import" => JobType::TableImport,
             "unknown" => JobType::Unknown,
             _ => JobType::Unknown,
         }

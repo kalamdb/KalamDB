@@ -1223,6 +1223,7 @@ export default function SqlStudio() {
                   schema={schema}
                   isSchemaRefreshing={isSchemaRefreshing}
                   onAfterSave={refreshExplorerSchema}
+                  onOpenQueryInNewTab={openQueryInNewTab}
                 />
               ) : (
                 <>

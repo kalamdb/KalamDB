@@ -81,6 +81,8 @@ pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
     job_registry.register(Arc::new(VectorIndexExecutor::new()));
     job_registry.register(Arc::new(TopicRetentionExecutor::new()));
     job_registry.register(Arc::new(UserExportExecutor::new()));
+    job_registry.register(Arc::new(TableExportExecutor::new()));
+    job_registry.register(Arc::new(TableImportExecutor::new()));
 
     let jobs_provider = app_ctx.system_tables().jobs();
     let job_nodes_provider = app_ctx.system_tables().job_nodes();

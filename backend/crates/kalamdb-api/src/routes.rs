@@ -29,6 +29,8 @@ use crate::{http, ui, ws};
 /// - GET /v1/api/auth/status - Check server setup status (localhost only)
 /// - POST /v1/api/topics/consume - Consume messages from a topic (long polling)
 /// - POST /v1/api/topics/ack - Acknowledge offset for consumer group
+/// - POST /v1/api/table-exports - Start a table export job
+/// - POST /v1/api/table-imports - Upload a table export ZIP and start import
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         // Root-level health check endpoint (no version prefix)
@@ -94,12 +96,17 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                                 .service(http::topics::consume_handler)
                             .service(http::topics::latest_offsets_handler)
                                 .service(http::topics::ack_handler),
-                        ),
+                        )
+                        .service(http::table_transfer::start_table_export)
+                        .service(http::table_transfer::get_table_export_status)
+                        .service(http::table_transfer::start_table_import)
+                        .service(http::table_transfer::get_table_import_status),
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)
                 .service(http::files::download_file)
                 // Export download endpoint
                 .service(http::files::download_export)
+                .service(http::files::download_table_export)
                 .service(ws::websocket_handler),
         );
 }

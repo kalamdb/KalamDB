@@ -39,6 +39,7 @@ pub mod oidc_browser;
 pub mod oidc_device;
 mod query;
 mod subscriptions;
+mod table_transfer;
 
 const SPINNER_TICKS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_TICK_INTERVAL_MS: u64 = 80;
@@ -151,6 +152,9 @@ pub struct CLISession {
 
     /// Whether credentials were loaded from storage (vs. provided on command line)
     credentials_loaded: bool,
+
+    /// Authentication provider (kept for HTTP API calls)
+    auth: AuthProvider,
 
     /// Configured timeouts for operations
     #[allow(dead_code)] // Reserved for future use
@@ -310,6 +314,7 @@ impl CLISession {
             cluster_name: None, // Will be fetched lazily from system.cluster
             credential_store,
             credentials_loaded,
+            auth,
             timeouts,
         })
     }
@@ -427,6 +432,28 @@ impl CLISession {
     pub fn server_url(&self) -> &str {
         &self.server_url
     }
+        /// Get the base API URL (server_url without trailing slash).
+        pub(super) fn api_base(&self) -> String {
+            self.server_url.trim_end_matches('/').to_string()
+        }
+
+        /// Return the value for an `Authorization` header suitable for direct HTTP calls.
+        ///
+        /// For `JwtToken` auth this returns `Bearer <token>`.
+        /// For `BasicAuth` it returns `Basic <base64>` (the server accepts Basic on all REST endpoints).
+        /// For `None` auth it returns an empty string (no header added).
+        pub(super) fn authorization_header_value(&self) -> Option<String> {
+            match &self.auth {
+                AuthProvider::JwtToken(token) => Some(format!("Bearer {}", token)),
+                AuthProvider::BasicAuth(user, pass) => {
+                    use base64::Engine as _;
+                    let encoded = base64::engine::general_purpose::STANDARD
+                        .encode(format!("{}:{}", user, pass));
+                    Some(format!("Basic {}", encoded))
+                },
+                AuthProvider::None => None,
+            }
+        }
 
     /// Check if session is connected
     pub fn is_connected(&self) -> bool {

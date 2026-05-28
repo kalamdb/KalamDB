@@ -19,6 +19,7 @@ kalamdb-sharding = { path = "../kalamdb-sharding" }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
+kalamdb-transfer = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
@@ -27,6 +28,7 @@ tokio = { workspace = true, features = ["sync", "time", "rt"] }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+bytes = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
@@ -42,8 +44,6 @@ uuid = { workspace = true }
 
 # ZIP archive creation
 zip = { workspace = true }
-flate2 = { workspace = true }
-tar = { workspace = true }
 
 # Concurrent
 parking_lot = { workspace = true }
@@ -58,3 +58,5 @@ doctest = false
 kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
 tempfile = { workspace = true }
 ntest = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }

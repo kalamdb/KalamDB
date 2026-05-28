@@ -368,7 +368,13 @@ async fn handle_oidc_login(
             device_flow.map(|device_flow| device_flow.direct_supported).unwrap_or(false);
 
         if args.brokered || (!can_direct && can_broker) {
-            oidc_device::login_with_brokered_device(&api_client, &server_url, &oidc, !cli.no_color)
+            oidc_device::login_with_brokered_device(
+                &api_client,
+                &server_url,
+                &oidc,
+                !cli.no_color,
+                !cli.no_spinner,
+            )
                 .await?
         } else if can_direct {
             let oidc_client = oidc_http_client(cli.timeout)?;
@@ -378,6 +384,7 @@ async fn handle_oidc_login(
                 &server_url,
                 &oidc,
                 !cli.no_color,
+                !cli.no_spinner,
             )
             .await?
         } else {
@@ -392,7 +399,9 @@ async fn handle_oidc_login(
             &api_client,
             &server_url,
             &oidc,
+            args.oidc_redirect_uri.as_deref(),
             !cli.no_color,
+            !cli.no_spinner,
         )
         .await?
     };

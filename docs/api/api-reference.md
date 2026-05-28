@@ -17,6 +17,11 @@ This reference is aligned with the current route + handler implementations.
 
 - `POST /v1/api/sql`
 - `GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_name}`
+- `POST /v1/api/table-exports`
+- `GET /v1/api/table-exports/{job_id}`
+- `GET /v1/table-exports/{export_id}`
+- `POST /v1/api/table-imports`
+- `GET /v1/api/table-imports/{job_id}`
 
 ### WebSocket
 
@@ -52,6 +57,11 @@ Direct `user` / `password` credentials are only accepted on `POST /v1/api/auth/l
 
 - `POST /v1/api/sql`
 - `GET /v1/files/...`
+- `POST /v1/api/table-exports`
+- `GET /v1/api/table-exports/{job_id}`
+- `GET /v1/table-exports/{export_id}`
+- `POST /v1/api/table-imports`
+- `GET /v1/api/table-imports/{job_id}`
 - `POST /v1/api/topics/consume`
 - `POST /v1/api/topics/ack`
 
@@ -241,7 +251,76 @@ Download previously stored file bytes.
 - `200 OK`: binary content with inferred content-type and `Content-Disposition: inline`
 - `400/403/404` depending on validation/permission/not-found conditions
 
-## 5) Health Endpoints
+## 5) Table Transfer API
+
+Table transfer endpoints are used by the Admin UI table editor for user/shared table data movement.
+They require bearer auth and role in `{service, dba, system}`.
+
+Table exports flush hot RocksDB rows first, then write a ZIP containing committed Parquet segments
+and a KalamDB table-export metadata file. Table imports accept only that table-export ZIP format,
+require the target table to already exist with matching column definitions, and register imported
+Parquet files through the target table manifest.
+
+### `POST /v1/api/table-exports`
+
+Start a table export job.
+
+```json
+{
+  "namespace_id": "app",
+  "table_name": "events",
+  "table_type": "user",
+  "user_id": "alice"
+}
+```
+
+For `shared` tables, omit `user_id`.
+
+Response:
+
+```json
+{
+  "job_id": "TE-...",
+  "export_id": "table-export-...",
+  "status": "queued",
+  "download_url": "/v1/table-exports/table-export-..."
+}
+```
+
+### `GET /v1/api/table-exports/{job_id}`
+
+Poll export status. When `status` is `completed`, `download_url` is present.
+
+### `GET /v1/table-exports/{export_id}`
+
+Download the completed table export ZIP. This route also requires bearer auth and role in
+`{service, dba, system}`.
+
+### `POST /v1/api/table-imports`
+
+Upload a table export ZIP and start an import job. The request is `multipart/form-data` with:
+
+- `namespace_id`
+- `table_name`
+- `table_type` (`user` or `shared`)
+- `user_id` for user tables only
+- `file` containing the ZIP
+
+Response:
+
+```json
+{
+  "job_id": "TI-...",
+  "import_id": "table-import-...",
+  "status": "queued"
+}
+```
+
+### `GET /v1/api/table-imports/{job_id}`
+
+Poll import status.
+
+## 6) Health Endpoints
 
 ## `GET /health` and `GET /v1/api/healthcheck`
 
@@ -295,7 +374,7 @@ Response shape:
 }
 ```
 
-## 6) Auth Endpoints
+## 7) Auth Endpoints
 
 ## `POST /v1/api/auth/login`
 
@@ -395,7 +474,7 @@ Localhost-only (unless remote setup allowed). Returns setup status:
 }
 ```
 
-## 7) Topic HTTP API
+## 8) Topic HTTP API
 
 Both topic endpoints require bearer auth **and** role in `{service, dba, system}`.
 

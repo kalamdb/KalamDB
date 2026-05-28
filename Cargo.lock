@@ -4271,7 +4271,7 @@ dependencies = [
  "predicates",
  "rand 0.10.1",
  "regex",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rpassword",
  "rustyline",
  "serde",
@@ -4300,7 +4300,7 @@ dependencies = [
  "kalamdb-server",
  "link-common",
  "ntest",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4397,7 +4397,7 @@ dependencies = [
  "pgrx",
  "pgrx-bench",
  "regex",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "tokio",
@@ -4454,12 +4454,13 @@ dependencies = [
  "kalamdb-session",
  "kalamdb-store",
  "kalamdb-system",
+ "kalamdb-transfer",
  "log",
  "mime_guess",
  "moka",
  "openidconnect",
  "parking_lot",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rmp-serde",
  "rust-embed",
  "serde",
@@ -4491,7 +4492,7 @@ dependencies = [
  "moka",
  "once_cell",
  "openidconnect",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4730,6 +4731,7 @@ dependencies = [
  "kalamdb-raft",
  "kalamdb-session",
  "kalamdb-system",
+ "kalamdb-transfer",
  "log",
  "serde_json",
  "tokio",
@@ -4812,6 +4814,7 @@ name = "kalamdb-jobs"
 version = "0.5.1-beta.2"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "datafusion",
  "flate2",
@@ -4824,6 +4827,7 @@ dependencies = [
  "kalamdb-store",
  "kalamdb-system",
  "kalamdb-tables",
+ "kalamdb-transfer",
  "log",
  "ntest",
  "parking_lot",
@@ -5029,7 +5033,7 @@ dependencies = [
  "opentelemetry_sdk",
  "parking_lot",
  "rand 0.10.1",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serial_test",
@@ -5189,6 +5193,23 @@ dependencies = [
  "serde",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "kalamdb-transfer"
+version = "0.5.1-beta.2"
+dependencies = [
+ "chrono",
+ "flate2",
+ "kalamdb-commons",
+ "kalamdb-core",
+ "kalamdb-system",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -5417,7 +5438,7 @@ dependencies = [
  "log",
  "miniz_oxide 0.9.1",
  "quinn-proto",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "rmp-serde",
  "rustls",
  "rustls-webpki",
@@ -5485,9 +5506,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "lru-slab"
@@ -7250,9 +7271,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7383,9 +7404,9 @@ dependencies = [
 
 [[package]]
 name = "rpassword"
-version = "7.5.2"
+version = "7.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac5b223d9738ef56e0b98305410be40fa0941bf6036c56f1506751e43552d64"
+checksum = "835a57a69104632d64deb0df2e09a69945cd7a6eab4070fc9b1d7e50cf6c3edc"
 dependencies = [
  "libc",
  "rtoolbox",
@@ -8351,7 +8372,7 @@ dependencies = [
  "memchr",
  "parse-display",
  "pin-project-lite",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serde_with",

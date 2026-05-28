@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use indicatif::{ProgressBar, ProgressStyle};
 use openidconnect::{
     core::CoreDeviceAuthorizationResponse, reqwest::Client as OidcHttpClient,
     DeviceAuthorizationUrl, DeviceCodeErrorResponse, DeviceCodeErrorResponseType, HttpClientError,
@@ -18,12 +19,27 @@ use crate::{
     terminal_ui,
 };
 
+const PROGRESS_TICK_MS: u64 = 80;
+
+fn create_oidc_wait_spinner(message: &str) -> ProgressBar {
+    let progress_bar = ProgressBar::new_spinner();
+    progress_bar.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.cyan} {msg} {elapsed_precise}")
+            .expect("oidc spinner template should be valid"),
+    );
+    progress_bar.set_message(message.to_string());
+    progress_bar.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_MS));
+    progress_bar
+}
+
 pub async fn login_with_direct_device(
     http_client: &OidcHttpClient,
     api_client: &reqwest::Client,
     server_url: &str,
     options: &OidcLoginOptions,
     color: bool,
+    show_progress: bool,
 ) -> Result<ExternalLoginSession> {
     let endpoint = device_authorization_endpoint(options)?;
     let client = discover_core_client(http_client, options)
@@ -46,14 +62,30 @@ pub async fn login_with_direct_device(
         color,
     );
 
-    let token_response = client
+    let wait_spinner = if show_progress {
+        Some(create_oidc_wait_spinner("Waiting for OIDC device verification..."))
+    } else {
+        None
+    };
+
+    let token_response_result = client
         .exchange_device_access_token(&details)
         .map_err(|error| {
             CLIError::ConfigurationError(format!("OIDC token endpoint is not configured: {error}"))
         })?
         .request_async(http_client, tokio::time::sleep, None)
-        .await
-        .map_err(map_device_token_error)?;
+        .await;
+
+    let token_response = token_response_result.map_err(|error| {
+        if let Some(progress_bar) = &wait_spinner {
+            progress_bar.finish_and_clear();
+        }
+        map_device_token_error(error)
+    })?;
+
+    if let Some(progress_bar) = wait_spinner {
+        progress_bar.finish_with_message("OIDC device verification received".to_string());
+    }
 
     let id_token = OidcTokenResponse::id_token(&token_response).ok_or_else(|| {
         CLIError::ConfigurationError("OIDC provider did not return an ID token".to_string())
@@ -71,6 +103,7 @@ pub async fn login_with_brokered_device(
     server_url: &str,
     options: &OidcLoginOptions,
     color: bool,
+    show_progress: bool,
 ) -> Result<ExternalLoginSession> {
     let device_flow = options.device_flow.as_ref().ok_or_else(|| {
         CLIError::ConfigurationError(
@@ -94,11 +127,20 @@ pub async fn login_with_brokered_device(
         color,
     );
 
+    let wait_spinner = if show_progress {
+        Some(create_oidc_wait_spinner("Waiting for OIDC device verification..."))
+    } else {
+        None
+    };
+
     let deadline =
         Instant::now() + Duration::from_secs(start.expires_in_seconds.saturating_add(30));
     let mut interval = Duration::from_secs(start.interval_seconds.max(1));
     loop {
         if Instant::now() >= deadline {
+            if let Some(progress_bar) = &wait_spinner {
+                progress_bar.finish_and_clear();
+            }
             return Err(CLIError::ConfigurationError(
                 "OIDC device login expired. Start a new login attempt.".to_string(),
             ));
@@ -121,6 +163,10 @@ pub async fn login_with_brokered_device(
                 interval += Duration::from_secs(5);
             },
             OidcDevicePollStatus::Authorized => {
+                if let Some(progress_bar) = &wait_spinner {
+                    progress_bar
+                        .finish_with_message("OIDC device verification received".to_string());
+                }
                 let access_token = poll.access_token.ok_or_else(|| {
                     CLIError::ConfigurationError(
                         "brokered OIDC login completed without an access token".to_string(),
@@ -142,16 +188,25 @@ pub async fn login_with_brokered_device(
                 });
             },
             OidcDevicePollStatus::Denied => {
+                if let Some(progress_bar) = &wait_spinner {
+                    progress_bar.finish_and_clear();
+                }
                 return Err(CLIError::ConfigurationError(
                     poll.message.unwrap_or_else(|| "OIDC device login was denied".to_string()),
                 ));
             },
             OidcDevicePollStatus::Expired => {
+                if let Some(progress_bar) = &wait_spinner {
+                    progress_bar.finish_and_clear();
+                }
                 return Err(CLIError::ConfigurationError(poll.message.unwrap_or_else(|| {
                     "OIDC device login expired. Start a new login attempt.".to_string()
                 })));
             },
             OidcDevicePollStatus::Failed => {
+                if let Some(progress_bar) = &wait_spinner {
+                    progress_bar.finish_and_clear();
+                }
                 return Err(CLIError::ConfigurationError(
                     poll.message.unwrap_or_else(|| "OIDC device login failed".to_string()),
                 ));

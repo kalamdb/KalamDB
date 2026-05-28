@@ -82,6 +82,19 @@ pub enum Command {
         timeout: Option<u64>,
     },
     Unknown(String),
+    
+    /// Export a table to a ZIP archive
+    ExportTable {
+        table: String,
+        user_id: Option<String>,
+        output: Option<String>,
+    },
+    /// Import a table from a ZIP archive
+    ImportTable {
+        table: String,
+        file: String,
+        user_id: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -170,6 +183,14 @@ const HELP_META_COMMANDS: &[HelpEntry] = &[
     HelpEntry {
         command_key: "consume",
         syntax: "\\consume <topic>",
+    },
+    HelpEntry {
+        command_key: "export",
+        syntax: "\\export <namespace.table> [--user-id <id>] [--output <file.zip>]",
+    },
+    HelpEntry {
+        command_key: "import",
+        syntax: "\\import <namespace.table> <file.zip> [--user-id <id>]",
     },
 ];
 
@@ -352,6 +373,10 @@ enum MetaCommand {
     History,
     #[command(name = "consume", about = "Consume topic messages")]
     Consume(ConsumeArgs),
+    #[command(name = "export", about = "Export a table to a ZIP archive")]
+    Export(ExportTableArgs),
+    #[command(name = "import", about = "Import a table from a ZIP archive")]
+    Import(ImportTableArgs),
 }
 
 #[derive(Debug, Args)]
@@ -504,6 +529,26 @@ struct ConsumeArgs {
 }
 
 #[derive(Debug, Args)]
+struct ExportTableArgs {
+    #[arg(value_name = "TABLE")]
+    table: String,
+    #[arg(long = "user-id")]
+    user_id: Option<String>,
+    #[arg(long = "output", short = 'o')]
+    output: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ImportTableArgs {
+    #[arg(value_name = "TABLE")]
+    table: String,
+    #[arg(value_name = "FILE")]
+    file: String,
+    #[arg(long = "user-id")]
+    user_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
 struct TrailingValueArgs {
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
     values: Vec<String>,
@@ -544,6 +589,16 @@ impl MetaCommand {
                 from: args.from,
                 limit: args.limit,
                 timeout: args.timeout,
+            }),
+            Self::Export(args) => Ok(Command::ExportTable {
+                table: args.table,
+                user_id: args.user_id,
+                output: args.output,
+            }),
+            Self::Import(args) => Ok(Command::ImportTable {
+                table: args.table,
+                file: args.file,
+                user_id: args.user_id,
             }),
         }
     }

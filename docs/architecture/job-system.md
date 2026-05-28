@@ -10,9 +10,9 @@ The job system provides distributed background execution across the cluster. A j
 - Crash recovery and leader failover handling.
 
 This document reflects the current implementation in:
-- [backend/crates/kalamdb-core/src/jobs/jobs_manager/actions.rs](../../backend/crates/kalamdb-core/src/jobs/jobs_manager/actions.rs)
-- [backend/crates/kalamdb-core/src/jobs/jobs_manager/runner.rs](../../backend/crates/kalamdb-core/src/jobs/jobs_manager/runner.rs)
-- [backend/crates/kalamdb-commons/src/models/job_type.rs](../../backend/crates/kalamdb-commons/src/models/job_type.rs)
+- [backend/crates/kalamdb-jobs/src/jobs_manager/actions.rs](../../backend/crates/kalamdb-jobs/src/jobs_manager/actions.rs)
+- [backend/crates/kalamdb-jobs/src/jobs_manager/runner.rs](../../backend/crates/kalamdb-jobs/src/jobs_manager/runner.rs)
+- [backend/crates/kalamdb-system/src/providers/jobs/models/job_type.rs](../../backend/crates/kalamdb-system/src/providers/jobs/models/job_type.rs)
 
 ## Core Concepts
 
@@ -27,7 +27,13 @@ Each `JobType` encodes whether it has local work, leader actions, or is leader-o
 - `has_leader_actions()` — external storage and shared metadata updates.
 - `is_leader_only()` — leader actions only, no local work (leader creates a single JobNode).
 
-See [backend/crates/kalamdb-commons/src/models/job_type.rs](../../backend/crates/kalamdb-commons/src/models/job_type.rs).
+See [backend/crates/kalamdb-system/src/providers/jobs/models/job_type.rs](../../backend/crates/kalamdb-system/src/providers/jobs/models/job_type.rs).
+
+Examples of leader-only data-management jobs:
+
+- `user_export`: flushes and packages all user-table data for one user.
+- `table_export`: flushes and packages one `USER` or `SHARED` table scope as a table-export ZIP.
+- `table_import`: imports a table-export ZIP by copying Parquet files and persisting manifest entries.
 
 ### Awake Channel
 When a `CreateJobNode` command is applied, the state machine calls `awake_job()` on the local node. The run loop consumes this channel for instant dispatch, with a 500ms poll fallback for recovery and retries.
@@ -43,7 +49,7 @@ Creation flow:
    - **Leader-only job**: only for leader.
    - **All other jobs**: for all active cluster nodes.
 
-Relevant code: [backend/crates/kalamdb-core/src/jobs/jobs_manager/actions.rs](../../backend/crates/kalamdb-core/src/jobs/jobs_manager/actions.rs)
+Relevant code: [backend/crates/kalamdb-jobs/src/jobs_manager/actions.rs](../../backend/crates/kalamdb-jobs/src/jobs_manager/actions.rs)
 
 ## Job Execution Flow
 
