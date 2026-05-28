@@ -4,6 +4,7 @@ import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, Info } from "lucide-reac
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { PanelHeader, chromeLabelClassName } from "@/components/layout/typography";
 import { cn } from "@/lib/utils";
 import type { QueryLogEntry } from "../../shared/types";
 
@@ -273,27 +274,28 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col xl:flex-row">
       <section aria-label="Trace timeline" className="flex min-h-[220px] min-w-0 flex-col border-b border-border bg-muted/10 xl:w-[40%] xl:min-w-[300px] xl:max-w-[500px] xl:border-b-0 xl:border-r">
           <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Timeline Stream
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {websocketFrameCount > 0
-                  ? `${websocketFrameCount} frame${websocketFrameCount === 1 ? "" : "s"} captured • ${logs.length} total event${logs.length === 1 ? "" : "s"}`
-                  : `${logs.length} event${logs.length === 1 ? "" : "s"}`}
-              </p>
-            </div>
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px] font-semibold uppercase tracking-wide",
+            <PanelHeader
+              title="Timeline Stream"
+              className="flex-1"
+              description={
                 websocketFrameCount > 0
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
-                  : "border-border bg-muted/40 text-muted-foreground",
-              )}
-            >
-              {websocketFrameCount > 0 ? "WS Trace" : "Execution"}
-            </Badge>
+                  ? `${websocketFrameCount} frame${websocketFrameCount === 1 ? "" : "s"} captured • ${logs.length} total event${logs.length === 1 ? "" : "s"}`
+                  : `${logs.length} event${logs.length === 1 ? "" : "s"}`
+              }
+              actions={
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] font-semibold uppercase",
+                    websocketFrameCount > 0
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
+                      : "border-border bg-muted/40 text-muted-foreground",
+                  )}
+                >
+                  {websocketFrameCount > 0 ? "WS Trace" : "Execution"}
+                </Badge>
+              }
+            />
           </div>
           <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
             <div className="space-y-1.5 p-2">
@@ -316,7 +318,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                   >
                     <div className="flex items-center gap-2">
                       <item.Icon className={cn("h-3.5 w-3.5 shrink-0", getIconClassName(item.kind, status))} />
-                      <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide", getBadgeClassName(item.kind))}>
+                      <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px] font-semibold uppercase", getBadgeClassName(item.kind))}>
                         {item.label}
                       </Badge>
                       <p
@@ -354,7 +356,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
       <section aria-label="Trace details" className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
           <div className="min-w-0 border-b border-border px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
-              <Badge variant="outline" className={cn("shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", getBadgeClassName(selectedEntry.kind))}>
+              <Badge variant="outline" className={cn("shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase", getBadgeClassName(selectedEntry.kind))}>
                 {selectedEntry.label}
               </Badge>
               <h3 className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
@@ -372,7 +374,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className={`flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 ${chromeLabelClassName}`}>
             <span className="rounded border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-semibold text-foreground">
               Preview
             </span>

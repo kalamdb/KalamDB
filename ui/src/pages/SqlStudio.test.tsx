@@ -754,7 +754,7 @@ describe("SqlStudio page", () => {
     });
 
     fireEvent.click(screen.getByRole("switch"));
-    fireEvent.click(screen.getByTitle("Subscription options"));
+    fireEvent.click(screen.getByRole("button", { name: /subscription options/i }));
     fireEvent.change(screen.getByLabelText("from"), {
       target: { value: "9223372036854775807" },
     });

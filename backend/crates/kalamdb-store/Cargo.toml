@@ -11,11 +11,13 @@ repository.workspace = true
 default = ["rocksdb"]
 rocksdb = ["dep:rocksdb"]
 datafusion = ["dep:datafusion"]
+traceability = ["kalamdb-observability/traceability"]
 
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde", "full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
 kalamdb-sharding = { path = "../kalamdb-sharding", features = ["serde"] }
 
 rocksdb = { workspace = true, optional = true }

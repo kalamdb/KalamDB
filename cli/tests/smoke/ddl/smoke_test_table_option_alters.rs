@@ -33,7 +33,8 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for USER tables");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -60,7 +61,7 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
     .expect("Failed to insert initial user-table row");
 
     let alter_sql = format!(
-        "ALTER TABLE {} SET TBLPROPERTIES (USE_USER_STORAGE = false, FLUSH_POLICY = 'rows:50,interval:120', COMPRESSION = 'lz4')",
+        "ALTER TABLE {} SET TBLPROPERTIES (USE_USER_STORAGE = false, FLUSH_POLICY = 'rows:50,interval:120', COMPRESSION = 'none')",
         full_table
     );
     execute_sql_as_root_via_client(&alter_sql).expect("Failed to alter user table options");
@@ -78,7 +79,14 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
     .expect("Failed to query latest user table schema row");
     assert_contains_all_case_insensitive(
         &latest_output,
-        &["false", "lz4", "row_limit", "50", "interval_seconds", "120"],
+        &[
+            "false",
+            "none",
+            "row_limit",
+            "50",
+            "interval_seconds",
+            "120",
+        ],
         "latest user table schema options",
     );
 
@@ -87,11 +95,8 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
         full_table
     ))
     .expect("Failed to insert second user-table row after ALTER");
-    execute_sql_as_root_via_client(&format!(
-        "UPDATE {} SET visits = 15 WHERE id = 1",
-        full_table
-    ))
-    .expect("Failed to update user-table row after ALTER");
+    execute_sql_as_root_via_client(&format!("UPDATE {} SET visits = 15 WHERE id = 1", full_table))
+        .expect("Failed to update user-table row after ALTER");
 
     let pre_flush = wait_for_query_contains_with(
         &format!("SELECT * FROM {} ORDER BY id", full_table),
@@ -140,7 +145,8 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
         "user table rows after post-flush insert",
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180000)]
@@ -157,7 +163,8 @@ fn smoke_test_alter_shared_table_options_preserves_query_dml_and_flush() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for SHARED tables");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -264,7 +271,8 @@ fn smoke_test_alter_shared_table_options_preserves_query_dml_and_flush() {
         "shared table rows after post-flush insert",
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180000)]
@@ -281,7 +289,8 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for STREAM tables");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -294,13 +303,29 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
             TYPE = 'STREAM',
             TTL_SECONDS = 60,
             EVICTION_STRATEGY = 'time_based',
-            MAX_STREAM_SIZE_BYTES = 1024,
-            COMPRESSION = 'snappy'
+            MAX_STREAM_SIZE_BYTES = 1024
         )"#,
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create stream table");
     wait_for_schema_history(&namespace, &table, 1, 1, "stream create");
+
+    let invalid_stream_create = format!(
+        r#"CREATE TABLE {}.invalid_stream_compression (
+            event_id BIGINT PRIMARY KEY,
+            event_type TEXT NOT NULL
+        ) WITH (
+            TYPE = 'STREAM',
+            TTL_SECONDS = 60,
+            COMPRESSION = 'snappy'
+        )"#,
+        namespace
+    );
+    assert_sql_rejected_with(
+        &invalid_stream_create,
+        "COMPRESSION is only supported for USER and SHARED tables",
+        "stream CREATE with compression",
+    );
 
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (event_id, event_type, payload) VALUES (1, 'created', 'before alter')",
@@ -309,10 +334,16 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
     .expect("Failed to insert initial stream-table row");
 
     let alter_sql = format!(
-        "ALTER TABLE {} SET TBLPROPERTIES (TTL_SECONDS = 120, EVICTION_STRATEGY = 'hybrid', MAX_STREAM_SIZE_BYTES = 4096, COMPRESSION = 'lz4')",
+        "ALTER TABLE {} SET TBLPROPERTIES (TTL_SECONDS = 120, EVICTION_STRATEGY = 'hybrid', MAX_STREAM_SIZE_BYTES = 4096)",
         full_table
     );
     execute_sql_as_root_via_client(&alter_sql).expect("Failed to alter stream table options");
+
+    assert_sql_rejected_with(
+        &format!("ALTER TABLE {} SET TBLPROPERTIES (COMPRESSION = 'zstd')", full_table),
+        "COMPRESSION is not supported for STREAM tables",
+        "stream ALTER with compression",
+    );
 
     let history = wait_for_schema_history(&namespace, &table, 2, 2, "stream alter");
     assert_eq!(row_i64(&history[0], "schema_version"), Some(1));
@@ -327,7 +358,13 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
     .expect("Failed to query latest stream table schema row");
     assert_contains_all_case_insensitive(
         &latest_output,
-        &["ttl_seconds", "120", "hybrid", "max_stream_size_bytes", "4096", "lz4"],
+        &[
+            "ttl_seconds",
+            "120",
+            "hybrid",
+            "max_stream_size_bytes",
+            "4096",
+        ],
         "latest stream table schema options",
     );
 
@@ -365,7 +402,8 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
         "stream table rows after rejected flush",
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
 fn wait_for_schema_history(
@@ -384,19 +422,15 @@ fn wait_for_schema_history(
     loop {
         let output = execute_sql_as_root_via_client_json(&query)
             .unwrap_or_else(|err| panic!("{}: failed to query system.schemas: {}", context, err));
-        let json: Value = serde_json::from_str(&output)
-            .unwrap_or_else(|err| panic!("{}: failed to parse JSON output: {} ({})", context, err, output));
+        let json: Value = serde_json::from_str(&output).unwrap_or_else(|err| {
+            panic!("{}: failed to parse JSON output: {} ({})", context, err, output)
+        });
         let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
 
         let matches = rows.len() == expected_rows
-            && rows
-                .last()
-                .and_then(|row| row_i64(row, "schema_version"))
+            && rows.last().and_then(|row| row_i64(row, "schema_version"))
                 == Some(expected_latest_version)
-            && rows
-                .last()
-                .and_then(|row| row_bool(row, "is_latest"))
-                == Some(true);
+            && rows.last().and_then(|row| row_bool(row, "is_latest")) == Some(true);
 
         if matches {
             return rows;
@@ -452,6 +486,31 @@ fn assert_contains_all_case_insensitive(output: &str, needles: &[&str], context:
     }
 }
 
+fn assert_sql_rejected_with(sql: &str, expected: &str, context: &str) {
+    match execute_sql_as_root_via_client(sql) {
+        Err(err) => {
+            let message = err.to_string();
+            assert!(
+                message.to_ascii_lowercase().contains(&expected.to_ascii_lowercase()),
+                "{}: expected rejection containing '{}', got error: {}",
+                context,
+                expected,
+                err
+            );
+        },
+        Ok(output) => {
+            let message = output.to_ascii_lowercase();
+            assert!(
+                message.contains("error") && message.contains(&expected.to_ascii_lowercase()),
+                "{}: expected rejection containing '{}', got success output: {}",
+                context,
+                expected,
+                output
+            );
+        },
+    }
+}
+
 fn flush_table_and_assert(
     full_table: &str,
     namespace: &str,
@@ -459,10 +518,12 @@ fn flush_table_and_assert(
     is_user_table: bool,
     context: &str,
 ) {
-    let flush_output = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
-        .unwrap_or_else(|err| panic!("{}: flush command failed: {}", context, err));
-    let job_id = parse_job_id_from_flush_output(&flush_output)
-        .unwrap_or_else(|err| panic!("{}: failed to parse flush job id from '{}': {}", context, flush_output, err));
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .unwrap_or_else(|err| panic!("{}: flush command failed: {}", context, err));
+    let job_id = parse_job_id_from_flush_output(&flush_output).unwrap_or_else(|err| {
+        panic!("{}: failed to parse flush job id from '{}': {}", context, flush_output, err)
+    });
     let timeout = if is_cluster_mode() {
         FLUSH_WAIT_TIMEOUT + Duration::from_secs(15)
     } else {

@@ -179,8 +179,8 @@ impl CachedTableData {
     /// This is computed once when CachedTableData is created and reused for all
     /// flush operations. Returns (bloom_filter_columns, indexed_columns).
     ///
-    /// - bloom_filter_columns: PRIMARY KEY columns + _seq (for Parquet Bloom filters)
-    /// - indexed_columns: (column_id, column_name) pairs for row-group stats extraction
+    /// - bloom_filter_columns: PRIMARY KEY columns (for Parquet Bloom filters)
+    /// - indexed_columns: PRIMARY KEY columns + _seq for segment stats extraction
     fn compute_indexed_columns(table_def: &TableDefinition) -> (Vec<String>, Vec<(u64, String)>) {
         let mut bloom_filter_columns = Vec::new();
         let mut indexed_columns = Vec::new();
@@ -191,8 +191,7 @@ impl CachedTableData {
             indexed_columns.push((col.column_id, col.column_name.clone()));
         }
 
-        // Add _seq system column (always present for Bloom filters and stats)
-        bloom_filter_columns.push(SystemColumnNames::SEQ.to_string());
+        // Add _seq system column for range stats; Bloom filters are kept to PK columns.
         indexed_columns.push((0, SystemColumnNames::SEQ.to_string())); // _seq uses column_id 0
 
         (bloom_filter_columns, indexed_columns)
@@ -283,7 +282,7 @@ impl CachedTableData {
             })
     }
 
-    /// Get cached Bloom filter columns (PRIMARY KEY + _seq)
+    /// Get cached Bloom filter columns (PRIMARY KEY columns)
     ///
     /// These columns are computed once when the cache entry is created and
     /// remain constant for the lifetime of this schema version. Used for
@@ -367,5 +366,37 @@ mod tests {
 
         slot.set(third);
         assert_eq!(slot.get().unwrap().schema().field(0).name(), "third");
+    }
+
+    #[test]
+    fn cached_column_sets_keep_bloom_filters_to_primary_keys() {
+        use kalamdb_commons::{
+            models::{KalamDataType, NamespaceId, TableName},
+            schemas::{ColumnDefinition, TableOptions, TableType},
+        };
+
+        let table_def = TableDefinition::new(
+            NamespaceId::from("test"),
+            TableName::from("events"),
+            TableType::Shared,
+            vec![
+                ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+                ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
+            ],
+            TableOptions::shared(),
+            None,
+        )
+        .expect("table definition");
+
+        let cached = CachedTableData::new(Arc::new(table_def));
+
+        assert_eq!(cached.bloom_filter_columns(), &["id".to_string()]);
+        assert_eq!(
+            cached.indexed_columns(),
+            &[
+                (1, "id".to_string()),
+                (0, SystemColumnNames::SEQ.to_string())
+            ]
+        );
     }
 }

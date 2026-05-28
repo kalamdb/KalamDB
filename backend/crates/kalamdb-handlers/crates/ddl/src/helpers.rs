@@ -1,1 +1,1 @@
-pub use kalamdb_handlers_support::{audit, guards, storage, table_creation};
+pub use kalamdb_handlers_support::{async_blocking, audit, guards, storage, table_creation};

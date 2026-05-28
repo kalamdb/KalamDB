@@ -126,7 +126,7 @@ export default function StreamingTopics() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Topics</CardTitle>
+          <CardTitle>Topics</CardTitle>
           <CardDescription>
             {sortedTopics.length} topic{sortedTopics.length === 1 ? "" : "s"} visible
           </CardDescription>

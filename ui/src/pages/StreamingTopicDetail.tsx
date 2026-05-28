@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fieldLabelClassName } from "@/components/layout/typography";
 import { formatDate, formatTimestamp } from "@/lib/formatters";
 
 function formatNullableTimestamp(value: string | null): string {
@@ -256,24 +257,24 @@ export default function StreamingTopicDetail() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Topic Summary</CardTitle>
+              <CardTitle>Topic Summary</CardTitle>
               <CardDescription className="font-mono text-xs">{selectedTopic.topicId}</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-4">
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Partitions</p>
+                <p className={fieldLabelClassName}>Partitions</p>
                 <p className="font-medium">{selectedTopic.partitions}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Routes</p>
+                <p className={fieldLabelClassName}>Routes</p>
                 <p className="font-medium">{selectedTopic.routeCount}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Created</p>
+                <p className={fieldLabelClassName}>Created</p>
                 <p className="font-mono text-xs">{formatNullableTimestamp(selectedTopic.createdAt)}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Updated</p>
+                <p className={fieldLabelClassName}>Updated</p>
                 <p className="font-mono text-xs">{formatNullableTimestamp(selectedTopic.updatedAt)}</p>
               </div>
             </CardContent>
@@ -318,7 +319,7 @@ export default function StreamingTopicDetail() {
             <TabsContent value="messages" className="mt-0 flex flex-col gap-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Inspect Messages</CardTitle>
+                  <CardTitle>Inspect Messages</CardTitle>
                   <CardDescription>{messages.length} row{messages.length === 1 ? "" : "s"} in the current inspector result</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
@@ -334,7 +335,7 @@ export default function StreamingTopicDetail() {
 
                     <div className="grid gap-3 md:grid-cols-6">
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Mode</p>
+                        <p className={fieldLabelClassName}>Mode</p>
                         <Select value={readMode} onValueChange={(value) => setReadMode(value as ConsumeReadMode)}>
                           <SelectTrigger aria-label="Mode">
                             <SelectValue />
@@ -348,7 +349,7 @@ export default function StreamingTopicDetail() {
                         </Select>
                       </div>
                       <div className="flex flex-col gap-1 md:col-span-2">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Group ID</p>
+                        <p className={fieldLabelClassName}>Group ID</p>
                         <Input
                           aria-label="Group ID"
                           value={groupId}
@@ -357,7 +358,7 @@ export default function StreamingTopicDetail() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Partition</p>
+                        <p className={fieldLabelClassName}>Partition</p>
                         <Select value={partitionId} onValueChange={setPartitionId}>
                           <SelectTrigger aria-label="Partition">
                             <SelectValue placeholder={partitionOptions[0] ?? "0"} />
@@ -372,7 +373,7 @@ export default function StreamingTopicDetail() {
                         </Select>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Start</p>
+                        <p className={fieldLabelClassName}>Start</p>
                         <Select value={startMode} onValueChange={(value) => setStartMode(value as ConsumeStartMode)}>
                           <SelectTrigger aria-label="Start">
                             <SelectValue />
@@ -387,7 +388,7 @@ export default function StreamingTopicDetail() {
                         </Select>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Offset</p>
+                        <p className={fieldLabelClassName}>Offset</p>
                         <Input
                           aria-label="Offset"
                           value={offsetValue}
@@ -396,15 +397,15 @@ export default function StreamingTopicDetail() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Limit</p>
+                        <p className={fieldLabelClassName}>Limit</p>
                         <Input aria-label="Limit" value={limitValue} onChange={(event) => setLimitValue(event.target.value)} />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Timeout (s)</p>
+                        <p className={fieldLabelClassName}>Timeout (s)</p>
                         <Input aria-label="Timeout" value={timeoutValue} onChange={(event) => setTimeoutValue(event.target.value)} />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Decode</p>
+                        <p className={fieldLabelClassName}>Decode</p>
                         <Select value={decodeMode} onValueChange={(value) => setDecodeMode(value as PayloadDecodeMode)}>
                           <SelectTrigger aria-label="Decode">
                             <SelectValue />
@@ -552,7 +553,7 @@ export default function StreamingTopicDetail() {
             <TabsContent value="offsets" className="mt-0">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Committed Offsets</CardTitle>
+                  <CardTitle>Committed Offsets</CardTitle>
                   <CardDescription>{offsets.length} row{offsets.length === 1 ? "" : "s"} for {selectedTopic.topicId}</CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -595,7 +596,7 @@ export default function StreamingTopicDetail() {
             <TabsContent value="sql" className="mt-0">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">SQL Studio Shortcuts</CardTitle>
+                  <CardTitle>SQL Studio Shortcuts</CardTitle>
                   <CardDescription>Each shortcut opens SQL Studio with the exact query shown beside it.</CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3">

@@ -19,7 +19,7 @@ use kalamdb_core::{
 use kalamdb_filestore::{HealthStatus, StorageHealthService};
 use kalamdb_sql::ddl::CheckStorageStatement;
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 /// Typed handler for STORAGE CHECK statements
 pub struct CheckStorageHandler {
@@ -59,15 +59,16 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
         // Get the storage by ID (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
         let sid = statement.storage_id.clone();
-        let storage = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().storages().get_storage_by_id(&sid)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
-        .into_kalamdb_error("Failed to get storage")?
-        .ok_or_else(|| {
-            KalamDbError::NotFound(format!("Storage '{}' not found", statement.storage_id.as_str()))
-        })?;
+        let storage =
+            run_blocking(move || app_ctx.system_tables().storages().get_storage_by_id(&sid))
+                .await
+                .into_kalamdb_error("Failed to get storage")?
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Storage '{}' not found",
+                        statement.storage_id.as_str()
+                    ))
+                })?;
 
         // Run the health check
         let mut health_result = StorageHealthService::run_full_health_check(&storage)

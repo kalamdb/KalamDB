@@ -780,9 +780,9 @@ ensure_dex_for_oidc_tests() {
 
 npm_install_dir() {
     if [ -f package-lock.json ]; then
-        npm ci --no-audit --no-fund
+        npm ci --include=dev --no-audit --no-fund
     else
-        npm install --no-audit --no-fund --no-package-lock
+        npm install --include=dev --no-audit --no-fund --no-package-lock
     fi
 }
 

@@ -18,6 +18,7 @@ use kalamdb_sql::ddl::DropNamespaceStatement;
 
 use crate::{
     helpers::{
+        async_blocking::run_blocking,
         audit,
         guards::{block_anonymous_write, require_admin},
     },
@@ -65,13 +66,12 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         // Check if namespace exists (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
-        let (namespace_opt, tables_in_namespace) = tokio::task::spawn_blocking(move || {
+        let (namespace_opt, tables_in_namespace) = run_blocking(move || {
             let ns = app_ctx.system_tables().namespaces().get_namespace(&ns_id)?;
             let tables = app_ctx.system_tables().tables().list_tables_in_namespace(&ns_id)?;
             Ok::<_, KalamDbError>((ns, tables))
         })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        .await?;
 
         let namespace = match namespace_opt {
             Some(ns) => ns,
@@ -94,11 +94,9 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
             let app_ctx = self.app_context.clone();
             let tid = table_id.clone();
-            let storage_details = tokio::task::spawn_blocking(move || {
-                capture_storage_cleanup_details(&app_ctx, &tid, table_type)
-            })
-            .await
-            .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+            let storage_details =
+                run_blocking(move || capture_storage_cleanup_details(&app_ctx, &tid, table_type))
+                    .await?;
 
             self.app_context
                 .applier()

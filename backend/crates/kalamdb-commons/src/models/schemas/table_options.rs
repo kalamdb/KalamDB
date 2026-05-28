@@ -1,8 +1,89 @@
 //! Type-safe table options for different table types
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{fmt, str::FromStr};
+
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{schemas::policy::FlushPolicy, StorageId, TableAccess};
+
+/// Compression algorithms supported by KalamDB's Parquet cold-storage writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableCompression {
+    None,
+    #[default]
+    Snappy,
+    Zstd,
+}
+
+impl TableCompression {
+    pub const SUPPORTED_VALUES: &'static str = "none, snappy, zstd";
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            TableCompression::None => "none",
+            TableCompression::Snappy => "snappy",
+            TableCompression::Zstd => "zstd",
+        }
+    }
+}
+
+impl fmt::Display for TableCompression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for TableCompression {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for TableCompression {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct TableCompressionVisitor;
+
+        impl de::Visitor<'_> for TableCompressionVisitor {
+            type Value = TableCompression;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a supported table compression: none, snappy, or zstd")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                value.parse().map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(TableCompressionVisitor)
+    }
+}
+
+impl FromStr for TableCompression {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Ok(TableCompression::None),
+            "snappy" => Ok(TableCompression::Snappy),
+            "zstd" => Ok(TableCompression::Zstd),
+            other => Err(format!(
+                "Invalid COMPRESSION '{}'. Supported: {}",
+                other,
+                TableCompression::SUPPORTED_VALUES
+            )),
+        }
+    }
+}
 
 /// **Q: How does per-user storage assignment work with use_user_storage option?** → A: Lookup
 /// chain: table.use_user_storage=true → check user.storage_mode → if "region" use user.storage_id,
@@ -25,10 +106,9 @@ pub struct UserTableOptions {
     /// Flush policy (e.g. time-based, size-based or both)
     pub flush_policy: Option<FlushPolicy>,
 
-    /// Compression algorithm (none, snappy, lz4, zstd)
-    /// TODO: Make this an enum
+    /// Compression algorithm for Parquet cold-storage files.
     #[serde(default = "default_compression")]
-    pub compression: String,
+    pub compression: TableCompression,
 }
 
 /// Table options for SHARED tables
@@ -41,10 +121,9 @@ pub struct SharedTableOptions {
 
     pub flush_policy: Option<FlushPolicy>,
 
-    /// Compression algorithm (none, snappy, lz4, zstd)
-    /// TODO: Make this an enum
+    /// Compression algorithm for Parquet cold-storage files.
     #[serde(default = "default_compression")]
-    pub compression: String,
+    pub compression: TableCompression,
 }
 
 /// Table options for STREAM tables
@@ -60,10 +139,6 @@ pub struct StreamTableOptions {
     /// Maximum stream size in bytes (0 = unlimited)
     #[serde(default)]
     pub max_stream_size_bytes: u64,
-
-    /// Compression algorithm (none, snappy, lz4, zstd)
-    #[serde(default = "default_compression")]
-    pub compression: String,
 }
 
 /// Table options for SYSTEM tables
@@ -208,13 +283,21 @@ impl TableOptions {
         TableOptions::System(SystemTableOptions::default())
     }
 
-    /// Get the compression setting (common across all types)
+    /// Get the table-level Parquet compression setting when applicable.
     pub fn compression(&self) -> &str {
         match self {
-            TableOptions::User(opts) => &opts.compression,
-            TableOptions::Shared(opts) => &opts.compression,
-            TableOptions::Stream(opts) => &opts.compression,
-            TableOptions::System(_) => "none", // System tables don't use compression
+            TableOptions::User(opts) => opts.compression.as_str(),
+            TableOptions::Shared(opts) => opts.compression.as_str(),
+            TableOptions::Stream(_) | TableOptions::System(_) => "none",
+        }
+    }
+
+    /// Get the configured Parquet compression codec for table types that write cold segments.
+    pub fn parquet_compression(&self) -> TableCompression {
+        match self {
+            TableOptions::User(opts) => opts.compression,
+            TableOptions::Shared(opts) => opts.compression,
+            TableOptions::Stream(_) | TableOptions::System(_) => TableCompression::None,
         }
     }
 
@@ -253,8 +336,8 @@ fn default_true() -> bool {
     true
 }
 
-fn default_compression() -> String {
-    "snappy".to_string()
+fn default_compression() -> TableCompression {
+    TableCompression::default()
 }
 
 fn default_system_cache_ttl() -> u64 {
@@ -293,7 +376,6 @@ impl Default for StreamTableOptions {
             ttl_seconds: 86400, // 24 hours default
             eviction_strategy: default_eviction_strategy(),
             max_stream_size_bytes: 0,
-            compression: default_compression(),
         }
     }
 }
@@ -317,7 +399,7 @@ mod tests {
     fn test_user_table_options_default() {
         let opts = UserTableOptions::default();
         assert!(opts.flush_policy.is_none());
-        assert_eq!(opts.compression, "snappy");
+        assert_eq!(opts.compression, TableCompression::Snappy);
     }
 
     #[test]
@@ -325,7 +407,7 @@ mod tests {
         let opts = SharedTableOptions::default();
         assert_eq!(opts.access_level, Some(TableAccess::Private));
         assert!(opts.flush_policy.is_none());
-        assert_eq!(opts.compression, "snappy");
+        assert_eq!(opts.compression, TableCompression::Snappy);
     }
 
     #[test]
@@ -334,7 +416,6 @@ mod tests {
         assert_eq!(opts.ttl_seconds, 86400);
         assert_eq!(opts.eviction_strategy, "time_based");
         assert_eq!(opts.max_stream_size_bytes, 0);
-        assert_eq!(opts.compression, "snappy");
     }
 
     #[test]
@@ -369,7 +450,7 @@ mod tests {
     fn test_compression_getter() {
         assert_eq!(TableOptions::user().compression(), "snappy");
         assert_eq!(TableOptions::shared().compression(), "snappy");
-        assert_eq!(TableOptions::stream(3600).compression(), "snappy");
+        assert_eq!(TableOptions::stream(3600).compression(), "none");
         assert_eq!(TableOptions::system().compression(), "none");
     }
 
@@ -404,14 +485,37 @@ mod tests {
             ttl_seconds: 1800,
             eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
-            compression: "lz4".to_string(),
         });
 
-        assert_eq!(custom_stream.compression(), "lz4");
+        assert_eq!(custom_stream.compression(), "none");
         if let TableOptions::Stream(opts) = custom_stream {
             assert_eq!(opts.ttl_seconds, 1800);
             assert_eq!(opts.eviction_strategy, "size_based");
             assert_eq!(opts.max_stream_size_bytes, 1_000_000_000);
         }
+    }
+
+    #[test]
+    fn test_table_compression_supported_values() {
+        assert_eq!("none".parse::<TableCompression>().unwrap(), TableCompression::None);
+        assert_eq!("snappy".parse::<TableCompression>().unwrap(), TableCompression::Snappy);
+        assert_eq!("ZSTD".parse::<TableCompression>().unwrap(), TableCompression::Zstd);
+        assert!("lz4".parse::<TableCompression>().is_err());
+    }
+
+    #[test]
+    fn test_table_compression_serializes_as_lowercase_string() {
+        let json = serde_json::to_string(&TableCompression::Zstd).unwrap();
+        assert_eq!(json, "\"zstd\"");
+        let decoded: TableCompression = serde_json::from_str("\"snappy\"").unwrap();
+        assert_eq!(decoded, TableCompression::Snappy);
+    }
+
+    #[test]
+    fn test_table_compression_decodes_persisted_string_shape() {
+        let bytes = flexbuffers::to_vec("zstd").unwrap();
+        let decoded: TableCompression = flexbuffers::from_slice(&bytes).unwrap();
+
+        assert_eq!(decoded, TableCompression::Zstd);
     }
 }

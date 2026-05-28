@@ -33,7 +33,7 @@ export function mapSettingsRows(rows: Setting[]): Setting[] {
 
 export async function fetchSystemStats(): Promise<SystemStatsMap> {
   const db = getDb();
-  const rows = await db.select().from(system_stats).limit(100);
+  const rows = await db.select().from(system_stats).limit(150);
   const stats: SystemStatsMap = {};
   for (const row of rows) {
     if (row.metric_name) {
@@ -45,9 +45,15 @@ export async function fetchSystemStats(): Promise<SystemStatsMap> {
 
 export const DASHBOARD_METRIC_KEYS = [
   "active_connections",
+  "active_connections_peak",
   "active_subscriptions",
   "active_subscriptions_peak",
-  "websocket_sessions_peak",
+  "subscription_changes_delivered_per_second",
+  "pubsub_active_consumers",
+  "pubsub_messages_consumed_per_second",
+  "pubsub_messages_consumed_peak_per_second",
+  "pubsub_kb_consumed_per_second",
+  "topic_cache_topic_count",
   "memory_usage_mb",
   "cpu_usage_percent",
   "select_queries_per_second",

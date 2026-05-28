@@ -12,6 +12,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::ShowStoragesStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Typed handler for SHOW STORAGES statements
 pub struct ShowStoragesHandler {
     app_context: Arc<AppContext>,
@@ -32,11 +34,8 @@ impl TypedStatementHandler<ShowStoragesStatement> for ShowStoragesHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         // Query all storages (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
-        let batches = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().storages().scan_all_storages()
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let batches =
+            run_blocking(move || app_ctx.system_tables().storages().scan_all_storages()).await?;
 
         // Return as query result
         let row_count = batches.num_rows();

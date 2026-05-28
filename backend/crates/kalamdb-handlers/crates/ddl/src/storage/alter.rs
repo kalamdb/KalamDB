@@ -14,7 +14,7 @@ use kalamdb_core::{
 use kalamdb_filestore::StorageHealthService;
 use kalamdb_sql::ddl::AlterStorageStatement;
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 /// Typed handler for ALTER STORAGE statements
 pub struct AlterStorageHandler {
@@ -40,18 +40,16 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         let storage_id = statement.storage_id.clone();
         let app_ctx = self.app_context.clone();
         let sid = storage_id.clone();
-        let mut storage = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().storages().get_storage_by_id(&sid)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
-        .into_kalamdb_error("Failed to get storage")?
-        .ok_or_else(|| {
-            KalamDbError::InvalidOperation(format!(
-                "Storage '{}' not found",
-                statement.storage_id.as_str()
-            ))
-        })?;
+        let mut storage =
+            run_blocking(move || app_ctx.system_tables().storages().get_storage_by_id(&sid))
+                .await
+                .into_kalamdb_error("Failed to get storage")?
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Storage '{}' not found",
+                        statement.storage_id.as_str()
+                    ))
+                })?;
 
         // Update fields if provided
         if let Some(name) = statement.storage_name {
@@ -130,12 +128,9 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
 
         // Save updated storage (offload sync RocksDB write)
         let app_ctx = self.app_context.clone();
-        tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().storages().update_storage(storage)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))?
-        .into_kalamdb_error("Failed to update storage")?;
+        run_blocking(move || app_ctx.system_tables().storages().update_storage(storage))
+            .await
+            .into_kalamdb_error("Failed to update storage")?;
 
         // Invalidate storage cache to ensure fresh data on next access
         storage_registry.invalidate(&storage_id);

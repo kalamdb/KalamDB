@@ -54,12 +54,11 @@ type ArrayRef = Arc<dyn Array>;
 /// schema column is present and correctly typed so downstream constraint validation can see
 /// omitted columns instead of having them silently materialized to placeholder values.
 pub fn coerce_rows(rows: Vec<Row>, schema: &SchemaRef) -> Result<Vec<Row>, String> {
-    let _span = tracing::info_span!(
+    let _span = kalamdb_observability::kdb_debug_span_entered!(
         "coerce_rows",
         row_count = rows.len(),
         num_fields = schema.fields().len()
-    )
-    .entered();
+    );
     let typed_nulls = get_typed_nulls(schema);
 
     rows.into_iter()

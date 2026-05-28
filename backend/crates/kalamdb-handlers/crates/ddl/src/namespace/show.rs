@@ -12,6 +12,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::ShowNamespacesStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Typed handler for SHOW NAMESPACES statements
 pub struct ShowNamespacesHandler {
     app_context: Arc<AppContext>,
@@ -34,11 +36,9 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
 
         // Query all namespaces via the table provider (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
-        let batches = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().namespaces().scan_all_namespaces()
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let batches =
+            run_blocking(move || app_ctx.system_tables().namespaces().scan_all_namespaces())
+                .await?;
 
         // Log query operation
         let duration = start_time.elapsed().as_secs_f64() * 1000.0;

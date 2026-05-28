@@ -679,7 +679,6 @@ mod tests {
             ttl_seconds: 1800,
             eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
-            compression: "lz4".to_string(),
         });
 
         table.set_options(custom_opts);

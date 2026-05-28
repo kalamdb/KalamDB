@@ -13,6 +13,7 @@ categories = ["database"]
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-row-filter = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-system = { path = "../kalamdb-system" }

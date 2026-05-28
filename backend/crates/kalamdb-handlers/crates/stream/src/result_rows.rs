@@ -1,11 +1,39 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use datafusion::arrow::{
+use arrow::{
     array::{ArrayRef, Int32Array, Int64Array, StringBuilder},
-    datatypes::{DataType, Field, Schema},
+    datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
 use kalamdb_core::{error::KalamDbError, sql::context::ExecutionResult};
+
+fn ack_schema() -> SchemaRef {
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
+        .get_or_init(|| {
+            Arc::new(Schema::new(vec![
+                Field::new("topic", DataType::Utf8, false),
+                Field::new("group_id", DataType::Utf8, false),
+                Field::new("partition", DataType::Int32, false),
+                Field::new("committed_offset", DataType::Int64, false),
+            ]))
+        })
+        .clone()
+}
+
+fn reset_consumer_group_schema() -> SchemaRef {
+    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
+    SCHEMA
+        .get_or_init(|| {
+            Arc::new(Schema::new(vec![
+                Field::new("topic", DataType::Utf8, false),
+                Field::new("group_id", DataType::Utf8, false),
+                Field::new("partition", DataType::Int32, false),
+                Field::new("next_offset", DataType::Int64, false),
+            ]))
+        })
+        .clone()
+}
 
 pub fn ack_result(
     topic_name: &str,
@@ -13,12 +41,7 @@ pub fn ack_result(
     partition_id: u32,
     upto_offset: u64,
 ) -> Result<ExecutionResult, KalamDbError> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("topic", DataType::Utf8, false),
-        Field::new("group_id", DataType::Utf8, false),
-        Field::new("partition", DataType::Int32, false),
-        Field::new("committed_offset", DataType::Int64, false),
-    ]));
+    let schema = ack_schema();
 
     let mut topic_builder = StringBuilder::new();
     let mut group_builder = StringBuilder::new();
@@ -51,12 +74,7 @@ pub fn reset_consumer_group_result(
     partition_id: u32,
     next_offset: u64,
 ) -> Result<ExecutionResult, KalamDbError> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("topic", DataType::Utf8, false),
-        Field::new("group_id", DataType::Utf8, false),
-        Field::new("partition", DataType::Int32, false),
-        Field::new("next_offset", DataType::Int64, false),
-    ]));
+    let schema = reset_consumer_group_schema();
 
     let mut topic_builder = StringBuilder::new();
     let mut group_builder = StringBuilder::new();

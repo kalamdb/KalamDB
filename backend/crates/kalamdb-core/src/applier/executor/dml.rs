@@ -607,18 +607,17 @@ impl DmlExecutor {
                             ))
                         })?;
 
-                    provider
-                        .validate_insert_batch_rows(
-                            user_id,
-                            mutations.iter().map(|mutation| &mutation.payload),
-                        )
-                        .await
-                        .map_err(|error| {
+                    let batch_rows: Vec<&Row> =
+                        mutations.iter().map(|mutation| &mutation.payload).collect();
+
+                    provider.validate_insert_batch_rows(user_id, batch_rows).await.map_err(
+                        |error| {
                             ApplierError::Execution(format!(
                                 "Failed to insert batch row: {}",
                                 error
                             ))
-                        })?;
+                        },
+                    )?;
 
                     return Ok(());
                 }

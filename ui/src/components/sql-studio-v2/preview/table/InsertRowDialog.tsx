@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { chromeLabelClassName } from "@/components/layout/typography";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -109,10 +111,10 @@ export function InsertRowDialog({ open, table, onSubmit, onClose }: InsertRowDia
                   <span className="font-medium text-foreground">{col.name}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">{col.dataType}</span>
                   {col.isPrimaryKey && (
-                    <span className="text-[10px] uppercase tracking-wide text-yellow-600 dark:text-yellow-500">PK</span>
+                    <span className={cn(chromeLabelClassName, "text-yellow-600 dark:text-yellow-500")}>PK</span>
                   )}
                   {!col.isNullable && (
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">required</span>
+                    <span className={chromeLabelClassName}>required</span>
                   )}
                 </span>
 

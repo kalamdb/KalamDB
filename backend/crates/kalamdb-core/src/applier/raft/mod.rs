@@ -11,6 +11,7 @@
 mod provider_meta_applier;
 mod provider_shared_data_applier;
 mod provider_user_data_applier;
+mod utils;
 
 pub use provider_meta_applier::ProviderMetaApplier;
 pub use provider_shared_data_applier::ProviderSharedDataApplier;

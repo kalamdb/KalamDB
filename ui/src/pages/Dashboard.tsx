@@ -3,6 +3,7 @@ import {
   Clock3,
   Database,
   Gauge,
+  MessageSquare,
   RefreshCw,
   Search,
   Timer,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { DashboardClusterOverview } from "@/components/dashboard/ClusterOverview";
 import { MetricsChart } from "@/components/dashboard/MetricsChart";
+import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
 import { StorageUsageChart } from "@/components/dashboard/StorageUsageChart";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { useAuth } from "@/lib/auth";
@@ -31,12 +33,14 @@ import {
 import {
   useCheckStorageHealthMutation,
   useGetClusterSnapshotQuery,
+  useGetSlowQueriesQuery,
   useGetStatsQuery,
   useGetStoragesQuery,
 } from "@/store/apiSlice";
 
 const EMPTY_STATS: SystemStatsMap = {};
 const DASHBOARD_STATS_POLL_INTERVAL_MS = 5000;
+const DASHBOARD_SLOW_QUERIES_POLL_INTERVAL_MS = 15000;
 const HISTORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HISTORY_RAW_AGE_MS = 60 * 60 * 1000;
 const HISTORY_MINUTE_AGE_MS = 24 * 60 * 60 * 1000;
@@ -65,6 +69,22 @@ function formatDecimal(value: string | undefined, digits = 2): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+function cardItemsClass(itemCount: number): string {
+  if (itemCount === 1) {
+    return "flex justify-center";
+  }
+  if (itemCount === 3) {
+    return "grid grid-cols-3 gap-2";
+  }
+  return "grid grid-cols-2 gap-3";
+}
+
+function cardValueClass(itemCount: number): string {
+  return itemCount > 2
+    ? "max-w-full break-words text-center text-xl font-semibold leading-tight tabular-nums"
+    : "max-w-full break-words text-center text-2xl font-semibold leading-tight tabular-nums";
 }
 
 function compactDashboardSamples(samples: DashboardMetricSample[]): DashboardMetricSample[] {
@@ -153,6 +173,15 @@ export default function Dashboard() {
   } = useGetClusterSnapshotQuery(undefined, {
     pollingInterval: 5000,
   });
+  const {
+    data: slowQueries = [],
+    isFetching: isSlowQueriesLoading,
+    refetch: refetchSlowQueries,
+  } = useGetSlowQueriesQuery(10, {
+    pollingInterval: DASHBOARD_SLOW_QUERIES_POLL_INTERVAL_MS,
+    refetchOnFocus: true,
+    refetchOnReconnect: true,
+  });
   const [checkStorageHealth, { data: storageHealth, isLoading: isStorageHealthLoading, error: storageHealthError }] =
     useCheckStorageHealthMutation();
 
@@ -185,7 +214,7 @@ export default function Dashboard() {
   }, [checkStorageHealth, selectedStorageId]);
 
   async function handleRefresh(): Promise<void> {
-    await Promise.all([refetchStats(), refetchStorages(), refetchCluster()]);
+    await Promise.all([refetchStats(), refetchStorages(), refetchCluster(), refetchSlowQueries()]);
 
     if (selectedStorageId) {
       await checkStorageHealth({ storageId: selectedStorageId, extended: true });
@@ -222,9 +251,20 @@ export default function Dashboard() {
       title: "Connections & Subscriptions",
       items: [
         { label: "Connections", value: parseInteger(currentStats.active_connections).toLocaleString() },
+        { label: "Peak Connections", value: parseInteger(currentStats.active_connections_peak).toLocaleString() },
         { label: "Subscriptions", value: parseInteger(currentStats.active_subscriptions).toLocaleString() },
+        { label: "Changes/s", value: formatDecimal(currentStats.subscription_changes_delivered_per_second) },
       ],
       icon: Wifi,
+    },
+    {
+      title: "Pub/Sub",
+      items: [
+        { label: "Messages", value: parseInteger(currentStats.pubsub_messages_published_total).toLocaleString() },
+        { label: "Consumers", value: parseInteger(currentStats.topic_consumer_group_count).toLocaleString() },
+        { label: "Topics", value: parseInteger(currentStats.topic_cache_topic_count).toLocaleString() },
+      ],
+      icon: MessageSquare,
     },
     {
       title: "Queries Total",
@@ -272,19 +312,21 @@ export default function Dashboard() {
         </div>
       }
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
         {cards.map((card) => (
-          <Card key={card.title}>
-            <CardContent className="pt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{card.title}</p>
-                <card.icon className="h-4 w-4 text-muted-foreground" />
+          <Card key={card.title} className="min-h-[142px]">
+            <CardContent className="flex flex-1 flex-col justify-center text-center">
+              <div className="relative mb-3 flex min-h-8 items-start justify-center px-5">
+                <p className="text-center text-xs uppercase leading-snug tracking-[0.14em] text-muted-foreground">
+                  {card.title}
+                </p>
+                <card.icon className="absolute right-0 top-0 h-4 w-4 text-muted-foreground" />
               </div>
-              <div className={card.items.length > 1 ? "grid grid-cols-2 gap-3" : ""}>
+              <div className={cardItemsClass(card.items.length)}>
                 {card.items.map((item) => (
-                  <div key={item.label} className="min-w-0">
-                    <p className="truncate text-2xl font-semibold">{item.value}</p>
-                    <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+                  <div key={item.label} className="flex min-w-0 flex-col items-center text-center">
+                    <p className={cardValueClass(card.items.length)}>{item.value}</p>
+                    <p className="text-center text-xs leading-snug text-muted-foreground">{item.label}</p>
                   </div>
                 ))}
               </div>
@@ -293,7 +335,11 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <MetricsChart data={visibleMetricSamples} isLoading={isLoading && visibleMetricSamples.length === 0} />
+      <MetricsChart
+        data={visibleMetricSamples}
+        isLoading={isLoading && visibleMetricSamples.length === 0}
+        trailingPanel={<SlowQueriesPanel queries={slowQueries} isLoading={isSlowQueriesLoading && slowQueries.length === 0} />}
+      />
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.95fr)]">
         <StorageUsageChart

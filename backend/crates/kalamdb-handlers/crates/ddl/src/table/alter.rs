@@ -1017,6 +1017,9 @@ fn apply_table_property_updates(
             if updates.access_level.is_some() {
                 return Err(unsupported_table_property("ACCESS_LEVEL", "STREAM"));
             }
+            if updates.compression.is_some() {
+                return Err(unsupported_table_property("COMPRESSION", "STREAM"));
+            }
 
             let mut changed = false;
             let mut changes = Vec::new();
@@ -1036,12 +1039,6 @@ fn apply_table_property_updates(
                 opts.max_stream_size_bytes = max_stream_size_bytes;
                 changes.push(format!("MAX_STREAM_SIZE_BYTES={}", max_stream_size_bytes));
             }
-            if let Some(compression) = &updates.compression {
-                changed |= &opts.compression != compression;
-                opts.compression = compression.clone();
-                changes.push(format!("COMPRESSION={}", compression));
-            }
-
             Ok((format_table_property_change(changes), changed))
         },
         TableOptions::System(_) => Err(KalamDbError::InvalidOperation(

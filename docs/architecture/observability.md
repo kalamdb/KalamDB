@@ -13,6 +13,25 @@ The observability crate is now the source of truth for:
 - manifest/parquet activity and flush counters
 - open-file breakdowns used by health logging and `system.stats`
 
+## Traceability feature gate
+
+Runtime metrics and dashboard counters are separate from tracing spans. The admin UI relies on
+`system.stats`, so metrics remain enabled by default through `kalamdb-observability`'s `metrics`
+feature and are still compiled when traceability is disabled.
+
+Tracing spans and trace/debug events that sit on query, RocksDB, row serialization, DML collection,
+manifest, and Parquet hot paths must go through the `kalamdb-observability` macro facade instead of
+calling `tracing::*` directly. The server's default feature set includes `traceability` for current
+developer behavior. Production builds that want dashboard metrics without hot-path tracing can use:
+
+```bash
+cd backend && cargo build --release --no-default-features --features embedded-ui,mimalloc
+```
+
+The macros compile to no-ops without evaluating span fields or timing expressions when
+`traceability` is not enabled. This keeps the observability seam deep: callers express the span/event
+once, while the crate controls whether it becomes a `tracing` span or disappears at compile time.
+
 Query metrics are lock-free atomics on the hot path:
 
 - `queries_total`
@@ -29,6 +48,27 @@ Query metrics are lock-free atomics on the hot path:
 - `avg_query_latency_ms`
 
 The query rate is a bounded rolling window, and average latency is derived from accumulated execution time. Queries against `system.*` and `dba.*` tables are excluded from these counters so dashboard and administrative reads do not inflate user workload metrics. There is no background writer or persisted `dba` metrics table.
+
+Pub/sub and live-subscription metrics are also lock-free atomics or in-memory cache counts; dashboard reads do not scan topic message storage:
+
+- `pubsub_messages_published_total`
+- `pubsub_messages_published_per_second`
+- `pubsub_messages_published_peak_per_second`
+- `pubsub_bytes_published_total`
+- `pubsub_kb_published_per_second`
+- `pubsub_messages_consumed_total`
+- `pubsub_messages_consumed_per_second`
+- `pubsub_messages_consumed_peak_per_second`
+- `pubsub_bytes_consumed_total`
+- `pubsub_kb_consumed_per_second`
+- `pubsub_active_consumers`
+- `pubsub_active_consumers_peak`
+- `subscription_changes_delivered_total`
+- `subscription_changes_delivered_per_second`
+- `topic_consumer_group_count`
+- `topic_consumer_partition_count`
+
+Publish and consume counters are recorded only after successful topic writes or reads. Active consumer counts wrap HTTP and SQL consume requests, while consumer group totals come from the topic publisher's runtime state and restored offset metadata.
 
 Storage-adjacent observability counters are also maintained as lightweight atomics in `kalamdb-observability` and updated from the owning write paths:
 

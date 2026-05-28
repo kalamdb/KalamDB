@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use futures_util::future::try_join_all;
 use kalamdb_commons::{models::rows::Row, StorageKey, TableId};
 use kalamdb_store::IndexedEntityStore;
 use kalamdb_system::VectorMetric;
@@ -23,7 +24,10 @@ where
     FRow: FnMut(&T) -> &Row,
     FKey: FnMut(&T, &str) -> K,
 {
-    let mut ops_by_column: HashMap<String, Vec<(K, VectorHotOp)>> = HashMap::new();
+    let entries = entries.into_iter();
+    let (entry_count, _) = entries.size_hint();
+    let mut ops_by_column: HashMap<String, Vec<(K, VectorHotOp)>> =
+        HashMap::with_capacity(vector_columns.len());
 
     for entry in entries {
         let row = row_for(&entry);
@@ -37,19 +41,22 @@ where
                 continue;
             };
 
-            ops_by_column.entry(column_name.clone()).or_default().push((
-                key_for(&entry, pk.as_str()),
-                VectorHotOp::new(
-                    table_id.clone(),
-                    column_name.clone(),
-                    pk.clone(),
-                    VectorHotOpType::Upsert,
-                    Some(vector),
-                    None,
-                    *dimensions,
-                    VectorMetric::Cosine,
-                ),
-            ));
+            ops_by_column
+                .entry(column_name.clone())
+                .or_insert_with(|| Vec::with_capacity(entry_count))
+                .push((
+                    key_for(&entry, pk.as_str()),
+                    VectorHotOp::new(
+                        table_id.clone(),
+                        column_name.clone(),
+                        pk.clone(),
+                        VectorHotOpType::Upsert,
+                        Some(vector),
+                        None,
+                        *dimensions,
+                        VectorMetric::Cosine,
+                    ),
+                ));
         }
     }
 
@@ -65,22 +72,26 @@ pub(crate) fn build_vector_delete_ops<K, FKey>(
 where
     FKey: FnMut(&str) -> K,
 {
-    let mut ops_by_column: HashMap<String, Vec<(K, VectorHotOp)>> = HashMap::new();
+    let mut ops_by_column: HashMap<String, Vec<(K, VectorHotOp)>> =
+        HashMap::with_capacity(vector_columns.len());
 
     for (column_name, dimensions) in vector_columns {
-        ops_by_column.entry(column_name.clone()).or_default().push((
-            key_for(pk),
-            VectorHotOp::new(
-                table_id.clone(),
-                column_name.clone(),
-                pk.to_string(),
-                VectorHotOpType::Delete,
-                None,
-                None,
-                *dimensions,
-                VectorMetric::Cosine,
-            ),
-        ));
+        ops_by_column.insert(
+            column_name.clone(),
+            vec![(
+                key_for(pk),
+                VectorHotOp::new(
+                    table_id.clone(),
+                    column_name.clone(),
+                    pk.to_string(),
+                    VectorHotOpType::Delete,
+                    None,
+                    None,
+                    *dimensions,
+                    VectorMetric::Cosine,
+                ),
+            )],
+        );
     }
 
     ops_by_column
@@ -94,20 +105,26 @@ pub(crate) async fn stage_vector_ops_by_column<K>(
 where
     K: StorageKey + Clone + Send + Sync + 'static,
 {
-    for (column_name, ops) in ops_by_column {
+    let futures = ops_by_column.into_iter().map(|(column_name, ops)| {
         let store = vector_stores.get(&column_name).ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Missing cached vector store for column '{}'",
                 column_name
             ))
         })?;
-        store.insert_batch_async(ops).await.map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to {} ops for column '{}': {}",
-                action, column_name, error
-            ))
-        })?;
-    }
+        let store = Arc::clone(store);
+        Ok(async move {
+            store.insert_batch_async(ops).await.map_err(|error| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to {} ops for column '{}': {}",
+                    action, column_name, error
+                ))
+            })
+        })
+    });
+
+    let futures = futures.collect::<Result<Vec<_>, KalamDbError>>()?;
+    try_join_all(futures).await?;
 
     Ok(())
 }

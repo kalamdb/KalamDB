@@ -5,9 +5,8 @@
 //!
 //! # Performance Features
 //!
-//! - **Column Projection**: Only read the columns you need, reducing I/O and memory
-//! - **Row Group Pruning via Bloom Filters**: Skip entire row groups where the bloom filter reports
-//!   a value is "definitely not present"
+//! - **Column Projection**: Pushes a Parquet projection mask so unneeded column chunks are not
+//!   read or decoded
 //! - **Streaming I/O**: All reads use `ParquetObjectReader` — reads only the footer eagerly and
 //!   fetches column chunks on demand via range requests (remote) or file seeks (local). No
 //!   full-file downloads.

@@ -20,7 +20,7 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::CreateNamespaceStatement;
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 /// Typed handler for CREATE NAMESPACE statements
 pub struct CreateNamespaceHandler {
@@ -92,11 +92,9 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         let namespace_id = NamespaceId::new(name);
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
-        let existing = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().namespaces().get_namespace(&ns_id)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let existing =
+            run_blocking(move || app_ctx.system_tables().namespaces().get_namespace(&ns_id))
+                .await?;
 
         if existing.is_some() {
             if statement.if_not_exists {

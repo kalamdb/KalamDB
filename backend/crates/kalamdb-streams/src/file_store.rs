@@ -201,8 +201,7 @@ impl FileStreamLogStore {
 
         let mut expired_dirs = Vec::new();
         visit_dirs(base_dir, |window_dir| {
-            if let Some((_window_start, window_end)) = Self::parse_window_dir(&window_dir)
-            {
+            if let Some((_window_start, window_end)) = Self::parse_window_dir(&window_dir) {
                 if window_end <= before_time {
                     expired_dirs.push(window_dir);
                 }
@@ -530,7 +529,9 @@ impl FileStreamLogStore {
                 return Ok(true);
             }
             visit_dirs(&window_dir, |shard_dir| {
-                for entry in fs::read_dir(&shard_dir).map_err(|e| StreamLogError::Io(e.to_string()))? {
+                for entry in
+                    fs::read_dir(&shard_dir).map_err(|e| StreamLogError::Io(e.to_string()))?
+                {
                     let entry = entry.map_err(|e| StreamLogError::Io(e.to_string()))?;
                     let path = entry.path();
                     if !path.is_file() {
@@ -911,7 +912,10 @@ mod tests {
             "expected stream rows to be stored directly as <user_id>.log"
         );
         assert_ne!(
-            old_path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str()),
+            old_path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str()),
             Some(user_id.as_str()),
             "expected no per-user directory in the stream file layout"
         );

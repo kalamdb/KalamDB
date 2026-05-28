@@ -117,7 +117,7 @@ impl<'a> FlushScopeWriter<'a> {
             );
             let result = self
                 .storage_cached
-                .write_parquet_sync(
+                .write_parquet_with_compression_sync(
                     self.table_type,
                     self.table_id,
                     user_id,
@@ -125,6 +125,7 @@ impl<'a> FlushScopeWriter<'a> {
                     self.schema.clone(),
                     vec![batch.clone()],
                     Some(self.metadata.bloom_filter_columns.clone()),
+                    self.metadata.compression,
                 )
                 .into_flush_error("Filestore error")?;
 

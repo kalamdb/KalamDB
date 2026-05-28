@@ -77,6 +77,7 @@ pub async fn execute_flush_synchronously(
         cached_table.schema_version,
         cached_table.bloom_filter_columns().to_vec(),
         cached_table.indexed_columns().to_vec(),
+        cached_table.table.table_options.parquet_compression(),
     );
     let scan_batch_size = server.app_context.config().flush.flush_batch_size;
     let scope_hook = Arc::new(NoopFlushScopeHook);
@@ -149,6 +150,7 @@ pub async fn execute_shared_flush_synchronously(
         cached_table.schema_version,
         cached_table.bloom_filter_columns().to_vec(),
         cached_table.indexed_columns().to_vec(),
+        cached_table.table.table_options.parquet_compression(),
     );
     let scan_batch_size = server.app_context.config().flush.flush_batch_size;
     let scope_hook = Arc::new(NoopFlushScopeHook);

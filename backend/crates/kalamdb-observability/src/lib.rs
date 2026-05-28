@@ -14,10 +14,12 @@ pub mod activity;
 pub mod allocator_metrics;
 pub mod cpu;
 pub mod health_monitor;
+pub mod pubsub_metrics;
 pub mod query_metrics;
 pub mod runtime_metrics;
 pub mod storage_metrics;
 pub mod system_stats;
+pub mod trace;
 
 pub use activity::{idle_duration, initialize_activity_now, last_activity_ms, record_activity_now};
 pub use allocator_metrics::{
@@ -27,6 +29,11 @@ pub use cpu::{get_cpu_count, get_physical_cpu_count};
 pub use health_monitor::{
     decrement_websocket_sessions, get_websocket_session_count, get_websocket_session_peak_count,
     increment_websocket_sessions, HealthCounts, HealthMetrics, HealthMonitor,
+};
+pub use pubsub_metrics::{
+    pubsub_metrics_snapshot, record_pubsub_messages_consumed, record_pubsub_messages_published,
+    record_subscription_changes_delivered, track_pubsub_consumer, PubSubConsumerGuard,
+    PubSubMetricsSnapshot,
 };
 pub use query_metrics::{
     observe_query, query_metrics_snapshot, should_observe_query_namespace, QueryMetricKind,
@@ -46,3 +53,4 @@ pub use system_stats::{
     collect_system_stats, CacheMetrics, ClusterMetrics, EntityCounts, LiveQueryMetrics,
     ServerConfigMetrics, SystemStatsSource,
 };
+pub use trace::NoopSpanGuard;

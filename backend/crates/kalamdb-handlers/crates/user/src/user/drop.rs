@@ -13,6 +13,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::DropUserStatement;
 
+use crate::helpers::async_blocking::run_blocking;
+
 /// Handler for DROP USER
 pub struct DropUserHandler {
     app_context: Arc<AppContext>,
@@ -34,11 +36,8 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
         let app_ctx = self.app_context.clone();
         let user_id = UserId::try_new(statement.username.clone())
             .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
-        let existing = tokio::task::spawn_blocking(move || {
-            app_ctx.system_tables().users().get_user_by_id(&user_id)
-        })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        let existing =
+            run_blocking(move || app_ctx.system_tables().users().get_user_by_id(&user_id)).await?;
         if existing.is_none() {
             if statement.if_exists {
                 return Ok(ExecutionResult::Success {

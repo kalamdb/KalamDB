@@ -23,6 +23,7 @@ interface TimeSeriesData {
 interface MetricsChartProps {
   data: DashboardMetricSample[];
   isLoading?: boolean;
+  trailingPanel?: ReactNode;
 }
 
 function formatTimeLabel(timestamp: number): string {
@@ -36,6 +37,11 @@ function formatRateValue(value: number | string): string {
   return numeric.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatMetricTooltip(value: number | string, name: string | number | undefined): string {
+  const formatted = formatRateValue(value);
+  return String(name).includes("/s") ? `${formatted}/s` : formatted;
+}
+
 const tooltipStyle = {
   border: "none",
   borderRadius: "8px",
@@ -46,7 +52,7 @@ function ChartCard({ title, children }: { title: string; children: ReactNode }) 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">{title}</CardTitle>
+        <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="h-80">{children}</CardContent>
     </Card>
@@ -73,12 +79,13 @@ export function buildMetricChartData(data: DashboardMetricSample[]): TimeSeriesD
   });
 }
 
-export function MetricsChart({ data, isLoading }: MetricsChartProps) {
+export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartProps) {
   const chartData = useMemo(() => buildMetricChartData(data), [data]);
+  const gridClassName = "mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2";
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+      <div className={gridClassName}>
         <Card className="h-96 flex items-center justify-center text-muted-foreground">
           Loading query activity...
         </Card>
@@ -86,27 +93,32 @@ export function MetricsChart({ data, isLoading }: MetricsChartProps) {
           Loading connection metrics...
         </Card>
         <Card className="h-96 flex items-center justify-center text-muted-foreground">
+          Loading pub/sub metrics...
+        </Card>
+        <Card className="h-96 flex items-center justify-center text-muted-foreground">
           Loading resource metrics...
         </Card>
         <Card className="h-96 flex items-center justify-center text-muted-foreground">
           Loading storage metrics...
         </Card>
+        {trailingPanel}
       </div>
     );
   }
 
   if (chartData.length === 0) {
     return (
-      <div className="grid grid-cols-1 gap-4 mt-6">
+      <div className={gridClassName}>
         <Card className="h-64 flex items-center justify-center text-muted-foreground">
           No historical metric data available yet.
         </Card>
+        {trailingPanel}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+    <div className={gridClassName}>
       <ChartCard title="SQL Query Activity">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
@@ -128,13 +140,33 @@ export function MetricsChart({ data, isLoading }: MetricsChartProps) {
           <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
             <XAxis dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} tickFormatter={formatTimeLabel} tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
-            <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
+            <YAxis yAxisId="count" tick={{ fontSize: 12 }} allowDecimals={false} />
+            <YAxis yAxisId="rate" orientation="right" tick={{ fontSize: 12 }} tickFormatter={formatRateValue} />
+            <Tooltip formatter={(value, name) => formatMetricTooltip(value as number, name)} labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
             <Legend wrapperStyle={{ paddingTop: "20px" }} />
-            <Line type="monotone" dataKey="active_connections" name="Connections" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
-            <Line type="monotone" dataKey="active_subscriptions" name="Subscriptions" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
-            <Line type="step" dataKey="active_subscriptions_peak" name="Peak Subscriptions" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
-            <Line type="step" dataKey="websocket_sessions_peak" name="Peak Sockets" stroke="#dc2626" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="active_connections" name="Connections" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+            <Line yAxisId="count" type="step" dataKey="active_connections_peak" name="Peak Connections" stroke="#dc2626" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="active_subscriptions" name="Subscriptions" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+            <Line yAxisId="count" type="step" dataKey="active_subscriptions_peak" name="Peak Subscriptions" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="rate" type="step" dataKey="subscription_changes_delivered_per_second" name="Changes/s" stroke="#0891b2" strokeWidth={2} dot={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      <ChartCard title="Pub/Sub Consumers">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+            <XAxis dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} tickFormatter={formatTimeLabel} tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
+            <YAxis yAxisId="count" tick={{ fontSize: 12 }} allowDecimals={false} />
+            <YAxis yAxisId="rate" orientation="right" tick={{ fontSize: 12 }} tickFormatter={formatRateValue} />
+            <Tooltip formatter={(value, name) => formatMetricTooltip(value as number, name)} labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
+            <Legend wrapperStyle={{ paddingTop: "20px" }} />
+            <Line yAxisId="count" type="monotone" dataKey="pubsub_active_consumers" name="Active Consumers" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+            <Line yAxisId="rate" type="step" dataKey="pubsub_messages_consumed_per_second" name="Msg/s" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="rate" type="step" dataKey="pubsub_messages_consumed_peak_per_second" name="Peak Msg/s" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="rate" type="step" dataKey="pubsub_kb_consumed_per_second" name="KB/s" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="topic_cache_topic_count" name="Total Topics" stroke="#dc2626" strokeDasharray="6 4" strokeWidth={2} dot={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -157,7 +189,7 @@ export function MetricsChart({ data, isLoading }: MetricsChartProps) {
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="Manifest & Parquet Activity">
+      <ChartCard title="Manifest & Parquet Rates">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
@@ -174,6 +206,8 @@ export function MetricsChart({ data, isLoading }: MetricsChartProps) {
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
+
+      {trailingPanel}
     </div>
   );
 }

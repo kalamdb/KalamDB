@@ -11,12 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toaster-provider";
 import {
@@ -35,6 +30,7 @@ import equal from "fast-deep-equal";
 import { generateDropTableSql } from "./ddl-generator";
 import { discardEdit } from "@/features/sql-studio/state/editorTabSlice";
 import { useSqlPreview } from "@/components/sql-preview";
+import { StudioChromeLabel, StudioIconButton } from "../shared/StudioChrome";
 import type { StudioNamespace, StudioTable } from "@/components/sql-studio-v2/shared/types";
 
 interface EditorSidebarProps {
@@ -185,22 +181,15 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-2 border-b border-border px-2 py-2">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Namespace
-          </label>
+          <StudioChromeLabel>Namespace</StudioChromeLabel>
           <div className="flex items-center gap-0.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateNamespace(true)}
-                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  <FolderPlus className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Create namespace</TooltipContent>
-            </Tooltip>
+            <StudioIconButton
+              onClick={() => setShowCreateNamespace(true)}
+              tooltip="Create namespace"
+              aria-label="Create namespace"
+            >
+              <FolderPlus data-icon="only" />
+            </StudioIconButton>
             {(() => {
               const isSystem = activeNamespace.startsWith("system") || activeNamespace.startsWith("dba");
               const noNamespaces = namespaces.length === 0;
@@ -211,25 +200,16 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
                   ? "System namespace — cannot drop"
                   : `Drop namespace "${activeNamespace}"`;
               return (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="block">
-                      <button
-                        type="button"
-                        onClick={handleDropNamespaceClick}
-                        disabled={disabled}
-                        className={cn(
-                          "rounded p-0.5 text-muted-foreground transition-colors",
-                          !disabled && "hover:bg-destructive/10 hover:text-destructive",
-                          disabled && "cursor-not-allowed opacity-30",
-                        )}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>{tooltipLabel}</TooltipContent>
-                </Tooltip>
+                <StudioIconButton
+                  onClick={handleDropNamespaceClick}
+                  disabled={disabled}
+                  tone="destructive"
+                  tooltip={tooltipLabel}
+                  aria-label="Drop namespace"
+                  className={cn(disabled && "cursor-not-allowed opacity-30")}
+                >
+                  <Trash2 data-icon="only" />
+                </StudioIconButton>
               );
             })()}
           </div>
@@ -270,23 +250,15 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
 
       {namespaces.length > 0 && (
         <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Tables ({tablesInNamespace.length})
-          </span>
+          <StudioChromeLabel>Tables ({tablesInNamespace.length})</StudioChromeLabel>
           {!activeNamespaceIsReadOnly && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleCreate}
-                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  aria-label="New table"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>New table</TooltipContent>
-            </Tooltip>
+            <StudioIconButton
+              onClick={handleCreate}
+              tooltip="New table"
+              aria-label="New table"
+            >
+              <Plus data-icon="only" />
+            </StudioIconButton>
           )}
         </div>
       )}
@@ -332,25 +304,19 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
                   <span className="truncate">{table.name}</span>
                 </button>
                 {!activeNamespaceIsReadOnly && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDropTable(table);
-                        }}
-                        className={cn(
-                          "absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/60 transition-colors",
-                          "hover:bg-destructive/10 hover:text-destructive",
-                        )}
-                        aria-label={`Drop table ${table.name}`}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Drop table</TooltipContent>
-                  </Tooltip>
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                    <StudioIconButton
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDropTable(table);
+                      }}
+                      tone="destructive"
+                      tooltip="Drop table"
+                      aria-label={`Drop table ${table.name}`}
+                    >
+                      <Trash2 data-icon="only" />
+                    </StudioIconButton>
+                  </div>
                 )}
               </li>
             );

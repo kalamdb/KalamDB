@@ -80,10 +80,16 @@ pub struct HealthMonitor;
 impl HealthMonitor {
     /// Collect open file metrics without refreshing process CPU/memory stats.
     pub fn collect_open_file_metrics() -> (usize, Option<OpenFileBreakdown>) {
-        #[cfg(unix)]
-        let open_file_breakdown = Self::collect_open_file_breakdown();
-        #[cfg(not(unix))]
-        let open_file_breakdown = None;
+        let open_file_breakdown: Option<OpenFileBreakdown> = {
+            #[cfg(unix)]
+            {
+                Self::collect_open_file_breakdown()
+            }
+            #[cfg(not(unix))]
+            {
+                None
+            }
+        };
 
         let open_files = open_file_breakdown.map(|breakdown| breakdown.total).unwrap_or(0);
         (open_files, open_file_breakdown)

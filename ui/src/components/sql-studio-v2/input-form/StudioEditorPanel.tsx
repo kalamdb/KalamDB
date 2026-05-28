@@ -12,6 +12,8 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { panelDescriptionClassName, panelTitleClassName } from "@/components/layout/typography";
+import { StudioChromeLabel, StudioIconButton } from "../shared/StudioChrome";
 import type { LiveSubscriptionOptions, StudioNamespace } from "../shared/types";
 import {
   buildSqlCompletionData,
@@ -330,24 +332,21 @@ export function StudioEditorPanel({
                 }
               }}
               autoFocus
-              className="h-7 w-full max-w-[320px] rounded border border-border bg-background px-2 text-base font-semibold text-foreground outline-none ring-2 ring-ring"
+              className={`h-7 w-full max-w-[320px] rounded border border-border bg-background px-2 outline-none ring-2 ring-ring ${panelTitleClassName}`}
             />
           ) : (
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-base font-semibold text-foreground">{tabTitle}</p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+              <p className={`truncate ${panelTitleClassName}`}>{tabTitle}</p>
+              <StudioIconButton
                 onClick={() => setIsEditingTitle(true)}
-                title="Rename query"
+                tooltip="Rename query"
+                aria-label="Rename query"
               >
-                <PenLine className="h-3.5 w-3.5" />
-              </Button>
+                <PenLine data-icon="only" />
+              </StudioIconButton>
             </div>
           )}
-          <p className="text-xs text-muted-foreground">Draft</p>
+          <p className={panelDescriptionClassName}>Draft</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden items-center gap-2 lg:flex">
@@ -361,15 +360,13 @@ export function StudioEditorPanel({
                 Live query
               </span>
               {isLive && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                <StudioIconButton
                   onClick={() => setShowSubscriptionOptions((prev) => !prev)}
-                  title="Subscription options"
+                  tooltip="Subscription options"
+                  aria-label="Subscription options"
                 >
-                  <Settings2 className="h-3.5 w-3.5" />
-                </Button>
+                  <Settings2 data-icon="only" />
+                </StudioIconButton>
               )}
             </div>
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -383,7 +380,7 @@ export function StudioEditorPanel({
             className="shrink-0"
             onClick={onSave}
           >
-            <Save className="mr-1.5 h-3.5 w-3.5" />
+            <Save data-icon="inline-start" />
             Save
           </Button>
           {isLive ? (
@@ -394,9 +391,9 @@ export function StudioEditorPanel({
               disabled={isExecuteDisabled}
             >
               {liveStatus === "connected" || isConnectingLive ? (
-                <Square className="mr-1.5 h-3.5 w-3.5" />
+                <Square data-icon="inline-start" />
               ) : (
-                <Play className="mr-1.5 h-3.5 w-3.5" />
+                <Play data-icon="inline-start" />
               )}
               {liveStatus === "connected"
                 ? "Stop"
@@ -412,7 +409,7 @@ export function StudioEditorPanel({
                 onClick={() => runSql("auto")}
                 disabled={isExecuteDisabled}
               >
-                <Play className="mr-1.5 h-3.5 w-3.5" />
+                <Play data-icon="inline-start" />
                 {isRunning ? "Running..." : executeLabel}
               </Button>
               <DropdownMenu>
@@ -449,11 +446,10 @@ export function StudioEditorPanel({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="secondary"
-                size="icon"
-                className="h-8 w-8"
+                size="icon-sm"
                 aria-label="More query actions"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreHorizontal data-icon="only" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -476,7 +472,7 @@ export function StudioEditorPanel({
 
       {isLive && showSubscriptionOptions && (
         <div className="flex shrink-0 items-center gap-4 border-b border-border bg-muted/30 px-4 py-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Options</span>
+          <StudioChromeLabel>Options</StudioChromeLabel>
           <div className="flex items-center gap-1.5">
             <label className="text-xs text-muted-foreground" htmlFor="opt-last-rows">last_rows</label>
             <Input

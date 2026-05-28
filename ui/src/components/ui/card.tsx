@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { panelDescriptionClassName, panelTitleClassName } from "@/components/layout/typography"
 
 function Card({
   className,
@@ -37,7 +38,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("text-sm font-medium", className)}
+      className={cn(panelTitleClassName, className)}
       {...props}
     />
   )
@@ -47,7 +48,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-xs/relaxed text-muted-foreground", className)}
+      className={cn(panelDescriptionClassName, className)}
       {...props}
     />
   )

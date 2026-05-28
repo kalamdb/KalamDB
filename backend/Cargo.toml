@@ -73,9 +73,10 @@ num_cpus = { workspace = true }
 libc = { workspace = true }
 
 [features]
-default = ["embedded-ui", "mimalloc"]
+default = ["embedded-ui", "mimalloc", "traceability"]
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
+traceability = ["kalamdb-core/traceability", "kalamdb-observability/traceability"]
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 # End-to-end tests that require a full test server instance
 e2e-tests = []

@@ -9,7 +9,7 @@ use arrow::{
 };
 use bytes::Bytes;
 use datafusion::arrow::compute::{self, SortOptions};
-use kalamdb_commons::constants::SystemColumnNames;
+use kalamdb_commons::{constants::SystemColumnNames, schemas::TableCompression};
 use parquet::{
     arrow::ArrowWriter,
     basic::{Compression, ZstdLevel},
@@ -28,24 +28,21 @@ pub struct ParquetWriteResult {
     pub size_bytes: u64,
 }
 
-/// Serialize Arrow RecordBatches to Parquet format in memory.
-pub(crate) fn serialize_to_parquet(
+pub(crate) fn serialize_to_parquet_with_compression(
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
     bloom_filter_columns: Option<Vec<String>>,
+    compression: TableCompression,
 ) -> Result<Bytes> {
-    let row_count: u64 = batches.iter().map(|batch| batch.num_rows() as u64).sum();
-    let bloom_filter_count = bloom_filter_columns.as_ref().map_or(0, Vec::len);
-    let span = tracing::debug_span!(
+    let _span_guard = kalamdb_observability::kdb_debug_span_entered!(
         "parquet.serialize",
-        row_count = row_count,
-        bloom_filter_count = bloom_filter_count
+        row_count = batches.iter().map(|batch| batch.num_rows() as u64).sum::<u64>(),
+        bloom_filter_count = bloom_filter_columns.as_ref().map_or(0, Vec::len)
     );
-    let _span_guard = span.entered();
 
     let batches = sort_batches_by_seq(batches)?;
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-    let props = writer_properties(total_rows, bloom_filter_columns);
+    let props = writer_properties(total_rows, bloom_filter_columns, compression);
 
     // Write to in-memory buffer
     let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
@@ -60,7 +57,7 @@ pub(crate) fn serialize_to_parquet(
         writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
     }
 
-    tracing::debug!(size_bytes = buffer.len(), "Parquet serialization completed");
+    kalamdb_observability::kdb_debug!(size_bytes = buffer.len(), "Parquet serialization completed");
     Ok(Bytes::from(buffer))
 }
 
@@ -70,11 +67,27 @@ pub(crate) fn serialize_to_parquet(
 /// keeping row materialization bounded to the channel capacity plus one Arrow batch.
 pub fn serialize_record_batch_receiver_to_parquet(
     schema: SchemaRef,
-    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
     bloom_filter_columns: Option<Vec<String>>,
     estimated_rows: u64,
 ) -> Result<Bytes> {
-    let props = writer_properties(estimated_rows, bloom_filter_columns);
+    serialize_record_batch_receiver_to_parquet_with_compression(
+        schema,
+        receiver,
+        bloom_filter_columns,
+        estimated_rows,
+        TableCompression::default(),
+    )
+}
+
+pub fn serialize_record_batch_receiver_to_parquet_with_compression(
+    schema: SchemaRef,
+    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    bloom_filter_columns: Option<Vec<String>>,
+    estimated_rows: u64,
+    compression: TableCompression,
+) -> Result<Bytes> {
+    let props = writer_properties(estimated_rows, bloom_filter_columns, compression);
     let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
     let mut rows_written = 0u64;
 
@@ -91,7 +104,7 @@ pub fn serialize_record_batch_receiver_to_parquet(
         writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
     }
 
-    tracing::debug!(
+    kalamdb_observability::kdb_debug!(
         row_count = rows_written,
         size_bytes = buffer.len(),
         "Streaming Parquet serialization completed"
@@ -102,6 +115,7 @@ pub fn serialize_record_batch_receiver_to_parquet(
 fn writer_properties(
     row_count: u64,
     bloom_filter_columns: Option<Vec<String>>,
+    compression: TableCompression,
 ) -> WriterProperties {
     let bloom_ndv_estimate = row_count.max(1);
     let bloom_filter_columns = if row_count < MIN_ROWS_FOR_BLOOM_FILTERS {
@@ -111,7 +125,7 @@ fn writer_properties(
     };
 
     let mut props_builder = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(zstd_level()))
+        .set_compression(parquet_compression(compression))
         .set_max_row_group_row_count(Some(128 * 1024));
 
     if let Some(cols) = bloom_filter_columns {
@@ -124,6 +138,14 @@ fn writer_properties(
     }
 
     props_builder.build()
+}
+
+fn parquet_compression(compression: TableCompression) -> Compression {
+    match compression {
+        TableCompression::None => Compression::UNCOMPRESSED,
+        TableCompression::Snappy => Compression::SNAPPY,
+        TableCompression::Zstd => Compression::ZSTD(zstd_level()),
+    }
 }
 
 fn zstd_level() -> ZstdLevel {
@@ -201,10 +223,11 @@ fn is_sorted_by_seq(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{fs, sync::Arc};
 
     use arrow::array::StringArray;
     use kalamdb_commons::arrow_utils::{field_utf8, schema};
+    use parquet::file::reader::{FileReader, SerializedFileReader};
 
     use super::*;
 
@@ -221,9 +244,32 @@ mod tests {
     #[test]
     fn test_serialize_to_parquet() {
         let (schema, batches) = make_test_batch();
-        let bytes = serialize_to_parquet(schema, batches, None).unwrap();
+        let bytes =
+            serialize_to_parquet_with_compression(schema, batches, None, TableCompression::Snappy)
+                .unwrap();
         assert!(!bytes.is_empty());
         // Parquet magic number at start
         assert_eq!(&bytes[0..4], b"PAR1");
+    }
+
+    #[test]
+    fn test_supported_compressions_are_written_to_parquet_metadata() {
+        for (table_compression, expected) in [
+            (TableCompression::None, Compression::UNCOMPRESSED),
+            (TableCompression::Snappy, Compression::SNAPPY),
+            (TableCompression::Zstd, Compression::ZSTD(zstd_level())),
+        ] {
+            let (schema, batches) = make_test_batch();
+            let bytes =
+                serialize_to_parquet_with_compression(schema, batches, None, table_compression)
+                    .unwrap();
+            let temp_file = tempfile::NamedTempFile::new().unwrap();
+            fs::write(temp_file.path(), bytes).unwrap();
+
+            let file = fs::File::open(temp_file.path()).unwrap();
+            let reader = SerializedFileReader::new(file).unwrap();
+            let column = reader.metadata().row_group(0).column(0);
+            assert_eq!(column.compression(), expected);
+        }
     }
 }

@@ -2222,6 +2222,7 @@ pub async fn execute_sql_via_http_as(
     let response = client
         .post(format!("{}/v1/api/sql", base_url))
         .header("Authorization", format!("Bearer {}", token))
+        .timeout(Duration::from_secs(15))
         .json(&json!({ "sql": sql }))
         .send()
         .await?;

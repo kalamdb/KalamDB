@@ -88,7 +88,7 @@ export function DashboardClusterOverview({
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base font-medium">
+        <CardTitle className="flex items-center gap-2">
           <Server className="h-4 w-4" />
           Cluster Nodes & Health
         </CardTitle>

@@ -13,7 +13,7 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::AlterNamespaceStatement;
 
-use crate::helpers::guards::require_admin;
+use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 /// Typed handler for ALTER NAMESPACE statements
 pub struct AlterNamespaceHandler {
@@ -41,7 +41,7 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
         let ns_id = namespace_id.clone();
         let options = statement.options.clone();
         let name_owned = name.to_string();
-        tokio::task::spawn_blocking(move || {
+        run_blocking(move || {
             let namespaces_provider = app_ctx.system_tables().namespaces();
             let mut namespace = namespaces_provider.get_namespace(&ns_id)?.ok_or_else(|| {
                 KalamDbError::NotFound(format!("Namespace '{}' not found", name_owned))
@@ -65,8 +65,7 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
             namespaces_provider.update_namespace(namespace)?;
             Ok::<_, KalamDbError>(())
         })
-        .await
-        .map_err(|e| KalamDbError::ExecutionError(format!("Task join error: {}", e)))??;
+        .await?;
 
         // Log DDL operation
         use crate::helpers::audit;

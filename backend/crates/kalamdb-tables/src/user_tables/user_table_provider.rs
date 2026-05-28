@@ -137,19 +137,18 @@ impl UserTableProvider {
             })
             .collect();
         let backend = store.backend().clone();
-        let vector_stores: HashMap<String, Arc<UserVectorHotStore>> = vector_columns
-            .iter()
-            .map(|(column_name, _)| {
-                (
-                    column_name.clone(),
-                    Arc::new(new_indexed_user_vector_hot_store(
-                        backend.clone(),
-                        core.table_id(),
-                        column_name,
-                    )),
-                )
-            })
-            .collect();
+        let mut vector_stores: HashMap<String, Arc<UserVectorHotStore>> =
+            HashMap::with_capacity(vector_columns.len());
+        for (column_name, _) in &vector_columns {
+            vector_stores.insert(
+                column_name.clone(),
+                Arc::new(new_indexed_user_vector_hot_store(
+                    backend.clone(),
+                    core.table_id(),
+                    column_name,
+                )),
+            );
+        }
 
         if log::log_enabled!(log::Level::Debug) {
             let field_names: Vec<_> = core.schema().fields().iter().map(|f| f.name()).collect();
@@ -297,8 +296,11 @@ impl UserTableProvider {
         I: IntoIterator<Item = &'a Row>,
     {
         let pk_name = self.primary_key_field_name();
-        let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::new();
-        let mut seen_batch_pks = HashSet::new();
+        let rows = rows.into_iter();
+        let (lower_bound, upper_bound) = rows.size_hint();
+        let capacity = upper_bound.unwrap_or(lower_bound);
+        let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::with_capacity(capacity);
+        let mut seen_batch_pks = HashSet::with_capacity(capacity);
 
         for row_data in rows {
             if let Some(pk_value) = row_data.get(pk_name) {
@@ -321,12 +323,11 @@ impl UserTableProvider {
             return Ok(());
         }
 
-        let pk_prefixes: Vec<(String, Vec<u8>)> = pk_values_to_check
-            .iter()
-            .map(|(pk_str, pk_value)| {
-                (pk_str.clone(), self.pk_index.build_prefix_for_pk(user_id, pk_value))
-            })
-            .collect();
+        let mut pk_prefixes: Vec<(String, Vec<u8>)> = Vec::with_capacity(pk_values_to_check.len());
+        for (pk_str, pk_value) in &pk_values_to_check {
+            pk_prefixes
+                .push((pk_str.clone(), self.pk_index.build_prefix_for_pk(user_id, pk_value)));
+        }
 
         let store = self.store.clone();
         let hot_duplicate =
@@ -417,23 +418,23 @@ impl UserTableProvider {
             KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
         })?;
 
-        let mut user_rows: Vec<UserTableRow> = Vec::with_capacity(row_count);
-        let mut row_keys: Vec<UserTableRowId> = Vec::with_capacity(row_count);
+        let mut entries: Vec<(UserTableRowId, UserTableRow)> = Vec::with_capacity(row_count);
 
         for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
-            row_keys.push(UserTableRowId::new(user_id.clone(), seq_id));
-            user_rows.push(UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
-                _commit_seq: commit_seq,
-                _deleted: false,
-                fields: row_data,
-            });
+            let row_key = UserTableRowId::new(user_id.clone(), seq_id);
+            entries.push((
+                row_key,
+                UserTableRow {
+                    user_id: user_id.clone(),
+                    _seq: seq_id,
+                    _commit_seq: commit_seq,
+                    _deleted: false,
+                    fields: row_data,
+                },
+            ));
         }
 
         let store = self.store.clone();
-        let entries: Vec<(UserTableRowId, UserTableRow)> =
-            row_keys.iter().cloned().zip(user_rows.into_iter()).collect();
 
         let entries = tokio::task::spawn_blocking(
             move || -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
@@ -482,8 +483,8 @@ impl UserTableProvider {
             "Batch inserted {} user table rows for user {} with _seq range [{}, {}]",
             row_count,
             user_id.as_str(),
-            row_keys.first().map(|k| k.seq.as_i64()).unwrap_or(0),
-            row_keys.last().map(|k| k.seq.as_i64()).unwrap_or(0)
+            entries.first().map(|(k, _)| k.seq.as_i64()).unwrap_or(0),
+            entries.last().map(|(k, _)| k.seq.as_i64()).unwrap_or(0)
         );
 
         Ok(entries)

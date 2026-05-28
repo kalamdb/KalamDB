@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use arrow::datatypes::Schema;
 use kalamdb_commons::{
     models::{NamespaceId, StorageId, TableAccess, TableName},
-    schemas::{policy::FlushPolicy, ColumnDefault, TableType},
+    schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 
 /// Unified CREATE TABLE statement that works for USER, SHARED, and STREAM tables
@@ -31,8 +31,8 @@ pub struct CreateTableStatement {
     pub deleted_retention_hours: Option<u32>,
     /// TTL for stream tables in seconds (STREAM tables only)
     pub ttl_seconds: Option<u64>,
-    /// Compression algorithm (none, snappy, lz4, zstd)
-    pub compression: Option<String>,
+    /// Compression algorithm for Parquet cold-storage files.
+    pub compression: Option<TableCompression>,
     /// Stream eviction strategy (time_based, size_based, hybrid)
     pub eviction_strategy: Option<String>,
     /// Maximum stream size in bytes (0 = unlimited)

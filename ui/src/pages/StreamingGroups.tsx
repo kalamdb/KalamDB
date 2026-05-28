@@ -81,7 +81,7 @@ export default function StreamingGroups() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Consumer Groups</CardTitle>
+          <CardTitle>Consumer Groups</CardTitle>
           <CardDescription>
             {filteredGroups.length} group{filteredGroups.length === 1 ? "" : "s"} visible
           </CardDescription>

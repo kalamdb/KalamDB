@@ -11,6 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { chromeLabelClassName } from "@/components/layout/typography";
 import { cn } from "@/lib/utils";
 
 interface TabConfig {
@@ -44,7 +45,8 @@ export function StudioTabsHeader() {
                   disabled={tab.disabled}
                   onClick={() => dispatch(setActiveStudioTab(tab.value))}
                   className={cn(
-                    "relative flex flex-1 flex-col items-center gap-0.5 rounded-md px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide transition-colors",
+                    "relative flex flex-1 flex-col items-center gap-0.5 rounded-md px-2 py-1.5 transition-colors",
+                    chromeLabelClassName,
                     "hover:bg-accent hover:text-accent-foreground",
                     isActive
                       ? "bg-accent text-accent-foreground"

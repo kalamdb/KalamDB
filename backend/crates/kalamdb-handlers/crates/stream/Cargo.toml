@@ -12,12 +12,13 @@ description = "Stream and topic SQL handlers for KalamDB"
 kalamdb-commons = { path = "../../../kalamdb-commons", default-features = false }
 kalamdb-core = { path = "../../../kalamdb-core" }
 kalamdb-handlers-support = { path = "../support" }
+kalamdb-observability = { path = "../../../kalamdb-observability" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-system = { path = "../../../kalamdb-system" }
 kalamdb-tables = { path = "../../../kalamdb-tables" }
 
+arrow = { workspace = true }
 chrono = { workspace = true }
-datafusion = { workspace = true }
 log = { workspace = true }
 
 [lib]
