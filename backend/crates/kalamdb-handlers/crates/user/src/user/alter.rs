@@ -81,6 +81,11 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     })?;
             },
             UserModification::SetRole(new_role) => {
+                if updated.user_id.is_admin() {
+                    return Err(KalamDbError::InvalidOperation(
+                        "Root user role cannot be changed".to_string(),
+                    ));
+                }
                 if !context.is_admin() {
                     return Err(KalamDbError::Unauthorized(
                         "Only admins can change roles".to_string(),

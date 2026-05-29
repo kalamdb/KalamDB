@@ -527,6 +527,8 @@ async fn upsert_password_user(
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         })
         .context("Failed to create password user")?;
 
@@ -741,6 +743,8 @@ fn insert_local_user(server: &HttpTestServer, user_id: &UserId, role: Role) -> R
         last_login_at: None,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
         user_id: user_id.clone(),
         password_hash: String::new(),
         email: Some(format!("{}@test.local", user_id.as_str())),
@@ -776,6 +780,8 @@ fn insert_oauth_user(
             last_login_at: None,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
             user_id: user_id.clone(),
             password_hash: String::new(),
             email: Some("preprovisioned@test.local".to_string()),

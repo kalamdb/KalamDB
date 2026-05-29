@@ -163,7 +163,10 @@ fn http_get_with_token(
     Ok(result)
 }
 
-fn wait_for_show_export_row(job_id: &str, timeout: Duration) -> Result<Value, Box<dyn std::error::Error>> {
+fn wait_for_show_export_row(
+    job_id: &str,
+    timeout: Duration,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let poll_interval = Duration::from_millis(300);
     let mut last_rows: Vec<std::collections::HashMap<String, Value>> = Vec::new();
@@ -468,14 +471,9 @@ fn smoke_table_export_import_user_table_flushed_and_hot_data() {
 
     let token = get_token_sync(default_username(), default_password()).expect("admin token");
 
-    let export = start_table_export_sync(
-        &token,
-        &namespace,
-        &source_table,
-        "user",
-        Some(&export_user),
-    )
-    .expect("start user table export");
+    let export =
+        start_table_export_sync(&token, &namespace, &source_table, "user", Some(&export_user))
+            .expect("start user table export");
     let export_job_id = export
         .get("job_id")
         .and_then(|value| value.as_str())
@@ -561,15 +559,15 @@ fn smoke_table_export_import_user_table_flushed_and_hot_data() {
         .and_then(|row| parse_count_from_row(row, "c"))
         .expect("target count value");
 
-    assert_eq!(target_count_value, source_count_value, "imported user row count should match source");
+    assert_eq!(
+        target_count_value, source_count_value,
+        "imported user row count should match source"
+    );
 
     let hot_row_check = execute_sql_via_client_as_json(
         &export_user,
         export_pass,
-        &format!(
-            "SELECT COUNT(*) AS c FROM {} WHERE note = 'user_row_hot_12'",
-            target_fqn
-        ),
+        &format!("SELECT COUNT(*) AS c FROM {} WHERE note = 'user_row_hot_12'", target_fqn),
     )
     .expect("target user hot row check");
     let hot_row_json: Value = serde_json::from_str(&hot_row_check).expect("parse hot row check");

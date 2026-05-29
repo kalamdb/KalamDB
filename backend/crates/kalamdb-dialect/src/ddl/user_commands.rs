@@ -68,6 +68,7 @@ fn extract_identifier(token: &Token) -> Option<String> {
         Token::Word(w) => Some(w.value.clone()),
         Token::SingleQuotedString(s) => Some(s.clone()),
         Token::DoubleQuotedString(s) => Some(s.clone()),
+        Token::Number(s, _) => Some(s.clone()),
         _ => None,
     }
 }
@@ -105,6 +106,7 @@ fn filter_tokens(tokens: Vec<Token>) -> Vec<Token> {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreateUserStatement {
+    pub mode: CreateUserMode,
     pub username: String,
     pub auth_type: AuthType,
     pub role: Role,
@@ -112,6 +114,15 @@ pub struct CreateUserStatement {
     pub password: Option<String>,
     pub storage_mode: StorageMode,
     pub storage_id: Option<StorageId>,
+    pub invite_email: Option<String>,
+    pub invite_expires_at: Option<i64>,
+}
+
+/// CREATE USER operation mode.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CreateUserMode {
+    User,
+    OidcInvite,
 }
 
 impl CreateUserStatement {
@@ -141,12 +152,17 @@ impl CreateUserStatement {
             });
         }
 
+        let first_after_user = iter.next().unwrap_or(&Token::EOF);
+        let is_invite = is_keyword(first_after_user, "INVITE");
+
+        if is_invite {
+            return Self::parse_invite_tokens(iter);
+        }
+
         // Username (identifier or quoted string)
-        let username = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
-            UserCommandError {
-                message: "Expected username after CREATE USER".to_string(),
-                hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
-            }
+        let username = extract_identifier(first_after_user).ok_or_else(|| UserCommandError {
+            message: "Expected username after CREATE USER".to_string(),
+            hint: Some("Username can be unquoted (alice) or quoted ('alice')".to_string()),
         })?;
 
         // WITH keyword
@@ -253,6 +269,7 @@ impl CreateUserStatement {
         }
 
         Ok(CreateUserStatement {
+            mode: CreateUserMode::User,
             username,
             auth_type,
             role,
@@ -260,6 +277,104 @@ impl CreateUserStatement {
             password,
             storage_mode,
             storage_id,
+            invite_email: None,
+            invite_expires_at: None,
+        })
+    }
+
+    fn parse_invite_tokens<'a, I>(
+        mut iter: std::iter::Peekable<I>,
+    ) -> Result<Self, UserCommandError>
+    where
+        I: Iterator<Item = &'a Token>,
+    {
+        let invite_email =
+            extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                UserCommandError {
+                    message: "Expected email address after CREATE USER INVITE".to_string(),
+                    hint: Some(
+                        "Syntax: CREATE USER INVITE 'user@example.com' ROLE dba".to_string(),
+                    ),
+                }
+            })?;
+
+        if !is_keyword(iter.next().unwrap_or(&Token::EOF), "ROLE") {
+            return Err(UserCommandError {
+                message: "Expected ROLE keyword".to_string(),
+                hint: Some(
+                    "ROLE is required: CREATE USER INVITE 'user@example.com' ROLE dba".to_string(),
+                ),
+            });
+        }
+        let role_str = extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+            UserCommandError {
+                message: "Expected role name after ROLE".to_string(),
+                hint: Some("Valid roles: dba, admin, developer, service, user, system".to_string()),
+            }
+        })?;
+        let role = parse_role(&role_str)?;
+
+        let mut storage_mode = StorageMode::Table;
+        let mut storage_id = None;
+        let mut invite_expires_at = None;
+
+        while let Some(token) = iter.peek() {
+            if is_keyword(token, "EXPIRES_AT") {
+                iter.next();
+                let value =
+                    extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                        UserCommandError {
+                            message: "Expected millisecond timestamp after EXPIRES_AT".to_string(),
+                            hint: Some("Use EXPIRES_AT 1770000000000".to_string()),
+                        }
+                    })?;
+                invite_expires_at = Some(value.parse::<i64>().map_err(|_| UserCommandError {
+                    message: format!("Invalid EXPIRES_AT timestamp '{}'", value),
+                    hint: Some("EXPIRES_AT must be a Unix timestamp in milliseconds".to_string()),
+                })?);
+                continue;
+            }
+
+            if is_keyword(token, "STORAGE_MODE") {
+                iter.next();
+                let value =
+                    extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                        UserCommandError {
+                            message: "Expected storage mode after STORAGE_MODE".to_string(),
+                            hint: Some("Valid storage modes: table, region".to_string()),
+                        }
+                    })?;
+                storage_mode = parse_storage_mode(&value)?;
+                continue;
+            }
+
+            if is_keyword(token, "STORAGE_ID") {
+                iter.next();
+                let value =
+                    extract_identifier(iter.next().unwrap_or(&Token::EOF)).ok_or_else(|| {
+                        UserCommandError {
+                            message: "Expected storage ID after STORAGE_ID".to_string(),
+                            hint: Some("Storage ID can be quoted: STORAGE_ID 'local'".to_string()),
+                        }
+                    })?;
+                storage_id = Some(StorageId::from(value));
+                continue;
+            }
+
+            break;
+        }
+
+        Ok(CreateUserStatement {
+            mode: CreateUserMode::OidcInvite,
+            username: String::new(),
+            auth_type: AuthType::OidcInvite,
+            role,
+            email: Some(invite_email.clone()),
+            password: None,
+            storage_mode,
+            storage_id,
+            invite_email: Some(invite_email),
+            invite_expires_at,
         })
     }
 }
@@ -552,6 +667,17 @@ mod tests {
             Some("{\"issuer\":\"https://idp.example.com\",\"subject\":\"oidc_user\"}")
         );
         assert_eq!(stmt.role, Role::User);
+    }
+
+    #[test]
+    fn test_create_user_invite_with_expiry() {
+        let sql = "CREATE USER INVITE 'alice@example.com' ROLE dba EXPIRES_AT 1770000000000";
+        let stmt = CreateUserStatement::parse(sql).unwrap();
+
+        assert_eq!(stmt.mode, CreateUserMode::OidcInvite);
+        assert_eq!(stmt.invite_email.as_deref(), Some("alice@example.com"));
+        assert_eq!(stmt.role, Role::Dba);
+        assert_eq!(stmt.invite_expires_at, Some(1_770_000_000_000));
     }
 
     #[test]

@@ -216,29 +216,94 @@ async fn resolve_external_authenticated_user(
     let user_id = user_id_from_oidc_subject(&claims.sub)?;
 
     match repo.get_user_by_id(&user_id).await {
-        Ok(user) => authenticate_persisted_external_user(user, claims, connection_info),
-        Err(AuthError::UserNotFound(_))
-            if config.oidc_auto_provision && config.oidc_default_role == Role::User =>
-        {
-            verify_claimed_role(&user_id, claims.role.as_ref(), Role::User)?;
-            Ok(authenticated_user_from_claims(
-                user_id,
-                Role::User,
-                AuthType::Oidc,
-                claims,
-                connection_info,
-            ))
-        },
-        Err(AuthError::UserNotFound(_)) if config.oidc_auto_provision => {
-            let user =
-                auto_provision_external_user(repo, config.oidc_default_role, claims, user_id)
-                    .await?;
+        Ok(user) => {
+            if user.deleted_at.is_some() {
+                if let Some(user) =
+                    try_accept_external_oidc_invite(repo, claims, user_id.clone()).await?
+                {
+                    return authenticate_persisted_external_user(user, claims, connection_info);
+                }
+
+                return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
+            }
+
             authenticate_persisted_external_user(user, claims, connection_info)
         },
         Err(AuthError::UserNotFound(_)) => {
+            if let Some(user) =
+                try_accept_external_oidc_invite(repo, claims, user_id.clone()).await?
+            {
+                return authenticate_persisted_external_user(user, claims, connection_info);
+            }
+
+            if config.oidc_auto_provision && config.oidc_default_role == Role::User {
+                verify_claimed_role(&user_id, claims.role.as_ref(), Role::User)?;
+                return Ok(authenticated_user_from_claims(
+                    user_id,
+                    Role::User,
+                    AuthType::Oidc,
+                    claims,
+                    connection_info,
+                ));
+            }
+
+            if config.oidc_auto_provision {
+                let user =
+                    auto_provision_external_user(repo, config.oidc_default_role, claims, user_id)
+                        .await?;
+                return authenticate_persisted_external_user(user, claims, connection_info);
+            }
+
             Err(AuthError::InvalidCredentials("Invalid credentials".to_string()))
         },
         Err(err) => Err(err),
+    }
+}
+
+async fn try_accept_external_oidc_invite(
+    repo: &Arc<dyn UserRepository>,
+    claims: &jwt_auth::JwtClaims,
+    user_id: UserId,
+) -> AuthResult<Option<User>> {
+    let Some(email) = claims.email.as_deref().map(str::trim).filter(|email| !email.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let Some(invite) = repo.get_active_oidc_invite_by_email(email, now).await? else {
+        return Ok(None);
+    };
+
+    verify_claimed_role(&user_id, claims.role.as_ref(), invite.role)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let user = User {
+        created_at: now,
+        updated_at: now,
+        locked_until: None,
+        last_login_at: None,
+        last_seen: None,
+        deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
+        user_id: user_id.clone(),
+        password_hash: String::new(),
+        email: Some(email.to_ascii_lowercase()),
+        auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
+        storage_id: invite.storage_id.clone(),
+        failed_login_attempts: 0,
+        role: invite.role,
+        auth_type: AuthType::Oidc,
+        storage_mode: invite.storage_mode,
+    };
+
+    repo.accept_oidc_invite(&invite.user_id, user).await?;
+    match repo.get_user_by_id(&user_id).await {
+        Ok(user) => Ok(Some(user)),
+        Err(AuthError::UserNotFound(_)) => Err(AuthError::DatabaseError(
+            "accepted OIDC invite did not create a user".to_string(),
+        )),
+        Err(error) => Err(error),
     }
 }
 
@@ -270,11 +335,13 @@ async fn auto_provision_external_user(
         last_login_at: None,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
         user_id: user_id.clone(),
         password_hash: String::new(),
         email: claims.email.clone(),
         auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
         storage_id: None,
+        invited_by: None,
         failed_login_attempts: 0,
         role: default_role,
         auth_type: AuthType::Oidc,
@@ -416,6 +483,18 @@ mod tests {
             }
         }
 
+        fn with_users(users: Vec<User>) -> Self {
+            Self {
+                lookups: AtomicUsize::new(0),
+                users: Mutex::new(
+                    users
+                        .into_iter()
+                        .map(|user| (user.user_id.clone(), user))
+                        .collect(),
+                ),
+            }
+        }
+
         fn lookup_count(&self) -> usize {
             self.lookups.load(Ordering::SeqCst)
         }
@@ -433,6 +512,27 @@ mod tests {
                 .ok_or_else(|| AuthError::UserNotFound(format!("User '{}' not found", user_id)))
         }
 
+        async fn get_active_oidc_invite_by_email(
+            &self,
+            email: &str,
+            now_millis: i64,
+        ) -> AuthResult<Option<User>> {
+            let normalized_email = email.trim().to_ascii_lowercase();
+            Ok(self
+                .users
+                .lock()
+                .expect("test repo users lock should not be poisoned")
+                .values()
+                .find(|user| {
+                    user.auth_type == AuthType::OidcInvite
+                        && user.deleted_at.is_none()
+                        && user.email.as_deref().map(str::to_ascii_lowercase)
+                            == Some(normalized_email.clone())
+                        && user.invite_expires_at.is_some_and(|expires_at| expires_at >= now_millis)
+                })
+                .cloned())
+        }
+
         async fn update_user(&self, _user: &User) -> AuthResult<()> {
             Ok(())
         }
@@ -442,6 +542,15 @@ mod tests {
                 .lock()
                 .expect("test repo users lock should not be poisoned")
                 .insert(_user.user_id.clone(), _user);
+            Ok(())
+        }
+
+        async fn accept_oidc_invite(&self, invite_user_id: &UserId, user: User) -> AuthResult<()> {
+            let mut users = self.users.lock().expect("test repo users lock should not be poisoned");
+            users.insert(user.user_id.clone(), user);
+            if let Some(invite) = users.get_mut(invite_user_id) {
+                invite.deleted_at = Some(chrono::Utc::now().timestamp_millis());
+            }
             Ok(())
         }
     }
@@ -486,6 +595,8 @@ mod tests {
             last_login_at: None,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
             user_id,
             password_hash: String::new(),
             email: Some("stored@example.com".to_string()),
@@ -568,6 +679,80 @@ mod tests {
         assert_eq!(user.user_id, user_id);
         assert_eq!(user.role, Role::Dba);
         assert_eq!(user.auth_type, AuthType::Oidc);
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn external_oauth_user_accepts_active_email_invite_when_auto_provision_is_disabled() {
+        let claims = external_claims(None);
+        let invite_id = UserId::new("invite_alice");
+        let mut invite = test_user(invite_id.clone(), Role::Dba, AuthType::OidcInvite);
+        invite.email = Some("USER@example.com".to_string());
+        invite.auth_data = None;
+        invite.invite_expires_at = Some(chrono::Utc::now().timestamp_millis() + 60_000);
+
+        let repo = Arc::new(CountingRepo::with_user(invite));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(false, Role::User);
+
+        let user =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect("active invite should create a persisted OIDC user");
+
+        assert_eq!(user.user_id.as_str(), "subject-123");
+        assert_eq!(user.role, Role::Dba);
+        assert_eq!(user.auth_type, AuthType::Oidc);
+
+        let accepted = repo
+            .get_user_by_id(&UserId::new("subject-123"))
+            .await
+            .expect("accepted user should be persisted");
+        assert_eq!(
+            accepted.auth_data.as_ref().map(|data| data.subject.as_str()),
+            Some("subject-123")
+        );
+
+        let invite = repo
+            .get_user_by_id(&invite_id)
+            .await
+            .expect("invite row should remain as soft-deleted history");
+        assert!(invite.deleted_at.is_some());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn external_oauth_user_accepts_active_invite_when_same_subject_was_deleted() {
+        let claims = external_claims(None);
+        let user_id = UserId::new(claims.sub.clone());
+        let mut deleted_user = test_user(user_id.clone(), Role::User, AuthType::Oidc);
+        deleted_user.email = Some("user@example.com".to_string());
+        deleted_user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
+
+        let invite_id = UserId::new("invite_retry");
+        let mut invite = test_user(invite_id.clone(), Role::Dba, AuthType::OidcInvite);
+        invite.email = Some("user@example.com".to_string());
+        invite.auth_data = None;
+        invite.invite_expires_at = Some(chrono::Utc::now().timestamp_millis() + 60_000);
+
+        let repo = Arc::new(CountingRepo::with_users(vec![deleted_user, invite]));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(false, Role::User);
+
+        let user =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect("active invite should recreate a previously deleted OIDC subject");
+
+        assert_eq!(user.user_id, user_id);
+        assert_eq!(user.role, Role::Dba);
+        assert_eq!(user.auth_type, AuthType::Oidc);
+
+        let invite = repo
+            .get_user_by_id(&invite_id)
+            .await
+            .expect("invite row should remain as soft-deleted history");
+        assert!(invite.deleted_at.is_some());
     }
 
     #[tokio::test]

@@ -49,7 +49,10 @@ async fn run() -> Result<()> {
     let password_prompt_mode =
         matches!(
             cli.subcommand,
-            Some(CliCommand::Login(_)) | Some(CliCommand::Token(_)) | Some(CliCommand::Whoami)
+            Some(CliCommand::Login(_))
+                | Some(CliCommand::Token(_))
+                | Some(CliCommand::Invite(_))
+                | Some(CliCommand::Whoami)
         ) || (cli.subcommand.is_none() && cli.command.is_none() && cli.file.is_none());
     if cli.password.as_deref() == Some("") && password_prompt_mode && std::io::stdin().is_terminal()
     {

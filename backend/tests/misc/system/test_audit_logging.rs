@@ -31,6 +31,8 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
         updated_at: now,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     // Ignore error if user already exists (shared DB in tests)

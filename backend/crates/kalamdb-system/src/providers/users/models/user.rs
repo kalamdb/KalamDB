@@ -37,6 +37,8 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// - `updated_at`: Unix timestamp in milliseconds when user was last modified
 /// - `last_seen`: Optional Unix timestamp in milliseconds of last activity
 /// - `deleted_at`: Optional Unix timestamp in milliseconds for soft delete
+/// - `invite_expires_at`: Optional Unix timestamp in milliseconds for pending OIDC invites
+/// - `invited_by`: Optional admin user ID that created a pending OIDC invite
 ///
 /// ## Serialization
 /// - **RocksDB**: FlatBuffers envelope + FlexBuffers payload
@@ -139,6 +141,16 @@ pub struct User {
     )]
     pub deleted_at: Option<i64>,
     #[column(
+        id = 17,
+        ordinal = 16,
+        data_type(KalamDataType::Timestamp),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Pending OIDC invite expiry timestamp"
+    )]
+    pub invite_expires_at: Option<i64>,
+    #[column(
         id = 1,
         ordinal = 1,
         data_type(KalamDataType::Text),
@@ -188,6 +200,16 @@ pub struct User {
         comment = "Optional preferred storage configuration ID"
     )]
     pub storage_id: Option<StorageId>,
+    #[column(
+        id = 18,
+        ordinal = 17,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Admin user that created a pending OIDC invite"
+    )]
+    pub invited_by: Option<UserId>,
     // 4-byte aligned fields (enums, i32)
     /// Number of consecutive failed login attempts (reset on successful login)
     #[column(
@@ -299,6 +321,8 @@ mod tests {
             updated_at: 1730000000000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 

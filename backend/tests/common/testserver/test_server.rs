@@ -159,6 +159,8 @@ impl TestServer {
                 updated_at: chrono::Utc::now().timestamp_millis(),
                 last_seen: None,
                 deleted_at: None,
+                invite_expires_at: None,
+                invited_by: None,
             };
             let _ = users_provider.create_user(user);
             Role::User
@@ -218,6 +220,8 @@ impl TestServer {
             updated_at: chrono::Utc::now().timestamp_millis(),
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         let _ = users_provider.create_user(user);

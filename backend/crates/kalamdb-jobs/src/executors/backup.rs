@@ -30,9 +30,7 @@ use std::{fs, path::Path};
 use async_trait::async_trait;
 use kalamdb_core::error::KalamDbError;
 use kalamdb_system::JobType;
-use kalamdb_transfer::{
-    copy_dir_to_dir, finalize_database_backup, prepare_database_backup,
-};
+use kalamdb_transfer::{copy_dir_to_dir, finalize_database_backup, prepare_database_backup};
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};

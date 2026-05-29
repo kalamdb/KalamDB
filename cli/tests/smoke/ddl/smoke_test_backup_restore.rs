@@ -182,7 +182,8 @@ fn smoke_backup_database_job_completes() {
 
     // Cleanup — best-effort
     let _ = std::fs::remove_dir_all(&backup_path);
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// BACKUP DATABASE writes a `.tar.gz` archive when the target path ends with
@@ -222,7 +223,8 @@ fn smoke_backup_database_archive_job_completes() {
     println!("✅  Backup archive verified at {}", backup_path.display());
 
     let _ = std::fs::remove_file(&backup_path);
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// RESTORE DATABASE FROM a valid backup path creates a restore job that completes.
@@ -277,7 +279,8 @@ fn smoke_restore_from_backup_job_completes() {
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&backup_path);
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// RESTORE DATABASE FROM accepts a `.tar.gz` archive path and creates a restore
@@ -323,7 +326,8 @@ fn smoke_restore_from_backup_archive_job_completes() {
     println!("✅  Restore archive job completed");
 
     let _ = std::fs::remove_file(&backup_path);
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// A regular `user`-role user is forbidden from running BACKUP DATABASE.

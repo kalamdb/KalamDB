@@ -966,14 +966,8 @@ pub async fn create_session(
                     let username = "root".to_string();
                     let password = "".to_string();
 
-                    match try_login(
-                        &server_url,
-                        &username,
-                        &password,
-                        cli.verbose,
-                        !cli.no_spinner,
-                    )
-                    .await
+                    match try_login(&server_url, &username, &password, cli.verbose, !cli.no_spinner)
+                        .await
                     {
                         LoginResult::Success(login_response) => {
                             eprintln!("Auto-authenticated as root for localhost connection");

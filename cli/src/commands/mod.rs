@@ -14,6 +14,7 @@ enum PreSessionCommand {
     Login,
     Logout,
     Whoami,
+    Invite,
     Token,
     CredentialManagement,
     CredentialLogin,
@@ -38,6 +39,7 @@ fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
             CliCommand::Login(_) => Some(PreSessionCommand::Login),
             CliCommand::Logout(_) => Some(PreSessionCommand::Logout),
             CliCommand::Whoami => Some(PreSessionCommand::Whoami),
+            CliCommand::Invite(_) => Some(PreSessionCommand::Invite),
             CliCommand::Token(_) => Some(PreSessionCommand::Token),
             CliCommand::Version | CliCommand::Update(_) | CliCommand::Doctor(_) => None,
         };
@@ -84,6 +86,16 @@ async fn run_pre_session_command(
         },
         PreSessionCommand::Whoami => {
             Ok(if auth::handle_whoami(context.cli, context.credential_store).await? {
+                PreSessionResult::Exit
+            } else {
+                PreSessionResult::NotHandled
+            })
+        },
+        PreSessionCommand::Invite => {
+            let Some(CliCommand::Invite(args)) = &context.cli.subcommand else {
+                return Ok(PreSessionResult::NotHandled);
+            };
+            Ok(if auth::handle_invite(context.cli, args, context.credential_store).await? {
                 PreSessionResult::Exit
             } else {
                 PreSessionResult::NotHandled
@@ -203,6 +215,7 @@ mod tests {
             ),
             (&["logout"][..], PreSessionCommand::Logout),
             (&["whoami"][..], PreSessionCommand::Whoami),
+            (&["invite", "--email", "alice@example.com"][..], PreSessionCommand::Invite),
             (&["token", "create", "--name", "ci-prod"][..], PreSessionCommand::Token),
         ] {
             let cli = parse_cli(args);

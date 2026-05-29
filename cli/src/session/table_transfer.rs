@@ -32,17 +32,14 @@ fn parse_table_ref(table_ref: &str) -> Result<(String, String)> {
 
 /// Build a reqwest `Client` with a 60-second timeout.
 fn http_client() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
+    reqwest::Client::builder().timeout(Duration::from_secs(60)).build()
 }
 
 impl CLISession {
-    /// Handle `\export <namespace.table> [--type ...] [--user-id ...] [--output ...]`
+    /// Handle `\export <namespace.table> [--user-id ...] [--output ...]`
     pub(super) async fn cmd_export_table(
         &self,
         table_ref: &str,
-        table_type: &str,
         user_id: Option<&str>,
         output: Option<&str>,
     ) -> Result<()> {
@@ -61,17 +58,14 @@ impl CLISession {
         let mut body = serde_json::json!({
             "namespace_id": namespace,
             "table_name": table_name,
-            "table_type": table_type,
         });
         if let Some(uid) = user_id {
             body["user_id"] = serde_json::Value::String(uid.to_string());
         }
 
-        println!("Starting export of {}.{} (type: {})…", namespace, table_name, table_type);
+        println!("Starting export of {}.{}…", namespace, table_name);
 
-        let mut req = client
-            .post(format!("{}/v1/api/table-exports", base))
-            .json(&body);
+        let mut req = client.post(format!("{}/v1/api/table-exports", base)).json(&body);
 
         if let Some(auth_header) = self.authorization_header_value() {
             req = req.header("Authorization", auth_header);
@@ -85,15 +79,12 @@ impl CLISession {
         })?;
 
         let status = resp.status();
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| {
-                CLIError::LinkError(KalamLinkError::NetworkError(format!(
-                    "Failed to read export response: {}",
-                    e
-                )))
-            })?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| {
+            CLIError::LinkError(KalamLinkError::NetworkError(format!(
+                "Failed to read export response: {}",
+                e
+            )))
+        })?;
 
         if !status.is_success() {
             return Err(CLIError::LinkError(KalamLinkError::ServerError {
@@ -111,7 +102,13 @@ impl CLISession {
 
         // Poll until terminal
         let download_url = self
-            .poll_transfer_job_until_done(&client, &base, "/v1/api/table-exports", &job_id, "export")
+            .poll_transfer_job_until_done(
+                &client,
+                &base,
+                "/v1/api/table-exports",
+                &job_id,
+                "export",
+            )
             .await?;
 
         // Download the ZIP
@@ -121,9 +118,9 @@ impl CLISession {
             ));
         };
 
-        let output_path = output.map(|s| s.to_string()).unwrap_or_else(|| {
-            format!("{}.{}-export.zip", namespace, table_name)
-        });
+        let output_path = output
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{}.{}-export.zip", namespace, table_name));
 
         self.download_export_zip(&client, &url, &output_path).await?;
 
@@ -131,20 +128,19 @@ impl CLISession {
         Ok(())
     }
 
-    /// Handle `\import <namespace.table> <file.zip> [--type ...] [--user-id ...]`
+    /// Handle `\import <namespace.table> <file.zip> [--user-id ...]`
     pub(super) async fn cmd_import_table(
         &self,
         table_ref: &str,
         zip_path: &str,
-        table_type: &str,
         user_id: Option<&str>,
     ) -> Result<()> {
         let (namespace, table_name) = parse_table_ref(table_ref)?;
 
         // Read the ZIP file
-        let zip_bytes = tokio::fs::read(zip_path).await.map_err(|e| {
-            CLIError::ParseError(format!("Cannot read '{}': {}", zip_path, e))
-        })?;
+        let zip_bytes = tokio::fs::read(zip_path)
+            .await
+            .map_err(|e| CLIError::ParseError(format!("Cannot read '{}': {}", zip_path, e)))?;
 
         let client = http_client().map_err(|e| {
             CLIError::LinkError(KalamLinkError::NetworkError(format!(
@@ -155,15 +151,11 @@ impl CLISession {
 
         let base = self.api_base();
 
-        println!(
-            "Importing {} into {}.{} (type: {})…",
-            zip_path, namespace, table_name, table_type
-        );
+        println!("Importing {} into {}.{}…", zip_path, namespace, table_name);
 
         let mut form = multipart::Form::new()
             .text("namespace_id", namespace.clone())
-            .text("table_name", table_name.clone())
-            .text("table_type", table_type.to_string());
+            .text("table_name", table_name.clone());
 
         if let Some(uid) = user_id {
             form = form.text("user_id", uid.to_string());
@@ -183,9 +175,7 @@ impl CLISession {
                 .map_err(|e| CLIError::ParseError(format!("MIME error: {}", e)))?,
         );
 
-        let mut req = client
-            .post(format!("{}/v1/api/table-imports", base))
-            .multipart(form);
+        let mut req = client.post(format!("{}/v1/api/table-imports", base)).multipart(form);
 
         if let Some(auth_header) = self.authorization_header_value() {
             req = req.header("Authorization", auth_header);
@@ -199,15 +189,12 @@ impl CLISession {
         })?;
 
         let status = resp.status();
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| {
-                CLIError::LinkError(KalamLinkError::NetworkError(format!(
-                    "Failed to read import response: {}",
-                    e
-                )))
-            })?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| {
+            CLIError::LinkError(KalamLinkError::NetworkError(format!(
+                "Failed to read import response: {}",
+                e
+            )))
+        })?;
 
         if !status.is_success() {
             return Err(CLIError::LinkError(KalamLinkError::ServerError {
@@ -298,10 +285,7 @@ impl CLISession {
                     return Ok(download_url);
                 },
                 "failed" => {
-                    let msg = json["error_message"]
-                        .as_str()
-                        .unwrap_or("unknown error")
-                        .to_string();
+                    let msg = json["error_message"].as_str().unwrap_or("unknown error").to_string();
                     return Err(CLIError::LinkError(KalamLinkError::ServerError {
                         status_code: 500,
                         message: format!("{} job {} failed: {}", kind, job_id, msg),
@@ -336,10 +320,7 @@ impl CLISession {
         println!("Downloading ZIP from {}…", full_url);
 
         let resp = req.send().await.map_err(|e| {
-            CLIError::LinkError(KalamLinkError::NetworkError(format!(
-                "Download failed: {}",
-                e
-            )))
+            CLIError::LinkError(KalamLinkError::NetworkError(format!("Download failed: {}", e)))
         })?;
 
         if !resp.status().is_success() {

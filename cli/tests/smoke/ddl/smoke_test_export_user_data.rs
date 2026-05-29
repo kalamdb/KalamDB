@@ -221,9 +221,7 @@ fn wait_for_export_row_as_root(
             return Ok(row.clone());
         }
         if std::time::Instant::now() >= deadline {
-            return Err(
-                format!("Timeout waiting for SHOW EXPORT row for job {}", job_id).into()
-            );
+            return Err(format!("Timeout waiting for SHOW EXPORT row for job {}", job_id).into());
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -566,8 +564,7 @@ fn smoke_export_download_zip_is_valid() {
     // the header (bytes 0-3) and the footer (last 4 bytes). At least one entry must
     // reside under the expected `{namespace}/{table}/` folder path.
     {
-        let mut zip =
-            zip::ZipArchive::new(Cursor::new(body.clone())).expect("parse export zip");
+        let mut zip = zip::ZipArchive::new(Cursor::new(body.clone())).expect("parse export zip");
         let expected_prefix = format!("{}/{}/", namespace, table);
         let mut parquet_count: usize = 0;
         let mut namespace_path_found = false;
@@ -580,8 +577,7 @@ fn smoke_export_download_zip_is_valid() {
                 continue;
             }
             let mut data: Vec<u8> = Vec::new();
-            std::io::Read::read_to_end(&mut entry, &mut data)
-                .expect("read parquet bytes from zip");
+            std::io::Read::read_to_end(&mut entry, &mut data).expect("read parquet bytes from zip");
             assert!(
                 data.len() >= 8,
                 "Parquet entry '{}' is too small ({} bytes) to be a valid Parquet file",
@@ -620,7 +616,9 @@ fn smoke_export_download_zip_is_valid() {
         println!(
             "✅  Export ZIP deep-checked: {} Parquet entries (PAR1 header+footer OK), \
              path '{}' confirmed ({} total ZIP bytes)",
-            parquet_count, expected_prefix, body.len()
+            parquet_count,
+            expected_prefix,
+            body.len()
         );
     }
 
@@ -686,13 +684,12 @@ fn smoke_export_user_data_download_and_reimport() {
         execute_sql_via_client_as(
             &export_user,
             export_pass,
-            &format!("INSERT INTO {} (data) VALUES ('reimp_row_{}')" , source_fqn, i),
+            &format!("INSERT INTO {} (data) VALUES ('reimp_row_{}')", source_fqn, i),
         )
         .expect("INSERT failed");
     }
-    let flush_out =
-        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", source_fqn))
-            .expect("flush failed");
+    let flush_out = execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", source_fqn))
+        .expect("flush failed");
     let flush_job_id = parse_job_id_from_flush_output(&flush_out).expect("flush job id");
     verify_job_completed(&flush_job_id, Duration::from_secs(45)).expect("flush should complete");
 
@@ -701,7 +698,7 @@ fn smoke_export_user_data_download_and_reimport() {
         execute_sql_via_client_as(
             &export_user,
             export_pass,
-            &format!("INSERT INTO {} (data) VALUES ('reimp_row_hot_{}')" , source_fqn, i),
+            &format!("INSERT INTO {} (data) VALUES ('reimp_row_hot_{}')", source_fqn, i),
         )
         .expect("hot INSERT failed");
     }
@@ -739,9 +736,7 @@ fn smoke_export_user_data_download_and_reimport() {
                 .or_else(|| row.get("download_url").cloned())
                 .and_then(|v| v.as_str().map(String::from))
         })
-        .unwrap_or_else(|| {
-            panic!("No download_url in SHOW EXPORT for job {}", user_export_job_id)
-        });
+        .unwrap_or_else(|| panic!("No download_url in SHOW EXPORT for job {}", user_export_job_id));
 
     let user_token = get_token_sync(&export_user, export_pass).expect("get user token");
     let normalized_url = normalize_download_url(&download_url);
@@ -756,8 +751,8 @@ fn smoke_export_user_data_download_and_reimport() {
     // Deep ZIP inspection: every .parquet entry must have PAR1 magic at header and
     // footer; at least one entry must live under namespace/table/.
     {
-        let mut zip = zip::ZipArchive::new(Cursor::new(zip_body.clone()))
-            .expect("parse user export ZIP");
+        let mut zip =
+            zip::ZipArchive::new(Cursor::new(zip_body.clone())).expect("parse user export ZIP");
         let expected_prefix = format!("{}/{}/", namespace, source_table);
         let mut parquet_count: usize = 0;
         let mut namespace_path_found = false;
@@ -819,8 +814,7 @@ fn smoke_export_user_data_download_and_reimport() {
     // rows (8 previously flushed + 4 hot flushed by the executor) must appear in
     // the imported table.
 
-    let admin_token =
-        get_token_sync(default_username(), default_password()).expect("admin token");
+    let admin_token = get_token_sync(default_username(), default_password()).expect("admin token");
 
     let transfer_export =
         start_user_table_export_sync(&admin_token, &namespace, &source_table, &export_user)
@@ -833,14 +827,10 @@ fn smoke_export_user_data_download_and_reimport() {
 
     let transfer_export_status = wait_for_job_finished(&transfer_job_id, TABLE_TRANSFER_TIMEOUT)
         .expect("table-transfer export job should finish");
-    assert_eq!(
-        transfer_export_status, "completed",
-        "Table-transfer export must complete"
-    );
+    assert_eq!(transfer_export_status, "completed", "Table-transfer export must complete");
 
-    let transfer_row =
-        wait_for_export_row_as_root(&transfer_job_id, Duration::from_secs(30))
-            .expect("SHOW EXPORT row for table-transfer job");
+    let transfer_row = wait_for_export_row_as_root(&transfer_job_id, Duration::from_secs(30))
+        .expect("SHOW EXPORT row for table-transfer job");
     let transfer_download_path = transfer_row
         .get("download_url")
         .and_then(extract_arrow_value)
@@ -853,8 +843,7 @@ fn smoke_export_user_data_download_and_reimport() {
         transfer_download_path
     );
 
-    let transfer_url =
-        format!("{}{}", server_url().trim_end_matches('/'), transfer_download_path);
+    let transfer_url = format!("{}{}", server_url().trim_end_matches('/'), transfer_download_path);
     let (transfer_dl_status, _, transfer_zip) =
         http_get_with_token(&transfer_url, &admin_token).expect("download table-transfer zip");
     assert_eq!(transfer_dl_status, 200, "Expected 200 OK for table-transfer download");
@@ -888,8 +877,7 @@ fn smoke_export_user_data_download_and_reimport() {
         &format!("SELECT COUNT(*) AS c FROM {}", target_fqn),
     )
     .expect("target count query");
-    let count_val: serde_json::Value =
-        serde_json::from_str(&count_json).expect("parse count JSON");
+    let count_val: serde_json::Value = serde_json::from_str(&count_json).expect("parse count JSON");
     let count_rows = get_rows_as_hashmaps(&count_val).unwrap_or_default();
     let total = count_rows
         .first()
@@ -904,10 +892,7 @@ fn smoke_export_user_data_download_and_reimport() {
     let flushed_json = execute_sql_via_client_as_json(
         &export_user,
         export_pass,
-        &format!(
-            "SELECT COUNT(*) AS c FROM {} WHERE data = 'reimp_row_5'",
-            target_fqn
-        ),
+        &format!("SELECT COUNT(*) AS c FROM {} WHERE data = 'reimp_row_5'", target_fqn),
     )
     .expect("flushed row check");
     let flushed_val: serde_json::Value =
@@ -926,10 +911,7 @@ fn smoke_export_user_data_download_and_reimport() {
     let hot_json = execute_sql_via_client_as_json(
         &export_user,
         export_pass,
-        &format!(
-            "SELECT COUNT(*) AS c FROM {} WHERE data = 'reimp_row_hot_12'",
-            target_fqn
-        ),
+        &format!("SELECT COUNT(*) AS c FROM {} WHERE data = 'reimp_row_hot_12'", target_fqn),
     )
     .expect("hot row check");
     let hot_val: serde_json::Value = serde_json::from_str(&hot_json).expect("parse hot check");
@@ -951,10 +933,8 @@ fn smoke_export_user_data_download_and_reimport() {
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source_fqn));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target_fqn));
-    let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -1072,7 +1052,7 @@ fn smoke_show_export_empty_for_new_user() {
     let fresh_pass = "FreshUser123!";
 
     execute_sql_as_root_via_client(&format!(
-        "CREATE USER {} WITH PASSWORD '{}' ROLE 'user'",
+        "CREATE USER {} WITH PASSWORD '{}' ROLE 'dba'",
         fresh_user, fresh_pass
     ))
     .expect("CREATE USER failed");
@@ -1083,13 +1063,25 @@ fn smoke_show_export_empty_for_new_user() {
     let json: serde_json::Value =
         serde_json::from_str(&show_out_json).expect("parse SHOW EXPORT JSON");
 
-    // Either empty rows or an empty table
-    let row_count = get_rows_as_hashmaps(&json).map(|r| r.len()).unwrap_or(0);
+    // In running-server mode, privileged users can see historical exports for
+    // other users. Assert that this fresh user has no rows.
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+    let user_row_count = rows
+        .iter()
+        .filter(|row| {
+            row.get("user_id")
+                .and_then(extract_arrow_value)
+                .or_else(|| row.get("user_id").cloned())
+                .and_then(|v| v.as_str().map(String::from))
+                .map(|uid| uid == fresh_user)
+                .unwrap_or(false)
+        })
+        .count();
 
     assert_eq!(
-        row_count, 0,
-        "SHOW EXPORT should return 0 rows for a user who has never exported; got {}",
-        row_count
+        user_row_count, 0,
+        "SHOW EXPORT should return 0 rows for a fresh user; got {} rows for user {}",
+        user_row_count, fresh_user
     );
 
     println!("✅  SHOW EXPORT correctly returns empty result for user with no exports");

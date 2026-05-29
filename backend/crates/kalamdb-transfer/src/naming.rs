@@ -9,11 +9,7 @@ pub fn build_table_export_download_url(export_id: &str) -> String {
 }
 
 pub fn generate_user_export_id(user_id: &str) -> String {
-    format!(
-        "export-{}-{}",
-        user_id,
-        chrono::Utc::now().format("%Y%m%d-%H%M%S")
-    )
+    format!("export-{}-{}", user_id, chrono::Utc::now().format("%Y%m%d-%H%M%S"))
 }
 
 pub fn generate_table_export_id() -> String {

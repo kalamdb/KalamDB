@@ -84,6 +84,8 @@ mod tests {
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 

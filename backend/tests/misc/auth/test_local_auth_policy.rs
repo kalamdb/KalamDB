@@ -64,6 +64,8 @@ async fn insert_password_user_with_role(
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         })
         .context("Failed to create local password user")?;
 

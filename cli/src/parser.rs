@@ -82,7 +82,7 @@ pub enum Command {
         timeout: Option<u64>,
     },
     Unknown(String),
-    
+
     /// Export a table to a ZIP archive
     ExportTable {
         table: String,

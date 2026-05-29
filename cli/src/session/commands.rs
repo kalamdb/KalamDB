@@ -188,14 +188,20 @@ impl CLISession {
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
             },
-                Command::ExportTable { table, user_id, output } => {
-                    self.cmd_export_table(&table, user_id.as_deref(), output.as_deref())
-                        .await?;
-                },
-                Command::ImportTable { table, file, user_id } => {
-                    self.cmd_import_table(&table, &file, user_id.as_deref())
-                        .await?;
-                },
+            Command::ExportTable {
+                table,
+                user_id,
+                output,
+            } => {
+                self.cmd_export_table(&table, user_id.as_deref(), output.as_deref()).await?;
+            },
+            Command::ImportTable {
+                table,
+                file,
+                user_id,
+            } => {
+                self.cmd_import_table(&table, &file, user_id.as_deref()).await?;
+            },
         }
         Ok(())
     }

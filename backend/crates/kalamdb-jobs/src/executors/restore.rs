@@ -25,17 +25,12 @@
 //! ## IMPORTANT
 //! Restore requires a server restart after completion to reload the restored data.
 
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use async_trait::async_trait;
 use kalamdb_core::error::KalamDbError;
 use kalamdb_system::JobType;
-use kalamdb_transfer::{
-    copy_dir_to_dir, finalize_database_restore, prepare_database_restore,
-};
+use kalamdb_transfer::{copy_dir_to_dir, finalize_database_restore, prepare_database_restore};
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};

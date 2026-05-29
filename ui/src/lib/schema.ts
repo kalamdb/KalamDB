@@ -150,6 +150,8 @@ export const system_users = kTable('system.users', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
   last_seen: timestamp('last_seen', { mode: 'string' }),
   deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  invite_expires_at: timestamp('invite_expires_at', { mode: 'string' }),
+  invited_by: text('invited_by'),
 });
 
 export const system_live = kTable('system.live', {

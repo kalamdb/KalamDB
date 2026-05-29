@@ -168,6 +168,8 @@ mod tests {
             updated_at: 0,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         assert!(tracker.check_lockout(&user).is_ok());
@@ -194,6 +196,8 @@ mod tests {
             updated_at: 0,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         let result = tracker.check_lockout(&user);
@@ -227,6 +231,8 @@ mod tests {
             updated_at: 0,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         // Should pass even though user is "locked" because tracking is disabled

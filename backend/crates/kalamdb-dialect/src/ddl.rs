@@ -67,7 +67,7 @@ pub use topic_commands::{
 };
 pub use use_namespace::UseNamespaceStatement;
 pub use user_commands::{
-    AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
+    AlterUserStatement, CreateUserMode, CreateUserStatement, DropUserStatement, UserModification,
 };
 
 /// DML statement markers for TypedStatementHandler pattern

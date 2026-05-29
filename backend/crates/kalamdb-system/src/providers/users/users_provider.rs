@@ -17,7 +17,7 @@ use std::{
 };
 
 use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
-use kalamdb_commons::{models::rows::SystemTableRow, Role, UserId};
+use kalamdb_commons::{models::rows::SystemTableRow, AuthType, Role, UserId};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 use parking_lot::RwLock;
 
@@ -36,6 +36,7 @@ use crate::{
 pub type UsersStore = IndexedEntityStore<UserId, SystemTableRow>;
 
 const USER_ROLE_INDEX: usize = 0;
+const USER_EMAIL_INDEX: usize = 1;
 const PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY: usize = 32;
 
 /// System.users table provider using IndexedEntityStore for automatic index management.
@@ -109,6 +110,13 @@ impl UsersTableProvider {
         }
 
         let existing_row = existing.unwrap();
+        let existing_user = Self::decode_user_row(&existing_row)?;
+
+        if existing_user.user_id.is_admin() && user.role != existing_user.role {
+            return Err(SystemError::InvalidOperation(
+                "Root user role cannot be changed".to_string(),
+            ));
+        }
 
         // Use update_with_old for efficiency (we already have old entity)
         let new_row = Self::encode_user_row(&user)?;
@@ -127,6 +135,12 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn delete_user(&self, user_id: &UserId) -> Result<(), SystemError> {
+        if user_id.is_admin() {
+            return Err(SystemError::InvalidOperation(
+                "Root user cannot be removed from the system".to_string(),
+            ));
+        }
+
         // Get existing user
         let mut user = self
             .store
@@ -155,6 +169,80 @@ impl UsersTableProvider {
     pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>, SystemError> {
         let row = self.store.get(user_id)?;
         row.map(|value| Self::decode_user_row(&value)).transpose()
+    }
+
+    /// Get any active user account by email address.
+    ///
+    /// This includes both regular users and pending invites, and skips soft-deleted rows.
+    pub fn get_active_user_by_email(&self, email: &str) -> Result<Option<User>, SystemError> {
+        let normalized_email = normalize_invite_email(email);
+        if normalized_email.is_empty() {
+            return Ok(None);
+        }
+
+        let prefix = format!("{}:", normalized_email);
+        let user_ids = self
+            .store
+            .scan_index_keys_iter(USER_EMAIL_INDEX, Some(prefix.as_bytes()), None)
+            .into_system_error("scan user email index error")?;
+
+        for user_id in user_ids {
+            let user_id = user_id.into_system_error("decode user email index key error")?;
+            let Some(user) = self.get_user_by_id(&user_id)? else {
+                continue;
+            };
+
+            if user.deleted_at.is_none() {
+                return Ok(Some(user));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get the active pending OIDC invite for an email address.
+    ///
+    /// Returns the newest non-deleted, non-expired invite when multiple historical
+    /// rows exist for the same email.
+    pub fn get_active_oidc_invite_by_email(
+        &self,
+        email: &str,
+        now_millis: i64,
+    ) -> Result<Option<User>, SystemError> {
+        let normalized_email = normalize_invite_email(email);
+        if normalized_email.is_empty() {
+            return Ok(None);
+        }
+
+        let prefix = format!("{}:invite:", normalized_email);
+        let invite_ids = self
+            .store
+            .scan_index_keys_iter(USER_EMAIL_INDEX, Some(prefix.as_bytes()), None)
+            .into_system_error("scan user email index error")?;
+
+        let mut newest_invite: Option<User> = None;
+        for invite_id in invite_ids {
+            let invite_id = invite_id.into_system_error("decode user email index key error")?;
+            let Some(invite) = self.get_user_by_id(&invite_id)? else {
+                continue;
+            };
+
+            if invite.auth_type != AuthType::OidcInvite || invite.deleted_at.is_some() {
+                continue;
+            }
+            if !invite.invite_expires_at.is_some_and(|expires_at| expires_at >= now_millis) {
+                continue;
+            }
+
+            let should_replace = newest_invite
+                .as_ref()
+                .is_none_or(|existing| invite.created_at > existing.created_at);
+            if should_replace {
+                newest_invite = Some(invite);
+            }
+        }
+
+        Ok(newest_invite)
     }
 
     /// Return the target role used by hot-path impersonation checks.
@@ -243,6 +331,10 @@ fn role_index_prefix(role: Role) -> Vec<u8> {
     format!("{}:", role.as_str()).into_bytes()
 }
 
+fn normalize_invite_email(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
+}
+
 crate::impl_system_table_provider_metadata!(
     indexed,
     provider = UsersTableProvider,
@@ -292,6 +384,8 @@ mod tests {
             updated_at: 1000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 
@@ -419,14 +513,38 @@ mod tests {
         // Scan all
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 15);
+        assert_eq!(batch.num_columns(), 17);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let provider = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 15);
+        assert_eq!(schema.fields().len(), 17);
         assert_eq!(schema.field(0).name(), "user_id");
+    }
+
+    #[test]
+    fn test_get_active_oidc_invite_by_email_uses_email_index() {
+        let provider = create_test_provider();
+        let mut invite = create_test_user("invite_alice");
+        invite.auth_type = AuthType::OidcInvite;
+        invite.email = Some("Alice@Example.com".to_string());
+        invite.role = Role::Dba;
+        invite.invite_expires_at = Some(2_000);
+
+        provider.create_user(invite.clone()).unwrap();
+
+        let found = provider
+            .get_active_oidc_invite_by_email("alice@example.com", 1_500)
+            .unwrap()
+            .expect("active invite should be found");
+        assert_eq!(found.user_id, invite.user_id);
+        assert_eq!(found.role, Role::Dba);
+
+        assert!(provider
+            .get_active_oidc_invite_by_email("alice@example.com", 2_001)
+            .unwrap()
+            .is_none());
     }
 }

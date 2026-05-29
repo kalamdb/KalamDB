@@ -286,6 +286,9 @@ pub enum CliCommand {
     /// Show the currently authenticated user
     Whoami,
 
+    /// Create an OIDC email invite for a future login
+    Invite(InviteArgs),
+
     /// Manage service tokens
     Token(TokenArgs),
 }
@@ -348,6 +351,21 @@ pub struct LogoutArgs {
     /// Delete credentials for every saved instance
     #[arg(long = "all")]
     pub all: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct InviteArgs {
+    /// Email address that may accept the OIDC invite
+    #[arg(long = "email")]
+    pub email: String,
+
+    /// Role assigned after the invited user authenticates
+    #[arg(long = "role", value_enum, default_value_t = TokenRole::User)]
+    pub role: TokenRole,
+
+    /// Number of days before the invite expires
+    #[arg(long = "expires-in-days", default_value_t = 7)]
+    pub expires_in_days: i64,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -525,6 +543,28 @@ mod tests {
         assert_eq!(create.name, "ci-prod");
         assert_eq!(create.role, TokenRole::Dba);
         assert!(create.save);
+    }
+
+    #[test]
+    fn invite_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "kalam",
+            "invite",
+            "--email",
+            "alice@example.com",
+            "--role",
+            "dba",
+            "--expires-in-days",
+            "14",
+        ])
+        .expect("invite should parse");
+
+        let Some(CliCommand::Invite(args)) = cli.subcommand else {
+            panic!("expected invite command");
+        };
+        assert_eq!(args.email, "alice@example.com");
+        assert_eq!(args.role, TokenRole::Dba);
+        assert_eq!(args.expires_in_days, 14);
     }
 
     #[test]

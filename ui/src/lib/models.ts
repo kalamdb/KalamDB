@@ -46,6 +46,8 @@ export type SystemUserListRow = Pick<SystemUserRow,
   | "updated_at"
   | "last_seen"
   | "deleted_at"
+  | "invite_expires_at"
+  | "invited_by"
   | "failed_login_attempts"
   | "locked_until"
   | "last_login_at"

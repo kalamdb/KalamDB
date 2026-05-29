@@ -116,6 +116,32 @@ async fn test_user_sql_commands_over_http() {
                 let role = rows[0].get("role").unwrap().as_str().unwrap();
                 assert_eq!(role, "dba");
 
+                let alter_root_sql = "ALTER USER root SET ROLE dba";
+                let result = server.execute_sql_with_auth(alter_root_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Error);
+                assert!(
+                    result
+                        .error
+                        .as_ref()
+                        .map(|err| err.message.contains("Root user role cannot be changed"))
+                        .unwrap_or(false),
+                    "Expected clear root role protection error: {:?}",
+                    result.error
+                );
+
+                let drop_root_sql = "DROP USER root";
+                let result = server.execute_sql_with_auth(drop_root_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Error);
+                assert!(
+                    result
+                        .error
+                        .as_ref()
+                        .map(|err| err.message.contains("Root user cannot be removed"))
+                        .unwrap_or(false),
+                    "Expected clear root delete protection error: {:?}",
+                    result.error
+                );
+
                 // ALTER USER SET STORAGE_MODE / STORAGE_ID
                 let create_sql = "CREATE USER 'storage_test' WITH PASSWORD 'Password123!S' ROLE user STORAGE_MODE table";
                 server.execute_sql_with_auth(create_sql, &admin_auth).await?;
@@ -182,6 +208,25 @@ async fn test_user_sql_commands_over_http() {
                 server.execute_sql_with_auth(create_sql, &admin_auth).await?;
                 let result = server.execute_sql_with_auth(create_sql, &admin_auth).await?;
                 assert_eq!(result.status, ResponseStatus::Error);
+
+                // Invite emails must be unique across active users
+                let create_sql =
+                    "CREATE USER 'invite_target' WITH PASSWORD 'Password123!I' ROLE user EMAIL 'invite@example.com'";
+                server.execute_sql_with_auth(create_sql, &admin_auth).await?;
+
+                let invite_sql =
+                    "CREATE USER INVITE 'invite@example.com' ROLE user EXPIRES_AT 1770000000000";
+                let result = server.execute_sql_with_auth(invite_sql, &admin_auth).await?;
+                assert_eq!(result.status, ResponseStatus::Error);
+                assert!(
+                    result
+                        .error
+                        .as_ref()
+                        .map(|err| err.message.contains("Email 'invite@example.com' is already in use"))
+                        .unwrap_or(false),
+                    "Expected duplicate-email invite rejection: {:?}",
+                    result.error
+                );
 
                 // Not found
                 let alter_sql = "ALTER USER 'nonexistent_user' SET ROLE dba";

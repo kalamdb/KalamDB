@@ -46,9 +46,13 @@ import {
 import {
   createUser,
   deleteUser,
+  fetchInviteUsers,
   fetchUsers,
+  reinviteUserInvite,
   type CreateUserInput,
   type UpdateUserInput,
+  type UserListFilters,
+  type UserListResult,
   type User,
   updateUser,
 } from "@/services/userService";
@@ -129,10 +133,23 @@ export const apiSlice = createApi({
       },
       providesTags: ["Stats"],
     }),
-    getUsersList: builder.query<User[], void>({
+    getInviteUsersList: builder.query<User[], void>({
       async queryFn() {
         try {
-          const data = await fetchUsers();
+          const data = await fetchInviteUsers();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch invites";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["Users"],
+    }),
+    getUsersList: builder.query<UserListResult, UserListFilters | void>({
+      async queryFn(filters) {
+        try {
+          const normalizedFilters = filters && typeof filters === "object" ? filters : undefined;
+          const data = await fetchUsers(normalizedFilters);
           return { data };
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to fetch users";
@@ -172,6 +189,18 @@ export const apiSlice = createApi({
           return { data: undefined };
         } catch (error) {
           const message = error instanceof Error ? error.message : "Failed to delete user";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["Users"],
+    }),
+    reinviteUser: builder.mutation<void, { invite: User; inviteExpiresAt: number }>({
+      async queryFn({ invite, inviteExpiresAt }) {
+        try {
+          await reinviteUserInvite(invite, inviteExpiresAt);
+          return { data: undefined };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to reinvite user";
           return { error: { status: "CUSTOM_ERROR", error: message } };
         }
       },
@@ -379,10 +408,12 @@ export const {
   useGetSettingsQuery,
   useGetStatsQuery,
   useGetSlowQueriesQuery,
+  useGetInviteUsersListQuery,
   useGetUsersListQuery,
   useCreateUserMutation,
   useUpdateUserMutation,
   useDeleteUserMutation,
+  useReinviteUserMutation,
   useGetJobsFilteredQuery,
   useGetAuditLogsQuery,
   useGetServerLogsQuery,

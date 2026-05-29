@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use kalamdb_core::error::KalamDbError;
 
@@ -60,13 +63,14 @@ pub fn finalize_database_backup(
 ) -> Result<u64, KalamDbError> {
     if plan.archive_output {
         create_tar_gz_archive(&plan.backup_root, backup_target)?;
-        let archive_size = backup_target.metadata().map(|metadata| metadata.len()).map_err(|error| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to inspect archive '{}': {}",
-                backup_target.display(),
-                error
-            ))
-        })?;
+        let archive_size =
+            backup_target.metadata().map(|metadata| metadata.len()).map_err(|error| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to inspect archive '{}': {}",
+                    backup_target.display(),
+                    error
+                ))
+            })?;
         let _ = fs::remove_dir_all(&plan.backup_root);
         Ok(archive_size)
     } else {

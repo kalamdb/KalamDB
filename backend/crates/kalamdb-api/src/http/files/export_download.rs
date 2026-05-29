@@ -50,10 +50,10 @@ pub async fn download_export(
         ));
     }
 
-    if !is_admin_role(session.role()) {
+    if session.user_id() != &user_id && !is_admin_role(session.role()) {
         return HttpResponse::Forbidden().json(SqlResponse::error(
             ErrorCode::PermissionDenied,
-            "DBA or System role is required to download exports",
+            "Only the export owner, DBA, or System role may download exports",
             0.0,
         ));
     }

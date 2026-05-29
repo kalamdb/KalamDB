@@ -187,6 +187,8 @@ pub async fn server_setup_handler(
         updated_at: created_at,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     if let Err(e) = user_repo.create_user(dba_user.clone()).await {

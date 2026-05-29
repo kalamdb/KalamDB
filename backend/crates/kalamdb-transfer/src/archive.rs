@@ -183,12 +183,10 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
             ));
         }
 
-        let relative_path = entry
-            .path()
-            .map_err(|error| {
-                KalamDbError::InvalidOperation(format!("Invalid archive path: {}", error))
-            })?
-            .into_owned();
+        let raw_path = entry.path_bytes().to_vec();
+        let relative_path = Path::new(std::str::from_utf8(&raw_path).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("Invalid archive path bytes: {}", error))
+        })?);
 
         if relative_path.components().any(|component| {
             matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
@@ -198,7 +196,7 @@ pub fn extract_tar_gz_archive(archive_path: &Path, output_dir: &Path) -> Result<
             ));
         }
 
-        let output_path = output_dir.join(&relative_path);
+        let output_path = output_dir.join(relative_path);
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 KalamDbError::InvalidOperation(format!(
@@ -268,7 +266,54 @@ pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use tempfile::tempdir;
+
+    fn octal_bytes(value: u64, width: usize) -> Vec<u8> {
+        let mut bytes = vec![b'0'; width];
+        let octal = format!("{:o}", value);
+        let start = width.saturating_sub(octal.len() + 1);
+        bytes[start..start + octal.len()].copy_from_slice(octal.as_bytes());
+        bytes[width - 1] = 0;
+        bytes
+    }
+
+    fn write_tar_header(archive: &mut Vec<u8>, path: &str, size: u64) {
+        let mut header = [0u8; 512];
+        header[..path.len()].copy_from_slice(path.as_bytes());
+        header[100..108].copy_from_slice(&octal_bytes(0o644, 8));
+        header[108..116].copy_from_slice(&octal_bytes(0, 8));
+        header[116..124].copy_from_slice(&octal_bytes(0, 8));
+        header[124..136].copy_from_slice(&octal_bytes(size, 12));
+        header[136..148].copy_from_slice(&octal_bytes(0, 12));
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+
+        for byte in &mut header[148..156] {
+            *byte = b' ';
+        }
+
+        let checksum: u32 = header.iter().map(|byte| *byte as u32).sum();
+        let checksum_bytes = format!("{:06o}\0 ", checksum);
+        header[148..156].copy_from_slice(checksum_bytes.as_bytes());
+
+        archive.extend_from_slice(&header);
+    }
+
+    fn write_malicious_tar_gz(archive_path: &Path) {
+        let archive_file = File::create(archive_path).expect("archive file");
+        let mut encoder = GzEncoder::new(archive_file, Compression::default());
+
+        let mut tar_bytes = Vec::new();
+        write_tar_header(&mut tar_bytes, "../bad", 4);
+        tar_bytes.extend_from_slice(b"oops");
+        tar_bytes.resize(tar_bytes.len().next_multiple_of(512), 0);
+        tar_bytes.extend_from_slice(&[0u8; 1024]);
+
+        encoder.write_all(&tar_bytes).expect("write archive bytes");
+        encoder.finish().expect("finish gzip");
+    }
 
     #[test]
     fn tar_gz_path_accepts_trailing_separator() {
@@ -280,18 +325,7 @@ mod tests {
     fn extract_archive_rejects_parent_paths() {
         let temp_dir = tempdir().expect("temp dir");
         let archive_path = temp_dir.path().join("bad.tar.gz");
-        let archive_file = File::create(&archive_path).expect("archive file");
-        let encoder = GzEncoder::new(archive_file, Compression::default());
-        let mut builder = Builder::new(encoder);
-        let mut header = tar::Header::new_gnu();
-        header.set_size(4);
-        header.set_cksum();
-        builder
-            .append_data(&mut header, "../bad", &b"oops"[..])
-            .expect("append bad path");
-        builder.finish().expect("finish archive");
-        let encoder = builder.into_inner().expect("encoder");
-        encoder.finish().expect("finish gzip");
+        write_malicious_tar_gz(&archive_path);
 
         let output_dir = temp_dir.path().join("out");
         assert!(extract_tar_gz_archive(&archive_path, &output_dir).is_err());

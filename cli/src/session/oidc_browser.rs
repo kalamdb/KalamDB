@@ -336,9 +336,7 @@ mod tests {
     #[test]
     fn rejects_non_loopback_redirect_uri() {
         let error = resolve_redirect_uri(Some("http://example.com/callback")).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("localhost, 127.0.0.1, or ::1"));
+        assert!(error.to_string().contains("localhost, 127.0.0.1, or ::1"));
     }
 
     #[test]

@@ -16,12 +16,12 @@ use kalamdb_core::{
     },
 };
 use kalamdb_jobs::AppContextJobsExt;
+use kalamdb_session::is_admin_role;
 use kalamdb_sql::ddl::ShowExportStatement;
 use kalamdb_system::{
     providers::jobs::models::{Job, JobFilter, JobSortField, SortOrder},
     JobType,
 };
-use kalamdb_session::is_admin_role;
 use kalamdb_transfer::{build_table_export_download_url, build_user_export_download_url};
 
 /// Handler for SHOW EXPORT
@@ -167,7 +167,9 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
                     let export_user_id =
                         Self::extract_parameter(job, "user_id").unwrap_or_else(|| user_id.clone());
                     Self::extract_export_id(job)
-                        .map(|export_id| build_user_export_download_url(&export_user_id, &export_id))
+                        .map(|export_id| {
+                            build_user_export_download_url(&export_user_id, &export_id)
+                        })
                         .unwrap_or_default()
                 },
                 (JobType::TableExport, kalamdb_system::JobStatus::Completed) => {

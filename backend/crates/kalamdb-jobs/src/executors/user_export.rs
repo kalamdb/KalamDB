@@ -15,11 +15,7 @@
 //! }
 //! ```
 
-use std::{
-    collections::HashMap,
-    fs,
-    time::Duration,
-};
+use std::{collections::HashMap, fs, time::Duration};
 
 use async_trait::async_trait;
 use kalamdb_commons::{

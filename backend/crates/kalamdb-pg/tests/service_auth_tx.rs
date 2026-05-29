@@ -75,6 +75,8 @@ impl StaticUserRepo {
                 updated_at: 0,
                 last_seen: None,
                 deleted_at: None,
+                invite_expires_at: None,
+                invited_by: None,
             },
         }
     }
@@ -103,11 +105,27 @@ impl UserRepository for StaticUserRepo {
         }
     }
 
+    async fn get_active_oidc_invite_by_email(
+        &self,
+        _email: &str,
+        _now_millis: i64,
+    ) -> AuthResult<Option<User>> {
+        Ok(None)
+    }
+
     async fn update_user(&self, _user: &User) -> AuthResult<()> {
         Ok(())
     }
 
     async fn create_user(&self, _user: User) -> AuthResult<()> {
+        Ok(())
+    }
+
+    async fn accept_oidc_invite(
+        &self,
+        _invite_user_id: &kalamdb_commons::UserId,
+        _user: User,
+    ) -> AuthResult<()> {
         Ok(())
     }
 }

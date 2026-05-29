@@ -68,7 +68,8 @@ pub async fn start_table_export(
         return forbidden("DBA or System role is required to export table data");
     }
 
-    let (table_id, table_type, user_id) = match parse_transfer_request(&body, app_context.as_ref()) {
+    let (table_id, table_type, user_id) = match parse_transfer_request(&body, app_context.as_ref())
+    {
         Ok(value) => value,
         Err(message) => return bad_request(message),
     };
@@ -127,10 +128,11 @@ pub async fn start_table_import(
         table_name: parsed.table_name.unwrap_or_default(),
         user_id: parsed.user_id,
     };
-    let (table_id, table_type, user_id) = match parse_transfer_request(&request, app_context.as_ref()) {
-        Ok(value) => value,
-        Err(message) => return bad_request(message),
-    };
+    let (table_id, table_type, user_id) =
+        match parse_transfer_request(&request, app_context.as_ref()) {
+            Ok(value) => value,
+            Err(message) => return bad_request(message),
+        };
     let Some(file) = parsed.file else {
         return bad_request("Import ZIP file is required".to_string());
     };
@@ -274,10 +276,7 @@ async fn parse_import_multipart(mut payload: Multipart) -> Result<ParsedImportMu
                 data.extend_from_slice(&bytes);
             }
             parsed.file = Some(data.freeze());
-        } else if matches!(
-            field_name.as_str(),
-            "namespace_id" | "table_name" | "user_id"
-        ) {
+        } else if matches!(field_name.as_str(), "namespace_id" | "table_name" | "user_id") {
             let value = read_limited_text_field(&mut field, &field_name).await?;
             match field_name.as_str() {
                 "namespace_id" => parsed.namespace_id = Some(value),

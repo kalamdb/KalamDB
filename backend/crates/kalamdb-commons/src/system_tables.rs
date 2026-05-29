@@ -444,6 +444,8 @@ pub enum StoragePartition {
     SystemUsersUsernameIdx,
     /// Role index for system.users (non-unique index)
     SystemUsersRoleIdx,
+    /// Email index for system.users (non-unique index)
+    SystemUsersEmailIdx,
     /// Deleted_at index for system.users (non-unique index)
     SystemUsersDeletedAtIdx,
     /// Manifest cache for query optimization (Phase 4 - US6)
@@ -463,6 +465,7 @@ impl StoragePartition {
             StoragePartition::InformationSchemaTables => "information_schema_tables",
             StoragePartition::SystemUsersUsernameIdx => "system_users_username_idx",
             StoragePartition::SystemUsersRoleIdx => "system_users_role_idx",
+            StoragePartition::SystemUsersEmailIdx => "system_users_email_idx",
             StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
             StoragePartition::ManifestCache => "manifest_cache",
             StoragePartition::ManifestPendingWriteIdx => "manifest_pending_write_idx",
@@ -476,6 +479,7 @@ impl StoragePartition {
         match self {
             StoragePartition::SystemUsersUsernameIdx
             | StoragePartition::SystemUsersRoleIdx
+            | StoragePartition::SystemUsersEmailIdx
             | StoragePartition::SystemUsersDeletedAtIdx
             | StoragePartition::ManifestPendingWriteIdx
             | StoragePartition::SystemJobsStatusIdx
@@ -492,6 +496,7 @@ impl StoragePartition {
             "information_schema_tables" => Some(StoragePartition::InformationSchemaTables),
             "system_users_username_idx" => Some(StoragePartition::SystemUsersUsernameIdx),
             "system_users_role_idx" => Some(StoragePartition::SystemUsersRoleIdx),
+            "system_users_email_idx" => Some(StoragePartition::SystemUsersEmailIdx),
             "system_users_deleted_at_idx" => Some(StoragePartition::SystemUsersDeletedAtIdx),
             "manifest_cache" => Some(StoragePartition::ManifestCache),
             "manifest_pending_write_idx" => Some(StoragePartition::ManifestPendingWriteIdx),
@@ -513,6 +518,8 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersUsernameIdx.name()));
         static ROLE_IDX: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersRoleIdx.name()));
+        static EMAIL_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemUsersEmailIdx.name()));
         static DELETED_AT_IDX: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::SystemUsersDeletedAtIdx.name()));
         static MANIFEST_CACHE: Lazy<Partition> =
@@ -528,6 +535,7 @@ impl StoragePartition {
             StoragePartition::InformationSchemaTables => &INFO,
             StoragePartition::SystemUsersUsernameIdx => &USERNAME_IDX,
             StoragePartition::SystemUsersRoleIdx => &ROLE_IDX,
+            StoragePartition::SystemUsersEmailIdx => &EMAIL_IDX,
             StoragePartition::SystemUsersDeletedAtIdx => &DELETED_AT_IDX,
             StoragePartition::ManifestCache => &MANIFEST_CACHE,
             StoragePartition::SystemJobsStatusIdx => &JOBS_STATUS_IDX,

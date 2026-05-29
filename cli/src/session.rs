@@ -432,28 +432,28 @@ impl CLISession {
     pub fn server_url(&self) -> &str {
         &self.server_url
     }
-        /// Get the base API URL (server_url without trailing slash).
-        pub(super) fn api_base(&self) -> String {
-            self.server_url.trim_end_matches('/').to_string()
-        }
+    /// Get the base API URL (server_url without trailing slash).
+    pub(super) fn api_base(&self) -> String {
+        self.server_url.trim_end_matches('/').to_string()
+    }
 
-        /// Return the value for an `Authorization` header suitable for direct HTTP calls.
-        ///
-        /// For `JwtToken` auth this returns `Bearer <token>`.
-        /// For `BasicAuth` it returns `Basic <base64>` (the server accepts Basic on all REST endpoints).
-        /// For `None` auth it returns an empty string (no header added).
-        pub(super) fn authorization_header_value(&self) -> Option<String> {
-            match &self.auth {
-                AuthProvider::JwtToken(token) => Some(format!("Bearer {}", token)),
-                AuthProvider::BasicAuth(user, pass) => {
-                    use base64::Engine as _;
-                    let encoded = base64::engine::general_purpose::STANDARD
-                        .encode(format!("{}:{}", user, pass));
-                    Some(format!("Basic {}", encoded))
-                },
-                AuthProvider::None => None,
-            }
+    /// Return the value for an `Authorization` header suitable for direct HTTP calls.
+    ///
+    /// For `JwtToken` auth this returns `Bearer <token>`.
+    /// For `BasicAuth` it returns `Basic <base64>` (the server accepts Basic on all REST endpoints).
+    /// For `None` auth it returns an empty string (no header added).
+    pub(super) fn authorization_header_value(&self) -> Option<String> {
+        match &self.auth {
+            AuthProvider::JwtToken(token) => Some(format!("Bearer {}", token)),
+            AuthProvider::BasicAuth(user, pass) => {
+                use base64::Engine as _;
+                let encoded =
+                    base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", user, pass));
+                Some(format!("Basic {}", encoded))
+            },
+            AuthProvider::None => None,
         }
+    }
 
     /// Check if session is connected
     pub fn is_connected(&self) -> bool {

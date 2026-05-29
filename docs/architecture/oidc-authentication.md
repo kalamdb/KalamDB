@@ -131,19 +131,25 @@ External-token authentication checks for an existing `system.users` row with `us
 
 There is no provider-family enum in the active identity model. A specific IdP such as Dex, Keycloak, Firebase, Okta, or Entra ID is just an OIDC issuer.
 
+OIDC invitations are stored in `system.users` as pending rows with `auth_type = "oidc_invite"`, a synthetic `invite_<hash>` `user_id`, the invited email, requested role, `invite_expires_at`, and `invited_by`. They are not valid login users. During OIDC login, if no persisted `user_id = sub` row exists, KalamDB checks the token email against active pending invites. A matching unexpired invite creates a real `auth_type = "oidc"` user with `user_id = sub`, copies the invited role and storage preferences, records the issuer/subject link in `auth_data`, and soft-deletes the invite row.
+
 ## Auto-Provisioning
 
 When `[auth.oidc].auto_provision = true` and `[auth.oidc].default_role = "user"`, valid external users authenticate as regular users without creating per-user rows. A persisted row is still checked first so deleted OIDC users, elevated OIDC users, and same-ID local password users keep their explicit local policy.
 
-If the default role is elevated, auto-provisioning creates a persisted OIDC user row with `user_id = sub`. If auto-provisioning is disabled, users must already have a persisted OIDC row before first login.
+If the default role is elevated, auto-provisioning creates a persisted OIDC user row with `user_id = sub`. If auto-provisioning is disabled, users must already have a persisted OIDC row or an active email invite before first login.
 
-When auto-provisioning is disabled, create the OIDC user explicitly before first login. Canonical SQL uses `WITH OIDC`; `WITH OAUTH` remains only as a compatibility alias.
+When auto-provisioning is disabled, either create the OIDC user explicitly before first login or create an email invite. Canonical SQL uses `WITH OIDC`; `WITH OAUTH` remains only as a compatibility alias.
 
 ```sql
 CREATE USER 'provider-subject'
   WITH OIDC '{"issuer":"https://idp.example.com/realms/kalamdb","subject":"provider-subject"}'
   ROLE service
   EMAIL 'alice@example.com';
+
+CREATE USER INVITE 'alice@example.com'
+  ROLE dba
+  EXPIRES_AT 1770000000000;
 ```
 
 ## Operational Notes

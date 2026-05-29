@@ -65,6 +65,8 @@ async fn test_system_users_user_id_index() {
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server
@@ -416,6 +418,8 @@ async fn test_index_performance_scaling() {
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server
@@ -471,6 +475,8 @@ async fn test_index_performance_scaling() {
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         server

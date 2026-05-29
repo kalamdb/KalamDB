@@ -36,6 +36,8 @@ async fn users_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             updated_at: 1_000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         })
         .expect("seed user row");
 
