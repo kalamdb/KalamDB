@@ -93,12 +93,6 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    /// Check if this error code indicates a NOT_LEADER error
-    #[inline]
-    pub fn is_not_leader(&self) -> bool {
-        matches!(self, ErrorCode::NotLeader)
-    }
-
     /// Get the string representation of the error code
     #[inline]
     pub fn as_str(&self) -> &'static str {

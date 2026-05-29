@@ -306,15 +306,6 @@ impl ManifestService {
         self.update_cached_entry(table_id, user_id, |entry| entry.mark_stale())
     }
 
-    /// Mark a cache entry as having an error state.
-    pub fn mark_as_error(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<(), StorageError> {
-        self.update_cached_entry(table_id, user_id, |entry| entry.mark_error())
-    }
-
     /// Mark a cache entry as syncing (flush in progress).
     pub fn mark_syncing(
         &self,
@@ -695,21 +686,6 @@ impl ManifestService {
         }
 
         Ok(deleted_files)
-    }
-
-    /// Flush the currently cached manifest to cold storage.
-    pub fn flush_manifest(
-        &self,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<(), StorageError> {
-        if let Some(entry) = self.get_or_load(table_id, user_id)? {
-            self.persist_manifest(table_id, user_id, &entry.manifest)?;
-            debug!("Flushed manifest for {} (ver: {})", table_id, entry.manifest.version);
-        } else {
-            warn!("Attempted to flush manifest for {} but it was not in cache", table_id);
-        }
-        Ok(())
     }
 
     /// Rebuild manifest from Parquet footers.

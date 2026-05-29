@@ -158,13 +158,6 @@ impl LiveQueryId {
         &self.subscription_id
     }
 
-    /// Creates a prefix key for scanning all live queries for a user+connection.
-    ///
-    /// Used by `delete_by_connection_id` for efficient range deletion.
-    pub fn user_connection_prefix(user_id: &UserId, connection_id: &ConnectionId) -> Vec<u8> {
-        encode_prefix(&(user_id.as_str(), connection_id.as_str()))
-    }
-
     /// Creates a prefix key for scanning all live queries for a user.
     ///
     /// Used for getting all live queries belonging to a user.

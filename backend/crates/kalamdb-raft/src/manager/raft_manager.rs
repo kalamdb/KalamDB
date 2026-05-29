@@ -662,27 +662,6 @@ impl RaftManager {
         Ok(())
     }
 
-    /// Wait for the cluster initialization background task to complete
-    ///
-    /// This allows checking if all peers have joined the cluster.
-    /// This consumes the wait handle - subsequent calls will return immediately.
-    pub async fn wait_for_cluster_formation(&self, timeout: Duration) -> Result<(), RaftError> {
-        let handle = {
-            let mut guard = self.cluster_init_handle.write();
-            guard.take()
-        };
-
-        if let Some(handle) = handle {
-            match tokio::time::timeout(timeout, handle).await {
-                Ok(Ok(_)) => Ok(()),
-                Ok(Err(e)) => Err(RaftError::Internal(format!("Cluster init task failed: {}", e))),
-                Err(_) => Err(RaftError::Timeout(timeout)),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
     /// Wait for a peer node to be online and ready to join the cluster
     ///
     /// This checks if authenticated cluster `Ping` succeeds before attempting to add the peer.
@@ -1273,20 +1252,6 @@ impl RaftManager {
         }
     }
 
-    /// Propose a command to any group by GroupId (for RPC server handling)
-    ///
-    /// Used by the RaftService when receiving a forwarded proposal.
-    /// Does NOT forward - should only be called when we are the leader.
-    /// Uses standard quorum-based replication.
-    pub async fn propose_for_group(
-        &self,
-        group_id: GroupId,
-        command: Vec<u8>,
-    ) -> Result<Vec<u8>, RaftError> {
-        let (data, _log_index) = self.propose_for_group_with_index(group_id, command).await?;
-        Ok(data)
-    }
-
     /// Propose a command to any group and return both response data and log index
     ///
     /// Used by the RaftService when receiving a forwarded proposal.
@@ -1472,16 +1437,6 @@ impl RaftManager {
     /// Get the unified Meta group
     pub fn meta(&self) -> &Arc<RaftGroup<MetaStateMachine>> {
         &self.meta
-    }
-
-    /// Get a user data shard
-    pub fn user_data_shard(&self, shard: u32) -> Option<&Arc<RaftGroup<UserDataStateMachine>>> {
-        self.user_data_shards.get(shard as usize)
-    }
-
-    /// Get a shared data shard
-    pub fn shared_data_shard(&self, shard: u32) -> Option<&Arc<RaftGroup<SharedDataStateMachine>>> {
-        self.shared_data_shards.get(shard as usize)
     }
 
     /// Set the meta applier for persisting unified metadata to providers
@@ -1903,53 +1858,6 @@ impl RaftManager {
     /// Attempt to step down leaders for all Raft groups
     pub async fn step_down_all(&self) -> Result<Vec<ClusterActionResult>, RaftError> {
         Ok(self.run_action_for_all_groups(ClusterAction::StepDown).await)
-    }
-
-    /// Get summary information about existing snapshots
-    pub fn get_snapshots_summary(&self) -> SnapshotsSummary {
-        let mut total_groups = 0;
-        let mut groups_with_snapshots = 0;
-        let mut group_details = Vec::new();
-
-        // Check Meta group
-        total_groups += 1;
-        if let Some(snapshot_idx) = self.meta.snapshot_index() {
-            groups_with_snapshots += 1;
-            group_details.push((GroupId::Meta, Some(snapshot_idx)));
-        } else {
-            group_details.push((GroupId::Meta, None));
-        }
-
-        // Check User data shards
-        for (i, shard) in self.user_data_shards.iter().enumerate() {
-            total_groups += 1;
-            let group_id = GroupId::DataUserShard(i as u32);
-            if let Some(snapshot_idx) = shard.snapshot_index() {
-                groups_with_snapshots += 1;
-                group_details.push((group_id, Some(snapshot_idx)));
-            } else {
-                group_details.push((group_id, None));
-            }
-        }
-
-        // Check Shared data shards
-        for (i, shard) in self.shared_data_shards.iter().enumerate() {
-            total_groups += 1;
-            let group_id = GroupId::DataSharedShard(i as u32);
-            if let Some(snapshot_idx) = shard.snapshot_index() {
-                groups_with_snapshots += 1;
-                group_details.push((group_id, Some(snapshot_idx)));
-            } else {
-                group_details.push((group_id, None));
-            }
-        }
-
-        SnapshotsSummary {
-            total_groups,
-            groups_with_snapshots,
-            snapshots_dir: "data/snapshots".to_string(),
-            group_details,
-        }
     }
 
     /// Gracefully shutdown the Raft manager

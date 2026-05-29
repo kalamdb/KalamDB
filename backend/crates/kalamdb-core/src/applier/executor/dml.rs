@@ -751,16 +751,6 @@ impl DmlExecutor {
         Ok(())
     }
 
-    pub async fn apply_user_transaction_batch(
-        &self,
-        transaction_id: &TransactionId,
-        mutations: &[StagedMutation],
-    ) -> Result<TransactionApplyResult, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.apply_user_transaction_batch_with_commit_seq(transaction_id, mutations, commit_seq)
-            .await
-    }
-
     pub async fn apply_user_transaction_batch_with_commit_seq(
         &self,
         transaction_id: &TransactionId,
@@ -961,16 +951,6 @@ impl DmlExecutor {
             manifest_updates: side_effect_plan.manifest_updates,
             publisher_events: side_effect_plan.publisher_events,
         })
-    }
-
-    pub async fn apply_shared_transaction_batch(
-        &self,
-        transaction_id: &TransactionId,
-        mutations: &[StagedMutation],
-    ) -> Result<TransactionApplyResult, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.apply_shared_transaction_batch_with_commit_seq(transaction_id, mutations, commit_seq)
-            .await
     }
 
     pub async fn apply_shared_transaction_batch_with_commit_seq(

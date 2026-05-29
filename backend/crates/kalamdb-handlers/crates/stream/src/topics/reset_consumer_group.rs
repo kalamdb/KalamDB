@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{ConsumerGroupId, TopicId},
+    models::ConsumerGroupId,
     Role,
 };
 use kalamdb_core::{
@@ -15,6 +15,8 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::ResetConsumerGroupStatement;
 
 use crate::result_rows;
+
+use super::name_resolution::{resolve_topic_id, resolve_topic_name};
 
 pub struct ResetConsumerGroupHandler {
     app_context: Arc<AppContext>,
@@ -31,14 +33,15 @@ impl TypedStatementHandler<ResetConsumerGroupStatement> for ResetConsumerGroupHa
         &self,
         statement: ResetConsumerGroupStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = TopicId::new(&statement.topic_name);
+        let resolved_topic_name = resolve_topic_name(&statement.topic_name, context);
+        let topic_id = resolve_topic_id(&statement.topic_name, context);
         let group_id = ConsumerGroupId::new(&statement.group_id);
 
         let topics_provider = self.app_context.system_tables().topics();
         let _topic = topics_provider.get_topic_by_id_async(&topic_id).await?.ok_or_else(|| {
-            KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
+            KalamDbError::NotFound(format!("Topic '{}' does not exist", resolved_topic_name))
         })?;
 
         self.app_context
@@ -49,7 +52,7 @@ impl TypedStatementHandler<ResetConsumerGroupStatement> for ResetConsumerGroupHa
             })?;
 
         result_rows::reset_consumer_group_result(
-            &statement.topic_name,
+            &resolved_topic_name,
             &statement.group_id,
             statement.partition_id,
             statement.next_offset,

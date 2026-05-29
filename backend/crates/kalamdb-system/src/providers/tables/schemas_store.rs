@@ -128,25 +128,6 @@ impl SchemasStore {
         Ok(())
     }
 
-    /// Debug: dump all keys in the store matching a table_id prefix
-    #[allow(dead_code)]
-    pub fn debug_dump_keys_for_table(&self, table_id: &TableId) {
-        let prefix_key = TableVersionId::latest(table_id.clone());
-        log::debug!("[SchemasStore::debug_dump] Partition: {}", self.partition());
-        match self.scan_keys_typed(Some(&prefix_key), None, 1000) {
-            Ok(keys) => {
-                log::debug!("[SchemasStore::debug_dump] Keys for table_id={}:", table_id);
-                for key in &keys {
-                    log::debug!("  Key: {:?}", key);
-                }
-                log::debug!("[SchemasStore::debug_dump] Total keys found: {}", keys.len());
-            },
-            Err(e) => {
-                log::debug!("[SchemasStore::debug_dump] Error scanning: {:?}", e);
-            },
-        }
-    }
-
     /// Delete all versions of a table (for DROP TABLE)
     ///
     /// Uses a prefix scan on the table's composite key to find and delete

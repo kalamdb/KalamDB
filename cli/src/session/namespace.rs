@@ -14,7 +14,10 @@ impl CLISession {
     }
 
     pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<String> {
-        let trimmed = sql.trim().trim_end_matches(';').trim();
+        let trimmed = Self::strip_leading_sql_comments(sql)
+            .trim()
+            .trim_end_matches(';')
+            .trim();
         if trimmed.is_empty() {
             return None;
         }
@@ -34,6 +37,35 @@ impl CLISession {
         }
 
         Self::parse_namespace_identifier(remainder)
+    }
+
+    fn strip_leading_sql_comments(mut value: &str) -> &str {
+        loop {
+            let trimmed = value.trim_start();
+            if trimmed.is_empty() {
+                return trimmed;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("--") {
+                if let Some(newline_idx) = rest.find('\n') {
+                    value = &rest[newline_idx + 1..];
+                    continue;
+                }
+
+                return "";
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("/*") {
+                if let Some(end_idx) = rest.find("*/") {
+                    value = &rest[end_idx + 2..];
+                    continue;
+                }
+
+                return "";
+            }
+
+            return trimmed;
+        }
     }
 
     pub(in crate::session) fn strip_ascii_prefix<'a>(

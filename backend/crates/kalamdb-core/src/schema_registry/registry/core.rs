@@ -993,17 +993,6 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    /// Remove a cached DataFusion provider for a table and unregister from DataFusion
-    pub fn remove_provider(&self, table_id: &TableId) -> Result<(), KalamDbError> {
-        // Clear from CachedTableData
-        if let Some(cached) = self.get(table_id) {
-            cached.clear_provider();
-        }
-
-        // Deregister from DataFusion
-        self.deregister_from_datafusion(table_id)
-    }
-
     /// Get a cached DataFusion provider for a table
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         let result = self.get(table_id).and_then(|cached| cached.get_provider());
@@ -1123,20 +1112,6 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    /// Store table definition in cache (persistence handled by caller)
-    pub fn put_table_definition(
-        &self,
-        table_id: &TableId,
-        table_def: &TableDefinition,
-    ) -> Result<(), KalamDbError> {
-        let app_ctx = self.app_context();
-        let table_arc = Arc::new(table_def.clone());
-        let data = CachedTableData::from_table_definition(app_ctx, table_id, table_arc)?;
-        self.insert_cached(table_id.clone(), Arc::new(data));
-
-        Ok(())
-    }
-
     /// Delete table definition from persistence layer (delete-through pattern)
     pub fn delete_table_definition(&self, table_id: &TableId) -> Result<(), KalamDbError> {
         let tables_provider = self.app_context().system_tables().tables();
@@ -1157,17 +1132,6 @@ impl SchemaRegistry {
         // Scan all tables from storage
         let all_entries = tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")?;
         Ok(all_entries)
-    }
-
-    /// Return a snapshot of the currently cached table definitions.
-    ///
-    /// This is useful for extension or runtime glue that needs visibility into
-    /// newly registered tables before a persistence-backed rescan occurs.
-    pub fn cached_table_definitions(&self) -> Vec<TableDefinition> {
-        self.table_cache
-            .iter()
-            .map(|entry| entry.value().table.as_ref().clone())
-            .collect()
     }
 
     /// Get table definition if it exists (optimized single-call pattern)

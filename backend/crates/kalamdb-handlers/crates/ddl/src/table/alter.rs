@@ -594,6 +594,7 @@ fn apply_alter_operation(
             data_type,
             nullable,
             default_value,
+            if_not_exists,
         } => {
             // Block adding columns with system column names
             if is_system_column(column_name) {
@@ -609,6 +610,17 @@ fn apply_alter_operation(
                 .iter()
                 .any(|c| c.column_name.eq_ignore_ascii_case(column_name))
             {
+                if *if_not_exists {
+                    log::debug!(
+                        "⊙ Skipping ADD COLUMN {} on {} (IF NOT EXISTS)",
+                        column_name,
+                        table_id
+                    );
+                    return Ok((
+                        format!("ADD COLUMN {} {}", column_name, data_type.sql_name()),
+                        false,
+                    ));
+                }
                 log::error!(
                     "❌ ALTER TABLE failed: Column '{}' already exists in {}",
                     column_name,

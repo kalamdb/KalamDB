@@ -93,14 +93,6 @@ impl TopicRetentionIndexKey {
         encode_key(&(topic_id.as_str(), partition_id, timestamp_ms, offset))
     }
 
-    pub fn from_message(message: &TopicMessage) -> Self {
-        Self::new(
-            message.topic_id.clone(),
-            message.partition_id,
-            message.timestamp_ms,
-            message.offset,
-        )
-    }
 }
 
 impl StorageKey for TopicRetentionIndexKey {

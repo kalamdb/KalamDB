@@ -9,6 +9,7 @@ use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
+    operations::table_cleanup::cleanup_parquet_files_internal,
     sql::{
         context::{ExecutionContext, ExecutionResult, ScalarValue},
         executor::handlers::TypedStatementHandler,
@@ -22,7 +23,7 @@ use crate::{
         audit,
         guards::{block_anonymous_write, require_admin},
     },
-    table::drop::{capture_storage_cleanup_details, schedule_drop_table_cleanup},
+    table::drop::{capture_storage_cleanup_details, cleanup_dropped_table_partitions},
 };
 
 /// Typed handler for DROP NAMESPACE statements
@@ -103,11 +104,12 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 .drop_table(table_id.clone())
                 .await
                 .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
-            let cleanup_job_id = schedule_drop_table_cleanup(
+            cleanup_dropped_table_partitions(&self.app_context, &table_id, table_type).await?;
+            cleanup_parquet_files_internal(
                 &self.app_context,
                 &table_id,
                 table_type,
-                storage_details,
+                &storage_details,
             )
             .await?;
 
@@ -117,8 +119,8 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 "TABLE",
                 &table_id.full_name(),
                 Some(format!(
-                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {}",
-                    table_type, cleanup_job_id
+                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup: sync hot+cold",
+                    table_type
                 )),
                 None,
             );

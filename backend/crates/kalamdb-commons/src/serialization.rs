@@ -69,19 +69,6 @@ pub fn encode_enveloped(
     envelope.encode()
 }
 
-/// Like [`encode_enveloped`] but accepts the payload as `&[u8]` instead of
-/// `Vec<u8>`, avoiding an intermediate allocation when the caller already has
-/// a byte slice (e.g. from a `FlatBufferBuilder::finished_data()` or FlexBuffers
-/// encode).
-pub fn encode_enveloped_ref(
-    codec_kind: CodecKind,
-    schema_version: u16,
-    payload: &[u8],
-) -> Result<Vec<u8>> {
-    let envelope = EntityEnvelope::new(codec_kind, schema_version, payload.to_vec());
-    envelope.encode()
-}
-
 /// Decode and validate an entity envelope.
 ///
 /// `expected_schema_version` provides strict version validation.

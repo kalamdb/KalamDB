@@ -15,6 +15,7 @@ use super::{
     models::{ErrorCode, SqlResponse},
     request::took_ms,
 };
+use kalamdb_sql::classifier::SqlStatementKind;
 
 #[derive(Debug)]
 pub(super) struct ParsedExecutionStatement {
@@ -204,9 +205,19 @@ pub(super) fn split_and_prepare_statements(
     }
 
     let mut prepared = Vec::with_capacity(raw_statements.len());
+    let mut prepare_ctx = exec_ctx.clone();
 
     for raw_statement in &raw_statements {
-        prepared.push(prepare_api_statement(raw_statement, exec_ctx, sql_executor, start_time)?);
+        let prepared_stmt =
+            prepare_api_statement(raw_statement, &prepare_ctx, sql_executor, start_time)?;
+
+        if let Some(classified) = prepared_stmt.prepared_statement.classified_statement.as_ref() {
+            if let SqlStatementKind::UseNamespace(stmt) = classified.kind() {
+                prepare_ctx = prepare_ctx.clone().with_namespace_id(stmt.namespace.clone());
+            }
+        }
+
+        prepared.push(prepared_stmt);
     }
 
     Ok(prepared)

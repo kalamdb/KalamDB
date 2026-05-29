@@ -5,7 +5,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
 use kalamdb_commons::{
     arrow_utils::{field_uint64, field_utf8, schema},
-    models::{NamespaceId, TableId},
+    models::TableId,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -37,7 +37,10 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::default());
+        let ns = statement
+            .namespace_id
+            .clone()
+            .unwrap_or_else(|| context.default_namespace());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
 
         // TableDefinition gives us metadata only; stats system not yet implemented.

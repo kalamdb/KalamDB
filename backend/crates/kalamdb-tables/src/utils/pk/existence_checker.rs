@@ -44,10 +44,6 @@ impl PkCheckResult {
         matches!(self, PkCheckResult::FoundInHot | PkCheckResult::FoundInCold { .. })
     }
 
-    /// Returns true if the check was skipped due to auto-increment
-    pub fn is_auto_increment(&self) -> bool {
-        matches!(self, PkCheckResult::AutoIncrement)
-    }
 }
 
 /// Primary Key Existence Checker
@@ -364,7 +360,7 @@ impl PkExistenceChecker {
             SystemColumnNames::SEQ,
             SystemColumnNames::DELETED,
         ];
-        let mut stream = storage_cached
+        let mut stream = match storage_cached
             .read_parquet_file_stream(
                 table_type,
                 table_id,
@@ -373,7 +369,24 @@ impl PkExistenceChecker {
                 &columns_to_read,
             )
             .await
-            .into_kalamdb_error("Failed to open Parquet stream")?;
+        {
+            Ok(stream) => stream,
+            Err(err) => {
+                let err_msg = err.to_string().to_ascii_lowercase();
+                if err_msg.contains("not found") && err_msg.contains("object at location") {
+                    log::warn!(
+                        "[pk_exists_in_parquet_async] skipping missing parquet file '{}' for {}: {}",
+                        parquet_filename,
+                        table_id,
+                        err
+                    );
+                    return Ok(false);
+                }
+                return Err(
+                    KalamDbError::Other(format!("Failed to open Parquet stream: {}", err))
+                );
+            },
+        };
 
         // Track latest version: (max_seq, is_deleted)
         let mut latest: Option<(i64, bool)> = None;

@@ -22,10 +22,16 @@ impl CLISession {
 
     /// Execute multiple SQL statements from a script.
     pub async fn execute_batch(&mut self, sql: &str) -> Result<()> {
-        for statement in Self::split_batch_statements(sql) {
-            self.execute(&statement).await?;
+        let statements = Self::coalesce_explicit_transaction_blocks(Self::split_batch_statements(sql))?;
+        for statement in statements {
+            let dispatch = Self::strip_leading_batch_comments(&statement);
+            if dispatch.is_empty() {
+                continue;
+            }
 
-            if let Some(table) = Self::batch_table_readiness_target(&statement) {
+            self.execute_input(dispatch).await?;
+
+            if let Some(table) = Self::batch_table_readiness_target(dispatch) {
                 self.wait_for_batch_table_ready(&table).await?;
             }
         }
@@ -38,6 +44,78 @@ impl CLISession {
 
     pub(in crate::session) fn batch_table_readiness_target(statement: &str) -> Option<String> {
         parser::batch_table_readiness_target(statement)
+    }
+
+    fn coalesce_explicit_transaction_blocks(statements: Vec<String>) -> Result<Vec<String>> {
+        let mut merged = Vec::with_capacity(statements.len());
+        let mut in_tx = false;
+        let mut tx_buffer = String::new();
+
+        for statement in statements {
+            if !in_tx {
+                if Self::is_explicit_transaction_begin(&statement) {
+                    in_tx = true;
+                    tx_buffer.push_str(statement.trim());
+                    tx_buffer.push_str(";\n");
+                } else {
+                    merged.push(statement);
+                }
+                continue;
+            }
+
+            tx_buffer.push_str(statement.trim());
+            tx_buffer.push_str(";\n");
+
+            if Self::is_explicit_transaction_end(&statement) {
+                merged.push(tx_buffer.trim_end().to_string());
+                tx_buffer.clear();
+                in_tx = false;
+            }
+        }
+
+        if in_tx {
+            return Err(CLIError::ParseError(
+                "SQL file contains an explicit transaction block without COMMIT/ROLLBACK"
+                    .to_string(),
+            ));
+        }
+
+        Ok(merged)
+    }
+
+    fn is_explicit_transaction_begin(statement: &str) -> bool {
+        let trimmed = Self::strip_leading_batch_comments(statement);
+        Self::strip_ascii_prefix(trimmed, "BEGIN").is_some()
+            || Self::strip_ascii_prefix(trimmed, "START TRANSACTION").is_some()
+    }
+
+    fn is_explicit_transaction_end(statement: &str) -> bool {
+        let trimmed = Self::strip_leading_batch_comments(statement);
+        Self::strip_ascii_prefix(trimmed, "COMMIT").is_some()
+            || Self::strip_ascii_prefix(trimmed, "ROLLBACK").is_some()
+    }
+
+    fn strip_leading_batch_comments(mut value: &str) -> &str {
+        loop {
+            let trimmed = value.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("--") {
+                let Some(newline_index) = rest.find('\n') else {
+                    return "";
+                };
+                value = &rest[newline_index + 1..];
+                continue;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("/*") {
+                let Some(end_index) = rest.find("*/") else {
+                    return "";
+                };
+                value = &rest[end_index + 2..];
+                continue;
+            }
+
+            return trimmed;
+        }
     }
 
     async fn wait_for_batch_table_ready(&mut self, table: &str) -> Result<()> {
@@ -82,6 +160,16 @@ mod tests {
     }
 
     #[test]
+    fn split_batch_statements_skips_comment_only_trailing_content() {
+        let statements = CLISession::split_batch_statements(
+            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY);\n-- trailing comment only\n-- another comment\n",
+        );
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0], "CREATE TABLE demo.t (id BIGINT PRIMARY KEY)");
+    }
+
+    #[test]
     fn readiness_target_detects_create_table_forms() {
         assert_eq!(
             CLISession::batch_table_readiness_target(
@@ -101,5 +189,46 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn coalesce_transaction_block_merges_begin_commit() {
+        let statements = vec![
+            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY)".to_string(),
+            "BEGIN".to_string(),
+            "INSERT INTO demo.t (id) VALUES (1)".to_string(),
+            "UPDATE demo.t SET id = 2 WHERE id = 1".to_string(),
+            "COMMIT".to_string(),
+            "SELECT * FROM demo.t".to_string(),
+        ];
+
+        let merged = CLISession::coalesce_explicit_transaction_blocks(statements).unwrap();
+        assert_eq!(merged.len(), 3);
+        assert!(merged[1].starts_with("BEGIN;"));
+        assert!(merged[1].contains("INSERT INTO demo.t"));
+        assert!(merged[1].contains("COMMIT;"));
+    }
+
+    #[test]
+    fn coalesce_transaction_block_requires_end_marker() {
+        let statements = vec![
+            "BEGIN".to_string(),
+            "INSERT INTO demo.t (id) VALUES (1)".to_string(),
+        ];
+
+        let err = CLISession::coalesce_explicit_transaction_blocks(statements).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("explicit transaction block without COMMIT/ROLLBACK")
+        );
+    }
+
+    #[test]
+    fn split_batch_keeps_export_and_create_separate() {
+        let sql = "-- Export table\nexport demo.t --output /tmp/demo.zip;\n\n-- Create target\nCREATE TABLE demo_copy (id BIGINT PRIMARY KEY);\n";
+        let statements = CLISession::split_batch_statements(sql);
+        assert_eq!(statements.len(), 2);
+        assert!(statements[0].contains("export demo.t --output /tmp/demo.zip"));
+        assert!(statements[1].contains("CREATE TABLE demo_copy"));
     }
 }

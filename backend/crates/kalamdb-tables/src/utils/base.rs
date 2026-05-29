@@ -123,8 +123,8 @@ pub use crate::utils::row_utils::{
     resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
 };
 use crate::{
-    error::KalamDbError, error_extensions::KalamDbResultExt, manifest::ManifestAccessPlanner,
-    utils::unified_dml,
+    error::{KalamDbError, TableError}, error_extensions::KalamDbResultExt,
+    manifest::ManifestAccessPlanner, utils::unified_dml,
 };
 
 #[async_trait]
@@ -1609,10 +1609,25 @@ async fn pk_exists_batch_in_parquet_via_storage_cache(
         SystemColumnNames::SEQ,
         SystemColumnNames::DELETED,
     ];
-    let mut stream = storage_cached
+    let mut stream = match storage_cached
         .read_parquet_file_stream(table_type, table_id, user_id, parquet_filename, &columns_to_read)
         .await
-        .into_kalamdb_error("Failed to open Parquet stream")?;
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            let err_msg = err.to_string().to_ascii_lowercase();
+            if err_msg.contains("not found") && err_msg.contains("object at location") {
+                log::warn!(
+                    "[pk_exists_batch_in_parquet] skipping missing parquet file '{}' for {}: {}",
+                    parquet_filename,
+                    table_id,
+                    err
+                );
+                return Ok(None);
+            }
+            return Err(TableError::Other(format!("Failed to open Parquet stream: {}", err)));
+        },
+    };
 
     // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
     let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
@@ -1701,10 +1716,25 @@ async fn pk_exists_in_parquet_via_storage_cache(
         SystemColumnNames::SEQ,
         SystemColumnNames::DELETED,
     ];
-    let mut stream = storage_cached
+    let mut stream = match storage_cached
         .read_parquet_file_stream(table_type, table_id, user_id, parquet_filename, &columns_to_read)
         .await
-        .into_kalamdb_error("Failed to open Parquet stream")?;
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            let err_msg = err.to_string().to_ascii_lowercase();
+            if err_msg.contains("not found") && err_msg.contains("object at location") {
+                log::warn!(
+                    "[pk_exists_in_parquet] skipping missing parquet file '{}' for {}: {}",
+                    parquet_filename,
+                    table_id,
+                    err
+                );
+                return Ok(false);
+            }
+            return Err(TableError::Other(format!("Failed to open Parquet stream: {}", err)));
+        },
+    };
 
     // Track latest version: (max_seq, is_deleted)
     let mut latest: Option<(i64, bool)> = None;

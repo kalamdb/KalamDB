@@ -329,12 +329,6 @@ impl Job {
         self
     }
 
-    /// Check if job can be retried
-    #[inline]
-    pub fn can_retry(&self) -> bool {
-        self.retry_count < self.max_retries
-    }
-
     /// Extract namespace_id from parameters JSON
     pub fn namespace_id(&self) -> Option<NamespaceId> {
         self.parameters
@@ -347,43 +341,6 @@ impl Job {
         self.parameters
             .as_ref()
             .and_then(|p| p.get("table_name")?.as_str().map(TableName::new))
-    }
-
-    /// Set parameters (JSON value)
-    pub fn with_parameters(mut self, parameters: Value) -> Self {
-        self.parameters = Some(parameters);
-        self
-    }
-
-    /// Set idempotency key for duplicate prevention
-    pub fn with_idempotency_key(mut self, key: String) -> Self {
-        self.idempotency_key = Some(key);
-        self
-    }
-
-    /// Set max retries
-    pub fn with_max_retries(mut self, max_retries: u8) -> Self {
-        self.max_retries = max_retries;
-        self
-    }
-
-    /// Set queue name
-    pub fn with_queue(mut self, queue: String) -> Self {
-        self.queue = Some(queue);
-        self
-    }
-
-    /// Set priority
-    pub fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = Some(priority);
-        self
-    }
-
-    /// Set resource metrics (memory and CPU usage)
-    pub fn with_metrics(mut self, memory_used: Option<i64>, cpu_used: Option<i64>) -> Self {
-        self.memory_used = memory_used;
-        self.cpu_used = cpu_used;
-        self
     }
 
     /// get the parameters as T if possible

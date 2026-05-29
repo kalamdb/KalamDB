@@ -30,7 +30,8 @@ pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
         }
 
         if !in_single_quote && !in_double_quote && !in_backtick {
-            if ch == '-' && chars.peek() == Some(&'-') {
+            if ch == '-' && chars.peek() == Some(&'-') && is_sql_line_comment_start(&current, &chars)
+            {
                 current.push(ch);
                 current.push(chars.next().expect("peeked dash should be available"));
                 in_line_comment = true;
@@ -68,7 +69,7 @@ pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
             },
             ';' if !(in_single_quote || in_double_quote || in_backtick) => {
                 let stmt = current.trim();
-                if !stmt.is_empty() {
+                if !strip_leading_batch_comments(stmt).is_empty() {
                     statements.push(stmt.to_string());
                 }
                 current.clear();
@@ -78,7 +79,7 @@ pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
     }
 
     let trailing = current.trim();
-    if !trailing.is_empty() {
+    if !strip_leading_batch_comments(trailing).is_empty() {
         statements.push(trailing.to_string());
     }
 
@@ -163,4 +164,18 @@ fn strip_leading_batch_comments(mut value: &str) -> &str {
 
         return trimmed;
     }
+}
+
+fn is_sql_line_comment_start(current: &str, chars: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let prev = current.chars().last();
+    let prev_ok = prev.is_none()
+        || prev.is_some_and(|c| c.is_whitespace() || matches!(c, ';' | '(' | ')' | ','));
+    if !prev_ok {
+        return false;
+    }
+
+    let mut lookahead = chars.clone();
+    let _second_dash = lookahead.next();
+    let after_second_dash = lookahead.peek().copied();
+    after_second_dash.is_none() || after_second_dash.is_some_and(char::is_whitespace)
 }

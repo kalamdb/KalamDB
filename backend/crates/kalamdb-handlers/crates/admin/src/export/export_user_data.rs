@@ -52,17 +52,30 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
             format!("user_export:{}:{}", &user_id, chrono::Utc::now().format("%Y%m%d"));
 
         let job_manager = self.app_context.job_manager();
-        let job_id: JobId = job_manager
+        let job_id: Option<JobId> = match job_manager
             .create_job_typed(JobType::UserExport, params, Some(idempotency_key), None)
-            .await?;
+            .await
+        {
+            Ok(job_id) => Some(job_id),
+            Err(KalamDbError::IdempotentConflict(_)) => None,
+            Err(err) => return Err(err),
+        };
 
-        Ok(ExecutionResult::Success {
-            message: format!(
-                "User data export started. Job ID: {}. Use SHOW EXPORT to check status and get \
-                 the download link.",
-                job_id.as_str()
-            ),
-        })
+        match job_id {
+            Some(job_id) => Ok(ExecutionResult::Success {
+                message: format!(
+                    "User data export started. Job ID: {}. Use SHOW EXPORT to check status and get \
+                     the download link.",
+                    job_id.as_str()
+                ),
+            }),
+            None => Ok(ExecutionResult::Success {
+                message:
+                    "User data export already in progress. Use SHOW EXPORT to check status and \
+                     get the download link."
+                        .to_string(),
+            }),
+        }
     }
 
     async fn check_authorization(

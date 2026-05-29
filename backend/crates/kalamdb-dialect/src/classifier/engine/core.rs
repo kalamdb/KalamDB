@@ -571,14 +571,14 @@ impl SqlStatement {
                             .to_string(),
                     ));
                 }
-                if word_refs.get(2) == Some(&"SET") && word_refs.get(3) == Some(&"RETENTION")
+                if word_refs.get(3) == Some(&"SET") && word_refs.get(4) == Some(&"RETENTION")
                 {
                     Self::wrap(sql, || {
                         crate::ddl::topic_commands::parse_alter_topic_set_retention(sql)
                             .map(SqlStatementKind::AlterTopicRetention)
                     })
-                } else if word_refs.get(2) == Some(&"CLEAR")
-                    && word_refs.get(3) == Some(&"RETENTION")
+                } else if word_refs.get(3) == Some(&"CLEAR")
+                    && word_refs.get(4) == Some(&"RETENTION")
                 {
                     Self::wrap(sql, || {
                         crate::ddl::topic_commands::parse_alter_topic_clear_retention(sql)

@@ -203,10 +203,6 @@ impl Topic {
         !self.routes.is_empty()
     }
 
-    /// Returns the number of routes configured for this topic.
-    pub fn route_count(&self) -> usize {
-        self.routes.len()
-    }
 }
 
 #[cfg(test)]

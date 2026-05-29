@@ -202,69 +202,6 @@ impl TopicMessageStore {
         Ok(count)
     }
 
-    /// Delete all messages for a specific partition within a topic
-    ///
-    /// Returns the count of deleted messages.
-    pub fn delete_partition_messages(
-        &self,
-        topic_id: &TopicId,
-        partition_id: u32,
-    ) -> kalamdb_store::storage_trait::Result<usize> {
-        let prefix = TopicMessageId::prefix_for_partition(topic_id, partition_id);
-        let partition = self.partition();
-        let retention_partition = self.retention_partition();
-        let primary_keys: Vec<Vec<u8>> = self
-            .backend()
-            .scan(&partition, Some(&prefix), None, None)?
-            .map(|(key, _)| key)
-            .collect();
-        let retention_prefix = TopicRetentionIndexKey::prefix_for_partition(topic_id, partition_id);
-        let retention_keys: Vec<Vec<u8>> = self
-            .backend()
-            .scan(&retention_partition, Some(&retention_prefix), None, None)?
-            .map(|(key, _)| key)
-            .collect();
-
-        let count = primary_keys.len();
-        let mut operations = Vec::with_capacity(primary_keys.len() + retention_keys.len());
-        operations.extend(primary_keys.into_iter().map(|key| Operation::Delete {
-            partition: partition.clone(),
-            key,
-        }));
-        operations.extend(retention_keys.into_iter().map(|key| Operation::Delete {
-            partition: retention_partition.clone(),
-            key,
-        }));
-        self.backend().batch(operations)?;
-
-        Ok(count)
-    }
-
-    /// Batch-write pre-encoded message key-value pairs directly to storage.
-    ///
-    /// Unlike `batch_put()` on EntityStore, this skips per-entry serialization
-    /// and partition cloning because callers have already encoded the keys and
-    /// values. This is designed for the publish hot-path where messages are
-    /// serialized *outside* the partition write lock to minimise lock hold time.
-    pub fn batch_put_raw(
-        &self,
-        entries: Vec<(Vec<u8>, Vec<u8>)>,
-    ) -> kalamdb_store::storage_trait::Result<()> {
-        use kalamdb_commons::storage::Operation;
-
-        let partition = self.partition();
-        let operations: Vec<Operation> = entries
-            .into_iter()
-            .map(|(key, value)| Operation::Put {
-                partition: partition.clone(),
-                key,
-                value,
-            })
-            .collect();
-
-        self.backend().batch(operations)
-    }
-
     /// Batch-write pre-encoded messages and their retention index entries.
     pub fn batch_put_raw_with_retention(
         &self,

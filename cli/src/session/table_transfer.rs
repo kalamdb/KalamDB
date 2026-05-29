@@ -285,7 +285,11 @@ impl CLISession {
                     return Ok(download_url);
                 },
                 "failed" => {
-                    let msg = json["error_message"].as_str().unwrap_or("unknown error").to_string();
+                    let msg = json["error_message"]
+                        .as_str()
+                        .or_else(|| json["message"].as_str())
+                        .unwrap_or("unknown error")
+                        .to_string();
                     return Err(CLIError::LinkError(KalamLinkError::ServerError {
                         status_code: 500,
                         message: format!("{} job {} failed: {}", kind, job_id, msg),

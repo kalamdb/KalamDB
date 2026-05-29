@@ -136,21 +136,6 @@ impl PendingBuffer {
         self.pending_count.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Get the highest required_meta_index in the buffer
-    ///
-    /// Returns None if buffer is empty.
-    pub fn max_required_meta_index(&self) -> Option<u64> {
-        let guard = self.by_required_meta.read();
-        guard.keys().next_back().copied()
-    }
-
-    /// Get the lowest required_meta_index in the buffer
-    ///
-    /// Returns None if buffer is empty.
-    pub fn min_required_meta_index(&self) -> Option<u64> {
-        let guard = self.by_required_meta.read();
-        guard.keys().next().copied()
-    }
 }
 
 #[cfg(test)]

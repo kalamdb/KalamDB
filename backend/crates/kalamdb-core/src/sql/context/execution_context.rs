@@ -190,29 +190,6 @@ impl ExecutionContext {
         ctx
     }
 
-    fn build_effective_session_context(&self, user_id: UserId, role: Role) -> SessionContext {
-        let mut session_state = self.base_session_context.state();
-
-        session_state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(SessionUserContext::new(
-                user_id.clone(),
-                role,
-                self.auth_session.read_context(),
-            ));
-
-        if let Some(ref ns) = self.namespace_id {
-            session_state.config_mut().options_mut().catalog.default_schema =
-                ns.as_str().to_string();
-        }
-
-        let ctx = SessionContext::new_with_state(session_state);
-
-        ctx
-    }
-
     /// Create a per-request SessionContext with current user_id and role injected
     ///
     /// Clones the base SessionState and injects the current user_id and role into
@@ -249,18 +226,6 @@ impl ExecutionContext {
         session.clone()
     }
 
-    /// Create a per-request SessionContext using an explicit effective identity.
-    ///
-    /// This bypasses the cached session for explicit identity construction.
-    /// Cross-user impersonation must be authorized before this boundary.
-    pub fn create_session_with_effective_user(
-        &self,
-        user_id: &UserId,
-        role: Role,
-    ) -> SessionContext {
-        self.build_effective_session_context(user_id.clone(), role)
-    }
-
     /// Get the current default namespace (schema) from DataFusion session config
     ///
     /// This reads `datafusion.catalog.default_schema` from the request-scoped
@@ -283,14 +248,4 @@ impl ExecutionContext {
         self.namespace_id.clone().unwrap_or_default()
     }
 
-    #[inline]
-    pub fn user_context(&self) -> &kalamdb_session::UserContext {
-        self.auth_session.user_context()
-    }
-
-    /// Get the AuthSession reference (contains all session metadata)
-    #[inline]
-    pub fn auth_session(&self) -> &AuthSession {
-        &self.auth_session
-    }
 }

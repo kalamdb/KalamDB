@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 const exampleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test.beforeAll(() => {
-  execFileSync(process.execPath, ['setup.mjs'], {
+  execFileSync(process.execPath, ['setup.mjs', '--force'], {
     cwd: exampleRoot,
     stdio: 'inherit',
     env: {

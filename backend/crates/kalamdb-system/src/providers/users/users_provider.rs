@@ -85,6 +85,24 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), SystemError> {
+        if let Some(existing_row) = self.store.get(&user.user_id)? {
+            let existing_user = Self::decode_user_row(&existing_row)?;
+            if existing_user.deleted_at.is_none() {
+                return Err(SystemError::AlreadyExists(format!(
+                    "User '{}' already exists",
+                    user.user_id
+                )));
+            }
+
+            // Reactivate soft-deleted user rows while preserving index consistency.
+            let row = Self::encode_user_row(&user)?;
+            self.store
+                .update_with_old(&user.user_id, Some(&existing_row), &row)
+                .into_system_error("reactivate user error")?;
+            self.update_role_caches_for_user(&user);
+            return Ok(());
+        }
+
         // Insert user - indexes are managed automatically
         let row = Self::encode_user_row(&user)?;
         self.store.insert(&user.user_id, &row).into_system_error("insert user error")?;

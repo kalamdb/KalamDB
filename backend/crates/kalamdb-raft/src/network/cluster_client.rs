@@ -10,10 +10,7 @@ use tonic::{transport::Channel, Request, Response, Status};
 
 use super::{
     cluster_service::cluster_client::ClusterServiceClient,
-    models::{
-        ForwardSqlRequest, ForwardSqlResponse, GetNodeInfoRequest, GetNodeInfoResponse,
-        PingRequest, PingResponse,
-    },
+    models::{ForwardSqlRequest, ForwardSqlResponse, GetNodeInfoRequest, GetNodeInfoResponse},
 };
 use crate::{manager::RaftManager, GroupId, RaftError};
 
@@ -97,18 +94,6 @@ impl ClusterClient {
     ) -> Result<ForwardSqlResponse, RaftError> {
         self.call_node(target_node_id, "forward_sql", request, |mut client, request| async move {
             client.forward_sql(request).await
-        })
-        .await
-    }
-
-    /// Ping a specific peer node.
-    pub async fn ping_peer(&self, target_node_id: NodeId) -> Result<PingResponse, RaftError> {
-        let request = PingRequest {
-            from_node_id: self.manager.node_id().as_u64(),
-        };
-
-        self.call_node(target_node_id, "ping", request, |mut client, request| async move {
-            client.ping(request).await
         })
         .await
     }

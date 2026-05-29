@@ -56,11 +56,13 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         let check_id = user_id.clone();
         let existing =
             run_blocking(move || app_ctx.system_tables().users().get_user_by_id(&check_id)).await?;
-        if existing.is_some() {
-            return Err(KalamDbError::AlreadyExists(format!(
-                "User '{}' already exists",
-                statement.username
-            )));
+        if let Some(existing_user) = existing {
+            if existing_user.deleted_at.is_none() {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "User '{}' already exists",
+                    statement.username
+                )));
+            }
         }
 
         let storage_id = if let Some(storage_id) = statement.storage_id.clone() {

@@ -5,6 +5,7 @@ mod clear;
 mod consume;
 mod create;
 mod drop;
+mod name_resolution;
 mod reset_consumer_group;
 mod retention;
 

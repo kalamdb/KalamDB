@@ -21,6 +21,7 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         registry,
         SqlStatementKind::CreateTopic(CreateTopicStatement {
             topic_name: "_placeholder".to_string(),
+            if_not_exists: false,
             partitions: None,
             retention_seconds: None,
             retention_max_bytes: None,
@@ -52,6 +53,7 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         SqlStatementKind::AddTopicSource(AddTopicSourceStatement {
             topic_name: "_placeholder".to_string(),
             table_id: TableId::from_strings("_placeholder", "_placeholder"),
+            table_name_qualified: true,
             operation: kalamdb_commons::models::TopicOp::Insert,
             filter_expr: None,
             payload_mode: PayloadMode::Full,

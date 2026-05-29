@@ -266,10 +266,6 @@ impl FileSubfolderState {
         self.subfolder_name()
     }
 
-    /// Check if rotation is needed before adding files
-    pub fn needs_rotation(&self, max_files_per_folder: u32) -> bool {
-        self.count >= max_files_per_folder
-    }
 }
 
 #[cfg(test)]
