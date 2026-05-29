@@ -1115,8 +1115,16 @@ async fn test_ack_offset() {
 async fn test_drop_topic() {
     let server = TestServer::new_shared().await;
 
+    // Ensure the fixed-name topic does not leak between repeated runs.
+    let _ = server.execute_sql("DROP TOPIC IF EXISTS default.temp_drop_tp").await;
+
     // Create and drop
-    server.execute_sql("CREATE TOPIC default.temp_drop_tp PARTITIONS 1").await;
+    let create_result = server.execute_sql("CREATE TOPIC default.temp_drop_tp PARTITIONS 1").await;
+    assert!(
+        create_result.status == ResponseStatus::Success,
+        "CREATE TOPIC should succeed: {:?}",
+        create_result.error
+    );
 
     let sql = "DROP TOPIC default.temp_drop_tp";
     let result = server.execute_sql(sql).await;
@@ -1869,6 +1877,7 @@ async fn test_sql_consume_without_group_is_stateless_and_does_not_persist_offset
 /// - explicit `ack` progression for same-group consumers
 #[tokio::test]
 #[ntest::timeout(90000)]
+#[serial]
 async fn test_http_api_consume_ack_option_combinations() {
     let server = http_server::get_global_server().await;
     let namespace = consolidated_helpers::unique_namespace("tp_http_opts");
@@ -2543,31 +2552,34 @@ async fn test_clear_topic_user_role_forbidden() {
 #[ntest::timeout(15000)]
 async fn test_drop_topic_cleans_up_data_immediately() {
     let server = TestServer::new_shared().await;
+    let namespace = consolidated_helpers::unique_namespace("drop_topic_cleanup");
+    let table = consolidated_helpers::unique_table("events");
+    let topic_table = consolidated_helpers::unique_table("events_topic");
+    let source_table = format!("{}.{}", namespace, table);
+    let topic = format!("{}.{}", namespace, topic_table);
 
     // Setup: Create namespace, table, and topic
-    server.execute_sql("CREATE NAMESPACE test_drop_ns").await;
+    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     server
-        .execute_sql("CREATE TABLE test_drop_ns.events (id TEXT PRIMARY KEY, data TEXT)")
+        .execute_sql(&format!("CREATE TABLE {} (id TEXT PRIMARY KEY, data TEXT)", source_table))
         .await;
-    server.execute_sql("CREATE TOPIC test_drop_ns.events_topic PARTITIONS 1").await;
+    server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await;
     server
-        .execute_sql(
-            "ALTER TOPIC test_drop_ns.events_topic ADD SOURCE test_drop_ns.events ON INSERT",
-        )
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
         .await;
 
     // Insert some data to generate messages
     server
-        .execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('1', 'event1')")
+        .execute_sql(&format!("INSERT INTO {} (id, data) VALUES ('1', 'event1')", source_table))
         .await;
     server
-        .execute_sql("INSERT INTO test_drop_ns.events (id, data) VALUES ('2', 'event2')")
+        .execute_sql(&format!("INSERT INTO {} (id, data) VALUES ('2', 'event2')", source_table))
         .await;
 
     // Give CDC some time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let topic_id = TopicId::new("test_drop_ns.events_topic");
+    let topic_id = TopicId::new(&topic);
     server
         .app_context
         .system_tables()
@@ -2580,10 +2592,10 @@ async fn test_drop_topic_cleans_up_data_immediately() {
             chrono::Utc::now().timestamp_millis(),
         ))
         .expect("Failed to seed topic offset before DROP TOPIC");
-    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", Some(1)).await;
+    assert_topic_offset_state(&server, &topic, "drop_offsets", Some(1)).await;
 
     // Drop the topic
-    let drop_result = server.execute_sql("DROP TOPIC test_drop_ns.events_topic").await;
+    let drop_result = server.execute_sql(&format!("DROP TOPIC {}", topic)).await;
     assert_eq!(
         drop_result.status,
         ResponseStatus::Success,
@@ -2599,7 +2611,7 @@ async fn test_drop_topic_cleans_up_data_immediately() {
             .unwrap_or(false),
         "DROP TOPIC should report direct cleanup instead of a cleanup job"
     );
-    assert_topic_offset_state(&server, "test_drop_ns.events_topic", "drop_offsets", None).await;
+    assert_topic_offset_state(&server, &topic, "drop_offsets", None).await;
     assert!(
         server
             .app_context

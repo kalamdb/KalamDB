@@ -22,7 +22,7 @@ use crate::{
     terminal_ui,
 };
 
-const DEFAULT_CLI_REDIRECT_URI: &str = "http://127.0.0.1:8787/callback";
+const DEFAULT_CLI_REDIRECT_URI: &str = "http://localhost:8787/callback";
 const CALLBACK_TIMEOUT_SECS: u64 = 120;
 const PROGRESS_TICK_MS: u64 = 80;
 
@@ -321,7 +321,7 @@ mod tests {
         let redirect = resolve_redirect_uri(None).expect("default redirect uri should resolve");
 
         assert_eq!(redirect.redirect_uri, DEFAULT_CLI_REDIRECT_URI);
-        assert_eq!(redirect.listener_addr, "127.0.0.1:8787");
+        assert_eq!(redirect.listener_addr, "localhost:8787");
     }
 
     #[test]

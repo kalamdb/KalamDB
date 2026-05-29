@@ -1591,7 +1591,10 @@ jobs:
           done
 
           cd "dist/$VERSION"
-          if ! ls -1 ./*.tar.gz ./*.zip >/dev/null 2>&1; then
+          shopt -s nullglob
+          release_assets=( *.tar.gz *.zip *.exe *.dll )
+
+          if [[ ${#release_assets[@]} -eq 0 ]]; then
             echo "No release artifacts found. Check workflow inputs.platforms / all_platforms." >&2
             exit 1
           fi
@@ -1602,7 +1605,8 @@ jobs:
             exit 1
           fi
 
-          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
+          # Keep asset names unprefixed (no ./) so update clients can match by exact filename.
+          sha256sum "${release_assets[@]}" > SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -1614,6 +1618,8 @@ jobs:
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz
             dist/${{ needs.read_version.outputs.version }}/*.zip
+            dist/${{ needs.read_version.outputs.version }}/*.exe
+            dist/${{ needs.read_version.outputs.version }}/*.dll
             dist/${{ needs.read_version.outputs.version }}/SHA256SUMS
             dist/${{ needs.read_version.outputs.version }}/LICENSE.txt
             dist/${{ needs.read_version.outputs.version }}/NOTICE

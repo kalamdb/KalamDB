@@ -115,3 +115,88 @@ pub trait StatementHandler: Send + Sync {
         async move { result }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use datafusion::prelude::SessionContext;
+    use kalamdb_commons::{Role, UserId};
+    use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
+
+    use super::{ExecutionContext, ExecutionResult, ScalarValue, StatementHandler};
+    use crate::error::KalamDbError;
+
+    struct DummyHandler;
+
+    impl StatementHandler for DummyHandler {
+        fn execute<'a>(
+            &'a self,
+            _statement: SqlStatement,
+            _params: Vec<ScalarValue>,
+            _context: &'a ExecutionContext,
+        ) -> impl std::future::Future<Output = Result<ExecutionResult, KalamDbError>> + Send + 'a
+        {
+            async move {
+                Ok(ExecutionResult::Success {
+                    message: "ok".to_string(),
+                })
+            }
+        }
+    }
+
+    fn context_with_role(role: Role) -> ExecutionContext {
+        ExecutionContext::new(
+            UserId::from("test-user"),
+            role,
+            Arc::new(SessionContext::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn default_check_authorization_denies_regular_user_for_unknown_statements() {
+        let handler = DummyHandler;
+        let statement = SqlStatement::new("SHOW SOMETHING".to_string(), SqlStatementKind::Unknown);
+        let context = context_with_role(Role::User);
+
+        let err = handler
+            .check_authorization(&statement, &context)
+            .await
+            .expect_err("regular user should be denied for unknown statement");
+
+        assert!(matches!(
+            err,
+            KalamDbError::PermissionDenied(message)
+            if message.contains("requires an elevated role")
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_check_authorization_allows_admin_roles() {
+        let handler = DummyHandler;
+        let statement = SqlStatement::new("SHOW SOMETHING".to_string(), SqlStatementKind::Unknown);
+        let context = context_with_role(Role::Dba);
+
+        handler
+            .check_authorization(&statement, &context)
+            .await
+            .expect("DBA role should pass authorization");
+    }
+
+    #[tokio::test]
+    async fn execute_returns_success_result() {
+        let handler = DummyHandler;
+        let statement = SqlStatement::new("SELECT 1".to_string(), SqlStatementKind::Select);
+        let context = context_with_role(Role::System);
+
+        let result = handler
+            .execute(statement, Vec::new(), &context)
+            .await
+            .expect("dummy execute should succeed");
+
+        assert!(matches!(
+            result,
+            ExecutionResult::Success { message } if message == "ok"
+        ));
+    }
+}

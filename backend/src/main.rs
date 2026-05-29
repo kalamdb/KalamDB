@@ -574,7 +574,12 @@ mod tests {
         force_allocator_collection(true);
         let after = collect_runtime_metrics(start);
 
-        let allowed_growth = 8 * 1024 * 1024;
+        let is_coverage_run = std::env::var_os("LLVM_PROFILE_FILE").is_some();
+        let allowed_growth = if is_coverage_run {
+            32 * 1024 * 1024
+        } else {
+            8 * 1024 * 1024
+        };
         assert!(
             after.memory_bytes.unwrap_or_default()
                 <= before.memory_bytes.unwrap_or_default() + allowed_growth,
