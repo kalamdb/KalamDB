@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, Search, Table2, FolderPlus, Trash2 } from "lucide-react";
+import { Plus, Search, Table2, FolderPlus, Trash2, MoreHorizontal, Upload } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   Select,
@@ -9,6 +9,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -31,6 +44,11 @@ import { generateDropTableSql } from "./ddl-generator";
 import { discardEdit } from "@/features/sql-studio/state/editorTabSlice";
 import { useSqlPreview } from "@/components/sql-preview";
 import { StudioChromeLabel, StudioIconButton } from "../shared/StudioChrome";
+import {
+  startTableImport,
+  getTableImportStatus,
+  type TableTransferInput,
+} from "@/services/tableTransferService";
 import type { StudioNamespace, StudioTable } from "@/components/sql-studio-v2/shared/types";
 
 interface EditorSidebarProps {
@@ -51,6 +69,14 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
   const { notify } = useToast();
   const { openSqlPreview } = useSqlPreview();
+    // Import table dialog state
+    const [showImportDialog, setShowImportDialog] = useState(false);
+    const [importNamespace, setImportNamespace] = useState<string>("");
+    const [importTableName, setImportTableName] = useState("");
+    const [importTableType, setImportTableType] = useState<"shared" | "user">("shared");
+    const [importUserId, setImportUserId] = useState("");
+    const [importFile, setImportFile] = useState<File | null>(null);
+    const [isImporting, setIsImporting] = useState(false);
 
   const isDirty = (() => {
     if (mode === "idle" || !draft || !original) return false;
@@ -147,7 +173,62 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     });
   };
 
+  const openImportDialog = () => {
+    setImportNamespace(activeNamespace);
+    setImportTableName("");
+    setImportTableType("shared");
+    setImportUserId("");
+    setImportFile(null);
+    setShowImportDialog(true);
+  };
+
+  const handleImportSubmit = async () => {
+    if (!importFile || !importTableName.trim() || !importNamespace.trim()) return;
+    setIsImporting(true);
+    try {
+      const input: TableTransferInput = {
+        namespace_id: importNamespace,
+        table_name: importTableName.trim(),
+        table_type: importTableType,
+        ...(importTableType === "user" && importUserId.trim()
+          ? { user_id: importUserId.trim() }
+          : {}),
+      };
+      const job = await startTableImport(input, importFile);
+      // Poll until terminal
+      const pollInterval = 2000;
+      const timeout = 300_000;
+      const deadline = Date.now() + timeout;
+      let done = false;
+      while (!done && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, pollInterval));
+        const status = await getTableImportStatus(job.job_id);
+        if (status.status === "completed") {
+          done = true;
+          notify({
+            title: `Table "${importNamespace}.${importTableName.trim()}" imported successfully`,
+            variant: "success",
+          });
+          setShowImportDialog(false);
+          onSchemaRefresh?.();
+        } else if (status.status === "failed" || status.status === "cancelled") {
+          throw new Error(status.message ?? `Import ${status.status}`);
+        }
+      }
+      if (!done) throw new Error("Import timed out");
+    } catch (err) {
+      notify({
+        title: "Import failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleDropTable = (table: StudioTable) => {
+
     const sql = generateDropTableSql(table.namespace, table.name);
     const fqn = `${table.namespace}.${table.name}`;
     openSqlPreview({
@@ -260,6 +341,27 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
               <Plus data-icon="only" />
             </StudioIconButton>
           )}
+            {!activeNamespaceIsReadOnly && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <StudioIconButton
+                    tooltip="Table actions"
+                    aria-label="Table actions"
+                  >
+                    <MoreHorizontal data-icon="only" />
+                  </StudioIconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="text-xs">
+                  <DropdownMenuItem
+                    className="gap-2 text-xs"
+                    onSelect={openImportDialog}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Import table…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
         </div>
       )}
 
@@ -351,6 +453,97 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
         }}
         onClose={() => setPendingDiscardAction(null)}
       />
+
+      {/* Import Table Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => !isImporting && setShowImportDialog(open)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Import table</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Namespace</label>
+              <Select value={importNamespace} onValueChange={setImportNamespace}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Select namespace" />
+                </SelectTrigger>
+                <SelectContent>
+                  {namespaces
+                    .filter((ns) => !isReadOnlyNamespace(ns))
+                    .map((ns) => (
+                      <SelectItem key={ns} value={ns} className="text-xs">
+                        {ns}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Table name</label>
+              <Input
+                value={importTableName}
+                onChange={(e) => setImportTableName(e.target.value)}
+                placeholder="my_table"
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Table type</label>
+              <Select
+                value={importTableType}
+                onValueChange={(v) => setImportTableType(v as "shared" | "user")}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="shared" className="text-xs">Shared</SelectItem>
+                  <SelectItem value="user" className="text-xs">User</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {importTableType === "user" && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-muted-foreground">User ID (optional)</label>
+                <Input
+                  value={importUserId}
+                  onChange={(e) => setImportUserId(e.target.value)}
+                  placeholder="user-uuid"
+                  className="h-8 text-xs"
+                />
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">ZIP archive</label>
+              <input
+                type="file"
+                accept=".zip"
+                className="text-xs file:mr-2 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs file:font-medium"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowImportDialog(false)}
+              disabled={isImporting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void handleImportSubmit()}
+              disabled={isImporting || !importFile || !importTableName.trim() || !importNamespace.trim()}
+            >
+              {isImporting ? "Importing…" : "Import"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
     </TooltipProvider>

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    args::{Cli, LoginArgs, LogoutArgs, TokenCommand, TokenCreateArgs},
+    args::{Cli, InviteArgs, LoginArgs, LogoutArgs, TokenCommand, TokenCreateArgs},
     connect::{build_timeouts, resolve_server_url},
     terminal_input::{prompt_line, prompt_password},
 };
@@ -368,8 +368,14 @@ async fn handle_oidc_login(
             device_flow.map(|device_flow| device_flow.direct_supported).unwrap_or(false);
 
         if args.brokered || (!can_direct && can_broker) {
-            oidc_device::login_with_brokered_device(&api_client, &server_url, &oidc, !cli.no_color)
-                .await?
+            oidc_device::login_with_brokered_device(
+                &api_client,
+                &server_url,
+                &oidc,
+                !cli.no_color,
+                !cli.no_spinner,
+            )
+            .await?
         } else if can_direct {
             let oidc_client = oidc_http_client(cli.timeout)?;
             oidc_device::login_with_direct_device(
@@ -378,6 +384,7 @@ async fn handle_oidc_login(
                 &server_url,
                 &oidc,
                 !cli.no_color,
+                !cli.no_spinner,
             )
             .await?
         } else {
@@ -392,7 +399,9 @@ async fn handle_oidc_login(
             &api_client,
             &server_url,
             &oidc,
+            args.oidc_redirect_uri.as_deref(),
             !cli.no_color,
+            !cli.no_spinner,
         )
         .await?
     };
@@ -549,6 +558,74 @@ pub async fn handle_token_command(
     }
 }
 
+pub async fn handle_invite(
+    cli: &Cli,
+    args: &InviteArgs,
+    credential_store: &mut FileCredentialStore,
+) -> Result<bool> {
+    validate_invite_email(&args.email)?;
+    let email = args.email.trim();
+    if args.expires_in_days <= 0 {
+        return Err(CLIError::ConfigurationError(
+            "--expires-in-days must be greater than zero".to_string(),
+        ));
+    }
+
+    let (config, _) = load_config_or_default(cli)?;
+    let auth_context = resolve_auth_context(cli, credential_store, &config, true)
+        .await?
+        .ok_or_else(|| {
+            CLIError::ConfigurationError(
+                "No admin credentials available. Run `kalam login` with a DBA or system account."
+                    .to_string(),
+            )
+        })?;
+
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(args.expires_in_days);
+    let create_invite_sql = format!(
+        "CREATE USER INVITE {} ROLE {} EXPIRES_AT {}",
+        sql_string_literal(email),
+        args.role.as_sql(),
+        expires_at.timestamp_millis()
+    );
+
+    let client = authed_client(cli, &config, &auth_context)?;
+    let response = client
+        .execute_query(&create_invite_sql, None, None, None)
+        .await
+        .map_err(CLIError::from)?;
+    if !response.success() {
+        let message = response
+            .error
+            .as_ref()
+            .map(|error| error.message.clone())
+            .or_else(|| response.results.first().and_then(|result| result.message.clone()))
+            .unwrap_or_else(|| "CREATE USER INVITE failed".to_string());
+        return Err(CLIError::ConfigurationError(message));
+    }
+
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "email": email,
+                "role": args.role.as_sql(),
+                "expires_at": expires_at.to_rfc3339(),
+                "expires_at_ms": expires_at.timestamp_millis(),
+                "server_url": auth_context.server_url,
+            }))
+            .map_err(|error| CLIError::FormatError(error.to_string()))?
+        );
+    } else {
+        println!("Created OIDC invite for {}", email);
+        println!("Role: {}", args.role.as_sql());
+        println!("Expires at: {}", expires_at.to_rfc3339());
+        println!("Server: {}", auth_context.server_url);
+    }
+
+    Ok(true)
+}
+
 async fn handle_token_create(
     cli: &Cli,
     args: &TokenCreateArgs,
@@ -660,6 +737,26 @@ fn validate_token_name(name: &str) -> Result<()> {
     {
         return Err(CLIError::ConfigurationError(
             "--name may only contain ASCII letters, numbers, '_' and '-'".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_invite_email(email: &str) -> Result<()> {
+    let trimmed = email.trim();
+    if trimmed.is_empty() || !trimmed.contains('@') {
+        return Err(CLIError::ConfigurationError(
+            "--email must be a valid email address".to_string(),
+        ));
+    }
+    if trimmed.len() > 320 {
+        return Err(CLIError::ConfigurationError(
+            "--email must be 320 characters or fewer".to_string(),
+        ));
+    }
+    if trimmed.contains('\'') || trimmed.contains('\n') || trimmed.contains('\r') {
+        return Err(CLIError::ConfigurationError(
+            "--email contains unsupported characters".to_string(),
         ));
     }
     Ok(())
@@ -996,5 +1093,49 @@ mod tests {
             .bodies
             .iter()
             .any(|body| body.contains("ci-prod") && body.contains("password")));
+    }
+
+    #[tokio::test]
+    async fn invite_command_creates_oidc_invite() {
+        let server = MockServer::spawn().await;
+        let (_temp_dir, mut store, config_path) = temp_store();
+        let saved = Credentials::with_refresh_token(
+            "prod".to_string(),
+            "admin-token".to_string(),
+            "root".to_string(),
+            "2099-01-01T00:00:00Z".to_string(),
+            Some(server.base_url.clone()),
+            Some("refresh-root".to_string()),
+            Some("2099-01-02T00:00:00Z".to_string()),
+        );
+        store.set_credentials(&saved).expect("save admin credentials");
+        let cli = parse_cli(
+            &[
+                "invite",
+                "--email",
+                "alice@example.com",
+                "--role",
+                "dba",
+                "--expires-in-days",
+                "7",
+                "--instance",
+                "prod",
+            ],
+            &server.base_url,
+            &config_path,
+        );
+        let Some(crate::args::CliCommand::Invite(args)) = &cli.subcommand else {
+            panic!("expected invite command");
+        };
+
+        handle_invite(&cli, args, &mut store)
+            .await
+            .expect("invite command should succeed");
+
+        let state = server.state.lock().expect("mock state lock");
+        assert!(state.paths.iter().any(|path| path == "/v1/api/sql"));
+        assert!(state.bodies.iter().any(|body| {
+            body.contains("CREATE USER INVITE 'alice@example.com' ROLE dba EXPIRES_AT")
+        }));
     }
 }

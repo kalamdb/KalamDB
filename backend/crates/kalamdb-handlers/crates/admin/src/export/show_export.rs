@@ -6,6 +6,7 @@ use arrow::{
     array::{RecordBatch, StringArray, TimestampMicrosecondArray},
     datatypes::{DataType, Field, Schema, TimeUnit},
 };
+use kalamdb_commons::Role;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -15,11 +16,13 @@ use kalamdb_core::{
     },
 };
 use kalamdb_jobs::AppContextJobsExt;
+use kalamdb_session::is_admin_role;
 use kalamdb_sql::ddl::ShowExportStatement;
 use kalamdb_system::{
     providers::jobs::models::{Job, JobFilter, JobSortField, SortOrder},
     JobType,
 };
+use kalamdb_transfer::{build_table_export_download_url, build_user_export_download_url};
 
 /// Handler for SHOW EXPORT
 ///
@@ -36,6 +39,7 @@ impl ShowExportHandler {
     fn result_schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
             Field::new("job_id", DataType::Utf8, false),
+            Field::new("job_type", DataType::Utf8, false),
             Field::new("status", DataType::Utf8, false),
             Field::new("created_at", DataType::Timestamp(TimeUnit::Microsecond, None), false),
             Field::new("message", DataType::Utf8, true),
@@ -64,14 +68,41 @@ impl ShowExportHandler {
         }
     }
 
-    /// Build a download URI for a completed export.
-    fn build_download_url(user_id: &str, export_id: &str) -> String {
-        format!("/v1/exports/{}/{}", user_id, export_id)
-    }
-
     /// Extract export_id from job parameters JSON
     fn extract_export_id(job: &Job) -> Option<String> {
         Self::extract_parameter(job, "export_id")
+    }
+
+    fn include_job_for_role(job: &Job, role: Role, user_id: &str) -> bool {
+        if matches!(role, Role::System | Role::Dba) {
+            return true;
+        }
+
+        match job.job_type {
+            JobType::UserExport => {
+                Self::extract_parameter(job, "user_id").as_deref() == Some(user_id)
+            },
+            JobType::TableExport | JobType::TableImport => {
+                // For user-scoped table transfer jobs, filter to matching user_id.
+                // Shared-table jobs do not include a user scope in params; include those for
+                // maintenance-capable non-admins because they explicitly initiated maintenance.
+                Self::extract_parameter(job, "user_id")
+                    .as_deref()
+                    .is_none_or(|value| value == user_id)
+            },
+            JobType::Backup | JobType::Restore => true,
+            _ => false,
+        }
+    }
+
+    fn supported_job_types() -> [JobType; 5] {
+        [
+            JobType::UserExport,
+            JobType::TableExport,
+            JobType::TableImport,
+            JobType::Backup,
+            JobType::Restore,
+        ]
     }
 }
 
@@ -84,28 +115,31 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         let user_id = context.user_id().to_string();
 
-        // Query jobs for this user's export jobs
+        // Query maintenance transfer jobs and expose them in one place.
         let job_manager = self.app_context.job_manager();
-        let filter = JobFilter {
-            job_type: Some(JobType::UserExport),
-            limit: Some(20),
-            sort_by: Some(JobSortField::CreatedAt),
-            sort_order: Some(SortOrder::Desc),
-            ..Default::default()
-        };
+        let mut all_jobs = Vec::new();
+        for job_type in Self::supported_job_types() {
+            let filter = JobFilter {
+                job_type: Some(job_type),
+                limit: Some(40),
+                sort_by: Some(JobSortField::CreatedAt),
+                sort_order: Some(SortOrder::Desc),
+                ..Default::default()
+            };
+            all_jobs.extend(job_manager.list_jobs(filter).await?);
+        }
+        all_jobs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
 
-        let all_jobs = job_manager.list_jobs(filter).await?;
-
-        // Filter to only this user's exports (check parameters JSON)
-        let user_jobs: Vec<&Job> = all_jobs
+        let visible_jobs: Vec<&Job> = all_jobs
             .iter()
-            .filter(|job| Self::extract_parameter(job, "user_id").as_deref() == Some(&user_id))
+            .filter(|job| Self::include_job_for_role(job, context.user_role(), &user_id))
+            .take(20)
             .collect();
 
         // Build result schema
         let schema = Self::result_schema();
 
-        if user_jobs.is_empty() {
+        if visible_jobs.is_empty() {
             let batch = RecordBatch::new_empty(schema.clone());
             return Ok(ExecutionResult::Rows {
                 batches: vec![batch],
@@ -115,34 +149,46 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
         }
 
         let mut job_ids = Vec::new();
+        let mut job_types = Vec::new();
         let mut statuses = Vec::new();
         let mut created_ats = Vec::new();
         let mut messages = Vec::new();
         let mut download_urls = Vec::new();
 
-        for job in &user_jobs {
+        for job in &visible_jobs {
             job_ids.push(job.job_id.as_str().to_string());
+            job_types.push(job.job_type.as_str().to_string());
             statuses.push(format!("{}", job.status));
             created_ats.push(Self::created_at_micros(job.created_at));
             messages.push(job.message.clone().unwrap_or_default());
 
-            // Build download URL only for completed jobs
-            let url = if job.status == kalamdb_system::JobStatus::Completed {
-                Self::extract_export_id(job)
-                    .map(|eid| Self::build_download_url(&user_id, &eid))
-                    .unwrap_or_default()
-            } else {
-                String::new()
+            let url = match (job.job_type, job.status) {
+                (JobType::UserExport, kalamdb_system::JobStatus::Completed) => {
+                    let export_user_id =
+                        Self::extract_parameter(job, "user_id").unwrap_or_else(|| user_id.clone());
+                    Self::extract_export_id(job)
+                        .map(|export_id| {
+                            build_user_export_download_url(&export_user_id, &export_id)
+                        })
+                        .unwrap_or_default()
+                },
+                (JobType::TableExport, kalamdb_system::JobStatus::Completed) => {
+                    Self::extract_export_id(job)
+                        .map(|export_id| build_table_export_download_url(&export_id))
+                        .unwrap_or_default()
+                },
+                _ => String::new(),
             };
             download_urls.push(url);
         }
 
-        let row_count = user_jobs.len();
+        let row_count = visible_jobs.len();
 
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(StringArray::from(job_ids)),
+                Arc::new(StringArray::from(job_types)),
                 Arc::new(StringArray::from(statuses)),
                 Arc::new(TimestampMicrosecondArray::from(created_ats)),
                 Arc::new(StringArray::from(messages)),
@@ -165,9 +211,9 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
         _statement: &ShowExportStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        if matches!(context.user_role(), kalamdb_commons::Role::User) {
+        if !is_admin_role(context.user_role()) {
             return Err(KalamDbError::PermissionDenied(
-                "Regular users may only execute SELECT and DML statements".to_string(),
+                "SHOW EXPORT requires DBA or System role".to_string(),
             ));
         }
 
@@ -204,9 +250,16 @@ mod tests {
 
     #[test]
     fn show_export_download_url_is_relative_uri() {
-        let url = ShowExportHandler::build_download_url("alice", "export-123");
+        let url = build_user_export_download_url("alice", "export-123");
 
         assert_eq!(url, "/v1/exports/alice/export-123");
+    }
+
+    #[test]
+    fn show_export_table_download_url_is_relative_uri() {
+        let url = build_table_export_download_url("table-export-123");
+
+        assert_eq!(url, "/v1/table-exports/table-export-123");
     }
 
     #[tokio::test]
@@ -275,6 +328,13 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("job_id column should be Utf8");
         assert_eq!(job_ids.value(0), "UE-test-show-export");
+
+        let job_types = batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("job_type column should be Utf8");
+        assert_eq!(job_types.value(0), "user_export");
     }
 
     #[tokio::test]
@@ -336,7 +396,7 @@ mod tests {
         assert_eq!(batches[0].num_rows(), 1);
 
         let download_urls = batches[0]
-            .column(4)
+            .column(5)
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("download_url column should be Utf8");

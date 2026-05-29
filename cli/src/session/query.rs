@@ -3,7 +3,7 @@ use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use indicatif::ProgressBar;
@@ -35,23 +35,15 @@ impl CLISession {
 
         let upload_present = !upload_parts.is_empty();
         let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
-        let show_loading = if self.animations {
+        if self.animations {
             if upload_present {
                 let pb = Self::create_spinner("Uploading files...");
                 *spinner.lock().expect("spinner lock should not be poisoned") = Some(pb);
-                None
             } else {
-                let spinner_clone = Arc::clone(&spinner);
-                let threshold = Duration::from_millis(self.loading_threshold_ms);
-                Some(tokio::spawn(async move {
-                    tokio::time::sleep(threshold).await;
-                    let pb = Self::create_spinner("Executing query...");
-                    *spinner_clone.lock().expect("spinner lock should not be poisoned") = Some(pb);
-                }))
+                let pb = Self::create_spinner("Waiting for query result...");
+                *spinner.lock().expect("spinner lock should not be poisoned") = Some(pb);
             }
-        } else {
-            None
-        };
+        }
 
         let upload_progress = if self.animations && upload_present {
             let spinner_clone = Arc::clone(&spinner);
@@ -100,9 +92,6 @@ impl CLISession {
                 .await
         };
 
-        if let Some(task) = show_loading {
-            task.abort();
-        }
         if let Some(pb) = spinner.lock().expect("spinner lock should not be poisoned").take() {
             pb.finish_and_clear();
         }

@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use indicatif::{ProgressBar, ProgressStyle};
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
     reqwest::Client as OidcHttpClient,
@@ -21,8 +22,15 @@ use crate::{
     terminal_ui,
 };
 
-const CLI_REDIRECT_URI: &str = "http://127.0.0.1:8787/callback";
+const DEFAULT_CLI_REDIRECT_URI: &str = "http://127.0.0.1:8787/callback";
 const CALLBACK_TIMEOUT_SECS: u64 = 120;
+const PROGRESS_TICK_MS: u64 = 80;
+
+#[derive(Debug)]
+struct ResolvedRedirectUri {
+    redirect_uri: String,
+    listener_addr: String,
+}
 
 pub type CliOidcClient = CoreClient<
     EndpointSet,
@@ -50,16 +58,20 @@ pub async fn login_with_browser(
     api_client: &reqwest::Client,
     server_url: &str,
     options: &OidcLoginOptions,
+    redirect_uri_override: Option<&str>,
     color: bool,
+    show_progress: bool,
 ) -> Result<ExternalLoginSession> {
-    let redirect_url = RedirectUrl::new(CLI_REDIRECT_URI.to_string()).map_err(|error| {
+    let redirect = resolve_redirect_uri(redirect_uri_override)?;
+    let redirect_url = RedirectUrl::new(redirect.redirect_uri.clone()).map_err(|error| {
         CLIError::ConfigurationError(format!("invalid CLI OIDC redirect URL: {error}"))
     })?;
     let client = discover_core_client(http_client, options).await?.set_redirect_uri(redirect_url);
     let request = build_authorization_request(&client, &options.scopes);
-    let listener = TcpListener::bind("127.0.0.1:8787").map_err(|error| {
+    let listener = TcpListener::bind(&redirect.listener_addr).map_err(|error| {
         CLIError::ConfigurationError(format!(
-            "failed to listen for OIDC callback on 127.0.0.1:8787: {error}"
+            "failed to listen for OIDC callback on {}: {error}",
+            redirect.listener_addr
         ))
     })?;
 
@@ -70,15 +82,44 @@ pub async fn login_with_browser(
     );
     try_open_browser(&request.authorization_url);
 
-    let callback = tokio::time::timeout(
+    let wait_spinner = if show_progress {
+        let progress_bar = ProgressBar::new_spinner();
+        progress_bar.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.cyan} {msg} {elapsed_precise}")
+                .expect("oidc spinner template should be valid"),
+        );
+        progress_bar.set_message("Waiting for OIDC browser verification...".to_string());
+        progress_bar.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_MS));
+        Some(progress_bar)
+    } else {
+        None
+    };
+
+    let callback_result = tokio::time::timeout(
         Duration::from_secs(CALLBACK_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || wait_for_callback(listener)),
     )
-    .await
-    .map_err(|_| CLIError::ConfigurationError("OIDC browser login timed out".to_string()))?
-    .map_err(|error| {
-        CLIError::ConfigurationError(format!("OIDC callback task failed: {error}"))
-    })??;
+    .await;
+
+    let callback = match callback_result {
+        Ok(task_result) => task_result.map_err(|error| {
+            if let Some(progress_bar) = &wait_spinner {
+                progress_bar.finish_and_clear();
+            }
+            CLIError::ConfigurationError(format!("OIDC callback task failed: {error}"))
+        })??,
+        Err(_) => {
+            if let Some(progress_bar) = &wait_spinner {
+                progress_bar.finish_and_clear();
+            }
+            return Err(CLIError::ConfigurationError("OIDC browser login timed out".to_string()));
+        },
+    };
+
+    if let Some(progress_bar) = wait_spinner {
+        progress_bar.finish_with_message("OIDC browser verification received".to_string());
+    }
 
     if callback.state != request.csrf_state.secret().as_str() {
         return Err(CLIError::ConfigurationError("OIDC callback state did not match".to_string()));
@@ -88,10 +129,61 @@ pub async fn login_with_browser(
         api_client,
         server_url,
         callback.code,
-        CLI_REDIRECT_URI.to_string(),
+        redirect.redirect_uri,
         request.pkce_verifier.secret().to_string(),
     )
     .await
+}
+
+fn resolve_redirect_uri(redirect_uri_override: Option<&str>) -> Result<ResolvedRedirectUri> {
+    let redirect_uri = redirect_uri_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_CLI_REDIRECT_URI);
+    let parsed = Url::parse(redirect_uri).map_err(|error| {
+        CLIError::ConfigurationError(format!("invalid CLI OIDC redirect URL: {error}"))
+    })?;
+
+    if parsed.scheme() != "http" {
+        return Err(CLIError::ConfigurationError(
+            "OIDC browser login redirect URI must use http:// and a loopback host".to_string(),
+        ));
+    }
+
+    let host = parsed.host_str().ok_or_else(|| {
+        CLIError::ConfigurationError(
+            "OIDC browser login redirect URI must include a loopback host".to_string(),
+        )
+    })?;
+    if !is_loopback_host(host) {
+        return Err(CLIError::ConfigurationError(
+            "OIDC browser login redirect URI must use localhost, 127.0.0.1, or ::1".to_string(),
+        ));
+    }
+
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        CLIError::ConfigurationError(
+            "OIDC browser login redirect URI must include a port".to_string(),
+        )
+    })?;
+    let listener_addr = if host.contains(':') {
+        format!("[{}]:{}", host, port)
+    } else {
+        format!("{}:{}", host, port)
+    };
+
+    Ok(ResolvedRedirectUri {
+        redirect_uri: parsed.to_string(),
+        listener_addr,
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 pub async fn discover_core_client(
@@ -218,4 +310,40 @@ fn try_open_browser(url: &str) {
         ("xdg-open", vec![url])
     };
     let _ = Command::new(command.0).args(command.1).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_loopback_host, resolve_redirect_uri, DEFAULT_CLI_REDIRECT_URI};
+
+    #[test]
+    fn resolves_default_redirect_uri() {
+        let redirect = resolve_redirect_uri(None).expect("default redirect uri should resolve");
+
+        assert_eq!(redirect.redirect_uri, DEFAULT_CLI_REDIRECT_URI);
+        assert_eq!(redirect.listener_addr, "127.0.0.1:8787");
+    }
+
+    #[test]
+    fn accepts_localhost_redirect_uri() {
+        let redirect = resolve_redirect_uri(Some("http://localhost:9999/callback"))
+            .expect("localhost redirect uri should resolve");
+
+        assert_eq!(redirect.redirect_uri, "http://localhost:9999/callback");
+        assert_eq!(redirect.listener_addr, "localhost:9999");
+    }
+
+    #[test]
+    fn rejects_non_loopback_redirect_uri() {
+        let error = resolve_redirect_uri(Some("http://example.com/callback")).unwrap_err();
+        assert!(error.to_string().contains("localhost, 127.0.0.1, or ::1"));
+    }
+
+    #[test]
+    fn detects_loopback_hosts() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("::1"));
+        assert!(!is_loopback_host("example.com"));
+    }
 }

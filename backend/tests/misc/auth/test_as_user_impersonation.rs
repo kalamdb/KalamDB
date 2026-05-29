@@ -37,6 +37,8 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
         updated_at: now,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     let _ = users.create_user(user);

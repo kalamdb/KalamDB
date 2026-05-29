@@ -8,7 +8,10 @@ use kalamdb_core::{app_context::AppContext, sql::executor::handler_registry::Han
 use kalamdb_handlers_support::register_typed_handler;
 use kalamdb_sql::{
     classifier::SqlStatementKind,
-    ddl::{AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification},
+    ddl::{
+        AlterUserStatement, CreateUserMode, CreateUserStatement, DropUserStatement,
+        UserModification,
+    },
 };
 
 pub fn register_user_handlers(
@@ -19,6 +22,7 @@ pub fn register_user_handlers(
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateUser(CreateUserStatement {
+            mode: CreateUserMode::User,
             username: "_placeholder".to_string(),
             auth_type: AuthType::Password,
             role: kalamdb_commons::Role::User,
@@ -26,6 +30,8 @@ pub fn register_user_handlers(
             password: None,
             storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
             storage_id: None,
+            invite_email: None,
+            invite_expires_at: None,
         }),
         user::CreateUserHandler::new(app_context.clone(), enforce_password_complexity),
         SqlStatementKind::CreateUser,

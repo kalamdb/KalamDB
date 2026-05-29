@@ -56,6 +56,8 @@ async fn create_admin_user(app_context: &Arc<AppContext>) -> UserId {
         updated_at: now,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     app_context

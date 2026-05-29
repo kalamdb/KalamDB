@@ -1,10 +1,11 @@
 export interface CreateUserInput {
-  username: string;
+  username?: string;
   password?: string;
-  auth_type?: "password" | "oidc";
+  auth_type?: "password" | "oidc" | "oidc_invite";
   auth_data?: string;
   role?: string;
   email?: string;
+  invite_expires_at?: number;
   storage_mode?: "table" | "region" | null;
   storage_id?: string | null;
 }
@@ -23,7 +24,31 @@ function escapeSqlLiteral(value: string): string {
 
 export function buildCreateUserSql(input: CreateUserInput): string {
   const authType = (input.auth_type ?? "password").toLowerCase();
-  let sql = `CREATE USER '${escapeSqlLiteral(input.username)}'`;
+  if (authType === "oidc_invite") {
+    const email = input.email?.trim();
+    if (!email) {
+      throw new Error("Email is required for OIDC invites");
+    }
+    const role = input.role ?? "user";
+    const expiresAt = input.invite_expires_at;
+    if (!expiresAt) {
+      throw new Error("Invite expiration is required for OIDC invites");
+    }
+
+    let inviteSql = `CREATE USER INVITE '${escapeSqlLiteral(email)}' ROLE '${escapeSqlLiteral(role)}' EXPIRES_AT ${expiresAt}`;
+    if (input.storage_mode) {
+      inviteSql += ` STORAGE_MODE '${escapeSqlLiteral(input.storage_mode)}'`;
+    }
+    if (input.storage_id?.trim()) {
+      inviteSql += ` STORAGE_ID '${escapeSqlLiteral(input.storage_id.trim())}'`;
+    }
+    return inviteSql;
+  }
+
+  if (!input.username?.trim()) {
+    throw new Error("Username is required");
+  }
+  let sql = `CREATE USER '${escapeSqlLiteral(input.username.trim())}'`;
 
   if (authType === "oidc") {
     sql += ` WITH OIDC`;

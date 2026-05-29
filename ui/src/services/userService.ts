@@ -2,7 +2,7 @@ import { executeSql } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
 import type { SystemUserListRow } from "@/lib/models";
 import { system_users } from "@/lib/schema";
-import { isNull, asc } from "drizzle-orm";
+import { and, asc, isNull, like, sql, type SQL } from "drizzle-orm";
 import {
   buildCreateUserSql,
   buildDeleteUserSql,
@@ -17,30 +17,98 @@ import {
 
 export type User = SystemUserListRow;
 
+export interface UserListFilters {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface UserListResult {
+  users: User[];
+  hasMore: boolean;
+}
+
 export type { CreateUserInput, UpdateUserInput };
 
-export async function fetchUsers(): Promise<User[]> {
+const INVITE_USER_ID_PATTERN = "invite_%";
+
+const userSelect = {
+  user_id: system_users.user_id,
+  role: system_users.role,
+  email: system_users.email,
+  auth_type: system_users.auth_type,
+  auth_data: system_users.auth_data,
+  storage_mode: system_users.storage_mode,
+  storage_id: system_users.storage_id,
+  created_at: system_users.created_at,
+  updated_at: system_users.updated_at,
+  last_seen: system_users.last_seen,
+  deleted_at: system_users.deleted_at,
+  invite_expires_at: system_users.invite_expires_at,
+  invited_by: system_users.invited_by,
+  failed_login_attempts: system_users.failed_login_attempts,
+  locked_until: system_users.locked_until,
+  last_login_at: system_users.last_login_at,
+} as const;
+
+function buildUserSearchCondition(search?: string): SQL | undefined {
+  const normalizedSearch = search?.trim();
+  if (!normalizedSearch) {
+    return undefined;
+  }
+
+  const searchPattern = `%${normalizedSearch}%`;
+  return sql`(
+    ${system_users.user_id} LIKE ${searchPattern}
+    OR ${system_users.email} LIKE ${searchPattern}
+    OR ${system_users.role} LIKE ${searchPattern}
+  )`;
+}
+
+function buildInviteConditions(): SQL[] {
+  return [isNull(system_users.deleted_at), like(system_users.user_id, INVITE_USER_ID_PATTERN)];
+}
+
+function buildUserConditions(search?: string): SQL[] {
+  const conditions: SQL[] = [
+    isNull(system_users.deleted_at),
+    sql`${system_users.user_id} NOT LIKE ${INVITE_USER_ID_PATTERN}`,
+  ];
+
+  const searchCondition = buildUserSearchCondition(search);
+  if (searchCondition) {
+    conditions.push(searchCondition);
+  }
+
+  return conditions;
+}
+
+export async function fetchInviteUsers(): Promise<User[]> {
   const db = getDb();
+
   return db
-    .select({
-      user_id: system_users.user_id,
-      role: system_users.role,
-      email: system_users.email,
-      auth_type: system_users.auth_type,
-      auth_data: system_users.auth_data,
-      storage_mode: system_users.storage_mode,
-      storage_id: system_users.storage_id,
-      created_at: system_users.created_at,
-      updated_at: system_users.updated_at,
-      last_seen: system_users.last_seen,
-      deleted_at: system_users.deleted_at,
-      failed_login_attempts: system_users.failed_login_attempts,
-      locked_until: system_users.locked_until,
-      last_login_at: system_users.last_login_at,
-    })
+    .select(userSelect)
     .from(system_users)
-    .where(isNull(system_users.deleted_at))
+    .where(and(...buildInviteConditions()))
     .orderBy(asc(system_users.user_id));
+}
+
+export async function fetchUsers(filters?: UserListFilters): Promise<UserListResult> {
+  const db = getDb();
+  const pageSize = filters?.limit ?? 25;
+
+  const rows = await db
+    .select(userSelect)
+    .from(system_users)
+    .where(and(...buildUserConditions(filters?.search)))
+    .orderBy(asc(system_users.user_id))
+    .limit(pageSize + 1)
+    .offset(filters?.offset ?? 0);
+
+  return {
+    users: rows.slice(0, pageSize),
+    hasMore: rows.length > pageSize,
+  };
 }
 
 export async function createUser(input: CreateUserInput): Promise<void> {
@@ -67,4 +135,23 @@ export async function updateUser(username: string, input: UpdateUserInput): Prom
 
 export async function deleteUser(username: string): Promise<void> {
   await executeSql(buildDeleteUserSql(username));
+}
+
+export async function reinviteUserInvite(invite: User, inviteExpiresAt: number): Promise<void> {
+  if (invite.auth_type !== "oidc_invite") {
+    throw new Error("Only OIDC invites can be reinvited");
+  }
+  if (!invite.email?.trim()) {
+    throw new Error("Invite email is required");
+  }
+
+  await deleteUser(invite.user_id);
+  await createUser({
+    auth_type: "oidc_invite",
+    email: invite.email,
+    role: invite.role,
+    invite_expires_at: inviteExpiresAt,
+    storage_mode: invite.storage_mode === "region" ? "region" : "table",
+    storage_id: invite.storage_id,
+  });
 }

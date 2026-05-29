@@ -18,6 +18,9 @@
 
 use std::{path::PathBuf, time::Duration};
 
+use flate2::read::GzDecoder;
+use tar::Archive;
+
 use crate::common::*;
 
 /// Timeout for a backup job (RocksDB BackupEngine + file copies can be slow).
@@ -57,6 +60,80 @@ fn tmp_backup_archive_path(suffix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{}.tar.gz", unique))
 }
 
+fn seed_backup_fixture_data(prefix: &str) -> (String, String, String) {
+    let namespace = generate_unique_namespace(&format!("{}_ns", prefix));
+    let table = generate_unique_table(&format!("{}_tbl", prefix));
+    let table_fqn = format!("{}.{}", namespace, table);
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("create fixture namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', FLUSH_POLICY='rows:5')",
+        table_fqn
+    ))
+    .expect("create fixture table");
+    wait_for_table_ready(&table_fqn, Duration::from_secs(5)).expect("fixture table ready");
+
+    for index in 1..=8 {
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {} (note) VALUES ('fixture_row_{}')",
+            table_fqn, index
+        ))
+        .expect("insert fixture row");
+    }
+
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", table_fqn))
+            .expect("flush fixture table");
+    let flush_job_id =
+        parse_job_id_from_flush_output(&flush_output).expect("parse fixture flush job id");
+    verify_job_completed(&flush_job_id, Duration::from_secs(45))
+        .expect("fixture flush should complete");
+
+    // Keep extra rows hot so backups include both parquet and unflushed paths.
+    for index in 9..=12 {
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {} (note) VALUES ('fixture_hot_row_{}')",
+            table_fqn, index
+        ))
+        .expect("insert fixture hot row");
+    }
+
+    (namespace, table, table_fqn)
+}
+
+fn assert_backup_directory_layout(backup_path: &std::path::Path) {
+    for dir in ["rocksdb", "storage"] {
+        let full = backup_path.join(dir);
+        assert!(
+            full.exists() && full.is_dir(),
+            "Backup is missing required directory: {}",
+            full.display()
+        );
+    }
+}
+
+fn assert_backup_archive_layout(backup_path: &std::path::Path) {
+    let file = std::fs::File::open(backup_path).expect("open backup archive file");
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+
+    let mut entries = Vec::new();
+    for entry in archive.entries().expect("read archive entries") {
+        let entry = entry.expect("read archive entry");
+        let path = entry.path().expect("archive entry path");
+        entries.push(path.to_string_lossy().to_string());
+    }
+
+    for dir in ["rocksdb", "storage"] {
+        let present = entries.iter().any(|entry| {
+            let trimmed = entry.trim_start_matches("./");
+            trimmed == dir || trimmed.starts_with(&format!("{}/", dir))
+        });
+        assert!(present, "Archive is missing required root entry '{}'", dir);
+    }
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 /// BACKUP DATABASE creates a completed job and writes the expected directory layout
@@ -68,6 +145,7 @@ fn smoke_backup_database_job_completes() {
         return;
     }
 
+    let (fixture_ns, _fixture_table, _fixture_fqn) = seed_backup_fixture_data("backup_dir");
     let backup_path = tmp_backup_path("kdb_bkp");
 
     // Issue the backup command
@@ -98,12 +176,14 @@ fn smoke_backup_database_job_completes() {
         "Backup directory was not created: {}",
         backup_path.display()
     );
-    assert!(backup_path.join("rocksdb").exists(), "Backup is missing rocksdb/ subdirectory");
+    assert_backup_directory_layout(&backup_path);
 
     println!("✅  Backup directory verified at {}", backup_path.display());
 
     // Cleanup — best-effort
     let _ = std::fs::remove_dir_all(&backup_path);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// BACKUP DATABASE writes a `.tar.gz` archive when the target path ends with
@@ -115,6 +195,7 @@ fn smoke_backup_database_archive_job_completes() {
         return;
     }
 
+    let (fixture_ns, _fixture_table, _fixture_fqn) = seed_backup_fixture_data("backup_archive");
     let backup_path = tmp_backup_archive_path("kdb_bkp_archive");
 
     let output =
@@ -137,10 +218,13 @@ fn smoke_backup_database_archive_job_completes() {
     let bytes = std::fs::read(&backup_path).expect("read backup archive");
     assert!(bytes.len() >= 2, "Backup archive should not be empty");
     assert_eq!(&bytes[..2], &[0x1f, 0x8b], "Backup archive should start with gzip magic bytes");
+    assert_backup_archive_layout(&backup_path);
 
     println!("✅  Backup archive verified at {}", backup_path.display());
 
     let _ = std::fs::remove_file(&backup_path);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// RESTORE DATABASE FROM a valid backup path creates a restore job that completes.
@@ -155,6 +239,7 @@ fn smoke_restore_from_backup_job_completes() {
         return;
     }
 
+    let (fixture_ns, _fixture_table, _fixture_fqn) = seed_backup_fixture_data("restore_dir");
     let backup_path = tmp_backup_path("kdb_restore");
 
     // Step 1: create a backup to restore from
@@ -166,6 +251,7 @@ fn smoke_restore_from_backup_job_completes() {
     let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
         .unwrap_or_else(|e| panic!("Backup job wait failed: {}", e));
     assert_eq!(bkp_status, "completed", "Backup must complete before restore test");
+    assert_backup_directory_layout(&backup_path);
 
     // Step 2: restore from the backup
     let restore_out = execute_sql_as_root_via_client(&format!(
@@ -188,17 +274,13 @@ fn smoke_restore_from_backup_job_completes() {
     let status = wait_for_job_finished(&restore_job_id, RESTORE_JOB_TIMEOUT)
         .unwrap_or_else(|e| panic!("Restore job wait failed: {}", e));
 
-    // Restore may "complete" or "fail" depending on underlying conditions;
-    // what matters is that the job ends in a known terminal state.
-    assert!(
-        status == "completed" || status == "failed",
-        "Restore job should be in terminal state; got: {}",
-        status
-    );
-    println!("✅  Restore job finished with status '{}'", status);
+    assert_eq!(status, "completed", "Restore job should complete successfully");
+    println!("✅  Restore job completed");
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&backup_path);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// RESTORE DATABASE FROM accepts a `.tar.gz` archive path and creates a restore
@@ -210,6 +292,7 @@ fn smoke_restore_from_backup_archive_job_completes() {
         return;
     }
 
+    let (fixture_ns, _fixture_table, _fixture_fqn) = seed_backup_fixture_data("restore_archive");
     let backup_path = tmp_backup_archive_path("kdb_restore_archive");
 
     let bkp_out =
@@ -225,6 +308,7 @@ fn smoke_restore_from_backup_archive_job_completes() {
         "Backup archive was not created: {}",
         backup_path.display()
     );
+    assert_backup_archive_layout(&backup_path);
 
     let restore_out = execute_sql_as_root_via_client(&format!(
         "RESTORE DATABASE FROM '{}'",
@@ -238,14 +322,12 @@ fn smoke_restore_from_backup_archive_job_completes() {
     let status = wait_for_job_finished(&restore_job_id, RESTORE_JOB_TIMEOUT)
         .unwrap_or_else(|e| panic!("Restore archive job wait failed: {}", e));
 
-    assert!(
-        status == "completed" || status == "failed",
-        "Restore archive job should be in terminal state; got: {}",
-        status
-    );
-    println!("✅  Restore archive job finished with status '{}'", status);
+    assert_eq!(status, "completed", "Restore archive job should complete successfully");
+    println!("✅  Restore archive job completed");
 
     let _ = std::fs::remove_file(&backup_path);
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", fixture_ns));
 }
 
 /// A regular `user`-role user is forbidden from running BACKUP DATABASE.

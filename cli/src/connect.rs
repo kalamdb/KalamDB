@@ -1,6 +1,7 @@
 use std::{io::IsTerminal, net::IpAddr, time::Duration};
 
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
 use kalam_cli::{
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
@@ -290,6 +291,18 @@ fn render_prompt_label(label: &str, use_color: bool) -> String {
     }
 }
 
+fn create_connect_spinner(message: &str) -> ProgressBar {
+    let progress_bar = ProgressBar::new_spinner();
+    progress_bar.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.cyan} {msg} {elapsed_precise}")
+            .expect("connect spinner template should be valid"),
+    );
+    progress_bar.set_message(message.to_string());
+    progress_bar.enable_steady_tick(Duration::from_millis(80));
+    progress_bar
+}
+
 pub async fn create_session(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
@@ -334,7 +347,19 @@ pub async fn create_session(
     }
 
     // Helper function to exchange user/password for a JWT token
-    async fn try_login(server_url: &str, user: &str, password: &str, verbose: bool) -> LoginResult {
+    async fn try_login(
+        server_url: &str,
+        user: &str,
+        password: &str,
+        verbose: bool,
+        show_progress: bool,
+    ) -> LoginResult {
+        let login_spinner = if show_progress {
+            Some(create_connect_spinner(&format!("Connecting to {}...", server_url)))
+        } else {
+            None
+        };
+
         // Create a temporary client just for login (no auth needed for login endpoint)
         let temp_client = match KalamLinkClient::builder()
             .base_url(server_url)
@@ -343,6 +368,9 @@ pub async fn create_session(
         {
             Ok(client) => client,
             Err(e) => {
+                if let Some(pb) = login_spinner {
+                    pb.finish_and_clear();
+                }
                 if verbose {
                     eprintln!("Warning: Could not create client for login: {}", e);
                 }
@@ -352,6 +380,9 @@ pub async fn create_session(
 
         match temp_client.login(user, password).await {
             Ok(response) => {
+                if let Some(pb) = login_spinner {
+                    pb.finish_with_message("Connected".to_string());
+                }
                 if verbose {
                     eprintln!(
                         "Successfully authenticated as '{}' (expires: {})",
@@ -361,12 +392,18 @@ pub async fn create_session(
                 LoginResult::Success(response)
             },
             Err(KalamLinkError::SetupRequired(msg)) => {
+                if let Some(pb) = login_spinner {
+                    pb.finish_and_clear();
+                }
                 if verbose {
                     eprintln!("Server requires setup: {}", msg);
                 }
                 LoginResult::SetupRequired
             },
             Err(e) => {
+                if let Some(pb) = login_spinner {
+                    pb.finish_and_clear();
+                }
                 if verbose {
                     eprintln!("Warning: Login failed: {}", e);
                 }
@@ -481,13 +518,22 @@ pub async fn create_session(
     async fn setup_and_login(
         server_url: &str,
         verbose: bool,
+        show_progress: bool,
         instance: &str,
         credential_store: &mut FileCredentialStore,
         save_credentials: bool,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
         match run_setup_wizard(server_url).await {
             Ok((setup_username, setup_password)) => {
-                match try_login(server_url, &setup_username, &setup_password, verbose).await {
+                match try_login(
+                    server_url,
+                    &setup_username,
+                    &setup_password,
+                    verbose,
+                    show_progress,
+                )
+                .await
+                {
                     LoginResult::Success(login_response) => {
                         let authenticated_user = login_response.user.id.to_string();
 
@@ -526,6 +572,7 @@ pub async fn create_session(
         server_url_source: ServerUrlSource,
         use_color: bool,
         verbose: bool,
+        show_progress: bool,
         instance: &str,
         credential_store: &mut FileCredentialStore,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
@@ -555,7 +602,7 @@ pub async fn create_session(
                 true
             } else {
                 matches!(
-                    try_login(server_url, "root", "", verbose).await,
+                    try_login(server_url, "root", "", verbose, show_progress).await,
                     LoginResult::SetupRequired
                 )
             }
@@ -564,7 +611,15 @@ pub async fn create_session(
         };
 
         if needs_setup {
-            return setup_and_login(server_url, verbose, instance, credential_store, true).await;
+            return setup_and_login(
+                server_url,
+                verbose,
+                show_progress,
+                instance,
+                credential_store,
+                true,
+            )
+            .await;
         }
 
         println!();
@@ -585,7 +640,7 @@ pub async fn create_session(
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
 
         // Try to login with provided credentials
-        match try_login(server_url, &username, &password, verbose).await {
+        match try_login(server_url, &username, &password, verbose, show_progress).await {
             LoginResult::Success(login_response) => {
                 let authenticated_user = login_response.user.id.to_string();
 
@@ -621,7 +676,15 @@ pub async fn create_session(
                 ))
             },
             LoginResult::SetupRequired => {
-                setup_and_login(server_url, verbose, instance, credential_store, true).await
+                setup_and_login(
+                    server_url,
+                    verbose,
+                    show_progress,
+                    instance,
+                    credential_store,
+                    true,
+                )
+                .await
             },
             LoginResult::Failed(error) => {
                 Err(CLIError::ConfigurationError(format!("Login failed: {}", error)))
@@ -698,7 +761,7 @@ pub async fn create_session(
             String::new()
         };
 
-        match try_login(&server_url, &username, &password, cli.verbose).await {
+        match try_login(&server_url, &username, &password, cli.verbose, !cli.no_spinner).await {
             LoginResult::Success(login_response) => {
                 let authenticated_user = login_response.user.id.to_string();
 
@@ -736,6 +799,7 @@ pub async fn create_session(
                 setup_and_login(
                     &server_url,
                     cli.verbose,
+                    !cli.no_spinner,
                     &cli.instance,
                     credential_store,
                     cli.save_credentials,
@@ -811,6 +875,7 @@ pub async fn create_session(
                             server_url_source,
                             !cli.no_color,
                             cli.verbose,
+                            !cli.no_spinner,
                             &cli.instance,
                             credential_store,
                         )
@@ -820,7 +885,15 @@ pub async fn create_session(
                         let username = "root".to_string();
                         let password = "".to_string();
 
-                        match try_login(&server_url, &username, &password, cli.verbose).await {
+                        match try_login(
+                            &server_url,
+                            &username,
+                            &password,
+                            cli.verbose,
+                            !cli.no_spinner,
+                        )
+                        .await
+                        {
                             LoginResult::Success(login_response) => {
                                 eprintln!("Auto-authenticated as root for localhost connection");
                                 (
@@ -838,6 +911,7 @@ pub async fn create_session(
                                             &setup_username,
                                             &setup_password,
                                             cli.verbose,
+                                            !cli.no_spinner,
                                         )
                                         .await
                                         {
@@ -882,6 +956,7 @@ pub async fn create_session(
                         server_url_source,
                         !cli.no_color,
                         cli.verbose,
+                        !cli.no_spinner,
                         &cli.instance,
                         credential_store,
                     )
@@ -891,7 +966,9 @@ pub async fn create_session(
                     let username = "root".to_string();
                     let password = "".to_string();
 
-                    match try_login(&server_url, &username, &password, cli.verbose).await {
+                    match try_login(&server_url, &username, &password, cli.verbose, !cli.no_spinner)
+                        .await
+                    {
                         LoginResult::Success(login_response) => {
                             eprintln!("Auto-authenticated as root for localhost connection");
                             (
@@ -909,6 +986,7 @@ pub async fn create_session(
                                         &setup_username,
                                         &setup_password,
                                         cli.verbose,
+                                        !cli.no_spinner,
                                     )
                                     .await
                                     {
@@ -961,6 +1039,7 @@ pub async fn create_session(
                 server_url_source,
                 !cli.no_color,
                 cli.verbose,
+                !cli.no_spinner,
                 &cli.instance,
                 credential_store,
             )
@@ -970,7 +1049,7 @@ pub async fn create_session(
             let username = "root".to_string();
             let password = "".to_string();
 
-            match try_login(&server_url, &username, &password, cli.verbose).await {
+            match try_login(&server_url, &username, &password, cli.verbose, !cli.no_spinner).await {
                 LoginResult::Success(login_response) => {
                     if cli.verbose {
                         eprintln!("Auto-authenticated as root for localhost connection");
@@ -990,6 +1069,7 @@ pub async fn create_session(
                                 &setup_username,
                                 &setup_password,
                                 cli.verbose,
+                                !cli.no_spinner,
                             )
                             .await
                             {
@@ -1141,6 +1221,7 @@ pub async fn create_session(
                 match setup_and_login(
                     &server_url,
                     cli.verbose,
+                    !cli.no_spinner,
                     &cli.instance,
                     credential_store,
                     cli.save_credentials,
@@ -1184,6 +1265,7 @@ pub async fn create_session(
                     server_url_source,
                     !cli.no_color,
                     cli.verbose,
+                    !cli.no_spinner,
                     &cli.instance,
                     credential_store,
                 )

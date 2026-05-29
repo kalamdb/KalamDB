@@ -104,6 +104,8 @@ async fn open_session(
         updated_at: 0,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
     app_ctx
         .system_tables()

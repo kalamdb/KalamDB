@@ -543,6 +543,8 @@ mod tests {
             updated_at: 1000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         applier.create_user(&user).await.unwrap();
@@ -644,6 +646,8 @@ mod tests {
             updated_at: 1000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
         let storage = Storage {
             storage_id: StorageId::from("s1"),
@@ -790,6 +794,8 @@ mod tests {
             updated_at: 1000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         // Mix of different operation types

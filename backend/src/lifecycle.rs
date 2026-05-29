@@ -1079,6 +1079,8 @@ async fn create_default_system_user(
                 updated_at: created_at,
                 last_seen: None,
                 deleted_at: None,
+                invite_expires_at: None,
+                invited_by: None,
             };
 
             users_provider.create_user(user)?;

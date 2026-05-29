@@ -5,7 +5,7 @@
 //! ## Endpoint
 //! GET /v1/exports/{user_id}/{export_id}
 //!
-//! The requesting user must be the owner of the export, or an admin.
+//! Downloading transfer artifacts requires a DBA or System role.
 
 use std::sync::Arc;
 
@@ -14,13 +14,14 @@ use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::models::UserId;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_session::{is_admin_role, AuthSession};
+use kalamdb_transfer::{is_safe_transfer_id, table_export_zip_path, user_export_zip_path};
 
 use crate::http::sql::models::{ErrorCode, SqlResponse};
 
 /// GET /v1/exports/{user_id}/{export_id} - Download a user data export ZIP
 ///
 /// Requires Bearer token (JWT) authorization.
-/// Only the owning user or an admin can download the export.
+/// Only DBA/System roles can download the export.
 #[get("/exports/{user_id}/{export_id}")]
 pub async fn download_export(
     extractor: AuthSessionExtractor,
@@ -41,7 +42,7 @@ pub async fn download_export(
         },
     };
 
-    if !is_safe_export_id(&export_id) {
+    if !is_safe_transfer_id(&export_id) {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
             "Invalid export path",
@@ -49,19 +50,61 @@ pub async fn download_export(
         ));
     }
 
-    // Authorization: only the owning user or admins can download
     if session.user_id() != &user_id && !is_admin_role(session.role()) {
         return HttpResponse::Forbidden().json(SqlResponse::error(
             ErrorCode::PermissionDenied,
-            "You can only download your own exports",
+            "Only the export owner, DBA, or System role may download exports",
             0.0,
         ));
     }
 
     // Build file path
     let exports_dir = app_context.config().storage.exports_dir();
-    let zip_path = exports_dir.join(user_id.as_str()).join(format!("{}.zip", export_id));
+    let zip_path = user_export_zip_path(&exports_dir, user_id.as_str(), &export_id);
 
+    serve_export_zip(&zip_path, &export_id, "Export").await
+}
+
+/// GET /v1/table-exports/{export_id} - Download a single-table export ZIP.
+///
+/// Requires DBA/System role because table exports may contain shared data or
+/// administrator-selected user data.
+#[get("/table-exports/{export_id}")]
+pub async fn download_table_export(
+    extractor: AuthSessionExtractor,
+    path: web::Path<String>,
+    app_context: web::Data<Arc<AppContext>>,
+) -> impl Responder {
+    let session: AuthSession = extractor.into();
+    let export_id = path.into_inner();
+
+    if !is_safe_transfer_id(&export_id) {
+        return HttpResponse::BadRequest().json(SqlResponse::error(
+            ErrorCode::InvalidInput,
+            "Invalid export path",
+            0.0,
+        ));
+    }
+
+    if !is_admin_role(session.role()) {
+        return HttpResponse::Forbidden().json(SqlResponse::error(
+            ErrorCode::PermissionDenied,
+            "DBA or System role is required to download table exports",
+            0.0,
+        ));
+    }
+
+    let exports_dir = app_context.config().storage.exports_dir();
+    let zip_path = table_export_zip_path(&exports_dir, &export_id);
+
+    serve_export_zip(&zip_path, &export_id, "Table export").await
+}
+
+async fn serve_export_zip(
+    zip_path: &std::path::Path,
+    export_id: &str,
+    log_prefix: &str,
+) -> HttpResponse {
     if !zip_path.exists() {
         return HttpResponse::NotFound().json(serde_json::json!({
             "error": "Export not found",
@@ -69,8 +112,7 @@ pub async fn download_export(
         }));
     }
 
-    // Read and serve the file
-    match tokio::fs::read(&zip_path).await {
+    match tokio::fs::read(zip_path).await {
         Ok(data) => {
             let filename = format!("{}.zip", export_id);
             HttpResponse::Ok()
@@ -81,8 +123,13 @@ pub async fn download_export(
                 ))
                 .body(data)
         },
-        Err(e) => {
-            log::warn!("Export download failed: path={}, error={}", zip_path.display(), e);
+        Err(error) => {
+            log::warn!(
+                "{} download failed: path={}, error={}",
+                log_prefix,
+                zip_path.display(),
+                error
+            );
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to read export file",
                 "code": "INTERNAL_ERROR",
@@ -91,21 +138,13 @@ pub async fn download_export(
     }
 }
 
-fn is_safe_export_id(export_id: &str) -> bool {
-    !export_id.is_empty()
-        && export_id.len() <= 160
-        && export_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::is_safe_export_id;
+    use kalamdb_transfer::is_safe_transfer_id;
 
     #[test]
     fn export_id_accepts_generated_shape() {
-        assert!(is_safe_export_id("export-alice_1-20260101-120000"));
+        assert!(is_safe_transfer_id("export-alice_1-20260101-120000"));
     }
 
     #[test]
@@ -122,7 +161,7 @@ mod tests {
             "export.zip",
             "éxport",
         ] {
-            assert!(!is_safe_export_id(value), "expected rejection for {value:?}");
+            assert!(!is_safe_transfer_id(value), "expected rejection for {value:?}");
         }
     }
 }

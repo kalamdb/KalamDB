@@ -127,6 +127,8 @@ mod smoke_test_ddl_alter;
 mod smoke_test_export_user_data;
 #[path = "smoke/ddl/smoke_test_table_option_alters.rs"]
 mod smoke_test_table_option_alters;
+#[path = "smoke/ddl/smoke_test_table_transfer.rs"]
+mod smoke_test_table_transfer;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

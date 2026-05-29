@@ -15,12 +15,7 @@
 //! }
 //! ```
 
-use std::{
-    collections::HashMap,
-    fs,
-    io::{Cursor, Write},
-    time::Duration,
-};
+use std::{collections::HashMap, fs, time::Duration};
 
 use async_trait::async_trait;
 use kalamdb_commons::{
@@ -32,9 +27,11 @@ use kalamdb_commons::{
 use kalamdb_core::{error::KalamDbError, providers::UserTableProvider};
 use kalamdb_store::EntityStore;
 use kalamdb_system::{JobStatus, JobType};
+use kalamdb_transfer::{
+    is_safe_transfer_id, user_export_zip_path, UserDataExportZip, UserDataExportZipBuilder,
+};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
-use zip::{write::SimpleFileOptions, ZipWriter};
 
 use crate::{
     executors::{flush::FlushParams, JobContext, JobDecision, JobExecutor, JobParams},
@@ -62,6 +59,11 @@ impl JobParams for UserExportParams {
         }
         if self.export_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("export_id cannot be empty".to_string()));
+        }
+        if !is_safe_transfer_id(&self.export_id) {
+            return Err(KalamDbError::InvalidOperation(
+                "export_id contains unsafe characters".to_string(),
+            ));
         }
         Ok(())
     }
@@ -284,15 +286,9 @@ impl JobExecutor for UserExportExecutor {
         // ── Phase 4: Read raw Parquet files and build ZIP ────────────────────
         ctx.log_info("Reading Parquet files and building ZIP archive…");
 
-        let zip_buffer = Cursor::new(Vec::new());
-        let mut zip_writer = ZipWriter::new(zip_buffer);
-        let zip_options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(6));
+        let mut zip_builder = UserDataExportZipBuilder::new();
 
         let storage_registry = ctx.app_ctx.storage_registry();
-        let mut total_files: usize = 0;
-        let mut total_bytes: usize = 0;
 
         for (table_def, storage_id) in &tables_with_storage {
             let table_label =
@@ -352,30 +348,20 @@ impl JobExecutor for UserExportExecutor {
                     },
                 };
 
-                let zip_entry = format!(
-                    "{}/{}/{}",
+                zip_builder.add_file(
                     table_def.namespace_id.as_str(),
                     table_def.table_name.as_str(),
-                    filename
-                );
-
-                zip_writer.start_file(&zip_entry, zip_options).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to add '{}' to ZIP: {}",
-                        zip_entry, e
-                    ))
-                })?;
-                zip_writer.write_all(&get_result.data).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to write '{}' to ZIP: {}",
-                        zip_entry, e
-                    ))
-                })?;
-
-                total_bytes += get_result.data.len();
-                total_files += 1;
+                    filename,
+                    &get_result.data,
+                )?;
             }
         }
+
+        let UserDataExportZip {
+            bytes: zip_bytes,
+            raw_bytes: total_bytes,
+            file_count: total_files,
+        } = zip_builder.finish()?;
 
         if total_files == 0 {
             return Ok(JobDecision::Completed {
@@ -384,10 +370,6 @@ impl JobExecutor for UserExportExecutor {
         }
 
         // ── Phase 5: Flush ZIP to disk ───────────────────────────────────────
-        let finished = zip_writer.finish().map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to finalize ZIP archive: {}", e))
-        })?;
-        let zip_bytes = finished.into_inner();
         let zip_size = zip_bytes.len();
 
         let exports_dir = ctx.app_ctx.config().storage.exports_dir();
@@ -401,7 +383,7 @@ impl JobExecutor for UserExportExecutor {
         })?;
 
         let zip_filename = format!("{}.zip", export_id);
-        let zip_path = user_exports_dir.join(&zip_filename);
+        let zip_path = user_export_zip_path(&exports_dir, params.user_id.as_str(), export_id);
 
         fs::write(&zip_path, &zip_bytes).map_err(|e| {
             KalamDbError::InvalidOperation(format!(

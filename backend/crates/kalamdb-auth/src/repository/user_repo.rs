@@ -14,11 +14,21 @@ use crate::errors::error::AuthResult;
 pub trait UserRepository: Send + Sync {
     async fn get_user_by_id(&self, user_id: &UserId) -> AuthResult<User>;
 
+    /// Get an active pending OIDC invite by normalized email address.
+    async fn get_active_oidc_invite_by_email(
+        &self,
+        email: &str,
+        now_millis: i64,
+    ) -> AuthResult<Option<User>>;
+
     /// Update a full user record. Implementations may persist only changed fields.
     async fn update_user(&self, user: &User) -> AuthResult<()>;
 
     /// Create a new user.
     async fn create_user(&self, user: User) -> AuthResult<()>;
+
+    /// Accept a pending OIDC invite by creating the real user and deleting the invite row.
+    async fn accept_oidc_invite(&self, invite_user_id: &UserId, user: User) -> AuthResult<()>;
 }
 
 const USER_CACHE_TTL_SECS: u64 = 5;
@@ -64,6 +74,14 @@ impl UserRepository for CachedUsersRepo {
         Ok(user)
     }
 
+    async fn get_active_oidc_invite_by_email(
+        &self,
+        email: &str,
+        now_millis: i64,
+    ) -> AuthResult<Option<User>> {
+        self.inner.get_active_oidc_invite_by_email(email, now_millis).await
+    }
+
     async fn update_user(&self, user: &User) -> AuthResult<()> {
         self.invalidate_user(&user.user_id);
         self.inner.update_user(user).await
@@ -71,6 +89,12 @@ impl UserRepository for CachedUsersRepo {
 
     async fn create_user(&self, user: User) -> AuthResult<()> {
         self.inner.create_user(user).await
+    }
+
+    async fn accept_oidc_invite(&self, invite_user_id: &UserId, user: User) -> AuthResult<()> {
+        self.invalidate_user(invite_user_id);
+        self.invalidate_user(&user.user_id);
+        self.inner.accept_oidc_invite(invite_user_id, user).await
     }
 }
 
@@ -101,6 +125,22 @@ impl UserRepository for CoreUsersRepo {
         .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))?
     }
 
+    async fn get_active_oidc_invite_by_email(
+        &self,
+        email: &str,
+        now_millis: i64,
+    ) -> AuthResult<Option<User>> {
+        let provider = Arc::clone(&self.provider);
+        let email = email.to_string();
+        tokio::task::spawn_blocking(move || {
+            provider
+                .get_active_oidc_invite_by_email(&email, now_millis)
+                .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))
+        })
+        .await
+        .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))?
+    }
+
     async fn update_user(&self, user: &User) -> AuthResult<()> {
         let provider = Arc::clone(&self.provider);
         let user = user.clone();
@@ -116,5 +156,20 @@ impl UserRepository for CoreUsersRepo {
             .await
             .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))?
             .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))
+    }
+
+    async fn accept_oidc_invite(&self, invite_user_id: &UserId, user: User) -> AuthResult<()> {
+        let provider = Arc::clone(&self.provider);
+        let invite_user_id = invite_user_id.clone();
+        tokio::task::spawn_blocking(move || {
+            provider
+                .create_user(user)
+                .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))?;
+            provider
+                .delete_user(&invite_user_id)
+                .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))
+        })
+        .await
+        .map_err(|e| crate::AuthError::DatabaseError(e.to_string()))?
     }
 }

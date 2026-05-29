@@ -14,6 +14,7 @@ use kalamdb_core::{
 use kalamdb_jobs::{executors::restore::RestoreParams, AppContextJobsExt};
 use kalamdb_sql::ddl::RestoreDatabaseStatement;
 use kalamdb_system::JobType;
+use kalamdb_transfer::is_tar_gz_path;
 
 /// Handler for RESTORE DATABASE FROM '<path>'
 pub struct RestoreDatabaseHandler {
@@ -23,12 +24,6 @@ pub struct RestoreDatabaseHandler {
 impl RestoreDatabaseHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
-    }
-
-    fn is_archive_path(path: &std::path::Path) -> bool {
-        let value =
-            path.to_string_lossy().trim().trim_end_matches(['/', '\\']).to_ascii_lowercase();
-        value.ends_with(".tar.gz") || value.ends_with(".tgz")
     }
 }
 
@@ -47,7 +42,7 @@ impl TypedStatementHandler<RestoreDatabaseStatement> for RestoreDatabaseHandler 
                 statement.backup_path
             )));
         }
-        if !backup_path.is_dir() && !(backup_path.is_file() && Self::is_archive_path(backup_path)) {
+        if !backup_path.is_dir() && !(backup_path.is_file() && is_tar_gz_path(backup_path)) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "'{}' must be a backup directory or a .tar.gz/.tgz backup archive.",
                 statement.backup_path

@@ -7,7 +7,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Sheet,
   SheetContent,
@@ -32,17 +32,16 @@ interface UserFormProps {
 }
 
 const ROLES = ["user", "service", "dba", "system"] as const;
-const AUTH_TYPES = ["password", "oidc"] as const;
 const STORAGE_MODES = ["table", "region"] as const;
 const NONE_STORAGE_ID = "__none__";
+type CreateMode = "create" | "invite";
 
 interface FormData {
   username: string;
   password: string;
   role: string;
   email: string;
-  authType: string;
-  authData: string;
+  inviteExpiresDays: string;
   storageMode: "table" | "region";
   storageId: string;
 }
@@ -113,13 +112,13 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
   const { data: storages = [] } = useGetStoragesQuery();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createMode, setCreateMode] = useState<CreateMode>("create");
   const [formData, setFormData] = useState<FormData>({
     username: "",
     password: "",
     role: "user",
     email: "",
-    authType: "password",
-    authData: "",
+    inviteExpiresDays: "7",
     storageMode: "table",
     storageId: "",
   });
@@ -136,48 +135,56 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
       password: "",
       role: user?.role ?? "user",
       email: user?.email ?? "",
-      authType: user?.auth_type ?? "password",
-      authData: valueToText(user?.auth_data),
+      inviteExpiresDays: "7",
       storageMode: user?.storage_mode === "region" ? "region" : "table",
       storageId: user?.storage_id ?? "",
     });
+    if (!user) {
+      setCreateMode("create");
+    }
     setError(null);
   }, [open, user]);
 
-  const showPasswordField = (!isEditing && formData.authType === "password") || isEditing;
-  const showAuthDataField = !isEditing && formData.authType === "oidc";
+  const isInviteMode = !isEditing && createMode === "invite";
+  const showPasswordField = !isEditing ? !isInviteMode : true;
+  const showInviteExpiryField = isInviteMode;
+
   const canSubmit = useMemo(() => {
     if (isEditing) {
       return true;
     }
 
-    if (!formData.username.trim()) {
+    if (!isInviteMode && !formData.username.trim()) {
       return false;
     }
-    if (formData.authType === "password" && !formData.password.trim()) {
+    if (isInviteMode && !formData.email.trim()) {
       return false;
     }
-    if (formData.authType === "oidc" && !formData.authData.trim()) {
+    if (!isInviteMode && !formData.password.trim()) {
+      return false;
+    }
+    if (isInviteMode && Number(formData.inviteExpiresDays) <= 0) {
       return false;
     }
     return true;
   }, [
     isEditing,
+    isInviteMode,
     formData.username,
-    formData.authType,
     formData.password,
-    formData.authData,
+    formData.email,
+    formData.inviteExpiresDays,
   ]);
 
   const usernameHelpText = useMemo(() => {
     if (isEditing) {
       return "Username cannot be changed after creation.";
     }
-    if (formData.authType === "oidc") {
-      return "For OIDC users, use the OIDC subject claim as the user ID.";
+    if (isInviteMode) {
+      return "Invite rows get a system-generated ID and become real users after OIDC login.";
     }
     return "Unique user login name.";
-  }, [isEditing, formData.authType]);
+  }, [isEditing, isInviteMode]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -211,14 +218,15 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
         }
         await updateUserMutation({ username: user.user_id, input: updateInput }).unwrap();
       } else {
+        const inviteExpiresDays = Number(formData.inviteExpiresDays);
+        const inviteExpiresAt = Date.now() + inviteExpiresDays * 24 * 60 * 60 * 1000;
         await createUserMutation({
-          username: formData.username.trim(),
-          password: formData.authType === "password" ? formData.password.trim() : undefined,
-          auth_type: formData.authType as "password" | "oidc",
-          auth_data:
-            formData.authType === "oidc" ? formData.authData.trim() || undefined : undefined,
+          username: isInviteMode ? undefined : formData.username.trim(),
+          password: isInviteMode ? undefined : formData.password.trim(),
+          auth_type: isInviteMode ? "oidc_invite" : "password",
           role: formData.role,
           email: formData.email.trim() || undefined,
+          invite_expires_at: isInviteMode ? Math.round(inviteExpiresAt) : undefined,
           storage_mode: formData.storageMode,
           storage_id: formData.storageId.trim() || null,
         }).unwrap();
@@ -241,12 +249,25 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
           <SheetDescription>
             {isEditing
               ? "Update account details, role, and storage preferences. Some authentication metadata remains system-managed."
-              : "Create a new database user account with auth type and role."}
+              : "Create a password user account or send an OIDC invite."}
           </SheetDescription>
         </SheetHeader>
 
         <form id="user-form" onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            {!isEditing && (
+              <Tabs
+                value={createMode}
+                onValueChange={(value) => setCreateMode(value as CreateMode)}
+                className="gap-2"
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="create">Create User</TabsTrigger>
+                  <TabsTrigger value="invite">Invite User</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+
             {isEditing && user && (
               <div className="space-y-2">
                 <label className="text-sm font-medium">User ID</label>
@@ -260,9 +281,9 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
               <Input
                 value={formData.username}
                 onChange={(event) => setFormData((prev) => ({ ...prev, username: event.target.value }))}
-                disabled={isEditing}
+                disabled={isEditing || isInviteMode}
                 placeholder="e.g. analyst_01"
-                autoFocus={!isEditing}
+                autoFocus={!isEditing && !isInviteMode}
               />
               <FieldHelp text={usernameHelpText} />
             </div>
@@ -287,28 +308,6 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
               <FieldHelp text="Access level for this account: user, service, dba, or system." />
             </div>
 
-            {!isEditing && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Auth Type</label>
-                <Select
-                  value={formData.authType}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, authType: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {AUTH_TYPES.map((authType) => (
-                      <SelectItem key={authType} value={authType}>
-                        {authType}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FieldHelp text="Authentication mode used by this user (password or oidc)." />
-              </div>
-            )}
-
             {showPasswordField && (
               <div className="space-y-2">
                 <label className="text-sm font-medium">
@@ -324,17 +323,17 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
               </div>
             )}
 
-            {showAuthDataField && (
+            {showInviteExpiryField && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Auth Data (OIDC payload)</label>
-                <Textarea
-                  value={formData.authData}
-                  onChange={(event) => setFormData((prev) => ({ ...prev, authData: event.target.value }))}
-                  placeholder='e.g. {"issuer":"https://idp.example.com/realms/kalamdb","subject":"user-123"}'
-                  rows={4}
-                  className="font-mono text-xs"
+                <label className="text-sm font-medium">Invite Expiration</label>
+                <Input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={formData.inviteExpiresDays}
+                  onChange={(event) => setFormData((prev) => ({ ...prev, inviteExpiresDays: event.target.value }))}
                 />
-                <FieldHelp text="Issuer and subject link for this OIDC user. Subject must match the user ID." />
+                <FieldHelp text="Number of days this OIDC email invite remains usable." />
               </div>
             )}
 
@@ -439,6 +438,16 @@ export function UserForm({ open, onOpenChange, user, onSuccess }: UserFormProps)
                     label="Last Seen"
                     value={formatTimestampValue(user.last_seen)}
                     description="Latest authenticated activity timestamp."
+                  />
+                  <SystemField
+                    label="Invite Expires"
+                    value={formatTimestampValue(user.invite_expires_at)}
+                    description="Expiration timestamp for pending OIDC email invites."
+                  />
+                  <SystemField
+                    label="Invited By"
+                    value={user.invited_by}
+                    description="Admin user that created the invite."
                   />
                   <SystemField
                     label="Created At"

@@ -14,6 +14,7 @@ use kalamdb_core::{
 use kalamdb_jobs::{executors::user_export::UserExportParams, AppContextJobsExt};
 use kalamdb_sql::ddl::ExportUserDataStatement;
 use kalamdb_system::JobType;
+use kalamdb_transfer::generate_user_export_id;
 
 /// Handler for EXPORT USER DATA
 ///
@@ -39,8 +40,7 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         let user_id = context.user_id().to_string();
 
         // Generate a unique export ID
-        let export_id =
-            format!("export-{}-{}", &user_id, chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+        let export_id = generate_user_export_id(&user_id);
 
         let params = UserExportParams {
             user_id: user_id.clone(),

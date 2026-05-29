@@ -15,10 +15,13 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::CreateUserStatement;
+use kalamdb_sql::ddl::{CreateUserMode, CreateUserStatement};
 use kalamdb_system::{AuthData, User};
+use sha2::{Digest, Sha256};
 
 use crate::helpers::async_blocking::run_blocking;
+
+const DEFAULT_INVITE_TTL_MILLIS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
 /// Handler for CREATE USER
 pub struct CreateUserHandler {
@@ -42,6 +45,10 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        if statement.mode == CreateUserMode::OidcInvite {
+            return self.create_oidc_invite(statement, context).await;
+        }
+
         // Duplicate check (provider enforces via user_id but we do early check for clearer error)
         let app_ctx = self.app_context.clone();
         let user_id = UserId::try_new(statement.username.clone())
@@ -141,6 +148,11 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                 let auth_data = AuthData::new(issuer, subject);
                 ("".to_string(), Some(auth_data))
             },
+            AuthType::OidcInvite => {
+                return Err(KalamDbError::InvalidOperation(
+                    "CREATE USER INVITE must use CREATE USER INVITE syntax".to_string(),
+                ));
+            },
         };
 
         let now = chrono::Utc::now().timestamp_millis();
@@ -160,6 +172,8 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
             updated_at: now,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         };
 
         // Delegate to unified applier (handles standalone vs cluster internally)
@@ -207,4 +221,144 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
         }
         Ok(())
     }
+}
+
+impl CreateUserHandler {
+    async fn create_oidc_invite(
+        &self,
+        statement: CreateUserStatement,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let invite_email = statement
+            .invite_email
+            .as_deref()
+            .or(statement.email.as_deref())
+            .map(normalize_invite_email)
+            .filter(|email| !email.is_empty())
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "CREATE USER INVITE requires an email address".to_string(),
+                )
+            })?;
+
+        let storage_id = if let Some(storage_id) = statement.storage_id.clone() {
+            let app_ctx = self.app_context.clone();
+            let storage_lookup_id = storage_id.clone();
+            let storage = run_blocking(move || {
+                app_ctx.system_tables().storages().get_storage_by_id(&storage_lookup_id)
+            })
+            .await?;
+
+            if storage.is_none() {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' does not exist",
+                    storage_id.as_str()
+                )));
+            }
+
+            Some(storage_id)
+        } else {
+            None
+        };
+
+        let app_ctx = self.app_context.clone();
+        let invite_email_for_lookup = invite_email.clone();
+        let existing_email = run_blocking(move || {
+            app_ctx
+                .system_tables()
+                .users()
+            .get_active_user_by_email(&invite_email_for_lookup)
+        })
+        .await?;
+        if existing_email.is_some() {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "Email '{}' is already in use",
+                invite_email
+            )));
+        }
+
+        let user_id = invite_user_id(&invite_email);
+        let app_ctx = self.app_context.clone();
+        let check_id = user_id.clone();
+        let existing =
+            run_blocking(move || app_ctx.system_tables().users().get_user_by_id(&check_id)).await?;
+        if existing.as_ref().is_some_and(|user| user.deleted_at.is_none()) {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "OIDC invite for '{}' already exists",
+                invite_email
+            )));
+        }
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let invite_expires_at = statement
+            .invite_expires_at
+            .unwrap_or(now.saturating_add(DEFAULT_INVITE_TTL_MILLIS));
+        if invite_expires_at <= now {
+            return Err(KalamDbError::InvalidOperation(
+                "Invite expiry must be in the future".to_string(),
+            ));
+        }
+
+        let user = User {
+            user_id: user_id.clone(),
+            password_hash: String::new(),
+            role: statement.role,
+            email: Some(invite_email.clone()),
+            auth_type: AuthType::OidcInvite,
+            auth_data: None,
+            storage_mode: statement.storage_mode,
+            storage_id,
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: Some(invite_expires_at),
+            invited_by: Some(context.user_id().clone()),
+        };
+
+        self.app_context.applier().create_user(user).await.map_err(|e| {
+            KalamDbError::ExecutionError(format!("CREATE USER INVITE failed: {}", e))
+        })?;
+
+        use crate::helpers::audit;
+        let audit_entry = audit::log_ddl_operation(
+            context,
+            "CREATE",
+            "USER INVITE",
+            &invite_email,
+            Some(format!(
+                "Role: {:?}, expires_at: {}, storage_mode: {}, storage_id: {}",
+                statement.role,
+                invite_expires_at,
+                statement.storage_mode,
+                statement
+                    .storage_id
+                    .as_ref()
+                    .map(|storage_id| storage_id.as_str())
+                    .unwrap_or("NULL")
+            )),
+            None,
+        );
+        audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+
+        Ok(ExecutionResult::Success {
+            message: format!("OIDC invite '{}' created", invite_email),
+        })
+    }
+}
+
+fn normalize_invite_email(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
+}
+
+fn invite_user_id(email: &str) -> UserId {
+    let digest = Sha256::digest(email.as_bytes());
+    let mut suffix = String::with_capacity(32);
+    for byte in digest.iter().take(16) {
+        suffix.push_str(&format!("{:02x}", byte));
+    }
+    UserId::new(format!("invite_{}", suffix))
 }

@@ -124,6 +124,8 @@ pub async fn create_test_user(
         updated_at: now,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     }
 }
 
@@ -257,6 +259,8 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
         updated_at: now,
         last_seen: None,
         deleted_at: None,
+        invite_expires_at: None,
+        invited_by: None,
     };
 
     server

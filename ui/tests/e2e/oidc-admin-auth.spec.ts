@@ -1,9 +1,12 @@
 import { expect, type Page, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
   .process?.env;
 const uiPort = Number(env?.KALAMDB_UI_PLAYWRIGHT_PORT ?? 4175);
 const uiOrigin = `http://127.0.0.1:${uiPort}`;
+const backendOrigin = env?.KALAMDB_E2E_BACKEND_URL ?? env?.VITE_API_URL ?? "http://localhost:2900";
+const inviteTtlMs = 7 * 24 * 60 * 60 * 1000;
 
 type AuthUser = {
   id: string;
@@ -35,6 +38,115 @@ function loginResponse(user: AuthUser) {
     expires_at: "2099-01-01T00:00:00Z",
     refresh_expires_at: "2099-01-02T00:00:00Z",
   };
+}
+
+function inviteUserId(email: string): string {
+  return `invite_${createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32)}`;
+}
+
+async function backendAvailable(page: Page): Promise<boolean> {
+  try {
+    const response = await page.request.get(`${backendOrigin}/v1/api/auth/status`);
+    return response.ok();
+  } catch {
+    return false;
+  }
+}
+
+async function dexAvailable(page: Page): Promise<boolean> {
+  try {
+    const response = await page.request.get("http://127.0.0.1:5556/.well-known/openid-configuration");
+    return response.ok();
+  } catch {
+    return false;
+  }
+}
+
+async function loginAdmin(page: Page): Promise<string | null> {
+  const candidates = [
+    {
+      user: env?.KALAMDB_E2E_ADMIN_USER ?? "root",
+      password: env?.KALAMDB_E2E_ADMIN_PASSWORD ?? env?.KALAMDB_ROOT_PASSWORD ?? "kalamdb123",
+    },
+    {
+      user: "admin",
+      password: env?.KALAMDB_E2E_ADMIN_PASSWORD ?? env?.KALAMDB_ROOT_PASSWORD ?? "kalamdb123",
+    },
+  ];
+
+  for (const credentials of candidates) {
+    const response = await page.request.post(`${backendOrigin}/v1/api/auth/login`, {
+      data: credentials,
+    });
+    if (!response.ok()) {
+      continue;
+    }
+
+    const payload = await response.json();
+    if (typeof payload.access_token === "string" && payload.access_token.length > 0) {
+      return payload.access_token;
+    }
+  }
+
+  return null;
+}
+
+function cellText(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value && typeof value === "object") {
+    const values = Object.values(value);
+    if (values.length === 1) {
+      return cellText(values[0]);
+    }
+  }
+  return null;
+}
+
+async function executeAdminSql(page: Page, token: string, sql: string, ignoreError = false) {
+  const response = await page.request.post(`${backendOrigin}/v1/api/sql`, {
+    data: { sql },
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (ignoreError) {
+    return;
+  }
+
+  expect(response.ok()).toBeTruthy();
+  const payload = await response.json();
+  expect(payload.status).toBe("success");
+  return payload;
+}
+
+async function queryFirstColumn(page: Page, token: string, sql: string): Promise<string[]> {
+  const payload = await executeAdminSql(page, token, sql);
+  const rows = payload?.results?.[0]?.rows;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .map((row) => (Array.isArray(row) ? cellText(row[0]) : null))
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+async function dropUsersByEmail(page: Page, token: string, email: string) {
+  const userIds = await queryFirstColumn(
+    page,
+    token,
+    `SELECT user_id FROM system.users WHERE email = '${email}'`,
+  );
+
+  for (const userId of userIds) {
+    await executeAdminSql(page, token, `DROP USER '${userId.replace(/'/g, "''")}'`, true);
+  }
 }
 
 async function mockAdminApi(
@@ -125,16 +237,7 @@ async function mockAdminApi(
 }
 
 test("OIDC login button completes callback through the KalamDB backend exchange", async ({ page }) => {
-  let dexAvailable = false;
-  try {
-    const dexStatus = await page.request.get(
-      "http://127.0.0.1:5556/.well-known/openid-configuration",
-    );
-    dexAvailable = dexStatus.ok();
-  } catch {
-    dexAvailable = false;
-  }
-  test.skip(!dexAvailable, "local Dex is not reachable at http://127.0.0.1:5556");
+  test.skip(!(await dexAvailable(page)), "local Dex is not reachable at http://127.0.0.1:5556");
 
   await mockAdminApi(page, null, oidcUser("dba"));
 
@@ -159,6 +262,52 @@ test("OIDC login button completes callback through the KalamDB backend exchange"
   await page.locator('button[type="submit"]').click();
 
   await expect(page.getByRole("link", { name: /sql studio/i })).toBeVisible();
+});
+
+test("invited Dex user is created from the OIDC email invite on first Admin UI login", async ({ page }) => {
+  test.skip(!(await backendAvailable(page)), `KalamDB backend is not reachable at ${backendOrigin}`);
+  test.skip(!(await dexAvailable(page)), "local Dex is not reachable at http://127.0.0.1:5556");
+
+  const adminToken = await loginAdmin(page);
+  test.skip(!adminToken, "admin credentials could not log in to KalamDB");
+  if (!adminToken) {
+    return;
+  }
+
+  const inviteEmail = "heidi@example.org";
+  const inviteId = inviteUserId(inviteEmail);
+  const expiresAt = Date.now() + inviteTtlMs;
+
+  await dropUsersByEmail(page, adminToken, inviteEmail);
+  await executeAdminSql(page, adminToken, `DROP USER '${inviteId}'`, true);
+  await executeAdminSql(
+    page,
+    adminToken,
+    `CREATE USER INVITE '${inviteEmail}' ROLE 'dba' EXPIRES_AT ${expiresAt}`,
+  );
+
+  await page.goto("/ui/login");
+  await page.getByRole("button", { name: /continue with dex/i }).click();
+
+  const connectorButton = page.getByRole("button", { name: /log in with email/i });
+  if (await connectorButton.isVisible().catch(() => false)) {
+    await connectorButton.click();
+  }
+
+  await page.locator('input[name="login"]').fill(inviteEmail);
+  await page.locator('input[name="password"]').fill("kalamdb123");
+  await page.locator('button[type="submit"]').click();
+
+  await expect(page.getByRole("link", { name: /sql studio/i })).toBeVisible();
+  await page.getByRole("link", { name: /^users$/i }).click();
+  const users = page.getByRole("region", { name: /users list/i });
+  const invites = page.getByRole("region", { name: /pending invites/i });
+
+  await expect(users.getByText(inviteEmail)).toBeVisible();
+  await expect(users.getByRole("row", { name: new RegExp(`${inviteEmail}.*dba|dba.*${inviteEmail}`) })).toBeVisible();
+  await expect(invites.getByText(inviteId)).toHaveCount(0);
+
+  await dropUsersByEmail(page, adminToken, inviteEmail);
 });
 
 test("OIDC dba users can enter the Admin UI", async ({ page }) => {

@@ -1,0 +1,28 @@
+[package]
+name = "kalamdb-transfer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared archive and data transfer utilities for KalamDB backup, restore, export, and import workflows"
+
+[dependencies]
+kalamdb-commons = { workspace = true, features = ["full"] }
+kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-system = { path = "../kalamdb-system" }
+
+chrono = { workspace = true }
+flate2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tar = { workspace = true }
+uuid = { workspace = true }
+zip = { workspace = true }
+
+[lib]
+doctest = false
+
+[dev-dependencies]
+tempfile = { workspace = true }

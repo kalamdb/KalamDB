@@ -16,4 +16,4 @@ mod download;
 mod export_download;
 
 pub(crate) use download::download_file;
-pub(crate) use export_download::download_export;
+pub(crate) use export_download::{download_export, download_table_export};

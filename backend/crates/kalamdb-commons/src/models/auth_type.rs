@@ -18,6 +18,16 @@ pub enum AuthType {
         serde(alias = "oauth", alias = "OAuth", alias = "Oidc")
     )]
     Oidc,
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            rename = "oidc_invite",
+            alias = "oidc-invite",
+            alias = "OidcInvite",
+            alias = "oidcinvite"
+        )
+    )]
+    OidcInvite,
 }
 
 impl AuthType {
@@ -25,13 +35,15 @@ impl AuthType {
         match self {
             AuthType::Password => "password",
             AuthType::Oidc => "oidc",
+            AuthType::OidcInvite => "oidc_invite",
         }
     }
 
     pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        match s.to_lowercase().replace('-', "_").as_str() {
             "password" | "internal" => Some(AuthType::Password),
             "oidc" | "oauth" => Some(AuthType::Oidc),
+            "oidc_invite" => Some(AuthType::OidcInvite),
             _ => None,
         }
     }
@@ -55,6 +67,7 @@ impl From<&str> for AuthType {
         match s.to_lowercase().as_str() {
             "password" | "internal" => AuthType::Password,
             "oidc" | "oauth" => AuthType::Oidc,
+            "oidc_invite" | "oidc-invite" => AuthType::OidcInvite,
             _ => AuthType::Password,
         }
     }
@@ -74,6 +87,7 @@ mod tests {
     fn serializes_to_lowercase_wire_values() {
         assert_eq!(serde_json::to_string(&AuthType::Password).unwrap(), "\"password\"");
         assert_eq!(serde_json::to_string(&AuthType::Oidc).unwrap(), "\"oidc\"");
+        assert_eq!(serde_json::to_string(&AuthType::OidcInvite).unwrap(), "\"oidc_invite\"");
     }
 
     #[test]

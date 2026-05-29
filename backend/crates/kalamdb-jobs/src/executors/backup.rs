@@ -25,18 +25,13 @@
 //! }
 //! ```
 
-use std::{
-    fs::{self, File},
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use async_trait::async_trait;
-use flate2::{write::GzEncoder, Compression};
 use kalamdb_core::error::KalamDbError;
 use kalamdb_system::JobType;
+use kalamdb_transfer::{copy_dir_to_dir, finalize_database_backup, prepare_database_backup};
 use serde::{Deserialize, Serialize};
-use tar::Builder;
-use uuid::Uuid;
 
 use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 
@@ -70,184 +65,6 @@ impl BackupExecutor {
     pub fn new() -> Self {
         Self
     }
-
-    fn is_archive_path(path: &Path) -> bool {
-        let value =
-            path.to_string_lossy().trim().trim_end_matches(['/', '\\']).to_ascii_lowercase();
-        value.ends_with(".tar.gz") || value.ends_with(".tgz")
-    }
-
-    fn create_archive_staging_dir(archive_path: &Path) -> Result<PathBuf, KalamDbError> {
-        let parent = archive_path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to create archive parent directory '{}': {}",
-                parent.display(),
-                e
-            ))
-        })?;
-
-        let file_name = archive_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("kalamdb-backup");
-        let staging_dir = parent.join(format!(".{}.staging-{}", file_name, Uuid::new_v4()));
-
-        fs::create_dir_all(&staging_dir).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to create backup staging directory '{}': {}",
-                staging_dir.display(),
-                e
-            ))
-        })?;
-
-        Ok(staging_dir)
-    }
-
-    fn create_tar_gz_archive(src_dir: &Path, archive_path: &Path) -> Result<(), KalamDbError> {
-        if let Some(parent) = archive_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to create archive output directory '{}': {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        }
-
-        if archive_path.exists() {
-            if archive_path.is_dir() {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Archive output path '{}' is a directory",
-                    archive_path.display()
-                )));
-            }
-
-            fs::remove_file(archive_path).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to replace existing archive '{}': {}",
-                    archive_path.display(),
-                    e
-                ))
-            })?;
-        }
-
-        let archive_file = File::create(archive_path).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to create archive '{}': {}",
-                archive_path.display(),
-                e
-            ))
-        })?;
-        let encoder = GzEncoder::new(archive_file, Compression::default());
-        let mut builder = Builder::new(encoder);
-
-        for entry in fs::read_dir(src_dir).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to read archive staging directory '{}': {}",
-                src_dir.display(),
-                e
-            ))
-        })? {
-            let entry = entry.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Directory entry error: {}", e))
-            })?;
-            let src_path = entry.path();
-            let name = entry.file_name();
-            let archive_name = Path::new(name.as_os_str());
-
-            if src_path.is_dir() {
-                builder.append_dir_all(archive_name, &src_path).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to archive directory '{}': {}",
-                        src_path.display(),
-                        e
-                    ))
-                })?;
-            } else {
-                let mut file = File::open(&src_path).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to open archive input '{}': {}",
-                        src_path.display(),
-                        e
-                    ))
-                })?;
-                builder.append_file(archive_name, &mut file).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to archive file '{}': {}",
-                        src_path.display(),
-                        e
-                    ))
-                })?;
-            }
-        }
-
-        builder.finish().map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to finish archive '{}': {}",
-                archive_path.display(),
-                e
-            ))
-        })?;
-        let encoder = builder.into_inner().map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to finalize archive '{}': {}",
-                archive_path.display(),
-                e
-            ))
-        })?;
-        encoder.finish().map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to flush archive '{}': {}",
-                archive_path.display(),
-                e
-            ))
-        })?;
-
-        Ok(())
-    }
-
-    /// Recursively copy `src` into `dst`, creating `dst` if necessary.
-    fn copy_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
-        if !src.exists() {
-            return Ok(0);
-        }
-        fs::create_dir_all(dst).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to create directory '{}': {}",
-                dst.display(),
-                e
-            ))
-        })?;
-        let mut bytes_copied: u64 = 0;
-        for entry in fs::read_dir(src).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to read directory '{}': {}",
-                src.display(),
-                e
-            ))
-        })? {
-            let entry = entry.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Directory entry error: {}", e))
-            })?;
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-            if src_path.is_dir() {
-                bytes_copied += Self::copy_dir(&src_path, &dst_path)?;
-            } else {
-                fs::copy(&src_path, &dst_path).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to copy '{}' to '{}': {}",
-                        src_path.display(),
-                        dst_path.display(),
-                        e
-                    ))
-                })?;
-                bytes_copied += src_path.metadata().map(|m| m.len()).unwrap_or(0);
-            }
-        }
-        Ok(bytes_copied)
-    }
 }
 
 #[async_trait]
@@ -277,60 +94,34 @@ impl JobExecutor for BackupExecutor {
         let src_streams = storage.streams_dir();
 
         let result = tokio::task::spawn_blocking(move || -> Result<u64, KalamDbError> {
-            let archive_output = Self::is_archive_path(&backup_target);
-            let backup_root = if archive_output {
-                Self::create_archive_staging_dir(&backup_target)?
-            } else {
-                backup_target.clone()
-            };
-
-            fs::create_dir_all(&backup_root).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to create backup root '{}': {}",
-                    backup_root.display(),
-                    e
-                ))
-            })?;
+            let plan = prepare_database_backup(&backup_target)?;
 
             // 1. RocksDB native backup (hot, consistent, with flush)
-            storage_backend.backup_to(&backup_root.join("rocksdb")).map_err(|e| {
+            storage_backend.backup_to(&plan.rocksdb_dir()).map_err(|e| {
                 KalamDbError::InvalidOperation(format!("RocksDB backup failed: {}", e))
             })?;
 
             let mut total_bytes: u64 = 0;
 
             // 2. Parquet storage files
-            total_bytes += Self::copy_dir(&src_storage, &backup_root.join("storage"))?;
+            total_bytes += copy_dir_to_dir(&src_storage, &plan.storage_dir())?;
 
             // 3. Snapshot files
-            total_bytes += Self::copy_dir(&src_snapshots, &backup_root.join("snapshots"))?;
+            total_bytes += copy_dir_to_dir(&src_snapshots, &plan.snapshots_dir())?;
 
             // 4. Stream commit log files
-            total_bytes += Self::copy_dir(&src_streams, &backup_root.join("streams"))?;
+            total_bytes += copy_dir_to_dir(&src_streams, &plan.streams_dir())?;
 
             // 5. server.toml (look next to the binary / CWD)
             let server_toml = Path::new("server.toml");
             if server_toml.exists() {
-                fs::copy(server_toml, backup_root.join("server.toml")).map_err(|e| {
+                fs::copy(server_toml, plan.server_toml_path()).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Failed to copy server.toml: {}", e))
                 })?;
                 total_bytes += server_toml.metadata().map(|m| m.len()).unwrap_or(0);
             }
 
-            if archive_output {
-                Self::create_tar_gz_archive(&backup_root, &backup_target)?;
-                let archive_size = backup_target.metadata().map(|m| m.len()).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to inspect archive '{}': {}",
-                        backup_target.display(),
-                        e
-                    ))
-                })?;
-                let _ = fs::remove_dir_all(&backup_root);
-                Ok(archive_size)
-            } else {
-                Ok(total_bytes)
-            }
+            finalize_database_backup(plan, &backup_target, total_bytes)
         })
         .await
         .map_err(|e| KalamDbError::InvalidOperation(format!("Backup task panicked: {}", e)))?;
@@ -375,6 +166,8 @@ impl Default for BackupExecutor {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+
     use flate2::read::GzDecoder;
     use kalamdb_core::test_helpers::test_app_context_simple;
     use tar::Archive;
@@ -402,7 +195,7 @@ mod tests {
         fs::write(source_root.join("server.toml"), "port = 2900\n").expect("config file");
 
         let archive_path = temp_dir.path().join("backup.tar.gz");
-        BackupExecutor::create_tar_gz_archive(&source_root, &archive_path)
+        kalamdb_transfer::create_tar_gz_archive(&source_root, &archive_path)
             .expect("archive creation");
 
         let extract_root = temp_dir.path().join("extract");
@@ -429,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_is_archive_path_accepts_trailing_separator() {
-        assert!(BackupExecutor::is_archive_path(Path::new("/tmp/kalamdb.tar.gz/")));
-        assert!(BackupExecutor::is_archive_path(Path::new("/tmp/kalamdb.tgz/")));
+        assert!(kalamdb_transfer::is_tar_gz_path(Path::new("/tmp/kalamdb.tar.gz/")));
+        assert!(kalamdb_transfer::is_tar_gz_path(Path::new("/tmp/kalamdb.tgz/")));
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::rows::SystemTableRow, storage::Partition, UserId};
+use kalamdb_commons::{models::rows::SystemTableRow, storage::Partition, AuthType, UserId};
 use kalamdb_store::IndexDefinition;
 
 use crate::{
@@ -47,9 +47,50 @@ impl IndexDefinition<UserId, SystemTableRow> for UserRoleIndex {
     }
 }
 
+/// Index for querying users and pending OIDC invites by email.
+///
+/// Key format: `{lowercase_email}:{kind}:{user_id}`
+pub struct UserEmailIndex;
+
+impl IndexDefinition<UserId, SystemTableRow> for UserEmailIndex {
+    fn partition(&self) -> Partition {
+        Partition::new(StoragePartition::SystemUsersEmailIdx.name())
+    }
+
+    fn indexed_columns(&self) -> Vec<&str> {
+        vec!["email"]
+    }
+
+    fn extract_key(&self, _primary_key: &UserId, row: &SystemTableRow) -> Option<Vec<u8>> {
+        let user: User = system_row_to_model(row, &User::definition()).ok()?;
+        let email = user.email.as_deref()?.trim().to_ascii_lowercase();
+        if email.is_empty() {
+            return None;
+        }
+
+        let kind = if user.auth_type == AuthType::OidcInvite {
+            "invite"
+        } else {
+            "user"
+        };
+        Some(format!("{}:{}:{}", email, kind, user.user_id.as_str()).into_bytes())
+    }
+
+    fn filter_to_prefix(&self, filter: &datafusion::logical_expr::Expr) -> Option<Vec<u8>> {
+        use kalamdb_store::extract_string_equality;
+
+        if let Some((col, val)) = extract_string_equality(filter) {
+            if col == "email" {
+                return Some(format!("{}:", val.trim().to_ascii_lowercase()).into_bytes());
+            }
+        }
+        None
+    }
+}
+
 /// Create the default set of indexes for the users table.
 pub fn create_users_indexes() -> Vec<Arc<dyn IndexDefinition<UserId, SystemTableRow>>> {
-    vec![Arc::new(UserRoleIndex)]
+    vec![Arc::new(UserRoleIndex), Arc::new(UserEmailIndex)]
 }
 
 #[cfg(test)]
@@ -76,6 +117,8 @@ mod tests {
             updated_at: 1000,
             last_seen: None,
             deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
         }
     }
 
@@ -95,7 +138,8 @@ mod tests {
     #[test]
     fn test_create_users_indexes() {
         let indexes = create_users_indexes();
-        assert_eq!(indexes.len(), 1);
+        assert_eq!(indexes.len(), 2);
         assert_eq!(indexes[0].partition(), StoragePartition::SystemUsersRoleIdx.name().into());
+        assert_eq!(indexes[1].partition(), StoragePartition::SystemUsersEmailIdx.name().into());
     }
 }
