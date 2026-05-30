@@ -154,7 +154,8 @@ struct ChatWorkloadStats {
     peak_active_subscriptions: AtomicU64,
     subscription_open_latency_us: AtomicU64,
     subscription_open_max_us: AtomicU64,
-    subscription_events: AtomicU64,
+    subscription_change_rows: AtomicU64,
+    subscription_payload_bytes: AtomicU64,
     subscription_connect_timings: TimingSeries,
     create_conversation_timings: TimingSeries,
     insert_message_timings: TimingSeries,
@@ -266,7 +267,7 @@ impl Benchmark for ChatRealtimeBench {
             run_sql_with_retry(
                 client,
                 &format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, peer_user TEXT NOT NULL, opened_by TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, state TEXT NOT NULL, created_at_ms BIGINT NOT NULL)",
+                    "CREATE USER TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, peer_user TEXT NOT NULL, opened_by TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, state TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
                     config.namespace
                 ),
             )
@@ -275,7 +276,7 @@ impl Benchmark for ChatRealtimeBench {
             run_sql_with_retry(
                 client,
                 &format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, recipient_user TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, body TEXT NOT NULL, created_at_ms BIGINT NOT NULL)",
+                    "CREATE USER TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, recipient_user TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, body TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
                     config.namespace
                 ),
             )
@@ -897,18 +898,38 @@ fn spawn_subscription_drain(
                     match event {
                         Some(Ok(ChangeEvent::Ack { .. })) => {}
                         Some(Ok(ChangeEvent::InitialDataBatch { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
                         Some(Ok(ChangeEvent::Insert { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
                         Some(Ok(ChangeEvent::Update { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
-                        Some(Ok(ChangeEvent::Delete { .. })) => {}
+                        Some(Ok(ChangeEvent::Delete { old_rows, .. })) => {
+                            stats
+                                .subscription_change_rows
+                                .fetch_add(old_rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&old_rows),
+                                Ordering::Relaxed,
+                            );
+                        }
                         Some(Ok(ChangeEvent::Error { message, .. })) => {
                             let _ = subscription.close().await;
                             stats.subscriptions_closed.fetch_add(1, Ordering::Relaxed);
@@ -1028,12 +1049,17 @@ async fn run_conversation_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = conversation_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_conv_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_conv_forward_{}", iteration))
+        .group_id(&forwarder_group)
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
@@ -1100,12 +1126,17 @@ async fn run_message_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = message_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_msg_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_msg_forward_{}", iteration))
+        .group_id(&forwarder_group)
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
@@ -1180,12 +1211,17 @@ async fn run_typing_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = typing_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_typing_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_typing_forward_{}", iteration))
+        .group_id(&forwarder_group)
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
@@ -2176,7 +2212,8 @@ fn print_chat_summary(
     let peak_active_subscriptions = stats.peak_active_subscriptions.load(Ordering::Relaxed);
     let subscription_open_latency_us = stats.subscription_open_latency_us.load(Ordering::Relaxed);
     let subscription_open_max_us = stats.subscription_open_max_us.load(Ordering::Relaxed);
-    let subscription_events = stats.subscription_events.load(Ordering::Relaxed);
+    let subscription_change_rows = stats.subscription_change_rows.load(Ordering::Relaxed);
+    let subscription_payload_bytes = stats.subscription_payload_bytes.load(Ordering::Relaxed);
     let total_ops = selects + inserts + updates;
     let duration_secs = scenario_elapsed.as_secs_f64();
 
@@ -2188,12 +2225,17 @@ fn print_chat_summary(
         peak_active_subscriptions,
     );
     println!(
-        "  Chat rates: sessions={:.1}/s | user_messages={:.1}/s | typing={:.1}/s | total_sql={:.1}/s | delivered_live_events={:.1}/s",
+        "  Chat rates: sessions={:.1}/s | user_messages={:.1}/s | typing={:.1}/s | total_sql={:.1}/s | delivered_live_changes={:.1}/s",
         per_sec(sessions_completed, duration_secs),
         per_sec(messages_sent, duration_secs),
         per_sec(typing_events_sent, duration_secs),
         per_sec(total_ops, duration_secs),
-        per_sec(subscription_events, duration_secs),
+        per_sec(subscription_change_rows, duration_secs),
+    );
+    println!(
+        "  Live payload: total={} | throughput={}",
+        format_memory(Some(subscription_payload_bytes)),
+        format_bytes_per_sec(per_sec(subscription_payload_bytes, duration_secs)),
     );
     println!(
         "  SQL breakdown: select={:.1}/s avg={:.2}ms max={:.2}ms | insert={:.1}/s avg={:.2}ms max={:.2}ms | update={:.1}/s avg={:.2}ms max={:.2}ms",
@@ -2305,6 +2347,64 @@ fn per_sec(count: u64, duration_secs: f64) -> f64 {
         count as f64 / duration_secs
     } else {
         0.0
+    }
+}
+
+fn estimate_rows_payload_bytes(rows: &[HashMap<String, KalamCellValue>]) -> u64 {
+    rows.iter()
+        .map(estimate_row_payload_bytes)
+        .sum::<usize>() as u64
+}
+
+fn estimate_row_payload_bytes(row: &HashMap<String, KalamCellValue>) -> usize {
+    let mut total = 2usize;
+    let mut first = true;
+
+    for (key, value) in row {
+        if !first {
+            total = total.saturating_add(1);
+        }
+        first = false;
+
+        total = total
+            .saturating_add(key.len().saturating_add(2))
+            .saturating_add(1)
+            .saturating_add(estimate_json_value_bytes(value.inner()));
+    }
+
+    total
+}
+
+fn estimate_json_value_bytes(value: &JsonValue) -> usize {
+    match value {
+        JsonValue::Null => 4,
+        JsonValue::Bool(true) => 4,
+        JsonValue::Bool(false) => 5,
+        JsonValue::Number(number) => number.to_string().len(),
+        JsonValue::String(text) => text.len().saturating_add(2),
+        JsonValue::Array(values) => {
+            let mut total = 2usize;
+            for (index, entry) in values.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total.saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
+        },
+        JsonValue::Object(map) => {
+            let mut total = 2usize;
+            for (index, (key, entry)) in map.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total
+                    .saturating_add(key.len().saturating_add(2))
+                    .saturating_add(1)
+                    .saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
+        },
     }
 }
 
@@ -2425,6 +2525,18 @@ fn format_memory(memory_bytes: Option<u64>) -> String {
         Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
         Some(bytes) => format!("{} B", bytes),
         None => "n/a".to_string(),
+    }
+}
+
+fn format_bytes_per_sec(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 * 1024.0 {
+        format!("{:.1} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.1} KiB/s", bytes_per_sec / 1024.0)
+    } else {
+        format!("{:.1} B/s", bytes_per_sec)
     }
 }
 

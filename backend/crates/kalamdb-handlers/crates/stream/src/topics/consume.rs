@@ -13,7 +13,7 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_observability::track_pubsub_consumer;
+use kalamdb_observability::{heartbeat_pubsub_consumer, track_pubsub_consumer};
 use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
 use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
 
@@ -49,6 +49,15 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
         let partition_id = 0u32;
         let group_id =
             statement.group_id.as_ref().map(|group_name| ConsumerGroupId::new(group_name));
+        let consumer_group = group_id.as_ref().map(|group| group.as_str()).unwrap_or("-");
+        let consumer_key = format!(
+            "sql:{}:{}:{}:{}",
+            context.user_id().as_str(),
+            topic_id.as_str(),
+            partition_id,
+            consumer_group,
+        );
+        heartbeat_pubsub_consumer(&consumer_key);
 
         let committed_offset = group_id.as_ref().and_then(|group_id| {
             topic_publisher.get_group_offsets(&topic_id, group_id).ok().and_then(|offsets| {

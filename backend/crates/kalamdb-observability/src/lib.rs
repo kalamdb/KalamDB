@@ -31,8 +31,9 @@ pub use health_monitor::{
     increment_websocket_sessions, HealthCounts, HealthMetrics, HealthMonitor,
 };
 pub use pubsub_metrics::{
-    pubsub_metrics_snapshot, record_pubsub_messages_consumed, record_pubsub_messages_published,
-    record_subscription_changes_delivered, track_pubsub_consumer, PubSubConsumerGuard,
+    heartbeat_pubsub_consumer, pubsub_metrics_snapshot, record_pubsub_messages_consumed,
+    record_pubsub_messages_published, record_subscription_changes_delivered,
+    record_subscription_delivery, track_pubsub_consumer, PubSubConsumerGuard,
     PubSubMetricsSnapshot,
 };
 pub use query_metrics::{

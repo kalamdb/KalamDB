@@ -11,7 +11,7 @@ use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
-use kalamdb_observability::track_pubsub_consumer;
+use kalamdb_observability::{heartbeat_pubsub_consumer, track_pubsub_consumer};
 use kalamdb_session::AuthSession;
 
 use super::models::{
@@ -63,6 +63,15 @@ pub async fn consume_handler(
 
     let topic_id = &body.topic_id;
     let group_id = body.group_id.as_ref();
+    let consumer_group = group_id.map(|group| group.as_str()).unwrap_or("-");
+    let consumer_key = format!(
+        "http:{}:{}:{}:{}",
+        session.user_id().as_str(),
+        topic_id.as_str(),
+        body.partition_id,
+        consumer_group,
+    );
+    heartbeat_pubsub_consumer(&consumer_key);
 
     // Verify topic exists
     let topics_provider = app_context.system_tables().topics();

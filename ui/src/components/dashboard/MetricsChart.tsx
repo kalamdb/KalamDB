@@ -149,6 +149,7 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
             <Line yAxisId="count" type="monotone" dataKey="active_subscriptions" name="Subscriptions" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
             <Line yAxisId="count" type="step" dataKey="active_subscriptions_peak" name="Peak Subscriptions" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} dot={false} connectNulls />
             <Line yAxisId="rate" type="step" dataKey="subscription_changes_delivered_per_second" name="Changes/s" stroke="#0891b2" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="rate" type="step" dataKey="subscription_bytes_delivered_per_second" name="Bytes/s" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -199,6 +200,7 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
             <Tooltip formatter={(value, name) => name === "Manifest Count" ? formatRateValue(value as number) : `${formatRateValue(value as number)}/s`} labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
             <Legend wrapperStyle={{ paddingTop: "20px" }} />
             <Line yAxisId="count" type="step" dataKey="manifest_cache_rocksdb_entries" name="Manifest Count" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="step" dataKey="flush_operations_total" name="Flush Count" stroke="#0f766e" strokeWidth={2} dot={false} connectNulls />
             <Line yAxisId="rate" type="step" dataKey="manifest_writes_per_second" name="Manifest Writes/s" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls />
             <Line yAxisId="rate" type="step" dataKey="manifest_reads_per_second" name="Manifest Reads/s" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls />
             <Line yAxisId="rate" type="step" dataKey="parquet_files_written_per_second" name="Parquet Written/s" stroke="#7c3aed" strokeDasharray="6 4" strokeWidth={2} dot={false} connectNulls />

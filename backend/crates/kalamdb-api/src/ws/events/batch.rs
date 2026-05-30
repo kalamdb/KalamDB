@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use actix_ws::Session;
 use kalamdb_commons::{ids::SeqId, websocket::BatchControl, WebSocketMessage};
+use kalamdb_observability::record_subscription_delivery;
 use kalamdb_core::providers::arrow_json_conversion::row_into_json_map;
 use kalamdb_live::{LiveQueryManager, SharedConnectionState};
 use log::error;
 use tracing::debug;
 
-use super::{send_error, send_message};
+use super::{estimate_rows_payload_bytes, send_error, send_message};
 use crate::ws::models::WsErrorCode;
 
 /// Handle next batch request
@@ -76,7 +77,19 @@ pub async fn handle_next_batch(
                 batch_control,
             );
             let ser = connection_state.serialization_type();
-            let _ = send_message(session, &msg, ser, compression_enabled).await;
+            let delivered_rows = match &msg {
+                WebSocketMessage::InitialDataBatch { rows, .. } => rows.len() as u64,
+                _ => 0,
+            };
+            if send_message(session, &msg, ser, compression_enabled).await.is_ok() {
+                let delivered_bytes = match &msg {
+                    WebSocketMessage::InitialDataBatch { rows, .. } => {
+                        estimate_rows_payload_bytes(rows)
+                    },
+                    _ => 0,
+                };
+                record_subscription_delivery(delivered_rows, delivered_bytes);
+            }
 
             if !result.has_more {
                 let flushed = connection_state.complete_initial_load(subscription_id);
