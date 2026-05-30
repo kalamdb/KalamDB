@@ -193,9 +193,26 @@ fi
 
 add_prerelease_dist_tag() {
   if [[ -n "$PRERELEASE_TAG" ]]; then
-    # shellcheck disable=SC2086
-    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG $REGISTRY_FLAG
-    echo "✅ Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
+    local attempt=1
+    local max_attempts=3
+
+    while [[ $attempt -le $max_attempts ]]; do
+      # shellcheck disable=SC2086
+      if npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG $REGISTRY_FLAG; then
+        echo "✅ Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
+        return 0
+      fi
+
+      echo "⚠️  Failed to add dist-tag '$PRERELEASE_TAG' (attempt $attempt/$max_attempts)."
+      if [[ $attempt -lt $max_attempts ]]; then
+        sleep $((attempt * 2))
+      fi
+      attempt=$((attempt + 1))
+    done
+
+    echo "⚠️  Publish succeeded, but adding dist-tag '$PRERELEASE_TAG' failed after $max_attempts attempts."
+    echo "   This is non-fatal for CI release completion. You can fix the tag manually later with:"
+    echo "   npm dist-tag add $PACKAGE_NAME@$VERSION $PRERELEASE_TAG --registry $PUBLISH_REGISTRY_URL"
   fi
 }
 

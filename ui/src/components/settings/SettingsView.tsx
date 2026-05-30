@@ -89,15 +89,15 @@ export function SettingsView({ filterCategory }: SettingsViewProps) {
             <div className="divide-y">
               {groupedSettings[category].map((setting: Setting) => (
                 <div key={setting.name} className="py-4 first:pt-0 last:pb-0">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
+                  <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-4">
+                    <div className="min-w-0">
                       <h4 className="font-medium">{setting.name}</h4>
                       <p className="text-sm text-muted-foreground mt-1">
                         {setting.description}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <code className="px-2 py-1 bg-muted rounded text-sm">
+                    <div className="max-w-full text-left sm:max-w-[45%] sm:text-right">
+                      <code className="inline-block max-w-full break-all rounded bg-muted px-2 py-1 text-sm">
                         {setting.value}
                       </code>
                     </div>

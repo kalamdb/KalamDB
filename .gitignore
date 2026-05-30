@@ -128,3 +128,4 @@ link/sdks/typescript/client/.npmrc
 /link/kalam-client/sdks/typescript/client/.wasm-target-size-current2
 /benchv2/logs
 /backend/kalamdb-nightly
+/tools/supabase-local
