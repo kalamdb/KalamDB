@@ -30,7 +30,7 @@ export function UserMenu({ username, role, onLogout }: UserMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-9 rounded-full p-0">
+        <Button variant="ghost" className="h-8 rounded-full p-0">
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
             {getInitials(username)}
           </span>

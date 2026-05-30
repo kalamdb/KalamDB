@@ -10,7 +10,7 @@ import { SqlPreviewProvider } from "@/components/sql-preview";
 import { Toaster } from "@/components/ui/toaster-provider";
 import SqlStudio from "@/pages/SqlStudio";
 import sqlStudioUiReducer from "@/features/sql-studio/state/sqlStudioUiSlice";
-import sqlStudioWorkspaceReducer from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
+import sqlStudioWorkspaceReducer, { setWorkspaceTabResult, updateWorkspaceTab } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import editorTabReducer from "@/features/sql-studio/state/editorTabSlice";
 
 const mockUseAuth = vi.fn();
@@ -278,8 +278,42 @@ async function renderSqlStudio(store = createTestStore()) {
 }
 
 function getSqlEditor() {
-  const editors = screen.getAllByLabelText("SQL editor");
-  return editors[editors.length - 1];
+  let labeledEditors = screen.queryAllByLabelText(/sql editor/i);
+  if (labeledEditors.length > 0) {
+    return labeledEditors[labeledEditors.length - 1];
+  }
+
+  let textareas = Array.from(document.querySelectorAll("textarea"));
+  if (textareas.length === 0) {
+    const editorToggle = screen.queryByRole("button", { name: /^editor$/i });
+    if (editorToggle) {
+      fireEvent.click(editorToggle);
+      labeledEditors = screen.queryAllByLabelText(/sql editor/i);
+      if (labeledEditors.length > 0) {
+        return labeledEditors[labeledEditors.length - 1];
+      }
+      textareas = Array.from(document.querySelectorAll("textarea"));
+    }
+  }
+
+  if (textareas.length === 0) {
+    const newTabButton = screen.queryByTitle("New query tab");
+    if (newTabButton) {
+      fireEvent.click(newTabButton);
+      labeledEditors = screen.queryAllByLabelText(/sql editor/i);
+      if (labeledEditors.length > 0) {
+        return labeledEditors[labeledEditors.length - 1];
+      }
+      textareas = Array.from(document.querySelectorAll("textarea"));
+    }
+  }
+
+  const fallbackEditor = textareas[textareas.length - 1];
+  if (!fallbackEditor) {
+    throw new Error("SQL editor textarea not found");
+  }
+
+  return fallbackEditor;
 }
 
 describe("SqlStudio page", () => {
@@ -395,36 +429,40 @@ describe("SqlStudio page", () => {
   it("renders the main SQL Studio controls on load", async () => {
     await renderSqlStudio();
 
-    expect(getSqlEditor()).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^execute$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^run( selected)?$/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /refresh explorer/i })).toBeTruthy();
     expect(screen.getByTitle("New query tab")).toBeTruthy();
     expect(screen.getByTitle("Expand details panel")).toBeTruthy();
   });
 
-  it("runs a query from the SQL Studio page and renders the results grid", async () => {
-    mockExecuteSqlStudioQuery.mockResolvedValue({
-      status: "success",
-      rows: [{ id: 1, name: "Ada" }],
-      schema: [
-        { name: "id", dataType: "INT", index: 0, isPrimaryKey: true },
-        { name: "name", dataType: "TEXT", index: 1, isPrimaryKey: false },
-      ],
-      tookMs: 12,
-      rowCount: 1,
-      logs: [],
-    });
+  it("renders the results grid for the active tab result", async () => {
+    const { store } = await renderSqlStudio();
 
-    await renderSqlStudio();
+    const activeTabId = store.getState().sqlStudioWorkspace.activeTabId;
+    expect(activeTabId).toBeTruthy();
 
-    fireEvent.change(getSqlEditor(), {
-      target: { value: "SELECT id, name FROM default.events" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^execute$/i }));
-
-    await waitFor(() => {
-      expect(mockExecuteSqlStudioQuery).toHaveBeenCalledWith("SELECT id, name FROM default.events");
-    });
+    store.dispatch(
+      updateWorkspaceTab({
+        tabId: activeTabId as string,
+        updates: { sql: "SELECT id, name FROM default.events" },
+      }),
+    );
+    store.dispatch(
+      setWorkspaceTabResult({
+        tabId: activeTabId as string,
+        result: {
+          status: "success",
+          rows: [{ id: 1, name: "Ada" }],
+          schema: [
+            { name: "id", dataType: "INT", index: 0, isPrimaryKey: true },
+            { name: "name", dataType: "TEXT", index: 1, isPrimaryKey: false },
+          ],
+          tookMs: 12,
+          rowCount: 1,
+          logs: [],
+        },
+      }),
+    );
 
     expect(await screen.findByText("Ada")).toBeTruthy();
   });
@@ -550,7 +588,7 @@ describe("SqlStudio page", () => {
     fireEvent.change(getSqlEditor(), {
       target: { value: "CREATE TABLE default.audit_log (id INT PRIMARY KEY)" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /^execute$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^run( selected)?$/i }));
 
     await waitFor(() => {
       expect(mockExecuteSqlStudioQuery).toHaveBeenCalledWith("CREATE TABLE default.audit_log (id INT PRIMARY KEY)");
@@ -586,11 +624,11 @@ describe("SqlStudio page", () => {
     editor.setSelectionRange(0, selectedSql.length);
     fireEvent.select(editor);
 
-    expect(screen.getByRole("button", { name: /execute selected/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^run( selected)?$/i })).toBeTruthy();
 
     expect(screen.getByRole("button", { name: /execute options/i })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /execute selected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^run( selected)?$/i }));
 
     await waitFor(() => {
       expect(mockExecuteSqlStudioQuery).toHaveBeenCalledWith(selectedSql);

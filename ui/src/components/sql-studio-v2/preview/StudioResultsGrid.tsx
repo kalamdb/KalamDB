@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -54,6 +54,7 @@ interface StudioResultsGridProps {
   onResultViewChange: (view: SqlStudioResultView) => void;
   onFetchNextBatch?: () => void;
   onRefreshAfterCommit: () => void;
+  actions?: ReactNode;
 }
 
 type SortDirection = "asc" | "desc";
@@ -158,6 +159,7 @@ export function StudioResultsGrid({
   onResultViewChange,
   onFetchNextBatch,
   onRefreshAfterCommit,
+  actions,
 }: StudioResultsGridProps) {
   const [sortState, setSortState] = useState<SortState>(null);
   const [pageIndex, setPageIndex] = useState(0);
@@ -589,7 +591,10 @@ export function StudioResultsGrid({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-      <div className="flex h-11 shrink-0 items-end justify-between gap-3 border-b border-border px-3">
+      <div
+        data-testid="sql-results-header"
+        className="flex h-11 shrink-0 items-end justify-between gap-3 border-b border-border px-3"
+      >
         <Tabs
           value={resultView}
           onValueChange={(value) => onResultViewChange(value as SqlStudioResultView)}
@@ -616,49 +621,52 @@ export function StudioResultsGrid({
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        {isSuccess && (
-          <div className="ml-auto flex h-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground">
-            <span>{result.rowCount.toLocaleString()} rows</span>
-            <span>took {Math.round(result.tookMs)} ms</span>
-            <span>as user: {currentUsername}</span>
-            {result.rowCount > MAX_RENDERED_ROWS && (
-              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-700">
-                showing first {MAX_RENDERED_ROWS.toLocaleString()}
-              </span>
-            )}
-            {canMutateRows && resultView === "results" && selectedRows.size > 0 && (
-              <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-700">
-                {selectedRows.size} selected
-              </span>
-            )}
-            {resultView === "results" && sortState && (
-              <span className="rounded bg-border px-1.5 py-0.5 text-[10px] text-foreground">
-                {sortState.columnName} ({sortState.direction})
-              </span>
-            )}
-            {canFetchNextLiveBatch && (
+        <div className="ml-auto flex h-full min-w-0 flex-nowrap items-center gap-2 overflow-visible whitespace-nowrap">
+          {isSuccess && (
+            <div className="flex min-w-0 flex-nowrap items-center gap-2 text-[11px] text-muted-foreground">
+              <span>{result.rowCount.toLocaleString()} rows</span>
+              <span>took {Math.round(result.tookMs)} ms</span>
+              <span>as user: {currentUsername}</span>
+              {result.rowCount > MAX_RENDERED_ROWS && (
+                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-700">
+                  showing first {MAX_RENDERED_ROWS.toLocaleString()}
+                </span>
+              )}
+              {canMutateRows && resultView === "results" && selectedRows.size > 0 && (
+                <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-700">
+                  {selectedRows.size} selected
+                </span>
+              )}
+              {resultView === "results" && sortState && (
+                <span className="rounded bg-border px-1.5 py-0.5 text-[10px] text-foreground">
+                  {sortState.columnName} ({sortState.direction})
+                </span>
+              )}
+              {canFetchNextLiveBatch && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 gap-1.5"
+                  onClick={onFetchNextBatch}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                  Fetch next batch
+                </Button>
+              )}
               <Button
                 size="sm"
-                variant="secondary"
-                className="h-7 gap-1.5"
-                onClick={onFetchNextBatch}
+                variant="destructive"
+                className={cn("h-7 gap-1.5", (!canMutateRows || resultView !== "results" || selectedRows.size === 0) && "invisible pointer-events-none")}
+                onClick={handleDeleteSelectedRows}
+                disabled={!canMutateRows || resultView !== "results" || selectedRows.size === 0}
               >
-                <ChevronRight className="h-3.5 w-3.5" />
-                Fetch next batch
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete selected
               </Button>
-            )}
-            <Button
-              size="sm"
-              variant="destructive"
-              className={cn("h-7 gap-1.5", (!canMutateRows || resultView !== "results" || selectedRows.size === 0) && "invisible pointer-events-none")}
-              onClick={handleDeleteSelectedRows}
-              disabled={!canMutateRows || resultView !== "results" || selectedRows.size === 0}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete selected
-            </Button>
-          </div>
-        )}
+            </div>
+          )}
+          {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+        </div>
       </div>
 
       {isRunning && (

@@ -15,7 +15,6 @@ const SetupWizard = lazy(() => import("./pages/SetupWizard"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SqlStudio = lazy(() => import("./pages/SqlStudio"));
 const Users = lazy(() => import("./pages/Users"));
-const Jobs = lazy(() => import("./pages/Jobs"));
 const LiveQueries = lazy(() => import("./pages/LiveQueries"));
 const Logging = lazy(() => import("./pages/Logging"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -58,7 +57,6 @@ function App() {
                         <Route path="dashboard" element={<Dashboard />} />
                         <Route path="sql" element={<SqlStudio />} />
                         <Route path="users" element={<Users />} />
-                        <Route path="jobs" element={<Jobs />} />
                         <Route path="live-queries" element={<LiveQueries />} />
                         <Route path="streaming" element={<Navigate to="/streaming/topics" replace />} />
                         <Route path="streaming/topics" element={<StreamingTopics />} />

@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db";
 import type { SystemServerLogRow } from "@/lib/models";
 import { system_server_logs } from "@/lib/schema";
-import { eq, like, desc, and, type SQL } from "drizzle-orm";
+import { eq, like, desc, and, lt, gt, type SQL } from "drizzle-orm";
 
 export type ServerLog = SystemServerLogRow;
 
@@ -10,6 +10,8 @@ export interface ServerLogFilters {
   target?: string;
   message?: string;
   limit?: number;
+  beforeTimestamp?: string;
+  afterTimestamp?: string;
 }
 
 export async function fetchServerLogs(filters?: ServerLogFilters) {
@@ -24,6 +26,12 @@ export async function fetchServerLogs(filters?: ServerLogFilters) {
   }
   if (filters?.message) {
     conditions.push(like(system_server_logs.message, `%${filters.message}%`));
+  }
+  if (filters?.beforeTimestamp) {
+    conditions.push(lt(system_server_logs.timestamp, filters.beforeTimestamp));
+  }
+  if (filters?.afterTimestamp) {
+    conditions.push(gt(system_server_logs.timestamp, filters.afterTimestamp));
   }
 
   return db

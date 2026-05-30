@@ -1,20 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type { IDisposable, Position, editor, languages } from "monaco-editor";
-import { ChevronDown, Clock3, Copy, MoreHorizontal, PenLine, Play, RadioTower, Save, Settings2, Square, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { panelDescriptionClassName, panelTitleClassName } from "@/components/layout/typography";
-import { StudioChromeLabel, StudioIconButton } from "../shared/StudioChrome";
-import type { LiveSubscriptionOptions, StudioNamespace } from "../shared/types";
+import type { StudioNamespace } from "../shared/types";
 import {
   buildSqlCompletionData,
   resolveSqlContextualCompletions,
@@ -28,45 +15,19 @@ const EMPTY_COMPLETION_DATA = buildSqlCompletionData([]);
 
 interface StudioEditorPanelProps {
   schema: StudioNamespace[];
-  tabTitle: string;
-  lastSavedAt: string | null;
-  isLive: boolean;
-  liveStatus: "idle" | "connecting" | "connected" | "error";
   sql: string;
-  isRunning: boolean;
-  subscriptionOptions?: LiveSubscriptionOptions;
   onSqlChange: (value: string) => void;
   onRun: (sql: string, mode: ExecuteMode) => void;
-  onToggleLive: (checked: boolean) => void;
-  onSubscriptionOptionsChange: (options: LiveSubscriptionOptions | undefined) => void;
-  onRename: (title: string) => void;
-  onSave: () => void;
-  onSaveCopy: () => void;
-  onDelete: () => void;
+  onSelectedSqlChange?: (value: string) => void;
 }
 
 export function StudioEditorPanel({
   schema,
-  tabTitle,
-  lastSavedAt,
-  isLive,
-  liveStatus,
   sql,
-  isRunning,
-  subscriptionOptions,
   onSqlChange,
   onRun,
-  onToggleLive,
-  onSubscriptionOptionsChange,
-  onRename,
-  onSave,
-  onSaveCopy,
-  onDelete,
+  onSelectedSqlChange,
 }: StudioEditorPanelProps) {
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(tabTitle);
-  const [showSubscriptionOptions, setShowSubscriptionOptions] = useState(false);
-  const [selectedSql, setSelectedSql] = useState("");
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const editorListenerRefs = useRef<IDisposable[]>([]);
   const onRunRef = useRef(onRun);
@@ -91,12 +52,6 @@ export function StudioEditorPanel({
   }, [sql]);
 
   useEffect(() => {
-    if (!isEditingTitle) {
-      setDraftTitle(tabTitle);
-    }
-  }, [tabTitle, isEditingTitle]);
-
-  useEffect(() => {
     return () => {
       completionProviderRef.current?.dispose();
       editorListenerRefs.current.forEach((listener) => listener.dispose());
@@ -117,7 +72,7 @@ export function StudioEditorPanel({
 
   const syncSelectedSql = () => {
     const nextSelectedSql = readSelectedSql();
-    setSelectedSql(nextSelectedSql.trim().length > 0 ? nextSelectedSql : "");
+    onSelectedSqlChange?.(nextSelectedSql.trim().length > 0 ? nextSelectedSql : "");
   };
 
   const runSql = (mode: ExecuteMode | "auto" = "auto") => {
@@ -271,287 +226,8 @@ export function StudioEditorPanel({
     registerCompletionProvider(monaco);
   };
 
-  const lastSavedLabel = useMemo(() => {
-    if (!lastSavedAt) {
-      return "Never saved";
-    }
-
-    const savedAt = new Date(lastSavedAt);
-    const now = Date.now();
-    const diffMs = now - savedAt.getTime();
-    if (Number.isNaN(savedAt.getTime()) || diffMs < 0) {
-      return "Last saved just now";
-    }
-
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    if (diffMinutes < 1) {
-      return "Last saved just now";
-    }
-    if (diffMinutes < 60) {
-      return `Last saved ${diffMinutes}m ago`;
-    }
-
-    const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) {
-      return `Last saved ${diffHours}h ago`;
-    }
-
-    return `Last saved ${savedAt.toLocaleString()}`;
-  }, [lastSavedAt]);
-
-  const commitRename = () => {
-    const normalizedTitle = draftTitle.trim();
-    if (normalizedTitle.length > 0 && normalizedTitle !== tabTitle) {
-      onRename(normalizedTitle);
-    }
-    setIsEditingTitle(false);
-  };
-
-  const hasSelectedSql = selectedSql.trim().length > 0;
-  const executeLabel = hasSelectedSql ? "Execute Selected" : "Execute";
-  const isConnectingLive = isLive && liveStatus === "connecting";
-  const isExecuteDisabled = isLive
-    ? !sql.trim()
-    : isRunning || !sql.trim();
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
-        <div className="min-w-0">
-          {isEditingTitle ? (
-            <input
-              value={draftTitle}
-              onChange={(event) => setDraftTitle(event.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  commitRename();
-                }
-                if (event.key === "Escape") {
-                  setIsEditingTitle(false);
-                }
-              }}
-              autoFocus
-              className={`h-7 w-full max-w-[320px] rounded border border-border bg-background px-2 outline-none ring-2 ring-ring ${panelTitleClassName}`}
-            />
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <p className={`truncate ${panelTitleClassName}`}>{tabTitle}</p>
-              <StudioIconButton
-                onClick={() => setIsEditingTitle(true)}
-                tooltip="Rename query"
-                aria-label="Rename query"
-              >
-                <PenLine data-icon="only" />
-              </StudioIconButton>
-            </div>
-          )}
-          <p className={panelDescriptionClassName}>Draft</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="hidden items-center gap-2 lg:flex">
-            <div className="flex items-center gap-2 border-r border-border pr-3">
-              <Switch
-                checked={isLive}
-                onCheckedChange={onToggleLive}
-              />
-              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <RadioTower className="h-3 w-3" />
-                Live query
-              </span>
-              {isLive && (
-                <StudioIconButton
-                  onClick={() => setShowSubscriptionOptions((prev) => !prev)}
-                  tooltip="Subscription options"
-                  aria-label="Subscription options"
-                >
-                  <Settings2 data-icon="only" />
-                </StudioIconButton>
-              )}
-            </div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Clock3 className="h-3 w-3" />
-              {lastSavedLabel}
-            </span>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="shrink-0"
-            onClick={onSave}
-          >
-            <Save data-icon="inline-start" />
-            Save
-          </Button>
-          {isLive ? (
-            <Button
-              size="sm"
-              className="shrink-0"
-              onClick={() => runSql("auto")}
-              disabled={isExecuteDisabled}
-            >
-              {liveStatus === "connected" || isConnectingLive ? (
-                <Square data-icon="inline-start" />
-              ) : (
-                <Play data-icon="inline-start" />
-              )}
-              {liveStatus === "connected"
-                ? "Stop"
-                : isConnectingLive
-                  ? "Connecting..."
-                  : "Subscribe"}
-            </Button>
-          ) : (
-            <div className="flex shrink-0">
-              <Button
-                size="sm"
-                className="rounded-r-none"
-                onClick={() => runSql("auto")}
-                disabled={isExecuteDisabled}
-              >
-                <Play data-icon="inline-start" />
-                {isRunning ? "Running..." : executeLabel}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    size="sm"
-                    className="rounded-l-none border-l border-primary-foreground/20 px-2"
-                    disabled={isExecuteDisabled}
-                    aria-label="Execute options"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onSelect={() => runSql("all")}
-                    title="Execute all statements in the editor"
-                  >
-                    Execute All
-                    <DropdownMenuShortcut>Cmd/Ctrl+Enter</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => runSql("selected")}
-                    disabled={!hasSelectedSql}
-                    title="Execute only the selected text in the editor"
-                  >
-                    Selected
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="secondary"
-                size="icon-sm"
-                aria-label="More query actions"
-              >
-                <MoreHorizontal data-icon="only" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setIsEditingTitle(true)}>
-                <PenLine className="mr-2 h-3.5 w-3.5" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onSaveCopy}>
-                <Copy className="mr-2 h-3.5 w-3.5" />
-                Save a copy
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onDelete} className="text-destructive">
-                <Trash2 className="mr-2 h-3.5 w-3.5" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-
-      {isLive && showSubscriptionOptions && (
-        <div className="flex shrink-0 items-center gap-4 border-b border-border bg-muted/30 px-4 py-2">
-          <StudioChromeLabel>Options</StudioChromeLabel>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-muted-foreground" htmlFor="opt-last-rows">last_rows</label>
-            <Input
-              id="opt-last-rows"
-              type="number"
-              min={0}
-              placeholder="–"
-              value={subscriptionOptions?.last_rows ?? ""}
-              onChange={(e) => {
-                const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
-                onSubscriptionOptionsChange({
-                  ...subscriptionOptions,
-                  last_rows: Number.isFinite(val) ? val : undefined,
-                });
-              }}
-              className="h-7 w-20 border-border bg-background text-xs"
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-muted-foreground" htmlFor="opt-batch-size">batch_size</label>
-            <Input
-              id="opt-batch-size"
-              type="number"
-              min={0}
-              placeholder="–"
-              value={subscriptionOptions?.batch_size ?? ""}
-              onChange={(e) => {
-                const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
-                onSubscriptionOptionsChange({
-                  ...subscriptionOptions,
-                  batch_size: Number.isFinite(val) ? val : undefined,
-                });
-              }}
-              className="h-7 w-20 border-border bg-background text-xs"
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-muted-foreground" htmlFor="opt-from">from</label>
-            <Input
-              id="opt-from"
-              type="text"
-              placeholder="–"
-              value={subscriptionOptions?.from ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                onSubscriptionOptionsChange({
-                  ...subscriptionOptions,
-                  from: raw || undefined,
-                });
-              }}
-              className="h-7 w-28 border-border bg-background text-xs"
-            />
-          </div>
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground" htmlFor="opt-auto-fetch-batches">
-            <input
-              id="opt-auto-fetch-batches"
-              type="checkbox"
-              checked={subscriptionOptions?.auto_fetch_batches ?? false}
-              onChange={(event) => {
-                onSubscriptionOptionsChange({
-                  ...subscriptionOptions,
-                  auto_fetch_batches: event.target.checked,
-                });
-              }}
-              className="h-3.5 w-3.5 rounded border-border accent-primary"
-            />
-            auto fetch batches
-          </label>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => onSubscriptionOptionsChange(undefined)}
-          >
-            Clear
-          </Button>
-        </div>
-      )}
-
       <div className="min-h-0 flex-1 overflow-hidden">
         <Editor
           height="100%"

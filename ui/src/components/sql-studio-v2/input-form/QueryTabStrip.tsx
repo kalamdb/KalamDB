@@ -9,6 +9,7 @@ interface QueryTabStripProps {
   onTabSelect: (tabId: string) => void;
   onAddTab: () => void;
   onCloseTab: (tabId: string) => void;
+  onRenameTab: (tabId: string, title: string) => void;
 }
 
 export function QueryTabStrip({
@@ -17,9 +18,12 @@ export function QueryTabStrip({
   onTabSelect,
   onAddTab,
   onCloseTab,
+  onRenameTab,
 }: QueryTabStripProps) {
   const previousUnreadCountsRef = useRef<Record<string, number>>({});
   const [flashingTabIds, setFlashingTabIds] = useState<Record<string, boolean>>({});
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
 
   useEffect(() => {
     const nextUnreadCounts: Record<string, number> = {};
@@ -63,26 +67,64 @@ export function QueryTabStrip({
     };
   }, [activeTabId, tabs]);
 
+  const startRename = (tab: QueryTab) => {
+    setEditingTabId(tab.id);
+    setDraftTitle(tab.title);
+  };
+
+  const commitRename = () => {
+    if (!editingTabId) {
+      return;
+    }
+
+    const normalizedTitle = draftTitle.trim();
+    const currentTab = tabs.find((tab) => tab.id === editingTabId);
+    if (currentTab && normalizedTitle.length > 0 && normalizedTitle !== currentTab.title) {
+      onRenameTab(editingTabId, normalizedTitle);
+    }
+    setEditingTabId(null);
+    setDraftTitle("");
+  };
+
+  const cancelRename = () => {
+    setEditingTabId(null);
+    setDraftTitle("");
+  };
+
   return (
-    <div className="flex items-center border-b border-border bg-background">
+    <div className="flex h-12 items-center border-b border-border bg-background">
       <div className="flex min-w-0 flex-1 overflow-x-auto">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
+          const isEditing = tab.id === editingTabId;
           const isFlashing = flashingTabIds[tab.id] === true;
           const isLive = tab.isLive;
           const isLiveConnecting = isLive && tab.liveStatus === "connecting";
           const isLiveConnected = isLive && tab.liveStatus === "connected";
           const isLiveErrored = isLive && tab.liveStatus === "error";
+          const saveStateLabel = tab.isDirty || !tab.lastSavedAt ? "Draft" : "Saved";
           return (
-            <button
+            <div
               key={tab.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => onTabSelect(tab.id)}
+              onDoubleClick={() => startRename(tab)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) {
+                  return;
+                }
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onTabSelect(tab.id);
+                }
+              }}
               className={cn(
-                "group relative flex h-11 min-w-[168px] max-w-[280px] items-center gap-2 overflow-hidden border-r border-border px-3 text-sm transition-colors",
+                "cursor-default",
+                "group relative flex h-12 min-w-[190px] max-w-[280px] items-center gap-2 overflow-hidden border-r border-border px-3 text-sm transition-colors",
                 isActive
-                  ? "border-t-2 border-t-sky-500 bg-background text-foreground"
-                  : "text-muted-foreground hover:bg-muted :bg-accent",
+                  ? "border-t border-t-foreground bg-background text-foreground"
+                  : "text-muted-foreground hover:bg-muted",
                 isLive && "backdrop-blur-sm",
                 isLiveConnected && (isActive
                   ? "bg-sky-500/12 shadow-[0_0_24px_rgba(14,165,233,0.16)]"
@@ -93,13 +135,12 @@ export function QueryTabStrip({
                 isFlashing && !isActive && "bg-amber-500/10 ring-inset ring-1 ring-amber-500/30 animate-[pulse_0.8s_ease-out_1]",
               )}
             >
-              <FileCode2 className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
-              <span className="min-w-0 flex-1 truncate text-left">
+              <span className="flex min-w-0 flex-1 items-center gap-2 whitespace-nowrap text-left">
                 {isLive && (
                   <span
                     aria-label={`Live query ${tab.liveStatus}`}
                     className={cn(
-                      "mr-2 inline-flex h-2.5 w-2.5 align-middle rounded-full",
+                      "inline-flex h-2.5 w-2.5 shrink-0 rounded-full",
                       isLiveErrored && "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.32)]",
                       isLiveConnecting && "bg-sky-400/90 ring-2 ring-sky-500/20",
                       isLiveConnected && "bg-sky-500 shadow-[0_0_12px_rgba(14,165,233,0.36)] animate-pulse",
@@ -107,7 +148,34 @@ export function QueryTabStrip({
                     )}
                   />
                 )}
-                <span className="align-middle">{tab.title}</span>
+                {isEditing ? (
+                  <input
+                    aria-label="Rename query tab"
+                    value={draftTitle}
+                    autoFocus
+                    onClick={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        commitRename();
+                      }
+                      if (event.key === "Escape") {
+                        cancelRename();
+                      }
+                    }}
+                    className="h-7 w-full rounded border border-input bg-background px-2 text-xs text-foreground outline-none ring-1 ring-ring"
+                  />
+                ) : (
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <FileCode2 className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-primary" : "text-muted-foreground")} />
+                    <span className="truncate align-middle">{tab.title}</span>
+                    <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                      {saveStateLabel}
+                    </span>
+                  </span>
+                )}
               </span>
               <span className="ml-auto flex shrink-0 items-center gap-1.5">
                 {tab.unreadChangeCount > 0 && !isActive && (
@@ -128,14 +196,14 @@ export function QueryTabStrip({
                   </span>
                 )}
               </span>
-            </button>
+            </div>
           );
         })}
 
         <button
           type="button"
           onClick={onAddTab}
-          className="flex h-11 w-11 shrink-0 items-center justify-center border-r border-border text-muted-foreground transition hover:bg-muted hover:text-foreground :bg-accent :text-foreground"
+          className="flex h-12 w-10 shrink-0 items-center justify-center border-r border-border text-muted-foreground transition hover:bg-muted hover:text-foreground"
           title="New query tab"
         >
           <Plus className="h-4 w-4" />

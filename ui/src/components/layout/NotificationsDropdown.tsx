@@ -108,8 +108,8 @@ export function NotificationsDropdown() {
     <>
       <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="relative" aria-label="Open notifications">
-            <Bell className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="relative h-8 w-8" aria-label="Open notifications">
+            <Bell className="h-4 w-4" />
             {runningJobsCount > 0 && (
               <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-yellow-400 opacity-75"></span>

@@ -1,6 +1,19 @@
 import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  ChevronDown,
+  Clock3,
+  Copy,
+  MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
+  Play,
+  RadioTower,
+  Save,
+  Settings2,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { StudioExplorerPanel } from "@/components/sql-studio-v2/browser-tree/StudioExplorerPanel";
 import { StudioTabsHeader } from "@/components/sql-studio-v2/studio-tabs/StudioTabsHeader";
 import { EditorSidebar } from "@/components/sql-studio-v2/table-editor/EditorSidebar";
@@ -23,6 +36,15 @@ const StudioEditorPanel = lazy(() =>
 import { StudioInspectorPanel } from "@/components/sql-studio-v2/inspector/StudioInspectorPanel";
 import { StudioResultsGrid } from "@/components/sql-studio-v2/preview/StudioResultsGrid";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useAuth } from "@/lib/auth";
@@ -115,6 +137,8 @@ import {
 
 const WORKSPACE_PERSIST_DEBOUNCE_MS = 750;
 
+type ExecuteMode = "all" | "selected";
+
 interface LiveBatchState {
   hasMore: boolean;
   batchNum?: number;
@@ -174,6 +198,33 @@ function stripTrailingOptionsClause(sql: string): string {
 
 function displayBatchNum(batchNum: number | undefined): number | undefined {
   return Number.isFinite(batchNum) ? Number(batchNum) + 1 : undefined;
+}
+
+function formatLastSavedLabel(lastSavedAt: string | null): string {
+  if (!lastSavedAt) {
+    return "Never saved";
+  }
+
+  const savedAt = new Date(lastSavedAt);
+  const diffMs = Date.now() - savedAt.getTime();
+  if (Number.isNaN(savedAt.getTime()) || diffMs < 0) {
+    return "Saved just now";
+  }
+
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  if (diffMinutes < 1) {
+    return "Saved just now";
+  }
+  if (diffMinutes < 60) {
+    return `Saved ${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `Saved ${diffHours}h ago`;
+  }
+
+  return `Saved ${savedAt.toLocaleDateString()}`;
 }
 
 function isWsErrorFrame(messageType: string): boolean {
@@ -274,6 +325,8 @@ export default function SqlStudio() {
   const [isUiHydrated, setIsUiHydrated] = useState(false);
   const [isRemoteWorkspaceHydrated, setIsRemoteWorkspaceHydrated] = useState(false);
   const [liveBatchByTab, setLiveBatchByTab] = useState<Record<string, LiveBatchState>>({});
+  const [selectedEditorSql, setSelectedEditorSql] = useState("");
+  const [showSubscriptionOptions, setShowSubscriptionOptions] = useState(false);
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
   const liveRequestNextBatchRef = useRef<Record<string, () => Promise<void>>>({});
   const liveGenRef = useRef<Record<string, number>>({});
@@ -310,6 +363,11 @@ export default function SqlStudio() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  useEffect(() => {
+    setSelectedEditorSql("");
+    setShowSubscriptionOptions(false);
+  }, [activeTab?.id]);
 
   const applySyncedWorkspace = useCallback((workspace: SqlStudioSyncedWorkspaceState) => {
     dispatch(hydrateSqlStudioWorkspace({
@@ -1018,20 +1076,21 @@ export default function SqlStudio() {
     };
   }, [activeTab, addTab, saveActiveTab]);
 
-  const renameActiveTab = useCallback((title: string) => {
-    if (!activeTab) {
+  const renameTab = useCallback((tabId: string, title: string) => {
+    const tab = tabs.find((item) => item.id === tabId);
+    if (!tab) {
       return;
     }
 
-    updateTab(activeTab.id, { title });
-    if (activeTab.savedQueryId) {
+    updateTab(tab.id, { title });
+    if (tab.savedQueryId) {
       dispatch(setWorkspaceSavedQueries(
         savedQueries.map((item) =>
-          item.id === activeTab.savedQueryId ? { ...item, title } : item,
+          item.id === tab.savedQueryId ? { ...item, title } : item,
         ),
       ));
     }
-  }, [activeTab, dispatch, savedQueries, updateTab]);
+  }, [dispatch, savedQueries, tabs, updateTab]);
 
   const deleteActiveTab = useCallback(() => {
     if (!activeTab) {
@@ -1152,6 +1211,258 @@ export default function SqlStudio() {
     user?.username,
   ]);
 
+  const hasSelectedSql = selectedEditorSql.trim().length > 0;
+  const executeLabel = hasSelectedSql ? "Run selected" : "Run";
+  const isConnectingLive = activeTab?.isLive && activeTab.liveStatus === "connecting";
+  const isExecuteDisabled = !activeTab
+    || (activeTab.isLive ? !activeTab.sql.trim() : isRunning || !activeTab.sql.trim());
+  const lastSavedLabel = formatLastSavedLabel(activeTab?.lastSavedAt ?? null);
+
+  const executeFromToolbar = (mode: ExecuteMode | "auto") => {
+    if (!activeTab) {
+      return;
+    }
+
+    const resolvedMode: ExecuteMode = mode === "auto"
+      ? (hasSelectedSql ? "selected" : "all")
+      : mode;
+    const sqlToRun = resolvedMode === "selected" ? selectedEditorSql : activeTab.sql;
+    if (!sqlToRun.trim()) {
+      return;
+    }
+
+    void runActiveQuery(sqlToRun);
+  };
+
+  const toggleActiveTabLive = (checked: boolean) => {
+    if (!activeTab) {
+      return;
+    }
+
+    if (!checked && (activeTab.liveStatus === "connected" || activeTab.liveStatus === "connecting")) {
+      stopLiveQuery(activeTab.id);
+    }
+    const nextSql = checked
+      ? stripAutoSelectLimitForLiveSql(activeTab.sql)
+      : activeTab.sql;
+    updateActiveTab({ isLive: checked, liveStatus: "idle", sql: nextSql });
+    if (!checked) {
+      setShowSubscriptionOptions(false);
+    }
+  };
+
+  const sqlResultActions = activeTab ? (
+    <>
+      <div className="hidden items-center gap-2 lg:flex">
+        <div className="flex items-center gap-2 border-r border-border pr-3">
+          <Switch checked={activeTab.isLive} onCheckedChange={toggleActiveTabLive} />
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <RadioTower className="h-3 w-3" />
+            Live
+          </span>
+          {activeTab.isLive && (
+            <div className="relative">
+              <Button
+                variant="secondary"
+                size="icon-xs"
+                onClick={() => setShowSubscriptionOptions((prev) => !prev)}
+                aria-label="Subscription options"
+                title="Subscription options"
+              >
+                <Settings2 data-icon="only" />
+              </Button>
+              {showSubscriptionOptions && (
+                <div
+                  data-testid="subscription-options-panel"
+                  className="absolute right-0 top-[calc(100%+6px)] z-50 w-[520px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-xs font-medium text-foreground">Subscription options</span>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => updateActiveTab({ subscriptionOptions: undefined, isDirty: true })}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs text-muted-foreground" htmlFor={`opt-last-rows-${activeTab.id}`}>last_rows</label>
+                      <Input
+                        id={`opt-last-rows-${activeTab.id}`}
+                        type="number"
+                        min={0}
+                        placeholder="–"
+                        value={activeTab.subscriptionOptions?.last_rows ?? ""}
+                        onChange={(event) => {
+                          const val = event.target.value ? parseInt(event.target.value, 10) : undefined;
+                          updateActiveTab({
+                            subscriptionOptions: {
+                              ...activeTab.subscriptionOptions,
+                              last_rows: Number.isFinite(val) ? val : undefined,
+                            },
+                            isDirty: true,
+                          });
+                        }}
+                        className="block h-7 border-border bg-background text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-xs text-muted-foreground" htmlFor={`opt-batch-size-${activeTab.id}`}>batch_size</label>
+                      <Input
+                        id={`opt-batch-size-${activeTab.id}`}
+                        type="number"
+                        min={0}
+                        placeholder="–"
+                        value={activeTab.subscriptionOptions?.batch_size ?? ""}
+                        onChange={(event) => {
+                          const val = event.target.value ? parseInt(event.target.value, 10) : undefined;
+                          updateActiveTab({
+                            subscriptionOptions: {
+                              ...activeTab.subscriptionOptions,
+                              batch_size: Number.isFinite(val) ? val : undefined,
+                            },
+                            isDirty: true,
+                          });
+                        }}
+                        className="block h-7 border-border bg-background text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-xs text-muted-foreground" htmlFor={`opt-from-${activeTab.id}`}>from</label>
+                      <Input
+                        id={`opt-from-${activeTab.id}`}
+                        type="text"
+                        placeholder="–"
+                        value={activeTab.subscriptionOptions?.from ?? ""}
+                        onChange={(event) => {
+                          const raw = event.target.value.trim();
+                          updateActiveTab({
+                            subscriptionOptions: {
+                              ...activeTab.subscriptionOptions,
+                              from: raw || undefined,
+                            },
+                            isDirty: true,
+                          });
+                        }}
+                        className="block h-7 border-border bg-background text-xs"
+                      />
+                    </div>
+                  </div>
+                  <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground" htmlFor={`opt-auto-fetch-batches-${activeTab.id}`}>
+                    <input
+                      id={`opt-auto-fetch-batches-${activeTab.id}`}
+                      type="checkbox"
+                      checked={activeTab.subscriptionOptions?.auto_fetch_batches ?? false}
+                      onChange={(event) => {
+                        updateActiveTab({
+                          subscriptionOptions: {
+                            ...activeTab.subscriptionOptions,
+                            auto_fetch_batches: event.target.checked,
+                          },
+                          isDirty: true,
+                        });
+                      }}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary"
+                    />
+                    auto fetch batches
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock3 className="h-3 w-3" />
+          {lastSavedLabel}
+        </span>
+      </div>
+      <Button
+        variant="secondary"
+        size="xs"
+        className="h-[26px]"
+        onClick={() => saveTab(activeTab.id, false)}
+      >
+        <Save data-icon="inline-start" />
+        Save
+      </Button>
+      {activeTab.isLive ? (
+        <Button
+          size="xs"
+          className="h-[26px]"
+          onClick={() => executeFromToolbar("auto")}
+          disabled={isExecuteDisabled}
+        >
+          {activeTab.liveStatus === "connected" || isConnectingLive ? (
+            <Square data-icon="inline-start" />
+          ) : (
+            <Play data-icon="inline-start" />
+          )}
+          {activeTab.liveStatus === "connected"
+            ? "Stop"
+            : isConnectingLive
+              ? "Connecting..."
+              : "Subscribe"}
+        </Button>
+      ) : (
+        <div className="flex shrink-0">
+          <Button
+            size="xs"
+            className="h-[26px] rounded-r-none"
+            onClick={() => executeFromToolbar("auto")}
+            disabled={isExecuteDisabled}
+          >
+            <Play data-icon="inline-start" />
+            {isRunning ? "Running..." : executeLabel}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="xs"
+                className="h-[26px] rounded-l-none border-l border-primary-foreground/20 px-2"
+                disabled={isExecuteDisabled}
+                aria-label="Execute options"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => executeFromToolbar("all")}>
+                Execute all
+                <DropdownMenuShortcut>Cmd/Ctrl+Enter</DropdownMenuShortcut>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => executeFromToolbar("selected")}
+                disabled={!hasSelectedSql}
+              >
+                Selected
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="secondary" size="icon-xs" className="h-[26px]" aria-label="More query actions">
+            <MoreHorizontal data-icon="only" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => saveTab(activeTab.id, true)}>
+            <Copy className="mr-2 h-3.5 w-3.5" />
+            Save a copy
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={deleteActiveTab} className="text-destructive">
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  ) : null;
+
   if (!activeTab) {
     return (
       <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
@@ -1254,6 +1565,7 @@ export default function SqlStudio() {
                 onTabSelect={(tabId) => dispatch(setWorkspaceActiveTabId(tabId))}
                 onAddTab={addTab}
                 onCloseTab={closeTab}
+                onRenameTab={renameTab}
               />
 
               <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
@@ -1273,29 +1585,10 @@ export default function SqlStudio() {
                   <Suspense fallback={<EditorSkeleton />}>
                   <StudioEditorPanel
                     schema={schema}
-                    tabTitle={activeTab.title}
-                    lastSavedAt={activeTab.lastSavedAt}
-                    isLive={activeTab.isLive}
-                    liveStatus={activeTab.liveStatus}
                     sql={activeTab.sql}
-                    isRunning={isRunning}
-                    subscriptionOptions={activeTab.subscriptionOptions}
                     onSqlChange={(value) => updateActiveTab({ sql: value, isDirty: true })}
                     onRun={(runSql) => runActiveQuery(runSql)}
-                    onToggleLive={(checked) => {
-                      if (!checked && (activeTab.liveStatus === "connected" || activeTab.liveStatus === "connecting")) {
-                        stopLiveQuery(activeTab.id);
-                      }
-                      const nextSql = checked
-                        ? stripAutoSelectLimitForLiveSql(activeTab.sql)
-                        : activeTab.sql;
-                      updateActiveTab({ isLive: checked, liveStatus: "idle", sql: nextSql });
-                    }}
-                    onSubscriptionOptionsChange={(options) => updateActiveTab({ subscriptionOptions: options, isDirty: true })}
-                    onRename={renameActiveTab}
-                    onSave={() => saveTab(activeTab.id, false)}
-                    onSaveCopy={() => saveTab(activeTab.id, true)}
-                    onDelete={deleteActiveTab}
+                    onSelectedSqlChange={setSelectedEditorSql}
                   />
                   </Suspense>
                 </ResizablePanel>
@@ -1316,6 +1609,7 @@ export default function SqlStudio() {
                     onResultViewChange={(view) => updateActiveTab({ resultView: view })}
                     onFetchNextBatch={() => fetchNextLiveBatch(activeTab.id)}
                     onRefreshAfterCommit={() => executeQueryForTab(activeTab.id, activeTab.sql, activeTab.title)}
+                    actions={sqlResultActions}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
