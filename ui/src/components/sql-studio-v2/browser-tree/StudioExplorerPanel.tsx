@@ -5,6 +5,7 @@ import {
   Database,
   FolderTree,
   KeyRound,
+  Loader2,
   RefreshCw,
   Radio,
   Search,
@@ -232,8 +233,15 @@ const StudioExplorerPanelComponent = ({
               {namespaceSectionExpanded && (
                 <div className="space-y-0.5 mt-0.5 pb-2">
                   {filteredSchema.length === 0 && (
-                    <div className="px-8 py-1.5 text-xs text-muted-foreground">
-                      No matching namespaces or tables.
+                    <div className="flex items-center px-8 py-1.5 text-xs text-muted-foreground">
+                      {schema.length === 0 && isRefreshing ? (
+                        <>
+                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                          Loading schema…
+                        </>
+                      ) : (
+                        "No matching namespaces or tables."
+                      )}
                     </div>
                   )}
                   {filteredSchema.map((namespace) => {
