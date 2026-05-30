@@ -24,3 +24,6 @@ mod test_cli_doc_matrix;
 
 #[path = "cli/test_cli_update.rs"]
 mod test_cli_update;
+
+#[path = "cli/test_cli_command_surface.rs"]
+mod test_cli_command_surface;

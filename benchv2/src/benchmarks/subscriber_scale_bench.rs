@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use kalam_client::{ChangeEvent, KalamLinkClient, SubscriptionConfig};
 use serde_json::Value;
 use tokio::sync::{watch, Mutex, Semaphore};
+use tokio::task::JoinSet;
 
 use crate::benchmarks::Benchmark;
 use crate::client::KalamClient;
@@ -132,6 +133,9 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(45);
 
 /// How long to wait when validating each configured WebSocket target.
 const TARGET_VALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How many pooled WebSocket clients to preconnect concurrently before tier ramp-up.
+const DEFAULT_PRECONNECT_BATCH: usize = 200;
 
 /// Backend live-query hard limit enforced per shared WebSocket connection.
 const DEFAULT_SUBSCRIPTIONS_PER_SHARED_WS: usize = 100;
@@ -289,6 +293,13 @@ impl Benchmark for SubscriberScaleBench {
                 subscriptions_per_ws,
             )?);
             let pooled_ws_connections = pooled_links.iter().map(Vec::len).sum::<usize>();
+            let preconnect_batch = preconnect_batch_limit();
+            let (preconnected, preconnect_time) = preconnect_pooled_links(
+                pooled_links.as_ref(),
+                connect_timeout,
+                preconnect_batch,
+            )
+            .await?;
             let single_target_ws_limit = detected_single_target_ws_limit().unwrap_or(32_000);
             let single_target_ws_limit_label = format_num(single_target_ws_limit as u32);
             if ws_targets.len() == 1
@@ -341,6 +352,12 @@ impl Benchmark for SubscriberScaleBench {
                 ws_targets.len(),
                 subscriptions_per_ws,
                 pooled_ws_connections,
+            );
+            println!(
+                "  Pooled preconnect: connected {} shared WS clients in {} (batch={})",
+                format_count(preconnected),
+                format_duration(preconnect_time),
+                format_count(preconnect_batch),
             );
             println!("  WebSocket target validation: {} endpoint(s) reachable", ws_targets.len());
             if !client.ws_local_bind_addresses().is_empty() {
@@ -903,6 +920,79 @@ fn connect_timeout_duration() -> Duration {
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_CONNECT_TIMEOUT_SECS),
     )
+}
+
+fn preconnect_batch_limit() -> usize {
+    std::env::var("KALAMDB_BENCH_SUBSCRIBER_PRECONNECT_BATCH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_PRECONNECT_BATCH)
+}
+
+async fn preconnect_pooled_links(
+    pool: &[Vec<KalamLinkClient>],
+    connect_timeout: Duration,
+    max_in_flight: usize,
+) -> Result<(usize, Duration), String> {
+    let total = pool.iter().map(Vec::len).sum::<usize>();
+    if total == 0 {
+        return Ok((0, Duration::ZERO));
+    }
+
+    let started = Instant::now();
+    let semaphore = Arc::new(Semaphore::new(max_in_flight.max(1)));
+    let mut join_set = JoinSet::new();
+
+    for links in pool {
+        for link in links {
+            let link = link.clone();
+            let semaphore = semaphore.clone();
+            join_set.spawn(async move {
+                let _permit = semaphore
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| "preconnect semaphore closed".to_string())?;
+
+                match tokio::time::timeout(connect_timeout, link.connect()).await {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(format!("{}", e)),
+                    Err(_) => Err(format!("timeout after {}", format_duration(connect_timeout))),
+                }
+            });
+        }
+    }
+
+    let mut failures = 0usize;
+    let mut failure_samples = Vec::new();
+    while let Some(joined) = join_set.join_next().await {
+        match joined {
+            Ok(Ok(())) => {},
+            Ok(Err(err)) => {
+                failures += 1;
+                if failure_samples.len() < 5 {
+                    failure_samples.push(err);
+                }
+            },
+            Err(err) => {
+                failures += 1;
+                if failure_samples.len() < 5 {
+                    failure_samples.push(format!("join error: {}", err));
+                }
+            },
+        }
+    }
+
+    if failures > 0 {
+        return Err(format!(
+            "Failed to preconnect {}/{} pooled WS client(s). Sample failures: {}",
+            failures,
+            total,
+            failure_samples.join(" | ")
+        ));
+    }
+
+    Ok((total, started.elapsed()))
 }
 
 fn build_shared_link_pool(
