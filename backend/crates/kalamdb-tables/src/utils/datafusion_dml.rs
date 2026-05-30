@@ -251,14 +251,6 @@ fn try_read_memory_source_batches(
     Ok(Some(batches))
 }
 
-pub async fn collect_matching_rows(
-    provider: &dyn TableProvider,
-    state: &dyn Session,
-    filters: &[Expr],
-) -> DataFusionResult<Vec<Row>> {
-    collect_matching_rows_with_projection(provider, state, filters, None).await
-}
-
 pub async fn collect_matching_rows_with_projection(
     provider: &dyn TableProvider,
     state: &dyn Session,
@@ -373,18 +365,6 @@ pub fn extract_pk_value(row: &Row, pk_column: &str) -> DataFusionResult<String> 
 
     scalar_to_pk_string(scalar)
         .map_err(|e| DataFusionError::Execution(format!("Invalid primary key value: {}", e)))
-}
-
-pub fn evaluate_assignment_expr(
-    state: &dyn Session,
-    schema: &SchemaRef,
-    row: &Row,
-    expr: &Expr,
-) -> DataFusionResult<ScalarValue> {
-    let df_schema = DFSchema::try_from(Arc::clone(schema))?;
-    let batch = build_row_batch(schema, row)?;
-
-    evaluate_expr_against_batch(state, &df_schema, &batch, expr)
 }
 
 pub fn evaluate_assignment_values(

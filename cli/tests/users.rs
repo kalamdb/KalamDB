@@ -14,3 +14,6 @@ mod test_admin;
 
 #[path = "users/test_concurrent_users.rs"]
 mod test_concurrent_users;
+
+#[path = "users/test_sql_file_corpus.rs"]
+mod test_sql_file_corpus;

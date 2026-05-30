@@ -98,11 +98,6 @@ impl CommonError {
         Self::PermissionDenied(msg.into())
     }
 
-    /// Creates a ConfigurationError with a message.
-    pub fn configuration_error(msg: impl Into<String>) -> Self {
-        Self::ConfigurationError(msg.into())
-    }
-
     /// Creates an Internal error with a message.
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())

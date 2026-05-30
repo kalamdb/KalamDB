@@ -6,7 +6,7 @@
 //! - ALTER TABLE messages MODIFY COLUMN age BIGINT
 
 use kalamdb_commons::{
-    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableAccess, TableName},
+    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableAccess, TableId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression},
 };
 use kalamdb_system::VectorMetric;
@@ -21,7 +21,9 @@ use sqlparser::{
 };
 
 use crate::{
-    compatibility::map_sql_type_to_kalam, ddl::DdlResult, parser::utils::parse_sql_statements,
+    compatibility::map_sql_type_to_kalam,
+    ddl::{parsing::parse_table_reference, DdlResult},
+    parser::utils::parse_sql_statements,
 };
 
 /// Column alteration operation
@@ -33,6 +35,7 @@ pub enum ColumnOperation {
         data_type: KalamDataType,
         nullable: bool,
         default_value: Option<ColumnDefault>,
+        if_not_exists: bool,
     },
     /// Drop an existing column
     Drop { column_name: String },
@@ -234,14 +237,12 @@ fn resolve_table_reference_from_str(
     table_ref: &str,
     current_namespace: &NamespaceId,
 ) -> DdlResult<(NamespaceId, TableName)> {
-    if let Some((namespace, table)) = table_ref.split_once('.') {
-        if namespace.is_empty() || table.is_empty() {
-            return Err("Invalid table reference. Use 'table' or 'namespace.table'".to_string());
-        }
-        Ok((NamespaceId::from(namespace), TableName::from(table)))
-    } else {
-        Ok((current_namespace.clone(), TableName::from(table_ref)))
-    }
+    let (namespace, table_name) = parse_table_reference(table_ref)?;
+    let table_id = TableId::try_from_strings(
+        namespace.as_deref().unwrap_or(current_namespace.as_str()),
+        &table_name,
+    )?;
+    Ok(table_id.into_parts())
 }
 
 fn normalize_alter_sql(sql: &str) -> String {
@@ -286,12 +287,13 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
         AlterTableOperation::AddColumn {
             column_def,
             column_position,
+            if_not_exists,
             ..
         } => {
             if column_position.is_some() {
                 return Err("Column position modifiers (FIRST/AFTER) are not supported".to_string());
             }
-            build_add_column_operation(column_def)
+            build_add_column_operation(column_def, *if_not_exists)
         },
         AlterTableOperation::DropColumn {
             column_names,
@@ -326,7 +328,7 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
     }
 }
 
-fn build_add_column_operation(column_def: &ColumnDef) -> DdlResult<ColumnOperation> {
+fn build_add_column_operation(column_def: &ColumnDef, if_not_exists: bool) -> DdlResult<ColumnOperation> {
     let default_nullable = true;
     let column_name = column_def.name.value.clone();
     let data_type = map_sql_type_to_kalam(&column_def.data_type)?;
@@ -337,6 +339,7 @@ fn build_add_column_operation(column_def: &ColumnDef) -> DdlResult<ColumnOperati
         data_type,
         nullable,
         default_value,
+        if_not_exists,
     })
 }
 
@@ -715,11 +718,29 @@ mod tests {
                 data_type,
                 nullable,
                 default_value,
+                if_not_exists,
             } => {
                 assert_eq!(column_name, "age");
                 assert_eq!(data_type, KalamDataType::Int);
                 assert!(nullable);
                 assert_eq!(default_value, None);
+                assert!(!if_not_exists);
+            },
+            _ => panic!("Expected Add operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_add_column_if_not_exists() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS age INT",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::Add { if_not_exists, .. } => {
+                assert!(if_not_exists);
             },
             _ => panic!("Expected Add operation"),
         }

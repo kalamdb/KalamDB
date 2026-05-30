@@ -16,7 +16,7 @@ fn oidc_browser_authorization_url_uses_code_flow_with_pkce() {
     )
     .set_auth_uri(AuthUrl::new("https://issuer.example/authorize".to_string()).unwrap())
     .set_token_uri(TokenUrl::new("https://issuer.example/token".to_string()).unwrap())
-    .set_redirect_uri(RedirectUrl::new("http://127.0.0.1:8787/callback".to_string()).unwrap());
+    .set_redirect_uri(RedirectUrl::new("http://localhost:8787/callback".to_string()).unwrap());
     let scopes = vec![
         "openid".to_string(),
         "email".to_string(),
@@ -32,7 +32,7 @@ fn oidc_browser_authorization_url_uses_code_flow_with_pkce() {
 
     assert_eq!(query.get("response_type"), Some(&"code".to_string()));
     assert_eq!(query.get("client_id"), Some(&"kalam-cli".to_string()));
-    assert_eq!(query.get("redirect_uri"), Some(&"http://127.0.0.1:8787/callback".to_string()));
+    assert_eq!(query.get("redirect_uri"), Some(&"http://localhost:8787/callback".to_string()));
     assert_eq!(query.get("code_challenge_method"), Some(&"S256".to_string()));
     assert!(query.get("code_challenge").is_some_and(|value| !value.is_empty()));
     assert!(query.get("state").is_some_and(|value| !value.is_empty()));

@@ -15,6 +15,8 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::CreateTopicStatement;
 use kalamdb_system::providers::topics::models::Topic;
 
+use super::name_resolution::resolve_topic_name;
+
 pub struct CreateTopicHandler {
     app_context: Arc<AppContext>,
 }
@@ -61,9 +63,10 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
         &self,
         statement: CreateTopicStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let namespace_id = Self::extract_namespace_id(&statement.topic_name)?;
+        let topic_name = resolve_topic_name(&statement.topic_name, context);
+        let namespace_id = Self::extract_namespace_id(&topic_name)?;
         let namespaces_provider = self.app_context.system_tables().namespaces();
         if namespaces_provider.get_namespace_async(&namespace_id).await?.is_none() {
             return Err(KalamDbError::NotFound(format!(
@@ -72,16 +75,21 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
             )));
         }
 
-        let topic_id = TopicId::new(&statement.topic_name);
+        let topic_id = TopicId::new(&topic_name);
         let topics_provider = self.app_context.system_tables().topics();
         if topics_provider.get_topic_by_id_async(&topic_id).await?.is_some() {
+            if statement.if_not_exists {
+                return Ok(ExecutionResult::Success {
+                    message: format!("Topic {} already exists (IF NOT EXISTS)", topic_name),
+                });
+            }
             return Err(KalamDbError::AlreadyExists(format!(
                 "Topic '{}' already exists",
-                statement.topic_name
+                topic_name
             )));
         }
 
-        let mut topic = Topic::new(topic_id.clone(), statement.topic_name.clone());
+        let mut topic = Topic::new(topic_id.clone(), topic_name.clone());
         topic.partitions = statement.partitions.unwrap_or(1);
         if topic.partitions == 0 {
             return Err(KalamDbError::InvalidOperation(
@@ -106,7 +114,7 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
         Ok(ExecutionResult::Success {
             message: format!(
                 "Created topic '{}' with {} partition(s)",
-                statement.topic_name, topic.partitions
+                topic_name, topic.partitions
             ),
         })
     }

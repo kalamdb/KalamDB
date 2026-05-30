@@ -88,12 +88,17 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
                     table_id.table_name().as_str()
                 );
 
-                let job_id: JobId = app_context
+                let job_id: Option<JobId> = match app_context
                     .job_manager()
                     .create_job_typed(JobType::Flush, params, Some(idempotency_key), None)
-                    .await?;
+                    .await
+                {
+                    Ok(job_id) => Some(job_id),
+                    Err(KalamDbError::IdempotentConflict(_)) => None,
+                    Err(err) => return Err(err),
+                };
 
-                Ok(Some(job_id))
+                Ok(job_id)
             });
 
             in_flight += 1;

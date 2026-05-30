@@ -91,7 +91,7 @@ pub(super) async fn run_websocket(
                             break;
                         }
                         Some(ConnectionEvent::HeartbeatTimeout) => {
-                            warn!("WebSocket heartbeat timeout: {}", connection_id);
+                            debug!("WebSocket heartbeat timeout: {}", connection_id);
                             let _ = session.close(Some(CloseReason {
                                 code: CloseCode::Normal,
                                 description: Some("Heartbeat timeout".into()),
@@ -99,7 +99,7 @@ pub(super) async fn run_websocket(
                             break;
                         }
                         Some(ConnectionEvent::Shutdown) => {
-                            info!("WebSocket shutdown requested: {}", connection_id);
+                            debug!("WebSocket shutdown requested: {}", connection_id);
                             let _ = session.close(Some(CloseReason {
                                 code: CloseCode::Away,
                                 description: Some("Server shutting down".into()),

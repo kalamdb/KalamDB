@@ -11,6 +11,7 @@
 use kalamdb_commons::models::{PayloadMode, TableId, TopicId, TopicOp};
 
 use crate::{
+    ddl::parsing::parse_table_reference,
     parser::{
         query_parser::QueryParser,
         utils::{extract_identifier, extract_keyword_value, normalize_sql},
@@ -29,6 +30,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTopicStatement {
     pub topic_name: String,
+    pub if_not_exists: bool,
     pub partitions: Option<u32>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
     pub retention_seconds: Option<Option<i64>>,
@@ -72,6 +74,7 @@ pub struct ClearTopicStatement {
 pub struct AddTopicSourceStatement {
     pub topic_name: String,
     pub table_id: TableId,
+    pub table_name_qualified: bool,
     pub operation: TopicOp,
     pub filter_expr: Option<String>,
     pub payload_mode: PayloadMode,
@@ -179,7 +182,7 @@ impl DdlAst for ResetConsumerGroupStatement {}
 
 /// Parse CREATE TOPIC statement
 ///
-/// Syntax: CREATE TOPIC <name> [PARTITIONS <count>] [WITH (...)]
+/// Syntax: CREATE TOPIC [IF NOT EXISTS] <name> [PARTITIONS <count>] [WITH (...)]
 pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
     let normalized = normalize_sql(sql);
     let (definition_sql, retention_seconds, retention_max_bytes) =
@@ -190,8 +193,33 @@ pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
         return Err("Expected CREATE TOPIC".to_string());
     }
 
-    // Extract topic name (3rd token: CREATE TOPIC <name>)
-    let topic_name = extract_identifier(&definition_sql, 2)?;
+    let tokens: Vec<&str> = definition_sql
+        .trim()
+        .trim_end_matches(';')
+        .split_whitespace()
+        .collect();
+    if tokens.len() < 3 {
+        return Err("Topic name required after CREATE TOPIC".to_string());
+    }
+
+    let mut if_not_exists = false;
+    let topic_token_index = if tokens.get(2).is_some_and(|t| t.eq_ignore_ascii_case("IF")) {
+        if tokens.len() < 6
+            || !tokens[3].eq_ignore_ascii_case("NOT")
+            || !tokens[4].eq_ignore_ascii_case("EXISTS")
+        {
+            return Err("Expected IF NOT EXISTS after CREATE TOPIC".to_string());
+        }
+        if_not_exists = true;
+        5
+    } else {
+        2
+    };
+
+    let topic_name = tokens
+        .get(topic_token_index)
+        .ok_or_else(|| "Topic name required after CREATE TOPIC".to_string())?
+        .to_string();
 
     // Optional: PARTITIONS <count>
     let partitions = if sql_upper.contains("PARTITIONS") {
@@ -207,6 +235,7 @@ pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
 
     Ok(CreateTopicStatement {
         topic_name,
+        if_not_exists,
         partitions,
         retention_seconds,
         retention_max_bytes,
@@ -309,7 +338,7 @@ pub fn parse_alter_topic_add_source(sql: &str) -> Result<AddTopicSourceStatement
 
     // Extract table name after SOURCE
     let table_str = extract_keyword_value(&normalized, "SOURCE")?;
-    let table_id = parse_table_id(&table_str)?;
+    let (table_id, table_name_qualified) = parse_table_id(&table_str)?;
 
     // Extract operation after ON
     let operation = parse_topic_operation(&extract_keyword_value(&normalized, "ON")?)?;
@@ -333,6 +362,7 @@ pub fn parse_alter_topic_add_source(sql: &str) -> Result<AddTopicSourceStatement
     Ok(AddTopicSourceStatement {
         topic_name,
         table_id,
+        table_name_qualified,
         operation,
         filter_expr,
         payload_mode,
@@ -478,19 +508,15 @@ pub fn parse_reset_consumer_group(sql: &str) -> Result<ResetConsumerGroupStateme
 
 // Helper functions
 
-// TODO: We aready have a method inside tableId for this. Refactor to use that.
-fn parse_table_id(table_str: &str) -> Result<TableId, String> {
-    // Support both "table" and "namespace.table" formats
-    if table_str.contains('.') {
-        let parts: Vec<&str> = table_str.split('.').collect();
-        if parts.len() == 2 {
-            Ok(TableId::from_strings(parts[0], parts[1]))
-        } else {
-            Err("Table name must be 'namespace.table' format".to_string())
-        }
-    } else {
-        // Default namespace
-        Ok(TableId::from_strings("default", table_str))
+fn parse_table_id(table_str: &str) -> Result<(TableId, bool), String> {
+    let (namespace, table_name) = parse_table_reference(table_str)?;
+    match namespace {
+        Some(namespace) => TableId::try_from_strings(&namespace, &table_name).map(|table_id| {
+            (table_id, true)
+        }),
+        None => TableId::try_from_strings("default", &table_name).map(|table_id| {
+            (table_id, false)
+        }),
     }
 }
 
@@ -765,6 +791,15 @@ mod tests {
     fn test_parse_create_topic() {
         let stmt = parse_create_topic("CREATE TOPIC app.notifications").unwrap();
         assert_eq!(stmt.topic_name, "app.notifications");
+        assert!(!stmt.if_not_exists);
+        assert_eq!(stmt.partitions, None);
+    }
+
+    #[test]
+    fn test_parse_create_topic_if_not_exists() {
+        let stmt = parse_create_topic("CREATE TOPIC IF NOT EXISTS app.notifications").unwrap();
+        assert_eq!(stmt.topic_name, "app.notifications");
+        assert!(stmt.if_not_exists);
         assert_eq!(stmt.partitions, None);
     }
 
@@ -818,7 +853,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(stmt.topic_name, "app.events");
+        assert!(stmt.table_name_qualified);
         assert_eq!(stmt.filter_expr, Some("priority >= 5".to_string()));
+    }
+
+    #[test]
+    fn test_parse_alter_topic_add_source_tracks_unqualified_table_names() {
+        let stmt = parse_alter_topic_add_source(
+            "ALTER TOPIC app.events ADD SOURCE messages ON INSERT",
+        )
+        .unwrap();
+
+        assert_eq!(stmt.table_id.namespace_id().as_str(), "default");
+        assert_eq!(stmt.table_id.table_name().as_str(), "messages");
+        assert!(!stmt.table_name_qualified);
     }
 
     #[test]

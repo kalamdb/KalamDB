@@ -14,6 +14,7 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
   <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/tests.json" alt="Overall Tests" /></a>
+  <a href="https://kalamdb.github.io/KalamDB/coverage/"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/coverage-backend.json" alt="Backend Coverage" /></a>
   <a href="https://github.com/kalamdb/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag" alt="Release" /></a>
   <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
   <a href="https://hub.docker.com/r/jamals86/pg-kalam"><img src="https://img.shields.io/docker/pulls/jamals86/pg-kalam?label=pg-kalam%20docker" alt="pg-kalam Docker Pulls" /></a>

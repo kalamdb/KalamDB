@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicU64, AtomicU8, Ordering},
+    atomic::{AtomicU8, Ordering},
     Arc, OnceLock,
 };
 
@@ -18,7 +18,6 @@ use crate::{app_context::AppContext, error::KalamDbError, error_extensions::Kala
 const PROVIDER_EMPTY: u8 = 0;
 const PROVIDER_INITIALIZED: u8 = 1;
 const PROVIDER_OVERRIDDEN: u8 = 2;
-const PROVIDER_CLEARED: u8 = 3;
 
 struct ProviderSlot {
     state: AtomicU8,
@@ -39,7 +38,7 @@ impl ProviderSlot {
         match self.state.load(Ordering::Acquire) {
             PROVIDER_INITIALIZED => self.initial.get().map(Arc::clone),
             PROVIDER_OVERRIDDEN => self.override_provider.read().as_ref().map(Arc::clone),
-            PROVIDER_EMPTY | PROVIDER_CLEARED => None,
+            PROVIDER_EMPTY => None,
             _ => None,
         }
     }
@@ -55,11 +54,6 @@ impl ProviderSlot {
 
         *override_provider = Some(provider);
         self.state.store(PROVIDER_OVERRIDDEN, Ordering::Release);
-    }
-
-    fn clear(&self) {
-        *self.override_provider.write() = None;
-        self.state.store(PROVIDER_CLEARED, Ordering::Release);
     }
 }
 
@@ -90,11 +84,6 @@ pub struct CachedTableData {
 
     /// Current schema version number
     pub schema_version: u32,
-
-    /// Last access timestamp in milliseconds since Unix epoch.
-    ///
-    /// Used for metrics and debugging. Moka cache handles LRU eviction automatically.
-    last_accessed_ms: AtomicU64,
 
     /// Bloom filter columns (PRIMARY KEY + _seq) - computed once on cache entry creation
     /// Static for each table schema version, changes only on ALTER TABLE
@@ -132,7 +121,6 @@ impl Clone for CachedTableData {
             table: Arc::clone(&self.table),
             storage_id: self.storage_id.clone(),
             schema_version: self.schema_version,
-            last_accessed_ms: AtomicU64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns: self.indexed_columns.clone(),
             provider: Arc::clone(&self.provider),
@@ -150,7 +138,6 @@ impl CachedTableData {
             table: schema,
             storage_id,
             schema_version,
-            last_accessed_ms: AtomicU64::new(Self::now_millis()),
             bloom_filter_columns,
             indexed_columns,
             provider: Arc::new(ProviderSlot::new()),
@@ -167,11 +154,6 @@ impl CachedTableData {
         table_def: Arc<TableDefinition>,
     ) -> Result<Self, KalamDbError> {
         Ok(Self::new(table_def))
-    }
-
-    fn now_millis() -> u64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
     }
 
     /// Compute bloom filter columns and indexed columns from table definition
@@ -208,16 +190,6 @@ impl CachedTableData {
             TableOptions::Stream(_) => Some(StorageId::local()), // Default for streams
             TableOptions::System(_) => None,
         }
-    }
-
-    #[inline]
-    pub fn touch_at(&self, timestamp_ms: u64) {
-        self.last_accessed_ms.store(timestamp_ms, Ordering::Relaxed);
-    }
-
-    #[inline]
-    pub fn last_accessed_ms(&self) -> u64 {
-        self.last_accessed_ms.load(Ordering::Relaxed)
     }
 
     /// Get Arrow schema from the cached provider or compute from TableDefinition
@@ -318,10 +290,6 @@ impl CachedTableData {
         self.provider.set(provider);
     }
 
-    /// Clear the cached provider (used during table invalidation)
-    pub fn clear_provider(&self) {
-        self.provider.clear();
-    }
 }
 
 #[cfg(test)]
@@ -347,11 +315,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_slot_supports_rebind_and_clear() {
+    fn provider_slot_supports_rebind() {
         let slot = ProviderSlot::new();
         let first = provider_with_field("first");
         let second = provider_with_field("second");
-        let third = provider_with_field("third");
 
         assert!(slot.get().is_none());
 
@@ -360,12 +327,6 @@ mod tests {
 
         slot.set(second);
         assert_eq!(slot.get().unwrap().schema().field(0).name(), "second");
-
-        slot.clear();
-        assert!(slot.get().is_none());
-
-        slot.set(third);
-        assert_eq!(slot.get().unwrap().schema().field(0).name(), "third");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::models::TableId;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -33,7 +33,10 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement.namespace_id.clone().unwrap_or_else(|| NamespaceId::default());
+        let ns = statement
+            .namespace_id
+            .clone()
+            .unwrap_or_else(|| context.default_namespace());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
         let def = self.app_context.schema_registry().get_table_if_exists(&table_id)?.ok_or_else(
             || {

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use kalamdb_commons::{
     models::{TableId, TableName},
     schemas::TableType,
-    JobId,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -67,10 +66,20 @@ impl TypedStatementHandler<CompactAllTablesStatement> for CompactAllTablesHandle
                 target_file_size_mb: 128,
             };
             let idempotency_key = format!("compact-{}-{}", ns.as_str(), table_name.as_str());
-            let job_id: JobId = job_manager
+            match job_manager
                 .create_job_typed(JobType::Compact, params, Some(idempotency_key), None)
-                .await?;
-            job_ids.push(job_id.as_str().to_string());
+                .await
+            {
+                Ok(job_id) => job_ids.push(job_id.as_str().to_string()),
+                Err(KalamDbError::IdempotentConflict(_)) => {
+                    log::info!(
+                        "Storage compaction already in progress for table '{}.{}'",
+                        ns.as_str(),
+                        table_name.as_str()
+                    );
+                },
+                Err(err) => return Err(err),
+            }
         }
 
         Ok(ExecutionResult::Success {

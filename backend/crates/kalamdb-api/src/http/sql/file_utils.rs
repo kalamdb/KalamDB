@@ -22,7 +22,6 @@ use kalamdb_system::{FileRef, FileSubfolderState};
 
 use super::models::{ErrorCode, FileError, ParsedMultipartRequest, ParsedSqlPayload, QueryRequest};
 
-const MAX_FILE_PART_SIZE: usize = 100 * 1024 * 1024; // 100MB absolute max per file field
 const MAX_MULTIPART_BUFFERED_BYTES: usize = 100 * 1024 * 1024; // cap chunked multipart memory use
 const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = 1024 * 1024; // SQL and params fields
 const MAX_NAMESPACE_FIELD_SIZE: usize = 4096;

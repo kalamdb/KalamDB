@@ -11,6 +11,7 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::ClearTopicStatement;
 
 use super::cleanup::clear_topic_data;
+use super::name_resolution::resolve_topic_id;
 
 pub struct ClearTopicHandler {
     app_context: Arc<AppContext>,
@@ -27,9 +28,10 @@ impl TypedStatementHandler<ClearTopicStatement> for ClearTopicHandler {
         &self,
         statement: ClearTopicStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = &statement.topic_id;
+        let resolved_topic_id = resolve_topic_id(statement.topic_id.as_str(), context);
+        let topic_id = &resolved_topic_id;
         let topics_provider = self.app_context.system_tables().topics();
         let topic = topics_provider.get_topic_by_id_async(topic_id).await?;
 

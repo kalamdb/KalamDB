@@ -81,3 +81,53 @@ impl From<ApplierError> for crate::error::KalamDbError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ApplierError;
+    use crate::error::KalamDbError;
+
+    #[test]
+    fn not_found_helper_populates_fields() {
+        let err = ApplierError::not_found("Table", "users");
+        match err {
+            ApplierError::NotFound { resource_type, id } => {
+                assert_eq!(resource_type, "Table");
+                assert_eq!(id, "users");
+            },
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_from_kalamdb_error_variants() {
+        let not_found = ApplierError::from(KalamDbError::NotFound("row-42".to_string()));
+        assert!(matches!(
+            not_found,
+            ApplierError::NotFound { resource_type, id }
+            if resource_type == "Resource" && id == "row-42"
+        ));
+
+        let unauthorized = ApplierError::from(KalamDbError::Unauthorized("denied".to_string()));
+        assert!(matches!(
+            unauthorized,
+            ApplierError::Unauthorized(message) if message == "denied"
+        ));
+    }
+
+    #[test]
+    fn maps_into_kalamdb_error_variants() {
+        let no_leader = KalamDbError::from(ApplierError::NoLeader);
+        assert!(matches!(
+            no_leader,
+            KalamDbError::ExecutionError(message)
+            if message == "No Raft leader available"
+        ));
+
+        let validation = KalamDbError::from(ApplierError::Validation("bad input".to_string()));
+        assert!(matches!(
+            validation,
+            KalamDbError::InvalidOperation(message) if message == "bad input"
+        ));
+    }
+}

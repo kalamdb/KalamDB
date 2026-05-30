@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use kalamdb_commons::models::TopicId;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -12,6 +11,7 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::DropTopicStatement;
 
 use super::cleanup::clear_topic_data;
+use super::name_resolution::{resolve_topic_id, resolve_topic_name};
 
 pub struct DropTopicHandler {
     app_context: Arc<AppContext>,
@@ -28,16 +28,17 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
         &self,
         statement: DropTopicStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = TopicId::new(&statement.topic_name);
+        let resolved_topic_name = resolve_topic_name(&statement.topic_name, context);
+        let topic_id = resolve_topic_id(&statement.topic_name, context);
         let topics_provider = self.app_context.system_tables().topics();
         let topic = topics_provider.get_topic_by_id_async(&topic_id).await?;
 
         if topic.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Topic '{}' does not exist",
-                statement.topic_name
+                resolved_topic_name
             )));
         }
 

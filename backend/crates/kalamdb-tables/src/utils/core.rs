@@ -171,26 +171,6 @@ impl TableProviderCore {
         }
     }
 
-    /// Add StorageRegistry to services
-    pub fn with_storage_registry(self, registry: Arc<StorageRegistry>) -> Self {
-        // Since services is behind Arc, we need to create a new TableServices
-        // This is only used during construction so the extra allocation is fine
-        let new_services = Arc::new(TableServices {
-            schema_registry: self.services.schema_registry.clone(),
-            system_columns: self.services.system_columns.clone(),
-            storage_registry: Some(registry),
-            manifest_service: self.services.manifest_service.clone(),
-            notification_service: self.services.notification_service.clone(),
-            cluster_coordinator: self.services.cluster_coordinator.clone(),
-            commit_sequence_source: self.services.commit_sequence_source.clone(),
-            topic_publisher: self.services.topic_publisher.clone(),
-        });
-        Self {
-            services: new_services,
-            ..self
-        }
-    }
-
     // ===========================
     // Delegating accessors for backward compatibility
     // ===========================

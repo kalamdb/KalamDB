@@ -181,23 +181,6 @@ impl TopicOffsetsTableProvider {
         self.store.insert(&key, &row).into_system_error("reset offset error")
     }
 
-    /// Delete all offsets for a consumer group
-    pub fn delete_group_offsets(
-        &self,
-        topic_id: &TopicId,
-        group_id: &ConsumerGroupId,
-    ) -> Result<usize, SystemError> {
-        let offsets = self.get_group_offsets(topic_id, group_id)?;
-        let count = offsets.len();
-
-        for offset in offsets {
-            let key = Self::make_key(&offset.topic_id, &offset.group_id, offset.partition_id);
-            self.store.delete(&key).into_system_error("delete offset error")?;
-        }
-
-        Ok(count)
-    }
-
     /// Delete all offsets for a topic (all consumer groups and partitions)
     pub fn delete_topic_offsets(&self, topic_id: &TopicId) -> Result<usize, SystemError> {
         let offsets = self.get_topic_offsets(topic_id)?;

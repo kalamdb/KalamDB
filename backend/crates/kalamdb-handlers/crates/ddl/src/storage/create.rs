@@ -20,6 +20,28 @@ use crate::helpers::{
     async_blocking::run_blocking, guards::require_admin, storage::ensure_filesystem_directory,
 };
 
+const DEFAULT_SHARED_TABLES_TEMPLATE: &str = "{namespace}/{tableName}";
+const DEFAULT_USER_TABLES_TEMPLATE: &str = "{namespace}/{tableName}/{userId}";
+
+fn normalize_storage_templates(
+    shared_tables_template: String,
+    user_tables_template: String,
+) -> (String, String) {
+    let shared = if shared_tables_template.trim().is_empty() {
+        DEFAULT_SHARED_TABLES_TEMPLATE.to_string()
+    } else {
+        shared_tables_template
+    };
+
+    let user = if user_tables_template.trim().is_empty() {
+        DEFAULT_USER_TABLES_TEMPLATE.to_string()
+    } else {
+        user_tables_template
+    };
+
+    (shared, user)
+}
+
 /// Typed handler for CREATE STORAGE statements
 pub struct CreateStorageHandler {
     app_context: Arc<AppContext>,
@@ -38,11 +60,27 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let CreateStorageStatement {
+            storage_id,
+            storage_type,
+            storage_name,
+            description,
+            base_directory,
+            shared_tables_template,
+            user_tables_template,
+            credentials,
+            config_json,
+        } = statement;
+
         // Extract providers from AppContext
         let storage_registry = self.app_context.storage_registry();
+        let (shared_tables_template, user_tables_template) = normalize_storage_templates(
+            shared_tables_template,
+            user_tables_template,
+        );
 
         // Check if storage already exists (offload sync RocksDB read)
-        let storage_id = StorageId::from(statement.storage_id.as_str());
+        let storage_id = StorageId::from(storage_id.as_str());
         let app_ctx = self.app_context.clone();
         let sid = storage_id.clone();
         let existing =
@@ -52,25 +90,21 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         if existing.is_some() {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' already exists",
-                statement.storage_id
+                storage_id
             )));
         }
 
         // Validate templates using StorageRegistry
-        if !statement.shared_tables_template.is_empty() {
-            storage_registry.validate_template(&statement.shared_tables_template, false)?;
-        }
-        if !statement.user_tables_template.is_empty() {
-            storage_registry.validate_template(&statement.user_tables_template, true)?;
-        }
+        storage_registry.validate_template(&shared_tables_template, false)?;
+        storage_registry.validate_template(&user_tables_template, true)?;
 
         // Filesystem storages must eagerly create their base directories
-        if statement.storage_type == StorageType::Filesystem {
-            ensure_filesystem_directory(&statement.base_directory)?;
+        if storage_type == StorageType::Filesystem {
+            ensure_filesystem_directory(&base_directory)?;
         }
 
         // Validate credentials JSON (if provided)
-        let normalized_credentials = if let Some(raw) = statement.credentials.as_ref() {
+        let normalized_credentials = if let Some(raw) = credentials.as_ref() {
             let value: serde_json::Value =
                 serde_json::from_str(raw).into_invalid_operation("Invalid credentials JSON")?;
 
@@ -86,7 +120,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         };
 
         // Validate config JSON (if provided)
-        let normalized_config_json = if let Some(raw) = statement.config_json.as_ref() {
+        let normalized_config_json = if let Some(raw) = config_json.as_ref() {
             let value: serde_json::Value =
                 serde_json::from_str(raw).into_invalid_operation("Invalid CONFIG JSON")?;
 
@@ -103,15 +137,15 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 
         // Create storage record
         let storage = kalamdb_system::Storage {
-            storage_id: statement.storage_id.clone(),
-            storage_name: statement.storage_name,
-            description: statement.description,
-            storage_type: statement.storage_type,
-            base_directory: statement.base_directory,
+            storage_id,
+            storage_name,
+            description,
+            storage_type,
+            base_directory,
             credentials: normalized_credentials,
             config_json: normalized_config_json,
-            shared_tables_template: statement.shared_tables_template,
-            user_tables_template: statement.user_tables_template,
+            shared_tables_template,
+            user_tables_template,
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
         };
@@ -150,6 +184,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             )));
         }
 
+        let created_storage_id = storage.storage_id.clone();
+
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context
             .applier()
@@ -158,7 +194,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
             .map_err(|e| KalamDbError::ExecutionError(format!("CREATE STORAGE failed: {}", e)))?;
 
         Ok(ExecutionResult::Success {
-            message: format!("Storage '{}' created successfully", statement.storage_id),
+            message: format!("Storage '{}' created successfully", created_storage_id),
         })
     }
 
@@ -175,10 +211,68 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 mod tests {
     use std::sync::Arc;
 
-    use kalamdb_commons::{models::UserId, Role, StorageId};
+    use kalamdb_commons::{models::ids::NamespaceId, models::TableName, models::TableId, models::UserId, Role, StorageId};
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
+    use kalamdb_filestore::StorageCached;
+    use kalamdb_system::{Storage, StorageType};
 
     use super::*;
+
+    #[test]
+    fn test_normalize_storage_templates_uses_defaults_when_empty() {
+        let (shared, user) = normalize_storage_templates(String::new(), "   ".to_string());
+
+        assert_eq!(shared, DEFAULT_SHARED_TABLES_TEMPLATE);
+        assert_eq!(user, DEFAULT_USER_TABLES_TEMPLATE);
+    }
+
+    #[test]
+    fn test_normalize_storage_templates_preserves_explicit_values() {
+        let (shared, user) = normalize_storage_templates(
+            "custom/shared/{namespace}/{tableName}".to_string(),
+            "custom/user/{namespace}/{tableName}/{userId}".to_string(),
+        );
+
+        assert_eq!(shared, "custom/shared/{namespace}/{tableName}");
+        assert_eq!(user, "custom/user/{namespace}/{tableName}/{userId}");
+    }
+
+    #[test]
+    fn test_defaulted_templates_keep_user_id_in_user_scope_path() {
+        let (shared_tables_template, user_tables_template) =
+            normalize_storage_templates(String::new(), String::new());
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let storage = Storage {
+            storage_id: StorageId::new("defaulted_storage"),
+            storage_name: "defaulted_storage".to_string(),
+            description: None,
+            storage_type: StorageType::Filesystem,
+            base_directory: "/tmp/kalamdb-defaulted-storage".to_string(),
+            credentials: None,
+            config_json: None,
+            shared_tables_template,
+            user_tables_template,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let cached = StorageCached::with_default_timeouts(storage);
+        let table_id = TableId::new(NamespaceId::new("sql_file_case_28_a"), TableName::new("case28_wide_user"));
+        let user_id = UserId::new("case28_user");
+
+        let result = cached.get_relative_path(
+            kalamdb_commons::schemas::TableType::User,
+            &table_id,
+            Some(&user_id),
+        );
+
+        assert!(
+            result.relative_path.contains(user_id.as_str()),
+            "resolved path must contain user_id isolation segment; got {}",
+            result.relative_path
+        );
+    }
 
     fn init_app_context() -> Arc<AppContext> {
         test_app_context_simple()

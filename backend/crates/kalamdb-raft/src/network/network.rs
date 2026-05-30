@@ -527,13 +527,6 @@ impl RaftNetworkFactory {
         nodes.insert(node_id, node);
     }
 
-    /// Remove a node from the cluster
-    pub fn unregister_node(&self, node_id: NodeId) {
-        let mut nodes = self.nodes.write();
-        nodes.remove(&node_id);
-        self.channels.remove(&node_id);
-    }
-
     /// Get node info by node ID (for leader forwarding)
     pub fn get_node(&self, node_id: NodeId) -> Option<KalamNode> {
         let nodes = self.nodes.read();

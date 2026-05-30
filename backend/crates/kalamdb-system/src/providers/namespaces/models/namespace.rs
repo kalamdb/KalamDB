@@ -117,25 +117,6 @@ impl Namespace {
         }
     }
 
-    /// Check if this namespace can be deleted (has no tables)
-    #[inline]
-    pub fn can_delete(&self) -> bool {
-        self.table_count == 0
-    }
-
-    /// Increment the table count
-    #[inline]
-    pub fn increment_table_count(&mut self) {
-        self.table_count += 1;
-    }
-
-    /// Decrement the table count
-    #[inline]
-    pub fn decrement_table_count(&mut self) {
-        if self.table_count > 0 {
-            self.table_count -= 1;
-        }
-    }
 }
 
 #[cfg(test)]

@@ -155,11 +155,38 @@ pub async fn cleanup_parquet_files_internal(
             ))
         })?;
 
-    let files_deleted = storage_cached
-        .delete_prefix(table_type, table_id, None)
-        .await
-        .into_kalamdb_error("Failed to delete Parquet tree")?
-        .files_deleted;
+    let mut files_deleted: usize = 0;
+
+    if table_type == TableType::User {
+        // User-table cold files are user-scoped by template. Delete every known user scope.
+        let manifest_user_ids = app_context
+            .manifest_service()
+            .get_manifest_user_ids(table_id)
+            .into_kalamdb_error("Failed to enumerate manifest user scopes for cleanup")?;
+
+        for user_id in &manifest_user_ids {
+            let deleted = storage_cached
+                .delete_prefix(table_type, table_id, Some(user_id))
+                .await
+                .into_kalamdb_error("Failed to delete user-scoped Parquet tree")?
+                .files_deleted;
+            files_deleted += deleted;
+        }
+
+        // Fallback cleanup for legacy/non-user-scoped layouts and any unresolved residue.
+        let deleted = storage_cached
+            .delete_prefix(table_type, table_id, None)
+            .await
+            .into_kalamdb_error("Failed to delete fallback Parquet tree")?
+            .files_deleted;
+        files_deleted += deleted;
+    } else {
+        files_deleted = storage_cached
+            .delete_prefix(table_type, table_id, None)
+            .await
+            .into_kalamdb_error("Failed to delete Parquet tree")?
+            .files_deleted;
+    }
 
     log::debug!("[CleanupHelper] Freed {} files from Parquet storage", files_deleted);
     Ok(0)

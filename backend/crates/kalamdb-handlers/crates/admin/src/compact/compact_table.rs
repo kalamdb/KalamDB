@@ -66,18 +66,32 @@ impl TypedStatementHandler<CompactTableStatement> for CompactTableHandler {
         let job_manager = self.app_context.job_manager();
         let idempotency_key =
             format!("compact-{}-{}", statement.namespace.as_str(), statement.table_name.as_str());
-        let job_id: JobId = job_manager
+        let job_id: Option<JobId> = match job_manager
             .create_job_typed(JobType::Compact, params, Some(idempotency_key), None)
-            .await?;
+            .await
+        {
+            Ok(job_id) => Some(job_id),
+            Err(KalamDbError::IdempotentConflict(_)) => None,
+            Err(err) => return Err(err),
+        };
 
-        Ok(ExecutionResult::Success {
-            message: format!(
-                "Storage compaction started for table '{}.{}'. Job ID: {}",
-                statement.namespace.as_str(),
-                statement.table_name.as_str(),
-                job_id.as_str()
-            ),
-        })
+        match job_id {
+            Some(job_id) => Ok(ExecutionResult::Success {
+                message: format!(
+                    "Storage compaction started for table '{}.{}'. Job ID: {}",
+                    statement.namespace.as_str(),
+                    statement.table_name.as_str(),
+                    job_id.as_str()
+                ),
+            }),
+            None => Ok(ExecutionResult::Success {
+                message: format!(
+                    "Storage compaction already in progress for table '{}.{}'",
+                    statement.namespace.as_str(),
+                    statement.table_name.as_str()
+                ),
+            }),
+        }
     }
 
     async fn check_authorization(

@@ -2,6 +2,7 @@
 //!
 //! Parses SQL statements like:
 //! - ALTER NAMESPACE app SET OPTIONS (key1 = 'value1', key2 = 'value2')
+//! - ALTER NAMESPACE app SET DESCRIPTION 'Human readable description'
 
 use std::collections::HashMap;
 
@@ -25,17 +26,27 @@ impl AlterNamespaceStatement {
     ///
     /// Supports syntax:
     /// - ALTER NAMESPACE name SET OPTIONS (key1 = 'value1', key2 = 42, key3 = true)
+    /// - ALTER NAMESPACE name SET DESCRIPTION 'text'
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql_upper = sql.trim().to_uppercase();
+        let sql_trim = sql.trim();
+        let sql_upper = sql_trim.to_uppercase();
 
         if !sql_upper.starts_with("ALTER NAMESPACE") {
             return Err("Expected ALTER NAMESPACE statement".to_string());
         }
 
-        if !sql_upper.contains("SET OPTIONS") {
-            return Err("Expected SET OPTIONS clause".to_string());
+        if sql_upper.contains("SET OPTIONS") {
+            return Self::parse_set_options(sql_trim);
         }
 
+        if sql_upper.contains("SET DESCRIPTION") {
+            return Self::parse_set_description(sql_trim);
+        }
+
+        Err("Expected SET OPTIONS or SET DESCRIPTION clause".to_string())
+    }
+
+    fn parse_set_options(sql: &str) -> DdlResult<Self> {
         // Extract namespace name (between ALTER NAMESPACE and SET OPTIONS)
         let name_part = sql
             .trim()
@@ -63,6 +74,47 @@ impl AlterNamespaceStatement {
             .trim();
 
         let options = Self::parse_options(options_part)?;
+
+        Ok(Self {
+            name: NamespaceId::new(name),
+            options,
+        })
+    }
+
+    fn parse_set_description(sql: &str) -> DdlResult<Self> {
+        // Extract namespace name and description value.
+        let name_part = sql
+            .trim()
+            .strip_prefix("ALTER NAMESPACE")
+            .or_else(|| sql.trim().strip_prefix("alter namespace"))
+            .ok_or_else(|| "Invalid ALTER NAMESPACE syntax".to_string())?
+            .trim();
+
+        let set_desc_pos = name_part
+            .to_uppercase()
+            .find("SET DESCRIPTION")
+            .ok_or_else(|| "SET DESCRIPTION clause not found".to_string())?;
+
+        let name = name_part[..set_desc_pos].trim();
+        if name.is_empty() {
+            return Err("Namespace name is required".to_string());
+        }
+
+        let desc_part = name_part[set_desc_pos..]
+            .strip_prefix("SET DESCRIPTION")
+            .or_else(|| name_part[set_desc_pos..].strip_prefix("set description"))
+            .ok_or_else(|| "Invalid SET DESCRIPTION syntax".to_string())?
+            .trim();
+
+        if !(desc_part.starts_with('\'') && desc_part.ends_with('\'')) {
+            return Err("SET DESCRIPTION value must be single-quoted".to_string());
+        }
+
+        let mut options = HashMap::new();
+        options.insert(
+            "description".to_string(),
+            JsonValue::String(desc_part[1..desc_part.len() - 1].to_string()),
+        );
 
         Ok(Self {
             name: NamespaceId::new(name),
@@ -165,5 +217,19 @@ mod tests {
     fn test_parse_alter_namespace_missing_name() {
         let result = AlterNamespaceStatement::parse("ALTER NAMESPACE SET OPTIONS ()");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_alter_namespace_set_description() {
+        let stmt = AlterNamespaceStatement::parse(
+            "ALTER NAMESPACE app SET DESCRIPTION 'Chat namespace'",
+        )
+        .unwrap();
+
+        assert_eq!(stmt.name.as_str(), "app");
+        assert_eq!(
+            stmt.options.get("description"),
+            Some(&JsonValue::String("Chat namespace".to_string()))
+        );
     }
 }

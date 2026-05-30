@@ -199,32 +199,14 @@ impl SystemTablesRegistry {
         self.stats.read().clone()
     }
 
-    /// Set the system.stats provider (called from kalamdb-core)
-    pub fn set_stats_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting stats provider");
-        *self.stats.write() = Some(provider);
-    }
-
     /// Get the system.settings provider (virtual table)
     pub fn settings(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.settings.read().clone()
     }
 
-    /// Set the system.settings provider (called from kalamdb-core)
-    pub fn set_settings_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting settings provider");
-        *self.settings.write() = Some(provider);
-    }
-
     /// Get the system.server_logs provider (virtual table reading JSON logs)
     pub fn server_logs(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.server_logs.read().clone()
-    }
-
-    /// Set the system.server_logs provider (called from kalamdb-core with logs path)
-    pub fn set_server_logs_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting server_logs provider");
-        *self.server_logs.write() = Some(provider);
     }
 
     /// Get the system.manifest provider
@@ -237,21 +219,9 @@ impl SystemTablesRegistry {
         self.cluster.read().clone()
     }
 
-    /// Set the system.cluster provider (called from kalamdb-core with executor)
-    pub fn set_cluster_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting cluster provider");
-        *self.cluster.write() = Some(provider);
-    }
-
     /// Get the system.cluster_groups provider (virtual table showing per-group status)
     pub fn cluster_groups(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.cluster_groups.read().clone()
-    }
-
-    /// Set the system.cluster_groups provider (called from kalamdb-core with executor)
-    pub fn set_cluster_groups_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting cluster_groups provider");
-        *self.cluster_groups.write() = Some(provider);
     }
 
     /// Get the system.tables view provider (virtual table showing table metadata)
@@ -259,107 +229,9 @@ impl SystemTablesRegistry {
         self.tables.read().clone()
     }
 
-    /// Set the system.tables view provider (called from kalamdb-core)
-    pub fn set_tables_view_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting tables view provider");
-        *self.tables.write() = Some(provider);
-    }
-
     /// Get the system.columns view provider (virtual table showing column metadata)
     pub fn columns_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.columns.read().clone()
-    }
-
-    /// Set the system.columns view provider (called from kalamdb-core)
-    pub fn set_columns_view_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
-        log::debug!("SystemTablesRegistry: Setting columns view provider");
-        *self.columns.write() = Some(provider);
-    }
-
-    // ===== Convenience Methods =====
-
-    /// Get all system.* providers as a vector for bulk registration
-    ///
-    /// Returns tuples of (table_name, provider) for DataFusion schema registration.
-    /// All providers are wrapped with `SecuredSystemTableProvider` for defense-in-depth
-    /// permission checking at the scan() level.
-    pub fn all_system_providers(&self) -> Vec<(SystemTable, Arc<dyn TableProvider>)> {
-        let persisted_tables = self.persisted_system_tables();
-
-        // Helper to wrap providers with security
-        let wrap =
-            |table: SystemTable, provider: Arc<dyn TableProvider>| -> Arc<dyn TableProvider> {
-                secure_provider(provider, table.table_id()) as Arc<dyn TableProvider>
-            };
-
-        let mut providers = Vec::new();
-        for &table in Self::provider_backed_system_tables() {
-            if !persisted_tables.contains(&table) {
-                continue;
-            }
-
-            if let Some(provider) = self.provider_for_system_table(table) {
-                providers.push((table, wrap(table, provider)));
-            }
-        }
-
-        // Add stats if initialized (virtual view from kalamdb-core)
-        if let Some(stats) = self.stats.read().clone() {
-            providers.push((
-                SystemTable::Stats,
-                wrap(SystemTable::Stats, stats as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add settings if initialized (virtual view from kalamdb-core)
-        if let Some(settings) = self.settings.read().clone() {
-            providers.push((
-                SystemTable::Settings,
-                wrap(SystemTable::Settings, settings as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add server_logs if initialized
-        if let Some(server_logs) = self.server_logs.read().clone() {
-            providers.push((
-                SystemTable::ServerLogs,
-                wrap(SystemTable::ServerLogs, server_logs as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add cluster if initialized (virtual table showing OpenRaft metrics)
-        if let Some(cluster) = self.cluster.read().clone() {
-            providers.push((
-                SystemTable::Cluster,
-                wrap(SystemTable::Cluster, cluster as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add cluster_groups if initialized (virtual table showing per-group OpenRaft metrics)
-        if let Some(cluster_groups) = self.cluster_groups.read().clone() {
-            providers.push((
-                SystemTable::ClusterGroups,
-                wrap(SystemTable::ClusterGroups, cluster_groups as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add tables view if initialized (virtual view from kalamdb-core)
-        if let Some(tables) = self.tables.read().clone() {
-            providers.push((
-                SystemTable::Tables,
-                wrap(SystemTable::Tables, tables as Arc<dyn TableProvider>),
-            ));
-        }
-
-        // Add columns view if initialized (virtual view from kalamdb-core)
-        if let Some(columns) = self.columns.read().clone() {
-            providers.push((
-                SystemTable::Columns,
-                wrap(SystemTable::Columns, columns as Arc<dyn TableProvider>),
-            ));
-        }
-
-        providers
     }
 
     /// Return persisted system tables that have concrete providers, without

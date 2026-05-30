@@ -15,13 +15,4 @@ pub enum StorageLocationConfig {
     Azure(AzureStorageConfig),
 }
 
-impl StorageLocationConfig {
-    pub fn as_type_str(&self) -> &'static str {
-        match self {
-            StorageLocationConfig::Local(_) => "local",
-            StorageLocationConfig::S3(_) => "s3",
-            StorageLocationConfig::Gcs(_) => "gcs",
-            StorageLocationConfig::Azure(_) => "azure",
-        }
-    }
-}
+impl StorageLocationConfig {}

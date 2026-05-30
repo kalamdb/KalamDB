@@ -75,7 +75,7 @@ impl HealthMonitor {
         kalamdb_observability::force_allocator_collection(true);
 
         if cleared_plan_cache > 0 {
-            log::info!(
+            log::debug!(
                 "Idle trim cleared {} SQL plans after {:?} idle",
                 cleared_plan_cache,
                 idle_for,

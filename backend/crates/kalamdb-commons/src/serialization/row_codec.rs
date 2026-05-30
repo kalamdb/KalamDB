@@ -192,36 +192,6 @@ pub fn decode_shared_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<R
     })
 }
 
-/// Decode only metadata (seq, deleted, pk_value) from a user table row's serialized bytes.
-pub fn decode_user_table_row_metadata(
-    bytes: &[u8],
-    pk_name: &str,
-) -> Result<(UserId, RowMetadata)> {
-    let envelope = decode_enveloped(bytes, ROW_SCHEMA_VERSION)?;
-    let payload =
-        flatbuffers::root::<fb_row::UserTableRowPayload>(&envelope.payload).map_err(|e| {
-            StorageError::SerializationError(format!("user table row metadata decode failed: {e}"))
-        })?;
-
-    let user_id = payload.user_id().ok_or_else(|| {
-        StorageError::SerializationError(
-            "user table row metadata decode failed: missing user_id".to_string(),
-        )
-    })?;
-
-    let pk_value = extract_pk_from_payload(payload.fields(), pk_name);
-
-    Ok((
-        UserId::from(user_id),
-        RowMetadata {
-            seq: SeqId::new(payload.seq()),
-            commit_seq: payload.commit_seq(),
-            deleted: payload.deleted(),
-            pk_value,
-        },
-    ))
-}
-
 /// Extract a single named field value from a FlatBuffers RowPayload without full deserialization.
 fn extract_pk_from_payload(
     fields: Option<fb_row::RowPayload<'_>>,

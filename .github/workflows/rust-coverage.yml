@@ -1,0 +1,142 @@
+name: Rust Coverage
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - scripts/rust-coverage.sh
+      - Cargo.toml
+      - backend/Cargo.toml
+      - .github/workflows/rust-coverage.yml
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+  RUSTC_WRAPPER: ""
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CRITICAL_COVERAGE_MIN_PCT: "90.0"
+
+jobs:
+  coverage:
+    name: Backend Rust Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run backend coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/rust-coverage.sh
+
+      - name: Generate backend coverage badge JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LCOV_FILE="target/coverage/backend/lcov.info"
+          if [[ ! -f "$LCOV_FILE" ]]; then
+            echo "LCOV report not found at $LCOV_FILE" >&2
+            exit 1
+          fi
+
+          read -r TOTAL HIT <<< "$(awk -F: '/^LF:/{lf+=$2} /^LH:/{lh+=$2} END{printf "%d %d", lf, lh}' "$LCOV_FILE")"
+          PCT="$(awk -v hit="$HIT" -v total="$TOTAL" 'BEGIN { if (total <= 0) printf "0.00"; else printf "%.2f", (hit / total) * 100 }')"
+
+          if [[ "$TOTAL" -eq 0 ]]; then
+            COLOR="lightgrey"
+            MESSAGE="no data"
+          elif awk "BEGIN {exit !($PCT >= 80.0)}"; then
+            COLOR="brightgreen"
+            MESSAGE="$PCT%"
+          elif awk "BEGIN {exit !($PCT >= 65.0)}"; then
+            COLOR="yellow"
+            MESSAGE="$PCT%"
+          else
+            COLOR="red"
+            MESSAGE="$PCT%"
+          fi
+
+          mkdir -p .github/badges
+          printf '{\n  "schemaVersion": 1,\n  "label": "backend coverage",\n  "message": "%s",\n  "color": "%s"\n}\n' "$MESSAGE" "$COLOR" > .github/badges/coverage-backend.json
+
+      - name: Commit coverage badge
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git checkout -B ci-coverage-badge-update
+          git add .github/badges/coverage-backend.json
+          if git diff --staged --quiet; then
+            echo "Coverage badge file already up to date"
+            exit 0
+          fi
+
+          git commit -m "Update backend coverage badge [skip ci]"
+          git push origin HEAD:main
+
+      - name: Prepare GitHub Pages content
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPORT_SRC="target/coverage/backend/html/html"
+          REPORT_DST="target/coverage/pages/coverage"
+
+          if [[ ! -f "$REPORT_SRC/index.html" ]]; then
+            echo "Coverage HTML index not found at $REPORT_SRC/index.html" >&2
+            exit 1
+          fi
+
+          rm -rf "target/coverage/pages"
+          mkdir -p "$REPORT_DST"
+          cp -R "$REPORT_SRC"/. "$REPORT_DST"/
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: target/coverage/pages
+
+      - name: Upload LCOV report
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-rust-lcov
+          path: target/coverage/backend/lcov.info
+          if-no-files-found: error
+
+  deploy-pages:
+    name: Deploy Coverage Pages
+    needs: coverage
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

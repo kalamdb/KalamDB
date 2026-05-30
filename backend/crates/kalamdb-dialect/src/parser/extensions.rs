@@ -282,7 +282,15 @@ impl ExtensionStatement {
             return result;
         }
         if sql_upper.starts_with("ALTER TOPIC") {
-            if sql_upper.contains(" SET RETENTION ") {
+            let words: Vec<&str> = sql_upper.split_whitespace().collect();
+            let has_set_retention = words
+                .windows(2)
+                .any(|window| window == ["SET", "RETENTION"]);
+            let has_clear_retention = words
+                .windows(2)
+                .any(|window| window == ["CLEAR", "RETENTION"]);
+
+            if has_set_retention {
                 if let Some(result) = Self::parse_with_prefix(
                     sql,
                     &sql_upper,
@@ -293,7 +301,7 @@ impl ExtensionStatement {
                 ) {
                     return result;
                 }
-            } else if sql_upper.contains(" CLEAR RETENTION") {
+            } else if has_clear_retention {
                 if let Some(result) = Self::parse_with_prefix(
                     sql,
                     &sql_upper,

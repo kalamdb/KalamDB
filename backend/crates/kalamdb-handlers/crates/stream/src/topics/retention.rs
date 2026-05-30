@@ -13,6 +13,8 @@ use kalamdb_handlers_support::audit;
 use kalamdb_sql::ddl::{AlterTopicRetentionStatement, ClearTopicRetentionStatement};
 use kalamdb_system::providers::topics::models::Topic;
 
+use super::name_resolution::{resolve_topic_id, resolve_topic_name};
+
 pub struct AlterTopicRetentionHandler {
     app_context: Arc<AppContext>,
 }
@@ -94,7 +96,8 @@ impl TypedStatementHandler<AlterTopicRetentionStatement> for AlterTopicRetention
             ));
         }
 
-        let topic_id = TopicId::new(&statement.topic_name);
+        let resolved_topic_name = resolve_topic_name(&statement.topic_name, context);
+        let topic_id = resolve_topic_id(&statement.topic_name, context);
         let topic = load_topic(&self.app_context, &topic_id).await?;
         let retention_seconds = statement.retention_seconds.unwrap_or(topic.retention_seconds);
         let retention_max_bytes =
@@ -111,7 +114,7 @@ impl TypedStatementHandler<AlterTopicRetentionStatement> for AlterTopicRetention
             context,
             "ALTER",
             "TOPIC",
-            &statement.topic_name,
+            &resolved_topic_name,
             Some(retention_summary(&updated_topic)),
             None,
         );
@@ -120,7 +123,7 @@ impl TypedStatementHandler<AlterTopicRetentionStatement> for AlterTopicRetention
         Ok(ExecutionResult::Success {
             message: format!(
                 "Updated retention for topic '{}': {}",
-                statement.topic_name,
+                resolved_topic_name,
                 retention_summary(&updated_topic)
             ),
         })
@@ -147,7 +150,8 @@ impl TypedStatementHandler<ClearTopicRetentionStatement> for ClearTopicRetention
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = TopicId::new(&statement.topic_name);
+        let resolved_topic_name = resolve_topic_name(&statement.topic_name, context);
+        let topic_id = resolve_topic_id(&statement.topic_name, context);
         let topic = load_topic(&self.app_context, &topic_id).await?;
         let updated_topic =
             persist_topic_retention_change(&self.app_context, topic, None, None).await?;
@@ -156,14 +160,14 @@ impl TypedStatementHandler<ClearTopicRetentionStatement> for ClearTopicRetention
             context,
             "ALTER",
             "TOPIC",
-            &statement.topic_name,
+            &resolved_topic_name,
             Some(retention_summary(&updated_topic)),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success {
-            message: format!("Cleared retention for topic '{}'", statement.topic_name),
+            message: format!("Cleared retention for topic '{}'", resolved_topic_name),
         })
     }
 

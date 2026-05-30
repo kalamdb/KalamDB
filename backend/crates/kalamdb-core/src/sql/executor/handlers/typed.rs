@@ -34,3 +34,68 @@ pub trait TypedStatementHandler<T: DdlAst>: Send + Sync {
         async move { Ok(()) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use datafusion::prelude::SessionContext;
+    use kalamdb_commons::{Role, UserId};
+    use kalamdb_sql::DdlAst;
+
+    use super::{ExecutionContext, ExecutionResult, ScalarValue, TypedStatementHandler};
+    use crate::error::KalamDbError;
+
+    #[derive(Debug, Clone)]
+    struct DummyAst;
+    impl DdlAst for DummyAst {}
+
+    struct DummyTypedHandler;
+
+    impl TypedStatementHandler<DummyAst> for DummyTypedHandler {
+        fn execute<'a>(
+            &'a self,
+            _statement: DummyAst,
+            _params: Vec<ScalarValue>,
+            _context: &'a ExecutionContext,
+        ) -> impl std::future::Future<Output = Result<ExecutionResult, KalamDbError>> + Send + 'a
+        {
+            async move {
+                Ok(ExecutionResult::Success {
+                    message: "typed-ok".to_string(),
+                })
+            }
+        }
+    }
+
+    fn test_context() -> ExecutionContext {
+        ExecutionContext::new(
+            UserId::from("typed-user"),
+            Role::User,
+            Arc::new(SessionContext::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn default_typed_authorization_allows_statement() {
+        let handler = DummyTypedHandler;
+        handler
+            .check_authorization(&DummyAst, &test_context())
+            .await
+            .expect("default typed authorization should allow");
+    }
+
+    #[tokio::test]
+    async fn typed_execute_returns_success_result() {
+        let handler = DummyTypedHandler;
+        let result = handler
+            .execute(DummyAst, Vec::new(), &test_context())
+            .await
+            .expect("typed execute should succeed");
+
+        assert!(matches!(
+            result,
+            ExecutionResult::Success { message } if message == "typed-ok"
+        ));
+    }
+}

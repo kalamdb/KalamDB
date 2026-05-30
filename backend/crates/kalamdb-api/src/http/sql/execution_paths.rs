@@ -257,7 +257,7 @@ async fn forward_batch_statement_to_group(
     target_group: GroupId,
     statement: &PreparedApiExecutionStatement,
     http_req: &HttpRequest,
-    req_for_forward: &QueryRequest,
+    request_namespace: Option<NamespaceId>,
     app_context: &AppContext,
     request_id: Option<&str>,
     start_time: Instant,
@@ -269,7 +269,7 @@ async fn forward_batch_statement_to_group(
     let request = QueryRequest {
         sql: statement.prepared_statement.sql.clone(),
         params: None,
-        namespace_id: req_for_forward.namespace_id.clone(),
+        namespace_id: request_namespace,
     };
 
     for attempt in 0..MAX_ATTEMPTS {
@@ -615,6 +615,7 @@ pub(super) async fn execute_batch_path(
         exec_ctx.request_id(),
         &request_transaction_coordinator,
     );
+    let mut statement_exec_ctx = exec_ctx.clone();
 
     let mut idx = 0;
     while idx < stmt_count {
@@ -684,7 +685,7 @@ pub(super) async fn execute_batch_path(
 
         // ── Per-statement execution (original path) ────────────────────
         let execute_as_user =
-            match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
+            match resolve_execute_as_user(stmt, impersonation_service, &statement_exec_ctx).await {
                 Ok(uid) => uid,
                 Err(err) => {
                     let _ = request_transaction_guard
@@ -692,7 +693,7 @@ pub(super) async fn execute_batch_path(
                     return build_kalamdb_error_response(
                         &err,
                         took_ms(start_time),
-                        exec_ctx.is_admin(),
+                        statement_exec_ctx.is_admin(),
                     );
                 },
             };
@@ -711,12 +712,14 @@ pub(super) async fn execute_batch_path(
                         table_id
                     ),
                     took_ms(start_time),
-                    exec_ctx.is_admin(),
+                    statement_exec_ctx.is_admin(),
                 ));
             }
         }
 
-        let routing_user_id = execute_as_user.as_ref().unwrap_or_else(|| exec_ctx.user_id());
+        let routing_user_id = execute_as_user
+            .as_ref()
+            .unwrap_or_else(|| statement_exec_ctx.user_id());
 
         if route_statements_individually {
             if let Some(target_group) =
@@ -727,9 +730,9 @@ pub(super) async fn execute_batch_path(
                         target_group,
                         stmt,
                         http_req,
-                        req_for_forward,
+                        Some(statement_exec_ctx.default_namespace()),
                         app_context.as_ref(),
-                        exec_ctx.request_id(),
+                        statement_exec_ctx.request_id(),
                         start_time,
                         meta_changed_in_batch,
                     )
@@ -749,6 +752,18 @@ pub(super) async fn execute_batch_path(
 
                             if statement_mutates_meta(stmt, app_context.as_ref(), routing_user_id) {
                                 meta_changed_in_batch = true;
+                            }
+
+                            if let Some(classified) =
+                                stmt.prepared_statement.classified_statement.as_ref()
+                            {
+                                if let SqlStatementKind::UseNamespace(use_namespace) =
+                                    classified.kind()
+                                {
+                                    statement_exec_ctx = statement_exec_ctx
+                                        .clone()
+                                        .with_namespace_id(use_namespace.namespace.clone());
+                                }
                             }
 
                             request_transaction_guard.sync(&request_transaction_coordinator);
@@ -780,7 +795,7 @@ pub(super) async fn execute_batch_path(
         match execute_single_statement_raw(
             &stmt.prepared_statement,
             sql_executor,
-            exec_ctx,
+            &statement_exec_ctx,
             execute_as_user.clone(),
             stmt_params,
         )
@@ -799,8 +814,8 @@ pub(super) async fn execute_batch_path(
                         target: "sql::exec",
                         "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
                         safe_sql,
-                        exec_ctx.user_id().as_str(),
-                        exec_ctx.user_role(),
+                        statement_exec_ctx.user_id().as_str(),
+                        statement_exec_ctx.user_role(),
                         row_count,
                         stmt_duration_ms
                     );
@@ -810,7 +825,7 @@ pub(super) async fn execute_batch_path(
                     safe_sql,
                     stmt_duration_secs,
                     row_count,
-                    exec_ctx.user_id().clone(),
+                    statement_exec_ctx.user_id().clone(),
                     kalamdb_core::schema_registry::TableType::User,
                     None,
                 );
@@ -825,7 +840,7 @@ pub(super) async fn execute_batch_path(
                         let effective_role = if execute_as_user.is_some() {
                             Some(kalamdb_commons::Role::User)
                         } else {
-                            Some(exec_ctx.user_role())
+                            Some(statement_exec_ctx.user_role())
                         };
                         return match stream_sql_rows_response(
                             batches,
@@ -844,7 +859,7 @@ pub(super) async fn execute_batch_path(
                                         ErrorCode::InternalError,
                                         &format!("Failed to stream SQL response: {}", err),
                                         took_ms(start_time),
-                                        exec_ctx.is_admin(),
+                                        statement_exec_ctx.is_admin(),
                                     ),
                                 )
                             },
@@ -855,7 +870,7 @@ pub(super) async fn execute_batch_path(
                 let effective_role = if execute_as_user.is_some() {
                     Some(kalamdb_commons::Role::User)
                 } else {
-                    Some(exec_ctx.user_role())
+                    Some(statement_exec_ctx.user_role())
                 };
                 let result = match execution_result_to_query_result(exec_result, effective_role) {
                     Ok(result) => result.with_as_user(effective_username),
@@ -867,7 +882,7 @@ pub(super) async fn execute_batch_path(
                                 ErrorCode::InternalError,
                                 &format!("Failed to serialize SQL result: {}", err),
                                 took_ms(start_time),
-                                exec_ctx.is_admin(),
+                                statement_exec_ctx.is_admin(),
                             ),
                         );
                     },
@@ -885,6 +900,14 @@ pub(super) async fn execute_batch_path(
                     &mut total_deleted,
                     &mut results,
                 );
+
+                if let Some(classified) = stmt.prepared_statement.classified_statement.as_ref() {
+                    if let SqlStatementKind::UseNamespace(use_namespace) = classified.kind() {
+                        statement_exec_ctx = statement_exec_ctx
+                            .clone()
+                            .with_namespace_id(use_namespace.namespace.clone());
+                    }
+                }
             },
             Err(err) => {
                 let _ =
@@ -896,7 +919,7 @@ pub(super) async fn execute_batch_path(
                         http_req,
                         req_for_forward,
                         app_context,
-                        exec_ctx.request_id(),
+                        statement_exec_ctx.request_id(),
                         start_time,
                     )
                     .await
@@ -910,7 +933,7 @@ pub(super) async fn execute_batch_path(
                     idx + 1,
                     &stmt.prepared_statement.sql,
                     took_ms(start_time),
-                    exec_ctx.is_admin(),
+                    statement_exec_ctx.is_admin(),
                 );
             },
         }

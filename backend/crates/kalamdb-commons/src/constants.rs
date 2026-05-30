@@ -49,7 +49,6 @@ impl SystemColumnNames {
         matches!(column_name, Self::DELETED | Self::SEQ | Self::COMMIT_SEQ)
     }
 }
-
 // /// Global instance of system column names.
 // pub const SYSTEM_COLUMNS: SystemColumnNames = SystemColumnNames;
 

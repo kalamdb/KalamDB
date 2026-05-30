@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::{compute::cast, datatypes::SchemaRef, record_batch::RecordBatch};
-use futures_util::{future::try_join_all, TryStreamExt};
+use futures_util::{future::join_all, TryStreamExt};
 use kalamdb_commons::{ids::SeqId, models::UserId, schemas::TableType, TableId};
 use kalamdb_filestore::StorageCached;
 use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait};
@@ -200,7 +200,31 @@ impl ManifestAccessPlanner {
                 }
             })
             .collect();
-        let streams = try_join_all(stream_futures).await?;
+        let stream_results = join_all(stream_futures).await;
+        let mut opened_files = Vec::new();
+        let mut streams = Vec::new();
+        for (parquet_file, result) in parquet_files.iter().zip(stream_results) {
+            match result {
+                Ok(stream) => {
+                    opened_files.push(parquet_file.clone());
+                    streams.push(stream);
+                },
+                Err(err) => {
+                    if is_missing_parquet_file_error(&err) {
+                        log::warn!(
+                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
+                            parquet_file,
+                            table_id,
+                            err
+                        );
+                        skipped = skipped.saturating_add(1);
+                        scanned = scanned.saturating_sub(1);
+                        continue;
+                    }
+                    return Err(err);
+                },
+            }
+        }
 
         // Look up current schema version once for all files
         let current_version = schema_registry
@@ -209,7 +233,7 @@ impl ManifestAccessPlanner {
             .unwrap_or(1);
 
         // Consume each stream batch-by-batch — peak memory per file is one row group.
-        for (parquet_file, mut stream) in parquet_files.iter().zip(streams) {
+        for (parquet_file, mut stream) in opened_files.iter().zip(streams) {
             let file_schema_version = file_schema_versions.get(parquet_file).copied().unwrap_or(1);
 
             while let Some(batch) =
@@ -404,6 +428,14 @@ impl ManifestAccessPlanner {
         // Can't compare, conservatively include
         true
     }
+}
+
+fn is_missing_parquet_file_error(err: &KalamDbError) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("not found")
+        && (msg.contains("object at location")
+            || msg.contains("no such file or directory")
+            || msg.contains("failed to open parquet stream"))
 }
 
 #[cfg(test)]

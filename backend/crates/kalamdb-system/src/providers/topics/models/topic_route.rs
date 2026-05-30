@@ -99,11 +99,6 @@ impl TopicRoute {
         self
     }
 
-    /// Adds a partition key expression to this route.
-    pub fn with_partition_key(mut self, partition_key_expr: String) -> Self {
-        self.partition_key_expr = Some(partition_key_expr);
-        self
-    }
 }
 
 #[cfg(test)]

@@ -1310,6 +1310,7 @@ impl AppContext {
         let runtime = collect_runtime_metrics(self.server_start_time);
         log::info!("Runtime metrics: {}", runtime.to_log_string());
     }
+
 }
 
 #[async_trait]

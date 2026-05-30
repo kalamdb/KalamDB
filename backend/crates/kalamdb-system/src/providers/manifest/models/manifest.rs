@@ -355,8 +355,6 @@ impl SegmentMetadata {
         }
     }
 
-    /// Create an in-progress segment (before Parquet write is complete)
-    ///
     /// Used during flush to track segments that are being written.
     /// If server crashes, these segments should be cleaned up on restart.
     pub fn in_progress(
@@ -556,44 +554,6 @@ impl Manifest {
         }
     }
 
-    /// Create a manifest for a table with FILE columns
-    pub fn new_with_files(table_id: TableId, user_id: Option<UserId>) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        Self {
-            table_id,
-            user_id,
-            version: 1,
-            created_at: now,
-            updated_at: now,
-            segments: Vec::new(),
-            last_sequence_number: 0,
-            files: Some(FileSubfolderState::new()),
-            vector_indexes: HashMap::new(),
-        }
-    }
-
-    /// Enable file tracking for this manifest
-    pub fn enable_files(&mut self) {
-        if self.files.is_none() {
-            self.files = Some(FileSubfolderState::new());
-        }
-    }
-
-    /// Allocate a file subfolder for a new file upload.
-    /// Returns the subfolder name (e.g., "f0001").
-    /// Panics if files are not enabled.
-    pub fn allocate_file_subfolder(&mut self, max_files_per_folder: u32) -> String {
-        let state = self.files.as_mut().expect("File tracking not enabled for this manifest");
-        let subfolder = state.allocate_file(max_files_per_folder);
-        self.updated_at = chrono::Utc::now().timestamp_millis();
-        self.version += 1;
-        subfolder
-    }
-
-    /// Get current file subfolder name without allocating
-    pub fn current_file_subfolder(&self) -> Option<String> {
-        self.files.as_ref().map(|s| s.subfolder_name())
-    }
     // ...existing code...
 
     pub fn add_segment(&mut self, segment: SegmentMetadata) {

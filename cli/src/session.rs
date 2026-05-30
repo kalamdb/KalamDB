@@ -945,6 +945,12 @@ mod tests {
         );
         assert_eq!(CLISession::parse_namespace_switch("USE billing"), Some("billing".to_string()));
         assert_eq!(CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"), None);
+        assert_eq!(
+            CLISession::parse_namespace_switch(
+                "-- setup namespace\n/* next */\nUSE NAMESPACE batch_case;"
+            ),
+            Some("batch_case".to_string())
+        );
     }
 
     #[test]

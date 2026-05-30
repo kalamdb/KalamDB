@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-        Int8Array, LargeStringArray, StringArray, StringBuilder, TimestampMicrosecondArray,
-        TimestampMillisecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        ArrayRef, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+        LargeStringArray, StringArray, StringBuilder, TimestampMicrosecondArray, UInt16Array,
+        UInt32Array, UInt64Array, UInt8Array,
     },
     compute,
     compute::kernels::aggregate::{max_string, min_string},
@@ -71,24 +71,9 @@ pub fn arrow_timestamp_micros() -> ArrowDataType {
     ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
 }
 
-/// Arrow Date32 type.
-pub fn arrow_date32() -> ArrowDataType {
-    ArrowDataType::Date32
-}
-
-/// Arrow Time64 (microsecond precision) type.
-pub fn arrow_time64_micros() -> ArrowDataType {
-    ArrowDataType::Time64(TimeUnit::Microsecond)
-}
-
 /// Build a UTF-8 field.
 pub fn field_utf8(name: &str, nullable: bool) -> Field {
     Field::new(name, arrow_utf8(), nullable)
-}
-
-/// Build a Large UTF-8 field.
-pub fn field_large_utf8(name: &str, nullable: bool) -> Field {
-    Field::new(name, arrow_large_utf8(), nullable)
 }
 
 /// Build an Int64 field.
@@ -96,19 +81,9 @@ pub fn field_int64(name: &str, nullable: bool) -> Field {
     Field::new(name, arrow_int64(), nullable)
 }
 
-/// Build an Int32 field.
-pub fn field_int32(name: &str, nullable: bool) -> Field {
-    Field::new(name, arrow_int32(), nullable)
-}
-
 /// Build a UInt64 field.
 pub fn field_uint64(name: &str, nullable: bool) -> Field {
     Field::new(name, arrow_uint64(), nullable)
-}
-
-/// Build a UInt32 field.
-pub fn field_uint32(name: &str, nullable: bool) -> Field {
-    Field::new(name, arrow_uint32(), nullable)
 }
 
 /// Build a Float64 field.
@@ -119,11 +94,6 @@ pub fn field_float64(name: &str, nullable: bool) -> Field {
 /// Build a Boolean field.
 pub fn field_boolean(name: &str, nullable: bool) -> Field {
     Field::new(name, arrow_boolean(), nullable)
-}
-
-/// Build a Timestamp (microsecond) field.
-pub fn field_timestamp_micros(name: &str, nullable: bool) -> Field {
-    Field::new(name, arrow_timestamp_micros(), nullable)
 }
 
 /// Build a SchemaRef from fields.
@@ -197,52 +167,12 @@ impl RecordBatchBuilder {
         self.add_string_column_internal(data)
     }
 
-    /// Add a string column from owned Strings.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional String values
-    pub fn add_string_column_owned(&mut self, data: Vec<Option<String>>) -> &mut Self {
-        self.add_string_column_internal(data)
-    }
-
     /// Add an Int64 column to the batch.
     ///
     /// # Arguments
     /// * `data` - Vector of optional i64 values
     pub fn add_int64_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
         self.push_array(Arc::new(Int64Array::from(data)))
-    }
-
-    /// Add a UInt64 column to the batch.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional u64 values
-    pub fn add_uint64_column(&mut self, data: Vec<Option<u64>>) -> &mut Self {
-        self.push_array(Arc::new(UInt64Array::from(data)))
-    }
-
-    /// Add an Int32 column to the batch.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional i32 values
-    pub fn add_int32_column(&mut self, data: Vec<Option<i32>>) -> &mut Self {
-        self.push_array(Arc::new(Int32Array::from(data)))
-    }
-
-    /// Add a Float64 column to the batch.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional f64 values
-    pub fn add_float64_column(&mut self, data: Vec<Option<f64>>) -> &mut Self {
-        self.push_array(Arc::new(Float64Array::from(data)))
-    }
-
-    /// Add a Boolean column to the batch.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional bool values
-    pub fn add_boolean_column(&mut self, data: Vec<Option<bool>>) -> &mut Self {
-        self.push_array(Arc::new(BooleanArray::from(data)))
     }
 
     /// Add a TimestampMicrosecond column to the batch.
@@ -255,26 +185,6 @@ impl RecordBatchBuilder {
     pub fn add_timestamp_micros_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
         let micros: Vec<Option<i64>> = data.into_iter().map(|ts| ts.map(|ms| ms * 1000)).collect();
         self.push_array(Arc::new(TimestampMicrosecondArray::from(micros)))
-    }
-
-    /// Add a TimestampMillisecond column to the batch.
-    ///
-    /// Use this for timestamps that are already in milliseconds and don't need conversion.
-    ///
-    /// # Arguments
-    /// * `data` - Vector of optional i64 values in **milliseconds**
-    pub fn add_timestamp_millis_column(&mut self, data: Vec<Option<i64>>) -> &mut Self {
-        self.push_array(Arc::new(TimestampMillisecondArray::from(data)))
-    }
-
-    /// Add a pre-built array column directly.
-    ///
-    /// Use this for custom array types not covered by the convenience methods.
-    ///
-    /// # Arguments
-    /// * `array` - Arc-wrapped array implementing the Array trait
-    pub fn add_array_column(&mut self, array: ArrayRef) -> &mut Self {
-        self.push_array(array)
     }
 
     /// Build the RecordBatch from accumulated columns.
@@ -296,10 +206,6 @@ impl RecordBatchBuilder {
         self.columns.len()
     }
 
-    /// Get the expected number of columns from the schema.
-    pub fn expected_column_count(&self) -> usize {
-        self.schema.fields().len()
-    }
 }
 
 /// Helper function to create an empty RecordBatch for a given schema.
@@ -436,11 +342,6 @@ pub fn array_value_to_string(array: &dyn arrow::array::Array, row_idx: usize) ->
             .map(|arr| arr.value(row_idx).to_string()),
         _ => None,
     }
-}
-
-/// Check if ArrowDataType is Int64.
-pub fn is_int64(data_type: &ArrowDataType) -> bool {
-    matches!(data_type, ArrowDataType::Int64)
 }
 
 /// Check if ArrowDataType is Boolean.

@@ -22,7 +22,9 @@ use crate::{
         audit,
         guards::{block_anonymous_write, require_admin},
     },
-    table::drop::{capture_storage_cleanup_details, schedule_drop_table_cleanup},
+    table::drop::{
+        capture_storage_cleanup_details, schedule_drop_table_cleanup, wait_for_cleanup_job,
+    },
 };
 
 /// Typed handler for DROP NAMESPACE statements
@@ -103,6 +105,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 .drop_table(table_id.clone())
                 .await
                 .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
+
             let cleanup_job_id = schedule_drop_table_cleanup(
                 &self.app_context,
                 &table_id,
@@ -110,6 +113,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 storage_details,
             )
             .await?;
+            wait_for_cleanup_job(&self.app_context, &cleanup_job_id, &table_id.full_name()).await?;
 
             let audit_entry = audit::log_ddl_operation(
                 context,
@@ -117,8 +121,9 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 "TABLE",
                 &table_id.full_name(),
                 Some(format!(
-                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {}",
-                    table_type, cleanup_job_id
+                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {} (completed before response)",
+                    table_type,
+                    cleanup_job_id
                 )),
                 None,
             );

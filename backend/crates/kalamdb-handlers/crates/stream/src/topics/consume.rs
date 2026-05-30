@@ -4,7 +4,7 @@ use arrow::{
     array::{ArrayRef, BinaryBuilder, Int32Array, Int64Array, StringBuilder},
     record_batch::RecordBatch,
 };
-use kalamdb_commons::models::{ConsumerGroupId, TopicId};
+use kalamdb_commons::models::ConsumerGroupId;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -16,6 +16,8 @@ use kalamdb_core::{
 use kalamdb_observability::track_pubsub_consumer;
 use kalamdb_sql::ddl::{ConsumePosition, ConsumeStatement};
 use kalamdb_tables::topics::topic_message_schema::topic_message_schema;
+
+use super::name_resolution::{resolve_topic_id, resolve_topic_name};
 
 pub struct ConsumeHandler {
     app_context: Arc<AppContext>,
@@ -32,12 +34,13 @@ impl TypedStatementHandler<ConsumeStatement> for ConsumeHandler {
         &self,
         statement: ConsumeStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let topic_id = TopicId::new(&statement.topic_name);
+        let resolved_topic_name = resolve_topic_name(&statement.topic_name, context);
+        let topic_id = resolve_topic_id(&statement.topic_name, context);
         let topics_provider = self.app_context.system_tables().topics();
         let _topic = topics_provider.get_topic_by_id_async(&topic_id).await?.ok_or_else(|| {
-            KalamDbError::NotFound(format!("Topic '{}' does not exist", statement.topic_name))
+            KalamDbError::NotFound(format!("Topic '{}' does not exist", resolved_topic_name))
         })?;
 
         let topic_publisher = self.app_context.topic_publisher();

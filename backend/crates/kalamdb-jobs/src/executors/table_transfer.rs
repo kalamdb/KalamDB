@@ -167,15 +167,26 @@ impl JobExecutor for TableExportExecutor {
         let mut segments = Vec::with_capacity(export_manifest.segments.len());
 
         for segment in &export_manifest.segments {
-            let get_result = storage_cached
+            let get_result = match storage_cached
                 .get(params.table_type, &params.table_id, target_user_id.as_ref(), &segment.path)
                 .await
-                .map_err(|error| {
-                    KalamDbError::InvalidOperation(format!(
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    let wrapped = KalamDbError::InvalidOperation(format!(
                         "Failed to read Parquet segment '{}' for {}: {}",
                         segment.path, table_label, error
-                    ))
-                })?;
+                    ));
+                    if is_missing_parquet_file_error(&wrapped) {
+                        ctx.log_warn(&format!(
+                            "Skipping missing Parquet segment '{}' for {} during export: {}",
+                            segment.path, table_label, error
+                        ));
+                        continue;
+                    }
+                    return Err(wrapped);
+                },
+            };
 
             segments.push(TableExportSegmentData {
                 source_path: segment.path.clone(),
@@ -568,4 +579,13 @@ impl Default for TableImportExecutor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_missing_parquet_file_error(err: &KalamDbError) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("not found")
+        && (msg.contains("object at location")
+            || msg.contains("no such file or directory")
+            || msg.contains("failed to open parquet stream")
+            || msg.contains("/batch-"))
 }
