@@ -268,10 +268,6 @@ pub async fn compact_small_segments(
     )
     .await?;
 
-    if latest_versions.is_empty() {
-        return Ok(None);
-    }
-
     let preserve_deleted_keys = find_deleted_keys_that_mask_older_cold_rows(
         &storage_cached,
         table_type,
@@ -442,7 +438,7 @@ async fn collect_latest_versions(
     ];
 
     for segment in segments {
-        let mut stream = storage_cached
+        let mut stream = match storage_cached
             .read_parquet_file_stream(
                 table_type,
                 table_id,
@@ -451,13 +447,45 @@ async fn collect_latest_versions(
                 &columns_to_read,
             )
             .await
-            .into_flush_error("Failed to open compacted input Parquet stream")?;
-
-        while let Some(batch) = stream
-            .try_next()
-            .await
-            .into_flush_error("Failed to read compacted input Parquet batch")?
         {
+            Ok(stream) => stream,
+            Err(error) => {
+                if is_missing_parquet_file_error_msg(&error.to_string()) {
+                    warn!(
+                        "Small-segment compaction skipping missing input segment '{}' for {}: {}",
+                        segment.path, table_id, error
+                    );
+                    continue;
+                }
+
+                return Err(FlushError::Other(format!(
+                    "Failed to open compacted input Parquet stream: {}",
+                    error
+                )));
+            },
+        };
+
+        loop {
+            let Some(batch) = (match stream.try_next().await {
+                Ok(batch) => batch,
+                Err(error) => {
+                    if is_missing_parquet_file_error_msg(&error.to_string()) {
+                        warn!(
+                            "Small-segment compaction skipping vanished input segment '{}' for {}: {}",
+                            segment.path, table_id, error
+                        );
+                        break;
+                    }
+
+                    return Err(FlushError::Other(format!(
+                        "Failed to read compacted input Parquet batch: {}",
+                        error
+                    )));
+                },
+            }) else {
+                break;
+            };
+
             let pk_idx = required_column_index(&batch, primary_key_field)?;
             let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
             let deleted_idx = optional_column_index(&batch, SystemColumnNames::DELETED);
@@ -507,7 +535,7 @@ async fn find_deleted_keys_that_mask_older_cold_rows(
     let mut preserve_deleted_keys = HashSet::new();
 
     for segment in older_segments {
-        let mut stream = storage_cached
+        let mut stream = match storage_cached
             .read_parquet_file_stream(
                 table_type,
                 table_id,
@@ -516,13 +544,45 @@ async fn find_deleted_keys_that_mask_older_cold_rows(
                 &columns_to_read,
             )
             .await
-            .into_flush_error("Failed to open older Parquet stream for compaction")?;
-
-        while let Some(batch) = stream
-            .try_next()
-            .await
-            .into_flush_error("Failed to read older Parquet batch for compaction")?
         {
+            Ok(stream) => stream,
+            Err(error) => {
+                if is_missing_parquet_file_error_msg(&error.to_string()) {
+                    warn!(
+                        "Small-segment compaction skipping missing older segment '{}' for {}: {}",
+                        segment.path, table_id, error
+                    );
+                    continue;
+                }
+
+                return Err(FlushError::Other(format!(
+                    "Failed to open older Parquet stream for compaction: {}",
+                    error
+                )));
+            },
+        };
+
+        loop {
+            let Some(batch) = (match stream.try_next().await {
+                Ok(batch) => batch,
+                Err(error) => {
+                    if is_missing_parquet_file_error_msg(&error.to_string()) {
+                        warn!(
+                            "Small-segment compaction skipping vanished older segment '{}' for {}: {}",
+                            segment.path, table_id, error
+                        );
+                        break;
+                    }
+
+                    return Err(FlushError::Other(format!(
+                        "Failed to read older Parquet batch for compaction: {}",
+                        error
+                    )));
+                },
+            }) else {
+                break;
+            };
+
             let pk_idx = required_column_index(&batch, primary_key_field)?;
             let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
             for row_idx in 0..batch.num_rows() {
@@ -580,16 +640,48 @@ async fn write_compacted_winners(
     let mut accumulator = CompactionWriteAccumulator::default();
 
     for segment in &selection.segments {
-        let mut stream = storage_cached
+        let mut stream = match storage_cached
             .read_parquet_file_stream(table_type, table_id, user_id, &segment.path, &[])
             .await
-            .into_flush_error("Failed to open compacted input Parquet stream")?;
-
-        while let Some(batch) = stream
-            .try_next()
-            .await
-            .into_flush_error("Failed to read compacted input Parquet batch")?
         {
+            Ok(stream) => stream,
+            Err(error) => {
+                if is_missing_parquet_file_error_msg(&error.to_string()) {
+                    warn!(
+                        "Small-segment compaction skipping missing winner-input segment '{}' for {}: {}",
+                        segment.path, table_id, error
+                    );
+                    continue;
+                }
+
+                return Err(FlushError::Other(format!(
+                    "Failed to open compacted input Parquet stream: {}",
+                    error
+                )));
+            },
+        };
+
+        loop {
+            let Some(batch) = (match stream.try_next().await {
+                Ok(batch) => batch,
+                Err(error) => {
+                    if is_missing_parquet_file_error_msg(&error.to_string()) {
+                        warn!(
+                            "Small-segment compaction skipping vanished winner-input segment '{}' for {}: {}",
+                            segment.path, table_id, error
+                        );
+                        break;
+                    }
+
+                    return Err(FlushError::Other(format!(
+                        "Failed to read compacted input Parquet batch: {}",
+                        error
+                    )));
+                },
+            }) else {
+                break;
+            };
+
             let Some(filtered_batch) = filter_latest_live_rows(
                 batch,
                 &schema_context.primary_key_field,
@@ -913,6 +1005,15 @@ fn stored_scalar_cmp(left: &StoredScalarValue, right: &StoredScalarValue) -> Opt
     }
 }
 
+fn is_missing_parquet_file_error_msg(message: &str) -> bool {
+    let msg = message.to_ascii_lowercase();
+    msg.contains("not found")
+        && (msg.contains("object at location")
+            || msg.contains("no such file or directory")
+            || msg.contains("failed to open parquet stream")
+            || msg.contains("/batch-"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -974,5 +1075,15 @@ mod tests {
         let manifest = manifest_with_segments(&[10_000, 2_000, 2_000, 2_000]);
 
         assert!(select_trailing_small_segments(&manifest, 10_000, 4, 8).is_none());
+    }
+
+    #[test]
+    fn detects_missing_parquet_error_messages() {
+        assert!(is_missing_parquet_file_error_msg(
+            "Parquet error: External: Object at location /tmp/batch-0.parquet not found: No such file or directory"
+        ));
+        assert!(!is_missing_parquet_file_error_msg(
+            "Parquet error: invalid footer magic bytes"
+        ));
     }
 }

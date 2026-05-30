@@ -9,6 +9,7 @@ test-threads = 15
 # concurrency budget.
 stateful-heavy = { max-threads = 1 }
 proxied-reconnect = { max-threads = 2 }
+cli-auth-running = { max-threads = 1 }
 # Each OIDC e2e test spawns a fresh KalamDB server subprocess (debug binary).
 # Running all five concurrently causes RocksDB init / file-I/O contention that
 # pushes every server startup near the 30-second wait_for_auth_status deadline.
@@ -36,6 +37,42 @@ test-group = "oidc-fresh-server"
 [[profile.default.overrides]]
 filter = 'test(oidc_cli_headless_brokered_device_login_works)'
 test-group = "oidc-fresh-server"
+
+[[profile.default.overrides]]
+filter = 'test(test_keycloak_realm_configured)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_hs256_with_external_issuer_rejected)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_cli_authenticate_unauthorized_user)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_cli_invalid_token)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_preprovisioned_oauth_user_via_bearer)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_untrusted_issuer_rejected)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_cli_localhost_auth_bypass)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_cli_authenticate_and_check_info)'
+test-group = "cli-auth-running"
+
+[[profile.default.overrides]]
+filter = 'test(test_cli_jwt_authentication)'
+test-group = "cli-auth-running"
 
 # [[profile.default.overrides]]
 # filter = 'test(test_scenario_08_subscription_reconnect)'

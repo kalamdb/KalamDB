@@ -358,22 +358,32 @@ impl UserTableProvider {
         }
 
         let pk_column_id = self.core.primary_key_column_id();
-        let pk_values: Vec<String> = pk_values_to_check.iter().map(|(pk, _)| pk.clone()).collect();
-        if let Some(found_pk) = base::pk_exists_batch_in_cold(
-            &self.core,
-            self.core.table_id(),
-            self.core.table_type(),
-            Some(user_id),
-            pk_name,
-            pk_column_id,
-            &pk_values,
-        )
-        .await?
-        {
-            return Err(KalamDbError::AlreadyExists(format!(
-                "Primary key violation: value '{}' already exists in column '{}'",
-                found_pk, pk_name
-            )));
+        let mut pk_values_for_cold_check: Vec<String> = Vec::with_capacity(pk_values_to_check.len());
+        for (pk_str, pk_value) in &pk_values_to_check {
+            // A hot tombstone must shadow older cold rows for the same PK.
+            // Without this guard, async flush output can cause false duplicate errors.
+            if !self.pk_tombstoned_in_hot(user_id, pk_value).await? {
+                pk_values_for_cold_check.push(pk_str.clone());
+            }
+        }
+
+        if !pk_values_for_cold_check.is_empty() {
+            if let Some(found_pk) = base::pk_exists_batch_in_cold(
+                &self.core,
+                self.core.table_id(),
+                self.core.table_type(),
+                Some(user_id),
+                pk_name,
+                pk_column_id,
+                &pk_values_for_cold_check,
+            )
+            .await?
+            {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Primary key violation: value '{}' already exists in column '{}'",
+                    found_pk, pk_name
+                )));
+            }
         }
 
         Ok(())

@@ -21,7 +21,7 @@ use crate::http::sql::models::{ErrorCode, SqlResponse};
 /// GET /v1/exports/{user_id}/{export_id} - Download a user data export ZIP
 ///
 /// Requires Bearer token (JWT) authorization.
-/// Only DBA/System roles can download the export.
+/// Only DBA/System roles can download exports.
 #[get("/exports/{user_id}/{export_id}")]
 pub async fn download_export(
     extractor: AuthSessionExtractor,

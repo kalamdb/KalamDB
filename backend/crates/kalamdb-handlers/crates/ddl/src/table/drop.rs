@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::TableId, schemas::TableType};
+use kalamdb_commons::{models::TableId, schemas::TableType, JobId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -20,7 +20,8 @@ use kalamdb_jobs::{
     AppContextJobsExt,
 };
 use kalamdb_sql::ddl::DropTableStatement;
-use kalamdb_system::JobType;
+use kalamdb_system::{JobStatus, JobType};
+use tokio::time::{sleep, Duration, Instant};
 
 use crate::helpers::{
     async_blocking::run_blocking,
@@ -32,6 +33,9 @@ use crate::helpers::{
 pub struct DropTableHandler {
     app_context: Arc<AppContext>,
 }
+
+const CLEANUP_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) fn capture_storage_cleanup_details(
     app_context: &Arc<AppContext>,
@@ -98,6 +102,45 @@ pub(crate) async fn cleanup_dropped_table_partitions(
     Ok(())
 }
 
+pub(crate) async fn wait_for_cleanup_job(
+    app_context: &Arc<AppContext>,
+    cleanup_job_id: &str,
+    scope: &str,
+) -> Result<(), KalamDbError> {
+    let job_manager = app_context.job_manager();
+    let job_id = JobId::new(cleanup_job_id.to_string());
+    let deadline = Instant::now() + CLEANUP_WAIT_TIMEOUT;
+
+    loop {
+        if Instant::now() >= deadline {
+            return Err(KalamDbError::ExecutionError(format!(
+                "Timed out waiting for cleanup job {} for {}",
+                cleanup_job_id, scope
+            )));
+        }
+
+        let Some(job) = job_manager.get_job(&job_id).await? else {
+            return Err(KalamDbError::ExecutionError(format!(
+                "Cleanup job {} for {} was not found",
+                cleanup_job_id, scope
+            )));
+        };
+
+        match job.status {
+            JobStatus::Completed | JobStatus::Skipped => return Ok(()),
+            JobStatus::Failed | JobStatus::Cancelled => {
+                return Err(KalamDbError::ExecutionError(format!(
+                    "Cleanup job {} for {} finished with status {}",
+                    cleanup_job_id, scope, job.status
+                )));
+            },
+            JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying => {
+                sleep(CLEANUP_WAIT_POLL_INTERVAL).await;
+            },
+        }
+    }
+}
+
 async fn enqueue_drop_table_cleanup_job(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
@@ -111,12 +154,11 @@ async fn enqueue_drop_table_cleanup_job(
         storage: storage_details,
     };
 
-    let idempotency_key =
-        format!("drop-{}-{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
-
     let job_manager = app_context.job_manager();
     let job_id = job_manager
-        .create_job_typed(JobType::Cleanup, params, Some(idempotency_key), None)
+        // Every drop must run cleanup, even if namespace/table names are reused.
+        // A static idempotency key can incorrectly dedupe later drops and leave stale files.
+        .create_job_typed(JobType::Cleanup, params, None, None)
         .await?;
 
     Ok(job_id.to_string())
@@ -310,18 +352,24 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             schedule_drop_table_cleanup(&self.app_context, &table_id, actual_type, storage_details)
                 .await?;
 
+        wait_for_cleanup_job(&self.app_context, &job_id, &table_id.full_name()).await?;
+
         let audit_entry = audit::log_ddl_operation(
             context,
             "DROP",
             "TABLE",
             &format!("{}.{}", statement.namespace_id.as_str(), statement.table_name.as_str()),
-            Some(format!("Type: {:?}, Cleanup Job: {}", actual_type, job_id.as_str())),
+            Some(format!(
+                "Type: {:?}, Cleanup Job: {} (completed before response)",
+                actual_type,
+                job_id.as_str()
+            )),
             None,
         );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         log::debug!(
-            "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job: {}",
+            "✅ DROP TABLE succeeded: {}.{} (type: {:?}) - Cleanup job completed: {}",
             statement.namespace_id.as_str(),
             statement.table_name.as_str(),
             actual_type,
