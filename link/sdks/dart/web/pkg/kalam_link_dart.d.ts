@@ -534,6 +534,14 @@ export class WasmTimestampFormatter {
     static withFormat(format: string): WasmTimestampFormatter;
 }
 
+export function fileRefDownloadUrl(file_ref_json: string, base_url: string, namespace: string, table: string): string;
+
+export function fileRefRelativePath(file_ref_json: string): string;
+
+export function fileRefRelativeUrl(file_ref_json: string, namespace: string, table: string): string;
+
+export function fileRefStoredName(file_ref_json: string): string;
+
 /**
  * Parse an ISO 8601 timestamp string to milliseconds since epoch
  *
@@ -574,6 +582,10 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_kalamclient_free: (a: number, b: number) => void;
     readonly __wbg_wasmtimestampformatter_free: (a: number, b: number) => void;
+    readonly fileRefDownloadUrl: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+    readonly fileRefRelativePath: (a: number, b: number, c: number) => void;
+    readonly fileRefRelativeUrl: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly fileRefStoredName: (a: number, b: number, c: number) => void;
     readonly kalamclient_anonymous: (a: number, b: number, c: number) => void;
     readonly kalamclient_clearAuthProvider: (a: number) => void;
     readonly kalamclient_connect: (a: number) => number;
@@ -616,12 +628,12 @@ export interface InitOutput {
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
     readonly timestampNow: () => number;
-    readonly __wasm_bindgen_func_elem_713: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_724: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_3561: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3561_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3561_3: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3560: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_378: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_393: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3640: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3640_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3640_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3639: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

@@ -1,30 +1,16 @@
 use std::sync::Arc;
 
-use kalamdb_commons::{models::ConnectionInfo, AuthType, Role, UserId};
+use kalamdb_commons::{models::ConnectionInfo, AuthType, UserId};
 use log::debug;
 use tracing::Instrument;
 
 use super::LOGIN_TRACKER;
 use crate::{
     errors::error::{AuthError, AuthResult},
-    helpers::basic_auth,
     models::context::AuthenticatedUser,
     repository::user_repo::UserRepository,
     security::password,
 };
-
-/// Authenticate using Basic Auth header.
-///
-/// The Basic header carries `user_id:password` (base64-encoded).
-#[allow(dead_code)]
-pub(super) async fn authenticate_basic(
-    auth_header: &str,
-    connection_info: &ConnectionInfo,
-    repo: &Arc<dyn UserRepository>,
-) -> AuthResult<AuthenticatedUser> {
-    let (user, password) = basic_auth::parse_basic_auth_header(auth_header)?;
-    authenticate_user_password(&user, &password, connection_info, repo).await
-}
 
 /// Core authentication logic for user/password.
 pub(super) async fn authenticate_user_password(
@@ -54,15 +40,12 @@ pub(super) async fn authenticate_user_password(
 
         LOGIN_TRACKER.check_lockout(&user)?;
 
-        if user.auth_type == AuthType::OAuth {
+        if user.auth_type == AuthType::Oidc {
             return Err(AuthError::AuthenticationFailed(
-                "OAuth users cannot authenticate with password. Use OAuth token instead."
+                "OIDC users cannot authenticate with password. Use OIDC login instead."
                     .to_string(),
             ));
         }
-
-        let is_localhost = connection_info.is_localhost();
-        let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
 
         if user_id.as_str() == UserId::root().as_str()
             && user.password_hash.is_empty()
@@ -75,36 +58,7 @@ pub(super) async fn authenticate_user_password(
 
         let mut auth_success = false;
 
-        if is_system_internal {
-            if is_localhost {
-                let password_ok = !password.is_empty()
-                    && !user.password_hash.is_empty()
-                    && password::verify_password(password, &user.password_hash)
-                        .await
-                        .unwrap_or(false);
-
-                if password_ok {
-                    auth_success = true;
-                } else {
-                    debug!("Authentication failed for system user attempt");
-                }
-            } else {
-                if user.password_hash.is_empty() {
-                    return Err(AuthError::RemoteAccessDenied(
-                        "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'".to_string(),
-                    ));
-                }
-                if !password.is_empty()
-                    && password::verify_password(password, &user.password_hash)
-                        .await
-                        .unwrap_or(false)
-                {
-                    auth_success = true;
-                } else {
-                    debug!("Authentication failed for remote user attempt");
-                }
-            }
-        } else if user.password_hash.is_empty() {
+        if user.password_hash.is_empty() {
             return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
         } else if !password.is_empty()
             && password::verify_password(password, &user.password_hash)
@@ -129,9 +83,10 @@ pub(super) async fn authenticate_user_password(
         }
         tracing::debug!(user_id = %user.user_id, role = ?user.role, "Password authentication succeeded");
 
-        Ok(AuthenticatedUser::new(
+        Ok(AuthenticatedUser::with_auth_type(
             user.user_id,
             user.role,
+            user.auth_type,
             user.email,
             user.created_at,
             user.updated_at,

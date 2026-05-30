@@ -111,6 +111,8 @@ struct BorrowedQueryRequest<'a> {
 pub type AuthRefreshCallback =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<AuthProvider>> + Send>> + Send + Sync>;
 
+pub(crate) type OwnedQueryUploadFile = (String, String, Vec<u8>, Option<String>);
+
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
 pub struct QueryExecutor {
@@ -240,7 +242,7 @@ impl QueryExecutor {
     pub async fn execute(
         &self,
         sql: &str,
-        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        files: Option<Vec<OwnedQueryUploadFile>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
     ) -> Result<QueryResponse> {
@@ -251,7 +253,7 @@ impl QueryExecutor {
     pub async fn execute_with_progress(
         &self,
         sql: &str,
-        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        files: Option<Vec<OwnedQueryUploadFile>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<String>,
         progress: Option<UploadProgressCallback>,
@@ -263,7 +265,7 @@ impl QueryExecutor {
     pub(crate) async fn execute_with_progress_ref(
         &self,
         sql: &str,
-        files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
+        files: Option<Vec<OwnedQueryUploadFile>>,
         params: Option<Vec<serde_json::Value>>,
         namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
@@ -457,6 +459,7 @@ impl QueryExecutor {
         err.is_timeout() || err.is_connect()
     }
 
+    #[cfg(feature = "file-uploads")]
     fn multipart_leader_retry_url(
         result: &Result<QueryResponse>,
         current_sql_url: &str,
@@ -473,12 +476,14 @@ impl QueryExecutor {
         (retry_url != current_sql_url).then_some(retry_url)
     }
 
+    #[cfg(feature = "file-uploads")]
     fn leader_url_from_query_response(response: &QueryResponse) -> Option<String> {
         let error = response.error.as_ref()?;
         Self::extract_leader_url(&error.message)
             .or_else(|| error.details.as_deref().and_then(Self::extract_leader_url))
     }
 
+    #[cfg(feature = "file-uploads")]
     fn leader_url_from_error_text(error_text: &str) -> Option<String> {
         serde_json::from_str::<QueryResponse>(error_text)
             .ok()
@@ -486,6 +491,7 @@ impl QueryExecutor {
             .or_else(|| Self::extract_leader_url(error_text))
     }
 
+    #[cfg(feature = "file-uploads")]
     fn extract_leader_url(text: &str) -> Option<String> {
         let marker = "Leader:";
         let index = text.find(marker)?;
@@ -663,6 +669,7 @@ mod tests {
         assert!((progress.percent - 100.0).abs() < f64::EPSILON);
     }
 
+    #[cfg(feature = "file-uploads")]
     #[test]
     fn extract_leader_url_handles_optional_url_hint() {
         let url = super::QueryExecutor::extract_leader_url(
@@ -673,6 +680,7 @@ mod tests {
         assert_eq!(url, "http://127.0.0.1:2903");
     }
 
+    #[cfg(feature = "file-uploads")]
     #[test]
     fn leader_retry_url_reads_structured_query_error() {
         let error_text = r#"{

@@ -15,6 +15,7 @@ env:
   RUST_VERSION: "1.92.0"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   fmt:
@@ -348,11 +349,19 @@ jobs:
       - name: Commit badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
+          set -euo pipefail
+
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          git checkout -B ci-test-badge-update
           git add .github/badges/tests.json
-          git diff --staged --quiet || git commit -m "Update test badge [skip ci]"
-          git push || echo "Nothing to push"
+          if git diff --staged --quiet; then
+            echo "Test badge file already up to date"
+            exit 0
+          fi
+
+          git commit -m "Update test badge [skip ci]"
+          git push origin HEAD:main
 
   license_compliance:
     name: License Compliance
@@ -412,6 +421,20 @@ jobs:
           cd link/sdks/typescript/client
           npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/sdk-licenses.json"
 
+      - name: Install npm CLI dependencies
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Generate npm CLI production license report
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd link/sdks/typescript/cli
+          npx --yes license-checker --production --json > "$GITHUB_WORKSPACE/target/license/npm-cli-licenses.json"
+
       - name: Validate licenses and generate third-party report
         shell: bash
         run: |
@@ -421,6 +444,7 @@ jobs:
             --rust-report target/license/rust-runtime-licenses.json \
             --ui-report target/license/ui-licenses.json \
             --sdk-report target/license/sdk-licenses.json \
+            --cli-report target/license/npm-cli-licenses.json \
             --output target/license/THIRD_PARTY_LICENSES.md
 
       - name: Upload license reports

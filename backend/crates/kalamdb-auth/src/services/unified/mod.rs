@@ -9,15 +9,17 @@ use std::sync::Arc;
 
 pub use audit::extract_user_id_for_audit;
 use bearer::authenticate_bearer;
+use kalamdb_commons::{models::ConnectionInfo, Role};
 use once_cell::sync::Lazy;
 use password::authenticate_user_password;
 use tracing::Instrument;
 pub use types::{AuthMethod, AuthRequest, AuthenticationResult};
 
 use crate::{
-    errors::error::{AuthError, AuthResult},
+    errors::error::AuthResult,
+    helpers::authorization_header::extract_bearer_token,
     models::context::AuthenticatedUser,
-    providers::jwt_config,
+    providers::{jwt_auth, jwt_config},
     repository::user_repo::UserRepository,
     services::login_tracker::LoginTracker,
 };
@@ -26,34 +28,22 @@ use crate::{
 static LOGIN_TRACKER: Lazy<LoginTracker> = Lazy::new(LoginTracker::new);
 
 /// Initialize auth configuration from server settings.
-pub fn init_auth_config(
-    auth: &kalamdb_configs::AuthSettings,
-    oauth: &kalamdb_configs::OAuthSettings,
-) {
-    let mut issuer_audiences = std::collections::HashMap::new();
+pub fn init_auth_config(auth: &kalamdb_configs::AuthSettings) {
+    let oidc_default_role = Role::from_str_opt(&auth.oidc.default_role).unwrap_or_else(|| {
+        log::warn!(
+            "Invalid auth.oidc.default_role '{}'; falling back to 'user'",
+            auth.oidc.default_role
+        );
+        Role::User
+    });
 
-    if let Some(client_id) = &oauth.providers.google.client_id {
-        if !oauth.providers.google.issuer.is_empty() {
-            issuer_audiences.insert(oauth.providers.google.issuer.clone(), client_id.clone());
-        }
-    }
-    if let Some(client_id) = &oauth.providers.github.client_id {
-        if !oauth.providers.github.issuer.is_empty() {
-            issuer_audiences.insert(oauth.providers.github.issuer.clone(), client_id.clone());
-        }
-    }
-    if let Some(client_id) = &oauth.providers.azure.client_id {
-        if !oauth.providers.azure.issuer.is_empty() {
-            issuer_audiences.insert(oauth.providers.azure.issuer.clone(), client_id.clone());
-        }
-    }
-    if let Some(client_id) = &oauth.providers.firebase.client_id {
-        if !oauth.providers.firebase.issuer.is_empty() {
-            issuer_audiences.insert(oauth.providers.firebase.issuer.clone(), client_id.clone());
-        }
-    }
-
-    jwt_config::init_jwt_config(&auth.jwt_secret, &auth.jwt_trusted_issuers, issuer_audiences);
+    jwt_config::init_jwt_config(
+        &auth.jwt_secret,
+        &auth.jwt_trusted_issuers,
+        Some(&auth.oidc),
+        auth.oidc.enabled && auth.oidc.auto_provision,
+        oidc_default_role,
+    );
 }
 
 /// Authenticate a request using the unified authentication flow.
@@ -98,37 +88,29 @@ pub async fn authenticate(
     .await
 }
 
+/// Resolve a validated KalamDB refresh token to the user it represents.
+pub async fn resolve_refresh_token_user(
+    repo: &Arc<dyn UserRepository>,
+    claims: &jwt_auth::JwtClaims,
+    connection_info: &ConnectionInfo,
+) -> AuthResult<AuthenticatedUser> {
+    let config = jwt_config::get_jwt_config();
+    bearer::resolve_internal_authenticated_user(repo, &config, claims, connection_info).await
+}
+
 async fn authenticate_header(
     auth_header: &str,
     connection_info: &kalamdb_commons::models::ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
-    let mut parts = auth_header.splitn(2, ' ');
-    let scheme = parts.next().unwrap_or_default().trim();
-    let token = parts.next().unwrap_or_default().trim();
+    let token = extract_bearer_token(auth_header)?;
+    let user = authenticate_bearer(token, connection_info, repo).await?;
+    record_authenticated_span(&user);
 
-    if scheme.eq_ignore_ascii_case("Basic") {
-        Err(AuthError::InvalidCredentials(
-            "Basic authentication is not supported. Use Bearer token or login endpoint."
-                .to_string(),
-        ))
-    } else if scheme.eq_ignore_ascii_case("Bearer") {
-        if token.is_empty() {
-            return Err(AuthError::MalformedAuthorization("Bearer token missing".to_string()));
-        }
-
-        let user = authenticate_bearer(token, connection_info, repo).await?;
-        record_authenticated_span(&user);
-
-        Ok(AuthenticationResult {
-            user,
-            method: AuthMethod::Bearer,
-        })
-    } else {
-        Err(AuthError::MalformedAuthorization(
-            "Authorization header must start with 'Basic ' or 'Bearer '".to_string(),
-        ))
-    }
+    Ok(AuthenticationResult {
+        user,
+        method: AuthMethod::Bearer,
+    })
 }
 
 async fn authenticate_credentials(

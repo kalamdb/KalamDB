@@ -35,24 +35,19 @@ services:
       # - "14268:14268"   # Jaeger collector HTTP
       # - "14250:14250"   # Jaeger collector gRPC
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:latest
-    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
     environment:
-      # Keycloak < 26
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-      # Keycloak >= 26
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME_STRICT: "false"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://127.0.0.1:5556/callback}
     ports:
-      - "8081:2900"
+      - "5556:5556"  # Dex issuer and OIDC endpoints
+      - "5558:5558"  # Dex telemetry/health
     volumes:
-      - ./keycloak/realm-import:/opt/keycloak/data/import:ro
-      - ./keycloak/data:/opt/keycloak/data
-      - ./keycloak/entrypoint.sh:/entrypoint.sh:ro
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - ./dex/data:/var/dex
 
   # webdav:
   #   image: bytemark/webdav:latest

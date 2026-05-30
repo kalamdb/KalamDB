@@ -51,6 +51,8 @@ mod smoke_test_as_user_chat_impersonation;
 mod smoke_test_as_user_impersonation;
 
 // Subscription tests
+#[path = "smoke/subscription/smoke_test_concurrent_subscriptions.rs"]
+mod smoke_test_concurrent_subscriptions;
 #[path = "smoke/subscription/smoke_test_shared_table_subscription.rs"]
 mod smoke_test_shared_table_subscription;
 #[path = "smoke/subscription/smoke_test_stream_subscription.rs"]

@@ -304,6 +304,35 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             item: "--version",
             tests: &["test_cli_version_command"],
         },
+        // Top-level commands
+        Coverage {
+            item: "update",
+            tests: &["test_cli_update_command_replaces_binary"],
+        },
+        Coverage {
+            item: "version",
+            tests: &["version_subcommand_parses"],
+        },
+        Coverage {
+            item: "doctor",
+            tests: &["utility_subcommands_parse"],
+        },
+        Coverage {
+            item: "login",
+            tests: &["login_subcommand_accepts_instance_and_url_after_command"],
+        },
+        Coverage {
+            item: "logout",
+            tests: &["utility_subcommands_parse"],
+        },
+        Coverage {
+            item: "whoami",
+            tests: &["utility_subcommands_parse"],
+        },
+        Coverage {
+            item: "token create",
+            tests: &["token_create_subcommand_parses"],
+        },
         // Interactive commands covered by parser + execution smoke
         Coverage {
             item: "\\help",

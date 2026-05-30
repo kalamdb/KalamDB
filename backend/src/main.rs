@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use kalamdb_configs::ServerConfig;
 use kalamdb_observability::initialize_activity_now;
 use kalamdb_server::{
-    lifecycle::{bootstrap, run},
+    lifecycle::{bootstrap, effective_max_blocking_threads, run},
     startup::configure_auth_runtime,
 };
 use log::info;
@@ -284,9 +284,18 @@ fn main() -> Result<()> {
 
     let config = load_server_config(&config_path);
     let worker_threads = resolve_tokio_worker_threads(&config);
+    let max_blocking_threads =
+        effective_max_blocking_threads(config.performance.worker_max_blocking_threads);
+
+    info!(
+        "Tokio runtime configured: worker_threads={}, max_blocking_threads={}",
+        worker_threads, max_blocking_threads
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("kalamdb-tokio")
         .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking_threads)
         .enable_all()
         .build()
         .expect("Failed to build tokio runtime");

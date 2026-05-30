@@ -15,6 +15,7 @@ use std::{
 
 use crate::{
     config::CLIConfiguration, error::Result, formatter::OutputFormatter, parser::CommandParser,
+    update_check::UpdateAvailability,
 };
 use clap::ValueEnum;
 use colored::*;
@@ -25,6 +26,7 @@ use kalam_client::{
     KalamLinkTimeouts, TimestampFormatter,
 };
 
+pub mod auth_options;
 mod batch;
 mod cluster;
 mod commands;
@@ -33,6 +35,8 @@ mod health;
 mod info;
 mod interactive;
 mod namespace;
+pub mod oidc_browser;
+pub mod oidc_device;
 mod query;
 mod subscriptions;
 
@@ -132,6 +136,9 @@ pub struct CLISession {
 
     /// Server build date
     server_build_date: Option<String>,
+
+    /// Latest CLI update available for this local binary
+    update_available: Option<UpdateAvailability>,
 
     /// Instance name for credential management
     instance: Option<String>,
@@ -298,6 +305,7 @@ impl CLISession {
             server_version,
             server_api_version,
             server_build_date,
+            update_available: None,
             instance,
             cluster_name: None, // Will be fetched lazily from system.cluster
             credential_store,
@@ -1092,7 +1100,7 @@ mod tests {
         .expect("create session");
 
         session
-            .execute("SELECT count(*) FROM dba.stats")
+            .execute("SELECT count(*) FROM system.stats")
             .await
             .expect("query should succeed after token refresh");
 

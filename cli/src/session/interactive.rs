@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    time::Duration,
 };
 
 use colored::Colorize;
@@ -92,6 +93,8 @@ impl CLISession {
             self.current_namespace_label()
         };
 
+        let update = update_prompt_label(self.update_available.as_ref(), use_colors_in_prompt);
+
         let arrow = if use_colors_in_prompt {
             if use_unicode {
                 "❯".bright_blue().bold().to_string()
@@ -102,7 +105,10 @@ impl CLISession {
             ">".to_string()
         };
 
-        let parts = [status, brand_with_profile, identity, namespace];
+        let mut parts = vec![status, brand_with_profile, identity, namespace];
+        if let Some(update) = update {
+            parts.push(update);
+        }
         let body = parts.join(" ");
         format!("{} {} ", body, arrow)
     }
@@ -160,10 +166,28 @@ impl CLISession {
             self.adopt_cluster_metadata(&cluster_info);
         }
 
+        self.update_available = crate::update_check::check_for_update(Duration::from_secs(2))
+            .await
+            .ok()
+            .flatten();
+        if let Some(update) = &self.update_available {
+            let message = format!(
+                "Update available: kalam {} -> {}. Run `kalam update`.",
+                update.current_version, update.latest_version
+            );
+            if self.color {
+                println!("{}", message.yellow().bold());
+            } else {
+                println!("{}", message);
+            }
+        }
+
         self.print_banner();
 
         let helper = CLIHelper::new(completer, self.color);
+        let history_size = self.config.resolved_ui().history_size;
         let config = Config::builder()
+            .max_history_size(history_size)?
             .completion_type(CompletionType::List)
             .completion_prompt_limit(100)
             .edit_mode(EditMode::Emacs)
@@ -178,7 +202,6 @@ impl CLISession {
             Cmd::AcceptLine,
         );
 
-        let history_size = self.config.resolved_ui().history_size;
         let history = CommandHistory::new(history_size);
 
         if let Ok(history_entries) = history.load() {
@@ -572,6 +595,44 @@ impl CLISession {
             }
         }
         Ok(())
+    }
+}
+
+fn update_prompt_label(
+    available: Option<&crate::update_check::UpdateAvailability>,
+    use_colors: bool,
+) -> Option<String> {
+    available.map(|available| {
+        let label = format!("update:{}", available.latest_version);
+        if use_colors {
+            format!("{}", label.yellow().bold())
+        } else {
+            label
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_prompt_label;
+    use crate::update_check::UpdateAvailability;
+
+    #[test]
+    fn update_prompt_label_is_absent_without_update() {
+        assert_eq!(update_prompt_label(None, false), None);
+    }
+
+    #[test]
+    fn update_prompt_label_includes_latest_version() {
+        let available = UpdateAvailability {
+            current_version: "0.5.1-beta.2".to_string(),
+            latest_version: "0.5.1-beta.3".to_string(),
+        };
+
+        assert_eq!(
+            update_prompt_label(Some(&available), false).as_deref(),
+            Some("update:0.5.1-beta.3")
+        );
     }
 }
 

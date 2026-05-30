@@ -1,7 +1,7 @@
 export interface CreateUserInput {
   username: string;
   password?: string;
-  auth_type?: "password" | "oauth" | "internal";
+  auth_type?: "password" | "oidc";
   auth_data?: string;
   role?: string;
   email?: string;
@@ -25,13 +25,11 @@ export function buildCreateUserSql(input: CreateUserInput): string {
   const authType = (input.auth_type ?? "password").toLowerCase();
   let sql = `CREATE USER '${escapeSqlLiteral(input.username)}'`;
 
-  if (authType === "oauth") {
-    sql += ` WITH OAUTH`;
+  if (authType === "oidc") {
+    sql += ` WITH OIDC`;
     if (input.auth_data?.trim()) {
       sql += ` '${escapeSqlLiteral(input.auth_data.trim())}'`;
     }
-  } else if (authType === "internal") {
-    sql += ` WITH INTERNAL`;
   } else {
     const password = input.password?.trim();
     if (!password) {

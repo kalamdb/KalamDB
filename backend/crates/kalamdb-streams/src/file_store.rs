@@ -21,7 +21,7 @@ use crate::{
     record::StreamLogRecord,
     store_trait::StreamLogStore,
     time_bucket::StreamTimeBucket,
-    utils::{cleanup_empty_dir, parse_log_window, parse_tmp_log_window, visit_dirs, visit_files},
+    utils::{cleanup_empty_dir, visit_dirs},
 };
 
 /// Write buffer capacity per segment file handle (64 KB).
@@ -40,11 +40,24 @@ const MAX_OPEN_SEGMENTS: usize = 256;
 /// Number of cold segment writers to close when the cache exceeds its cap.
 const SEGMENT_EVICT_BATCH: usize = 32;
 
+/// Suffix for a per-user stream log file inside a window/shard directory.
+const USER_LOG_FILE_SUFFIX: &str = ".log";
+
+/// Prefix for window directories: `w<start_ms>-<duration_ms>`.
+const WINDOW_DIR_PREFIX: &str = "w";
+
 /// Cached state for an open segment file.
 struct SegmentWriter {
     writer: BufWriter<File>,
     record_count: u32,
     last_write: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct LogFileEntry {
+    window_start: u64,
+    window_end: u64,
+    path: PathBuf,
 }
 
 /// File-based stream log store with cached file handles and write buffering.
@@ -169,33 +182,48 @@ impl FileStreamLogStore {
     }
 
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
-        let mut deleted = 0usize;
         let base_dir = &self.config.base_dir;
         if !base_dir.exists() {
             return Ok(0);
         }
 
-        visit_dirs(base_dir, |bucket_dir| {
-            visit_dirs(&bucket_dir, |shard_dir| {
-                visit_dirs(&shard_dir, |user_dir| {
-                    visit_files(&user_dir, |log_file| {
-                        if self.delete_if_expired(&log_file, before_time)? {
-                            deleted += 1;
-                        }
-                        Ok(true)
-                    })?;
-                    cleanup_empty_dir(&user_dir);
-                    Ok(true)
-                })?;
-                cleanup_empty_dir(&shard_dir);
-                Ok(true)
-            })?;
-            cleanup_empty_dir(&bucket_dir);
+        let deleted = self.delete_expired_windows(before_time)?;
+        cleanup_empty_dir(base_dir);
+
+        Ok(deleted)
+    }
+
+    fn delete_expired_windows(&self, before_time: u64) -> Result<usize> {
+        let base_dir = &self.config.base_dir;
+        if !base_dir.exists() {
+            return Ok(0);
+        }
+
+        let mut expired_dirs = Vec::new();
+        visit_dirs(base_dir, |window_dir| {
+            if let Some((_window_start, window_end)) = Self::parse_window_dir(&window_dir)
+            {
+                if window_end <= before_time {
+                    expired_dirs.push(window_dir);
+                }
+            }
             Ok(true)
         })?;
 
-        cleanup_empty_dir(base_dir);
+        let mut deleted = 0usize;
+        for window_dir in expired_dirs {
+            self.close_segments_under(&window_dir);
+            match fs::remove_dir_all(&window_dir) {
+                Ok(()) => {
+                    deleted += 1;
+                    self.close_segments_under(&window_dir);
+                },
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {},
+                Err(err) => return Err(StreamLogError::Io(err.to_string())),
+            }
+        }
 
+        cleanup_empty_dir(base_dir);
         Ok(deleted)
     }
 
@@ -205,21 +233,25 @@ impl FileStreamLogStore {
             return Ok(false);
         }
 
-        let mut found = false;
-        visit_dirs(base_dir, |bucket_dir| {
-            visit_dirs(&bucket_dir, |shard_dir| {
-                visit_dirs(&shard_dir, |user_dir| {
-                    visit_files(&user_dir, |log_file| {
-                        if self.is_expired_log_or_tmp(&log_file, before_time) {
-                            found = true;
-                            return Ok(false);
-                        }
-                        Ok(true)
-                    })
-                })
-            })
-        })?;
+        self.has_expired_window(before_time)
+    }
 
+    fn has_expired_window(&self, before_time: u64) -> Result<bool> {
+        let base_dir = &self.config.base_dir;
+        if !base_dir.exists() {
+            return Ok(false);
+        }
+
+        let mut found = false;
+        visit_dirs(base_dir, |window_dir| {
+            if let Some((_window_start, window_end)) = Self::parse_window_dir(&window_dir) {
+                if window_end <= before_time {
+                    found = true;
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })?;
         Ok(found)
     }
 
@@ -230,40 +262,9 @@ impl FileStreamLogStore {
             return Ok(Vec::new());
         }
 
-        visit_dirs(base_dir, |bucket_dir| {
-            visit_dirs(&bucket_dir, |shard_dir| {
-                visit_dirs(&shard_dir, |user_dir| {
-                    if let Some(name) = user_dir.file_name().and_then(|n| n.to_str()) {
-                        users.insert(UserId::new(name));
-                    }
-                    Ok(true)
-                })
-            })
-        })?;
+        self.collect_user_ids(&mut users)?;
 
         Ok(users.into_iter().collect())
-    }
-
-    fn is_expired_log_or_tmp(&self, path: &Path, before_time: u64) -> bool {
-        let Some(window_start) = parse_log_window(path).or_else(|| parse_tmp_log_window(path))
-        else {
-            return false;
-        };
-        let window_end = window_start.saturating_add(self.config.bucket.duration_ms());
-        window_end < before_time
-    }
-
-    fn delete_if_expired(&self, path: &Path, before_time: u64) -> Result<bool> {
-        if !self.is_expired_log_or_tmp(path, before_time) {
-            return Ok(false);
-        }
-
-        self.close_segment(path);
-        match fs::remove_file(path) {
-            Ok(()) => Ok(true),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(err) => Err(StreamLogError::Io(err.to_string())),
-        }
     }
 
     fn close_segment(&self, path: &Path) -> bool {
@@ -274,6 +275,22 @@ impl FileStreamLogStore {
             return true;
         }
         false
+    }
+
+    fn close_segments_under(&self, dir: &Path) -> usize {
+        let paths: Vec<PathBuf> = self
+            .segments
+            .iter()
+            .filter(|entry| entry.key().starts_with(dir))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let mut closed = 0usize;
+        for path in paths {
+            if self.close_segment(&path) {
+                closed += 1;
+            }
+        }
+        closed
     }
 
     fn prune_open_segments_if_needed(&self) {
@@ -316,6 +333,10 @@ impl FileStreamLogStore {
         };
 
         match self.config.bucket {
+            StreamTimeBucket::Minute => {
+                let truncated = dt.with_second(0).and_then(|v| v.with_nanosecond(0));
+                truncated.map(|v| v.timestamp_millis() as u64).unwrap_or(ts_ms)
+            },
             StreamTimeBucket::Hour => {
                 let truncated = dt
                     .with_minute(0)
@@ -346,24 +367,39 @@ impl FileStreamLogStore {
         }
     }
 
-    fn bucket_folder(&self, window_start_ms: u64) -> String {
-        let dt = Utc
-            .timestamp_millis_opt(window_start_ms as i64)
-            .single()
-            .unwrap_or_else(|| Utc.timestamp_millis_opt(0).single().unwrap());
-        match self.config.bucket {
-            StreamTimeBucket::Hour => dt.format("%Y%m%d%H").to_string(),
-            StreamTimeBucket::Day => dt.format("%Y%m%d").to_string(),
-            StreamTimeBucket::Week => dt.format("%G%V").to_string(),
-            StreamTimeBucket::Month => dt.format("%Y%m").to_string(),
-        }
+    fn window_dir(&self, window_start_ms: u64) -> PathBuf {
+        self.config.base_dir.join(format!(
+            "{}{}-{}",
+            WINDOW_DIR_PREFIX,
+            window_start_ms,
+            self.config.bucket.duration_ms()
+        ))
+    }
+
+    fn parse_window_dir(path: &Path) -> Option<(u64, u64)> {
+        let name = path.file_name()?.to_str()?;
+        let body = name.strip_prefix(WINDOW_DIR_PREFIX)?;
+        let (start, duration) = body.split_once('-')?;
+        let window_start = start.parse::<u64>().ok()?;
+        let duration_ms = duration.parse::<u64>().ok()?;
+        Some((window_start, window_start.saturating_add(duration_ms)))
+    }
+
+    fn user_log_file_name(user_id: &UserId) -> String {
+        format!("{}{}", user_id.as_str(), USER_LOG_FILE_SUFFIX)
+    }
+
+    fn parse_user_id_from_log_path(path: &Path) -> Option<UserId> {
+        let name = path.file_name()?.to_str()?;
+        let user_id = name.strip_suffix(USER_LOG_FILE_SUFFIX)?;
+        UserId::try_new(user_id.to_string()).ok()
     }
 
     fn log_path(&self, user_id: &UserId, window_start_ms: u64) -> PathBuf {
-        let bucket_folder = self.bucket_folder(window_start_ms);
         let shard = self.config.shard_router.route_stream_user(user_id).folder_name();
-        let user_dir = self.config.base_dir.join(bucket_folder).join(shard).join(user_id.as_str());
-        user_dir.join(format!("{}.log", window_start_ms))
+        self.window_dir(window_start_ms)
+            .join(shard)
+            .join(Self::user_log_file_name(user_id))
     }
 
     /// Ensure the parent directory of `path` exists, using the dir cache to
@@ -483,29 +519,73 @@ impl FileStreamLogStore {
         Ok(records)
     }
 
-    fn list_log_files_for_user(&self, user_id: &UserId) -> Result<Vec<(u64, PathBuf)>> {
+    fn collect_user_ids(&self, users: &mut HashSet<UserId>) -> Result<()> {
+        let base_dir = &self.config.base_dir;
+        if !base_dir.exists() {
+            return Ok(());
+        }
+
+        visit_dirs(base_dir, |window_dir| {
+            if Self::parse_window_dir(&window_dir).is_none() {
+                return Ok(true);
+            }
+            visit_dirs(&window_dir, |shard_dir| {
+                for entry in fs::read_dir(&shard_dir).map_err(|e| StreamLogError::Io(e.to_string()))? {
+                    let entry = entry.map_err(|e| StreamLogError::Io(e.to_string()))?;
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    if let Some(user_id) = Self::parse_user_id_from_log_path(&path) {
+                        users.insert(user_id);
+                    }
+                }
+                Ok(true)
+            })
+        })?;
+
+        Ok(())
+    }
+
+    fn list_log_files_for_user(&self, user_id: &UserId) -> Result<Vec<LogFileEntry>> {
         let mut entries = Vec::new();
         let base_dir = &self.config.base_dir;
         if !base_dir.exists() {
             return Ok(entries);
         }
 
+        self.collect_log_files_for_user(user_id, &mut entries)?;
+
+        Ok(entries)
+    }
+
+    fn collect_log_files_for_user(
+        &self,
+        user_id: &UserId,
+        entries: &mut Vec<LogFileEntry>,
+    ) -> Result<()> {
+        let base_dir = &self.config.base_dir;
+        if !base_dir.exists() {
+            return Ok(());
+        }
+
         let shard = self.config.shard_router.route_stream_user(user_id).folder_name();
-        visit_dirs(base_dir, |bucket_dir| {
-            let user_dir = bucket_dir.join(&shard).join(user_id.as_str());
-            if !user_dir.exists() {
+        visit_dirs(base_dir, |window_dir| {
+            let Some((window_start, window_end)) = Self::parse_window_dir(&window_dir) else {
                 return Ok(true);
+            };
+            let log_file = window_dir.join(&shard).join(Self::user_log_file_name(user_id));
+            if log_file.is_file() {
+                entries.push(LogFileEntry {
+                    window_start,
+                    window_end,
+                    path: log_file,
+                });
             }
-            visit_files(&user_dir, |log_file| {
-                if let Some(window_start) = parse_log_window(&log_file) {
-                    entries.push((window_start, log_file));
-                }
-                Ok(true)
-            })?;
             Ok(true)
         })?;
 
-        Ok(entries)
+        Ok(())
     }
 
     fn list_log_files_for_user_in_range(
@@ -513,34 +593,30 @@ impl FileStreamLogStore {
         user_id: &UserId,
         start_time: u64,
         end_time: u64,
-    ) -> Result<Vec<(u64, PathBuf)>> {
-        let bucket_ms = self.config.bucket.duration_ms();
+    ) -> Result<Vec<LogFileEntry>> {
         let mut entries = self.list_log_files_for_user(user_id)?;
-        entries.retain(|(window_start, _)| {
-            let window_end = window_start.saturating_add(bucket_ms);
-            *window_start <= end_time && window_end >= start_time
-        });
-        entries.sort_by_key(|(window_start, _)| *window_start);
+        entries.retain(|entry| entry.window_start <= end_time && entry.window_end > start_time);
+        entries.sort_by_key(|entry| entry.window_start);
         Ok(entries)
     }
 
-    fn list_log_files_for_user_latest(&self, user_id: &UserId) -> Result<Vec<(u64, PathBuf)>> {
+    fn list_log_files_for_user_latest(&self, user_id: &UserId) -> Result<Vec<LogFileEntry>> {
         let mut entries = self.list_log_files_for_user(user_id)?;
-        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.sort_by(|a, b| b.window_start.cmp(&a.window_start));
         Ok(entries)
     }
 
     fn collect_range_from_entries(
         &self,
-        entries: &[(u64, PathBuf)],
+        entries: &[LogFileEntry],
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
         let mut deleted: HashSet<i64> = HashSet::new();
 
-        for (_window_start, path) in entries {
-            self.flush_segment(path);
-            let should_continue = Self::visit_records(path, |record| {
+        for entry in entries {
+            self.flush_segment(&entry.path);
+            let should_continue = Self::visit_records(&entry.path, |record| {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
                         let seq = row_id.seq().as_i64();
@@ -600,9 +676,9 @@ impl FileStreamLogStore {
         let mut results: Vec<(StreamTableRowId, StreamTableRow)> = Vec::new();
         let mut deleted: HashSet<i64> = HashSet::new();
 
-        for (_window_start, path) in &entries {
-            self.flush_segment(path);
-            let records = Self::read_records(path)?;
+        for entry in &entries {
+            self.flush_segment(&entry.path);
+            let records = Self::read_records(&entry.path)?;
             for record in records.into_iter().rev() {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
@@ -741,6 +817,11 @@ mod tests {
             .unwrap_or_else(|| chrono::Utc.timestamp_millis_opt(0).single().unwrap());
 
         match bucket {
+            StreamTimeBucket::Minute => dt
+                .with_second(0)
+                .and_then(|v| v.with_nanosecond(0))
+                .map(|v| v.timestamp_millis() as u64)
+                .unwrap_or(ts_ms),
             StreamTimeBucket::Hour => dt
                 .with_minute(0)
                 .and_then(|v| v.with_second(0))
@@ -765,19 +846,6 @@ mod tests {
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
                 .map(|v| chrono::Utc.from_utc_datetime(&v).timestamp_millis() as u64)
                 .unwrap_or(ts_ms),
-        }
-    }
-
-    fn bucket_folder(bucket: StreamTimeBucket, window_start_ms: u64) -> String {
-        let dt = chrono::Utc
-            .timestamp_millis_opt(window_start_ms as i64)
-            .single()
-            .unwrap_or_else(|| chrono::Utc.timestamp_millis_opt(0).single().unwrap());
-        match bucket {
-            StreamTimeBucket::Hour => dt.format("%Y%m%d%H").to_string(),
-            StreamTimeBucket::Day => dt.format("%Y%m%d").to_string(),
-            StreamTimeBucket::Week => dt.format("%G%V").to_string(),
-            StreamTimeBucket::Month => dt.format("%Y%m").to_string(),
         }
     }
 
@@ -829,25 +897,25 @@ mod tests {
 
         store.append_rows(&table_id, &user_id, rows).expect("append_rows failed");
 
-        let shard_folder = shard_router.route_stream_user(&user_id).folder_name();
         let old_window = window_start_ms(bucket, old_ts);
         let new_window = window_start_ms(bucket, new_ts);
-        let old_bucket = bucket_folder(bucket, old_window);
-        let new_bucket = bucket_folder(bucket, new_window);
-
-        let old_path = base_dir
-            .join(old_bucket.clone())
-            .join(&shard_folder)
-            .join(user_id.as_str())
-            .join(format!("{}.log", old_window));
-        let new_path = base_dir
-            .join(new_bucket.clone())
-            .join(&shard_folder)
-            .join(user_id.as_str())
-            .join(format!("{}.log", new_window));
+        let old_path = store.log_path(&user_id, old_window);
+        let new_path = store.log_path(&user_id, new_window);
+        let old_window_dir = store.window_dir(old_window);
 
         assert!(old_path.exists(), "expected old log file to exist");
         assert!(new_path.exists(), "expected new log file to exist");
+        assert_eq!(
+            old_path.file_name().and_then(|name| name.to_str()),
+            Some("user-1.log"),
+            "expected stream rows to be stored directly as <user_id>.log"
+        );
+        assert_ne!(
+            old_path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str()),
+            Some(user_id.as_str()),
+            "expected no per-user directory in the stream file layout"
+        );
+        assert_eq!(store.open_segment_count(), 2);
         assert!(
             store
                 .has_logs_before(now_ms.saturating_sub(60 * 60 * 1000))
@@ -862,41 +930,10 @@ mod tests {
 
         assert!(!old_path.exists(), "expected old log file to be deleted");
         assert!(new_path.exists(), "expected new log file to remain");
+        assert_eq!(store.open_segment_count(), 1);
 
-        let old_bucket_dir = base_dir.join(old_bucket);
-        assert!(!old_bucket_dir.exists(), "expected old bucket directory to be removed");
+        assert!(!old_window_dir.exists(), "expected old window directory to be removed");
         assert!(base_dir.exists(), "expected base dir to remain");
-
-        let _ = fs::remove_dir_all(&base_dir);
-    }
-
-    #[test]
-    fn test_delete_old_logs_cleans_stale_tmp_files() {
-        let base_dir = temp_base_dir("kalamdb_streams_delete_tmp");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
-        let shard_router = ShardRouter::new(4, 1);
-        let bucket = StreamTimeBucket::Hour;
-        let store = create_store(base_dir.clone(), table_id, shard_router.clone(), bucket);
-
-        let user_id = UserId::new("user-tmp");
-        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
-        let old_ts = now_ms.saturating_sub(3 * 60 * 60 * 1000);
-        let old_window = window_start_ms(bucket, old_ts);
-        let old_bucket = bucket_folder(bucket, old_window);
-        let tmp_path = base_dir
-            .join(old_bucket)
-            .join(shard_router.route_stream_user(&user_id).folder_name())
-            .join(user_id.as_str())
-            .join(format!("{}.log.tmp", old_window));
-        fs::create_dir_all(tmp_path.parent().unwrap()).unwrap();
-        fs::write(&tmp_path, b"partial").unwrap();
-
-        let deleted = store
-            .delete_old_logs_with_count(now_ms.saturating_sub(60 * 60 * 1000))
-            .expect("delete_old_logs_with_count failed");
-
-        assert_eq!(deleted, 1);
-        assert!(!tmp_path.exists(), "expected stale tmp log file to be deleted");
 
         let _ = fs::remove_dir_all(&base_dir);
     }

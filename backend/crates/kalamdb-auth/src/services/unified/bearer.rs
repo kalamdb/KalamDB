@@ -3,14 +3,15 @@ use std::sync::Arc;
 use jsonwebtoken::Algorithm;
 use kalamdb_commons::{
     models::{ConnectionInfo, UserId},
-    AuthType,
+    AuthType, Role,
 };
+use kalamdb_system::providers::storages::models::StorageMode;
+use kalamdb_system::{AuthData, User};
 use tracing::Instrument;
 
 use crate::{
     errors::error::{AuthError, AuthResult},
     models::context::AuthenticatedUser,
-    oidc::OidcError,
     providers::{jwt_auth, jwt_config, jwt_config::JwtConfig},
     repository::user_repo::UserRepository,
 };
@@ -34,7 +35,15 @@ pub(super) async fn authenticate_bearer(
 
         jwt_auth::verify_issuer(&issuer, &config.trusted_issuers)?;
 
-        let claims = validate_bearer_token(token, &alg, &issuer, config).await?;
+        tracing::debug!(
+            issuer = %issuer,
+            algorithm = ?alg,
+            oidc_auto_provision = config.oidc_auto_provision,
+            trusted_issuer_count = config.trusted_issuers.len(),
+            "Bearer JWT issuer accepted"
+        );
+
+        let claims = validate_bearer_token(token, &alg, &issuer, &config).await?;
 
         let is_internal = jwt_auth::is_internal_issuer(&claims.iss);
 
@@ -73,48 +82,17 @@ pub(super) async fn authenticate_bearer(
             }
         }
 
-        // Internal and trusted external tokens both resolve directly by canonical sub.
-        let token_user_id = UserId::try_new(claims.sub.clone()).map_err(|_| {
-            AuthError::MalformedAuthorization("Token contains an invalid user claim".to_string())
-        })?;
-        let user = repo.get_user_by_id(&token_user_id).await?;
-
-        if user.deleted_at.is_some() {
-            return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
-        }
-
-        if !is_internal && user.auth_type != AuthType::OAuth {
-            return Err(AuthError::AuthenticationFailed(
-                "Account is not configured for OAuth authentication".to_string(),
-            ));
-        }
-
-        if let Some(claimed_role) = claims.role {
-            if claimed_role != user.role {
-                log::warn!(
-                    "Bearer token role mismatch: claimed={:?}, actual={:?} for user={}",
-                    claimed_role,
-                    user.role,
-                    user.user_id.as_str()
-                );
-                return Err(AuthError::InvalidCredentials(
-                    "Token role does not match user role".to_string(),
-                ));
-            }
-        }
+        let user = if is_internal {
+            resolve_internal_authenticated_user(repo, &config, &claims, connection_info).await?
+        } else {
+            resolve_external_authenticated_user(repo, &config, &claims, connection_info).await?
+        };
 
         let role = user.role;
 
         tracing::trace!(user_id = %user.user_id, role = ?role, "Bearer authentication succeeded");
 
-        Ok(AuthenticatedUser::new(
-            user.user_id.clone(),
-            role,
-            user.email.clone(),
-            user.created_at,
-            user.updated_at,
-            connection_info.clone(),
-        ))
+        Ok(user)
     }
     .instrument(span)
     .await
@@ -124,7 +102,7 @@ async fn validate_bearer_token(
     token: &str,
     alg: &Algorithm,
     issuer: &str,
-    config: &'static JwtConfig,
+    config: &JwtConfig,
 ) -> AuthResult<jwt_auth::JwtClaims> {
     match alg {
         Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512 => {
@@ -153,20 +131,7 @@ async fn validate_bearer_token(
                         .to_string(),
                 ));
             }
-            let validator = config.get_oidc_validator(issuer).await?;
-            let claims: jwt_auth::JwtClaims =
-                validator.validate(token).await.map_err(|e| match e {
-                    OidcError::JwtValidationFailed(ref msg) if msg.contains("expired") => {
-                        AuthError::TokenExpired
-                    },
-                    OidcError::JwtValidationFailed(ref msg) if msg.contains("signature") => {
-                        AuthError::InvalidSignature
-                    },
-                    _ => AuthError::MalformedAuthorization(format!(
-                        "External token validation failed: {}",
-                        e
-                    )),
-                })?;
+            let claims = config.validate_oidc_id_token(issuer, token).await?;
             jwt_auth::verify_issuer(&claims.iss, &config.trusted_issuers)?;
             if claims.sub.is_empty() {
                 return Err(AuthError::MalformedAuthorization(
@@ -179,5 +144,448 @@ async fn validate_bearer_token(
             "Unsupported JWT algorithm: {:?}",
             alg
         ))),
+    }
+}
+
+pub(super) async fn resolve_internal_authenticated_user(
+    repo: &Arc<dyn UserRepository>,
+    config: &JwtConfig,
+    claims: &jwt_auth::JwtClaims,
+    connection_info: &ConnectionInfo,
+) -> AuthResult<AuthenticatedUser> {
+    let user_id = user_id_from_token_subject(&claims.sub)?;
+
+    if matches!(claims.auth_type, Some(AuthType::Oidc)) {
+        return resolve_internal_oauth_session_user(repo, config, claims, user_id, connection_info)
+            .await;
+    }
+
+    let user = repo.get_user_by_id(&user_id).await?;
+    if user.deleted_at.is_some() {
+        return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
+    }
+    verify_claimed_role(&user.user_id, claims.role.as_ref(), user.role)?;
+    Ok(authenticated_user_from_persisted_user(user, connection_info))
+}
+
+async fn resolve_internal_oauth_session_user(
+    repo: &Arc<dyn UserRepository>,
+    config: &JwtConfig,
+    claims: &jwt_auth::JwtClaims,
+    user_id: UserId,
+    connection_info: &ConnectionInfo,
+) -> AuthResult<AuthenticatedUser> {
+    match repo.get_user_by_id(&user_id).await {
+        Ok(user) => {
+            if user.deleted_at.is_some() {
+                return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
+            }
+            if user.auth_type != AuthType::Oidc {
+                return Err(AuthError::AuthenticationFailed(
+                    "Account is not configured for OIDC authentication".to_string(),
+                ));
+            }
+            verify_claimed_role(&user.user_id, claims.role.as_ref(), user.role)?;
+            Ok(authenticated_user_from_persisted_user(user, connection_info))
+        },
+        Err(AuthError::UserNotFound(_))
+            if config.oidc_auto_provision && config.oidc_default_role == Role::User =>
+        {
+            verify_claimed_role(&user_id, claims.role.as_ref(), Role::User)?;
+            Ok(authenticated_user_from_claims(
+                user_id,
+                Role::User,
+                AuthType::Oidc,
+                claims,
+                connection_info,
+            ))
+        },
+        Err(AuthError::UserNotFound(_)) => {
+            Err(AuthError::InvalidCredentials("Invalid credentials".to_string()))
+        },
+        Err(err) => Err(err),
+    }
+}
+
+async fn resolve_external_authenticated_user(
+    repo: &Arc<dyn UserRepository>,
+    config: &JwtConfig,
+    claims: &jwt_auth::JwtClaims,
+    connection_info: &ConnectionInfo,
+) -> AuthResult<AuthenticatedUser> {
+    let user_id = user_id_from_oidc_subject(&claims.sub)?;
+
+    match repo.get_user_by_id(&user_id).await {
+        Ok(user) => authenticate_persisted_external_user(user, claims, connection_info),
+        Err(AuthError::UserNotFound(_))
+            if config.oidc_auto_provision && config.oidc_default_role == Role::User =>
+        {
+            verify_claimed_role(&user_id, claims.role.as_ref(), Role::User)?;
+            Ok(authenticated_user_from_claims(
+                user_id,
+                Role::User,
+                AuthType::Oidc,
+                claims,
+                connection_info,
+            ))
+        },
+        Err(AuthError::UserNotFound(_)) if config.oidc_auto_provision => {
+            let user =
+                auto_provision_external_user(repo, config.oidc_default_role, claims, user_id)
+                    .await?;
+            authenticate_persisted_external_user(user, claims, connection_info)
+        },
+        Err(AuthError::UserNotFound(_)) => {
+            Err(AuthError::InvalidCredentials("Invalid credentials".to_string()))
+        },
+        Err(err) => Err(err),
+    }
+}
+
+fn authenticate_persisted_external_user(
+    user: User,
+    claims: &jwt_auth::JwtClaims,
+    connection_info: &ConnectionInfo,
+) -> AuthResult<AuthenticatedUser> {
+    if user.deleted_at.is_some() {
+        return Err(AuthError::InvalidCredentials("Invalid credentials".to_string()));
+    }
+    verify_persisted_external_identity(&user, claims)?;
+    verify_claimed_role(&user.user_id, claims.role.as_ref(), user.role)?;
+
+    Ok(authenticated_user_from_persisted_user(user, connection_info))
+}
+
+async fn auto_provision_external_user(
+    repo: &Arc<dyn UserRepository>,
+    default_role: Role,
+    claims: &jwt_auth::JwtClaims,
+    user_id: UserId,
+) -> AuthResult<User> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let user = User {
+        created_at: now,
+        updated_at: now,
+        locked_until: None,
+        last_login_at: None,
+        last_seen: None,
+        deleted_at: None,
+        user_id: user_id.clone(),
+        password_hash: String::new(),
+        email: claims.email.clone(),
+        auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
+        storage_id: None,
+        failed_login_attempts: 0,
+        role: default_role,
+        auth_type: AuthType::Oidc,
+        storage_mode: StorageMode::Table,
+    };
+
+    match repo.create_user(user).await {
+        Ok(()) => repo.get_user_by_id(&user_id).await,
+        Err(create_err) => match repo.get_user_by_id(&user_id).await {
+            Ok(user) => Ok(user),
+            Err(_) => Err(create_err),
+        },
+    }
+}
+
+fn user_id_from_oidc_subject(subject: &str) -> AuthResult<UserId> {
+    UserId::try_new(subject.to_string()).map_err(|error| {
+        AuthError::MalformedAuthorization(format!(
+            "OIDC subject is not a valid KalamDB user id: {error}"
+        ))
+    })
+}
+
+fn user_id_from_token_subject(subject: &str) -> AuthResult<UserId> {
+    UserId::try_new(subject.to_string()).map_err(|_| {
+        AuthError::MalformedAuthorization("Token contains an invalid user claim".to_string())
+    })
+}
+
+fn verify_persisted_external_identity(user: &User, claims: &jwt_auth::JwtClaims) -> AuthResult<()> {
+    if user.auth_type != AuthType::Oidc {
+        return Err(AuthError::AuthenticationFailed(
+            "Account is not configured for OIDC authentication".to_string(),
+        ));
+    }
+
+    let auth_data = user.auth_data.as_ref().ok_or_else(|| {
+        AuthError::AuthenticationFailed("OIDC account is missing identity link".to_string())
+    })?;
+
+    if auth_data.issuer != claims.iss || auth_data.subject != claims.sub {
+        log::warn!(
+            "OIDC token identity mismatch for user={}: token issuer={}, token subject={}",
+            user.user_id,
+            claims.iss,
+            claims.sub
+        );
+        return Err(AuthError::AuthenticationFailed(
+            "OIDC token does not match the linked identity".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn verify_claimed_role(
+    user_id: &UserId,
+    claimed_role: Option<&Role>,
+    actual_role: Role,
+) -> AuthResult<()> {
+    if let Some(claimed_role) = claimed_role {
+        if *claimed_role != actual_role {
+            log::warn!(
+                "Bearer token role mismatch: claimed={:?}, actual={:?} for user={}",
+                claimed_role,
+                actual_role,
+                user_id.as_str()
+            );
+            return Err(AuthError::InvalidCredentials(
+                "Token role does not match user role".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn authenticated_user_from_persisted_user(
+    user: User,
+    connection_info: &ConnectionInfo,
+) -> AuthenticatedUser {
+    AuthenticatedUser::with_auth_type(
+        user.user_id,
+        user.role,
+        user.auth_type,
+        user.email,
+        user.created_at,
+        user.updated_at,
+        connection_info.clone(),
+    )
+}
+
+fn authenticated_user_from_claims(
+    user_id: UserId,
+    role: Role,
+    auth_type: AuthType,
+    claims: &jwt_auth::JwtClaims,
+    connection_info: &ConnectionInfo,
+) -> AuthenticatedUser {
+    let issued_at = token_timestamp_millis(claims.iat);
+    AuthenticatedUser::with_auth_type(
+        user_id,
+        role,
+        auth_type,
+        claims.email.clone(),
+        issued_at,
+        issued_at,
+        connection_info.clone(),
+    )
+}
+
+fn token_timestamp_millis(timestamp_secs: usize) -> i64 {
+    timestamp_secs.saturating_mul(1000).min(i64::MAX as usize) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+    };
+
+    use super::*;
+
+    #[derive(Default)]
+    struct CountingRepo {
+        lookups: AtomicUsize,
+        users: Mutex<HashMap<UserId, User>>,
+    }
+
+    impl CountingRepo {
+        fn with_user(user: User) -> Self {
+            Self {
+                lookups: AtomicUsize::new(0),
+                users: Mutex::new(HashMap::from([(user.user_id.clone(), user)])),
+            }
+        }
+
+        fn lookup_count(&self) -> usize {
+            self.lookups.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UserRepository for CountingRepo {
+        async fn get_user_by_id(&self, user_id: &UserId) -> AuthResult<User> {
+            self.lookups.fetch_add(1, Ordering::SeqCst);
+            self.users
+                .lock()
+                .expect("test repo users lock should not be poisoned")
+                .get(user_id)
+                .cloned()
+                .ok_or_else(|| AuthError::UserNotFound(format!("User '{}' not found", user_id)))
+        }
+
+        async fn update_user(&self, _user: &User) -> AuthResult<()> {
+            Ok(())
+        }
+
+        async fn create_user(&self, _user: User) -> AuthResult<()> {
+            self.users
+                .lock()
+                .expect("test repo users lock should not be poisoned")
+                .insert(_user.user_id.clone(), _user);
+            Ok(())
+        }
+    }
+
+    fn external_claims(role: Option<Role>) -> jwt_auth::JwtClaims {
+        jwt_auth::JwtClaims {
+            sub: "subject-123".to_string(),
+            iss: "https://issuer.example".to_string(),
+            exp: 99_999_999,
+            iat: 1_700_000_000,
+            email: Some("user@example.com".to_string()),
+            role,
+            auth_type: Some(AuthType::Oidc),
+            token_type: None,
+        }
+    }
+
+    fn internal_claims(user_id: &UserId, role: Role, auth_type: AuthType) -> jwt_auth::JwtClaims {
+        jwt_auth::JwtClaims {
+            sub: user_id.as_str().to_string(),
+            iss: jwt_auth::KALAMDB_ISSUER.to_string(),
+            exp: 99_999_999,
+            iat: 1_700_000_000,
+            email: Some("user@example.com".to_string()),
+            role: Some(role),
+            auth_type: Some(auth_type),
+            token_type: Some(jwt_auth::TokenType::Access),
+        }
+    }
+
+    fn test_user(user_id: UserId, role: Role, auth_type: AuthType) -> User {
+        let auth_data = if auth_type == AuthType::Oidc {
+            Some(AuthData::new("https://issuer.example", user_id.as_str()))
+        } else {
+            None
+        };
+
+        User {
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_000,
+            locked_until: None,
+            last_login_at: None,
+            last_seen: None,
+            deleted_at: None,
+            user_id,
+            password_hash: String::new(),
+            email: Some("stored@example.com".to_string()),
+            auth_data,
+            storage_id: None,
+            failed_login_attempts: 0,
+            role,
+            auth_type,
+            storage_mode: StorageMode::Table,
+        }
+    }
+
+    fn connection_info() -> ConnectionInfo {
+        ConnectionInfo::new(Some("127.0.0.1".to_string()))
+    }
+
+    #[test]
+    fn oidc_user_id_uses_subject_directly() {
+        let user_id = user_id_from_oidc_subject("subject-123").unwrap();
+
+        assert_eq!(user_id.as_str(), "subject-123");
+        assert!(user_id_from_oidc_subject("subject/123").is_err());
+    }
+
+    #[tokio::test]
+    async fn regular_external_user_uses_subject_without_persisting_when_default_role_is_user() {
+        let repo = Arc::new(CountingRepo::default());
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(true, Role::User);
+        let claims = external_claims(None);
+
+        let user =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect("regular external user should resolve from token claims");
+
+        assert_eq!(repo.lookup_count(), 1);
+        assert_eq!(user.user_id.as_str(), "subject-123");
+        assert_eq!(user.role, Role::User);
+        assert_eq!(user.auth_type, AuthType::Oidc);
+        assert_eq!(user.email.as_deref(), Some("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn external_subject_does_not_authenticate_password_user_collision() {
+        let claims = external_claims(None);
+        let user_id = UserId::new(claims.sub.clone());
+        let repo =
+            Arc::new(CountingRepo::with_user(test_user(user_id, Role::User, AuthType::Password)));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(true, Role::User);
+
+        let error =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect_err("OIDC subject must not authenticate a password user with the same id");
+
+        assert!(matches!(error, AuthError::AuthenticationFailed(_)));
+        assert_eq!(repo.lookup_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn elevated_external_oauth_user_uses_persisted_role() {
+        let claims = external_claims(None);
+        let user_id = UserId::new(claims.sub.clone());
+        let repo = Arc::new(CountingRepo::with_user(test_user(
+            user_id.clone(),
+            Role::Dba,
+            AuthType::Oidc,
+        )));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(true, Role::User);
+
+        let user =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect("persisted OIDC user should resolve from system.users");
+
+        assert_eq!(repo.lookup_count(), 1);
+        assert_eq!(user.user_id, user_id);
+        assert_eq!(user.role, Role::Dba);
+        assert_eq!(user.auth_type, AuthType::Oidc);
+    }
+
+    #[tokio::test]
+    async fn exchanged_regular_oauth_session_token_uses_subject_without_persisting() {
+        let user_id = UserId::new("subject-123");
+        let claims = internal_claims(&user_id, Role::User, AuthType::Oidc);
+        let repo = Arc::new(CountingRepo::default());
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(true, Role::User);
+
+        let user =
+            resolve_internal_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect("OAuth session token should resolve without a stored regular user");
+
+        assert_eq!(repo.lookup_count(), 1);
+        assert_eq!(user.user_id, user_id);
+        assert_eq!(user.role, Role::User);
+        assert_eq!(user.auth_type, AuthType::Oidc);
     }
 }

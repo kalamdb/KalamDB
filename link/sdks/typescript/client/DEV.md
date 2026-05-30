@@ -98,6 +98,7 @@ workflow:
 1. Builds the SDK.
 2. Runs the offline suite above.
 3. Runs the live e2e suite serially with `node --test --test-concurrency=1`.
+4. Runs Playwright browser smoke tests against the built `dist/` bundle.
 
 The e2e files are:
 
@@ -109,10 +110,20 @@ The e2e files are:
 - `tests/e2e/lifecycle/lifecycle.test.mjs`
 - `tests/e2e/subscription/subscription.test.mjs`
 - `tests/e2e/reconnect/reconnect.test.mjs`
+- `tests/e2e/reconnect/resume.test.mjs`
+- `tests/e2e/realworld/apollo-inspired.test.mjs`
 
 Serial execution is intentional in CI because the suite creates many eager
 WebSocket clients; running the files one-by-one avoids spurious auth rate-limit
 failures on shared runners.
+
+The browser smoke suite is automated with Playwright and currently covers:
+
+- `tests/playwright/browser-smoke.spec.js`
+
+It serves the built client package locally, proxies backend HTTP/WebSocket calls
+through the same origin, then validates browser-side query/live and reconnect
+flows against the real server.
 
 ### Running individual live test files
 

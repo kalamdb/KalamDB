@@ -5,10 +5,11 @@
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use kalamdb_core::{
-    error::KalamDbError,
-    manifest::{flush::helpers, FlushJobResult, FlushMetadata, TableFlush},
+use kalamdb_commons::UserId;
+use kalamdb_core::manifest::{
+    flush::helpers, FlushJobResult, FlushMetadata, FlushScopeHint, TableFlush,
 };
+use kalamdb_flush::FlushError;
 
 #[test]
 fn test_extract_pk_field_name_with_non_system_column() {
@@ -103,6 +104,7 @@ fn test_flush_job_result_shared_table() {
     let result = FlushJobResult {
         rows_flushed: 100,
         parquet_files: vec!["batch-0.parquet".to_string()],
+        scope_hints: vec![FlushScopeHint::Shared],
         metadata: FlushMetadata::shared_table(),
     };
 
@@ -118,6 +120,10 @@ fn test_flush_job_result_user_table() {
             "user_123/batch-0.parquet".to_string(),
             "user_456/batch-0.parquet".to_string(),
         ],
+        scope_hints: vec![
+            FlushScopeHint::User(UserId::from("user_123")),
+            FlushScopeHint::User(UserId::from("user_456")),
+        ],
         metadata: FlushMetadata::user_table(2, vec![]),
     };
 
@@ -130,6 +136,7 @@ fn test_flush_job_result_empty() {
     let result = FlushJobResult {
         rows_flushed: 0,
         parquet_files: vec![],
+        scope_hints: vec![],
         metadata: FlushMetadata::shared_table(),
     };
 
@@ -143,10 +150,11 @@ struct SuccessfulFlushJob {
 }
 
 impl TableFlush for SuccessfulFlushJob {
-    fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
+    fn execute(&self) -> Result<FlushJobResult, FlushError> {
         Ok(FlushJobResult {
             rows_flushed: self.rows,
             parquet_files: vec!["batch-0.parquet".to_string()],
+            scope_hints: vec![FlushScopeHint::Shared],
             metadata: FlushMetadata::shared_table(),
         })
     }
@@ -161,8 +169,8 @@ struct FailingFlushJob {
 }
 
 impl TableFlush for FailingFlushJob {
-    fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
-        Err(KalamDbError::Other(self.error_msg.clone()))
+    fn execute(&self) -> Result<FlushJobResult, FlushError> {
+        Err(FlushError::Other(self.error_msg.clone()))
     }
 
     fn table_identifier(&self) -> String {
@@ -191,7 +199,7 @@ fn test_failing_flush_job() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     match err {
-        KalamDbError::Other(msg) => assert_eq!(msg, "Disk full"),
+        FlushError::Other(msg) => assert_eq!(msg, "Disk full"),
         _ => panic!("Expected Other error variant"),
     }
 }

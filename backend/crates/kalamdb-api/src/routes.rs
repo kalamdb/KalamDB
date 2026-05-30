@@ -20,6 +20,11 @@ use crate::{http, ui, ws};
 /// - POST /v1/api/auth/refresh - Refresh auth token
 /// - POST /v1/api/auth/logout - Logout and clear cookie
 /// - GET /v1/api/auth/me - Get current user info
+/// - GET /v1/api/auth/login-options - Public local/OIDC login capabilities
+/// - POST /v1/api/auth/oidc/device/start - Start brokered OIDC device flow
+/// - POST /v1/api/auth/oidc/device/poll - Poll brokered OIDC device flow
+/// - POST /v1/api/auth/oidc/exchange-code - Exchange OIDC auth code for KalamDB tokens
+/// - POST /v1/api/auth/oidc/exchange-token - Exchange OIDC ID token for KalamDB tokens
 /// - POST /v1/api/auth/setup - Initial server setup (localhost only, requires no password on root)
 /// - GET /v1/api/auth/status - Check server setup status (localhost only)
 /// - POST /v1/api/topics/consume - Consume messages from a topic (long polling)
@@ -54,6 +59,26 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                                 )
                                 .route("/logout", web::post().to(http::auth::logout_handler))
                                 .route("/me", web::get().to(http::auth::me_handler))
+                                .route(
+                                    "/login-options",
+                                    web::get().to(http::auth::login_options_handler),
+                                )
+                                .route(
+                                    "/oidc/device/start",
+                                    web::post().to(http::auth::oidc_device_start_handler),
+                                )
+                                .route(
+                                    "/oidc/device/poll",
+                                    web::post().to(http::auth::oidc_device_poll_handler),
+                                )
+                                .route(
+                                    "/oidc/exchange-code",
+                                    web::post().to(http::auth::oidc_code_exchange_handler),
+                                )
+                                .route(
+                                    "/oidc/exchange-token",
+                                    web::post().to(http::auth::oidc_token_exchange_handler),
+                                )
                                 .route(
                                     "/setup",
                                     web::post().to(http::auth::server_setup_handler),

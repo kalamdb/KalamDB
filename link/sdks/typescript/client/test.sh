@@ -23,6 +23,16 @@ npm run build
 echo "🔎 Type-checking SDK test surface..."
 npm run test:types
 
+install_browser_runtime() {
+  echo ""
+  echo "🌐 Installing browser runtime for client smoke tests..."
+  if [[ "${PLAYWRIGHT_INSTALL_DEPS:-false}" == "true" ]]; then
+    npx playwright install --with-deps chromium
+  else
+    npm run test:browser:install
+  fi
+}
+
 # ── Unit tests (offline, no server required) ───────────────────────────
 echo ""
 echo "🔬 Running unit tests (no server)..."
@@ -52,7 +62,12 @@ if curl -sf "$KALAMDB_URL/health" > /dev/null 2>&1 \
     tests/e2e/lifecycle/lifecycle.test.mjs \
     tests/e2e/subscription/subscription.test.mjs \
     tests/e2e/reconnect/reconnect.test.mjs \
-    tests/e2e/reconnect/resume.test.mjs
+    tests/e2e/reconnect/resume.test.mjs \
+    tests/e2e/realworld/apollo-inspired.test.mjs
+  install_browser_runtime
+  echo ""
+  echo "🌐 Running browser smoke tests..."
+  npm run test:browser
   echo ""
   echo "✅ All TypeScript SDK tests passed!"
 else

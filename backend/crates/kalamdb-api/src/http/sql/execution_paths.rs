@@ -14,8 +14,11 @@ use kalamdb_core::{
     sql::{
         context::ExecutionContext,
         executor::{
-            request_transaction_state::RequestTransactionState, PreparedExecutionStatement,
-            ScalarValue, SqlExecutor,
+            request_transaction_state::{
+                map_request_transaction_error, AppContextRequestTransactionCoordinator,
+                RequestTransactionBatchGuard,
+            },
+            PreparedExecutionStatement, ScalarValue, SqlExecutor,
         },
         SqlImpersonationService,
     },
@@ -606,20 +609,12 @@ pub(super) async fn execute_batch_path(
     let mut total_deleted = 0usize;
     let mut meta_changed_in_batch = false;
     let mut params_remaining = Some(params);
-    let mut request_transaction_state =
-        match RequestTransactionState::from_execution_context(exec_ctx) {
-            Ok(state) => state,
-            Err(err) => {
-                return build_kalamdb_error_response(
-                    &err,
-                    took_ms(start_time),
-                    exec_ctx.is_admin(),
-                );
-            },
-        };
-    if let Some(state) = request_transaction_state.as_mut() {
-        state.sync_from_coordinator(app_context);
-    }
+    let request_transaction_coordinator =
+        AppContextRequestTransactionCoordinator::new(app_context.as_ref());
+    let mut request_transaction_guard = RequestTransactionBatchGuard::from_request_id(
+        exec_ctx.request_id(),
+        &request_transaction_coordinator,
+    );
 
     let mut idx = 0;
     while idx < stmt_count {
@@ -629,65 +624,59 @@ pub(super) async fn execute_batch_path(
         // When an explicit transaction is active and we see consecutive INSERT
         // statements targeting the same table (no EXECUTE AS USER, no params),
         // collect them and process through the transaction batch insert path.
-        if let Some(state) = request_transaction_state.as_ref() {
-            if let Some(transaction_id) = state.active_transaction_id() {
-                if is_batchable_insert(stmt) {
-                    let batch_table_id = stmt.prepared_statement.table_id.as_ref();
-                    let mut batch_end = idx + 1;
-                    while batch_end < stmt_count
-                        && is_batchable_insert(&prepared_statements[batch_end])
-                        && prepared_statements[batch_end].prepared_statement.table_id.as_ref()
-                            == batch_table_id
-                    {
-                        batch_end += 1;
-                    }
-                    let batch_len = batch_end - idx;
+        if let Some(transaction_id) = request_transaction_guard.active_transaction_id() {
+            if is_batchable_insert(stmt) {
+                let batch_table_id = stmt.prepared_statement.table_id.as_ref();
+                let mut batch_end = idx + 1;
+                while batch_end < stmt_count
+                    && is_batchable_insert(&prepared_statements[batch_end])
+                    && prepared_statements[batch_end].prepared_statement.table_id.as_ref()
+                        == batch_table_id
+                {
+                    batch_end += 1;
+                }
+                let batch_len = batch_end - idx;
 
-                    if batch_len > 1 {
-                        let batch_stmts: Vec<&PreparedExecutionStatement> = prepared_statements
-                            [idx..batch_end]
-                            .iter()
-                            .map(|s| &s.prepared_statement)
-                            .collect();
-                        let batch_start = Instant::now();
+                if batch_len > 1 {
+                    let batch_stmts: Vec<&PreparedExecutionStatement> = prepared_statements
+                        [idx..batch_end]
+                        .iter()
+                        .map(|s| &s.prepared_statement)
+                        .collect();
+                    let batch_start = Instant::now();
 
-                        match sql_executor.try_batch_insert_in_transaction(
-                            &batch_stmts,
-                            exec_ctx,
-                            transaction_id,
-                        ) {
-                            Ok(Some(results)) => {
-                                let batch_rows: usize =
-                                    results.iter().map(|r| r.affected_rows()).sum();
-                                let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
-                                log::debug!(
-                                    target: "sql::exec",
-                                    "✅ Batch INSERT ({} stmts, {} rows) | took={:.3}ms",
-                                    batch_len,
-                                    batch_rows,
-                                    batch_ms,
-                                );
-                                total_inserted += batch_rows;
-                                idx = batch_end;
-                                if let Some(state) = request_transaction_state.as_mut() {
-                                    state.sync_from_coordinator(app_context);
-                                }
-                                continue;
-                            },
-                            Ok(None) => { /* fast path not applicable, fall through */ },
-                            Err(err) => {
-                                if let Some(state) = request_transaction_state.as_mut() {
-                                    let _ = state.rollback_if_active(app_context);
-                                }
-                                return build_statement_error_response(
-                                    &err,
-                                    idx + 1,
-                                    &prepared_statements[idx].prepared_statement.sql,
-                                    took_ms(start_time),
-                                    exec_ctx.is_admin(),
-                                );
-                            },
-                        }
+                    match sql_executor.try_batch_insert_in_transaction(
+                        &batch_stmts,
+                        exec_ctx,
+                        transaction_id,
+                    ) {
+                        Ok(Some(results)) => {
+                            let batch_rows: usize = results.iter().map(|r| r.affected_rows()).sum();
+                            let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
+                            log::debug!(
+                                target: "sql::exec",
+                                "✅ Batch INSERT ({} stmts, {} rows) | took={:.3}ms",
+                                batch_len,
+                                batch_rows,
+                                batch_ms,
+                            );
+                            total_inserted += batch_rows;
+                            idx = batch_end;
+                            request_transaction_guard.sync(&request_transaction_coordinator);
+                            continue;
+                        },
+                        Ok(None) => { /* fast path not applicable, fall through */ },
+                        Err(err) => {
+                            let _ = request_transaction_guard
+                                .rollback_if_active(&request_transaction_coordinator);
+                            return build_statement_error_response(
+                                &err,
+                                idx + 1,
+                                &prepared_statements[idx].prepared_statement.sql,
+                                took_ms(start_time),
+                                exec_ctx.is_admin(),
+                            );
+                        },
                     }
                 }
             }
@@ -698,6 +687,8 @@ pub(super) async fn execute_batch_path(
             match resolve_execute_as_user(stmt, impersonation_service, exec_ctx).await {
                 Ok(uid) => uid,
                 Err(err) => {
+                    let _ = request_transaction_guard
+                        .rollback_if_active(&request_transaction_coordinator);
                     return build_kalamdb_error_response(
                         &err,
                         took_ms(start_time),
@@ -710,6 +701,8 @@ pub(super) async fn execute_batch_path(
             && stmt.prepared_statement.table_type == Some(TableType::Shared)
         {
             if let Some(table_id) = stmt.prepared_statement.table_id.as_ref() {
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
                 return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                     ErrorCode::SqlExecutionError,
                     &format!(
@@ -758,16 +751,13 @@ pub(super) async fn execute_batch_path(
                                 meta_changed_in_batch = true;
                             }
 
-                            if let Some(state) = request_transaction_state.as_mut() {
-                                state.sync_from_coordinator(app_context);
-                            }
+                            request_transaction_guard.sync(&request_transaction_coordinator);
                             idx += 1;
                             continue;
                         },
                         Err(response) => {
-                            if let Some(state) = request_transaction_state.as_mut() {
-                                let _ = state.rollback_if_active(app_context);
-                            }
+                            let _ = request_transaction_guard
+                                .rollback_if_active(&request_transaction_coordinator);
                             return response;
                         },
                     }
@@ -846,14 +836,18 @@ pub(super) async fn execute_batch_path(
                             took_ms(start_time),
                         ) {
                             Ok(response) => response,
-                            Err(err) => HttpResponse::InternalServerError().json(
-                                SqlResponse::error_for_privilege(
-                                    ErrorCode::InternalError,
-                                    &format!("Failed to stream SQL response: {}", err),
-                                    took_ms(start_time),
-                                    exec_ctx.is_admin(),
-                                ),
-                            ),
+                            Err(err) => {
+                                let _ = request_transaction_guard
+                                    .rollback_if_active(&request_transaction_coordinator);
+                                HttpResponse::InternalServerError().json(
+                                    SqlResponse::error_for_privilege(
+                                        ErrorCode::InternalError,
+                                        &format!("Failed to stream SQL response: {}", err),
+                                        took_ms(start_time),
+                                        exec_ctx.is_admin(),
+                                    ),
+                                )
+                            },
                         };
                     }
                 }
@@ -866,6 +860,8 @@ pub(super) async fn execute_batch_path(
                 let result = match execution_result_to_query_result(exec_result, effective_role) {
                     Ok(result) => result.with_as_user(effective_username),
                     Err(err) => {
+                        let _ = request_transaction_guard
+                            .rollback_if_active(&request_transaction_coordinator);
                         return HttpResponse::InternalServerError().json(
                             SqlResponse::error_for_privilege(
                                 ErrorCode::InternalError,
@@ -891,9 +887,8 @@ pub(super) async fn execute_batch_path(
                 );
             },
             Err(err) => {
-                if let Some(state) = request_transaction_state.as_mut() {
-                    let _ = state.rollback_if_active(app_context);
-                }
+                let _ =
+                    request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
 
                 if let Some(kalamdb_err) = err.downcast_ref::<kalamdb_core::error::KalamDbError>() {
                     if let Some(response) = handle_not_leader_error(
@@ -920,22 +915,13 @@ pub(super) async fn execute_batch_path(
             },
         }
 
-        if let Some(state) = request_transaction_state.as_mut() {
-            state.sync_from_coordinator(app_context);
-        }
+        request_transaction_guard.sync(&request_transaction_coordinator);
         idx += 1;
     }
 
-    if let Some(state) = request_transaction_state.as_mut() {
-        if state.is_active() {
-            let _ = state.rollback_if_active(app_context);
-            return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-                ErrorCode::SqlExecutionError,
-                "Request completed with an open explicit transaction; rolled back automatically",
-                took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
-        }
+    if let Err(err) = request_transaction_guard.ensure_closed(&request_transaction_coordinator) {
+        let err = map_request_transaction_error(err);
+        return build_kalamdb_error_response(&err, took_ms(start_time), exec_ctx.is_admin());
     }
 
     if is_batch {

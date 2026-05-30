@@ -17,6 +17,10 @@ pub mod services;
 
 // Re-export commonly used types
 pub use errors::error::{AuthError, AuthResult};
+pub use helpers::authorization_header::{
+    extract_bearer_token, is_basic_authorization, parse_authorization_header, AuthorizationScheme,
+    ParsedAuthorizationHeader,
+};
 #[cfg(feature = "http")]
 pub use helpers::cookie::{
     create_auth_cookie, create_logout_cookie, create_refresh_cookie, create_refresh_logout_cookie,
@@ -30,13 +34,22 @@ pub use helpers::ip_extractor::{
     extract_client_ip_addr_secure, extract_client_ip_secure, init_trusted_proxy_ranges,
     is_localhost_address,
 };
+#[cfg(feature = "http")]
+pub use helpers::request_tokens::{
+    extract_bearer_or_cookie_token, extract_refresh_or_bearer_token,
+};
 pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
+pub use models::login_request::LoginRequest;
 pub use providers::jwt_auth::{
-    create_and_sign_refresh_token, create_and_sign_token, generate_jwt_token, refresh_jwt_token,
-    JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
+    create_and_sign_refresh_token, create_and_sign_refresh_token_with_auth_type,
+    create_and_sign_token, create_and_sign_token_with_auth_type, generate_jwt_token,
+    refresh_jwt_token, JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
 };
 pub use repository::user_repo::{CachedUsersRepo, CoreUsersRepo, UserRepository};
 pub use services::{
     login_tracker::{LoginTracker, LoginTrackingConfig},
-    unified::{authenticate, extract_user_id_for_audit, AuthRequest, AuthenticationResult},
+    unified::{
+        authenticate, extract_user_id_for_audit, resolve_refresh_token_user, AuthRequest,
+        AuthenticationResult,
+    },
 };

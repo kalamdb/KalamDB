@@ -11,6 +11,30 @@ use kalamdb_commons::{
 };
 use serde::{Deserialize, Serialize, Serializer};
 
+const ERROR_CODE_METADATA: &[(ErrorCode, &str)] = &[
+    (ErrorCode::RateLimitExceeded, "RATE_LIMIT_EXCEEDED"),
+    (ErrorCode::InvalidParameter, "INVALID_PARAMETER"),
+    (ErrorCode::BatchParseError, "BATCH_PARSE_ERROR"),
+    (ErrorCode::EmptySql, "EMPTY_SQL"),
+    (ErrorCode::ParamsWithBatch, "PARAMS_WITH_BATCH"),
+    (ErrorCode::SqlExecutionError, "SQL_EXECUTION_ERROR"),
+    (ErrorCode::ForwardFailed, "FORWARD_FAILED"),
+    (ErrorCode::NotLeader, "NOT_LEADER"),
+    (ErrorCode::InvalidSql, "INVALID_SQL"),
+    (ErrorCode::TableNotFound, "TABLE_NOT_FOUND"),
+    (ErrorCode::PermissionDenied, "PERMISSION_DENIED"),
+    (ErrorCode::ClusterUnavailable, "CLUSTER_UNAVAILABLE"),
+    (ErrorCode::LeaderNotAvailable, "LEADER_NOT_AVAILABLE"),
+    (ErrorCode::InternalError, "INTERNAL_ERROR"),
+    (ErrorCode::InvalidInput, "INVALID_INPUT"),
+    (ErrorCode::FileTooLarge, "FILE_TOO_LARGE"),
+    (ErrorCode::TooManyFiles, "TOO_MANY_FILES"),
+    (ErrorCode::MissingFile, "MISSING_FILE"),
+    (ErrorCode::ExtraFile, "EXTRA_FILE"),
+    (ErrorCode::FileNotFound, "FILE_NOT_FOUND"),
+    (ErrorCode::InvalidMimeType, "INVALID_MIME_TYPE"),
+];
+
 /// Custom serializer to limit took field to 3 decimal places
 fn serialize_took<S>(took: &f64, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -78,29 +102,10 @@ impl ErrorCode {
     /// Get the string representation of the error code
     #[inline]
     pub fn as_str(&self) -> &'static str {
-        match self {
-            ErrorCode::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
-            ErrorCode::InvalidParameter => "INVALID_PARAMETER",
-            ErrorCode::BatchParseError => "BATCH_PARSE_ERROR",
-            ErrorCode::EmptySql => "EMPTY_SQL",
-            ErrorCode::ParamsWithBatch => "PARAMS_WITH_BATCH",
-            ErrorCode::SqlExecutionError => "SQL_EXECUTION_ERROR",
-            ErrorCode::ForwardFailed => "FORWARD_FAILED",
-            ErrorCode::NotLeader => "NOT_LEADER",
-            ErrorCode::InvalidSql => "INVALID_SQL",
-            ErrorCode::TableNotFound => "TABLE_NOT_FOUND",
-            ErrorCode::PermissionDenied => "PERMISSION_DENIED",
-            ErrorCode::ClusterUnavailable => "CLUSTER_UNAVAILABLE",
-            ErrorCode::LeaderNotAvailable => "LEADER_NOT_AVAILABLE",
-            ErrorCode::InternalError => "INTERNAL_ERROR",
-            ErrorCode::InvalidInput => "INVALID_INPUT",
-            ErrorCode::FileTooLarge => "FILE_TOO_LARGE",
-            ErrorCode::TooManyFiles => "TOO_MANY_FILES",
-            ErrorCode::MissingFile => "MISSING_FILE",
-            ErrorCode::ExtraFile => "EXTRA_FILE",
-            ErrorCode::FileNotFound => "FILE_NOT_FOUND",
-            ErrorCode::InvalidMimeType => "INVALID_MIME_TYPE",
-        }
+        ERROR_CODE_METADATA
+            .iter()
+            .find_map(|(code, name)| (*code == *self).then_some(*name))
+            .expect("all error codes must have string metadata")
     }
 
     #[inline]
@@ -130,29 +135,10 @@ impl fmt::Display for ErrorCode {
 
 impl From<&str> for ErrorCode {
     fn from(s: &str) -> Self {
-        match s {
-            "RATE_LIMIT_EXCEEDED" => ErrorCode::RateLimitExceeded,
-            "INVALID_PARAMETER" => ErrorCode::InvalidParameter,
-            "BATCH_PARSE_ERROR" => ErrorCode::BatchParseError,
-            "EMPTY_SQL" => ErrorCode::EmptySql,
-            "PARAMS_WITH_BATCH" => ErrorCode::ParamsWithBatch,
-            "SQL_EXECUTION_ERROR" => ErrorCode::SqlExecutionError,
-            "FORWARD_FAILED" => ErrorCode::ForwardFailed,
-            "NOT_LEADER" => ErrorCode::NotLeader,
-            "INVALID_SQL" => ErrorCode::InvalidSql,
-            "TABLE_NOT_FOUND" => ErrorCode::TableNotFound,
-            "PERMISSION_DENIED" => ErrorCode::PermissionDenied,
-            "CLUSTER_UNAVAILABLE" => ErrorCode::ClusterUnavailable,
-            "LEADER_NOT_AVAILABLE" => ErrorCode::LeaderNotAvailable,
-            "INVALID_INPUT" => ErrorCode::InvalidInput,
-            "FILE_TOO_LARGE" => ErrorCode::FileTooLarge,
-            "TOO_MANY_FILES" => ErrorCode::TooManyFiles,
-            "MISSING_FILE" => ErrorCode::MissingFile,
-            "EXTRA_FILE" => ErrorCode::ExtraFile,
-            "FILE_NOT_FOUND" => ErrorCode::FileNotFound,
-            "INVALID_MIME_TYPE" => ErrorCode::InvalidMimeType,
-            _ => ErrorCode::InternalError,
-        }
+        ERROR_CODE_METADATA
+            .iter()
+            .find_map(|(code, name)| (*name == s).then_some(*code))
+            .unwrap_or(ErrorCode::InternalError)
     }
 }
 
@@ -578,5 +564,13 @@ mod tests {
         let result = QueryResult::with_message("ok".to_string()).with_as_user("alice".to_string());
 
         assert_eq!(result.as_user, "alice".to_string());
+    }
+
+    #[test]
+    fn test_error_code_string_roundtrip() {
+        for (code, name) in ERROR_CODE_METADATA {
+            assert_eq!(code.as_str(), *name);
+            assert_eq!(ErrorCode::from(*name), *code);
+        }
     }
 }

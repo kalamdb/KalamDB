@@ -14,8 +14,30 @@ use url::Url;
 use crate::args::Cli;
 use crate::terminal_input::{prompt_line, prompt_password};
 
+const DEFAULT_LOCAL_SERVER_URL: &str = "http://localhost:2900";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerUrlSource {
+    CliUrl,
+    HostPort,
+    StoredCredentials,
+    DefaultLocalFallback,
+}
+
+impl ServerUrlSource {
+    fn is_default_local_fallback(self) -> bool {
+        matches!(self, Self::DefaultLocalFallback)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedServerUrl {
+    value: String,
+    source: ServerUrlSource,
+}
+
 /// Build timeouts configuration from CLI arguments
-fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
+pub(crate) fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
     // Check for preset flags first
     if cli.fast_timeouts {
         return KalamLinkTimeouts::fast();
@@ -73,7 +95,7 @@ fn should_default_to_http(raw: &str) -> bool {
         || normalized_host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
+pub(crate) fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
     let trimmed = server_url.trim();
     if trimmed.is_empty() {
         return Err(CLIError::ConfigurationError("Server URL must not be empty".to_string()));
@@ -127,6 +149,147 @@ fn normalize_and_validate_server_url(server_url: &str) -> Result<String> {
     Ok(normalized.trim_end_matches('/').to_string())
 }
 
+pub(crate) fn resolve_server_url(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+) -> Result<String> {
+    Ok(resolve_server_target(cli, credential_store)?.value)
+}
+
+fn resolve_server_target(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+) -> Result<ResolvedServerUrl> {
+    let (server_url, source) = match (cli.url.clone(), cli.host.clone()) {
+        (Some(url), _) => (url, ServerUrlSource::CliUrl),
+        (None, Some(host)) => (format!("http://{}:{}", host, cli.port), ServerUrlSource::HostPort),
+        (None, None) => {
+            if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
+                CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+            })? {
+                let creds_url = creds.get_server_url();
+                if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
+                    (creds_url.to_string(), ServerUrlSource::StoredCredentials)
+                } else {
+                    (DEFAULT_LOCAL_SERVER_URL.to_string(), ServerUrlSource::DefaultLocalFallback)
+                }
+            } else {
+                (DEFAULT_LOCAL_SERVER_URL.to_string(), ServerUrlSource::DefaultLocalFallback)
+            }
+        },
+    };
+
+    Ok(ResolvedServerUrl {
+        value: normalize_and_validate_server_url(&server_url)?,
+        source,
+    })
+}
+
+fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: bool) -> Vec<String> {
+    let title = " KALAMDB LOGIN ";
+    let border = "=".repeat(title.len());
+    let mut lines = Vec::with_capacity(9);
+
+    lines.push(if use_color {
+        border.bright_blue().bold().to_string()
+    } else {
+        border.clone()
+    });
+    lines.push(if use_color {
+        title.white().bold().on_blue().to_string()
+    } else {
+        title.to_string()
+    });
+    lines.push(if use_color {
+        border.bright_blue().bold().to_string()
+    } else {
+        border
+    });
+
+    let connection_message = match source {
+        ServerUrlSource::DefaultLocalFallback => {
+            "No server URL was configured. Kalam is using its default local address."
+        },
+        ServerUrlSource::StoredCredentials => "Using the server URL stored for this instance.",
+        ServerUrlSource::CliUrl => "Using the server URL you provided.",
+        ServerUrlSource::HostPort => "Using the host and port you provided.",
+    };
+    lines.push(if use_color && source.is_default_local_fallback() {
+        connection_message.yellow().bold().to_string()
+    } else if use_color {
+        connection_message.bright_white().to_string()
+    } else {
+        connection_message.to_string()
+    });
+
+    let server_label = if use_color {
+        "Server:".bright_cyan().bold().to_string()
+    } else {
+        "Server:".to_string()
+    };
+    let server_value = if use_color {
+        server_url.cyan().bold().to_string()
+    } else {
+        server_url.to_string()
+    };
+    lines.push(format!("{} {}", server_label, server_value));
+
+    if source.is_default_local_fallback() {
+        let hint = "Tip: pass --url <server> to connect to a different KalamDB server.";
+        lines.push(if use_color {
+            hint.bright_black().to_string()
+        } else {
+            hint.to_string()
+        });
+    }
+
+    if is_localhost_url(server_url) {
+        let setup_note =
+            "This local server is already initialized, so setup is not available here.";
+        lines.push(if use_color {
+            setup_note.yellow().to_string()
+        } else {
+            setup_note.to_string()
+        });
+
+        let account_note = "Use an existing KalamDB account to sign in.";
+        lines.push(if use_color {
+            account_note.bright_black().to_string()
+        } else {
+            account_note.to_string()
+        });
+
+        let cluster_note = "If this came from scripts/cluster.sh, sign in as 'root' with the configured root password (default: kalamdb123 unless changed).";
+        lines.push(if use_color {
+            cluster_note.bright_black().to_string()
+        } else {
+            cluster_note.to_string()
+        });
+    }
+
+    let section_title = "Credentials";
+    lines.push(if use_color {
+        section_title.bright_white().bold().to_string()
+    } else {
+        section_title.to_string()
+    });
+    lines.push(if use_color {
+        "-".repeat(section_title.len()).bright_black().to_string()
+    } else {
+        "-".repeat(section_title.len())
+    });
+
+    lines
+}
+
+fn render_prompt_label(label: &str, use_color: bool) -> String {
+    if use_color {
+        format!("{} ", label.bright_cyan().bold())
+    } else {
+        format!("{} ", label)
+    }
+}
+
 pub async fn create_session(
     cli: &Cli,
     credential_store: &mut FileCredentialStore,
@@ -143,30 +306,9 @@ pub async fn create_session(
     };
 
     // Determine server URL
-    let server_url = match (cli.url.clone(), cli.host.clone()) {
-        (Some(url), _) => url,
-        (None, Some(host)) => format!("http://{}:{}", host, cli.port),
-        (None, None) => {
-            // Try to get from stored credentials first
-            if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-            })? {
-                let creds_url = creds.get_server_url();
-                // If credentials have a valid URL (starts with http), use it
-                // Otherwise use default localhost:2900
-                if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
-                    creds_url.to_string()
-                } else {
-                    // Default to localhost:2900
-                    "http://localhost:2900".to_string()
-                }
-            } else {
-                // Default to localhost:2900 (credentials store URL per-instance)
-                "http://localhost:2900".to_string()
-            }
-        },
-    };
-    let server_url = normalize_and_validate_server_url(&server_url)?;
+    let server_target = resolve_server_target(cli, credential_store)?;
+    let server_url_source = server_target.source;
+    let server_url = server_target.value;
 
     if cli.verbose {
         eprintln!("Resolved server URL for instance '{}': {}", cli.instance, server_url);
@@ -381,6 +523,8 @@ pub async fn create_session(
     /// Prompt user for credentials and attempt login (interactive only)
     async fn prompt_and_login(
         server_url: &str,
+        server_url_source: ServerUrlSource,
+        use_color: bool,
         verbose: bool,
         instance: &str,
         credential_store: &mut FileCredentialStore,
@@ -424,20 +568,12 @@ pub async fn create_session(
         }
 
         println!();
-        println!("No authentication credentials found.");
-        println!("Please enter your credentials to connect to: {}", server_url);
-        if is_localhost_url(server_url) {
-            println!("This server is already configured, so setup is not available here.");
-            println!(
-                "If you started it with scripts/cluster.sh, sign in as 'root' with the configured \
-                 root password"
-            );
-            println!("(default cluster password: kalamdb123).");
+        for line in render_login_banner(server_url, server_url_source, use_color) {
+            println!("{}", line);
         }
-        println!();
 
         // Prompt for user
-        let username = prompt_line("User: ")
+        let username = prompt_line(&render_prompt_label("User:", use_color))
             .map_err(|e| CLIError::FileError(format!("Failed to read user: {}", e)))?;
 
         if username.is_empty() {
@@ -445,7 +581,7 @@ pub async fn create_session(
         }
 
         // Prompt for password
-        let password = prompt_password("Password: ")
+        let password = prompt_password(&render_prompt_label("Password:", use_color))
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
 
         // Try to login with provided credentials
@@ -670,8 +806,15 @@ pub async fn create_session(
 
                     if std::io::stdin().is_terminal() {
                         // Prompt user for credentials interactively
-                        prompt_and_login(&server_url, cli.verbose, &cli.instance, credential_store)
-                            .await?
+                        prompt_and_login(
+                            &server_url,
+                            server_url_source,
+                            !cli.no_color,
+                            cli.verbose,
+                            &cli.instance,
+                            credential_store,
+                        )
+                        .await?
                     } else if is_localhost_url(&server_url) {
                         // Non-interactive mode on localhost - try root auto-auth
                         let username = "root".to_string();
@@ -734,8 +877,15 @@ pub async fn create_session(
 
                 if std::io::stdin().is_terminal() {
                     // Prompt user for credentials interactively
-                    prompt_and_login(&server_url, cli.verbose, &cli.instance, credential_store)
-                        .await?
+                    prompt_and_login(
+                        &server_url,
+                        server_url_source,
+                        !cli.no_color,
+                        cli.verbose,
+                        &cli.instance,
+                        credential_store,
+                    )
+                    .await?
                 } else if is_localhost_url(&server_url) {
                     // Non-interactive mode on localhost - try root auto-auth
                     let username = "root".to_string();
@@ -806,7 +956,15 @@ pub async fn create_session(
     } else {
         // No credentials provided - prompt interactively if terminal is available
         if std::io::stdin().is_terminal() {
-            prompt_and_login(&server_url, cli.verbose, &cli.instance, credential_store).await?
+            prompt_and_login(
+                &server_url,
+                server_url_source,
+                !cli.no_color,
+                cli.verbose,
+                &cli.instance,
+                credential_store,
+            )
+            .await?
         } else if is_localhost_url(&server_url) {
             // Non-interactive mode on localhost - try root auto-auth
             let username = "root".to_string();
@@ -918,10 +1076,8 @@ pub async fn create_session(
             .connection_options(connection_options.clone());
 
         let test_client = test_builder.build()?;
-        // Try to list namespaces - this requires authentication
-        test_client
-            .execute_query("SELECT name FROM system.namespaces LIMIT 1", None, None, None)
-            .await
+        // Verify authentication without requiring system table privileges.
+        test_client.execute_query("SELECT 1 AS auth_check", None, None, None).await
     };
 
     // Check if auth test failed
@@ -1023,9 +1179,15 @@ pub async fn create_session(
                 eprintln!("\n{}", "Authentication failed with stored credentials.".yellow().bold());
 
                 // Prompt for new credentials
-                let (new_auth, new_username, new_creds_loaded) =
-                    prompt_and_login(&server_url, cli.verbose, &cli.instance, credential_store)
-                        .await?;
+                let (new_auth, new_username, new_creds_loaded) = prompt_and_login(
+                    &server_url,
+                    server_url_source,
+                    !cli.no_color,
+                    cli.verbose,
+                    &cli.instance,
+                    credential_store,
+                )
+                .await?;
 
                 // Retry session creation with new credentials
                 CLISession::with_auth_and_instance(
@@ -1056,10 +1218,16 @@ pub async fn create_session(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        env,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use clap::Parser;
 
-    use super::{build_timeouts, is_localhost_url, normalize_and_validate_server_url};
+    use super::*;
     use crate::args::Cli;
+    use kalam_cli::FileCredentialStore;
     use kalam_client::KalamLinkTimeouts;
 
     #[test]
@@ -1113,5 +1281,40 @@ mod tests {
         let timeouts = build_timeouts(&cli);
 
         assert_eq!(timeouts.keepalive_interval, KalamLinkTimeouts::default().keepalive_interval);
+    }
+
+    #[test]
+    fn test_resolve_server_target_defaults_to_localhost_when_unconfigured() {
+        let cli = Cli::parse_from(["kalam"]);
+        let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let temp_path = env::temp_dir().join(format!(
+            "kalam-connect-test-{}-{}.toml",
+            std::process::id(),
+            unique_suffix
+        ));
+        let store = FileCredentialStore::with_path(temp_path).unwrap();
+
+        let resolved = resolve_server_target(&cli, &store).unwrap();
+
+        assert_eq!(resolved.value, DEFAULT_LOCAL_SERVER_URL);
+        assert_eq!(resolved.source, ServerUrlSource::DefaultLocalFallback);
+    }
+
+    #[test]
+    fn test_render_login_banner_explains_default_local_fallback() {
+        let rendered = render_login_banner(
+            DEFAULT_LOCAL_SERVER_URL,
+            ServerUrlSource::DefaultLocalFallback,
+            false,
+        )
+        .join("\n");
+
+        assert!(rendered
+            .contains("No server URL was configured. Kalam is using its default local address."));
+        assert!(
+            rendered.contains("Tip: pass --url <server> to connect to a different KalamDB server.")
+        );
+        assert!(rendered.contains("If this came from scripts/cluster.sh, sign in as 'root'"));
+        assert!(!rendered.contains("Please enter your credentials to connect to:"));
     }
 }

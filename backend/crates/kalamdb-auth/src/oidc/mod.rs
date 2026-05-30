@@ -1,13 +1,13 @@
-//! Internal OIDC support for external JWT issuer discovery and JWKS validation.
+//! Internal OIDC support backed by `openidconnect` provider metadata and verifiers.
 
-mod claims;
-mod config;
+mod client;
+mod device;
 mod error;
-mod utils;
-mod validator;
+mod http;
 
-pub use claims::{JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS};
-pub(crate) use config::OidcConfig;
+pub(crate) use client::{
+    get_or_discover_oidc_client, oidc_client_cache, OidcClientCache, OidcClientHandle,
+};
+pub(crate) use device::{DeviceBrokerSession, DeviceBrokerState, DeviceBrokerStatus};
 pub(crate) use error::OidcError;
-pub(crate) use utils::{extract_algorithm_unverified, extract_issuer_unverified};
-pub(crate) use validator::OidcValidator;
+pub(crate) use http::default_oidc_http_client;

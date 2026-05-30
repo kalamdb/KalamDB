@@ -46,7 +46,7 @@ pub fn extract_max_seq(rows: &[HashMap<String, KalamCellValue>]) -> Option<SeqId
 /// prove they are stale.
 pub fn retain_rows_after(rows: &mut Vec<HashMap<String, KalamCellValue>>, after: SeqId) -> usize {
     let original_len = rows.len();
-    rows.retain(|row| row_seq(row).map_or(true, |seq| seq > after));
+    rows.retain(|row| row_seq(row).is_none_or(|seq| seq > after));
     original_len.saturating_sub(rows.len())
 }
 
@@ -56,7 +56,7 @@ pub fn retain_rows_after(rows: &mut Vec<HashMap<String, KalamCellValue>>, after:
 /// Returns `true` when `current` was advanced.
 #[inline]
 pub fn advance_seq(current: &mut Option<SeqId>, candidate: SeqId) -> bool {
-    if current.map_or(true, |prev| candidate > prev) {
+    if current.is_none_or(|prev| candidate > prev) {
         *current = Some(candidate);
         true
     } else {

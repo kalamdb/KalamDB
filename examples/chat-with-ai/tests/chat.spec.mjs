@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -11,6 +12,11 @@ const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const room = process.env.CHAT_TEST_ROOM ?? 'playwright-room-fallback';
 const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
+const rootPassword = process.env.KALAMDB_ROOT_PASSWORD ?? adminPassword;
+const chatSetupStatements = readFileSync(path.join(exampleRoot, 'chat-app.sql'), 'utf8')
+  .split(/;\s*(?:\r?\n|$)/)
+  .map((statement) => statement.trim())
+  .filter(Boolean);
 
 let agentProcess;
 let agentStdout = '';
@@ -25,34 +31,159 @@ function appendNodeOption(existing, flag) {
   return existing.split(/\s+/).includes(flag) ? existing : `${existing} ${flag}`;
 }
 
-async function login(user, password) {
-  const response = await fetch(`${serverUrl}/v1/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user, password }),
+async function requestJson(url, {
+  method = 'GET',
+  headers,
+  body,
+} = {}) {
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await response.text();
+  let json = null;
 
-  if (!response.ok) {
-    throw new Error(`Login failed for ${user}: ${response.status}`);
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
   }
 
-  const body = await response.json();
-  return body.access_token;
+  return {
+    ok: response.ok,
+    status: response.status,
+    text,
+    json,
+  };
 }
 
-async function executeSql(token, sql) {
-  const response = await fetch(`${serverUrl}/v1/api/sql`, {
+async function isServerAvailable() {
+  for (const healthUrl of [`${serverUrl}/health`, `${serverUrl}/v1/api/healthcheck`]) {
+    try {
+      const response = await fetch(healthUrl);
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // Try the fallback endpoint before treating the server as unavailable.
+    }
+  }
+
+  return false;
+}
+
+function sqlResponseHasRows(body) {
+  const result = Array.isArray(body?.results) ? body.results[0] : null;
+  const rows = Array.isArray(result?.rows) ? result.rows.length : 0;
+  const rowCount = typeof result?.row_count === 'number' ? result.row_count : rows;
+  return rowCount > 0;
+}
+
+function isProviderNotReady(message) {
+  return /provider not found/i.test(message);
+}
+
+async function ensureAdminReady() {
+  const statusResult = await requestJson(`${serverUrl}/v1/api/auth/status`);
+  if (statusResult.ok && statusResult.json?.needs_setup === true) {
+    const setupResult = await requestJson(`${serverUrl}/v1/api/auth/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        user: adminUsername,
+        password: adminPassword,
+        root_password: rootPassword,
+        email: null,
+      },
+    });
+
+    if (!setupResult.ok) {
+      throw new Error(`Auth setup failed: ${setupResult.status} ${setupResult.text}`);
+    }
+
+    return;
+  }
+
+  try {
+    await login(adminUsername, adminPassword);
+    return;
+  } catch (adminError) {
+    let rootToken;
+
+    try {
+      rootToken = await login('root', rootPassword);
+    } catch (rootError) {
+      throw new Error([
+        `Admin login failed for ${serverUrl}.`,
+        `Admin error: ${adminError instanceof Error ? adminError.message : String(adminError)}`,
+        `Root error: ${rootError instanceof Error ? rootError.message : String(rootError)}`,
+      ].join('\n'));
+    }
+
+    const userCheck = await executeSql(
+      rootToken,
+      `SELECT user_id FROM system.users WHERE user_id = ${sqlLiteral(adminUsername)} LIMIT 1`,
+      { allowFailure: true },
+    );
+
+    const repairSql = sqlResponseHasRows(userCheck.json)
+      ? `ALTER USER admin SET PASSWORD ${sqlLiteral(adminPassword)}; ALTER USER admin SET ROLE 'dba';`
+      : `CREATE USER admin WITH PASSWORD ${sqlLiteral(adminPassword)} ROLE 'dba'`;
+    const repairResult = await executeSql(rootToken, repairSql, { allowFailure: true });
+
+    if (!repairResult.ok && !/already exists|duplicate|conflict|idempotent/i.test(repairResult.text)) {
+      throw new Error(`Failed to prepare admin test user: ${repairResult.status} ${repairResult.text}`);
+    }
+
+    await login(adminUsername, adminPassword);
+  }
+}
+
+async function prepareChatDemoSchema() {
+  const token = await login(adminUsername, adminPassword);
+  await executeSql(token, 'DROP TOPIC chat_demo.ai_inbox', { allowFailure: true });
+
+  for (const statement of chatSetupStatements) {
+    await executeSql(token, statement);
+  }
+}
+
+async function login(user, password) {
+  const result = await requestJson(`${serverUrl}/v1/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { user, password },
+  });
+
+  if (!result.ok) {
+    throw new Error(`Login failed for ${user}: ${result.status}${result.text ? ` ${result.text}` : ''}`);
+  }
+
+  if (!result.json?.access_token) {
+    throw new Error(`Login response for ${user} did not include an access token`);
+  }
+
+  return result.json.access_token;
+}
+
+async function executeSql(token, sql, { allowFailure = false } = {}) {
+  const result = await requestJson(`${serverUrl}/v1/api/sql`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ sql }),
+    body: { sql },
   });
 
-  if (!response.ok) {
-    throw new Error(`SQL failed: ${response.status} ${await response.text()}`);
+  if (!result.ok && !allowFailure) {
+    throw new Error(`SQL failed: ${result.status} ${result.text}`);
   }
+
+  return result;
 }
 
 async function insertUserMessage(roomName, content, username = adminUsername) {
@@ -308,11 +439,20 @@ async function seedChatHistory() {
   const values = Array.from({ length: 48 }, (_, index) => (
     `('${room}', 'assistant', 'KalamDB Copilot', 'admin', 'seed history ${index}-${Date.now()}')`
   )).join(', ');
+  const statement = `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ${values}`;
 
-  await executeSql(
-    token,
-    `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ${values}`,
-  );
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const result = await executeSql(token, statement, { allowFailure: true });
+    if (result.ok) {
+      return;
+    }
+
+    if (!isProviderNotReady(result.text) || attempt === 6) {
+      throw new Error(`Failed to seed chat history: ${result.status} ${result.text}`);
+    }
+
+    await sleep(attempt * 250);
+  }
 }
 
 async function waitForOutput(process, expected) {
@@ -357,14 +497,11 @@ async function waitForAgentReady() {
 }
 
 test.beforeAll(async () => {
-  execFileSync(process.execPath, ['setup.mjs'], {
-    cwd: exampleRoot,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
-    },
-  });
+  const available = await isServerAvailable();
+  test.skip(!available, `KalamDB server is not reachable at ${serverUrl}`);
+
+  await ensureAdminReady();
+  await prepareChatDemoSchema();
 
   await seedChatHistory();
 

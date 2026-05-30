@@ -1,6 +1,6 @@
 //! Lightweight slow query logger
 //!
-//! Logs queries that exceed a configurable threshold to a separate slow.log file.
+//! Logs queries that exceed a configurable threshold to a separate slow-query JSONL file.
 //! Designed for minimal performance overhead using async file I/O.
 
 use std::{fs::OpenOptions, io::Write, path::Path, sync::Arc};
@@ -33,7 +33,7 @@ impl SlowQueryLogger {
     /// Create a new slow query logger
     ///
     /// # Arguments
-    /// * `log_path` - Path to slow.log file
+    /// * `log_path` - Path to slow-query JSONL file
     /// * `threshold_ms` - Minimum duration to log in milliseconds (queries faster than this are
     ///   ignored)
     ///
@@ -55,26 +55,22 @@ impl SlowQueryLogger {
                         OpenOptions::new().create(true).append(true).open(&log_path)
                     {
                         let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-                            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
+                            .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
                             .unwrap_or_else(|| "unknown".to_string());
 
-                        let table_info = entry
-                            .table_name
-                            .as_ref()
-                            .map(|t| format!("{}", t))
-                            .unwrap_or_else(|| "unknown".to_string());
-
-                        let log_line = format!(
-                            "[{}] SLOW QUERY - user={}, table={} ({}), duration={:.3}s, rows={}, \
-                             query={}\n",
-                            timestamp,
-                            entry.user_id,
-                            table_info,
-                            entry.table_type,
-                            entry.duration_secs,
-                            entry.row_count,
-                            entry.query.replace('\n', " ").replace('\r', "")
-                        );
+                        let log_line = serde_json::json!({
+                            "timestamp": timestamp,
+                            "timestamp_ms": entry.timestamp,
+                            "duration_ms": entry.duration_secs * 1000.0,
+                            "duration_secs": entry.duration_secs,
+                            "row_count": entry.row_count,
+                            "user_id": entry.user_id.to_string(),
+                            "table_type": entry.table_type.to_string(),
+                            "table_name": entry.table_name.as_ref().map(ToString::to_string),
+                            "query": entry.query.replace('\n', " ").replace('\r', ""),
+                        })
+                        .to_string();
+                        let log_line = format!("{}\n", log_line);
 
                         let _ = file.write_all(log_line.as_bytes());
                     }
@@ -175,7 +171,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_slow_query_logger_threshold() {
-        let logger = SlowQueryLogger::new("/tmp/test_slow.log".to_string(), 1200); // 1.2 seconds
+        let dir = tempfile::tempdir().expect("temp dir");
+        let slow_log = dir.path().join("slow.jsonl");
+        let logger = SlowQueryLogger::new(slow_log.display().to_string(), 1200); // 1.2 seconds
 
         // Fast query - should not log
         logger.log_if_slow(
@@ -201,10 +199,10 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Check log file exists and contains slow query
-        let content = std::fs::read_to_string("/tmp/test_slow.log").unwrap();
-        assert!(content.contains("SLOW QUERY"));
+        let content = std::fs::read_to_string(&slow_log).unwrap();
+        assert!(content.contains("duration_ms"));
         assert!(content.contains("slow_table"));
-        assert!(content.contains("duration=2.5"));
+        assert!(content.contains("2500.0"));
         assert!(!content.contains("fast_table"));
     }
 

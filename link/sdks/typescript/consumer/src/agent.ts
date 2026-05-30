@@ -416,6 +416,10 @@ export async function runConsumer<
         let lastError: unknown;
         let lastAttempt = 0;
         for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt += 1) {
+          if (options.stopSignal?.aborted) {
+            return;
+          }
+
           lastAttempt = attempt;
           const ctx: ConsumerRunContext<TData, TPayload> = {
             name: options.name,
@@ -458,6 +462,9 @@ export async function runConsumer<
 
             if (backoffMs > 0) {
               await sleep(backoffMs, options.stopSignal);
+              if (options.stopSignal?.aborted) {
+                return;
+              }
             }
           }
         }

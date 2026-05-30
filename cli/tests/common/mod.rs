@@ -74,6 +74,31 @@ pub use kalam_client::{
 };
 pub use tempfile::TempDir;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestTokenClaims {
+    pub sub: String,
+    pub iss: String,
+    pub aud: serde_json::Value,
+    pub exp: Option<i64>,
+}
+
+pub fn decode_unverified_token_claims(
+    token: &str,
+) -> Result<TestTokenClaims, Box<dyn std::error::Error>> {
+    let mut parts = token.split('.');
+    let _header = parts.next().ok_or("token is missing header")?;
+    let payload = parts.next().ok_or("token is missing payload")?;
+
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let decoded = URL_SAFE_NO_PAD.decode(payload)?;
+    Ok(serde_json::from_slice(&decoded)?)
+}
+
+pub fn assert_token_subject(token: &str, expected_subject: &str) {
+    let claims = decode_unverified_token_claims(token).expect("token claims should decode");
+    assert_eq!(claims.sub, expected_subject);
+}
+
 static SERVER_URL: OnceLock<String> = OnceLock::new();
 static ROOT_PASSWORD: OnceLock<String> = OnceLock::new();
 static ADMIN_PASSWORD: OnceLock<String> = OnceLock::new();
@@ -89,27 +114,19 @@ static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
+static SERVER_BIN_BUILD_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
 const LEADER_CACHE_TTL: Duration = Duration::from_secs(5);
 
 pub fn shared_http_client() -> Client {
-    // Return a process-wide singleton so all concurrent callers (e.g. 24 parallel
-    // publisher tasks) share one connection pool instead of each opening their own
-    // burst of TCP connections to the cluster leader.  pool_max_idle_per_host is
-    // only effective when the same Client instance is reused across requests.
-    static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
-    HTTP_CLIENT
-        .get_or_init(|| {
-            Client::builder()
-                .pool_max_idle_per_host(512)
-                .pool_idle_timeout(Duration::from_secs(90))
-                .connect_timeout(Duration::from_secs(3))
-                .timeout(Duration::from_secs(3))
-                .tcp_nodelay(true)
-                .build()
-                .expect("failed to build test HTTP client")
-        })
-        .clone()
+    Client::builder()
+        .pool_max_idle_per_host(512)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(3))
+        .tcp_nodelay(true)
+        .build()
+        .expect("failed to build test HTTP client")
 }
 
 #[derive(Clone, Debug)]
@@ -1223,7 +1240,12 @@ pub async fn force_auto_test_server_url_async() -> String {
     server_url().to_string()
 }
 
-fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let _guard = SERVER_BIN_BUILD_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "server binary build lock poisoned")?;
+
     if let Ok(path) = std::env::var("KALAMDB_SERVER_BIN") {
         return Ok(PathBuf::from(path));
     }
@@ -1251,6 +1273,12 @@ fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 
     Ok(path)
+}
+
+pub async fn ensure_test_server_ready_for_url(
+    base_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    test_auth_manager().ensure_ready(base_url).await
 }
 
 fn workspace_root() -> PathBuf {
@@ -5080,6 +5108,10 @@ pub fn get_storage_dir() -> std::path::PathBuf {
 
     if let Ok(storage_dir) = std::env::var("KALAMDB_STORAGE_DIR") {
         let path = PathBuf::from(storage_dir);
+        let nested_storage_path = path.join("storage");
+        if nested_storage_path.exists() {
+            return nested_storage_path;
+        }
         if path.exists() {
             return path;
         }
@@ -5146,7 +5178,7 @@ impl FlushStorageVerificationResult {
         );
         assert!(
             self.parquet_file_count > 0,
-            "{}: at least one batch-*.parquet file should exist after flush",
+            "{}: at least one Parquet segment should exist after flush",
             context
         );
         assert!(
@@ -5159,7 +5191,7 @@ impl FlushStorageVerificationResult {
 }
 
 /// Verify flush storage files for a SHARED table
-/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// Checks that manifest.json and Parquet segment files exist with non-zero size
 /// in the expected storage path for a shared table.
 ///
 /// # Arguments
@@ -5182,7 +5214,7 @@ pub fn verify_flush_storage_files_shared(
 
 /// Verify flush storage files for a USER table
 ///
-/// Checks that manifest.json and batch-*.parquet files exist with non-zero size
+/// Checks that manifest.json and Parquet segment files exist with non-zero size
 /// in the expected storage path for a user table. Since user tables have per-user
 /// subdirectories, this function searches through all user directories.
 ///
@@ -5239,7 +5271,7 @@ pub fn verify_flush_storage_files_user(
 
 /// Verify flush storage files in a specific directory
 ///
-/// Internal helper that checks for manifest.json and batch-*.parquet files in a directory.
+/// Internal helper that checks for manifest.json and segment Parquet files in a directory.
 fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerificationResult {
     use std::fs;
 
@@ -5266,12 +5298,14 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
         }
     }
 
-    // Check for batch-*.parquet files
+    // Check for flush and compaction Parquet files
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let filename = entry.file_name();
             let filename_str = filename.to_string_lossy();
-            if filename_str.starts_with("batch-") && filename_str.ends_with(".parquet") {
+            let is_parquet_segment = filename_str.ends_with(".parquet")
+                && (filename_str.starts_with("batch-") || filename_str.starts_with("compact-"));
+            if is_parquet_segment {
                 if let Ok(metadata) = entry.metadata() {
                     result.parquet_file_count += 1;
                     result.parquet_total_size += metadata.len();

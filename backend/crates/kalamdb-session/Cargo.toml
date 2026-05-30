@@ -23,6 +23,3 @@ kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 name = "kalamdb_session"
 path = "src/lib.rs"
 doctest = false
-
-[dev-dependencies]
-tokio = { workspace = true }

@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 # KalamDB CLI Installer
-# Usage: curl -fsSL https://kalamdb.com/install.sh | bash
+# Usage: curl -fsSL https://kalamdb.org/install.sh | sh
 #
 # Flags:
 #   --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
@@ -13,10 +13,29 @@
 #   KALAM_PRE_RELEASE  - Set to 1 to install the latest prerelease
 #   KALAM_NO_MODIFY_PATH - Set to 1 to skip PATH modification
 
+if [ -z "${BASH_VERSION:-}" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        case "$0" in
+            sh|-sh|*/sh|dash|-dash|*/dash)
+                ;;
+            *)
+                if [ -r "$0" ]; then
+                    KALAM_INSTALLER_REEXEC=1 exec bash "$0" "$@"
+                fi
+                ;;
+        esac
+
+        KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
+    fi
+
+    echo "KalamDB installer requires bash. Install bash or run: curl -fsSL https://kalamdb.org/install.sh | bash" >&2
+    exit 1
+fi
+
 set -euo pipefail
 
 # ── Configurable ────────────────────────────────────────────────────────────
-GITHUB_REPO="kalamstack/KalamDB"
+GITHUB_REPO="kalamdb/KalamDB"
 BINARY_NAME="kalam"
 ARTIFACT_PREFIX="kalamcli"
 INSTALL_DIR="${KALAM_INSTALL_DIR:-$HOME/.kalam/bin}"

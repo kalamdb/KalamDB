@@ -246,7 +246,7 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
         password_hash: String::new(), // No password for system users (localhost-only)
         role: Role::System,
         email: None,
-        auth_type: AuthType::Internal,
+        auth_type: AuthType::Password,
         auth_data: None,
         storage_mode: StorageMode::Table,
         storage_id: Some(StorageId::local()),

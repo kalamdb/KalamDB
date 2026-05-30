@@ -6,7 +6,7 @@ Official TypeScript / JavaScript SDK for [KalamDB](https://kalamdb.org) — SQL,
 
 KalamDB is built for apps where every user or tenant owns a private data space. The same SQL can run for every signed-in customer, while USER tables ensure each query only touches that caller's data. On the frontend, the default realtime API is now `live()`: you get the current materialized row set, not a stream of low-level diff frames that your UI has to reconcile.
 
-→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs/sdk/typescript) · [GitHub](https://github.com/kalamstack/KalamDB)
+→ **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs/sdk/typescript) · [GitHub](https://github.com/kalamdb/KalamDB)
 
 `@kalamdb/client` provides:
 
@@ -305,7 +305,7 @@ The npm README examples are backed by SDK tests:
 - `getSubscriptions()` for active subscriptions and typed `lastSeqId` checkpoints
 
 Full docs: [kalamdb.org/docs/sdk/typescript](https://kalamdb.org/docs/sdk/typescript)
-- Issues: [github.com/kalamstack/KalamDB/issues](https://github.com/kalamstack/KalamDB/issues)
+- Issues: [github.com/kalamdb/KalamDB/issues](https://github.com/kalamdb/KalamDB/issues)
 
 ---
 

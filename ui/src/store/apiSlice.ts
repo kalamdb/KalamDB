@@ -38,9 +38,9 @@ import {
 import {
   fetchSystemSettings,
   fetchSystemStats,
-  fetchDbaStats,
-  type DbaStatRow,
+  fetchSlowQueries,
   type Setting,
+  type SlowQuery,
   type SystemStatsMap,
 } from "@/services/systemTableService";
 import {
@@ -117,13 +117,13 @@ export const apiSlice = createApi({
       },
       providesTags: ["Stats"],
     }),
-    getDbaStats: builder.query<DbaStatRow[], string>({
-      async queryFn(timeRange) {
+    getSlowQueries: builder.query<SlowQuery[], number | void>({
+      async queryFn(limit) {
         try {
-          const data = await fetchDbaStats(timeRange || "24 HOURS");
+          const data = await fetchSlowQueries(limit ?? 20);
           return { data };
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Failed to fetch dba stats";
+          const message = error instanceof Error ? error.message : "Failed to fetch slow queries";
           return { error: { status: "CUSTOM_ERROR", error: message } };
         }
       },
@@ -378,7 +378,7 @@ export const apiSlice = createApi({
 export const {
   useGetSettingsQuery,
   useGetStatsQuery,
-  useGetDbaStatsQuery,
+  useGetSlowQueriesQuery,
   useGetUsersListQuery,
   useCreateUserMutation,
   useUpdateUserMutation,

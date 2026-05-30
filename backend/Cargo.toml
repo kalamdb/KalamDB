@@ -143,13 +143,11 @@ kalamdb-core = { path = "crates/kalamdb-core" }
 kalamdb-api = { path = "crates/kalamdb-api", default-features = false }
 kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-observability = { path = "crates/kalamdb-observability", features = ["mimalloc"] }
-kalamdb-sql = { package = "kalamdb-dialect", path = "crates/kalamdb-dialect" }
 kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
 kalamdb-raft = { path = "crates/kalamdb-raft" }
-kalamdb-sharding = { path = "crates/kalamdb-sharding" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
 kalam-client = { path = "../link/kalam-client", default-features = false, features = ["tokio-runtime", "cluster"] }
 
@@ -167,9 +165,10 @@ bcrypt = { workspace = true }
 datafusion = { workspace = true }
 libc = { workspace = true }
 serde = { workspace = true }
-arrow = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 once_cell = { workspace = true }
 serial_test = { workspace = true }
 ntest = { workspace = true }
+sha2 = { workspace = true }
+testcontainers-modules = { workspace = true }

@@ -17,7 +17,6 @@ kalamdb-sql = { package = "kalamdb-dialect", path = "../../../kalamdb-dialect" }
 kalamdb-system = { path = "../../../kalamdb-system" }
 
 chrono = { workspace = true }
-log = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 

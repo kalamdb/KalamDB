@@ -1,0 +1,57 @@
+[package]
+name = "kalamdb-flush"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Manifest, flush, and cold segment compaction logic for KalamDB"
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-filestore = { path = "../kalamdb-filestore" }
+kalamdb-observability = { path = "../kalamdb-observability" }
+kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-system = { path = "../kalamdb-system" }
+kalamdb-tables = { path = "../kalamdb-tables" }
+
+# Apache Arrow ecosystem
+arrow = { workspace = true }
+datafusion = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["sync", "rt"] }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+
+# Logging
+log = { workspace = true }
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# UUID generation
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+parquet = { workspace = true }
+
+[lib]
+name = "kalamdb_flush"
+path = "src/lib.rs"
+doctest = false

@@ -21,7 +21,7 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::{initialize_dba_namespace, start_startup_stats_snapshot, start_stats_recorder};
+use kalamdb_dba::initialize_dba_namespace;
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_store::open_storage_backend;
@@ -51,6 +51,16 @@ fn effective_workers(configured: usize) -> usize {
     }
     if configured == 0 {
         num_cpus::get().min(4)
+    } else {
+        configured
+    }
+}
+
+/// Resolve the configured blocking-pool cap used by Actix workers and the
+/// outer Tokio runtime.
+pub fn effective_max_blocking_threads(configured: usize) -> usize {
+    if configured == 0 {
+        kalamdb_configs::defaults::default_worker_max_blocking_threads()
     } else {
         configured
     }
@@ -224,17 +234,6 @@ pub async fn prepare_components(
         use_root_password_env,
     )
     .await?;
-    if config.retention.enable_dba_stats {
-        if let Err(error) = start_stats_recorder(app_context.clone()) {
-            log::error!("Failed to start DBA stats recorder: {}", error);
-        }
-    } else {
-        start_startup_stats_snapshot(app_context.clone());
-        log::info!(
-            "DBA periodic stats recorder disabled via config (retention.enable_dba_stats = false); recording startup snapshot only"
-        );
-    }
-
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -521,7 +520,7 @@ pub async fn run(
         effective_workers(config.server.workers),
         config.performance.max_connections,
         config.performance.backlog,
-        config.performance.worker_max_blocking_threads,
+        effective_max_blocking_threads(config.performance.worker_max_blocking_threads),
         config.rate_limit.request_body_limit_bytes / (1024 * 1024)
     );
 
@@ -645,7 +644,9 @@ pub async fn run(
     // Per-worker max concurrent connections (default: 25000)
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
-    .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+    .worker_max_blocking_threads(effective_max_blocking_threads(
+        config.performance.worker_max_blocking_threads,
+    ))
     // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
     // Connections stay open for reuse, reducing TCP handshake overhead
     .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
@@ -870,7 +871,9 @@ pub async fn run_for_tests(
         .listen(listener)?
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .worker_max_blocking_threads(effective_max_blocking_threads(
+            config.performance.worker_max_blocking_threads,
+        ))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
             config.performance.client_request_timeout,
@@ -961,7 +964,9 @@ pub async fn run_detached(
     let server = server
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)
+        .worker_max_blocking_threads(effective_max_blocking_threads(
+            config.performance.worker_max_blocking_threads,
+        ))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
             config.performance.client_request_timeout,
@@ -1063,7 +1068,7 @@ async fn create_default_system_user(
                 password_hash,
                 role,
                 email: Some(email),
-                auth_type: AuthType::Internal, // System user uses Internal auth
+                auth_type: AuthType::Password,
                 auth_data: None,
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),

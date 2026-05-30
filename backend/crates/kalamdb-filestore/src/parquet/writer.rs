@@ -18,6 +18,9 @@ use parquet::{
 
 use crate::error::{FilestoreError, Result};
 
+const MIN_ROWS_FOR_BLOOM_FILTERS: u64 = 1024;
+const PARQUET_INITIAL_BUFFER_BYTES: usize = 1024 * 1024;
+
 /// Result of a Parquet write operation.
 #[derive(Debug, Clone)]
 pub struct ParquetWriteResult {
@@ -40,36 +43,12 @@ pub(crate) fn serialize_to_parquet(
     );
     let _span_guard = span.entered();
 
-    const MIN_ROWS_FOR_BLOOM_FILTERS: u64 = 1024;
-
     let batches = sort_batches_by_seq(batches)?;
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-    let bloom_ndv_estimate = total_rows.max(1);
-    let bloom_filter_columns = if total_rows < MIN_ROWS_FOR_BLOOM_FILTERS {
-        None
-    } else {
-        bloom_filter_columns
-    };
-
-    // Build writer properties
-    let mut props_builder = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(zstd_level()))
-        .set_max_row_group_row_count(Some(128 * 1024)); // 128K rows per group
-
-    // Add bloom filters for specified columns
-    if let Some(cols) = bloom_filter_columns {
-        for col in cols {
-            let col_path: parquet::schema::types::ColumnPath = col.into();
-            props_builder = props_builder.set_column_bloom_filter_enabled(col_path.clone(), true);
-            props_builder = props_builder.set_column_bloom_filter_fpp(col_path.clone(), 0.01);
-            props_builder = props_builder.set_column_bloom_filter_ndv(col_path, bloom_ndv_estimate);
-        }
-    }
-
-    let props = props_builder.build();
+    let props = writer_properties(total_rows, bloom_filter_columns);
 
     // Write to in-memory buffer
-    let mut buffer = Vec::with_capacity(1024 * 1024); // 1MB initial capacity
+    let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
     {
         let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
             .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
@@ -83,6 +62,68 @@ pub(crate) fn serialize_to_parquet(
 
     tracing::debug!(size_bytes = buffer.len(), "Parquet serialization completed");
     Ok(Bytes::from(buffer))
+}
+
+/// Serialize batches produced by a bounded receiver to Parquet.
+///
+/// The caller can stream input batches into the receiver while this runs on a blocking worker,
+/// keeping row materialization bounded to the channel capacity plus one Arrow batch.
+pub fn serialize_record_batch_receiver_to_parquet(
+    schema: SchemaRef,
+    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    bloom_filter_columns: Option<Vec<String>>,
+    estimated_rows: u64,
+) -> Result<Bytes> {
+    let props = writer_properties(estimated_rows, bloom_filter_columns);
+    let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
+    let mut rows_written = 0u64;
+
+    {
+        let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
+            .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+
+        while let Some(batch_result) = receiver.blocking_recv() {
+            let batch = batch_result?;
+            rows_written = rows_written.saturating_add(batch.num_rows() as u64);
+            writer.write(&batch).map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+        }
+
+        writer.close().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
+    }
+
+    tracing::debug!(
+        row_count = rows_written,
+        size_bytes = buffer.len(),
+        "Streaming Parquet serialization completed"
+    );
+    Ok(Bytes::from(buffer))
+}
+
+fn writer_properties(
+    row_count: u64,
+    bloom_filter_columns: Option<Vec<String>>,
+) -> WriterProperties {
+    let bloom_ndv_estimate = row_count.max(1);
+    let bloom_filter_columns = if row_count < MIN_ROWS_FOR_BLOOM_FILTERS {
+        None
+    } else {
+        bloom_filter_columns
+    };
+
+    let mut props_builder = WriterProperties::builder()
+        .set_compression(Compression::ZSTD(zstd_level()))
+        .set_max_row_group_row_count(Some(128 * 1024));
+
+    if let Some(cols) = bloom_filter_columns {
+        for col in cols {
+            let col_path: parquet::schema::types::ColumnPath = col.into();
+            props_builder = props_builder.set_column_bloom_filter_enabled(col_path.clone(), true);
+            props_builder = props_builder.set_column_bloom_filter_fpp(col_path.clone(), 0.01);
+            props_builder = props_builder.set_column_bloom_filter_ndv(col_path, bloom_ndv_estimate);
+        }
+    }
+
+    props_builder.build()
 }
 
 fn zstd_level() -> ZstdLevel {

@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse};
 use actix_ws::ProtocolError;
-use kalamdb_auth::AuthRequest;
+use kalamdb_auth::{extract_bearer_token, AuthRequest};
 use kalamdb_commons::websocket::{CompressionType, ProtocolOptions, SerializationType};
 
 use super::context::UpgradeAuth;
@@ -71,7 +71,7 @@ pub(super) fn parse_upgrade_auth(req: &HttpRequest) -> Option<UpgradeAuth> {
         return None;
     };
 
-    let Some(token) = auth_str.strip_prefix("Bearer ") else {
+    let Ok(token) = extract_bearer_token(auth_str) else {
         return None;
     };
 

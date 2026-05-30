@@ -10,6 +10,7 @@ import SetupGuard from "./components/auth/SetupGuard";
 import Layout from "./components/layout/Layout";
 
 const Login = lazy(() => import("./pages/Login"));
+const OAuthCallback = lazy(() => import("./pages/OAuthCallback"));
 const SetupWizard = lazy(() => import("./pages/SetupWizard"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SqlStudio = lazy(() => import("./pages/SqlStudio"));
@@ -44,6 +45,7 @@ function App() {
                     <Routes>
                       <Route path="/setup" element={<SetupWizard />} />
                       <Route path="/login" element={<Login />} />
+                      <Route path="/oauth/callback" element={<OAuthCallback />} />
                       <Route
                         path="/"
                         element={

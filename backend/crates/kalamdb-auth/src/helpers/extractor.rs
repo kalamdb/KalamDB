@@ -348,19 +348,6 @@ impl FromRequest for AuthSessionExtractor {
                 },
             };
 
-            // Reject Basic auth (password auth only via login endpoint)
-            if auth_header.trim_start().to_lowercase().starts_with("basic ") {
-                let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                return Err(AuthExtractError::new(
-                    AuthError::InvalidCredentials(
-                        "This endpoint requires a Bearer token. Basic authentication is not \
-                         supported."
-                            .to_string(),
-                    ),
-                    took,
-                ));
-            }
-
             // Extract client IP with security checks
             let connection_info = extract_client_ip_secure(&req);
 
@@ -404,6 +391,11 @@ impl FromRequest for AuthSessionExtractor {
                 },
                 Err(e) => {
                     let took = start_time.elapsed().as_secs_f64() * 1000.0;
+                    tracing::debug!(
+                        error = %e,
+                        took_ms = took,
+                        "HTTP bearer authentication failed"
+                    );
                     Err(AuthExtractError::new(e, took))
                 },
             }

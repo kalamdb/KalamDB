@@ -7,6 +7,12 @@ import {
   ApiRequestError,
 } from "../lib/api";
 import { setClientToken, clearClient } from "../lib/kalam-client";
+import {
+  clearExternalAuthToken,
+  externalLoginResponse,
+  loadExternalAuthToken,
+  storeExternalAuthToken,
+} from "../lib/oauth";
 
 interface AuthState {
   user: UserInfo | null;
@@ -44,6 +50,13 @@ function extractAuthErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+async function authenticateExternalToken(token: string) {
+  await setClientToken(token);
+  const currentUser = await authApi.me();
+  storeExternalAuthToken(token);
+  return externalLoginResponse(token, currentUser);
+}
+
 export const login = createAsyncThunk(
   "auth/login",
   async (credentials: LoginRequest, { rejectWithValue }) => {
@@ -54,6 +67,7 @@ export const login = createAsyncThunk(
       }
 
       const response = await authApi.login(credentials);
+      clearExternalAuthToken();
       await setClientToken(response.access_token);
       return response;
     } catch (err) {
@@ -71,18 +85,49 @@ export const logout = createAsyncThunk("auth/logout", async () => {
   } catch {
     // Ignore logout errors
   } finally {
+    clearExternalAuthToken();
     await clearClient();
   }
 });
+
+export const loginWithExternalToken = createAsyncThunk(
+  "auth/loginWithExternalToken",
+  async (token: string, { rejectWithValue }) => {
+    try {
+      const status = await probeBackendReachability();
+      if (status.needs_setup) {
+        return rejectWithValue("Server setup is not complete yet.");
+      }
+
+      return await authenticateExternalToken(token);
+    } catch (err) {
+      clearExternalAuthToken();
+      await clearClient();
+      if (err instanceof TypeError) {
+        return rejectWithValue("KalamDB server is unreachable.");
+      }
+      return rejectWithValue(extractAuthErrorMessage(err, "External login failed"));
+    }
+  }
+);
 
 export const refresh = createAsyncThunk(
   "auth/refresh",
   async (_, { rejectWithValue }) => {
     try {
       const response = await authApi.refresh();
+      clearExternalAuthToken();
       await setClientToken(response.access_token);
       return response;
     } catch (err) {
+      const externalToken = loadExternalAuthToken();
+      if (externalToken) {
+        try {
+          return await authenticateExternalToken(externalToken);
+        } catch {
+          clearExternalAuthToken();
+        }
+      }
       await clearClient();
       if (err instanceof ApiRequestError) {
         return rejectWithValue(err.apiError.message);
@@ -97,9 +142,18 @@ export const checkAuth = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const response = await authApi.refresh();
+      clearExternalAuthToken();
       await setClientToken(response.access_token);
       return response;
     } catch (err) {
+      const externalToken = loadExternalAuthToken();
+      if (externalToken) {
+        try {
+          return await authenticateExternalToken(externalToken);
+        } catch {
+          clearExternalAuthToken();
+        }
+      }
       await clearClient();
       return rejectWithValue("Not authenticated");
     }
@@ -133,6 +187,23 @@ const authSlice = createSlice({
         state.error = null;
       })
       .addCase(login.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // External login
+      .addCase(loginWithExternalToken.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(loginWithExternalToken.fulfilled, (state, action) => {
+        state.user = normalizeUserInfo(action.payload.user);
+        state.accessToken = action.payload.access_token;
+        state.expiresAt = action.payload.expires_at;
+        state.isAuthenticated = true;
+        state.isLoading = false;
+        state.error = null;
+      })
+      .addCase(loginWithExternalToken.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
       })

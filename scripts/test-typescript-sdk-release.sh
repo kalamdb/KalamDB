@@ -11,7 +11,7 @@ ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-kalamdb123}"
 JWT_SECRET="sdk-test-secret-key-minimum-32-characters-long"
 SERVER_LOG="${TS_SDK_SERVER_LOG:-$ROOT_DIR/ts-sdk-server.log}"
 TEST_OUTPUT="${TS_SDK_TEST_OUTPUT:-$ROOT_DIR/ts-sdk-test-output.txt}"
-PACKAGES_RAW="${TS_SDK_PACKAGES:-client consumer orm react}"
+PACKAGES_RAW="${TS_SDK_PACKAGES:-client consumer orm react cli}"
 SERVER_BIN="${KALAMDB_SERVER_BIN:-}"
 SKIP_SERVER_START="${KALAMDB_SKIP_SERVER_START:-false}"
 SKIP_AUTH_SETUP="${KALAMDB_SKIP_AUTH_SETUP:-false}"
@@ -20,6 +20,14 @@ AUTH_TMP_DIR=""
 
 PACKAGES_NORMALIZED="${PACKAGES_RAW//,/ }"
 read -r -a SELECTED_PACKAGES <<<"$PACKAGES_NORMALIZED"
+
+PACKAGES_REQUIRE_SERVER=false
+for package in "${SELECTED_PACKAGES[@]}"; do
+    if [[ "$package" != "cli" ]]; then
+        PACKAGES_REQUIRE_SERVER=true
+        break
+    fi
+done
 
 if [[ ${#SELECTED_PACKAGES[@]} -eq 0 ]]; then
     echo "No TypeScript SDK packages were selected for testing." >&2
@@ -191,6 +199,11 @@ run_selected_package() {
             cd "$ROOT_DIR/link/sdks/typescript/react"
             npm test
             ;;
+        cli)
+            echo "Running @kalamdb/cli tests..."
+            cd "$ROOT_DIR/link/sdks/typescript/cli"
+            bash ./test.sh
+            ;;
         *)
             echo "Unknown TypeScript SDK package: $package" >&2
             return 1
@@ -200,7 +213,7 @@ run_selected_package() {
 
 trap cleanup EXIT
 
-if [[ "$SKIP_SERVER_START" != "true" ]]; then
+if [[ "$SKIP_SERVER_START" != "true" && "$PACKAGES_REQUIRE_SERVER" == "true" ]]; then
     SERVER_PID_FILE="$WORK_DIR/server.pid"
     KALAMDB_SERVER_BIN="$SERVER_BIN" \
     KALAMDB_SERVER_WORK_DIR="$WORK_DIR" \
@@ -213,7 +226,9 @@ if [[ "$SKIP_SERVER_START" != "true" ]]; then
     SERVER_PID="$(cat "$SERVER_PID_FILE")"
 fi
 
-ensure_test_auth_ready
+if [[ "$PACKAGES_REQUIRE_SERVER" == "true" ]]; then
+    ensure_test_auth_ready
+fi
 
 (
     for package in "${SELECTED_PACKAGES[@]}"; do

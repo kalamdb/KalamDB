@@ -173,9 +173,11 @@ def write_markdown(
     rust_entries: list[dict],
     ui_entries: list[dict],
     sdk_entries: list[dict],
+    cli_entries: list[dict],
     rust_counts: Counter[str],
     ui_counts: Counter[str],
     sdk_counts: Counter[str],
+    cli_counts: Counter[str],
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%SZ")
@@ -231,6 +233,21 @@ def write_markdown(
         )
     lines.append("")
 
+    lines.append("## npm CLI Production Dependencies")
+    lines.append("")
+    lines.append("| License | Count |")
+    lines.append("|---|---:|")
+    for license_expr, count in sorted(cli_counts.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| {license_expr or '<missing>'} | {count} |")
+    lines.append("")
+    lines.append("| Package | License | Repository |")
+    lines.append("|---|---|---|")
+    for entry in cli_entries:
+        lines.append(
+            f"| {entry['package']} | {entry['license'] or '<missing>'} | {entry['repository'] or ''} |"
+        )
+    lines.append("")
+
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -240,6 +257,7 @@ def main() -> int:
     parser.add_argument("--rust-report", required=True, help="Path to cargo-license JSON report")
     parser.add_argument("--ui-report", required=True, help="Path to UI npm license-checker JSON report")
     parser.add_argument("--sdk-report", required=True, help="Path to SDK npm license-checker JSON report")
+    parser.add_argument("--cli-report", required=True, help="Path to CLI npm license-checker JSON report")
     parser.add_argument("--output", required=True, help="Output markdown report path")
     args = parser.parse_args()
 
@@ -247,6 +265,7 @@ def main() -> int:
     rust_report_path = Path(args.rust_report)
     ui_report_path = Path(args.ui_report)
     sdk_report_path = Path(args.sdk_report)
+    cli_report_path = Path(args.cli_report)
     output_path = Path(args.output)
 
     allow, deny, rust_overrides = load_policy(policy_path)
@@ -259,17 +278,20 @@ def main() -> int:
     )
     ui_errors, ui_entries, ui_counts = validate_npm(ui_report_path, "kalamdb-admin-ui", allow, deny)
     sdk_errors, sdk_entries, sdk_counts = validate_npm(sdk_report_path, "@kalamdb/client", allow, deny)
+    cli_errors, cli_entries, cli_counts = validate_npm(cli_report_path, "@kalamdb/cli", allow, deny)
 
-    all_errors = rust_errors + ui_errors + sdk_errors
+    all_errors = rust_errors + ui_errors + sdk_errors + cli_errors
 
     write_markdown(
         output_path,
         rust_entries,
         ui_entries,
         sdk_entries,
+        cli_entries,
         rust_counts,
         ui_counts,
         sdk_counts,
+        cli_counts,
     )
 
     if all_errors:

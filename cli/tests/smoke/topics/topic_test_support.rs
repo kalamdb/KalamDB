@@ -112,6 +112,26 @@ pub fn is_retryable_consumer_poll_error(message: &str) -> bool {
         || normalized.contains("401")
 }
 
+async fn commit_processed_batch(
+    consumer: &mut TopicConsumer,
+    idle_sleep: Duration,
+    deadline: Instant,
+) {
+    loop {
+        match consumer.commit_sync().await {
+            Ok(_) => return,
+            Err(err) => {
+                let message = err.to_string();
+                if is_retryable_consumer_poll_error(&message) && Instant::now() < deadline {
+                    tokio::time::sleep(idle_sleep).await;
+                    continue;
+                }
+                panic!("topic consumer commit error: {}", message);
+            },
+        }
+    }
+}
+
 pub async fn build_test_consumer(
     topic: &str,
     group_id: &str,
@@ -176,7 +196,7 @@ pub async fn poll_unique_offsets_until(
                 }
 
                 if config.commit_each_batch {
-                    let _ = consumer.commit_sync().await;
+                    commit_processed_batch(consumer, config.idle_sleep, deadline).await;
                 }
             },
             Err(err) => {

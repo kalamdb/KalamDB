@@ -23,6 +23,7 @@ base64 = { workspace = true }
 
 # JWT validation
 jsonwebtoken = { workspace = true }
+openidconnect = { workspace = true }
 
 # Web framework (optional — gated behind "http" feature)
 actix-web = { workspace = true, optional = true }
@@ -59,7 +60,3 @@ chrono = { workspace = true }
 
 async-trait = { workspace = true }
 once_cell = { workspace = true }
-
-# SHA-256 helpers used by bearer token services
-sha2 = { workspace = true }
-hex = { workspace = true }

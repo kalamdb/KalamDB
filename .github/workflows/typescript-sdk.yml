@@ -23,6 +23,11 @@ on:
         type: boolean
         required: false
         default: false
+      publish_github_packages:
+        description: "Publish TypeScript SDK packages to GitHub Packages"
+        type: boolean
+        required: false
+        default: false
       force_publish:
         description: "Force republish (unpublish existing version first)"
         type: boolean
@@ -35,6 +40,11 @@ on:
         type: boolean
         required: false
         default: false
+      publish_github_packages:
+        description: "Publish TypeScript SDK packages to GitHub Packages"
+        type: boolean
+        required: false
+        default: false
       force_publish:
         description: "Force republish (unpublish existing version first)"
         type: boolean
@@ -43,6 +53,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -50,6 +61,7 @@ env:
   WASM_PACK_VERSION: "0.15.0"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   resolve_versions:
@@ -58,6 +70,7 @@ jobs:
     outputs:
       root_version: ${{ steps.versions.outputs.root_version }}
       typescript_version: ${{ steps.versions.outputs.typescript_version }}
+      test_matrix: ${{ steps.test_matrix.outputs.test_matrix }}
       latest_server_release_tag: ${{ steps.latest_server.outputs.release_tag }}
       selected_server_version: ${{ steps.latest_server.outputs.selected_version }}
       selected_server_selection_reason: ${{ steps.latest_server.outputs.selection_reason }}
@@ -84,6 +97,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
+
+      - name: Select TypeScript SDK test matrix
+        id: test_matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"cli","package_name":"@kalamdb/cli"}]}' >> "$GITHUB_OUTPUT"
+          else
+            echo 'test_matrix={"include":[{"slug":"client","package_name":"@kalamdb/client"},{"slug":"consumer","package_name":"@kalamdb/consumer"},{"slug":"orm","package_name":"@kalamdb/orm"},{"slug":"react","package_name":"@kalamdb/react"},{"slug":"cli","package_name":"@kalamdb/cli"}]}' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Resolve latest released server asset
         id: latest_server
@@ -127,15 +151,14 @@ jobs:
           if-no-files-found: error
 
   test_packages:
-    name: TypeScript SDK Tests (${{ matrix.package }})
+    name: TypeScript SDK Tests (${{ matrix.package_name }})
     runs-on: ubuntu-latest
     needs:
       - resolve_versions
       - download_release_server_binary
     strategy:
       fail-fast: false
-      matrix:
-        package: [client, consumer, orm, react]
+      matrix: ${{ fromJSON(needs.resolve_versions.outputs.test_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -193,10 +216,11 @@ jobs:
           KALAMDB_USER: "admin"
           KALAMDB_PASSWORD: "kalamdb123"
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          PLAYWRIGHT_INSTALL_DEPS: ${{ matrix.slug == 'client' && 'true' || 'false' }}
           KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
-          TS_SDK_PACKAGES: ${{ matrix.package }}
-          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.package }}-server.log
-          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output-${{ matrix.package }}.txt
+          TS_SDK_PACKAGES: ${{ matrix.slug }}
+          TS_SDK_SERVER_LOG: ${{ github.workspace }}/ts-sdk-${{ matrix.slug }}-server.log
+          TS_SDK_TEST_OUTPUT: ${{ github.workspace }}/ts-sdk-test-output-${{ matrix.slug }}.txt
         run: |
           set -euo pipefail
           ./scripts/test-typescript-sdk-release.sh
@@ -206,9 +230,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="ts-sdk-test-output-${{ matrix.package }}.txt"
-          if ! grep -q "Running @kalamdb/${{ matrix.package }} tests" "$output"; then
-            echo "Missing @kalamdb/${{ matrix.package }} npm package test run in ${output}" >&2
+          output="ts-sdk-test-output-${{ matrix.slug }}.txt"
+          if ! grep -q "Running ${{ matrix.package_name }} tests" "$output"; then
+            echo "Missing ${{ matrix.package_name }} npm package test run in ${output}" >&2
             exit 1
           fi
 
@@ -217,35 +241,37 @@ jobs:
         shell: bash
         run: |
           echo "=== TypeScript SDK server log ==="
-          cat "ts-sdk-${{ matrix.package }}-server.log" || true
+          cat "ts-sdk-${{ matrix.slug }}-server.log" || true
 
       - name: Upload server log
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ts-sdk-server-log-${{ matrix.package }}
-          path: ts-sdk-${{ matrix.package }}-server.log
+          name: ts-sdk-server-log-${{ matrix.slug }}
+          path: ts-sdk-${{ matrix.slug }}-server.log
           if-no-files-found: ignore
 
       - name: Upload TypeScript SDK test output
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ts-sdk-test-output-${{ matrix.package }}
-          path: ts-sdk-test-output-${{ matrix.package }}.txt
+          name: ts-sdk-test-output-${{ matrix.slug }}
+          path: ts-sdk-test-output-${{ matrix.slug }}.txt
           if-no-files-found: ignore
 
       - name: Fail if TypeScript SDK tests failed
         if: always() && steps.run_tests.outcome != 'success'
         shell: bash
         run: |
-          echo "TypeScript SDK tests failed for ${{ matrix.package }}" >&2
+          echo "TypeScript SDK tests failed for ${{ matrix.package_name }}" >&2
           exit 1
 
   summarize_tests:
     name: Summarize TypeScript SDK Tests
     runs-on: ubuntu-latest
-    needs: test_packages
+    needs:
+      - resolve_versions
+      - test_packages
     if: ${{ always() && needs.test_packages.result != 'cancelled' }}
     outputs:
       total: ${{ steps.parse_badge.outputs.total }}
@@ -265,16 +291,21 @@ jobs:
         id: parse_badge
         shell: bash
         env:
+          EXPECTED_PACKAGES_JSON: ${{ needs.resolve_versions.outputs.test_matrix }}
           JOB_RESULT: ${{ needs.test_packages.result }}
         run: |
           set -euo pipefail
           python3 <<'PYTHON'
+          import json
           import os
           import re
           from pathlib import Path
 
           artifacts_dir = Path("ts-sdk-test-artifacts")
-          expected_packages = {"client", "consumer", "orm"}
+          expected_packages = {
+              entry["slug"]
+              for entry in json.loads(os.environ["EXPECTED_PACKAGES_JSON"]).get("include", [])
+          }
           found_packages = set()
           total = 0
           passed = 0
@@ -437,6 +468,121 @@ jobs:
         working-directory: link/sdks/typescript/orm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/react to npm
+        shell: bash
+        working-directory: link/sdks/typescript/react
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+  publish_github_packages:
+    name: Publish TypeScript SDK packages to GitHub Packages
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_versions
+      - test_packages
+    if: ${{ inputs.publish_github_packages }}
+    env:
+      PUBLISH_REGISTRY_URL: 'https://npm.pkg.github.com'
+      PUBLISH_REGISTRY_NAME: 'GitHub Packages'
+      PUBLISH_ACCESS: ''
+      PUBLISH_SCOPE_OVERRIDE: '@kalamdb'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked
+          wasm-pack --version
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: github-packages-publish
+          cache-on-failure: true
+
+      - name: Publish @kalamdb/client to GitHub Packages
+        shell: bash
+        working-directory: link/sdks/typescript/client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/consumer to GitHub Packages
+        shell: bash
+        working-directory: link/sdks/typescript/consumer
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/orm to GitHub Packages
+        shell: bash
+        working-directory: link/sdks/typescript/orm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force_publish }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Publish @kalamdb/react to GitHub Packages
+        shell: bash
+        working-directory: link/sdks/typescript/react
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: |
           set -euo pipefail
           VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"

@@ -32,7 +32,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -42,7 +42,7 @@ use kalam_client::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::history::get_kalam_config_dir;
+mod path;
 
 /// File-based credential storage
 ///
@@ -90,15 +90,7 @@ impl FileCredentialStore {
     /// Default credentials file path
     /// - All platforms: `~/.kalam/credentials.toml` (same directory as config.toml)
     pub fn default_path() -> PathBuf {
-        if let Ok(path) = env::var("KALAMDB_CREDENTIALS_PATH") {
-            let trimmed = path.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed);
-            }
-        }
-
-        // Use consistent path across all platforms (same as config.toml)
-        get_kalam_config_dir().join("credentials.toml")
+        path::default_credentials_path()
     }
 
     /// Create a new file-based credential store at the default location
@@ -128,8 +120,7 @@ impl FileCredentialStore {
             let msg = format!(
                 "\n╭─ Cannot Read Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: \
                  {}\n│\n╰─ How to Fix:\n\nOption 1: Check file permissions\nOption 2: Delete and \
-                 re-authenticate\n───────────────────────────────────\ndel \"{}\"\nkalamcli \
-                 connect\n",
+                 re-authenticate\n───────────────────────────────────\ndel \"{}\"\nkalam login\n",
                 self.file_path.display(),
                 e,
                 self.file_path.display()
@@ -154,7 +145,7 @@ impl FileCredentialStore {
                 "\n╭─ Corrupted Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: \
                  {}\n│\n╰─ How to Fix:\n\nStep 1: Delete the corrupted \
                  file\n───────────────────────────────\ndel \"{}\"\n\nStep 2: \
-                 Re-authenticate\n───────────────────────\nkalamcli connect\n",
+                 Re-authenticate\n───────────────────────\nkalam login\n",
                 self.file_path.display(),
                 simple_error,
                 self.file_path.display()

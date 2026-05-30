@@ -1,5 +1,7 @@
 use std::env;
 
+use anyhow::{anyhow, Result};
+
 use super::{
     cluster::{ClusterConfig, PeerConfig},
     types::ServerConfig,
@@ -11,6 +13,38 @@ fn parse_csv_env_list(value: &str) -> Vec<String> {
         .map(|entry| entry.trim().to_string())
         .filter(|entry| !entry.is_empty())
         .collect()
+}
+
+fn parse_env<T>(name: &str) -> Result<Option<T>>
+where
+    T: std::str::FromStr,
+{
+    match env::var(name) {
+        Ok(value) => value.parse().map(Some).map_err(|_| anyhow!("Invalid {name} value: {value}")),
+        Err(_) => Ok(None),
+    }
+}
+
+fn parse_env_with_alias<T>(name: &str, alias: &str) -> Result<Option<T>>
+where
+    T: std::str::FromStr,
+{
+    match env::var(name) {
+        Ok(value) => value.parse().map(Some).map_err(|_| anyhow!("Invalid {name} value: {value}")),
+        Err(_) => parse_env(alias),
+    }
+}
+
+fn env_truthy(name: &str) -> Option<bool> {
+    env::var(name).ok().map(|value| {
+        value.eq_ignore_ascii_case("true") || value == "1" || value.eq_ignore_ascii_case("yes")
+    })
+}
+
+fn env_not_false(name: &str) -> Option<bool> {
+    env::var(name).ok().map(|value| {
+        !(value.eq_ignore_ascii_case("false") || value == "0" || value.eq_ignore_ascii_case("no"))
+    })
 }
 
 impl ServerConfig {
@@ -44,6 +78,17 @@ impl ServerConfig {
     /// - KALAMDB_JWT_EXPIRY_HOURS: Override auth.jwt_expiry_hours
     /// - KALAMDB_COOKIE_SECURE: Override auth.cookie_secure
     /// - KALAMDB_ALLOW_REMOTE_SETUP: Override auth.allow_remote_setup
+    /// - KALAMDB_AUTH_LOCAL_ENABLED: Override auth.local.enabled
+    /// - KALAMDB_AUTH_OIDC_ENABLED: Override auth.oidc.enabled
+    /// - KALAMDB_AUTH_OIDC_DISPLAY_NAME: Override auth.oidc.display_name
+    /// - KALAMDB_AUTH_OIDC_ISSUER: Override auth.oidc.issuer
+    /// - KALAMDB_AUTH_OIDC_CLIENT_ID: Override auth.oidc.client_id
+    /// - KALAMDB_AUTH_OIDC_CLIENT_SECRET: Override auth.oidc.client_secret
+    /// - KALAMDB_AUTH_OIDC_SCOPES: Override auth.oidc.scopes
+    /// - KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT: Override auth.oidc.device_authorization_endpoint
+    /// - KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED: Override auth.oidc.broker_device_flow_enabled
+    /// - KALAMDB_AUTH_OIDC_AUTO_PROVISION: Override auth.oidc.auto_provision
+    /// - KALAMDB_AUTH_OIDC_DEFAULT_ROLE: Override auth.oidc.default_role
     /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a
     ///   comma-separated list or "*"
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
@@ -67,192 +112,184 @@ impl ServerConfig {
     /// - KALAMDB_SERVER_WORKERS: Override server.workers (actix-web worker threads)
     ///
     /// Environment variables take precedence over server.toml values (T031)
-    pub fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
-        // Server workers (actix-web worker thread count)
-        if let Ok(val) = env::var("KALAMDB_SERVER_WORKERS") {
-            self.server.workers = val
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_SERVER_WORKERS value: {}", val))?;
-        }
+    pub fn apply_env_overrides(&mut self) -> Result<()> {
+        self.apply_server_env_overrides()?;
+        self.apply_topic_env_overrides()?;
+        self.apply_logging_env_overrides()?;
+        self.apply_auth_env_overrides()?;
+        self.apply_security_env_overrides()?;
+        self.apply_websocket_env_overrides()?;
+        self.apply_storage_env_overrides();
+        self.apply_cluster_env_overrides()?;
+        self.apply_rpc_tls_env_overrides();
+        Ok(())
+    }
 
-        // Server host
+    fn apply_server_env_overrides(&mut self) -> Result<()> {
+        if let Some(workers) = parse_env("KALAMDB_SERVER_WORKERS")? {
+            self.server.workers = workers;
+        }
         if let Ok(host) = env::var("KALAMDB_SERVER_HOST") {
             self.server.host = host;
         }
-
-        // Server port
-        if let Ok(port_str) = env::var("KALAMDB_SERVER_PORT") {
-            self.server.port = port_str
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_SERVER_PORT value: {}", port_str))?;
+        if let Some(port) = parse_env("KALAMDB_SERVER_PORT")? {
+            self.server.port = port;
         }
-
         if let Ok(origin) = env::var("KALAMDB_SERVER_PUBLIC_ORIGIN") {
             self.server.public_origin = Some(origin);
         }
+        Ok(())
+    }
 
-        // Log level
+    fn apply_topic_env_overrides(&mut self) -> Result<()> {
+        if let Some(timeout) = parse_env_with_alias(
+            "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
+            "KALAMDB_VISIBILITY_TIMEOUT_SECS",
+        )? {
+            self.topics.visibility_timeout_secs = timeout;
+        }
+        if let Some(seconds) = parse_env("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS")? {
+            self.topics.default_retention_seconds = seconds;
+        }
+        if let Some(max_bytes) = parse_env("KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES")? {
+            self.topics.default_retention_max_bytes = max_bytes;
+        }
+        if let Some(interval) = parse_env("KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS")? {
+            self.topics.retention_check_interval_seconds = interval;
+        }
+        if let Some(batch_size) = parse_env("KALAMDB_TOPIC_RETENTION_BATCH_SIZE")? {
+            self.topics.retention_batch_size = batch_size;
+        }
+        Ok(())
+    }
+
+    fn apply_logging_env_overrides(&mut self) -> Result<()> {
         if let Ok(level) = env::var("KALAMDB_LOG_LEVEL") {
             self.logging.level = level;
         }
-
-        // Log format
         if let Ok(format) = env::var("KALAMDB_LOG_FORMAT") {
             self.logging.format = format;
         }
-
-        let topic_visibility_timeout = env::var("KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS")
-            .or_else(|_| env::var("KALAMDB_VISIBILITY_TIMEOUT_SECS"));
-        if let Ok(val) = topic_visibility_timeout {
-            self.topics.visibility_timeout_secs = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS value: {}", val)
-            })?;
-        }
-
-        if let Ok(val) = env::var("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS") {
-            self.topics.default_retention_seconds = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS value: {}", val)
-            })?;
-        }
-
-        if let Ok(val) = env::var("KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES") {
-            self.topics.default_retention_max_bytes = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES value: {}", val)
-            })?;
-        }
-
-        if let Ok(val) = env::var("KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS") {
-            self.topics.retention_check_interval_seconds = val.parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS value: {}",
-                    val
-                )
-            })?;
-        }
-
-        if let Ok(val) = env::var("KALAMDB_TOPIC_RETENTION_BATCH_SIZE") {
-            self.topics.retention_batch_size = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_TOPIC_RETENTION_BATCH_SIZE value: {}", val)
-            })?;
-        }
-
-        // Logs directory path
         if let Ok(path) = env::var("KALAMDB_LOGS_DIR") {
             self.logging.logs_path = path;
         }
+        if let Some(log_to_console) = env_truthy("KALAMDB_LOG_TO_CONSOLE") {
+            self.logging.log_to_console = log_to_console;
+        }
+        if let Some(threshold) = parse_env("KALAMDB_SLOW_QUERY_THRESHOLD_MS")? {
+            self.logging.slow_query_threshold_ms = threshold;
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_OTLP_ENABLED") {
+            self.logging.otlp.enabled = enabled;
+        }
+        if let Ok(endpoint) = env::var("KALAMDB_OTLP_ENDPOINT") {
+            self.logging.otlp.endpoint = endpoint;
+        }
+        if let Ok(protocol) = env::var("KALAMDB_OTLP_PROTOCOL") {
+            self.logging.otlp.protocol = protocol;
+        }
+        if let Ok(service_name) = env::var("KALAMDB_OTLP_SERVICE_NAME") {
+            self.logging.otlp.service_name = service_name;
+        }
+        if let Some(timeout_ms) = parse_env("KALAMDB_OTLP_TIMEOUT_MS")? {
+            self.logging.otlp.timeout_ms = timeout_ms;
+        }
+        Ok(())
+    }
 
-        // Log to console
-        if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
-            self.logging.log_to_console =
-                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
-        }
-
-        // Slow query threshold
-        if let Ok(val) = env::var("KALAMDB_SLOW_QUERY_THRESHOLD_MS") {
-            self.logging.slow_query_threshold_ms = val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_SLOW_QUERY_THRESHOLD_MS value: {}", val)
-            })?;
-        }
-
-        // OTLP tracing settings
-        if let Ok(val) = env::var("KALAMDB_OTLP_ENABLED") {
-            self.logging.otlp.enabled =
-                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
-        }
-        if let Ok(val) = env::var("KALAMDB_OTLP_ENDPOINT") {
-            self.logging.otlp.endpoint = val;
-        }
-        if let Ok(val) = env::var("KALAMDB_OTLP_PROTOCOL") {
-            self.logging.otlp.protocol = val;
-        }
-        if let Ok(val) = env::var("KALAMDB_OTLP_SERVICE_NAME") {
-            self.logging.otlp.service_name = val;
-        }
-        if let Ok(val) = env::var("KALAMDB_OTLP_TIMEOUT_MS") {
-            self.logging.otlp.timeout_ms = val
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_OTLP_TIMEOUT_MS value: {}", val))?;
-        }
-
-        // JWT secret
+    fn apply_auth_env_overrides(&mut self) -> Result<()> {
         if let Ok(secret) = env::var("KALAMDB_JWT_SECRET") {
             self.auth.jwt_secret = secret;
         }
-
-        // JWT trusted issuers
         if let Ok(issuers) = env::var("KALAMDB_JWT_TRUSTED_ISSUERS") {
             self.auth.jwt_trusted_issuers = issuers;
         }
-
-        // JWT expiry hours
-        if let Ok(hours) = env::var("KALAMDB_JWT_EXPIRY_HOURS") {
-            self.auth.jwt_expiry_hours = hours.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_JWT_EXPIRY_HOURS value: {}", hours)
-            })?;
+        if let Some(expiry_hours) = parse_env("KALAMDB_JWT_EXPIRY_HOURS")? {
+            self.auth.jwt_expiry_hours = expiry_hours;
         }
-
-        // Cookie secure flag
-        if let Ok(val) = env::var("KALAMDB_COOKIE_SECURE") {
-            self.auth.cookie_secure =
-                val.to_lowercase() != "false" && val != "0" && val.to_lowercase() != "no";
+        if let Some(cookie_secure) = env_not_false("KALAMDB_COOKIE_SECURE") {
+            self.auth.cookie_secure = cookie_secure;
         }
-
-        // Allow remote setup (default: false)
-        if let Ok(val) = env::var("KALAMDB_ALLOW_REMOTE_SETUP") {
-            self.auth.allow_remote_setup =
-                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
+        if let Some(allow_remote_setup) = env_truthy("KALAMDB_ALLOW_REMOTE_SETUP") {
+            self.auth.allow_remote_setup = allow_remote_setup;
         }
-
-        // Pre-shared token for pg_kalam FDW gRPC authentication
-        if let Ok(val) = env::var("KALAMDB_PG_AUTH_TOKEN") {
-            self.auth.pg_auth_token = Some(val);
+        if let Ok(token) = env::var("KALAMDB_PG_AUTH_TOKEN") {
+            self.auth.pg_auth_token = Some(token);
         }
-
-        // Allowed browser origins used by both HTTP CORS and WebSocket origin checks.
-        if let Ok(val) = env::var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS") {
-            self.security.cors.allowed_origins = parse_csv_env_list(&val);
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_LOCAL_ENABLED") {
+            self.auth.local.enabled = enabled;
         }
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_OIDC_ENABLED") {
+            self.auth.oidc.enabled = enabled;
+        }
+        if let Ok(display_name) = env::var("KALAMDB_AUTH_OIDC_DISPLAY_NAME") {
+            self.auth.oidc.display_name = display_name;
+        }
+        if let Ok(issuer) = env::var("KALAMDB_AUTH_OIDC_ISSUER") {
+            self.auth.oidc.issuer = Some(issuer);
+        }
+        if let Ok(client_id) = env::var("KALAMDB_AUTH_OIDC_CLIENT_ID") {
+            self.auth.oidc.client_id = Some(client_id);
+        }
+        if let Ok(client_secret) = env::var("KALAMDB_AUTH_OIDC_CLIENT_SECRET") {
+            self.auth.oidc.client_secret = Some(client_secret);
+        }
+        if let Ok(scopes) = env::var("KALAMDB_AUTH_OIDC_SCOPES") {
+            self.auth.oidc.scopes = parse_csv_env_list(&scopes);
+        }
+        if let Ok(endpoint) = env::var("KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT") {
+            self.auth.oidc.device_authorization_endpoint = Some(endpoint);
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED") {
+            self.auth.oidc.broker_device_flow_enabled = enabled;
+        }
+        if let Some(auto_provision) = env_truthy("KALAMDB_AUTH_OIDC_AUTO_PROVISION") {
+            self.auth.oidc.auto_provision = auto_provision;
+        }
+        if let Ok(default_role) = env::var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE") {
+            self.auth.oidc.default_role = default_role;
+        }
+        if let Ok(audience) = env::var("KALAMDB_AUTH_OIDC_AUDIENCE") {
+            self.auth.oidc.audience = Some(audience);
+        }
+        Ok(())
+    }
 
-        // Trusted proxy ranges used for X-Forwarded-For / X-Real-IP trust.
-        if let Ok(val) = env::var("KALAMDB_SECURITY_TRUSTED_PROXY_RANGES")
+    fn apply_security_env_overrides(&mut self) -> Result<()> {
+        if let Ok(origins) = env::var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS") {
+            self.security.cors.allowed_origins = parse_csv_env_list(&origins);
+        }
+        if let Ok(ranges) = env::var("KALAMDB_SECURITY_TRUSTED_PROXY_RANGES")
             .or_else(|_| env::var("KALAMDB_TRUSTED_PROXY_RANGES"))
         {
-            self.security.trusted_proxy_ranges = parse_csv_env_list(&val);
+            self.security.trusted_proxy_ranges = parse_csv_env_list(&ranges);
         }
+        if let Some(rate_limit) = parse_env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC")? {
+            self.rate_limit.max_auth_requests_per_ip_per_sec = rate_limit;
+        }
+        Ok(())
+    }
 
-        // Auth rate limit per IP
-        if let Ok(val) = env::var("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC") {
-            self.rate_limit.max_auth_requests_per_ip_per_sec = val.parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC value: {}",
-                    val
-                )
-            })?;
+    fn apply_websocket_env_overrides(&mut self) -> Result<()> {
+        if let Some(timeout_secs) = parse_env("KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS")? {
+            self.websocket.client_timeout_secs = Some(timeout_secs);
         }
+        if let Some(timeout_secs) = parse_env("KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS")? {
+            self.websocket.auth_timeout_secs = Some(timeout_secs);
+        }
+        if let Some(interval_secs) = parse_env("KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS")? {
+            self.websocket.heartbeat_interval_secs = Some(interval_secs);
+        }
+        Ok(())
+    }
 
-        // WebSocket settings
-        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS") {
-            self.websocket.client_timeout_secs = Some(val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_CLIENT_TIMEOUT_SECS value: {}", val)
-            })?);
-        }
-        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS") {
-            self.websocket.auth_timeout_secs = Some(val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_AUTH_TIMEOUT_SECS value: {}", val)
-            })?);
-        }
-        if let Ok(val) = env::var("KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS") {
-            self.websocket.heartbeat_interval_secs = Some(val.parse().map_err(|_| {
-                anyhow::anyhow!("Invalid KALAMDB_WEBSOCKET_HEARTBEAT_INTERVAL_SECS value: {}", val)
-            })?);
-        }
-
-        // Data directory
+    fn apply_storage_env_overrides(&mut self) {
         if let Ok(path) = env::var("KALAMDB_DATA_DIR") {
             self.storage.data_path = path;
         }
+    }
 
-        // Cluster overrides
+    fn apply_cluster_env_overrides(&mut self) -> Result<()> {
         let cluster_id = env::var("KALAMDB_CLUSTER_ID").ok();
         let node_id = env::var("KALAMDB_NODE_ID")
             .ok()
@@ -261,84 +298,79 @@ impl ServerConfig {
         let api_addr = env::var("KALAMDB_CLUSTER_API_ADDR").ok();
         let peers_env = env::var("KALAMDB_CLUSTER_PEERS").ok();
 
-        let has_cluster_env = cluster_id.is_some()
-            || node_id.is_some()
-            || rpc_addr.is_some()
-            || api_addr.is_some()
-            || peers_env.is_some();
-
-        if has_cluster_env {
-            let parsed_node_id = match node_id {
-                Some(ref val) => val
-                    .parse::<u64>()
-                    .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_NODE_ID value: {}", val))?,
-                None => self.cluster.as_ref().map(|c| c.node_id).ok_or_else(|| {
-                    anyhow::anyhow!("KALAMDB_NODE_ID is required when overriding cluster settings")
-                })?,
-            };
-
-            let cluster = self.cluster.get_or_insert_with(|| ClusterConfig {
-                cluster_id: cluster_id.clone().unwrap_or_else(|| "cluster".to_string()),
-                node_id: parsed_node_id,
-                rpc_addr: rpc_addr.clone().unwrap_or_else(|| "127.0.0.1:2910".to_string()),
-                api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:2900".to_string()),
-                peers: Vec::new(),
-                user_shards: 12,
-                shared_shards: 1,
-                heartbeat_interval_ms: 250,
-                election_timeout_ms: (500, 1000),
-                snapshot_policy: "LogsSinceLast(1000)".to_string(),
-                max_snapshots_to_keep: 3,
-                replication_timeout_ms: 5000,
-                reconnect_interval_ms: 3000,
-                peer_wait_max_retries: None,
-                peer_wait_initial_delay_ms: None,
-                peer_wait_max_delay_ms: None,
-            });
-
-            if let Some(val) = cluster_id {
-                cluster.cluster_id = val;
-            }
-
-            cluster.node_id = parsed_node_id;
-
-            if let Some(val) = rpc_addr {
-                cluster.rpc_addr = val;
-            }
-
-            if let Some(val) = api_addr {
-                cluster.api_addr = val;
-            }
-
-            if let Some(val) = peers_env {
-                cluster.peers = parse_cluster_peers(&val)?;
-            }
+        if cluster_id.is_none()
+            && node_id.is_none()
+            && rpc_addr.is_none()
+            && api_addr.is_none()
+            && peers_env.is_none()
+        {
+            return Ok(());
         }
 
-        // Top-level RPC TLS overrides (unified mTLS config)
-        if let Ok(val) = env::var("KALAMDB_RPC_TLS_ENABLED") {
-            self.rpc_tls.enabled =
-                val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
-        }
-        if let Ok(val) = env::var("KALAMDB_RPC_TLS_CA_CERT") {
-            self.rpc_tls.ca_cert = Some(val);
-        }
-        if let Ok(val) = env::var("KALAMDB_RPC_TLS_SERVER_CERT") {
-            self.rpc_tls.server_cert = Some(val);
-        }
-        if let Ok(val) = env::var("KALAMDB_RPC_TLS_SERVER_KEY") {
-            self.rpc_tls.server_key = Some(val);
-        }
-        if let Ok(val) = env::var("KALAMDB_RPC_TLS_REQUIRE_CLIENT_CERT") {
-            self.rpc_tls.require_client_cert =
-                val.eq_ignore_ascii_case("true") || val == "1" || val.eq_ignore_ascii_case("yes");
-        }
+        let parsed_node_id = match node_id {
+            Some(ref value) => value
+                .parse::<u64>()
+                .map_err(|_| anyhow!("Invalid KALAMDB_NODE_ID value: {value}"))?,
+            None => self.cluster.as_ref().map(|cluster| cluster.node_id).ok_or_else(|| {
+                anyhow!("KALAMDB_NODE_ID is required when overriding cluster settings")
+            })?,
+        };
 
+        let cluster = self.cluster.get_or_insert_with(|| ClusterConfig {
+            cluster_id: cluster_id.clone().unwrap_or_else(|| "cluster".to_string()),
+            node_id: parsed_node_id,
+            rpc_addr: rpc_addr.clone().unwrap_or_else(|| "127.0.0.1:2910".to_string()),
+            api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:2900".to_string()),
+            peers: Vec::new(),
+            user_shards: 12,
+            shared_shards: 1,
+            heartbeat_interval_ms: 250,
+            election_timeout_ms: (500, 1000),
+            snapshot_policy: "LogsSinceLast(1000)".to_string(),
+            max_snapshots_to_keep: 3,
+            replication_timeout_ms: 5000,
+            reconnect_interval_ms: 3000,
+            peer_wait_max_retries: None,
+            peer_wait_initial_delay_ms: None,
+            peer_wait_max_delay_ms: None,
+        });
+
+        if let Some(value) = cluster_id {
+            cluster.cluster_id = value;
+        }
+        cluster.node_id = parsed_node_id;
+        if let Some(value) = rpc_addr {
+            cluster.rpc_addr = value;
+        }
+        if let Some(value) = api_addr {
+            cluster.api_addr = value;
+        }
+        if let Some(value) = peers_env {
+            cluster.peers = parse_cluster_peers(&value)?;
+        }
         Ok(())
+    }
+
+    fn apply_rpc_tls_env_overrides(&mut self) {
+        if let Some(enabled) = env_truthy("KALAMDB_RPC_TLS_ENABLED") {
+            self.rpc_tls.enabled = enabled;
+        }
+        if let Ok(ca_cert) = env::var("KALAMDB_RPC_TLS_CA_CERT") {
+            self.rpc_tls.ca_cert = Some(ca_cert);
+        }
+        if let Ok(server_cert) = env::var("KALAMDB_RPC_TLS_SERVER_CERT") {
+            self.rpc_tls.server_cert = Some(server_cert);
+        }
+        if let Ok(server_key) = env::var("KALAMDB_RPC_TLS_SERVER_KEY") {
+            self.rpc_tls.server_key = Some(server_key);
+        }
+        if let Some(require_client_cert) = env_truthy("KALAMDB_RPC_TLS_REQUIRE_CLIENT_CERT") {
+            self.rpc_tls.require_client_cert = require_client_cert;
+        }
     }
 }
 
-fn parse_cluster_peers(value: &str) -> anyhow::Result<Vec<PeerConfig>> {
+fn parse_cluster_peers(value: &str) -> Result<Vec<PeerConfig>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Ok(Vec::new());
@@ -456,6 +488,55 @@ mod tests {
         );
 
         env::remove_var("KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS");
+    }
+
+    #[test]
+    fn test_env_override_unified_auth_oidc_settings() {
+        let _guard = acquire_env_lock();
+        env::set_var("KALAMDB_AUTH_LOCAL_ENABLED", "false");
+        env::set_var("KALAMDB_AUTH_OIDC_ENABLED", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_DISPLAY_NAME", "Dex");
+        env::set_var("KALAMDB_AUTH_OIDC_ISSUER", "https://idp.example.com");
+        env::set_var("KALAMDB_AUTH_OIDC_CLIENT_ID", "kalamdb");
+        env::set_var("KALAMDB_AUTH_OIDC_CLIENT_SECRET", "secret");
+        env::set_var("KALAMDB_AUTH_OIDC_SCOPES", "openid,email");
+        env::set_var(
+            "KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT",
+            "https://idp.example.com/device",
+        );
+        env::set_var("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_AUTO_PROVISION", "true");
+        env::set_var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE", "dba");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert!(!config.auth.local.enabled);
+        assert!(config.auth.oidc.enabled);
+        assert_eq!(config.auth.oidc.display_name, "Dex");
+        assert_eq!(config.auth.oidc.issuer_str(), Some("https://idp.example.com"));
+        assert_eq!(config.auth.oidc.client_id_str(), Some("kalamdb"));
+        assert_eq!(config.auth.oidc.client_secret.as_deref(), Some("secret"));
+        assert_eq!(config.auth.oidc.scopes, vec!["openid".to_string(), "email".to_string()]);
+        assert_eq!(
+            config.auth.oidc.device_authorization_endpoint.as_deref(),
+            Some("https://idp.example.com/device")
+        );
+        assert!(config.auth.oidc.broker_device_flow_enabled);
+        assert!(config.auth.oidc.auto_provision);
+        assert_eq!(config.auth.oidc.default_role, "dba");
+
+        env::remove_var("KALAMDB_AUTH_LOCAL_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_DISPLAY_NAME");
+        env::remove_var("KALAMDB_AUTH_OIDC_ISSUER");
+        env::remove_var("KALAMDB_AUTH_OIDC_CLIENT_ID");
+        env::remove_var("KALAMDB_AUTH_OIDC_CLIENT_SECRET");
+        env::remove_var("KALAMDB_AUTH_OIDC_SCOPES");
+        env::remove_var("KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT");
+        env::remove_var("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED");
+        env::remove_var("KALAMDB_AUTH_OIDC_AUTO_PROVISION");
+        env::remove_var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE");
     }
 
     #[test]

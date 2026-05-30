@@ -16,8 +16,8 @@ pub enum TransactionCommitOutcome {
 
 /// Extension: build a CommitSideEffectPlan from a TransactionWriteSet.
 ///
-/// This lives in kalamdb-core because TransactionWriteSet is a core type,
-/// while the fanout plan types are owned by kalamdb-live.
+/// This lives in kalamdb-core because fanout plan types are owned by
+/// kalamdb-live, while TransactionWriteSet is shared transaction state.
 pub fn commit_side_effect_plan_from_write_set(
     write_set: &TransactionWriteSet,
 ) -> CommitSideEffectPlan {

@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use arrow::array::RecordBatch;
 use datafusion::{
@@ -23,7 +26,10 @@ use crate::{
             default_ordering::apply_default_order_by,
             handler_registry::HandlerRegistry,
             parameter_binding::{replace_placeholders_in_plan, validate_params},
-            request_transaction_state::RequestTransactionState,
+            request_transaction_state::{
+                map_request_transaction_error, AppContextRequestTransactionCoordinator,
+                RequestTransactionState,
+            },
         },
         plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig},
         ExecutionContext, ExecutionResult,
@@ -38,6 +44,28 @@ enum DmlKind {
     Delete,
 }
 
+fn query_metric_kind(kind: &SqlStatementKind) -> kalamdb_observability::QueryMetricKind {
+    match kind {
+        SqlStatementKind::Select => kalamdb_observability::QueryMetricKind::Select,
+        SqlStatementKind::Insert(_) => kalamdb_observability::QueryMetricKind::Insert,
+        SqlStatementKind::Update(_) => kalamdb_observability::QueryMetricKind::Update,
+        SqlStatementKind::Delete(_) => kalamdb_observability::QueryMetricKind::Delete,
+        _ => kalamdb_observability::QueryMetricKind::Other,
+    }
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+
+    haystack.len() >= needle.len()
+        && haystack.windows(needle.len()).any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn contains_internal_namespace_hint(sql: &str) -> bool {
+    contains_ignore_ascii_case(sql, "system.") || contains_ignore_ascii_case(sql, "dba.")
+}
+
 impl SqlExecutor {
     async fn try_execute_literal_insert_via_applier(
         &self,
@@ -49,10 +77,12 @@ impl SqlExecutor {
             return Ok(None);
         };
 
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_transaction_state =
-            RequestTransactionState::from_execution_context(exec_ctx)?;
+            RequestTransactionState::from_request_id(exec_ctx.request_id());
         if let Some(state) = request_transaction_state.as_mut() {
-            state.sync_from_coordinator(self.app_context.as_ref());
+            state.sync(&request_transaction_coordinator);
             if state.is_active() {
                 return Ok(None);
             }
@@ -308,9 +338,11 @@ impl SqlExecutor {
         &self,
         exec_ctx: &'a ExecutionContext,
     ) -> Result<Option<RequestTransactionState<'a>>, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?;
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id());
         if let Some(state) = request_state.as_mut() {
-            state.sync_from_coordinator(&self.app_context);
+            state.sync(&request_transaction_coordinator);
         }
         Ok(request_state)
     }
@@ -322,6 +354,30 @@ impl SqlExecutor {
         Ok(self
             .request_transaction_state(exec_ctx)?
             .and_then(|state| state.active_transaction_id().cloned()))
+    }
+
+    async fn resolve_prepared_table_type(
+        &self,
+        metadata: &PreparedExecutionStatement,
+    ) -> Result<Option<TableType>, KalamDbError> {
+        if let Some(table_type) = metadata.table_type {
+            return Ok(Some(table_type));
+        }
+
+        let Some(table_id) = metadata.table_id.as_ref() else {
+            return Ok(None);
+        };
+
+        if let Some(cached) = self.app_context.schema_registry().get(table_id) {
+            return Ok(Some(cached.table_entry().table_type));
+        }
+
+        Ok(self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists_async(table_id)
+            .await?
+            .map(|table_def| table_def.table_type))
     }
 
     fn transaction_query_context_for_request(
@@ -382,14 +438,18 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "BEGIN requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.begin(&self.app_context)?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .begin(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction started ({})", transaction_id),
         })
@@ -399,14 +459,19 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "COMMIT requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.commit(&self.app_context).await?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .commit(&request_transaction_coordinator)
+            .await
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction committed ({})", transaction_id),
         })
@@ -416,14 +481,18 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let mut request_state = RequestTransactionState::from_execution_context(exec_ctx)?
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "ROLLBACK requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
-        let transaction_id = request_state.rollback(&self.app_context)?;
+        request_state.sync(&request_transaction_coordinator);
+        let transaction_id = request_state
+            .rollback(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         Ok(ExecutionResult::Success {
             message: format!("Transaction rolled back ({})", transaction_id),
         })
@@ -447,7 +516,7 @@ impl SqlExecutor {
         Ok(())
     }
 
-    fn reject_unsupported_dml_in_active_request_transaction(
+    async fn reject_unsupported_dml_in_active_request_transaction(
         &self,
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
@@ -456,7 +525,7 @@ impl SqlExecutor {
             return Ok(());
         };
 
-        match metadata.table_type {
+        match self.resolve_prepared_table_type(metadata).await? {
             Some(TableType::Stream) => Err(KalamDbError::InvalidOperation(format!(
                 "transaction '{}' failed: stream tables are not supported inside explicit transactions",
                 transaction_id
@@ -634,56 +703,105 @@ impl SqlExecutor {
         );
         // Enter the span for the entire execution
         async {
-            let classified = metadata.classified_statement.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidSql(
-                    "Missing pre-classified statement metadata for SQL execution".to_string(),
-                )
-            })?;
+            let query_start = Instant::now();
+            let classified = match metadata.classified_statement.as_ref() {
+                Some(classified) => classified,
+                None => {
+                    kalamdb_observability::observe_query(
+                        kalamdb_observability::QueryMetricKind::Other,
+                        query_start.elapsed(),
+                        true,
+                    );
+                    return Err(KalamDbError::InvalidSql(
+                        "Missing pre-classified statement metadata for SQL execution".to_string(),
+                    ));
+                },
+            };
 
             // Record the command kind in the span
             let command_label = format!("{:?}", classified.kind());
             tracing::Span::current().record("command", &command_label.as_str());
-
-            self.reject_ddl_in_active_request_transaction(&classified, exec_ctx)?;
+            let query_kind = query_metric_kind(classified.kind());
+            let observe_query_metrics = if matches!(exec_ctx.user_role(), Role::Dba | Role::System)
+            {
+                if let Some(table_id) = metadata.table_id.as_ref() {
+                    kalamdb_observability::should_observe_query_namespace(
+                        table_id.namespace_id().as_str(),
+                    )
+                } else if !kalamdb_observability::should_observe_query_namespace(
+                    exec_ctx.default_namespace().as_str(),
+                ) {
+                    false
+                } else if matches!(classified.kind(), SqlStatementKind::Select) {
+                    !contains_internal_namespace_hint(metadata.sql.as_str())
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
 
             // Step 2: Route based on statement type
-            let result = match classified.kind() {
-                SqlStatementKind::BeginTransaction => {
-                    self.execute_begin_transaction(exec_ctx).await
-                },
-                SqlStatementKind::CommitTransaction => {
-                    self.execute_commit_transaction(exec_ctx).await
-                },
-                SqlStatementKind::RollbackTransaction => {
-                    self.execute_rollback_transaction(exec_ctx)
-                },
+            let result = if let Err(error) =
+                self.reject_ddl_in_active_request_transaction(&classified, exec_ctx)
+            {
+                Err(error)
+            } else {
+                match classified.kind() {
+                    SqlStatementKind::BeginTransaction => {
+                        self.execute_begin_transaction(exec_ctx).await
+                    },
+                    SqlStatementKind::CommitTransaction => {
+                        self.execute_commit_transaction(exec_ctx).await
+                    },
+                    SqlStatementKind::RollbackTransaction => {
+                        self.execute_rollback_transaction(exec_ctx)
+                    },
 
-                // Hot path: SELECT queries use DataFusion
-                // Tables are already registered in base session, we just inject user_id
-                SqlStatementKind::Select => {
-                    self.execute_via_datafusion(classified.as_str(), params, exec_ctx).await
-                },
+                    // Hot path: SELECT queries use DataFusion
+                    // Tables are already registered in base session, we just inject user_id
+                    SqlStatementKind::Select => {
+                        self.execute_via_datafusion(classified.as_str(), params, exec_ctx).await
+                    },
 
-                // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
-                // No caching needed - these are diagnostic/config commands
-                // Authorization already checked in classifier
-                SqlStatementKind::DataFusionMetaCommand => {
-                    self.execute_meta_command(sql, exec_ctx).await
-                },
+                    // DataFusion meta commands (EXPLAIN, SET, SHOW, etc.) - admin only
+                    // No caching needed - these are diagnostic/config commands
+                    // Authorization already checked in classifier
+                    SqlStatementKind::DataFusionMetaCommand => {
+                        self.execute_meta_command(sql, exec_ctx).await
+                    },
 
-                // Native DataFusion DML path (provider insert/update/delete hooks)
-                SqlStatementKind::Insert(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
-                    if params.is_empty() {
-                        if let Some(result) = self
-                            .try_execute_literal_insert_via_applier(
-                                classified.as_str(),
-                                metadata,
-                                exec_ctx,
+                    // Native DataFusion DML path (provider insert/update/delete hooks)
+                    SqlStatementKind::Insert(_) => {
+                        if let Err(error) = self
+                            .reject_unsupported_dml_in_active_request_transaction(
+                                metadata, exec_ctx,
                             )
-                            .await?
+                            .await
                         {
-                            Ok(result)
+                            Err(error)
+                        } else if params.is_empty() {
+                            match self
+                                .try_execute_literal_insert_via_applier(
+                                    classified.as_str(),
+                                    metadata,
+                                    exec_ctx,
+                                )
+                                .await
+                            {
+                                Ok(Some(result)) => Ok(result),
+                                Ok(None) => {
+                                    self.execute_dml_via_datafusion(
+                                        classified.as_str(),
+                                        metadata,
+                                        params,
+                                        exec_ctx,
+                                        DmlKind::Insert,
+                                    )
+                                    .await
+                                },
+                                Err(error) => Err(error),
+                            }
                         } else {
                             self.execute_dml_via_datafusion(
                                 classified.as_str(),
@@ -694,62 +812,78 @@ impl SqlExecutor {
                             )
                             .await
                         }
-                    } else {
-                        self.execute_dml_via_datafusion(
-                            classified.as_str(),
-                            metadata,
-                            params,
-                            exec_ctx,
-                            DmlKind::Insert,
-                        )
-                        .await
-                    }
-                },
-                SqlStatementKind::Update(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
-                    self.execute_dml_via_datafusion(
-                        classified.as_str(),
-                        metadata,
-                        params,
-                        exec_ctx,
-                        DmlKind::Update,
-                    )
-                    .await
-                },
-                SqlStatementKind::Delete(_) => {
-                    self.reject_unsupported_dml_in_active_request_transaction(metadata, exec_ctx)?;
-                    self.execute_dml_via_datafusion(
-                        classified.as_str(),
-                        metadata,
-                        params,
-                        exec_ctx,
-                        DmlKind::Delete,
-                    )
-                    .await
-                },
+                    },
+                    SqlStatementKind::Update(_) => {
+                        if let Err(error) = self
+                            .reject_unsupported_dml_in_active_request_transaction(
+                                metadata, exec_ctx,
+                            )
+                            .await
+                        {
+                            Err(error)
+                        } else {
+                            self.execute_dml_via_datafusion(
+                                classified.as_str(),
+                                metadata,
+                                params,
+                                exec_ctx,
+                                DmlKind::Update,
+                            )
+                            .await
+                        }
+                    },
+                    SqlStatementKind::Delete(_) => {
+                        if let Err(error) = self
+                            .reject_unsupported_dml_in_active_request_transaction(
+                                metadata, exec_ctx,
+                            )
+                            .await
+                        {
+                            Err(error)
+                        } else {
+                            self.execute_dml_via_datafusion(
+                                classified.as_str(),
+                                metadata,
+                                params,
+                                exec_ctx,
+                                DmlKind::Delete,
+                            )
+                            .await
+                        }
+                    },
 
-                // DDL operations that modify table/view structure require plan cache invalidation
-                // This prevents stale cached plans from referencing dropped/altered tables
-                SqlStatementKind::CreateTable(_)
-                | SqlStatementKind::DropTable(_)
-                | SqlStatementKind::AlterTable(_)
-                | SqlStatementKind::CreateView(_)
-                | SqlStatementKind::CreateNamespace(_)
-                | SqlStatementKind::DropNamespace(_) => {
-                    let result =
-                        self.handler_registry.handle(classified.clone(), params, exec_ctx).await;
-                    // Clear plan cache after DDL to invalidate any cached plans
-                    // that may reference the modified schema
-                    if result.is_ok() {
-                        self.sql_cache_registry.clear();
-                        log::debug!("SQL caches cleared after DDL operation");
-                    }
-                    result
-                },
+                    // DDL operations that modify table/view structure require plan cache invalidation
+                    // This prevents stale cached plans from referencing dropped/altered tables
+                    SqlStatementKind::CreateTable(_)
+                    | SqlStatementKind::DropTable(_)
+                    | SqlStatementKind::AlterTable(_)
+                    | SqlStatementKind::CreateView(_)
+                    | SqlStatementKind::CreateNamespace(_)
+                    | SqlStatementKind::DropNamespace(_) => {
+                        let result = self
+                            .handler_registry
+                            .handle(classified.clone(), params, exec_ctx)
+                            .await;
+                        // Clear plan cache after DDL to invalidate any cached plans
+                        // that may reference the modified schema
+                        if result.is_ok() {
+                            self.sql_cache_registry.clear();
+                            log::debug!("SQL caches cleared after DDL operation");
+                        }
+                        result
+                    },
 
-                // All other statements: Delegate to handler registry (no cache invalidation needed)
-                _ => self.handler_registry.handle(classified.clone(), params, exec_ctx).await,
+                    // All other statements: Delegate to handler registry (no cache invalidation needed)
+                    _ => self.handler_registry.handle(classified.clone(), params, exec_ctx).await,
+                }
             };
+            if observe_query_metrics {
+                kalamdb_observability::observe_query(
+                    query_kind,
+                    query_start.elapsed(),
+                    result.is_err(),
+                );
+            }
 
             // Record row count in the span
             if let Ok(ref res) = result {
@@ -807,13 +941,15 @@ impl SqlExecutor {
             &owned_exec_ctx
         };
 
-        let mut request_state = RequestTransactionState::from_execution_context(dml_exec_ctx)?
+        let request_transaction_coordinator =
+            AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
+        let mut request_state = RequestTransactionState::from_request_id(dml_exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
                     "autocommit DML requires a request-scoped execution context".to_string(),
                 )
             })?;
-        request_state.sync_from_coordinator(&self.app_context);
+        request_state.sync(&request_transaction_coordinator);
 
         if request_state.is_active() {
             return self
@@ -821,21 +957,23 @@ impl SqlExecutor {
                 .await;
         }
 
-        request_state.begin(&self.app_context)?;
+        request_state
+            .begin(&request_transaction_coordinator)
+            .map_err(map_request_transaction_error)?;
         let result = self
             .execute_dml_via_datafusion_inner(sql, metadata, params, dml_exec_ctx, dml_kind)
             .await;
 
         match result {
-            Ok(result) => match request_state.commit(&self.app_context).await {
+            Ok(result) => match request_state.commit(&request_transaction_coordinator).await {
                 Ok(_) => Ok(result),
                 Err(error) => {
-                    let _ = request_state.rollback_if_active(&self.app_context);
-                    Err(error)
+                    let _ = request_state.rollback_if_active(&request_transaction_coordinator);
+                    Err(map_request_transaction_error(error))
                 },
             },
             Err(error) => {
-                let _ = request_state.rollback_if_active(&self.app_context);
+                let _ = request_state.rollback_if_active(&request_transaction_coordinator);
                 Err(error)
             },
         }
@@ -991,7 +1129,10 @@ impl SqlExecutor {
 
         let collect_start = std::time::Instant::now();
         let batches = df.collect().await.map_err(Self::datafusion_to_execution_error)?;
-        tracing::debug!(collect_ms = %format!("{:.3}", collect_start.elapsed().as_micros() as f64 / 1000.0), "sql.dml_collect");
+        tracing::debug!(
+            collect_ms = collect_start.elapsed().as_secs_f64() * 1000.0,
+            "sql.dml_collect"
+        );
 
         let rows_affected = Self::extract_rows_affected(&batches)?;
         tracing::Span::current().record("rows_affected", rows_affected);
@@ -1411,5 +1552,17 @@ impl SqlExecutor {
         let app_context = &self.app_context;
         // Delegate to unified SchemaRegistry initialization
         app_context.schema_registry().initialize_tables()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_namespace_hint_matches_qualified_system_and_dba_queries() {
+        assert!(contains_internal_namespace_hint("SELECT * FROM system.stats LIMIT 100"));
+        assert!(contains_internal_namespace_hint("select * from DBA.notifications"));
+        assert!(!contains_internal_namespace_hint("SELECT * FROM default.events LIMIT 100"));
     }
 }

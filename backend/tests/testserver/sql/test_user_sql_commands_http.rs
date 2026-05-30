@@ -42,11 +42,11 @@ async fn test_user_sql_commands_over_http() {
                     row.get("email").unwrap().as_str().unwrap(),
                     "alice@example.com"
                 );
-                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "region");
+                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "Region");
                 assert_eq!(row.get("storage_id").unwrap().as_str().unwrap(), "local");
 
-                // CREATE USER with OAuth
-                let sql = r#"CREATE USER 'bob' WITH OAUTH '{"provider": "google", "subject": "12345"}' ROLE viewer EMAIL 'bob@example.com'"#;
+                // CREATE USER with external OIDC identity
+                let sql = r#"CREATE USER 'bob' WITH OIDC '{"issuer": "https://accounts.google.com", "subject": "bob"}' ROLE viewer EMAIL 'bob@example.com'"#;
                 let result = server.execute_sql_with_auth(sql, &admin_auth).await?;
                 assert_eq!(result.status, ResponseStatus::Success);
 
@@ -55,7 +55,7 @@ async fn test_user_sql_commands_over_http() {
                 let rows = result.rows_as_maps();
                 let row = &rows[0];
                 assert_eq!(row.get("user_id").unwrap().as_str().unwrap(), "bob");
-                assert_eq!(row.get("auth_type").unwrap().as_str().unwrap(), "oauth");
+                assert_eq!(row.get("auth_type").unwrap().as_str().unwrap(), "oidc");
                 assert_eq!(row.get("role").unwrap().as_str().unwrap(), "user");
 
                 // Authorization checks (regular user cannot CREATE USER)
@@ -132,7 +132,7 @@ async fn test_user_sql_commands_over_http() {
                 let result = server.execute_sql_with_auth(query, &admin_auth).await?;
                 let rows = result.rows_as_maps();
                 let row = &rows[0];
-                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "region");
+                assert_eq!(row.get("storage_mode").unwrap().as_str().unwrap(), "Region");
                 assert_eq!(row.get("storage_id").unwrap().as_str().unwrap(), "local");
 
                 let alter_sql = "ALTER USER 'storage_test' SET STORAGE_ID NULL";

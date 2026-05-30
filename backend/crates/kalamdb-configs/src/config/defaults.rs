@@ -157,6 +157,27 @@ pub fn default_flush_check_interval() -> u64 {
     60 // Check for pending writes every 60 seconds
 }
 
+// Flush compaction defaults
+pub fn default_flush_compaction_enabled() -> bool {
+    false
+}
+
+pub fn default_flush_compaction_min_eligible_segments() -> usize {
+    5
+}
+
+pub fn default_flush_compaction_max_segments_per_run() -> usize {
+    8
+}
+
+pub fn default_flush_compaction_user_max_segment_rows() -> u64 {
+    10_000
+}
+
+pub fn default_flush_compaction_shared_max_segment_rows() -> u64 {
+    25_000
+}
+
 // Manifest cache defaults (Phase 4 - US6)
 pub fn default_manifest_cache_eviction_interval() -> i64 {
     300 // 5 minutes
@@ -170,15 +191,6 @@ pub fn default_manifest_cache_max_entries() -> usize {
 /// Manifests not accessed for this many days will be removed from cache
 pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
     7 // 7 days
-}
-
-// Retention defaults
-pub fn default_deleted_retention_hours() -> i32 {
-    168 // 7 days
-}
-
-pub fn default_dba_stats_retention_days() -> u64 {
-    7
 }
 
 // Stream defaults
@@ -365,21 +377,36 @@ pub fn default_auth_allow_remote_setup() -> bool {
     false
 }
 
-// OAuth defaults
-pub fn default_oauth_enabled() -> bool {
+pub fn default_auth_local_enabled() -> bool {
+    true
+}
+
+pub fn default_auth_oidc_enabled() -> bool {
     false
 }
 
-pub fn default_oauth_auto_provision() -> bool {
+pub fn default_auth_oidc_display_name() -> String {
+    "OpenID Connect".to_string()
+}
+
+pub fn default_auth_oidc_scopes() -> Vec<String> {
+    vec![
+        "openid".to_string(),
+        "email".to_string(),
+        "profile".to_string(),
+    ]
+}
+
+pub fn default_auth_oidc_broker_device_flow_enabled() -> bool {
     false
 }
 
-pub fn default_oauth_default_role() -> String {
+pub fn default_auth_oidc_auto_provision() -> bool {
+    false
+}
+
+pub fn default_auth_oidc_default_role() -> String {
     "user".to_string()
-}
-
-pub fn default_oauth_provider_enabled() -> bool {
-    false
 }
 
 // WebSocket defaults

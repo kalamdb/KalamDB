@@ -12,7 +12,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    auth::WasmAuthProvider,
+    auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{create_promise, send_ws_message, ws_url_from_http_opts},
     state::SubscriptionState,
     wasm_debug_log,
@@ -21,43 +21,6 @@ use crate::models::{
     ClientMessage, ConnectionOptions, ProtocolOptions, SerializationType, ServerMessage,
     SubscriptionRequest,
 };
-
-/// Resolve a `WasmAuthProvider` from an optional JS async callback.
-///
-/// If `auth_provider_cb` is `Some`, the callback is invoked and the returned
-/// Promise is awaited to produce the auth.  Otherwise `fallback` is returned.
-async fn resolve_auth_for_reconnect(
-    auth_provider_cb: &Option<js_sys::Function>,
-    fallback: WasmAuthProvider,
-) -> Result<WasmAuthProvider, JsValue> {
-    if let Some(cb) = auth_provider_cb {
-        let result = JsFuture::from(js_sys::Promise::resolve(
-            &cb.call0(&JsValue::NULL)
-                .map_err(|e| JsValue::from_str(&format!("authProvider threw: {:?}", e)))?,
-        ))
-        .await?;
-
-        if result.is_null() || result.is_undefined() {
-            return Ok(WasmAuthProvider::None);
-        }
-
-        let jwt_obj = js_sys::Reflect::get(&result, &"jwt".into()).ok();
-        if let Some(jwt) = jwt_obj.filter(|v| !v.is_undefined() && !v.is_null()) {
-            let token = js_sys::Reflect::get(&jwt, &"token".into())
-                .ok()
-                .and_then(|v| v.as_string())
-                .ok_or_else(|| {
-                    JsValue::from_str(
-                        "authProvider result must have shape { jwt: { token: string } }",
-                    )
-                })?;
-            return Ok(WasmAuthProvider::Jwt { token });
-        }
-        Ok(WasmAuthProvider::None)
-    } else {
-        Ok(fallback)
-    }
-}
 
 /// Internal reconnection logic with auth provider support.
 ///
@@ -71,7 +34,7 @@ pub(crate) async fn reconnect_internal_with_auth(
     disable_compression: bool,
 ) -> Result<WebSocket, JsValue> {
     // Resolve auth (dynamic provider takes precedence).
-    let resolved_auth = resolve_auth_for_reconnect(&auth_provider_cb, auth).await?;
+    let resolved_auth = resolve_auth_provider(auth_provider_cb, auth).await?;
 
     if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
         return Err(JsValue::from_str(

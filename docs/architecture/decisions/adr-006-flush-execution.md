@@ -1,291 +1,183 @@
-# ADR-006: Flush Execution with Streaming Write and Per-User Isolation
+# ADR-006: Flush Execution and Post-Flush Tail Compaction
 
 **Status**: Accepted  
 **Date**: 2025-10-22  
+**Updated**: 2026-05-24
 **Related**: ADR-001 (Table-per-User), ADR-005 (RocksDB Metadata Only), ADR-007 (Storage Registry)
 
 ## Context
 
-KalamDB uses a **write-to-RocksDB + periodic-flush-to-Parquet** architecture for user tables. The flush operation must:
+KalamDB uses a write-hot / flush-cold architecture:
 
-1. **Prevent memory spikes** when flushing large tables (millions of rows)
-2. **Maintain read consistency** during concurrent writes
-3. **Ensure per-user file isolation** for access control and query performance
-4. **Handle partial failures** gracefully (don't lose data on Parquet write errors)
-5. **Enable immediate deletion** to free buffer space efficiently
+- hot rows live in RocksDB-backed table stores
+- cold rows live in immutable Parquet segments
+- manifests track cold segments per table scope and are owned by `ManifestService`
 
-This ADR documents the **streaming flush algorithm** that addresses these requirements.
+The current implementation must satisfy these constraints:
+
+1. Keep the write path cheap by avoiding cold-storage metadata rewrites on every DML statement.
+2. Flush large scopes in bounded batches instead of materializing entire tables in memory.
+3. Preserve user-scope isolation for `USER` tables while keeping `SHARED` tables as one flush scope.
+4. Make Parquet writes and manifest commits crash-safe.
+5. Preserve latest tombstones until cold compaction proves they are no longer needed.
+6. Compact only the unstable small-file tail instead of repeatedly rewriting older cold segments.
 
 ## Decision
 
-### 1. Streaming Write with RocksDB Snapshot
+### 1. Flush is scope-based and batched
 
-Instead of loading all table data into memory before writing Parquet files, we use a **streaming approach**:
+Flush jobs operate on manifest scopes with pending writes.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Flush Execution Flow (UserTableFlushJob::execute_flush)    │
-└─────────────────────────────────────────────────────────────┘
+- `USER` flush resolves one `(table_id, user_id)` scope at a time.
+- `SHARED` flush resolves one table-wide shared scope.
+- Hot rows are scanned in bounded batches controlled by `flush.flush_batch_size`.
 
-1. CREATE SNAPSHOT (RocksDB)
-   │
-   ├─> Provides point-in-time read consistency
-   └─> Prevents missing rows from concurrent inserts
+Version resolution keeps only the latest `_seq` per primary-key value. When a row has no primary
+key value, flush falls back to `_seq:<value>` so version resolution remains deterministic.
 
-2. SCAN TABLE CF SEQUENTIALLY (via snapshot iterator)
-   │
-   ├─> Process rows one-by-one (O(1) memory per row)
-   └─> Skip soft-deleted rows (_deleted = true)
+### 2. Flush keeps latest tombstones hot
 
-3. ACCUMULATE ROWS FOR CURRENT USER (in-memory buffer)
-   │
-   ├─> Buffer size = rows for single user (not entire table)
-   └─> Typical user has 100-10K rows (manageable memory)
+The current flush path does not write tombstones to Parquet. Instead:
 
-4. DETECT USER BOUNDARY (current_user_id ≠ previous_user_id)
-   │
-   ├─> Trigger Parquet write for completed user
-   └─> Reset buffer for next user
+- latest delete markers are filtered out of the cold output
+- the winning tombstone key remains in RocksDB
+- older versions can therefore stay masked until a later cold compaction inspects older segments
 
-5. WRITE PARQUET FILE (per user)
-   │
-   ├─> Filename: YYYY-MM-DDTHH-MM-SS.parquet (ISO 8601)
-   ├─> Path: {base_directory}/{namespace}/{tableName}/{userId}/
-   └─> Schema: Arrow schema from CREATE TABLE
+This keeps the cold write path simple while preserving correct MVCC visibility.
 
-6. DELETE FLUSHED ROWS (atomic per-user batch)
-   │
-   ├─> Delete RocksDB keys for successfully flushed user
-   └─> On Parquet failure, keep rows in buffer (retry next flush)
+### 3. Cold writes are atomic per scope
 
-7. REPEAT FOR NEXT USER
-   └─> Continue until all users processed
-```
+`FlushScopeWriter` performs the cold write under the manifest flush-scope lock:
 
-**Key Benefits**:
-- **Memory efficiency**: Only one user's data in memory at a time
-- **Read consistency**: Snapshot prevents "phantom reads" from concurrent INSERTs
-- **Fault tolerance**: Partial flush success (some users flushed, others retried)
+1. Mark the manifest as `syncing`.
+2. Allocate the next `batch-N.parquet` name from `manifest.last_sequence_number`.
+3. Write `batch-N.parquet.tmp`.
+4. Atomically rename it to `batch-N.parquet`.
+5. Compute `_seq` range, row count, schema version, size, and indexed-column stats.
 
-### 2. Per-User File Isolation Principle
+This keeps batch numbering serialized per scope and prevents overlapping flushes from racing the
+manifest append.
 
-Each user's data is written to a **separate Parquet file** during each flush:
+### 4. Flush commits the manifest through one canonical path
 
-```
-data/
-├── prod/                        # namespace
-│   └── events/                  # table
-│       ├── user123/             # user_id
-│       │   ├── 2025-10-22T10-15-30.parquet  (300 rows)
-│       │   ├── 2025-10-22T10-20-45.parquet  (150 rows)
-│       │   └── 2025-10-22T10-25-12.parquet  (200 rows)
-│       ├── user456/
-│       │   ├── 2025-10-22T10-16-05.parquet  (500 rows)
-│       │   └── 2025-10-22T10-21-33.parquet  (250 rows)
-│       └── user789/
-│           └── 2025-10-22T10-17-22.parquet  (120 rows)
-```
+After the Parquet rename succeeds, flush commits segment metadata through
+`ManifestService::persist_flushed_segment()`.
 
-**Why Per-User Files?**
+That path:
 
-1. **Row-Level Access Control**: Query engine filters Parquet files by `user_id` directory
-   - `SELECT * FROM events WHERE user_id = 'user123'` → Only reads `user123/*.parquet`
-   - No need to scan irrelevant users' data
+1. loads or initializes the manifest for the scope
+2. appends the new `SegmentMetadata`
+3. writes storage `manifest.json`
+4. refreshes the RocksDB manifest copy
+5. refreshes shared-scope memory cache when applicable
 
-2. **Efficient User Data Deletion**: Dropping user data = delete entire directory
-   - `DELETE FROM events WHERE user_id = 'user123'` → Remove `user123/` directory
-   - Avoid expensive Parquet rewrites for GDPR compliance
+Flush therefore treats `manifest.json` persistence as part of the successful cold commit, not as a
+separate background best-effort step.
 
-3. **Parallel Query Execution**: Different users' files can be read concurrently
-   - Thread pool reads `user123/*.parquet` and `user456/*.parquet` in parallel
-   - Scales linearly with CPU cores
+### 5. Hot-row cleanup happens only after the cold commit
 
-4. **Incremental Flush Efficiency**: Each flush appends new file, no merging
-   - No need to read existing Parquet files during flush
-   - Write-only operation (fast)
+Hot rows are deleted from RocksDB only after both of these succeed:
 
-**Trade-offs**:
-- More files = higher filesystem metadata overhead (mitigated by periodic compaction)
-- Small users create small files (< 1MB) → Compaction merges them into larger files
+- the Parquet batch rename to its final filename
+- the manifest append and persistence
 
-### 3. Immediate Deletion Pattern
+Cleanup is performed in bounded delete batches. If a flush fails before that point, rows remain hot
+and can be retried.
 
-After successfully writing Parquet for a user, **immediately delete** their rows from RocksDB:
+### 6. Post-flush small-segment compaction is optional and leader-only
 
-```rust
-// T151e: Write Parquet file
-let flush_result = self.flush_user_data(prev_user_id, &current_user_rows, &mut parquet_files);
+KalamDB now supports optional post-flush compaction under `[flush.compaction]`.
 
-match flush_result {
-    Ok(rows_count) => {
-        // T151f: Immediate deletion after successful Parquet write
-        let keys: Vec<Vec<u8>> = current_user_rows.iter().map(|(key, _)| key.clone()).collect();
-        self.delete_flushed_keys(&keys)?;
-        
-        log::debug!("Flushed {} rows for user {} (deleted from buffer)", rows_count, prev_user_id);
-    }
-    Err(e) => {
-        // T151g: On failure, keep rows in RocksDB for retry
-        log::error!("Failed to flush user {}: {}. Rows kept in buffer.", prev_user_id, e);
-    }
-}
+Defaults:
+
+```toml
+[flush.compaction]
+enabled = false
+min_eligible_segments = 5
+max_segments_per_run = 8
+user_max_segment_rows = 10000
+shared_max_segment_rows = 25000
 ```
 
-**Why Immediate Deletion?**
+Flush does not compact old Parquet files inline. Instead, successful flushes emit scope hints, and
+the jobs layer may enqueue a leader-only `segment_compact` job for eligible scopes.
 
-1. **Free buffer space quickly**: Prevent RocksDB from growing unbounded
-2. **Atomic per-user guarantee**: All rows for user deleted together (no partial state)
-3. **Retry safety**: Failed users remain in buffer for next flush attempt
-4. **Memory reclamation**: RocksDB compaction can reclaim disk space sooner
+### 7. Tail compaction rewrites only the trailing small-file run
 
-**Alternative Rejected**: "Flush all users, then delete all"
-- Risk: If deletion fails, data is duplicated (RocksDB + Parquet)
-- Problem: Can't distinguish which users were successfully flushed
+Compaction selects from the newest end of the manifest and stops at the first segment that is:
 
-### 4. Parquet File Naming Convention
+- already at or above the target row count
+- unreadable / not committed
+- on a different schema version
 
-Filenames use **ISO 8601 timestamps** with second-level precision:
+This keeps compaction focused on the unstable tail instead of rewriting already-sized historical
+segments.
 
-**Format**: `YYYY-MM-DDTHH-MM-SS.parquet`
+### 8. Tail compaction is MVCC-aware and manifest-safe
 
-**Examples**:
-- `2025-10-22T14-30-45.parquet`
-- `2025-10-22T14-31-12.parquet`
+Compaction runs in two phases:
 
-**Why ISO 8601?**
+1. Read the selected tail and determine the latest version for each key using primary key, `_seq`,
+   and `_deleted`.
+2. Inspect older segments to decide which delete tombstones must be preserved to continue masking
+   older cold rows.
+3. Stream only winning rows into `compact-<uuid>.parquet.tmp`.
+4. Rename to `compact-<uuid>.parquet`.
 
-1. **Lexicographic ordering = chronological ordering**
-   - File listing naturally shows time sequence
-   - `ls -l` output is already sorted by time
+The old manifest remains readable during this work.
 
-2. **Cross-platform compatibility**
-   - No colons (Windows forbids `:` in filenames)
-   - Uses hyphens as separators
+### 9. Manifest compaction is suffix replacement
 
-3. **Collision resistance**
-   - Second-level precision + UUID job_id → virtually no collisions
-   - Even concurrent flushes for same user create different timestamps
+The compacted Parquet file becomes visible only if the selected input segments are still the exact
+trailing suffix of the manifest when the scope lock is reacquired.
 
-4. **Human-readable**
-   - Easy to identify when a flush occurred
-   - Useful for debugging and auditing
+`replace_segments_with_compacted_segment_in_locked_scope()` then:
 
-**Alternative Rejected**: UUID-only filenames (e.g., `3f7b9a12-4c8d-4e5f-9b1a-2c3d4e5f6a7b.parquet`)
-- Not chronologically sortable
-- Hard to determine flush time without metadata lookup
+1. verifies the suffix by path, `_seq` range, row count, size, schema version, and status
+2. truncates the suffix
+3. appends the replacement compacted segment, or appends nothing if the suffix was fully pruned
+4. persists the updated `manifest.json`
+5. refreshes the hot manifest tiers
 
-### 5. Template Path Resolution
+If the suffix changed while compaction was writing, the swap is aborted and the new compacted file
+is deleted.
 
-Storage paths use **single-pass template substitution** with validation at `CREATE STORAGE` time:
+Compaction filenames use `compact-<uuid>.parquet`, so they do not consume a new `batch-N` slot.
 
-```sql
-CREATE STORAGE local
-    TYPE filesystem
-    BASE_DIRECTORY '/mnt/data'
-    USER_TABLES_TEMPLATE '{namespace}/{tableName}/users/{userId}'
-    SYSTEM_TABLES_TEMPLATE 'system/{tableName}';
-```
+### 10. Old compacted inputs are deleted only after the manifest swap
 
-**Substitution Variables**:
-- `{namespace}` → Namespace ID (e.g., `prod`)
-- `{tableName}` → Table name (e.g., `events`)
-- `{userId}` → User ID (e.g., `user123`)
-- `{shard}` → Shard number (future: from sharding strategy)
-
-**Resolution Example**:
-```
-Template: "{namespace}/{tableName}/users/{userId}"
-Namespace: prod
-TableName: events
-UserId: user123
-
-Resolved: "prod/events/users/user123"
-Full Path: "/mnt/data/prod/events/users/user123/2025-10-22T14-30-45.parquet"
-```
-
-**Why Single-Pass Substitution?**
-
-1. **Performance**: O(n) string replacement, no parsing overhead
-2. **Simplicity**: No regex or complex evaluation
-3. **Safety**: Template validation happens once at CREATE STORAGE (not every flush)
-4. **Determinism**: Same inputs → same output, no edge cases
-
-**Template Validation** (at CREATE STORAGE time):
-- Check for invalid variables (e.g., `{unknown}`)
-- Ensure required variables are present (e.g., `{userId}` for user tables)
-- Prevent path traversal attacks (e.g., `../../../etc/passwd`)
+Source files are deleted only after the manifest points at the replacement file, or after the
+suffix has been removed entirely. If the manifest swap does not happen, existing files remain the
+authoritative source of truth.
 
 ## Consequences
 
 ### Positive
 
-1. **Memory efficiency**: Streaming flush prevents out-of-memory errors on large tables
-2. **Fault tolerance**: Partial flush success with per-user atomicity
-3. **Read consistency**: RocksDB snapshot prevents phantom reads during flush
-4. **Query performance**: Per-user files enable row-level access control without full table scans
-5. **Operational simplicity**: ISO 8601 filenames make debugging easy
+1. The write path stays cheap because manifests are marked dirty hot-first and persisted on flush.
+2. Flush memory stays bounded by scan batch size and active scope, not table size.
+3. User isolation is preserved because user tables flush and compact per user scope.
+4. Parquet + manifest commit is atomic at the scope level.
+5. Tail compaction reduces small-file buildup without blocking normal flushes.
+6. MVCC visibility remains correct across hot rows, cold rows, and delete tombstones.
 
-### Negative
+### Trade-offs
 
-1. **More filesystem metadata**: Each user creates separate files
-   - Mitigated by periodic compaction (merge small files into larger ones)
-   
-2. **Small file problem**: Users with few rows create tiny Parquet files (< 100KB)
-   - Mitigated by compaction strategy (future: User Story 8)
+1. Latest tombstones may remain hot for some time until cold compaction can safely remove them.
+2. User-heavy workloads can still create many small cold segments before compaction converges.
+3. Compaction may be skipped if a newer flush changed the manifest tail during rewrite work.
 
-3. **No cross-user transactions**: Each user flushed independently
-   - Acceptable: User tables are isolated by design (Table-per-User architecture)
+## Notes for readers
 
-### Neutral
+The detailed implementation lives in:
 
-1. **Flush duration depends on user count**: More users = longer flush time
-   - Acceptable: Background operation, doesn't block queries
-   
-2. **Delete-heavy workloads create Parquet churn**: Frequent deletes → many files with `_deleted` rows
-   - Mitigated by compaction (rewrite files without deleted rows)
+- `backend/crates/kalamdb-flush/src/flush/`
+- `backend/crates/kalamdb-flush/src/flush_helper.rs`
+- `backend/crates/kalamdb-flush/src/service.rs`
+- `backend/crates/kalamdb-flush/src/compaction/small_segment.rs`
+- `backend/crates/kalamdb-core/src/manifest/mod.rs` for core-specific adapters around the flush crate
 
-## Implementation Notes
-
-### Streaming Algorithm (T151-T151h)
-
-```rust
-fn execute_flush(&self) -> Result<(usize, usize, Vec<String>), KalamDbError> {
-    // T151a: Create RocksDB snapshot
-    let snapshot = self.store.create_snapshot();
-    
-    // T151c: Streaming buffer for current user
-    let mut current_user_id: Option<String> = None;
-    let mut current_user_rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
-    
-    // T151b: Scan using snapshot iterator
-    let iter = self.store.scan_with_snapshot(&snapshot, ns, table)?;
-    
-    for item in iter {
-        let (key_bytes, value_bytes) = item?;
-        let (user_id, _row_id) = self.parse_user_key(&key_str)?;
-        
-        // T151d: Detect user boundary
-        if current_user_id.is_some() && current_user_id != Some(user_id) {
-            // T151e: Write Parquet for completed user
-            self.flush_user_data(prev_user_id, &current_user_rows, &mut files)?;
-            
-            // T151f: Delete successfully flushed rows
-            self.delete_flushed_keys(&keys)?;
-            
-            // Reset buffer for next user
-            current_user_rows.clear();
-        }
-        
-        // Accumulate row for current user
-        current_user_rows.push((key_bytes, row_data));
-    }
-    
-    // Flush final user
-    // ...
-}
-```
-
-### Per-User File Writing (T161a)
+For the current operational description, prefer [docs/architecture/manifest.md](../manifest.md).
 
 ```rust
 fn flush_user_data(&self, user_id: &str, rows: &[(Vec<u8>, JsonValue)]) -> Result<usize, KalamDbError> {
@@ -340,6 +232,6 @@ fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, Kala
 ## Future Enhancements
 
 1. **Sharding Support** (User Story 6): Populate `{shard}` variable using sharding strategy
-2. **Compaction** (User Story 8): Merge small per-user files into larger ones periodically
+2. **Compaction scheduling**: Add time/manual triggers if post-flush-only compaction is not enough
 3. **Parallel Flush**: Process multiple users concurrently (requires thread-safe RocksDB iterator)
 4. **Incremental Flush**: Track last flush timestamp per user, only flush new rows

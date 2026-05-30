@@ -17,15 +17,6 @@ export const dba_notifications = kTable('dba.notifications', {
   updated_at: timestamp('updated_at', { mode: 'string' }).notNull(),
 });
 
-export const dba_stats = kTable('dba.stats', {
-  id: text('id').notNull(),
-  node_id: text('node_id').notNull(),
-  metric_name: text('metric_name').notNull(),
-  metric_value: doublePrecision('metric_value').notNull(),
-  metric_unit: text('metric_unit'),
-  sampled_at: timestamp('sampled_at', { mode: 'string' }).notNull(),
-});
-
 export const system_audit_log = kTable('system.audit_log', {
   audit_id: text('audit_id').notNull(),
   timestamp: timestamp('timestamp', { mode: 'string' }).notNull(),
@@ -185,6 +176,17 @@ export const system_server_logs = kTable('system.server_logs', {
   target: text('target'),
   line: text('line'),
   message: text('message').notNull(),
+});
+
+export const system_slow_queries = kTable('system.slow_queries', {
+  timestamp: text('timestamp').notNull(),
+  timestamp_ms: integer('timestamp_ms').notNull(),
+  duration_ms: doublePrecision('duration_ms').notNull(),
+  user_id: text('user_id').notNull(),
+  table_type: text('table_type').notNull(),
+  table_name: text('table_name'),
+  row_count: integer('row_count').notNull(),
+  query: text('query').notNull(),
 });
 
 export const system_cluster = kTable('system.cluster', {

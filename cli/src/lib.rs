@@ -16,6 +16,8 @@ pub mod history;
 pub mod history_menu;
 pub mod parser;
 pub mod session;
+pub mod terminal_ui;
+pub mod update_check;
 
 pub use config::CLIConfiguration;
 pub use credentials::FileCredentialStore;

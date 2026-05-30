@@ -23,7 +23,7 @@ use kalamdb_system::{providers::storages::models::StorageMode, AuthType, Role, U
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
-    request_transaction_state, row, unique_namespace,
+    request_transaction_coordinator, request_transaction_state, row, unique_namespace,
 };
 use tonic::Request;
 
@@ -85,7 +85,7 @@ async fn open_session(
     service: &KalamPgService,
     session_label: &str,
 ) -> String {
-    init_auth_config(&app_ctx.config().auth, &app_ctx.config().oauth);
+    init_auth_config(&app_ctx.config().auth);
 
     let bridge_user_id = UserId::new(format!("{}_bridge_dba", session_label.replace('-', "_")));
     let bridge_user = User {
@@ -191,8 +191,9 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
 
     execute_ok(&executor, &request_ctx, "BEGIN").await;
     execute_ok(&executor, &request_ctx, &insert_sql(&table_id, 2, "from-sql")).await;
+    let sql_request_coordinator = request_transaction_coordinator(app_ctx.as_ref());
     let mut sql_request_state = request_transaction_state(&request_ctx);
-    sql_request_state.sync_from_coordinator(&app_ctx);
+    sql_request_state.sync(&sql_request_coordinator);
     let sql_transaction_id = sql_request_state
         .active_transaction_id()
         .expect("sql transaction id present")

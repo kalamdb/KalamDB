@@ -718,41 +718,29 @@ void main() {
   // KalamClient.connect — wsLazyConnect parameter
   // -----------------------------------------------------------------------
   group('wsLazyConnect parameter', () {
-    // These are compile-time / API-shape tests only. They verify that the
-    // named parameter exists, has the correct default, and is accepted by
-    // the `connect` factory.  Actual connection behaviour requires a running
-    // server and is covered by e2e tests.
+    // These are API-shape tests only. They verify that the named parameter
+    // exists, keeps the default lazy-connect behavior, and accepts an
+    // explicit false value without relying on the old uninitialized-bridge
+    // failure path. Actual connection behaviour is covered elsewhere.
 
-    test('wsLazyConnect defaults to true in call signature', () async {
-      await expectLater(
-        KalamClient.connect(
+    test('wsLazyConnect defaults to true in call signature', () {
+      expect(
+        () => KalamClient.connect(
           url: 'http://127.0.0.1:1',
           authProvider: () async => Auth.none(),
         ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('flutter_rust_bridge has not been initialized'),
-          ),
-        ),
+        returnsNormally,
       );
     });
 
-    test('wsLazyConnect false is accepted', () async {
-      await expectLater(
-        KalamClient.connect(
+    test('wsLazyConnect false is accepted', () {
+      expect(
+        () => KalamClient.connect(
           url: 'http://127.0.0.1:1',
           authProvider: () async => Auth.none(),
           wsLazyConnect: false,
         ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('flutter_rust_bridge has not been initialized'),
-          ),
-        ),
+        returnsNormally,
       );
     });
   });

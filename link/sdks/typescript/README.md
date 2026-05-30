@@ -2,12 +2,44 @@
 
 This folder contains the publishable TypeScript SDK packages:
 
+- `cli/` for `@kalamdb/cli`: npm wrapper that installs the released native `kalam` binary, verifies `SHA256SUMS`, and exposes the `kalam` command.
 - `client/` for `@kalamdb/client`: auth, SQL, FILE columns, live queries, subscriptions, and typed cell values.
 - `consumer/` for `@kalamdb/consumer`: topic polling, acknowledgements, and the agent/worker runtime.
 - `orm/` for `@kalamdb/orm`: Drizzle ORM driver, KalamDB table helpers, FILE/BYTES/EMBEDDING columns, live table helpers, and schema generation.
 - `react/` for `@kalamdb/react`: React provider, typed/raw live-query hooks, multi-query orchestration, mutation state, and component wrappers for KalamDB live queries.
 
 Use each package directory as the source of truth for its build, test, and publish workflow. The packages are intentionally split so UI code can depend on `@kalamdb/client`, `@kalamdb/orm`, and `@kalamdb/react`, while worker processes add `@kalamdb/consumer` only when they need topic consumption.
+
+## Maintainer package map
+
+| Directory | Source package | npm publish name | GitHub Packages name |
+| --- | --- | --- | --- |
+| `cli/` | `@kalamdb/cli` | `@kalamdb/cli` | `@kalamdb/cli` |
+| `client/` | `@kalamdb/client` | `@kalamdb/client` | `@kalamdb/client` |
+| `consumer/` | `@kalamdb/consumer` | `@kalamdb/consumer` | `@kalamdb/consumer` |
+| `orm/` | `@kalamdb/orm` | `@kalamdb/orm` | `@kalamdb/orm` |
+| `react/` | `@kalamdb/react` | `@kalamdb/react` | `@kalamdb/react` |
+
+The source manifests stay on `@kalamdb/*`. The GitHub Packages publish lane stages temporary `@kalamdb/*` manifests during publish because GitHub Packages requires the package scope to match the repository owner namespace.
+
+## Version maintenance
+
+The root Cargo workspace version in `Cargo.toml` is the shared version anchor for the publishable SDK cohort across TypeScript, Dart, and Python. After changing `[workspace.package].version`, run:
+
+```bash
+bash link/sdks/sync-versions.sh
+```
+
+That script:
+
+- sets all five TypeScript package `version` fields to the root Cargo workspace version,
+- updates `link/sdks/dart/pubspec.yaml` to the same version,
+- updates `link/sdks/python/pyproject.toml` and `link/sdks/python/Cargo.toml` to the same version,
+- updates the internal peer dependency floors to the current cohort range,
+- regenerates `versions.json` through `python3 scripts/versions.py sync --write`, and
+- verifies the generated manifest with `python3 scripts/versions.py verify`.
+
+Internal peer dependency ranges follow the shared cohort. For prerelease lanes like `0.5.0-beta.1`, the sync script keeps prerelease-safe floors such as `>=0.5.0-0 <0.6.0`.
 
 ## Developer handoff checklist
 
@@ -17,9 +49,20 @@ Use each package directory as the source of truth for its build, test, and publi
 - `BIGINT` values are JSON-safe strings by default because KalamDB preserves Int64 precision on the wire.
 - Exact KalamDB types are represented in the SDK: `BOOLEAN`, `INT`, `BIGINT`, `DOUBLE`, `FLOAT`, `TEXT`, `TIMESTAMP`, `DATE`, `DATETIME`, `TIME`, `JSON`, `BYTES`, `EMBEDDING(n)`, `UUID`, `DECIMAL(p,s)`, `SMALLINT`, and `FILE`.
 
-## Common commands
+## Build and test
+
+The release-lane test script in `scripts/test-typescript-sdk-release.sh` is the maintainer-facing source of truth. By default it runs all five packages: `client consumer orm react cli`.
 
 ```bash
+./scripts/test-typescript-sdk-release.sh
+TS_SDK_PACKAGES="client react cli" ./scripts/test-typescript-sdk-release.sh
+python3 scripts/versions.py verify
+```
+
+For short local loops you can still run package-local commands:
+
+```bash
+cd link/sdks/typescript/cli && npm test
 cd link/sdks/typescript/client && npm run build:ts
 cd link/sdks/typescript/orm && npm run build
 cd link/sdks/typescript/react && npm run build
@@ -27,6 +70,24 @@ cd link/sdks/typescript/consumer && npm run build:ts
 ```
 
 Full package builds also compile/copy the package-specific WASM artifacts.
+
+## Publishing and release checks
+
+The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` owns the shared TypeScript package test matrix and the publish automation for the app/runtime SDKs.
+
+- Manual input `publish=true` publishes the npm packages under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
+- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
+- Manual input `force_publish=true` asks each package `publish.sh` to attempt an unpublish and republish when the registry allows it.
+- The shared test matrix now runs `client`, `consumer`, `orm`, `react`, and `cli`.
+- Publish order matters for the app/runtime SDKs: `client` first, then `consumer`, then `orm`, then `react`.
+- `@kalamdb/cli` publishes after GitHub release assets exist, so its automation stays in `.github/workflows/release.yml` and uses the package-local `link/sdks/typescript/cli/publish.sh` entrypoint.
+
+Expected registry secrets and tokens:
+
+- npm publish uses `NPM_TOKEN` in GitHub Actions.
+- GitHub Packages publish uses `GH_PACKAGES_TOKEN` when provided, otherwise the workflow falls back to `github.token`.
+
+If you need to inspect publish behavior locally, each package directory has a `publish.sh` entrypoint. The workflow is still the preferred release path because it runs the shared test matrix and publishes in dependency order.
 
 ## React AI Chat Validation App
 

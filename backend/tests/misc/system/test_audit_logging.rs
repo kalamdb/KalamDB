@@ -20,7 +20,7 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some(format!("{}@kalamdb.local", username)),
-        auth_type: AuthType::Internal,
+        auth_type: AuthType::Password,
         auth_data: None,
         storage_mode: StorageMode::Table,
         storage_id: None,

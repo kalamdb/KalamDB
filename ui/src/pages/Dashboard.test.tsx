@@ -6,7 +6,6 @@ import Dashboard from "@/pages/Dashboard";
 
 const mockUseAuth = vi.fn();
 const mockGetStatsQuery = vi.fn();
-const mockGetDbaStatsQuery = vi.fn();
 const mockGetStoragesQuery = vi.fn();
 const mockGetClusterSnapshotQuery = vi.fn();
 const mockCheckStorageHealth = vi.fn();
@@ -18,7 +17,6 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/store/apiSlice", () => ({
   useGetStatsQuery: () => mockGetStatsQuery(),
-  useGetDbaStatsQuery: (timeRange: string) => mockGetDbaStatsQuery(timeRange),
   useGetStoragesQuery: () => mockGetStoragesQuery(),
   useGetClusterSnapshotQuery: () => mockGetClusterSnapshotQuery(),
   useCheckStorageHealthMutation: () => mockCheckStorageHealthMutation(),
@@ -54,7 +52,6 @@ describe("Dashboard page", () => {
 
     mockUseAuth.mockReset();
     mockGetStatsQuery.mockReset();
-    mockGetDbaStatsQuery.mockReset();
     mockGetStoragesQuery.mockReset();
     mockGetClusterSnapshotQuery.mockReset();
     mockCheckStorageHealth.mockReset();
@@ -71,19 +68,26 @@ describe("Dashboard page", () => {
         total_tables: "42",
         active_connections: "3",
         active_subscriptions: "2",
-        jobs_running: "1",
-        jobs_queued: "4",
-        total_storages: "2",
+        active_subscriptions_peak: "7",
+        websocket_sessions_peak: "5",
         server_uptime_human: "1h 10m",
+        queries_total: "12",
+        queries_per_second: "1.25",
+        avg_query_latency_ms: "4.50",
+        select_queries_total: "2",
+        insert_queries_total: "6",
+        update_queries_total: "3",
+        delete_queries_total: "1",
+        memory_usage_mb: "64",
+        cpu_usage_percent: "8.5",
+        open_files_total: "20",
+        open_files_directories: "4",
+        manifest_cache_rocksdb_entries: "11",
+        parquet_files_written_total: "8",
+        parquet_files_read_total: "13",
       },
       isFetching: false,
       error: null,
-      refetch: vi.fn().mockResolvedValue(undefined),
-    });
-
-    mockGetDbaStatsQuery.mockReturnValue({
-      data: [{ sampled_at: 1, metric_name: "cpu_usage_percent", metric_value: 23 }],
-      isFetching: false,
       refetch: vi.fn().mockResolvedValue(undefined),
     });
 
@@ -157,53 +161,37 @@ describe("Dashboard page", () => {
 
     expect(screen.getByText("Dashboard")).toBeTruthy();
     expect(screen.getByText("Welcome back, root")).toBeTruthy();
-    expect(screen.getByText("v1.2.3")).toBeTruthy();
+    expect(screen.getByText("1h 10m")).toBeTruthy();
     expect(screen.getByText("42")).toBeTruthy();
     expect(screen.getByText("9")).toBeTruthy();
-    expect(screen.getByText("Metrics chart 1")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+    expect(screen.getByText("1.25")).toBeTruthy();
+    expect(screen.getByText("4.50 ms")).toBeTruthy();
     expect(screen.getByText("Cluster overview 1")).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText("Metrics chart 1")).toBeTruthy();
+    });
 
     await waitFor(() => {
       expect(mockCheckStorageHealth).toHaveBeenCalledWith({ storageId: "local", extended: true });
     });
   });
 
-  it("falls back to the live cluster node version when stats omit server_version", async () => {
-    mockGetStatsQuery.mockReturnValue({
-      data: {
-        total_namespaces: "9",
-        total_tables: "42",
-        active_connections: "3",
-        active_subscriptions: "2",
-        jobs_running: "1",
-        jobs_queued: "4",
-        total_storages: "2",
-        server_uptime_human: "1h 10m",
-      },
-      isFetching: false,
-      error: null,
-      refetch: vi.fn().mockResolvedValue(undefined),
-    });
-
+  it("renders metric charts above storage and cluster health", async () => {
     render(<Dashboard />);
 
-    expect(screen.getByText("v1.2.3")).toBeTruthy();
-    expect(screen.queryByText("v0.1.1")).toBeNull();
-  });
-
-  it("renders the storage row above the metrics charts", () => {
-    render(<Dashboard />);
-
+    const metricsChart = await screen.findByText("Metrics chart 1");
     const storageWidget = screen.getByText("Storage usage local");
-    const metricsChart = screen.getByText("Metrics chart 1");
 
-    const storagePosition = storageWidget.compareDocumentPosition(metricsChart);
-    expect(storagePosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const metricsPosition = metricsChart.compareDocumentPosition(storageWidget);
+    expect(metricsPosition & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("refreshes dashboard queries and rechecks storage health", async () => {
     const statsRefetch = vi.fn().mockResolvedValue(undefined);
-    const dbaRefetch = vi.fn().mockResolvedValue(undefined);
     const storagesRefetch = vi.fn().mockResolvedValue(undefined);
     const clusterRefetch = vi.fn().mockResolvedValue(undefined);
 
@@ -214,19 +202,27 @@ describe("Dashboard page", () => {
         total_tables: "42",
         active_connections: "3",
         active_subscriptions: "2",
-        jobs_running: "1",
-        jobs_queued: "4",
-        total_storages: "2",
+        active_subscriptions_peak: "7",
+        websocket_sessions_peak: "5",
         server_uptime_human: "1h 10m",
+        queries_total: "12",
+        queries_per_second: "1.25",
+        avg_query_latency_ms: "4.50",
+        select_queries_total: "2",
+        insert_queries_total: "6",
+        update_queries_total: "3",
+        delete_queries_total: "1",
+        memory_usage_mb: "64",
+        cpu_usage_percent: "8.5",
+        open_files_total: "20",
+        open_files_directories: "4",
+        manifest_cache_rocksdb_entries: "11",
+        parquet_files_written_total: "8",
+        parquet_files_read_total: "13",
       },
       isFetching: false,
       error: null,
       refetch: statsRefetch,
-    });
-    mockGetDbaStatsQuery.mockReturnValue({
-      data: [{ sampled_at: 1, metric_name: "cpu_usage_percent", metric_value: 23 }],
-      isFetching: false,
-      refetch: dbaRefetch,
     });
     mockGetStoragesQuery.mockReturnValue({
       data: [{ storage_id: "local", name: "Local" }],
@@ -285,7 +281,6 @@ describe("Dashboard page", () => {
 
     await waitFor(() => {
       expect(statsRefetch).toHaveBeenCalledTimes(1);
-      expect(dbaRefetch).toHaveBeenCalledTimes(1);
       expect(storagesRefetch).toHaveBeenCalledTimes(1);
       expect(clusterRefetch).toHaveBeenCalledTimes(1);
       expect(mockCheckStorageHealth).toHaveBeenCalledTimes(2);

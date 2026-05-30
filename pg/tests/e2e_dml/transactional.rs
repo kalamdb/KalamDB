@@ -6,7 +6,7 @@ use super::common::{
     await_user_shard_leader, count_rows, create_shared_kalam_table, create_user_kalam_table,
     pg_backend_pid, postgres_error_text, rebind_user_table_to_user_leader,
     retry_transient_user_leader_error, same_user_shard_pair, set_user_id,
-    shared_leader_grpc_target, unique_name, TestEnv,
+    shared_leader_api_base_url, unique_name, TestEnv,
 };
 
 fn sql_rows(result: &Value) -> Vec<Vec<Value>> {
@@ -65,17 +65,8 @@ async fn fetch_transaction_rows_at(
     )
 }
 
-fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
-    let http_port = match grpc_port {
-        2910 => 2900,
-        _ => grpc_port.saturating_sub(1000),
-    };
-    format!("http://{host}:{http_port}")
-}
-
 async fn kalamdb_shared_leader_base_url() -> String {
-    let (host, grpc_port) = shared_leader_grpc_target().await;
-    grpc_http_base_url(&host, grpc_port)
+    shared_leader_api_base_url().await
 }
 
 async fn wait_for_active_pg_transaction(

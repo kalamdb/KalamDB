@@ -7,9 +7,96 @@
 //!
 //! Reference: README.md lines 58-67, docs/SQL.md flush section
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::common::*;
+
+fn flush_table_and_wait(full_table: &str, timeout: Duration) {
+    let flush_output =
+        execute_sql_as_root_via_client(&format!("STORAGE FLUSH TABLE {}", full_table))
+            .unwrap_or_else(|error| panic!("Failed to flush {}: {}", full_table, error));
+    let job_id = parse_job_id_from_flush_output(&flush_output).unwrap_or_else(|error| {
+        panic!("Failed to parse flush job ID from '{}': {}", flush_output, error)
+    });
+
+    verify_job_completed(&job_id, timeout).unwrap_or_else(|error| {
+        panic!("Flush job {} for {} failed: {}", job_id, full_table, error)
+    });
+}
+
+fn wait_for_single_compacted_parquet(
+    namespace: &str,
+    table: &str,
+    timeout: Duration,
+) -> FlushStorageVerificationResult {
+    let start = Instant::now();
+
+    loop {
+        let result = verify_flush_storage_files_shared(namespace, table);
+        let compact_count = result
+            .parquet_paths
+            .iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("compact-"))
+            })
+            .count();
+
+        if result.manifest_found && compact_count == 1 && result.parquet_paths.len() == 1 {
+            return result;
+        }
+
+        if start.elapsed() >= timeout {
+            panic!(
+                "Timed out waiting for post-flush compaction in {}.{}; found parquet files: {:?}",
+                namespace, table, result.parquet_paths
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn wait_for_latest_job_id(job_type: &str, timeout: Duration) -> String {
+    let start = Instant::now();
+
+    loop {
+        let query = format!(
+            "SELECT job_id FROM system.jobs WHERE job_type = '{}' ORDER BY created_at DESC LIMIT 1",
+            job_type
+        );
+
+        if let Ok(output) = execute_sql_as_root_via_client_json(&query) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&output) {
+                if let Some(rows) = get_rows_as_hashmaps(&parsed) {
+                    if let Some(job_id) = rows
+                        .first()
+                        .and_then(|row| row.get("job_id"))
+                        .map(extract_typed_value)
+                        .and_then(|value| value.as_str().map(str::to_owned))
+                    {
+                        return job_id;
+                    }
+                }
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            panic!("Timed out waiting for a '{}' job to appear in system.jobs", job_type);
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn post_flush_compaction_smoke_enabled() -> bool {
+    std::env::var("KALAMDB_TEST_FLUSH_COMPACTION")
+        .map(|value| {
+            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
 
 /// Test manifest.json creation after flushing USER table
 ///
@@ -296,6 +383,145 @@ fn smoke_test_manifest_updated_on_second_flush() {
     }
 
     println!("✅ Verified manifest.json updated after second flush");
+}
+
+/// Test post-flush small-segment compaction on a running server.
+///
+/// Verifies:
+/// - repeated manual flushes create a trailing run of small segments
+/// - post-flush compaction rewrites that run into one compact-*.parquet file
+/// - old batch files are removed after manifest swap
+/// - newest server-visible row versions are preserved after compaction
+#[ntest::timeout(240_000)]
+#[test]
+fn smoke_test_post_flush_compaction_rewrites_small_segments() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    if !post_flush_compaction_smoke_enabled() {
+        eprintln!(
+            "⚠️  Post-flush compaction smoke disabled; set KALAMDB_TEST_FLUSH_COMPACTION=1 for servers with [flush.compaction].enabled=true."
+        );
+        return;
+    }
+
+    let namespace = generate_unique_namespace("flush_compact_ns");
+    let table = generate_unique_table("shared_small_compact");
+    let full_table = format!("{}.{}", namespace, table);
+    let job_timeout = if is_cluster_mode() {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(120)
+    };
+
+    println!("🧪 Testing post-flush compaction for trailing small segments");
+
+    let _ =
+        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("Failed to create namespace");
+
+    let create_sql = format!(
+        r#"CREATE TABLE {} (
+            id BIGINT PRIMARY KEY,
+            payload TEXT NOT NULL
+        ) WITH (
+            TYPE = 'SHARED',
+            STORAGE_ID = 'local',
+            ACCESS_LEVEL = 'PUBLIC',
+            FLUSH_POLICY = 'rows:100'
+        )"#,
+        full_table
+    );
+    execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {} (id, payload) VALUES (1, 'first-version')",
+        full_table
+    ))
+    .expect("Failed to insert first version");
+    flush_table_and_wait(&full_table, job_timeout);
+
+    execute_sql_as_root_via_client(&format!(
+        "UPDATE {} SET payload = 'second-version' WHERE id = 1",
+        full_table
+    ))
+    .expect("Failed to update first row");
+    flush_table_and_wait(&full_table, job_timeout);
+
+    for (id, payload) in [(2_i64, "row-2"), (3_i64, "row-3"), (4_i64, "row-4")] {
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {} (id, payload) VALUES ({}, '{}')",
+            full_table, id, payload
+        ))
+        .unwrap_or_else(|error| panic!("Failed to insert id {}: {}", id, error));
+        flush_table_and_wait(&full_table, job_timeout);
+    }
+
+    let compaction_job_id = wait_for_latest_job_id("segment_compact", job_timeout);
+    verify_job_completed(&compaction_job_id, job_timeout).unwrap_or_else(|error| {
+        panic!("Segment compaction job {} failed: {}", compaction_job_id, error)
+    });
+
+    let compaction_result =
+        wait_for_single_compacted_parquet(&namespace, &table, Duration::from_secs(30));
+    compaction_result.assert_valid("Post-flush compaction");
+    assert_eq!(
+        compaction_result.parquet_file_count, 1,
+        "Expected compaction to leave exactly one parquet segment, found {:?}",
+        compaction_result.parquet_paths
+    );
+    assert!(
+        compaction_result.parquet_paths[0]
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("compact-")),
+        "Expected post-flush compaction to produce a compact-*.parquet file, found {:?}",
+        compaction_result.parquet_paths
+    );
+
+    let query_json = execute_sql_as_root_via_client_json(&format!(
+        "SELECT id, payload FROM {} ORDER BY id",
+        full_table
+    ))
+    .expect("Failed to query compacted table");
+    let parsed: serde_json::Value = serde_json::from_str(&query_json)
+        .expect("Failed to parse JSON response from compacted table query");
+    let rows = get_rows_as_hashmaps(&parsed).expect("Expected row data in compacted table query");
+
+    assert_eq!(rows.len(), 4, "Expected four live rows after compaction");
+
+    let mut values = rows
+        .iter()
+        .map(|row| {
+            let id = row
+                .get("id")
+                .map(extract_typed_value)
+                .and_then(|value| json_value_as_id(&value))
+                .expect("Expected numeric id in query result");
+            let payload = row
+                .get("payload")
+                .map(extract_typed_value)
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .expect("Expected payload in query result");
+            (id, payload)
+        })
+        .collect::<Vec<_>>();
+    values.sort();
+
+    assert_eq!(
+        values,
+        vec![
+            ("1".to_string(), "second-version".to_string()),
+            ("2".to_string(), "row-2".to_string()),
+            ("3".to_string(), "row-3".to_string()),
+            ("4".to_string(), "row-4".to_string()),
+        ],
+        "Expected compacted table to keep the newest visible row versions"
+    );
 }
 
 /// Test error: FLUSH on STREAM table should fail

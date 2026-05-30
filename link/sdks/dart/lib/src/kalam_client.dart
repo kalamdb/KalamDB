@@ -30,6 +30,9 @@ Future<Auth> _noAuth() async => const NoAuth();
 /// await client.dispose();
 /// ```
 class KalamClient {
+  static bool _isRustRuntimeInitialized = false;
+  static Future<void>? _rustRuntimeInitInFlight;
+
   final bridge.DartKalamClient _handle;
   final ConnectionHandlers? _connectionHandlers;
   final AuthProvider _authProvider;
@@ -46,12 +49,15 @@ class KalamClient {
       : _authProvider = authProvider,
         _auth = initialAuth;
 
-  /// Initialize the Rust runtime. Call once at app startup before any
-  /// [KalamClient.connect] calls.
+  /// Initialize the Rust runtime.
   ///
   /// This loads the native FFI library and is safe to `await` before
   /// `runApp()`. However, do **not** also `await` [connect] before
   /// `runApp()` — that performs network I/O and will freeze your UI.
+  ///
+  /// Calling this eagerly at startup is still recommended because it avoids
+  /// paying the bridge bootstrap cost during the first client connection.
+  /// The method is idempotent, so repeated calls are safe.
   ///
   /// ```dart
   /// void main() async {
@@ -61,7 +67,29 @@ class KalamClient {
   ///   // call connect() inside your widget/provider after the first frame
   /// }
   /// ```
-  static Future<void> init() => RustLib.init();
+  static Future<void> init() => _ensureRustRuntimeInitialized();
+
+  static Future<void> _ensureRustRuntimeInitialized() {
+    if (_isRustRuntimeInitialized) {
+      return Future.value();
+    }
+
+    final existing = _rustRuntimeInitInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = RustLib.init().then((_) {
+      _isRustRuntimeInitialized = true;
+    });
+    _rustRuntimeInitInFlight = future;
+
+    return future.whenComplete(() {
+      if (identical(_rustRuntimeInitInFlight, future)) {
+        _rustRuntimeInitInFlight = null;
+      }
+    });
+  }
 
   /// Connect to a KalamDB server.
   ///
@@ -138,6 +166,8 @@ class KalamClient {
     if (logListener != null) {
       KalamLogger.listener = logListener;
     }
+
+    await _ensureRustRuntimeInitialized();
 
     KalamLogger.info('client', 'Connecting to $url');
 
@@ -808,7 +838,8 @@ class KalamClient {
         :final subscriptionId,
         :final rowsJson,
         :final lastSeqId,
-      ) => () {
+      ) =>
+        () {
           if (lastSeqId != null) {
             onCheckpoint?.call(
               LiveCheckpoint(
@@ -843,21 +874,25 @@ class KalamClient {
       gen.DartChangeEvent_InitialDataBatch(
         :final subscriptionId,
         :final rowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson),
       gen.DartChangeEvent_Insert(
         :final subscriptionId,
         :final rowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson),
       gen.DartChangeEvent_Update(
         :final subscriptionId,
         :final rowsJson,
         :final oldRowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, rowsJson) ??
-          _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, rowsJson) ??
+            _checkpointFromRowsJson(subscriptionId, oldRowsJson),
       gen.DartChangeEvent_Delete(
         :final subscriptionId,
         :final oldRowsJson,
-      ) => _checkpointFromRowsJson(subscriptionId, oldRowsJson),
+      ) =>
+        _checkpointFromRowsJson(subscriptionId, oldRowsJson),
       gen.DartChangeEvent_Ack() || gen.DartChangeEvent_Error() => null,
     };
   }

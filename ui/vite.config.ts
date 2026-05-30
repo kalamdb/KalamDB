@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
+import { loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
@@ -109,6 +110,9 @@ export default defineConfig(({ mode }) => {
       // Exclude the SDK from pre-bundling so WASM files load correctly
       // When pre-bundled, import.meta.url points to .vite/deps which breaks WASM loading
       exclude: ["@kalamdb/client", "@kalamdb/orm"],
+    },
+    test: {
+      exclude: [...configDefaults.exclude, "tests/e2e/**"],
     },
     // Ensure WASM files are handled correctly
     assetsInclude: ["**/*.wasm"],

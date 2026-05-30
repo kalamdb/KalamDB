@@ -1,17 +1,17 @@
 {
   "name": "@kalamdb/react",
   "type": "module",
-  "version": "0.5.0-beta.1",
+  "version": "0.5.1-beta.2",
   "description": "React bindings for KalamDB live queries and mutation state",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kalamstack/KalamDB"
+    "url": "https://github.com/kalamdb/KalamDB"
   },
-  "homepage": "https://github.com/kalamstack/KalamDB#readme",
+  "homepage": "https://github.com/kalamdb/KalamDB#readme",
   "bugs": {
-    "url": "https://github.com/kalamstack/KalamDB/issues"
+    "url": "https://github.com/kalamdb/KalamDB/issues"
   },
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -45,8 +45,8 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@kalamdb/client": ">=0.5.0-0 <0.6.0",
-    "@kalamdb/orm": ">=0.5.0-0 <0.6.0",
+    "@kalamdb/client": ">=0.5.1-0 <0.6.0",
+    "@kalamdb/orm": ">=0.5.1-0 <0.6.0",
     "drizzle-orm": ">=0.45.2",
     "react": ">=18.0.0 || >=19.0.0",
     "react-dom": ">=18.0.0 || >=19.0.0"
@@ -68,15 +68,15 @@
     "@playwright/test": "^1.51.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^25.8.0",
-    "@types/react": "^19.2.14",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "drizzle-orm": "^0.45.2",
     "jsdom": "^29.1.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "keywords": [
     "kalamdb",

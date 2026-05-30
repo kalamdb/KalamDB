@@ -1,237 +1,155 @@
 # OIDC Authentication Architecture
 
-## Overview
+KalamDB supports two authentication paths through one auth surface:
 
-KalamDB supports two authentication paths for bearer tokens:
+- Local username/password login, controlled by `[auth.local]`.
+- One external OpenID Connect provider, controlled by `[auth.oidc]`.
 
-- **Internal tokens** — HS256-signed JWTs issued by KalamDB itself (via login/refresh endpoints).
-- **External provider tokens** — RS256/ES256-signed JWTs issued by an OIDC provider such as Keycloak, Google, GitHub, Azure AD, Auth0, or Okta.
-
-Both paths share the same `Authorization: Bearer <token>` header and are routed automatically based on the token's algorithm and issuer. No separate header or endpoint is needed.
-
-This document reflects the current implementation across:
-- [backend/crates/kalamdb-auth/src/services/unified/bearer.rs](../../backend/crates/kalamdb-auth/src/services/unified/bearer.rs)
-- [backend/crates/kalamdb-auth/src/providers/jwt_auth.rs](../../backend/crates/kalamdb-auth/src/providers/jwt_auth.rs)
-- [backend/crates/kalamdb-auth/src/providers/jwt_config.rs](../../backend/crates/kalamdb-auth/src/providers/jwt_config.rs)
-- [backend/crates/kalamdb-oidc/src/validator.rs](../../backend/crates/kalamdb-oidc/src/validator.rs)
-- [backend/crates/kalamdb-oidc/src/config.rs](../../backend/crates/kalamdb-oidc/src/config.rs)
-
----
+Internal KalamDB access and refresh tokens are HS256 JWTs issued by KalamDB. External identity tokens are OIDC ID tokens verified with the `openidconnect` crate against the configured issuer metadata and signing keys.
 
 ## Configuration
 
-All auth settings live under `[auth]` in `server.toml`:
+All authentication settings live under `[auth]` in `server.toml`. The legacy authentication alias can still deserialize existing local files, but new examples and docs should use `[auth]`. Legacy split OAuth tables and provider-specific OAuth subtables are rejected with migration guidance.
 
 ```toml
 [auth]
-# HS256 secret for internally-issued tokens (min 32 chars in production)
-jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
+jwt_secret = "replace-with-a-strong-random-secret-at-least-32-chars"
+jwt_trusted_issuers = "kalamdb,https://idp.example.com/realms/kalamdb"
+jwt_expiry_hours = 24
+allow_remote_setup = false
+cookie_secure = true
 
-# Comma-separated list of trusted issuer URLs.
-# Must include every OIDC provider you want to accept.
-# Defaults to "kalamdb" (internal only) if empty.
-jwt_trusted_issuers = "https://keycloak.example.com/realms/myrealm"
+[auth.local]
+enabled = true
 
-# When true, the first login from an unknown provider user auto-creates
-# a Role::User account. When false, the user must be pre-created manually.
-auto_create_users_from_provider = true
+[auth.oidc]
+enabled = true
+display_name = "Company SSO"
+issuer = "https://idp.example.com/realms/kalamdb"
+client_id = "kalamdb"
+client_secret = "optional-confidential-client-secret"
+scopes = ["openid", "email", "profile"]
+auto_provision = true
+default_role = "user"
+broker_device_flow_enabled = true
+# Optional override when provider discovery does not advertise device flow.
+device_authorization_endpoint = "https://idp.example.com/realms/kalamdb/protocol/openid-connect/auth/device"
 ```
 
-To trust multiple providers at once, use a comma-separated list:
+`auth.local.enabled` is authoritative. When it is `false`, password login and password setup are rejected server-side, and clients should hide local username/password controls.
 
-```toml
-jwt_trusted_issuers = "https://keycloak.example.com/realms/myrealm,https://accounts.google.com"
+## Public Login Metadata
+
+Clients discover available login methods with:
+
+```text
+GET /v1/api/auth/login-options
 ```
 
-The internal issuer `"kalamdb"` is always implicitly trusted regardless of this setting.
+The response exposes only public, no-secret metadata:
 
----
-
-## Request Flow
-
-Every `Authorization: Bearer <token>` request enters [`authenticate_bearer`](../../backend/crates/kalamdb-auth/src/services/unified/bearer.rs) and follows this path:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Bearer token arrives                                        │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                  Peek header (no sig check)
-                  read: alg, iss
-                               │
-                  verify_issuer(iss, trusted_issuers)
-                  ─ fast-reject unknown issuers ─
-                               │
-              ┌────────────────┴────────────────┐
-              │                                 │
-         HS256 alg                       RS256/ES256/PS256 alg
-              │                                 │
-    iss == "kalamdb"?                  iss == "kalamdb"?
-         │        │                        │         │
-        YES       NO                      YES        NO
-         │        │                        │         │
-    validate   REJECT                   REJECT  get_oidc_validator(iss)
-    (shared    (symmetric                (internal   │
-     secret)    key cannot               must be  validate(token)
-                prove external           HS256)   via JWKS
-                origin)                           │
-         │                                        │
-         └───────────────────┬────────────────────┘
-                             │
-                   parse JwtClaims
-                             │
-             token_type == Refresh? → REJECT
-                             │
-              ┌──────────────┴──────────────┐
-              │ Internal token               │ External token
-              │ lookup user by              │ compose oidc:kcl:{sub}
-              │ claims.username             │ lookup or auto-provision
-              └──────────────┬──────────────┘
-                             │
-                   role mismatch check
-                             │
-                   AuthenticatedUser
+```json
+{
+  "local": { "enabled": true },
+  "oidc": {
+    "enabled": true,
+    "display_name": "Company SSO",
+    "issuer": "https://idp.example.com/realms/kalamdb",
+    "client_id": "kalamdb",
+    "authorization_endpoint": "https://idp.example.com/.../auth",
+    "token_endpoint": "https://idp.example.com/.../token",
+    "device_authorization_endpoint": "https://idp.example.com/.../device",
+    "scopes": ["openid", "email", "profile"],
+    "device_flow": {
+      "direct_supported": true,
+      "broker_supported": true,
+      "broker_start_endpoint": "/v1/api/auth/oidc/device/start",
+      "broker_poll_endpoint": "/v1/api/auth/oidc/device/poll"
+    }
+  }
+}
 ```
 
-### Security constraints
+The old plural provider endpoint is not part of the active auth surface.
 
-| Algorithm | Issuer | Result |
-|---|---|---|
-| HS256 | `kalamdb` | ✅ Validate with shared secret |
-| HS256 | external | ❌ Rejected — symmetric algorithm cannot prove external origin |
-| RS256/ES256 | external | ✅ Validate via OIDC JWKS |
-| RS256/ES256 | `kalamdb` | ❌ Rejected — internal tokens must use HS256 |
+## Browser Flow
 
----
+The Admin UI uses Authorization Code with PKCE:
 
-## OIDC Discovery and Caching
+1. Fetch `/v1/api/auth/login-options`.
+2. Generate PKCE verifier/challenge, nonce, and state in browser storage.
+3. Redirect to the configured authorization endpoint.
+4. Handle `/ui/oauth/callback`, validate state, and send the authorization code, redirect URI, and PKCE verifier to `/v1/api/auth/oidc/exchange-code`.
+5. Store the returned KalamDB access and refresh tokens, then use the KalamDB access token for normal API calls.
 
-KalamDB uses standard OIDC Discovery — no manual JWKS URI configuration is needed. When a token from an unknown issuer (but in `trusted_issuers`) is seen for the first time, KalamDB automatically fetches:
+KalamDB performs the provider token exchange server-side through `openidconnect`, verifies the external ID token, maps or provisions a KalamDB user, and returns the normal login response. Admin UI access still requires the resulting user to have `dba` or `system` role.
 
-```
-GET {issuer_url}/.well-known/openid-configuration
-→ parse jwks_uri from response
-```
+## CLI Flow
 
-There are **two separate cache layers** to make this efficient:
+The CLI supports three login modes:
 
-### Layer 1 — OidcValidator registry (`JwtConfig`)
+- Local login: `kalam login` when `[auth.local].enabled = true`.
+- Browser OIDC: `kalam login --oidc` using Authorization Code with PKCE.
+- Headless OIDC: `kalam login --oidc --no-browser`, using direct provider device flow when available or `--brokered` for KalamDB-brokered device flow.
 
-`JwtConfig` holds a `RwLock<HashMap<String, OidcValidator>>` keyed by issuer URL. This is a process-scoped singleton initialized at startup.
+Browser OIDC sends the callback code to `/v1/api/auth/oidc/exchange-code`. Direct headless device flow obtains a provider ID token and sends it to `/v1/api/auth/oidc/exchange-token`. Both modes save KalamDB access and refresh tokens, not provider credentials.
 
-```
-First request for issuer X:
-  1. Read lock → miss
-  2. GET {issuer}/.well-known/openid-configuration  (network, once per issuer)
-  3. Parse response → extract jwks_uri
-  4. Construct OidcValidator, insert into map
-  5. Return clone (cloning shares the inner Arc — same JWKS cache)
+When `kalam login` runs from an interactive terminal, the CLI continues directly into the normal SQL shell after a successful local or OIDC login. When stdin or stdout is not a terminal, it keeps the prior one-shot behavior: save credentials if requested, print the login result, and exit so scripts do not hang.
 
-All subsequent requests for issuer X:
-  1. Read lock → hit → return clone immediately (no network, no write lock)
-```
+The brokered device flow keeps the provider device code server-side. The CLI only polls KalamDB until the broker returns KalamDB access and refresh tokens.
 
-This means OIDC Discovery is performed at most **once per issuer per process lifetime**. The write lock is only held during that initial insertion.
+## Token Verification
 
-### Layer 2 — JWKS key cache (per `OidcValidator`)
+Bearer authentication peeks at the JWT algorithm and issuer without trusting the token yet:
 
-Each `OidcValidator` holds its own `Arc<RwLock<HashMap<String, Jwk>>>` keyed by `kid` (key ID from the token header).
+1. If issuer is `kalamdb`, the token must use HS256 and is verified with `auth.jwt_secret`.
+2. If issuer is external, it must be configured in `[auth.oidc]` and trusted by `auth.jwt_trusted_issuers`.
+3. External tokens must use an asymmetric OIDC algorithm supported by `openidconnect`.
+4. Provider metadata and verifiers are discovered through `openidconnect::CoreProviderMetadata::discover_async` and cached per issuer.
+5. Audience, issuer, signature, expiry, and nonce checks are handled by `openidconnect` verifier APIs.
 
-```
-Token arrives with kid = "abc-123":
+Refresh tokens are never accepted as API access tokens.
 
-  ── Hot path (99% of requests) ──────────────────────────────
-  Read lock → kid found → return JWK immediately
+## User Identity
 
-  ── Cache miss (key not seen before, or after rotation) ─────
-  1. Read lock → miss
-  2. GET {jwks_uri}  (Keycloak's public key endpoint)
-  3. Compare new key set vs cached set (size + kid presence)
-  4. If changed: write lock, replace entire cache
-  5. Retry read → found → return JWK
-  6. Still not found → OidcError::KeyNotFound
-```
+External users use the OIDC subject claim directly as the KalamDB `user_id`. The same value appears in `system.users.user_id`, `CURRENT_USER()`, and PG extension `EXECUTE AS USER '<user_id>'` workflows.
 
-Key rotation is handled automatically. When Keycloak rotates its signing key, the next request with a `kid` not in the cache triggers a refresh that picks up the new key — no restart or manual intervention required.
+The subject must be a valid KalamDB `UserId`: ASCII letters, digits, `_`, or `-`, up to 128 characters. Providers that emit subjects with spaces, slashes, quotes, or other unsafe characters need a stable subject transform at the IdP layer before they are used with KalamDB.
 
-### Shared cache across clones
+Changing the configured OIDC issuer or provider can produce different subject values. In that case KalamDB treats the login as a different user because the authenticated `sub` changed.
 
-`OidcValidator` is `Clone` — but cloning it shares the same inner `Arc`, not a copy. All clones of a validator for the same issuer read from and write to the same JWKS HashMap.
+External-token authentication checks for an existing `system.users` row with `user_id = sub` before using any stateless regular-user fallback. If a local password user has the same ID, OIDC authentication is rejected instead of silently crossing auth modes.
 
-```
-                         ┌──────────────────────────┐
-  clone A ─────────────► │  Arc<RwLock<HashMap>>    │
-  clone B ─────────────► │  (single shared JWKS map)│
-  clone C ─────────────► │                          │
-                         └──────────────────────────┘
+`system.users.auth_data` stores the linked OIDC issuer and subject for persisted OIDC users. For persisted OIDC users, the `subject` must match the row's `user_id`:
+
+```json
+{
+  "issuer": "https://idp.example.com/realms/kalamdb",
+  "subject": "provider-subject"
+}
 ```
 
-This means a JWKS refresh triggered by any request immediately benefits all concurrent request handlers.
+There is no provider-family enum in the active identity model. A specific IdP such as Dex, Keycloak, Firebase, Okta, or Entra ID is just an OIDC issuer.
 
----
+## Auto-Provisioning
 
-## User Identity for Provider Tokens
+When `[auth.oidc].auto_provision = true` and `[auth.oidc].default_role = "user"`, valid external users authenticate as regular users without creating per-user rows. A persisted row is still checked first so deleted OIDC users, elevated OIDC users, and same-ID local password users keep their explicit local policy.
 
-Every OIDC user gets a **deterministic username** stored in KalamDB:
+If the default role is elevated, auto-provisioning creates a persisted OIDC user row with `user_id = sub`. If auto-provisioning is disabled, users must already have a persisted OIDC row before first login.
 
-```
-Format:  oidc:{provider-code}:{subject}
-Example: oidc:kcl:f47ac10b-58cc-4372-a567-0e02b2c3d479
-```
+When auto-provisioning is disabled, create the OIDC user explicitly before first login. Canonical SQL uses `WITH OIDC`; `WITH OAUTH` remains only as a compatibility alias.
 
-The 3-character provider code is derived from the issuer URL:
-
-| Issuer pattern | Code |
-|---|---|
-| Contains `keycloak` or `/realms/` | `kcl` |
-| `accounts.google.com` | `ggl` |
-| `github.com` | `ghb` |
-| `login.microsoftonline.com` / `sts.windows.net` | `msf` |
-| `auth0.com` | `a0x` |
-| `okta.com` | `okt` |
-| Unknown | First 3 hex chars of SHA-256(`issuer_url`) |
-
-This username is indexed in RocksDB (via `IndexedEntityStore`), so user lookups on every authenticated request are O(1) — no table scan.
-
-The `user_id` for auto-provisioned users is also deterministic:
-
-```
-user_id = "u_oidc_" + first 16 hex chars of SHA-256("{issuer}:{sub}")
+```sql
+CREATE USER 'provider-subject'
+  WITH OIDC '{"issuer":"https://idp.example.com/realms/kalamdb","subject":"provider-subject"}'
+  ROLE service
+  EMAIL 'alice@example.com';
 ```
 
-This means the same Keycloak user always maps to the same `user_id` even if the KalamDB user record is deleted and recreated.
+## Operational Notes
 
-### Auto-provisioning
-
-When `auto_create_users_from_provider = true` and no user with the composed username exists:
-
-1. A new `User` record is created with `role = Role::User`, `auth_type = AuthType::OAuth`.
-2. `email` is taken from the token's `email` claim if present.
-3. `auth_data` stores `{ "provider": issuer, "subject": sub }` as JSON.
-4. `password_hash` is empty — the user cannot log in via password.
-
-When `auto_create_users_from_provider = false`, the user must be pre-created in KalamDB with a username matching `oidc:{code}:{sub}` before their first login attempt.
-
----
-
-## Keycloak Setup Checklist
-
-1. Create a realm (e.g. `myrealm`).
-2. Create a client (e.g. `kalamdb-api`). Set access type to `bearer-only` for pure API use.
-3. Ensure your Keycloak realm is reachable from the KalamDB server at `https://keycloak.example.com/realms/myrealm`.
-4. Add the realm URL to `jwt_trusted_issuers` in `server.toml`.
-5. Set `auto_create_users_from_provider = true` (or pre-create users manually).
-6. Configure your client application to obtain tokens from Keycloak and send them as `Authorization: Bearer <token>`.
-
-No client secret or JWKS URI needs to be configured in KalamDB — Discovery handles it automatically.
-
----
-
-## Crate Responsibilities
-
-| Crate | Owns |
-|---|---|
-| `kalamdb-auth/oidc` | `JwtClaims`, `TokenType`, `OidcConfig` (discovery), `OidcValidator` (JWKS cache + validation), `OidcError`, algorithm and issuer extraction helpers |
-| `kalamdb-auth/jwt_auth.rs` | `KALAMDB_ISSUER`, `is_internal_issuer`, `verify_issuer`, HS256 signing/validation (`create_and_sign_token`, `validate_jwt_token`) |
-| `kalamdb-auth/jwt_config.rs` | `JwtConfig` singleton, `OidcValidator` registry (Layer 1 cache), `parse_trusted_issuers` |
-| `kalamdb-auth/bearer.rs` | Algorithm-based routing, user resolution, auto-provisioning orchestration |
+- Set a strong `auth.jwt_secret` in every non-local deployment.
+- Include `kalamdb` and the configured OIDC issuer in `auth.jwt_trusted_issuers`.
+- Configure the IdP redirect URI for the Admin UI callback: `https://your-host/ui/oauth/callback`.
+- Enable TLS at the edge and set `auth.cookie_secure = true` in production.
+- Use the cleanup guards to keep legacy provider sections and custom JWKS code out of active paths.

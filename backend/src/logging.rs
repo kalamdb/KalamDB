@@ -79,6 +79,64 @@ impl LogFormat {
     }
 }
 
+#[cfg(any(feature = "otel", test))]
+fn level_verbosity(level: &str) -> Option<u8> {
+    match level.to_ascii_lowercase().as_str() {
+        "off" => Some(0),
+        "error" => Some(1),
+        "warn" | "warning" => Some(2),
+        "info" => Some(3),
+        "debug" => Some(4),
+        "trace" => Some(5),
+        _ => None,
+    }
+}
+
+#[cfg(any(feature = "otel", test))]
+fn event_verbosity(level: &tracing::Level) -> u8 {
+    match *level {
+        tracing::Level::ERROR => 1,
+        tracing::Level::WARN => 2,
+        tracing::Level::INFO => 3,
+        tracing::Level::DEBUG => 4,
+        tracing::Level::TRACE => 5,
+    }
+}
+
+#[cfg(any(feature = "otel", test))]
+fn target_level_override<'a>(
+    target: &str,
+    target_levels: Option<&'a HashMap<String, String>>,
+) -> Option<&'a str> {
+    target_levels.and_then(|levels| {
+        levels
+            .iter()
+            .filter(|(configured_target, _)| {
+                target == configured_target.as_str()
+                    || target
+                        .strip_prefix(configured_target.as_str())
+                        .is_some_and(|suffix| suffix.starts_with("::"))
+            })
+            .max_by_key(|(configured_target, _)| configured_target.len())
+            .map(|(_, level)| level.as_str())
+    })
+}
+
+#[cfg(any(feature = "otel", test))]
+fn target_level_enabled(
+    target: &str,
+    event_level: &tracing::Level,
+    default_level: &str,
+    target_levels: Option<&HashMap<String, String>>,
+) -> bool {
+    let configured_level = target_level_override(target, target_levels).unwrap_or(default_level);
+    let Some(configured_verbosity) = level_verbosity(configured_level) else {
+        return false;
+    };
+
+    configured_verbosity != 0 && event_verbosity(event_level) <= configured_verbosity
+}
+
 /// Build the `EnvFilter` from the base level, hardcoded noisy-crate
 /// overrides, and optional per-target overrides from config.
 fn build_env_filter(
@@ -140,6 +198,11 @@ pub fn init_logging(
 ) -> anyhow::Result<()> {
     let log_format = LogFormat::from_str(format);
 
+    // Bridge `log` crate -> tracing as early as possible so existing subscribers
+    // in tests still receive `log::*` records, and so later `try_init()` failure
+    // does not silently disable the bridge.
+    tracing_log::LogTracer::init().ok();
+
     // Create logs directory if it doesn't exist
     if let Some(parent) = Path::new(file_path).parent() {
         fs::create_dir_all(parent)?;
@@ -175,7 +238,9 @@ pub fn init_logging(
             .with_target(true)
             .with_thread_names(true)
             .with_span_events(FmtSpan::NONE) // Change to CLOSE to show span timing
-            .with_span_list(true)
+            // Keep the current span for request/job correlation, but avoid
+            // serializing the full span stack on every log line.
+            .with_current_span(true)
             .with_filter(build_env_filter(level, target_levels)?);
         // We need to box because the json() layer has a different type
         layer.boxed()
@@ -200,26 +265,21 @@ pub fn init_logging(
     let init_result = if otlp.enabled {
         let tracer_provider = build_otlp_provider(otlp)?;
         let tracer = tracer_provider.tracer("kalamdb-server");
+        let otlp_target_levels = target_levels.cloned();
+        let otlp_default_level = level.to_string();
 
-        // Default-allow everything, but remove known noisy transport/system internals.
-        // This keeps future app spans/events visible without h2/poll_ready-style chatter.
-        let otlp_filter = filter_fn(|metadata| {
+        // Respect the configured level/target overrides, but still strip known
+        // transport/exporter chatter from trace export.
+        let otlp_filter = filter_fn(move |metadata| {
             if is_otlp_noisy_target(metadata.target()) {
                 return false;
             }
-            // Allow DEBUG-level spans from kalamdb crates for Jaeger profiling
-            if metadata.target().starts_with("kalamdb_") {
-                return matches!(
-                    *metadata.level(),
-                    tracing::Level::ERROR
-                        | tracing::Level::WARN
-                        | tracing::Level::INFO
-                        | tracing::Level::DEBUG
-                );
-            }
-            matches!(
-                *metadata.level(),
-                tracing::Level::ERROR | tracing::Level::WARN | tracing::Level::INFO
+
+            target_level_enabled(
+                metadata.target(),
+                metadata.level(),
+                &otlp_default_level,
+                otlp_target_levels.as_ref(),
             )
         });
 
@@ -246,10 +306,6 @@ pub fn init_logging(
 
     match init_result.0 {
         Ok(_) => {
-            // Bridge `log` crate → tracing (for all existing log::info!() etc. calls)
-            // Only initialize after subscriber is set up
-            tracing_log::LogTracer::init().ok(); // ok() in case already initialized
-
             #[cfg(feature = "otel")]
             if let Some(provider) = init_result.1 {
                 if let Ok(mut guard) = tracer_provider_slot().lock() {
@@ -352,7 +408,43 @@ fn normalize_http_endpoint(endpoint: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use kalamdb_commons::helpers::security::redact_sensitive_sql;
+
+    use super::{target_level_enabled, target_level_override};
+
+    #[test]
+    fn target_level_override_prefers_longest_matching_prefix() {
+        let levels = HashMap::from([
+            ("kalamdb_core".to_string(), "info".to_string()),
+            ("kalamdb_core::sql::executor".to_string(), "debug".to_string()),
+        ]);
+
+        let override_level =
+            target_level_override("kalamdb_core::sql::executor::sql_executor", Some(&levels));
+
+        assert_eq!(override_level, Some("debug"));
+    }
+
+    #[test]
+    fn target_level_enabled_honors_target_override_and_default() {
+        let levels =
+            HashMap::from([("kalamdb_core::sql::executor".to_string(), "debug".to_string())]);
+
+        assert!(target_level_enabled(
+            "kalamdb_core::sql::executor::sql_executor",
+            &tracing::Level::DEBUG,
+            "info",
+            Some(&levels),
+        ));
+        assert!(!target_level_enabled(
+            "kalamdb_publisher::service",
+            &tracing::Level::DEBUG,
+            "info",
+            Some(&levels),
+        ));
+    }
 
     #[test]
     fn test_redact_sensitive_sql_passwords() {

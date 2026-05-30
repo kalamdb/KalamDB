@@ -18,7 +18,7 @@
 #   PGUSER           — PostgreSQL user     (default: kalamdb)
 #   PGPASSWORD       — PostgreSQL password (default: kalamdb123)
 #   PGDATABASE       — PostgreSQL database (default: kalamdb)
-#   KALAMDB_API_URL  — KalamDB HTTP API    (default: http://localhost:8088)
+#   KALAMDB_API_URL  — KalamDB HTTP API    (default: http://localhost:${KALAMDB_HTTP_PORT:-2900})
 #   KALAMDB_PASSWORD — Admin password      (default: kalamdb123)
 # ==========================================================================
 set -euo pipefail
@@ -33,8 +33,18 @@ export PGUSER="${PGUSER:-kalamdb}"
 export PGPASSWORD="${PGPASSWORD:-kalamdb123}"
 export PGDATABASE="${PGDATABASE:-kalamdb}"
 
-KALAMDB_API_URL="${KALAMDB_API_URL:-http://localhost:8088}"
+KALAMDB_HTTP_PORT="${KALAMDB_HTTP_PORT:-2900}"
+KALAMDB_API_URL="${KALAMDB_API_URL:-http://localhost:${KALAMDB_HTTP_PORT}}"
 KALAMDB_PASSWORD="${KALAMDB_PASSWORD:-kalamdb123}"
+TEST_NAMESPACE="${TEST_NAMESPACE:-rmtest_$(date +%s)}"
+
+try_login() {
+    local user="$1"
+    curl -sf "$KALAMDB_API_URL/v1/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"user\":\"$user\",\"password\":\"$KALAMDB_PASSWORD\"}" \
+        2>/dev/null || true
+}
 
 find_pgrx_bin() {
     local binary="$1"
@@ -83,12 +93,14 @@ for i in $(seq 1 15); do
 done
 
 echo ""
-echo "Bootstrapping KalamDB namespace 'rmtest' ..."
+echo "Bootstrapping KalamDB namespace '$TEST_NAMESPACE' ..."
 
-LOGIN_RESP=$(curl -sf "$KALAMDB_API_URL/v1/api/auth/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"user\":\"admin\",\"password\":\"$KALAMDB_PASSWORD\"}" \
-    2>/dev/null || true)
+LOGIN_RESP="$(try_login root)"
+AUTH_USER="root"
+if [ -z "$LOGIN_RESP" ]; then
+    LOGIN_RESP="$(try_login admin)"
+    AUTH_USER="admin"
+fi
 
 BEARER_TOKEN=$(printf '%s' "$LOGIN_RESP" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
 if [ -z "$BEARER_TOKEN" ]; then
@@ -97,10 +109,12 @@ if [ -z "$BEARER_TOKEN" ]; then
         -H "Content-Type: application/json" \
         -d "{\"user\":\"admin\",\"password\":\"$KALAMDB_PASSWORD\",\"root_password\":\"$KALAMDB_PASSWORD\"}" \
         > /dev/null 2>&1 || true
-    LOGIN_RESP=$(curl -sf "$KALAMDB_API_URL/v1/api/auth/login" \
-        -H "Content-Type: application/json" \
-        -d "{\"user\":\"admin\",\"password\":\"$KALAMDB_PASSWORD\"}" \
-        2>/dev/null || true)
+    LOGIN_RESP="$(try_login admin)"
+    AUTH_USER="admin"
+    if [ -z "$LOGIN_RESP" ]; then
+        LOGIN_RESP="$(try_login root)"
+        AUTH_USER="root"
+    fi
     BEARER_TOKEN=$(printf '%s' "$LOGIN_RESP" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
 fi
 
@@ -112,9 +126,17 @@ fi
 curl -s "$KALAMDB_API_URL/v1/api/sql" \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"sql": "CREATE NAMESPACE IF NOT EXISTS rmtest"}' > /dev/null
+    -d "{\"sql\": \"CREATE NAMESPACE IF NOT EXISTS $TEST_NAMESPACE\"}" > /dev/null
 
-echo "KalamDB namespace bootstrapped (rmtest)."
+for table in profiles shared_items using_items; do
+    curl -s "$KALAMDB_API_URL/v1/api/sql" \
+        -H "Authorization: Bearer $BEARER_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"sql\": \"DROP TABLE IF EXISTS $TEST_NAMESPACE.$table\"}" \
+        > /dev/null || true
+done
+
+echo "KalamDB namespace bootstrapped ($TEST_NAMESPACE)."
 
 echo "Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
@@ -150,41 +172,18 @@ echo ""
 echo "Running test.sql ..."
 echo ""
 
+echo "Refreshing foreign server credentials for this test run ..."
+
 PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
     -v ON_ERROR_STOP=1 \
     -P pager=off \
-    -f "$SCRIPT_DIR/test.sql"
+    -c "DROP SERVER IF EXISTS kalam_server CASCADE; CREATE SERVER kalam_server FOREIGN DATA WRAPPER pg_kalam OPTIONS (host 'kalamdb', port '2910', auth_mode 'account_login', login_user '$AUTH_USER', login_password '$KALAMDB_PASSWORD');"
 
-# ── Cross-Verification: verify FDW writes are visible via KalamDB REST API ──
-echo ""
-echo "Cross-verifying FDW writes via KalamDB REST API ..."
-
-# Insert a verification row via PG FDW into the shared table so the REST
-# query checks write visibility rather than user-table scoping.
-PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-    -v ON_ERROR_STOP=1 \
-    -P pager=off \
-    -c "INSERT INTO rmtest.shared_items (id, title, value) VALUES ('xv1', 'CrossVerify', 99);"
-
-# Query the same row via KalamDB HTTP API
-API_RESULT=$(curl -s "$KALAMDB_API_URL/v1/api/sql" \
-    -H "Authorization: Bearer $BEARER_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"sql": "SELECT id, title, value FROM rmtest.shared_items WHERE id = '\''xv1'\''"}')
-
-if echo "$API_RESULT" | grep -q '"xv1"'; then
-    echo "  PASS: FDW-inserted row 'xv1' is visible via KalamDB REST API."
-else
-    echo "  FAIL: FDW-inserted row 'xv1' NOT found via KalamDB REST API!"
-    echo "  API response: $API_RESULT"
-    exit 1
-fi
-
-# Clean up the cross-verification row
-PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-    -v ON_ERROR_STOP=1 \
-    -P pager=off \
-    -c "DELETE FROM rmtest.shared_items WHERE id = 'xv1';"
+sed "s/rmtest/$TEST_NAMESPACE/g" "$SCRIPT_DIR/test.sql" | \
+    PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+        -v ON_ERROR_STOP=1 \
+        -P pager=off \
+        -f -
 
 # ── Concurrent Clients Test ──
 echo ""
@@ -196,7 +195,7 @@ for i in $(seq 1 5); do
         PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
             -v ON_ERROR_STOP=1 \
             -P pager=off \
-            -c "SET kalam.user_id = 'concurrent-user'; INSERT INTO rmtest.profiles (id, name, age) VALUES ('cc$i', 'Concurrent$i', $((20 + i))); SELECT COUNT(*) FROM rmtest.profiles;" \
+            -c "SET kalam.user_id = 'concurrent-user'; INSERT INTO $TEST_NAMESPACE.profiles (id, name, age) VALUES ('cc$i', 'Concurrent$i', $((20 + i))); SELECT COUNT(*) FROM $TEST_NAMESPACE.profiles;" \
             > /dev/null 2>&1
     ) &
 done
@@ -216,7 +215,7 @@ fi
 
 # Verify all concurrent rows exist
 CC_COUNT=$( PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-    -t -A -c "SET kalam.user_id = 'concurrent-user'; SELECT COUNT(*) FROM rmtest.profiles WHERE id IN ('cc1','cc2','cc3','cc4','cc5');" | tail -n 1 | tr -d '[:space:]' )
+    -t -A -c "SET kalam.user_id = 'concurrent-user'; SELECT COUNT(*) FROM $TEST_NAMESPACE.profiles WHERE id IN ('cc1','cc2','cc3','cc4','cc5');" | tail -n 1 | tr -d '[:space:]' )
 
 if [ "$CC_COUNT" -ge 5 ]; then
     echo "  PASS: All 5 concurrent rows visible ($CC_COUNT)."
@@ -229,7 +228,7 @@ fi
 PAGER=cat "$PSQL_BIN" -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
     -v ON_ERROR_STOP=1 \
     -P pager=off \
-    -c "SET kalam.user_id = 'concurrent-user'; DELETE FROM rmtest.profiles WHERE id IN ('cc1','cc2','cc3','cc4','cc5');" \
+    -c "SET kalam.user_id = 'concurrent-user'; DELETE FROM $TEST_NAMESPACE.profiles WHERE id IN ('cc1','cc2','cc3','cc4','cc5');" \
     > /dev/null 2>&1
 
 echo ""

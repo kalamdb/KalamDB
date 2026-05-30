@@ -2,7 +2,7 @@
 
 use kalamdb_commons::{
     models::{ConnectionInfo, UserId},
-    Role,
+    AuthType, Role,
 };
 
 /// Authenticated user context for a request.
@@ -15,6 +15,8 @@ pub struct AuthenticatedUser {
     pub user_id: UserId,
     /// User's role (User, Service, Dba, System)
     pub role: Role,
+    /// Authentication source used for the session.
+    pub auth_type: AuthType,
     /// Email address (if available)
     pub email: Option<String>,
     /// Account creation timestamp in milliseconds since epoch
@@ -34,9 +36,30 @@ impl AuthenticatedUser {
         updated_at: i64,
         connection_info: ConnectionInfo,
     ) -> Self {
+        Self::with_auth_type(
+            user_id,
+            role,
+            AuthType::Password,
+            email,
+            created_at,
+            updated_at,
+            connection_info,
+        )
+    }
+
+    pub fn with_auth_type(
+        user_id: UserId,
+        role: Role,
+        auth_type: AuthType,
+        email: Option<String>,
+        created_at: i64,
+        updated_at: i64,
+        connection_info: ConnectionInfo,
+    ) -> Self {
         Self {
             user_id,
             role,
+            auth_type,
             email,
             created_at,
             updated_at,

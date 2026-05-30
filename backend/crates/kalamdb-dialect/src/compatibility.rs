@@ -10,6 +10,62 @@ use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
 use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType};
 use sqlparser::ast::{DataType as SQLDataType, DataType::*, ObjectName};
 
+fn map_decimal_type(info: &sqlparser::ast::ExactNumberInfo) -> DataType {
+    match info {
+        sqlparser::ast::ExactNumberInfo::PrecisionAndScale(precision, scale) => {
+            DataType::Decimal128(*precision as u8, *scale as i8)
+        },
+        sqlparser::ast::ExactNumberInfo::Precision(precision) => {
+            DataType::Decimal128(*precision as u8, 0)
+        },
+        sqlparser::ast::ExactNumberInfo::None => DataType::Decimal128(38, 10),
+    }
+}
+
+fn map_decimal_kalam_type(info: &sqlparser::ast::ExactNumberInfo) -> Result<KalamDataType, String> {
+    let (precision, scale) = match info {
+        sqlparser::ast::ExactNumberInfo::PrecisionAndScale(precision, scale) => {
+            (*precision as u8, *scale as u8)
+        },
+        sqlparser::ast::ExactNumberInfo::Precision(precision) => (*precision as u8, 0),
+        sqlparser::ast::ExactNumberInfo::None => (38, 10),
+    };
+
+    KalamDataType::validate_decimal_params(precision, scale).map_err(|error| error.to_string())?;
+    Ok(KalamDataType::Decimal { precision, scale })
+}
+
+fn custom_type_identifier(name: &ObjectName) -> String {
+    name.0
+        .iter()
+        .map(|id| id.to_string().to_lowercase())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn parse_embedding_dimension(modifiers: &[String]) -> Result<i32, String> {
+    if modifiers.len() != 1 {
+        return Err(
+            "EMBEDDING type requires exactly one dimension parameter, e.g., EMBEDDING(384)"
+                .to_string(),
+        );
+    }
+
+    let dim_str = &modifiers[0];
+    let dim = dim_str.parse::<i32>().map_err(|_| {
+        format!("EMBEDDING dimension must be a positive integer, got '{}'", dim_str)
+    })?;
+
+    if dim < 1 {
+        return Err("EMBEDDING dimension must be at least 1".to_string());
+    }
+    if dim > 8192 {
+        return Err(format!("EMBEDDING dimension must be at most 8192 (found {})", dim));
+    }
+
+    Ok(dim)
+}
+
 /// Map a parsed `sqlparser` data type into an Arrow data type while accounting
 /// for PostgreSQL/MySQL aliases (e.g. `SERIAL`, `INT4`, `AUTO_INCREMENT`).
 pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String> {
@@ -60,13 +116,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         SQLDataType::Uuid => DataType::FixedSizeBinary(16),
 
         // Decimal ------------------------------------------------------------
-        Decimal(info) => match info {
-            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => {
-                DataType::Decimal128(*p as u8, *s as i8)
-            },
-            sqlparser::ast::ExactNumberInfo::Precision(p) => DataType::Decimal128(*p as u8, 0),
-            sqlparser::ast::ExactNumberInfo::None => DataType::Decimal128(38, 10),
-        },
+        Decimal(info) => map_decimal_type(info),
 
         // Custom or dialect specific identifiers ----------------------------
         Custom(name, modifiers) => map_custom_type(name, modifiers)?,
@@ -90,28 +140,14 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
         SQLDataType::Uuid => Ok(KalamDataType::Uuid),
         // Handle FILE type directly to avoid going through Arrow Utf8 -> Text
         SQLDataType::Custom(name, _) => {
-            let ident = name
-                .0
-                .iter()
-                .map(|id| id.to_string().to_lowercase())
-                .collect::<Vec<_>>()
-                .join(".");
-            if ident == "file" {
+            if custom_type_identifier(name) == "file" {
                 return Ok(KalamDataType::File);
             }
             // Fall through to standard Arrow conversion for other custom types
             let arrow_type = map_sql_type_to_arrow(sql_type)?;
             KalamDataType::from_arrow_type(&arrow_type).map_err(|e| e.to_string())
         },
-        SQLDataType::Decimal(info) => {
-            let (precision, scale) = match info {
-                sqlparser::ast::ExactNumberInfo::PrecisionAndScale(p, s) => (*p as u8, *s as u8),
-                sqlparser::ast::ExactNumberInfo::Precision(p) => (*p as u8, 0),
-                sqlparser::ast::ExactNumberInfo::None => (38, 10),
-            };
-            KalamDataType::validate_decimal_params(precision, scale).map_err(|e| e.to_string())?;
-            Ok(KalamDataType::Decimal { precision, scale })
-        },
+        SQLDataType::Decimal(info) => map_decimal_kalam_type(info),
         SQLDataType::Date => Ok(KalamDataType::Date),
         SQLDataType::Time(_, _) => Ok(KalamDataType::Time),
         SQLDataType::Timestamp(_, _) => Ok(KalamDataType::Timestamp),
@@ -124,42 +160,19 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
 }
 
 fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, String> {
-    let ident = name
-        .0
-        .iter()
-        .map(|id| id.to_string().to_lowercase())
-        .collect::<Vec<_>>()
-        .join(".");
+    let ident = custom_type_identifier(name);
 
     let dtype = match ident.as_str() {
         // KalamDB-specific: FILE -> Utf8 (stores FileRef as JSON string)
         "file" => DataType::Utf8,
         // KalamDB-specific: EMBEDDING(dimension) -> FixedSizeList<Float32>
         "embedding" => {
-            // Extract dimension from modifiers
-            if modifiers.len() != 1 {
-                return Err("EMBEDDING type requires exactly one dimension parameter, e.g., \
-                            EMBEDDING(384)"
-                    .to_string());
-            }
-
-            let dim_str = &modifiers[0];
-            let dim = dim_str.parse::<usize>().map_err(|_| {
-                format!("EMBEDDING dimension must be a positive integer, got '{}'", dim_str)
-            })?;
-
-            // Validate dimension is within allowed range (1-8192)
-            if dim < 1 {
-                return Err("EMBEDDING dimension must be at least 1".to_string());
-            }
-            if dim > 8192 {
-                return Err(format!("EMBEDDING dimension must be at most 8192 (found {})", dim));
-            }
+            let dim = parse_embedding_dimension(modifiers)?;
 
             // Return FixedSizeList<Float32> to match KalamDataType::Embedding Arrow conversion
             DataType::FixedSizeList(
                 std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, false)),
-                dim as i32,
+                dim,
             )
         },
 
@@ -244,6 +257,12 @@ mod tests {
     fn maps_sql_type_to_kalam() {
         let dtype = map_sql_type_to_kalam(&SQLDataType::Text).unwrap();
         assert_eq!(dtype, KalamDataType::Text);
+    }
+
+    #[test]
+    fn maps_file_custom_type_to_kalam() {
+        let dtype = map_sql_type_to_kalam(&custom("file")).unwrap();
+        assert_eq!(dtype, KalamDataType::File);
     }
 
     #[test]

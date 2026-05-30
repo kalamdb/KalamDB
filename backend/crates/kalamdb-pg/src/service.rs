@@ -5,7 +5,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 #[cfg(feature = "server")]
 use kalamdb_auth::{
-    authenticate, helpers::basic_auth, AuthRequest, AuthenticationResult, UserRepository,
+    authenticate, helpers::basic_auth, is_basic_authorization, AuthRequest, AuthenticationResult,
+    UserRepository,
 };
 #[cfg(feature = "server")]
 use kalamdb_commons::models::{ConnectionInfo, TransactionId};
@@ -996,11 +997,7 @@ impl KalamPgService {
 
         let connection_info =
             ConnectionInfo::new(request.remote_addr().map(|addr| addr.to_string()));
-        let auth_request = if provided
-            .get(..6)
-            .map(|prefix| prefix.eq_ignore_ascii_case("Basic "))
-            .unwrap_or(false)
-        {
+        let auth_request = if is_basic_authorization(provided) {
             let (user, password) =
                 basic_auth::parse_basic_auth_header(provided).map_err(|error| {
                     Status::unauthenticated(format!("authentication failed: {}", error))

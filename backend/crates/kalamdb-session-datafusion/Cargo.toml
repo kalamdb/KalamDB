@@ -20,9 +20,6 @@ datafusion = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 
-[dev-dependencies]
-tokio = { workspace = true }
-
 [lib]
 name = "kalamdb_session_datafusion"
 path = "src/lib.rs"

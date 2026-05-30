@@ -1,17 +1,17 @@
 {
   "name": "@kalamdb/orm",
   "type": "module",
-  "version": "0.5.0-beta.1",
+  "version": "0.5.1-beta.2",
   "description": "Drizzle ORM driver and schema generator for KalamDB",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kalamstack/KalamDB"
+    "url": "https://github.com/kalamdb/KalamDB"
   },
-  "homepage": "https://github.com/kalamstack/KalamDB#readme",
+  "homepage": "https://github.com/kalamdb/KalamDB#readme",
   "bugs": {
-    "url": "https://github.com/kalamstack/KalamDB/issues"
+    "url": "https://github.com/kalamdb/KalamDB/issues"
   },
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -47,7 +47,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@kalamdb/client": ">=0.5.0-0 <0.6.0",
+    "@kalamdb/client": ">=0.5.1-0 <0.6.0",
     "drizzle-orm": ">=0.45.2"
   },
   "devDependencies": {

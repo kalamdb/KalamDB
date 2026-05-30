@@ -105,7 +105,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
     echo "         using features: kalam-cli/e2e-tests and kalamdb-server/e2e-tests."
     echo "         Untargeted full runs also execute"
-    echo "         TypeScript SDK, example, React Playwright, UI, and Dart test suites."
+    echo "         TypeScript SDK unit/browser/e2e, example, UI, and Dart test suites."
     echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
@@ -499,7 +499,7 @@ if [ -z "$TEST_FILTER" ] \
     && [ -z "$TEST_TARGET" ] \
     && [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
     RUN_SUPPLEMENTARY_SUITES=true
-    SUPPLEMENTARY_MODE="TypeScript SDKs, examples, React Playwright, UI, and Dart"
+    SUPPLEMENTARY_MODE="TypeScript SDK unit/browser/e2e, examples, UI, and Dart"
 fi
 
 # Display configuration
@@ -602,6 +602,180 @@ require_cmd() {
         echo "Error: missing required command '$1'"
         exit 1
     }
+}
+
+package_filters_include() {
+    local expected="$1"
+    local package
+
+    for package in "${PACKAGE_FILTERS[@]}"; do
+        if [ "$package" = "$expected" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+verify_cli_test_layout() {
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+        return 0
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Warning: python3 not available; skipping CLI test layout verification." >&2
+        return 0
+    fi
+
+    local check_output
+    if ! check_output="$(python3 - "$REPO_ROOT/cli/Cargo.toml" "$REPO_ROOT/cli/tests" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+cargo_toml = Path(sys.argv[1]).resolve()
+tests_dir = Path(sys.argv[2]).resolve()
+
+test_path_re = re.compile(r'^\s*path\s*=\s*"([^"]+)"\s*$')
+path_attr_re = re.compile(r'^\s*#\[\s*path\s*=\s*"([^"]+)"\s*\]\s*$')
+
+registered_roots = set()
+for line in cargo_toml.read_text().splitlines():
+    match = test_path_re.match(line)
+    if not match:
+        continue
+    relative_path = match.group(1)
+    if relative_path.startswith("tests/") and relative_path.endswith(".rs"):
+        registered_roots.add((cargo_toml.parent / relative_path).resolve())
+
+reachable = set()
+pending = list(registered_roots)
+while pending:
+    current = pending.pop()
+    if current in reachable or not current.exists():
+        continue
+    reachable.add(current)
+    for line in current.read_text().splitlines():
+        match = path_attr_re.match(line)
+        if not match:
+            continue
+        child = (current.parent / match.group(1)).resolve()
+        if child.exists():
+            pending.append(child)
+
+all_rs_files = {path.resolve() for path in tests_dir.rglob("*.rs")}
+ignored_files = {path.resolve() for path in tests_dir.rglob("mod.rs")}
+ignored_files.add((tests_dir / "common/mod.rs").resolve())
+expected_files = {path for path in all_rs_files if path not in ignored_files}
+
+missing_files = sorted(
+    path.relative_to(cargo_toml.parent).as_posix() for path in expected_files - reachable
+)
+
+if missing_files:
+    print("The following cli/tests files are not reachable from registered Cargo test targets:")
+    for path in missing_files:
+        print(path)
+    raise SystemExit(1)
+PY
+)"; then
+        echo "Error: CLI test layout verification failed."
+        echo "$check_output"
+        echo ""
+        echo "Register new root tests in cli/Cargo.toml and wire nested test files into their aggregator targets before running run-tests.sh."
+        exit 1
+    fi
+}
+
+should_start_dex_for_oidc_tests() {
+    if [ "${KALAMDB_SKIP_DOCKER_DEX:-false}" = "true" ]; then
+        return 1
+    fi
+
+    case "$TEST_TARGET:$TEST_FILTER" in
+        *auth*|*oidc*|*OIDC*|*dex*|*Dex*)
+            return 0
+            ;;
+    esac
+
+    if [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
+        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+test_list_includes_cli_oidc() {
+    if [ -z "$TEST_LIST_FILE" ]; then
+        return 1
+    fi
+
+    if [ "$TEST_LIST_FILE" = "-" ]; then
+        return 0
+    fi
+
+    grep -q 'oidc_cli_' "$TEST_LIST_FILE"
+}
+
+should_prebuild_cli_oidc_server_binary() {
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+        return 1
+    fi
+
+    if [ -n "$TEST_LIST_FILE" ]; then
+        test_list_includes_cli_oidc
+        return $?
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        [[ "$TEST_FILTER" == *oidc_cli_* ]]
+        return $?
+    fi
+
+    if [ -n "$TEST_TARGET" ]; then
+        [ "$TEST_TARGET" = "auth" ]
+        return $?
+    fi
+
+    return 0
+}
+
+prebuild_cli_oidc_server_binary_if_needed() {
+    if ! should_prebuild_cli_oidc_server_binary; then
+        return 0
+    fi
+
+    if [ -n "${KALAMDB_SERVER_BIN:-}" ] && [ -f "$KALAMDB_SERVER_BIN" ]; then
+        chmod +x "$KALAMDB_SERVER_BIN" 2>/dev/null || true
+        step "Using prebuilt kalamdb-server for CLI OIDC tests"
+        return 0
+    fi
+
+    step "Prebuilding kalamdb-server for CLI OIDC tests"
+    (
+        cd "$REPO_ROOT"
+        cargo build -p kalamdb-server --bin kalamdb-server
+    )
+    export KALAMDB_SERVER_BIN="$REPO_ROOT/target/debug/kalamdb-server"
+}
+
+ensure_dex_for_oidc_tests() {
+    if ! should_start_dex_for_oidc_tests; then
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker is not available; Dex-backed OIDC tests may skip." >&2
+        return 0
+    fi
+
+    step "Starting shared Dex for OIDC tests"
+    (
+        cd "$REPO_ROOT/docker/utils"
+        docker compose up -d --force-recreate dex
+    ) || echo "Warning: could not start docker/utils Dex; Dex-backed OIDC tests may skip." >&2
 }
 
 npm_install_dir() {
@@ -847,6 +1021,12 @@ run_supplementary_suites() {
     export KALAMDB_TEST_PASSWORD="$KALAMDB_ADMIN_PASSWORD"
 
     run_npm_suite "link/sdks/typescript/client" "Running TypeScript client SDK tests" "test"
+    run_npm_suite \
+        "link/sdks/typescript/client" \
+        "Running TypeScript client SDK Playwright tests" \
+        "test:browser" \
+        "test:browser:install"
+    run_npm_suite "link/sdks/typescript/cli" "Running TypeScript CLI package tests" "test"
     run_npm_suite "link/sdks/typescript/consumer" "Running TypeScript consumer SDK tests" "test"
     run_npm_suite "link/sdks/typescript/orm" "Running TypeScript ORM SDK tests" "test"
     run_npm_suite "link/sdks/typescript/react" "Running TypeScript React SDK unit tests" "test"
@@ -861,6 +1041,11 @@ run_supplementary_suites() {
     run_npm_suite "examples/simple-typescript" "Running simple-typescript Playwright tests" "test"
     run_npm_suite "examples/summarizer-agent" "Running summarizer-agent example tests" "test"
     run_npm_suite "ui" "Running admin UI tests" "test:ci"
+    run_npm_suite \
+        "ui" \
+        "Running admin UI Playwright tests" \
+        "test:e2e" \
+        "test:e2e:install"
 
     step "Running Dart SDK tests"
     (
@@ -994,6 +1179,12 @@ single_package_name() {
 
 # Run tests from workspace root
 cd "$REPO_ROOT"
+
+step "Verifying CLI test layout"
+verify_cli_test_layout
+
+prebuild_cli_oidc_server_binary_if_needed
+ensure_dex_for_oidc_tests
 
 if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"

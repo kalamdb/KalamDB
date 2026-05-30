@@ -12,9 +12,9 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.92%2B-orange.svg" alt="Rust" /></a>
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamstack/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/tests.json" alt="Overall Tests" /></a>
-  <a href="https://github.com/kalamstack/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamstack/KalamDB?display_name=tag" alt="Release" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/tests.json" alt="Overall Tests" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag" alt="Release" /></a>
   <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
   <a href="https://hub.docker.com/r/jamals86/pg-kalam"><img src="https://img.shields.io/docker/pulls/jamals86/pg-kalam?label=pg-kalam%20docker" alt="pg-kalam Docker Pulls" /></a>
 </p>
@@ -22,8 +22,8 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
 <p align="center"><strong>SDKs</strong></p>
 
 <p align="center">
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
-  <a href="https://github.com/kalamstack/KalamDB/actions/workflows/sdks.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamstack/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/typescript-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/dart-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
   <a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/v/%40kalamdb%2Fclient?label=typescript%20sdk" alt="TypeScript SDK" /></a>
   <a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=dart%20sdk" alt="Dart SDK" /></a>
 </p>
@@ -87,22 +87,34 @@ See [examples/chat-with-ai](examples/chat-with-ai/README.md) for the base live a
 
 ```bash
 KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
-curl -sSL https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/single/docker-compose.yml | docker-compose -f - up -d
+curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml | docker-compose -f - up -d
 ```
 
 ### 3-node cluster
 
 ```bash
 KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
-curl -sSL https://raw.githubusercontent.com/kalamstack/KalamDB/main/docker/run/cluster/docker-compose.yml | docker-compose -f - up -d
+curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml | docker-compose -f - up -d
 ```
 
 ### Local run
 
 ```bash
-git clone https://github.com/kalamstack/KalamDB.git
+git clone https://github.com/kalamdb/KalamDB.git
 cd KalamDB/backend
 cargo run --bin kalamdb-server
+```
+
+### CLI
+
+```bash
+npm install -g @kalamdb/cli
+
+# or
+curl -fsSL https://kalamdb.org/install.sh | sh
+
+kalam doctor
+kalam login --instance local --url http://localhost:2900
 ```
 
 ## Browser/Frontend Client Example

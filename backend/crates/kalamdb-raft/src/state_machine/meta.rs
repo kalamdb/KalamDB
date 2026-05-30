@@ -622,7 +622,7 @@ impl KalamStateMachine for MetaStateMachine {
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);
         self.publish_last_applied(snapshot.last_applied_index);
 
-        log::info!(
+        log::debug!(
             "MetaStateMachine: Loaded in-memory metadata tracker from snapshot \
              (applied={}, term={})",
             snapshot.last_applied_index,

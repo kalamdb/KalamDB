@@ -9,7 +9,7 @@ use tokio_postgres::{Config, NoTls};
 
 use super::common::{
     kalamdb_account_login_server_options, pg_backend_pid, postgres_error_text,
-    shared_leader_grpc_target, unique_name, TestEnv,
+    shared_leader_api_base_url, shared_leader_grpc_target, unique_name, TestEnv,
 };
 use crate::e2e_common::tcp_proxy::TcpDisconnectProxy;
 
@@ -171,14 +171,6 @@ async fn create_proxy_shared_foreign_table(
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
 }
 
-fn grpc_http_base_url(host: &str, grpc_port: u16) -> String {
-    let http_port = match grpc_port {
-        2910 => 2900,
-        _ => grpc_port.saturating_sub(1000),
-    };
-    format!("http://{host}:{http_port}")
-}
-
 async fn provision_proxy_shared_foreign_table(
     client: &tokio_postgres::Client,
     server_name: &str,
@@ -201,7 +193,7 @@ async fn provision_proxy_shared_foreign_table(
 
     ProvisionedProxy {
         proxy,
-        leader_base_url: grpc_http_base_url(&target_host, target_port),
+        leader_base_url: shared_leader_api_base_url().await,
     }
 }
 

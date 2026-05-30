@@ -5,7 +5,7 @@
 //!
 //! ## Indexes
 //!
-//! The users table has one secondary index (managed automatically):
+//! The users table has two secondary indexes (managed automatically):
 //!
 //! 1. **UserRoleIndex** - Query users by role
 //!    - Key: `{role}:{user_id}`
@@ -69,8 +69,8 @@ impl UsersTableProvider {
             ))),
         };
         provider
-            .refresh_privileged_role_cache()
-            .expect("failed to initialize system.users privileged role cache from the role index");
+            .refresh_role_caches()
+            .expect("failed to initialize system.users role caches from the role index");
         provider
     }
 
@@ -87,7 +87,7 @@ impl UsersTableProvider {
         // Insert user - indexes are managed automatically
         let row = Self::encode_user_row(&user)?;
         self.store.insert(&user.user_id, &row).into_system_error("insert user error")?;
-        self.update_privileged_role_cache_for_user(&user);
+        self.update_role_caches_for_user(&user);
         Ok(())
     }
 
@@ -115,7 +115,7 @@ impl UsersTableProvider {
         self.store
             .update_with_old(&user.user_id, Some(&existing_row), &new_row)
             .into_system_error("update user error")?;
-        self.update_privileged_role_cache_for_user(&user);
+        self.update_role_caches_for_user(&user);
         Ok(())
     }
 
@@ -141,7 +141,7 @@ impl UsersTableProvider {
         // Update user with deleted_at
         let row = Self::encode_user_row(&user)?;
         self.store.update(user_id, &row).into_system_error("update user error")?;
-        self.update_privileged_role_cache_for_user(&user);
+        self.update_role_caches_for_user(&user);
         Ok(())
     }
 
@@ -184,7 +184,7 @@ impl UsersTableProvider {
         self.create_batch(users)
     }
 
-    fn refresh_privileged_role_cache(&self) -> Result<(), SystemError> {
+    fn refresh_role_caches(&self) -> Result<(), SystemError> {
         let mut roles = HashMap::with_capacity(PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY);
         for role in [Role::Service, Role::Dba, Role::System] {
             self.load_privileged_role(role, &mut roles)?;
@@ -208,7 +208,7 @@ impl UsersTableProvider {
             let user_id = user_id.into_system_error("decode user role index key error")?;
             if let Some(user) = self.get_user_by_id(&user_id)? {
                 if is_impersonation_privileged_role(user.role) {
-                    roles.insert(user.user_id, user.role);
+                    roles.insert(user.user_id.clone(), user.role);
                 }
             }
         }
@@ -216,7 +216,7 @@ impl UsersTableProvider {
         Ok(())
     }
 
-    fn update_privileged_role_cache_for_user(&self, user: &User) {
+    fn update_role_caches_for_user(&self, user: &User) {
         let mut roles = self.privileged_roles.write();
         if is_impersonation_privileged_role(user.role) {
             roles.insert(user.user_id.clone(), user.role);

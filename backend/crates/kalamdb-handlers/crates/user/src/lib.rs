@@ -20,7 +20,7 @@ pub fn register_user_handlers(
         registry,
         SqlStatementKind::CreateUser(CreateUserStatement {
             username: "_placeholder".to_string(),
-            auth_type: AuthType::Internal,
+            auth_type: AuthType::Password,
             role: kalamdb_commons::Role::User,
             email: None,
             password: None,

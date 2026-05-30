@@ -734,7 +734,15 @@ impl HttpTestServer {
     }
 
     pub async fn shutdown(mut self) {
-        // Actix `stop(true)` is graceful: it waits for existing keep-alive connections.
+        // Drop cached clients before shutdown so persistent HTTP keep-alives don't stall teardown.
+        let clients = {
+            let mut cache = self.link_client_cache.lock().await;
+            std::mem::take(&mut *cache)
+        };
+        for client in clients.into_values() {
+            client.disconnect().await;
+        }
+
         if let Some((running, temp_dir)) = self.take_shutdown_parts() {
             running.shutdown().await;
             drop(temp_dir);
@@ -844,6 +852,8 @@ impl HttpTestServer {
 
 impl Drop for HttpTestServer {
     fn drop(&mut self) {
+        let clients = std::mem::take(self.link_client_cache.get_mut());
+
         let Some((running, temp_dir)) = self.take_shutdown_parts() else {
             return;
         };
@@ -854,6 +864,9 @@ impl Drop for HttpTestServer {
 
             if let Ok(runtime) = runtime {
                 runtime.block_on(async {
+                    for client in clients.into_values() {
+                        client.disconnect().await;
+                    }
                     running.shutdown().await;
                     drop(temp_dir);
                 });
@@ -954,7 +967,7 @@ async fn start_http_test_server_with_setup(
     config.rate_limit.max_messages_per_sec = 10000;
     override_config(&mut config);
 
-    kalamdb_auth::services::unified::init_auth_config(&config.auth, &config.oauth);
+    kalamdb_auth::services::unified::init_auth_config(&config.auth);
 
     let (components, app_context) = if initialize_cluster {
         kalamdb_server::lifecycle::bootstrap_isolated(&config).await?

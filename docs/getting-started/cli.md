@@ -13,12 +13,15 @@ cd backend
 cargo run
 ```
 
-2) Build the CLI
+2) Install the CLI
 
 ```bash
-cd cli
-cargo build --release
-./target/release/kalam --help
+npm install -g @kalamdb/cli
+
+# or
+curl -fsSL https://kalamdb.org/install.sh | sh
+
+kalam --help
 ```
 
 3) Connect and run a query
@@ -41,10 +44,25 @@ SELECT * FROM system.tables LIMIT 5;
 ### Install
 
 ```bash
-cd cli
-cargo build --release
+npm install -g @kalamdb/cli
 
-./target/release/kalam --help
+# or
+curl -fsSL https://kalamdb.org/install.sh | sh
+
+# from source
+cd cli && cargo build --release
+```
+
+### Tooling Commands
+
+```bash
+kalam version
+kalam doctor
+kalam update
+kalam login --instance prod --url https://db.example.com --user root --password
+kalam whoami --instance prod
+kalam logout --instance prod
+kalam token create --name ci-prod
 ```
 
 ### Connect
@@ -60,14 +78,16 @@ kalam --url http://localhost:2900
 kalam --host localhost --port 2900
 
 # User/password login
-kalam --user alice --password Secret123!
+kalam login --instance dev --user alice --password Secret123!
 
 # JWT
 kalam --token "<JWT_TOKEN>"
 
-# Save credentials (stores JWT token for future sessions)
-kalam --user alice --password Secret123! --save-credentials --instance dev
+# Save credentials and drop into the shell immediately when run from a terminal
+kalam login --instance dev --user alice --password Secret123!
 ```
+
+When `kalam login` runs in an interactive terminal, it enters the normal SQL shell immediately after a successful local or OIDC login. Non-interactive invocations still save credentials and exit so shell scripts can keep treating `login` as a one-shot command.
 
 ### Run SQL
 
@@ -125,6 +145,16 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `--run` – shell command executed after schema changes are detected
 - `--run-on-start` – execute the watch command once before polling
 - `--interval` – schema watch poll interval, default `5s`
+
+### Top-level commands
+
+- `kalam version` – print CLI version/build metadata
+- `kalam update [--version <version>] [--pre-release]` – replace the current binary with a verified GitHub release artifact
+- `kalam doctor [--strict]` – inspect binary path, config, credentials, healthcheck, and auth reachability
+- `kalam login --instance <name> --url <url>` – login, save access/refresh tokens, and enter the interactive shell immediately when run from a terminal
+- `kalam logout [--all]` – remove saved credentials locally and best-effort notify the server
+- `kalam whoami` – call `/v1/api/auth/me` with the resolved credentials
+- `kalam token create --name <name>` – create a service account and print a fresh access/refresh token pair
 
 ### Interactive `\` commands
 
@@ -467,7 +497,7 @@ SELECT * FROM system.jobs WHERE status = 'running';
 View server metrics using the `\stats` command (alias: `\metrics`). This runs:
 
 ```sql
-SELECT * FROM system.stats ORDER BY key;
+SELECT metric_name, metric_value FROM system.stats ORDER BY metric_name;
 ```
 
 ```bash
@@ -476,6 +506,15 @@ kalam> \stats
 
 # Or use the alias
 kalam> \metrics
+```
+
+Recent slow queries are available as a system view:
+
+```sql
+SELECT timestamp, duration_ms, user_id, table_name, query
+FROM system.slow_queries
+ORDER BY timestamp_ms DESC
+LIMIT 20;
 ```
 
 
@@ -546,7 +585,7 @@ kalam --csv
 ## Support
 
 For issues, questions, or contributions:
-- GitHub: [github.com/kalamstack/KalamDB](https://github.com/kalamstack/KalamDB)
+- GitHub: [github.com/kalamdb/KalamDB](https://github.com/kalamdb/KalamDB)
 - Documentation: [docs/README.md](../README.md)
 
 ---
