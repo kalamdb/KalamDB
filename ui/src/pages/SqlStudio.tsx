@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { StudioExplorerPanel } from "@/components/sql-studio-v2/browser-tree/StudioExplorerPanel";
@@ -14,7 +14,12 @@ import { useToast } from "@/components/ui/toaster-provider";
 import { useSqlPreview } from "@/components/sql-preview";
 
 import { QueryTabStrip } from "@/components/sql-studio-v2/input-form/QueryTabStrip";
-import { StudioEditorPanel } from "@/components/sql-studio-v2/input-form/StudioEditorPanel";
+import { EditorSkeleton } from "@/components/sql-studio-v2/input-form/EditorSkeleton";
+const StudioEditorPanel = lazy(() =>
+  import("@/components/sql-studio-v2/input-form/StudioEditorPanel").then((m) => ({
+    default: m.StudioEditorPanel,
+  })),
+);
 import { StudioInspectorPanel } from "@/components/sql-studio-v2/inspector/StudioInspectorPanel";
 import { StudioResultsGrid } from "@/components/sql-studio-v2/preview/StudioResultsGrid";
 import { Button } from "@/components/ui/button";
@@ -1265,6 +1270,7 @@ export default function SqlStudio() {
                     dispatch(setVerticalLayout([safeSize, 100 - safeSize]));
                   }}
                 >
+                  <Suspense fallback={<EditorSkeleton />}>
                   <StudioEditorPanel
                     schema={schema}
                     tabTitle={activeTab.title}
@@ -1291,6 +1297,7 @@ export default function SqlStudio() {
                     onSaveCopy={() => saveTab(activeTab.id, true)}
                     onDelete={deleteActiveTab}
                   />
+                  </Suspense>
                 </ResizablePanel>
 
                 <ResizableHandle withHandle />
