@@ -1,4 +1,4 @@
-import { Plus, MessageSquare, Sparkles } from "lucide-react";
+import { Plus, MessageSquare } from "lucide-react";
 import type { InferSelectModel } from "drizzle-orm";
 import type { conversations as ConversationsTable } from "@/schema";
 import { cn, formatTime } from "@/lib/utils";
@@ -25,11 +25,15 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside className="w-72 shrink-0 border-r border-[var(--surface-border)] flex flex-col min-h-0 bg-[var(--background-alt)]/60 backdrop-blur-xl">
-      <div className="p-4 border-b border-[var(--surface-border)] flex items-center gap-2">
-        <div className="size-7 rounded-lg bg-[var(--accent)] flex items-center justify-center shadow-[0_0_18px_var(--accent-glow)]">
-          <Sparkles className="size-4 text-[var(--accent-foreground)]" />
-        </div>
-        <span className="font-semibold text-sm tracking-tight">KalamDB Chat</span>
+      <div className="p-4 border-b border-[var(--surface-border)] flex items-end gap-2">
+        <img
+          src="/kalamdb-logo-dark.png"
+          alt="KalamDB"
+          className="h-7 w-auto object-contain"
+        />
+        <span className="font-semibold text-sm tracking-tight text-[var(--muted-foreground)] leading-none pb-0.5">
+          Chat
+        </span>
       </div>
       <div className="p-3">
         <button

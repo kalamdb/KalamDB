@@ -1,43 +1,50 @@
-import { MessageSquarePlus, Sparkles, Zap, ShieldCheck, Square } from "lucide-react";
+import { MessageSquarePlus, Zap, ShieldCheck, Square, BookOpen } from "lucide-react";
 
 const FEATURES = [
   {
     icon: Zap,
     title: "Streaming",
-    body: "Each LLM token is a row in typing_tokens. UI subscribes; no SSE plumbing.",
+    body: "Replies appear live as the model thinks — no waiting for the full answer.",
   },
   {
     icon: ShieldCheck,
     title: "Approvals",
-    body: "The agent calls request_approval. UI shows it; one click resolves.",
+    body: "The app pauses before anything destructive. One click and it continues.",
   },
   {
     icon: Square,
     title: "Stop, live",
-    body: "Stop button is an UPDATE. The agent watches its own row and aborts.",
+    body: "Hit Stop mid-response — the agent halts instantly.",
+  },
+  {
+    icon: BookOpen,
+    title: "RAG · Ask your KB",
+    body: "Ask anything about your knowledge base. Instant answers, with sources.",
   },
 ];
 
 export function Welcome({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="flex-1 flex items-center justify-center p-8 animate-slide-up">
-      <div className="max-w-xl w-full text-center space-y-8">
+      <div className="max-w-3xl w-full text-center space-y-8">
         <div className="relative inline-flex">
-          <div className="absolute inset-0 rounded-2xl bg-[var(--accent)] blur-2xl opacity-25" />
-          <div className="relative inline-flex items-center justify-center size-16 rounded-2xl bg-[var(--accent)] shadow-[0_0_40px_var(--accent-glow)]">
-            <Sparkles className="size-7 text-[var(--accent-foreground)]" />
-          </div>
+          <div className="absolute inset-0 bg-[var(--accent)] blur-3xl opacity-25" />
+          <img
+            src="/kalamdb-logo-dark.png"
+            alt="KalamDB"
+            className="relative h-16 w-auto object-contain"
+          />
         </div>
 
         <div className="space-y-3">
           <h1 className="text-3xl font-semibold tracking-tight">KalamDB Chat Starter</h1>
           <p className="text-sm text-[var(--muted-foreground)] leading-relaxed max-w-md mx-auto">
             Live queries power every real-time behavior in this app — streaming, approvals,
-            cancellation. No bespoke WebSocket plumbing.
+            cancellation. No bespoke WebSocket/SSE plumbing.
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-3 gap-3 text-left">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-left">
           {FEATURES.map((f) => (
             <div
               key={f.title}
