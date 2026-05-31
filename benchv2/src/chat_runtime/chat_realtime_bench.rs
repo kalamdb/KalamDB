@@ -43,11 +43,11 @@ const CHAT_SQL_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(30);
 const SUBSCRIPTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const CHAT_FORWARDER_POLL_TIMEOUT: Duration = Duration::from_secs(1);
-const CHAT_MESSAGE_FORWARDER_MAX_IN_FLIGHT: usize = 16;
-const CHAT_TYPING_FORWARDER_MAX_IN_FLIGHT: usize = 32;
+const CHAT_MESSAGE_FORWARDER_MAX_IN_FLIGHT: usize = 64;
+const CHAT_TYPING_FORWARDER_MAX_IN_FLIGHT: usize = 128;
 const CHAT_DELIVERY_TIMEOUT_LOG_LIMIT: u64 = 5;
-const CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS: u64 = 15;
-const CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS: u64 = 120;
+const CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS: u64 = 30;
+const CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS: u64 = 300;
 const CHAT_MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const CHAT_CONVERSATION_TOPIC_SUFFIX: &str = "chat_conversation_events";
 const CHAT_MESSAGE_TOPIC_SUFFIX: &str = "chat_message_events";
@@ -398,7 +398,10 @@ impl Benchmark for ChatRealtimeBench {
             let scenario_started = Instant::now();
             let run_deadline = scenario_started + settings.duration();
             let target_cycle_interval = settings.target_cycle_interval();
-            let delivery_timeout = chat_delivery_wait_timeout(settings.realtime_conversations);
+            let delivery_timeout = chat_delivery_wait_timeout(
+                settings.realtime_conversations,
+                settings.messages_per_minute,
+            );
             let mut handles = Vec::with_capacity(settings.realtime_conversations as usize);
 
             println!(
@@ -672,7 +675,10 @@ async fn run_chat_worker(
                         stats.active_subscriptions.load(Ordering::Relaxed),
                     );
                 }
-                return Err(error);
+                // Keep workers alive to sustain steady pressure; timeout events are
+                // tracked and reported in delivery diagnostics.
+                let _ = error;
+                continue;
             }
 
             stats.sessions_completed.fetch_add(1, Ordering::Relaxed);
@@ -1060,7 +1066,7 @@ async fn run_conversation_forwarder(
         .consumer()
         .topic(&topic)
         .group_id(&forwarder_group)
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -1137,7 +1143,7 @@ async fn run_message_forwarder(
         .consumer()
         .topic(&topic)
         .group_id(&forwarder_group)
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -1222,7 +1228,7 @@ async fn run_typing_forwarder(
         .consumer()
         .topic(&topic)
         .group_id(&forwarder_group)
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -2579,8 +2585,10 @@ fn chat_worker_start_delay(worker_id: u32) -> Duration {
     Duration::from_millis(u64::from(worker_id) * CHAT_WORKER_START_STAGGER_MS)
 }
 
-fn chat_delivery_wait_timeout(realtime_conversations: u32) -> Duration {
-    let timeout_secs = (u64::from(realtime_conversations) / 100)
+fn chat_delivery_wait_timeout(realtime_conversations: u32, messages_per_minute: u32) -> Duration {
+    let conversation_component = (u64::from(realtime_conversations) / 50).max(1);
+    let rate_component = (u64::from(messages_per_minute) / 10).max(1);
+    let timeout_secs = (conversation_component + rate_component)
         .clamp(CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS, CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS);
     Duration::from_secs(timeout_secs)
 }

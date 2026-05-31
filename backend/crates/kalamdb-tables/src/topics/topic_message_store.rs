@@ -302,27 +302,6 @@ impl TopicMessageStore {
         Ok(entries.into_iter().map(|(_, entry)| entry.message_bytes).sum())
     }
 
-    /// Rebuild retention index entries for a partition from the primary topic log.
-    pub fn rebuild_retention_index_for_partition(
-        &self,
-        topic_id: &TopicId,
-        partition_id: u32,
-    ) -> kalamdb_store::storage_trait::Result<u64> {
-        let messages = self.fetch_messages(topic_id, partition_id, 0, usize::MAX)?;
-        let mut entries = Vec::with_capacity(messages.len());
-
-        for message in messages {
-            let msg_id = message.id();
-            let key_encoded = msg_id.storage_key();
-            let value_encoded = message.encode()?;
-            let retention_entry =
-                TopicRetentionIndexEntry::new(&message, value_encoded.len() as u64);
-            entries.push((retention_entry, key_encoded, value_encoded));
-        }
-
-        self.batch_put_raw_with_retention(entries)
-    }
-
     fn scan_retention_entries(
         &self,
         prefix: &[u8],

@@ -3,7 +3,7 @@
 //! These functions are shared by the `DropTableHandler` (in `kalamdb-handlers`)
 //! and the `CleanupExecutor` (in `kalamdb-jobs`).
 
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
 use kalamdb_commons::{
     models::{StorageId, TableId},
@@ -188,6 +188,26 @@ pub async fn cleanup_parquet_files_internal(
             .files_deleted;
     }
 
+    if table_type == TableType::Stream {
+        let stream_table_dir = app_context
+            .config()
+            .storage
+            .streams_dir()
+            .join(table_id.namespace_id().as_str())
+            .join(table_id.table_name().as_str());
+
+        if stream_table_dir.exists() {
+            fs::remove_dir_all(&stream_table_dir).map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to delete stream log directory '{}' for {}: {}",
+                    stream_table_dir.display(),
+                    table_id,
+                    e
+                ))
+            })?;
+        }
+    }
+
     log::debug!("[CleanupHelper] Freed {} files from Parquet storage", files_deleted);
     Ok(0)
 }
@@ -215,4 +235,78 @@ pub async fn cleanup_metadata_internal(
 
     log::debug!("[CleanupHelper] Metadata cleanup complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use kalamdb_commons::models::{NamespaceId, TableName};
+
+    use super::*;
+    use crate::test_helpers::test_app_context_simple;
+
+    #[tokio::test]
+    async fn cleanup_stream_drop_removes_stream_log_directory() {
+        let app_ctx = test_app_context_simple();
+
+        let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let table_id = TableId::new(
+            NamespaceId::new(format!("cleanup_stream_ns_{}", unique)),
+            TableName::new(format!("cleanup_stream_tbl_{}", unique)),
+        );
+
+        let stream_table_dir = app_ctx
+            .config()
+            .storage
+            .streams_dir()
+            .join(table_id.namespace_id().as_str())
+            .join(table_id.table_name().as_str());
+        fs::create_dir_all(&stream_table_dir).expect("create stream table dir");
+        fs::write(stream_table_dir.join("orphan.log"), b"orphan").expect("create stream file");
+
+        let storage = StorageCleanupDetails {
+            storage_id: StorageId::local(),
+            base_directory: ".".to_string(),
+            relative_path_template: "{namespace}/{tableName}".to_string(),
+        };
+
+        cleanup_parquet_files_internal(&app_ctx, &table_id, TableType::Stream, &storage)
+            .await
+            .expect("cleanup stream drop");
+
+        assert!(
+            !stream_table_dir.exists(),
+            "stream log directory should be removed when stream table is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_stream_drop_succeeds_when_stream_directory_missing() {
+        let app_ctx = test_app_context_simple();
+
+        let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let table_id = TableId::new(
+            NamespaceId::new(format!("cleanup_stream_missing_ns_{}", unique)),
+            TableName::new(format!("cleanup_stream_missing_tbl_{}", unique)),
+        );
+
+        let stream_table_dir = app_ctx
+            .config()
+            .storage
+            .streams_dir()
+            .join(table_id.namespace_id().as_str())
+            .join(table_id.table_name().as_str());
+        let _ = fs::remove_dir_all(&stream_table_dir);
+
+        let storage = StorageCleanupDetails {
+            storage_id: StorageId::local(),
+            base_directory: ".".to_string(),
+            relative_path_template: "{namespace}/{tableName}".to_string(),
+        };
+
+        cleanup_parquet_files_internal(&app_ctx, &table_id, TableType::Stream, &storage)
+            .await
+            .expect("cleanup stream drop without dir");
+    }
 }

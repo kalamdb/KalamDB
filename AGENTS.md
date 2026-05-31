@@ -1,203 +1,113 @@
-# KalamDB Development Guidelines
+# KalamDB Agent Guidelines
 
-## 🎯 Core Coding Principles
+Keep context small. Read only the files needed for the current task. Do not scan historical planning files, generated files, dependency caches, benchmark reports, or large docs unless the user explicitly asks for them.
 
-**ALWAYS follow these essential guidelines:**
+## Core Rules
 
-1. **Model Separation**: Each model MUST be in its own separate file
-2. **AppContext-First Pattern**: Use `Arc<AppContext>` parameter instead of individual fields
-3. **Performance & Memory Optimization**: Focus on lightweight memory usage and high concurrency
-   - Use `Arc<T>` for zero-copy sharing (no cloning data)
-   - DashMap for lock-free concurrent access
-   - Memoize expensive computations (e.g., Arrow schema construction)
-   - Separate large structs from hot-path metadata (LRU timestamps in separate map)
-   - Cache singleton instances (e.g., UserTableShared per table, not per user)
+1. Put each model in its own file.
+2. Prefer `Arc<AppContext>` over passing many individual dependencies.
+3. Optimize for low memory, high concurrency, and short feedback loops.
+4. Use `Arc<T>` for shared data, `DashMap` for concurrent maps, and memoize expensive schema construction.
+5. Use `TableId` instead of passing `NamespaceId` and `TableName` separately.
+6. Use type-safe models/enums such as `NamespaceId`, `TableId`, `UserId`, `JobStatus`, `Role`, `TableType`, and `StorageId`; avoid raw strings for domain values.
+7. Import types at the top of Rust files. Do not add `use` statements inside methods.
+8. Import `UserId` directly instead of writing fully-qualified conversions inline:
+   ```rust
+   use kalamdb_commons::models::UserId;
+   ```
+9. Use `EntityStore`, not the `EntityStorev2` alias.
+10. Keep code organized with minimal duplication and no unrelated refactors.
+11. Use DataFusion for query processing, version resolution, and deletion filtering.
+12. Do not add SQL rewrite passes in hot paths. Prefer typed coercion at parameter binding, scalar coercion, provider write paths, DataFusion casts, or explicit UDFs.
 
-4. instead than doing user_id.map(kalamdb_commons::models::UserId::from); always add it to the head of the file:
-```rust
-use kalamdb_commons::models::UserId;
-```
+## Storage Boundaries
 
-5. Well-organized code with minimal duplication
-6. Leveraging DataFusion for query processing, version resolution, and deletion filtering
-7. WHEN FINIDNG MULTIPLE ERRORS dont kleep running cargo check or cargo build run one time and output to a file and fix all of them at once!
-8. Instead of passing both Namespaceid and TableName pass TableId which contains both
-9. Don't import use inside methods always add them to the top of the rust file instead
-10. EntityStore is used instead of using the EntityStorev2 alias
-11. Always use type-safe enums and types instead of raw strings (e.g., `JobStatus`, `Role`, `TableType`, `NamespaceId`, `TableId`)
+- Filesystem, object storage, Parquet files, file lifecycle, cleanup, compaction, and file size accounting belong in `backend/crates/kalamdb-filestore`.
+- RocksDB, key-value engines, partitions, and column families belong in `backend/crates/kalamdb-store`.
+- `kalamdb-core` should orchestrate and delegate storage work instead of embedding filesystem or RocksDB details.
 
-12. Filesystem vs RocksDB separation of concerns
-   - Filesystem/file storage logic (cold storage, Parquet files, directory management, file size accounting) must live in `backend/crates/kalamdb-filestore`
-   - Key-value storage engines and partition/column family logic must live in `backend/crates/kalamdb-store`
-   - Orchestration layers in `kalamdb-core` (DDL/DML handlers, job executors) should delegate to these crates and avoid embedding filesystem or RocksDB specifics directly
-   - When adding cleanup/compaction/file lifecycle functionality, implement it in `kalamdb-filestore` and call it from `kalamdb-core`
+## Project Map
 
-13. **Smoke Tests Priority**: Always ensure smoke tests are passing before committing changes. If smoke tests fail, fix them or the underlying backend issue immediately. Run `cargo test --test smoke` in the `cli` directory to verify.
-14. **Tracing Table Field Convention**: In spans/events, log `table_id` (format `namespace.table`) instead of separate `table_namespace` and `table_name` fields.
-15. **No SQL Rewrite in Hot Paths**: Do not add SQL/DML/SELECT rewrite passes in execution hot paths. Prefer type-safe coercion at typed boundaries (parameter binding, scalar coercion, provider write path, DataFusion-native casts/UDFs explicitly invoked by query authors) to avoid extra parse/transform overhead.
-16. **SDK Changes Must Update Docs**: Any change under `link/sdks/**` or SDK bridge crates (for example `link/kalam-link-dart/**`) must also update the corresponding SDK docs in the `KalamSite` repo (typically `../KalamSite/content/sdk/**`) and include appropriate test coverage.
-17. **KalamDB Skill Changes Must Stay Synced**: Any change that adds or changes user-facing commands, CLI flags, SQL syntax, system table behavior, SDK entry points, config/env names, operational runbooks, or other workflows captured by KalamDB skills must also update the canonical skill content in `../kalamdb-skills` and any generated in-repo mirrors (for example `.agents/skills/**`). Treat skill updates as part of the feature, not follow-up cleanup.
-18. **Performance-First Execution**: Prefer approaches that reduce runtime, allocations, binary size, and compile time; avoid adding abstractions or dependencies that materially slow hot paths or build/test feedback loops without a clear benefit.
-19. **Performance Test Timing**: Whenever you run performance tests, benchmarks, or perf-focused e2e cases, record and report how long each relevant test took in seconds.
-20. **Architecture Changes Must Update Architecture Docs**: When a change affects architecture, transaction flow, storage boundaries, execution paths, or cross-system integration, first check `docs/architecture/` and `docs/architecture/decisions/`, then update the relevant document or add a new one so those folders stay aligned with the codebase.
-
-> **⚠️ IMPORTANT**: Smoke tests require a running KalamDB server! Start the server first with `cargo run` in the `backend` directory before running smoke tests. The tests will fail if no server is running.
-
-**When adding a new dependency:**
-1. Add it to `Cargo.toml` (root) under `[workspace.dependencies]` with version
-2. Reference it in individual crates using `{ workspace = true }`
-3. Add crate-specific features if needed: `{ workspace = true, features = ["..."] }`
-4. Enable only the features that are actually required; prefer `default-features = false` when defaults pull in unused code or slow compilation.
-
-**To update a dependency version:**
-- Only edit the version in root `Cargo.toml`
-- All crates will automatically use the new version
-
-## SDK Versioning Rules
-
-- Root Rust release components share the root workspace version from `Cargo.toml`: server, CLI, PG extension, and the current `link/kalam-client` crate.
-- Each non-Rust SDK keeps its own package version source, but all packages under `link/sdks/typescript/**` move as one cohort and must use the same package version.
-- Internal TypeScript compatibility ranges for sibling KalamDB packages must use a prerelease-safe bounded floor. Do not use `>=X.Y.Z` while the shared SDK cohort is still on prereleases, because npm semver excludes versions like `X.Y.Z-beta.1` from that range. Use `>=X.Y.Z-0 <X.(Y+1).0` when you want a base-version floor that still admits current prereleases and prevents future minor or major drift. For the current 0.5 cohort, that means `>=0.5.0-0 <0.6.0`.
-- For local TypeScript SDK installs and tests before publish, keep sibling KalamDB packages available via `file:` devDependencies. A peerDependency alone is not enough when the depended-on package version has not been published yet.
-- When SDK versions or internal SDK dependency ranges change, update `versions.json` and validate with `python3 scripts/versions.py verify`.
-
-## Active Technologies
-- Rust 1.92+ (stable toolchain, edition 2021)
-- RocksDB 0.24, Apache Arrow 52.0, Apache Parquet 52.0, DataFusion 40.0, Actix-Web 4.4
-- RocksDB for write path (<1ms), Parquet for flushed storage (compressed columnar format)
-- TypeScript/JavaScript ES2020+ (frontend SDKs)
-- WASM for browser-based client library
-
-**Job Management System** (Phase 9 + Phase 8.5 Complete):
-- **UnifiedJobManager**: Typed JobIds across active and legacy-compatible job types, with idempotency and retry logic (3× default with exponential backoff)
-- **Registered Job Executors**: FlushExecutor, CleanupExecutor, StreamEvictionExecutor, CompactExecutor, BackupExecutor, RestoreExecutor, VectorIndexExecutor, TopicRetentionExecutor, and UserExportExecutor. Legacy RT/UC/TC job types remain only for historical `system.jobs` decoding.
-- **Status Transitions**: New → Queued → Running → Completed/Failed/Retrying/Cancelled
-- **Crash Recovery**: Marks Running jobs as Failed on server restart
-- **Idempotency Keys**: Format "{job_type}:{namespace}:{table}:{date}" prevents duplicate jobs
-
-**Authentication & Authorization**:
-- **bcrypt 0.15**: Password hashing (cost factor 12, min 8 chars, max 72 chars)
-- **jsonwebtoken 9.2**: JWT token generation and validation (HS256 algorithm)
-- **HTTP Basic Auth**: Base64-encoded username:password (Authorization: Basic header)
-- **JWT Bearer Tokens**: Stateless authentication (Authorization: Bearer header)
-- **OAuth 2.0 Integration**: Google Workspace, GitHub, Microsoft Azure AD
-- **RBAC (Role-Based Access Control)**: Four roles (user, service, dba, system)
-- **Actix-Web Middleware**: Custom authentication extractors and guards
-- **StorageBackend Abstraction**: `Arc<dyn StorageBackend>` isolates RocksDB dependencies
-
-## Project Navigation
-
-- `backend/`: Main Rust server workspace; most database engine work starts here.
-- `backend/crates/`: Core server crates grouped by responsibility; prefer editing the owning crate instead of cross-cutting changes.
-- `cli/`: Kalam CLI, smoke tests, and CLI-facing integration flows.
-- `link/`: SDK bridge workspace and shared link infrastructure.
+- `backend/`: Rust server workspace.
+- `backend/crates/`: server crates by ownership boundary.
+- `cli/`: CLI and smoke tests.
+- `link/`: SDK bridge workspace.
 - `link/sdks/typescript/`: TypeScript SDK.
-- `link/sdks/dart/`: Dart/Flutter SDK. `link/sdks/dart/lib/src/generated` is generated; regenerate and prepare the SDK with `link/sdks/dart/build.sh`.
-- `link/kalam-link-dart/`: Rust bridge/native layer used by the Dart SDK.
-- `pg/`: PostgreSQL extension workspace for `pg_kalam`; see `pg/pg_kalam.control`, `pg/src/`, `pg/crates/`, and `pg/tests/`.
-- `benchv2/`: Benchmark harness, scenarios, templates, and results for performance work.
-- `ui/`: Frontend/admin UI.
-- `docs/`: Architecture, API, security, and operational documentation. For architecture-affecting work, always check and update `docs/architecture/` and `docs/architecture/decisions/`.
-- `specs/`: Historical and active design specs by feature/phase.
-- `docker/`: Container builds and local deployment layouts.
+- `link/sdks/dart/`: Dart SDK. `link/sdks/dart/lib/src/generated` is generated; regenerate via `link/sdks/dart/build.sh`.
+- `link/kalam-link-dart/`: Rust bridge for Dart.
+- `pg/`: PostgreSQL extension.
+- `benchv2/`: benchmarks.
+- `ui/`: admin UI.
+- `docs/`: maintained architecture, API, security, and operational docs.
+- `docker/`: container builds and local deployment.
 
-## Project Structure
-backend/crates/
-- kalamdb-api: HTTP/REST + WebSocket server surface, routes, UI asset serving.
-- kalamdb-auth: Authentication/authorization (bcrypt, JWT, RBAC, guards).
-- kalamdb-commons: Shared types, IDs, constants, utilities.
-- kalamdb-configs: Server configuration structs and loaders.
-- kalamdb-core: Core orchestration (DDL/DML handlers, jobs, live queries, schema registry).
-- kalamdb-filestore: Filesystem + object-store (S3/GCS/Azure/local) Parquet segment lifecycle.
-- kalamdb-observability: Metrics/telemetry helpers and system stats.
-- kalamdb-publisher: Durable topic publishing (route matching, offset allocation, payload extraction), synchronous write-path integration.
-- kalamdb-raft: Raft consensus, replication, and cluster coordination.
-- kalamdb-session: Session context + permission-aware table provider abstraction.
-- kalamdb-sharding: Shard models and routing logic.
-- kalamdb-dialect: SQL dialect, parsing, classification, compatibility helpers, and reusable DDL ASTs.
-- kalamdb-store: RocksDB backend and storage abstractions; provides `EntityStore` and `IndexedEntityStore` (indexed store) with automatic secondary indexes.
-- kalamdb-streams: Stream storage and commit log utilities.
-- kalamdb-system: System tables + metadata providers (EntityStore/IndexedEntityStore-based), `TopicPublisher` trait.
-- kalamdb-tables: User/shared/stream table providers built on `EntityStore`/`IndexedEntityStore`.
+## Crate Ownership
 
-## Code Style
+- `kalamdb-api`: HTTP, REST, WebSocket, and UI asset serving.
+- `kalamdb-auth`: authentication, authorization, JWT, RBAC, guards.
+- `kalamdb-commons`: shared types, IDs, constants, utilities.
+- `kalamdb-configs`: server configuration.
+- `kalamdb-core`: orchestration, SQL handlers, jobs, live queries, schema registry.
+- `kalamdb-filestore`: filesystem and object-store Parquet segment lifecycle.
+- `kalamdb-observability`: metrics and telemetry helpers.
+- `kalamdb-publisher`: durable topic publishing.
+- `kalamdb-raft`: Raft consensus and cluster coordination.
+- `kalamdb-session`: session context and permission-aware providers.
+- `kalamdb-sharding`: shard models and routing.
+- `kalamdb-dialect`: SQL dialect, parsing, classification, and DDL ASTs.
+- `kalamdb-store`: RocksDB storage abstractions, `EntityStore`, and `IndexedEntityStore`.
+- `kalamdb-streams`: stream storage and commit log utilities.
+- `kalamdb-system`: system tables and metadata providers.
+- `kalamdb-tables`: user, shared, and stream table providers.
 
-- **Rust 2021 edition**: Follow standard Rust conventions
-- **Type-safe wrappers**: Use `NamespaceId`, `TableName`, `UserId`, `StorageId`, `TableType` enum, `UserRole` enum, `TableAccessLevel` enum instead of raw strings
-- **Error handling**: Use `Result<T, KalamDbError>` for all fallible operations
-- **Async**: Use `tokio` runtime, prefer `async/await` over raw futures
-- **Logging**: Use `log` macros (`info!`, `debug!`, `warn!`, `error!`)
-- **Serialization**: Use `serde` with `#[derive(Serialize, Deserialize)]`
+## Build And Test
 
-## Build & Check Cadence (MUST)
+- Batch compile feedback. For multi-file changes, finish an edit batch, then run one check and capture output, for example `cargo check > batch_compile_output.txt 2>&1`.
+- When there are multiple compiler errors, fix them from one captured output file instead of repeatedly running `cargo check`.
+- Use `cargo nextest run` for tests unless explicitly told otherwise.
+- CLI smoke tests require a running server. Start the backend first, then run smoke tests from `cli`.
+- Smoke tests are required before committing changes that affect backend or CLI behavior.
+- For CLI e2e tests, run `cargo nextest run --features e2e-tests` without `--no-fail-fast`; fix the first failure, then rerun.
+- For performance tests, benchmarks, or perf e2e cases, report each relevant runtime in seconds.
+- Add `#[ntest::timeout(time)]` to async tests using observed healthy runtime x 1.5.
 
-- Prefer batching compilation feedback to avoid slow edit-run loops.
-- When iterating on multi-file changes, run a single workspace-wide check and capture output to a file, fix all issues, then re-check:
-  - Example: `cargo check > batch_compile_output.txt 2>&1`
-  - Parse and address all errors/warnings in one pass; avoid running `cargo check` repeatedly after each tiny edit.
-- If a task requires multiple related code changes, finish the full edit batch first and only then run `cargo check` or `cargo build` when validation is actually needed.
-- Re-run `cargo check` only after a meaningful batch of fixes. This keeps feedback fast and focused, and prevents thrashing CI and local builds.
-
-## Testing (MUST)
-
-- Use `cargo nextest run` for all test executions unless explicitly told otherwise.
-- For CLI e2e tests: run `cargo nextest run --features e2e-tests` **without** `--no-fail-fast`, capture output to a file, then fix failures one-by-one by running only the failing test(s). Re-run the full suite after fixes.
-- For e2e test runs, do NOT pass `--no-fail-fast`. Run normally, fix the first failure, re-run until it passes, then move to the next failing issue.
-- To verify the full core repo test matrix, start the KalamDB server first and then run `./scripts/test-all.sh` from the repo root. This script runs the Rust workspace tests, the feature-gated FDW import test, PostgreSQL extension e2e tests, the TypeScript SDK tests, the admin UI tests, and the Dart SDK tests.
-- For performance-focused tests, benchmarks, and perf e2e cases, capture and report the runtime for each relevant test in seconds in the final update.
-- Always add `#[ntest::timeout(time)]` to every async test where `time` is the **actual observed runtime** × 1.5 (to cover slower machines).
-   - Example: if a test took 40s, set `#[ntest::timeout(60000)]`.
-   - Recalculate and update timeouts after significant changes to test behavior or data size.
-- Timeouts are guardrails, not the fix: do not increase a test timeout just because a test started failing. Fix the hang, race, or slow path first, then set the timeout from the measured healthy runtime × 1.5.
-
-## Workflows & Commands (Documented)
+## Commands
 
 - Backend build: `cd backend && cargo build`
-- Backend run (default config): `cd backend && cargo run` (server on `http://127.0.0.1:2900`)
-- Backend run (explicit binary): `cd backend && cargo run --bin kalamdb-server`
-- Full test sweep: `cd /path/to/KalamDB && ./scripts/test-all.sh` (start the backend server first)
-- Backend config bootstrap: `cd backend && cp server.example.toml server.toml`
-- Create API key user: `cd backend && cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"`
-- Backend config via env vars: `KALAMDB_SERVER_PORT=9000 KALAMDB_LOG_LEVEL=debug cargo run`
-- CLI build: `cd cli && cargo build --release` (binary at `cli/target/release/kalam`)
-- CLI smoke tests with env vars: `KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
-- Docker build and run: `cd docker/build && docker build -f Dockerfile -t jamals86/kalamdb:latest ../..` then `cd ../run/single && docker-compose up -d`
+- Backend run: `cd backend && cargo run --bin kalamdb-server`
+- CLI build: `cd cli && cargo build --release`
+- CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
+- Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
+- Version verification after SDK version changes: `python3 scripts/versions.py verify`
 
-**Authentication Patterns**:
-- **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext
-- **Timing-Safe Comparisons**: Use `bcrypt::verify()` for constant-time password verification
-- **JWT Claims**: Include `user_id`, `role`, `exp` (expiration) in token payload
-- **Role Hierarchy**: system > dba > service > user (enforced in authorization middleware)
-- **Generic Error Messages**: Use "Invalid username or password" (NEVER "user not found" vs "wrong password")
-- **Soft Deletes**: Set `deleted_at` timestamp, return same error as invalid credentials
-- **Authorization Checks**: Verify role permissions BEFORE executing database operations
-- **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
+## SDK And Docs
 
-## Security Review Checklist (MUST)
+- Add new Rust dependencies only in root `Cargo.toml` under `[workspace.dependencies]`; use `{ workspace = true }` in crates.
+- TypeScript SDK packages under `link/sdks/typescript/**` move as one version cohort.
+- While TypeScript SDK packages are on prereleases, use bounded internal ranges like `>=0.5.0-0 <0.6.0`, not `>=0.5.0`.
+- SDK changes under `link/sdks/**` or SDK bridge crates must update corresponding SDK docs in `../KalamSite/content/sdk/**` and include tests.
+- User-facing command, CLI flag, SQL syntax, system table, SDK entry point, config/env, or runbook changes must update canonical skill content in `../kalamdb-skills` and generated in-repo mirrors when applicable.
+- Architecture-affecting changes must update relevant docs under `docs/architecture/` or `docs/architecture/decisions/`.
 
-Always check these before shipping changes that touch APIs, auth, SQL, or storage:
-1. SQL injection: ensure any internal SQL built from user input is parsed/parameterized and not string-concatenated into privileged queries.
-2. Auth bypass: confirm every protected endpoint uses `AuthSessionExtractor` or verified JWT, not just header presence.
-3. Role escalation: verify role claims are validated against DB and `AS USER`/impersonation paths are gated.
-4. Flooding/bruteforce: ensure pre-auth rate limits are enabled and login/refresh endpoints are throttled.
-5. System tables: confirm non-admin roles cannot read or mutate `system.*` tables (including via views).
-6. Nested queries: confirm subqueries/UNION/VIEW cannot bypass system table guards.
-7. Anonymous access: enumerate public endpoints and validate the data they return is safe.
-8. File upload/download: validate paths, size limits, storage access checks, and cleanup on failure.
+## Security
 
-Suggested extra checks:
-1. Token handling: rotation, expiry, and refresh scope for access vs refresh tokens.
-2. Secrets in logs: ensure SQL redaction and auth events never log plaintext secrets.
-3. CORS/Origin: verify WS/HTTP origin checks align with deployment model.
+Before shipping API, auth, SQL, or storage changes, check:
 
-## Security Policies (MUST)
+- SQL injection: no privileged string-concatenated SQL from user input.
+- Auth bypass: protected endpoints validate sessions or JWTs, not just header presence.
+- Role escalation: role claims are checked against storage; impersonation is gated.
+- Pre-auth login and refresh endpoints are rate-limited.
+- Non-admin roles cannot access or mutate `system.*`, including through views, subqueries, or unions.
+- Public endpoints expose only safe data.
+- File upload/download paths, sizes, access checks, and cleanup are validated.
+- JWT secrets are non-default and at least 32 chars outside localhost.
+- Auth cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` in production.
+- WebSocket origins are validated when strict mode is enabled.
+- Login failures use generic messages and soft-deleted users behave like invalid credentials.
 
-1. Health endpoints must be localhost-only unless explicitly authenticated and authorized.
-2. Never treat `Authorization` header presence as authentication. Always validate tokens.
-3. Auth endpoints must be IP rate-limited in addition to account lockout.
-4. JWT secrets must be non-default and at least 32 chars; refuse startup on non-localhost if not.
-5. Cookies carrying auth tokens must be `HttpOnly` and `SameSite=Strict`; `Secure` in production.
-6. WebSocket origins must be validated against config or rejected when strict mode is enabled.
-7. Admin or root password by default should be set or is set to kalamdb123 for testing or writting in tests, and the user should be admin
+## Token Discipline
 
-the folder: link/sdks/dart/lib/src/generated is generated dont modify anything in it, to regenerate this run the link/sdks/dart/build.sh script which also prepares the SDK artefacts
+- Prefer scoped `rg` commands against relevant source directories.
+- Avoid broad searches from repo root unless necessary.
+- Do not read or summarize large docs, historical plans, generated code, dependency directories, benchmark HTML, or binary assets unless they are directly required.
+- If broad context is needed, first list candidate files, then open only the smallest relevant set.

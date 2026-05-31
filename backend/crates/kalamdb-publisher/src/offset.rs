@@ -8,21 +8,7 @@ use std::sync::{
 use dashmap::DashMap;
 use kalamdb_commons::models::TopicId;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct TopicPartitionKey {
-    topic_id: TopicId,
-    partition_id: u32,
-}
-
-impl TopicPartitionKey {
-    #[inline]
-    fn new(topic_id: &TopicId, partition_id: u32) -> Self {
-        Self {
-            topic_id: topic_id.clone(),
-            partition_id,
-        }
-    }
-}
+use crate::keys::TopicPartitionKey;
 
 /// Manages per-topic-partition offset counters using atomic operations.
 ///
