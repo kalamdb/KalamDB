@@ -17,6 +17,7 @@ describe("buildMetricChartData", () => {
         manifest_cache_rocksdb_entries: 9,
         active_connections_peak: 6,
         subscription_changes_delivered_per_second: 12,
+        subscription_bytes_delivered_per_second: 2048,
         pubsub_active_consumers: 4,
         pubsub_messages_consumed_per_second: 3,
         pubsub_messages_consumed_peak_per_second: 9,
@@ -36,6 +37,7 @@ describe("buildMetricChartData", () => {
         manifest_cache_rocksdb_entries: 7,
         active_connections_peak: 5,
         subscription_changes_delivered_per_second: 2,
+        subscription_bytes_delivered_per_second: 256,
         pubsub_active_consumers: 1,
         pubsub_messages_consumed_per_second: 0.5,
         pubsub_messages_consumed_peak_per_second: 4,
@@ -59,6 +61,7 @@ describe("buildMetricChartData", () => {
     expect(chartData[1].manifest_cache_rocksdb_entries).toBe(9);
     expect(chartData[1].active_connections_peak).toBe(6);
     expect(chartData[1].subscription_changes_delivered_per_second).toBe(12);
+    expect(chartData[1].subscription_bytes_delivered_per_second).toBe(2048);
     expect(chartData[1].pubsub_active_consumers).toBe(4);
     expect(chartData[1].pubsub_messages_consumed_per_second).toBe(3);
     expect(chartData[1].pubsub_messages_consumed_peak_per_second).toBe(9);

@@ -9,11 +9,12 @@ use kalamdb_commons::{
     websocket::{BatchControl, SubscriptionOptions, SubscriptionRequest, MAX_ROWS_PER_BATCH},
     WebSocketMessage,
 };
+use kalamdb_observability::record_subscription_delivery;
 use kalamdb_core::providers::arrow_json_conversion::row_into_json_map;
 use kalamdb_live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
 use log::{debug, error, warn};
 
-use super::{send_error, send_message};
+use super::{estimate_rows_payload_bytes, send_error, send_message};
 use crate::{limiter::RateLimiter, ws::models::WsErrorCode};
 
 /// Handle subscription request
@@ -167,7 +168,19 @@ pub async fn handle_subscribe(
                     rows_json,
                     batch_control,
                 );
-                let _ = send_message(session, &batch_msg, ser, compression_enabled).await;
+                let delivered_rows = match &batch_msg {
+                    WebSocketMessage::InitialDataBatch { rows, .. } => rows.len() as u64,
+                    _ => 0,
+                };
+                if send_message(session, &batch_msg, ser, compression_enabled).await.is_ok() {
+                    let delivered_bytes = match &batch_msg {
+                        WebSocketMessage::InitialDataBatch { rows, .. } => {
+                            estimate_rows_payload_bytes(rows)
+                        },
+                        _ => 0,
+                    };
+                    record_subscription_delivery(delivered_rows, delivered_bytes);
+                }
 
                 if !initial.has_more {
                     let flushed = connection_state.complete_initial_load(&subscription_id);

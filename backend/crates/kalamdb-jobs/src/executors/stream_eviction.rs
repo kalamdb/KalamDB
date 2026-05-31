@@ -603,6 +603,10 @@ mod tests {
             0,
             "expired stream files should be removed completely"
         );
+        assert!(
+            !harness.stream_base_dir.exists(),
+            "empty stream base directory should be removed after eviction"
+        );
         let remaining_rows = store.scan_all(None).expect("scan store after file eviction");
         assert_eq!(remaining_rows.len(), 0, "Expired file-backed rows should be removed");
     }

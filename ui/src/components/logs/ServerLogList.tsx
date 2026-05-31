@@ -15,6 +15,9 @@ import {
 import { formatTimestamp } from '@/lib/formatters';
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/config';
 
+const LOG_GRID_TEMPLATE_COLUMNS = 'minmax(190px, 220px) minmax(74px, 90px) minmax(180px, 240px) minmax(360px, 1fr)';
+const GRAPH_BUCKET_COUNT = 48;
+
 const LEVEL_CONFIG: Record<string, { color: string; icon: typeof AlertCircle }> = {
   'ERROR': { color: 'text-red-500', icon: AlertCircle },
   'WARN': { color: 'text-yellow-500', icon: AlertTriangle },
@@ -34,6 +37,10 @@ function sqlLiteral(value: string): string {
 function parseTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatBucketLabel(value: number): string {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function ServerLogList() {
@@ -90,30 +97,38 @@ export function ServerLogList() {
   }, [logs, searchQuery, caseSensitive]);
 
   const histogram = useMemo(() => {
-    const bucketCount = 24;
-    const hourMs = 60 * 60 * 1000;
-    const now = Date.now();
-    const start = now - (bucketCount - 1) * hourMs;
+    const timestamps = logs
+      .map((log) => parseTimestamp(log.timestamp))
+      .filter((timestamp): timestamp is number => timestamp !== null)
+      .sort((a, b) => a - b);
 
-    const buckets = Array.from({ length: bucketCount }, (_, index) => {
-      const bucketTime = start + index * hourMs;
+    if (timestamps.length === 0) {
+      return { buckets: [], maxCount: 0, rangeLabel: 'No timestamped logs' };
+    }
+
+    const start = timestamps[0];
+    const end = timestamps[timestamps.length - 1];
+    const span = Math.max(1, end - start);
+
+    const buckets = Array.from({ length: GRAPH_BUCKET_COUNT }, (_, index) => {
+      const bucketTime = start + (span * index) / Math.max(1, GRAPH_BUCKET_COUNT - 1);
       return {
-        label: new Date(bucketTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+        label: formatBucketLabel(bucketTime),
         count: 0,
       };
     });
 
-    for (const log of logs) {
-      const timestamp = parseTimestamp(log.timestamp);
-      if (timestamp === null || timestamp < start || timestamp > now) {
-        continue;
-      }
-      const bucket = Math.min(bucketCount - 1, Math.floor((timestamp - start) / hourMs));
+    for (const timestamp of timestamps) {
+      const bucket = Math.min(GRAPH_BUCKET_COUNT - 1, Math.floor(((timestamp - start) / span) * GRAPH_BUCKET_COUNT));
       buckets[bucket].count += 1;
     }
 
     const maxCount = buckets.reduce((max, bucket) => Math.max(max, bucket.count), 0);
-    return { buckets, maxCount };
+    return {
+      buckets,
+      maxCount,
+      rangeLabel: `${formatBucketLabel(start)} - ${formatBucketLabel(end)}`,
+    };
   }, [logs]);
 
   const hasOlderPage = logs.length === pageSize;
@@ -164,7 +179,7 @@ export function ServerLogList() {
     if (!oldest) {
       return;
     }
-    setPageCursors((prev) => [...prev, oldest]);
+    setPageCursors((prev) => [...prev.slice(0, pageIndex + 1), oldest]);
     setPageIndex((prev) => prev + 1);
   };
 
@@ -176,34 +191,54 @@ export function ServerLogList() {
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-background text-foreground font-mono text-sm border rounded-md overflow-hidden shadow-sm">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-md border bg-background text-sm text-foreground shadow-sm">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-muted/10 px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">Server Logs</h3>
+          <p className="text-xs text-muted-foreground">Query-backed view of system.server_logs</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" onClick={openSqlStudio} className="h-9">
+            <Play className="h-3.5 w-3.5 mr-2" />
+            Query
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsPaused(!isPaused)}
+            className={`h-9 ${isPaused ? 'text-primary border-primary/50' : 'text-muted-foreground'}`}
+          >
+            <Pause className="h-3.5 w-3.5 mr-2" />
+            {isPaused ? 'RESUME' : 'PAUSE'}
+          </Button>
+          <Button variant="outline" size="sm" className="h-9" onClick={() => refetch()} disabled={isLoading}>
+            <RefreshCw className={`h-3.5 w-3.5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            REFRESH
+          </Button>
+        </div>
+      </div>
+
       {/* Graph Section */}
-      <div className="h-28 border-b p-4 flex flex-col bg-muted/30">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-muted-foreground font-sans">Log Frequency Graph (last 24h)</span>
-          <span className="text-xs text-muted-foreground font-sans">{logs.length} rows on this page</span>
+      <div className="flex h-28 shrink-0 flex-col border-b bg-muted/30 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">Log Frequency Graph</span>
+          <span className="text-xs text-muted-foreground">{histogram.rangeLabel} · {logs.length} rows</span>
         </div>
         {histogram.maxCount === 0 ? (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground font-sans">
-            No timestamped logs available for the last 24 hours.
+          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+            No timestamped logs available.
           </div>
         ) : (
-          <div className="flex items-end justify-between h-14 gap-1 mt-1">
+          <div className="mt-1 flex h-14 items-end gap-px">
             {histogram.buckets.map((bucket, index) => {
-              const height = histogram.maxCount > 0 ? Math.max(6, Math.round((bucket.count / histogram.maxCount) * 48)) : 6;
-              const emphasized = index === histogram.buckets.length - 1;
+              const height = bucket.count > 0 ? Math.max(4, Math.round((bucket.count / histogram.maxCount) * 52)) : 2;
               return (
-                <div key={`${bucket.label}-${index}`} className="flex flex-col items-center flex-1 gap-1">
+                <div key={`${bucket.label}-${index}`} className="flex h-full min-w-0 flex-1 items-end">
                   <div
-                    className={emphasized ? 'w-full max-w-[22px] rounded-t-sm bg-primary' : 'w-full max-w-[22px] rounded-t-sm bg-muted-foreground/40'}
+                    className={bucket.count > 0 ? 'w-full rounded-t-sm bg-primary' : 'w-full rounded-t-sm bg-border'}
                     style={{ height: `${height}px` }}
                     title={`${bucket.label}: ${bucket.count} logs`}
                   />
-                  {index % 3 === 0 ? (
-                    <span className="text-[9px] text-muted-foreground">{bucket.label}</span>
-                  ) : (
-                    <span className="text-[9px] text-transparent">00:00</span>
-                  )}
                 </div>
               );
             })}
@@ -212,13 +247,11 @@ export function ServerLogList() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between p-3 border-b bg-muted/10 font-sans">
-        <h3 className="font-medium text-sm">Server Logs</h3>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-background px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filters</span>
+        </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={openSqlStudio} className="h-9">
-            <Play className="h-3.5 w-3.5 mr-2" />
-            Query
-          </Button>
 
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
             <input
@@ -229,7 +262,7 @@ export function ServerLogList() {
             />
             Case sensitive
           </label>
-          
+
           <div className="relative w-64">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -266,26 +299,14 @@ export function ServerLogList() {
               ))}
             </SelectContent>
           </Select>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsPaused(!isPaused)}
-            className={`h-9 ${isPaused ? 'text-primary border-primary/50' : 'text-muted-foreground'}`}
-          >
-            <Pause className="h-3.5 w-3.5 mr-2" />
-            {isPaused ? 'RESUME' : 'PAUSE'}
-          </Button>
-
-          <Button variant="outline" size="sm" className="h-9" onClick={() => refetch()} disabled={isLoading}>
-            <RefreshCw className={`h-3.5 w-3.5 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            REFRESH
-          </Button>
         </div>
       </div>
 
       {/* Table Header */}
-      <div className="grid grid-cols-[220px_90px_220px_1fr] gap-4 px-4 py-2 border-b text-xs font-semibold text-muted-foreground bg-muted/30 font-sans">
+      <div
+        className="grid min-w-[860px] gap-4 border-b bg-muted/30 px-4 py-2 text-xs font-semibold text-muted-foreground"
+        style={{ gridTemplateColumns: LOG_GRID_TEMPLATE_COLUMNS }}
+      >
         <div>Timestamp</div>
         <div>Level</div>
         <div>Target</div>
@@ -293,7 +314,7 @@ export function ServerLogList() {
       </div>
 
       {/* Table Body */}
-      <div className="flex-1 overflow-auto bg-background">
+      <div className="min-h-0 flex-1 overflow-auto bg-background font-mono">
         {error ? (
           <div className="p-4">
             <Alert variant="destructive">
@@ -322,7 +343,8 @@ export function ServerLogList() {
               return (
                 <div 
                   key={`${log.timestamp}-${index}`}
-                  className="grid grid-cols-[220px_90px_220px_1fr] gap-4 px-4 py-2 border-b border-border/50 hover:bg-muted/50 text-xs transition-colors"
+                  className="grid min-w-[860px] gap-4 border-b border-border/50 px-4 py-2 text-xs transition-colors hover:bg-muted/50"
+                  style={{ gridTemplateColumns: LOG_GRID_TEMPLATE_COLUMNS }}
                 >
                   <div className="text-muted-foreground truncate">
                     {formatTimestamp(log.timestamp, 'Timestamp(Microsecond, None)')}

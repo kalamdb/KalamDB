@@ -20,6 +20,7 @@
 //! Live query notifications remain separate (async, best-effort via NotificationService).
 
 mod models;
+mod keys;
 mod offset;
 mod payload;
 mod routing;

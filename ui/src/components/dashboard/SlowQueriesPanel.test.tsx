@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SlowQueriesPanel } from "@/components/dashboard/SlowQueriesPanel";
 import type { SlowQuery } from "@/services/systemTableService";
@@ -66,5 +67,28 @@ describe("SlowQueriesPanel", () => {
     render(<SlowQueriesPanel queries={[]} />);
 
     expect(screen.getByText("No slow queries recorded.")).toBeTruthy();
+  });
+
+  it("shows latest slow queries first with bottom pagination navigator", () => {
+    const queries: SlowQuery[] = Array.from({ length: 11 }, (_, index) => ({
+      timestamp: `2026-05-28T11:${String(index).padStart(2, "0")}:00Z`,
+      timestamp_ms: 1_779_964_800_000 + index * 60_000,
+      duration_ms: 1200 + index,
+      user_id: "root",
+      table_type: "user",
+      table_name: "events",
+      row_count: 1,
+      query: `SELECT ${index}`,
+    }));
+
+    render(<SlowQueriesPanel queries={queries} pageSize={10} />);
+
+    expect(screen.getByText("Page 1 / 2")).toBeTruthy();
+    expect(screen.getByText("SELECT 10")).toBeTruthy();
+    expect(screen.queryByText("SELECT 0")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Page 2 / 2")).toBeTruthy();
+    expect(screen.getByText("SELECT 0")).toBeTruthy();
   });
 });

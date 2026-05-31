@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronsLeft,
-  ChevronsRight,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   KeyRound,
@@ -11,7 +18,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { CodeBlock } from "@/components/ui/code-block";
@@ -74,7 +89,13 @@ interface CellViewerState {
   canEdit: boolean;
 }
 
-const PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 100;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250] as const;
+const DEFAULT_COLUMN_WIDTH = 220;
+const MIN_COLUMN_WIDTH = 96;
+const MAX_COLUMN_WIDTH = 640;
+const SELECT_COLUMN_WIDTH = 44;
+const LIVE_COLUMN_WIDTH = 148;
 const MAX_RENDERED_ROWS = 1000;
 
 function stringifyCellValue(value: unknown): string {
@@ -163,6 +184,8 @@ export function StudioResultsGrid({
 }: StudioResultsGridProps) {
   const [sortState, setSortState] = useState<SortState>(null);
   const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [selectedCell, setSelectedCell] = useState<SelectedCell>(null);
   const [cellContextMenu, setCellContextMenu] = useState<CellContextMenuState | null>(null);
@@ -203,6 +226,7 @@ export function StudioResultsGrid({
     discardAll();
     setSortState(null);
     setPageIndex(0);
+    setColumnWidths({});
     setSelectedRows(new Set());
     setSelectedCell(null);
     setCellContextMenu(null);
@@ -308,9 +332,9 @@ export function StudioResultsGrid({
     return indices;
   }, [sourceRows, sortState, edits, getCellEditedValue, isLiveMode, schema]);
 
-  const pageCount = Math.max(1, Math.ceil(sortedRowIndices.length / PAGE_SIZE));
-  const currentPageStart = pageIndex * PAGE_SIZE;
-  const currentPageRows = sortedRowIndices.slice(currentPageStart, currentPageStart + PAGE_SIZE);
+  const pageCount = Math.max(1, Math.ceil(sortedRowIndices.length / pageSize));
+  const currentPageStart = pageIndex * pageSize;
+  const currentPageRows = sortedRowIndices.slice(currentPageStart, currentPageStart + pageSize);
   const columnNames = useMemo(() => schema.map((field) => field.name), [schema]);
   const selectedCellKey = selectedCell ? `${selectedCell.rowIndex}:${selectedCell.columnName}` : null;
 
@@ -394,6 +418,41 @@ export function StudioResultsGrid({
     });
     setPageIndex(0);
   };
+
+  const columnWidth = useCallback(
+    (columnName: string) => columnWidths[columnName] ?? DEFAULT_COLUMN_WIDTH,
+    [columnWidths],
+  );
+
+  const handleResizeColumn = useCallback(
+    (event: ReactMouseEvent, columnName: string) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startWidth = columnWidth(columnName);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const nextWidth = Math.max(
+          MIN_COLUMN_WIDTH,
+          Math.min(MAX_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX),
+        );
+        setColumnWidths((current) => ({
+          ...current,
+          [columnName]: nextWidth,
+        }));
+      };
+
+      const handleMouseUp = () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    },
+    [columnWidth],
+  );
 
   const handleEditCell = (rowIndex: number, columnName: string, currentValue: unknown) => {
     if (!canMutateRows) {
@@ -748,19 +807,28 @@ export function StudioResultsGrid({
             </div>
           )}
 
-          <ScrollArea className="min-h-0 min-w-0 flex-1">
+          <ScrollArea className="min-h-0 min-w-0 flex-1 bg-muted/10">
             <div className="min-w-max">
-              <table className="min-w-max border-collapse">
+              <table className="table-fixed border-collapse">
+              <colgroup>
+                <col style={{ width: isLiveMode ? LIVE_COLUMN_WIDTH : SELECT_COLUMN_WIDTH }} />
+                {schema.map((field) => (
+                  <col
+                    key={field.name}
+                    style={{ width: columnWidth(field.name) }}
+                  />
+                ))}
+              </colgroup>
               <thead className="sticky top-0 z-10">
                 <tr>
                   {isLiveMode ? (
-                    <th className="w-[148px] border-r border-border bg-muted/40 px-2 py-2 text-left">
+                    <th className="h-10 border-r border-border bg-muted/30 px-2 text-left align-middle">
                       <span className={chromeLabelClassName}>
                         Live
                       </span>
                     </th>
                   ) : (
-                    <th className="w-10 border-r border-border bg-background px-2 py-2 text-left">
+                    <th className="h-10 border-r border-border bg-muted/30 px-2 text-left align-middle">
                       {canMutateRows ? (
                       <div className="flex items-center justify-center">
                         <input
@@ -790,36 +858,46 @@ export function StudioResultsGrid({
                     return (
                       <th
                         key={field.name}
-                        className="border-r border-border bg-background px-2 py-2 text-left"
+                        className="relative h-10 border-r border-border bg-muted/30 px-0 text-left align-middle"
                       >
                         <button
                           type="button"
-                          className="flex items-start gap-1 text-left"
+                          data-testid={`results-column-header-${field.name}`}
+                          className="flex h-10 w-full min-w-0 items-center gap-1.5 px-2 text-left"
                           onClick={() => handleSortColumn(field.name)}
                         >
-                          <span>
-                            <span className={cn("flex items-center gap-1.5", chromeLabelClassName, "text-foreground")}>
-                              <span>{field.name}</span>
-                              {field.isPrimaryKey && (
-                                <span
-                                  className="inline-flex items-center gap-1 rounded bg-amber-400/20 px-1 py-0.5 text-[9px] font-semibold text-amber-300"
-                                  title="Primary key column"
-                                >
-                                  <KeyRound className="h-2.5 w-2.5" />
-                                  PK
-                                </span>
-                              )}
-                            </span>
-                            <span className="block text-[10px] font-normal uppercase text-muted-foreground">
-                              {field.dataType}
-                            </span>
-                          </span>
-                          {isSorted && (
-                            sortState?.direction === "asc"
-                              ? <ArrowUp className="mt-0.5 h-3 w-3 text-primary" />
-                              : <ArrowDown className="mt-0.5 h-3 w-3 text-primary" />
+                          {field.isPrimaryKey && (
+                            <KeyRound
+                              className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                              aria-label="Primary key column"
+                            />
                           )}
+                          <span className="min-w-0 truncate text-xs font-semibold text-foreground">
+                            {field.name}
+                          </span>
+                          {" "}
+                          <span className="shrink-0 truncate font-mono text-[11px] font-normal text-muted-foreground">
+                            {field.dataType}
+                          </span>
+                          <span className="ml-auto shrink-0 text-muted-foreground/70">
+                            {isSorted ? (
+                              sortState?.direction === "asc" ? (
+                                <ArrowUp className="h-3.5 w-3.5 text-primary" />
+                              ) : (
+                                <ArrowDown className="h-3.5 w-3.5 text-primary" />
+                              )
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5" />
+                            )}
+                          </span>
                         </button>
+                        <button
+                          type="button"
+                          aria-label={`Resize ${field.name}`}
+                          title="Resize column"
+                          onMouseDown={(event) => handleResizeColumn(event, field.name)}
+                          className="absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none border-r border-transparent hover:border-sky-500 hover:bg-sky-500/30"
+                        />
                       </th>
                     );
                   })}
@@ -900,7 +978,7 @@ export function StudioResultsGrid({
                           </div>
                         </td>
                       ) : (
-                        <td className="border-r border-border px-2 py-1">
+                        <td className="border-r border-border bg-background px-2 py-1">
                           {canMutateRows ? (
                           <div className="flex items-center justify-center">
                             <input
@@ -932,7 +1010,7 @@ export function StudioResultsGrid({
                         const cellKey = `${rowIndex}:${field.name}`;
 
                         return (
-                          <td key={`${rowIndex}-${field.name}`} className="border-r border-border px-1 py-1">
+                          <td key={`${rowIndex}-${field.name}`} className="border-r border-border bg-background px-0 py-0 align-middle">
                             <div
                               data-row-index={rowIndex}
                               data-column-name={field.name}
@@ -963,7 +1041,7 @@ export function StudioResultsGrid({
                                 });
                               }}
                               className={cn(
-                                "min-h-6 px-1 py-0.5 font-mono text-xs outline-none transition-colors duration-500",
+                                "min-h-9 overflow-hidden px-2 py-1.5 text-xs outline-none transition-colors duration-500",
                                 value === null && "italic text-muted-foreground",
                                 cellEdited && "bg-amber-500/20",
                                 selectedCellKey === cellKey && "ring-1 ring-ring",
@@ -991,49 +1069,63 @@ export function StudioResultsGrid({
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
 
-          <div className="flex shrink-0 items-center justify-between border-t border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
+          <div className="flex h-11 shrink-0 items-center border-t border-border bg-background px-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
               <Button
                 size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => setPageIndex(0)}
-                disabled={pageIndex === 0}
-              >
-                <ChevronsLeft className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
+                variant="outline"
+                className="h-8 w-8"
                 onClick={() => setPageIndex((previous) => Math.max(0, previous - 1))}
                 disabled={pageIndex === 0}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
+              <span>Page</span>
+              <Input
+                aria-label="Results page"
+                type="number"
+                min={1}
+                max={pageCount}
+                value={pageIndex + 1}
+                onChange={(event) => {
+                  const parsedPage = Number(event.target.value);
+                  if (!Number.isFinite(parsedPage)) {
+                    return;
+                  }
+                  setPageIndex(Math.max(0, Math.min(pageCount - 1, parsedPage - 1)));
+                }}
+                className="h-8 w-16 text-center text-xs"
+              />
+              <span>of {pageCount}</span>
               <Button
                 size="icon"
-                variant="ghost"
-                className="h-7 w-7"
+                variant="outline"
+                className="h-8 w-8"
                 onClick={() => setPageIndex((previous) => Math.min(pageCount - 1, previous + 1))}
                 disabled={pageIndex >= pageCount - 1}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => setPageIndex(Math.max(0, pageCount - 1))}
-                disabled={pageIndex >= pageCount - 1}
+              <Select
+                value={String(pageSize)}
+                onValueChange={(value) => {
+                  setPageSize(Number(value));
+                  setPageIndex(0);
+                }}
               >
-                <ChevronsRight className="h-3.5 w-3.5" />
-              </Button>
+                <SelectTrigger className="h-8 w-[92px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={String(option)} className="text-xs">
+                      {option} rows
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span>{sortedRowIndices.length.toLocaleString()} records</span>
             </div>
-
-            <span>
-              Page {pageIndex + 1} of {pageCount}
-            </span>
           </div>
 
           <CellContextMenu

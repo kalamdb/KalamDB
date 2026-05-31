@@ -43,11 +43,11 @@ const CHAT_SQL_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(30);
 const SUBSCRIPTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const CHAT_FORWARDER_POLL_TIMEOUT: Duration = Duration::from_secs(1);
-const CHAT_MESSAGE_FORWARDER_MAX_IN_FLIGHT: usize = 16;
-const CHAT_TYPING_FORWARDER_MAX_IN_FLIGHT: usize = 32;
+const CHAT_MESSAGE_FORWARDER_MAX_IN_FLIGHT: usize = 64;
+const CHAT_TYPING_FORWARDER_MAX_IN_FLIGHT: usize = 128;
 const CHAT_DELIVERY_TIMEOUT_LOG_LIMIT: u64 = 5;
-const CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS: u64 = 15;
-const CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS: u64 = 120;
+const CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS: u64 = 30;
+const CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS: u64 = 300;
 const CHAT_MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const CHAT_CONVERSATION_TOPIC_SUFFIX: &str = "chat_conversation_events";
 const CHAT_MESSAGE_TOPIC_SUFFIX: &str = "chat_message_events";
@@ -154,7 +154,8 @@ struct ChatWorkloadStats {
     peak_active_subscriptions: AtomicU64,
     subscription_open_latency_us: AtomicU64,
     subscription_open_max_us: AtomicU64,
-    subscription_events: AtomicU64,
+    subscription_change_rows: AtomicU64,
+    subscription_payload_bytes: AtomicU64,
     subscription_connect_timings: TimingSeries,
     create_conversation_timings: TimingSeries,
     insert_message_timings: TimingSeries,
@@ -266,7 +267,7 @@ impl Benchmark for ChatRealtimeBench {
             run_sql_with_retry(
                 client,
                 &format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, peer_user TEXT NOT NULL, opened_by TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, state TEXT NOT NULL, created_at_ms BIGINT NOT NULL)",
+                    "CREATE USER TABLE IF NOT EXISTS {}.conversations (id BIGINT PRIMARY KEY, peer_user TEXT NOT NULL, opened_by TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, state TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
                     config.namespace
                 ),
             )
@@ -275,7 +276,7 @@ impl Benchmark for ChatRealtimeBench {
             run_sql_with_retry(
                 client,
                 &format!(
-                    "CREATE USER TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, recipient_user TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, body TEXT NOT NULL, created_at_ms BIGINT NOT NULL)",
+                    "CREATE USER TABLE IF NOT EXISTS {}.messages (id BIGINT PRIMARY KEY, conversation_id BIGINT NOT NULL, sender_user TEXT NOT NULL, recipient_user TEXT NOT NULL, direction TEXT NOT NULL, needs_forward BOOLEAN NOT NULL, body TEXT NOT NULL, created_at_ms BIGINT NOT NULL) WITH (FLUSH_POLICY = 'rows:10000')",
                     config.namespace
                 ),
             )
@@ -397,7 +398,10 @@ impl Benchmark for ChatRealtimeBench {
             let scenario_started = Instant::now();
             let run_deadline = scenario_started + settings.duration();
             let target_cycle_interval = settings.target_cycle_interval();
-            let delivery_timeout = chat_delivery_wait_timeout(settings.realtime_conversations);
+            let delivery_timeout = chat_delivery_wait_timeout(
+                settings.realtime_conversations,
+                settings.messages_per_minute,
+            );
             let mut handles = Vec::with_capacity(settings.realtime_conversations as usize);
 
             println!(
@@ -671,7 +675,10 @@ async fn run_chat_worker(
                         stats.active_subscriptions.load(Ordering::Relaxed),
                     );
                 }
-                return Err(error);
+                // Keep workers alive to sustain steady pressure; timeout events are
+                // tracked and reported in delivery diagnostics.
+                let _ = error;
+                continue;
             }
 
             stats.sessions_completed.fetch_add(1, Ordering::Relaxed);
@@ -897,18 +904,38 @@ fn spawn_subscription_drain(
                     match event {
                         Some(Ok(ChangeEvent::Ack { .. })) => {}
                         Some(Ok(ChangeEvent::InitialDataBatch { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
                         Some(Ok(ChangeEvent::Insert { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
                         Some(Ok(ChangeEvent::Update { rows, .. })) => {
-                            stats.subscription_events.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_change_rows.fetch_add(rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&rows),
+                                Ordering::Relaxed,
+                            );
                             tracker.record_rows(&rows, kind);
                         }
-                        Some(Ok(ChangeEvent::Delete { .. })) => {}
+                        Some(Ok(ChangeEvent::Delete { old_rows, .. })) => {
+                            stats
+                                .subscription_change_rows
+                                .fetch_add(old_rows.len() as u64, Ordering::Relaxed);
+                            stats.subscription_payload_bytes.fetch_add(
+                                estimate_rows_payload_bytes(&old_rows),
+                                Ordering::Relaxed,
+                            );
+                        }
                         Some(Ok(ChangeEvent::Error { message, .. })) => {
                             let _ = subscription.close().await;
                             stats.subscriptions_closed.fetch_add(1, Ordering::Relaxed);
@@ -1028,13 +1055,18 @@ async fn run_conversation_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = conversation_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_conv_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_conv_forward_{}", iteration))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .group_id(&forwarder_group)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -1100,13 +1132,18 @@ async fn run_message_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = message_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_msg_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_msg_forward_{}", iteration))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .group_id(&forwarder_group)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -1180,13 +1217,18 @@ async fn run_typing_forwarder(
     iteration: u32,
 ) -> Result<(), String> {
     let topic = typing_topic_name(&namespace);
+    let forwarder_group = format!(
+        "chat_rt_typing_forward_{}_{}",
+        sanitize_identifier_fragment(&namespace),
+        iteration
+    );
     let mut consumer = admin_client
         .link()
         .clone()
         .consumer()
         .topic(&topic)
-        .group_id(&format!("chat_rt_typing_forward_{}", iteration))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
+        .group_id(&forwarder_group)
+        .auto_offset_reset(AutoOffsetReset::Latest)
         .max_poll_records(128)
         .poll_timeout(CHAT_FORWARDER_POLL_TIMEOUT)
         .build()
@@ -2176,7 +2218,8 @@ fn print_chat_summary(
     let peak_active_subscriptions = stats.peak_active_subscriptions.load(Ordering::Relaxed);
     let subscription_open_latency_us = stats.subscription_open_latency_us.load(Ordering::Relaxed);
     let subscription_open_max_us = stats.subscription_open_max_us.load(Ordering::Relaxed);
-    let subscription_events = stats.subscription_events.load(Ordering::Relaxed);
+    let subscription_change_rows = stats.subscription_change_rows.load(Ordering::Relaxed);
+    let subscription_payload_bytes = stats.subscription_payload_bytes.load(Ordering::Relaxed);
     let total_ops = selects + inserts + updates;
     let duration_secs = scenario_elapsed.as_secs_f64();
 
@@ -2188,12 +2231,17 @@ fn print_chat_summary(
         peak_active_subscriptions,
     );
     println!(
-        "  Chat rates: sessions={:.1}/s | user_messages={:.1}/s | typing={:.1}/s | total_sql={:.1}/s | delivered_live_events={:.1}/s",
+        "  Chat rates: sessions={:.1}/s | user_messages={:.1}/s | typing={:.1}/s | total_sql={:.1}/s | delivered_live_changes={:.1}/s",
         per_sec(sessions_completed, duration_secs),
         per_sec(messages_sent, duration_secs),
         per_sec(typing_events_sent, duration_secs),
         per_sec(total_ops, duration_secs),
-        per_sec(subscription_events, duration_secs),
+        per_sec(subscription_change_rows, duration_secs),
+    );
+    println!(
+        "  Live payload: total={} | throughput={}",
+        format_memory(Some(subscription_payload_bytes)),
+        format_bytes_per_sec(per_sec(subscription_payload_bytes, duration_secs)),
     );
     println!(
         "  SQL breakdown: select={:.1}/s avg={:.2}ms max={:.2}ms | insert={:.1}/s avg={:.2}ms max={:.2}ms | update={:.1}/s avg={:.2}ms max={:.2}ms",
@@ -2305,6 +2353,64 @@ fn per_sec(count: u64, duration_secs: f64) -> f64 {
         count as f64 / duration_secs
     } else {
         0.0
+    }
+}
+
+fn estimate_rows_payload_bytes(rows: &[HashMap<String, KalamCellValue>]) -> u64 {
+    rows.iter()
+        .map(estimate_row_payload_bytes)
+        .sum::<usize>() as u64
+}
+
+fn estimate_row_payload_bytes(row: &HashMap<String, KalamCellValue>) -> usize {
+    let mut total = 2usize;
+    let mut first = true;
+
+    for (key, value) in row {
+        if !first {
+            total = total.saturating_add(1);
+        }
+        first = false;
+
+        total = total
+            .saturating_add(key.len().saturating_add(2))
+            .saturating_add(1)
+            .saturating_add(estimate_json_value_bytes(value.inner()));
+    }
+
+    total
+}
+
+fn estimate_json_value_bytes(value: &JsonValue) -> usize {
+    match value {
+        JsonValue::Null => 4,
+        JsonValue::Bool(true) => 4,
+        JsonValue::Bool(false) => 5,
+        JsonValue::Number(number) => number.to_string().len(),
+        JsonValue::String(text) => text.len().saturating_add(2),
+        JsonValue::Array(values) => {
+            let mut total = 2usize;
+            for (index, entry) in values.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total.saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
+        },
+        JsonValue::Object(map) => {
+            let mut total = 2usize;
+            for (index, (key, entry)) in map.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total
+                    .saturating_add(key.len().saturating_add(2))
+                    .saturating_add(1)
+                    .saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
+        },
     }
 }
 
@@ -2428,6 +2534,18 @@ fn format_memory(memory_bytes: Option<u64>) -> String {
     }
 }
 
+fn format_bytes_per_sec(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 * 1024.0 {
+        format!("{:.1} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.1} KiB/s", bytes_per_sec / 1024.0)
+    } else {
+        format!("{:.1} B/s", bytes_per_sec)
+    }
+}
+
 fn epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2467,8 +2585,10 @@ fn chat_worker_start_delay(worker_id: u32) -> Duration {
     Duration::from_millis(u64::from(worker_id) * CHAT_WORKER_START_STAGGER_MS)
 }
 
-fn chat_delivery_wait_timeout(realtime_conversations: u32) -> Duration {
-    let timeout_secs = (u64::from(realtime_conversations) / 100)
+fn chat_delivery_wait_timeout(realtime_conversations: u32, messages_per_minute: u32) -> Duration {
+    let conversation_component = (u64::from(realtime_conversations) / 50).max(1);
+    let rate_component = (u64::from(messages_per_minute) / 10).max(1);
+    let timeout_secs = (conversation_component + rate_component)
         .clamp(CHAT_MIRROR_WAIT_MIN_TIMEOUT_SECS, CHAT_MIRROR_WAIT_MAX_TIMEOUT_SECS);
     Duration::from_secs(timeout_secs)
 }

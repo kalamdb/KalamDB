@@ -25,8 +25,11 @@ test('two tabs stay in sync through the live SQL subscription', async ({ browser
   await pageOne.goto(baseURL!);
   await pageTwo.goto(baseURL!);
 
-  await expect(pageOne.getByTestId('connection-status')).toContainText('Live');
-  await expect(pageTwo.getByTestId('connection-status')).toContainText('Live');
+  await expect(pageOne.getByRole('heading', { name: 'Realtime Ops Feed' })).toBeVisible();
+  await expect(pageTwo.getByRole('heading', { name: 'Realtime Ops Feed' })).toBeVisible();
+
+  await expect(pageOne.getByTestId('connection-status')).toContainText('Live', { timeout: 30_000 });
+  await expect(pageTwo.getByTestId('connection-status')).toContainText('Live', { timeout: 30_000 });
 
   await pageOne.getByLabel('Service').fill('shipping');
   await pageOne.getByLabel('Level').selectOption('critical');

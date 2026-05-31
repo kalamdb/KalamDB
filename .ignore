@@ -1,0 +1,22 @@
+# Keep local code search focused and avoid huge tool outputs.
+specs/
+benchv2/results/
+docs/development/rust-method-index.txt
+docs/notes/
+docs/plans/
+docs/plans/*.png
+
+# Generated, dependency, and build output.
+**/node_modules/
+**/target/
+**/.wasm-cargo-home/
+**/.wasm-target/
+link/sdks/dart/lib/src/generated/
+link/sdks/dart/build/
+link/sdks/dart/.dart_tool/
+
+# Runtime output.
+logs/
+**/logs/
+*.log
+*.jsonl

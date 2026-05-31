@@ -1,4 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -13,6 +15,7 @@ import type { SlowQuery } from "@/services/systemTableService";
 interface SlowQueriesPanelProps {
   queries: SlowQuery[];
   isLoading?: boolean;
+  pageSize?: number;
 }
 
 type SlowQueryPriority = "low" | "medium" | "high";
@@ -75,7 +78,27 @@ function formatTimestamp(value: unknown): string {
   });
 }
 
-export function SlowQueriesPanel({ queries, isLoading }: SlowQueriesPanelProps) {
+export function SlowQueriesPanel({ queries, isLoading, pageSize = 10 }: SlowQueriesPanelProps) {
+  const sortedQueries = useMemo(
+    () => [...queries].sort((left, right) => normalizeDuration(right.timestamp_ms) - normalizeDuration(left.timestamp_ms)),
+    [queries],
+  );
+  const totalPages = Math.max(1, Math.ceil(sortedQueries.length / pageSize));
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setPage(1);
+  }, [sortedQueries.length]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const pageStart = (page - 1) * pageSize;
+  const visibleQueries = sortedQueries.slice(pageStart, pageStart + pageSize);
+
   return (
     <Card>
       <CardHeader>
@@ -102,7 +125,7 @@ export function SlowQueriesPanel({ queries, isLoading }: SlowQueriesPanelProps) 
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {queries.map((query) => {
+                {visibleQueries.map((query) => {
                   const priority = getSlowQueryPriority(query.duration_ms);
                   return (
                     <TableRow key={`${query.timestamp_ms}-${query.query}`}>
@@ -119,6 +142,32 @@ export function SlowQueriesPanel({ queries, isLoading }: SlowQueriesPanelProps) 
                 })}
               </TableBody>
             </Table>
+            <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
+              <span>
+                Showing {visibleQueries.length} of {sortedQueries.length} latest queries
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  Previous
+                </Button>
+                <span>
+                  Page {page} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </CardContent>

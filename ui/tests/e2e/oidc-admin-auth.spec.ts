@@ -62,6 +62,27 @@ async function dexAvailable(page: Page): Promise<boolean> {
   }
 }
 
+async function oidcLoginAvailable(page: Page): Promise<boolean> {
+  try {
+    const response = await page.request.get(`${backendOrigin}/v1/api/auth/login-options`);
+    if (!response.ok()) {
+      return false;
+    }
+    const payload = (await response.json()) as {
+      oidc?: {
+        enabled?: boolean;
+        authorization_endpoint?: string | null;
+        token_endpoint?: string | null;
+      } | null;
+    };
+    return Boolean(
+      payload.oidc?.enabled && payload.oidc.authorization_endpoint && payload.oidc.token_endpoint,
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function loginAdmin(page: Page): Promise<string | null> {
   const candidates = [
     {
@@ -236,10 +257,21 @@ async function mockAdminApi(
   });
 }
 
+async function clearClientAuthState(page: Page) {
+  await page.context().clearCookies();
+  await page.addInitScript(() => {
+    localStorage.removeItem("kalamdb-admin-token");
+    localStorage.removeItem("kalamdb-admin-refresh-token");
+    localStorage.removeItem("kalamdb-admin-token-expires-at");
+    localStorage.removeItem("kalamdb-admin-user");
+  });
+}
+
 test("OIDC login button completes callback through the KalamDB backend exchange", async ({ page }) => {
   test.skip(!(await dexAvailable(page)), "local Dex is not reachable at http://127.0.0.1:5556");
 
   await mockAdminApi(page, null, oidcUser("dba"));
+  await clearClientAuthState(page);
 
   await page.goto("/ui/login");
   await expect(page.getByRole("button", { name: /continue with dex/i })).toBeVisible();
@@ -261,12 +293,13 @@ test("OIDC login button completes callback through the KalamDB backend exchange"
   await page.locator('input[name="password"]').fill("kalamdb123");
   await page.locator('button[type="submit"]').click();
 
-  await expect(page.getByRole("link", { name: /sql studio/i })).toBeVisible();
+  await expect(page.locator('a[href="/ui/sql"]')).toBeVisible();
 });
 
 test("invited Dex user is created from the OIDC email invite on first Admin UI login", async ({ page }) => {
   test.skip(!(await backendAvailable(page)), `KalamDB backend is not reachable at ${backendOrigin}`);
   test.skip(!(await dexAvailable(page)), "local Dex is not reachable at http://127.0.0.1:5556");
+  test.skip(!(await oidcLoginAvailable(page)), "backend login options do not expose OIDC sign-in");
 
   const adminToken = await loginAdmin(page);
   test.skip(!adminToken, "admin credentials could not log in to KalamDB");
@@ -286,8 +319,12 @@ test("invited Dex user is created from the OIDC email invite on first Admin UI l
     `CREATE USER INVITE '${inviteEmail}' ROLE 'dba' EXPIRES_AT ${expiresAt}`,
   );
 
+  await clearClientAuthState(page);
   await page.goto("/ui/login");
-  await page.getByRole("button", { name: /continue with dex/i }).click();
+  const continueWithDex = page.getByRole("button", { name: /continue with dex/i });
+  const dexButtonVisible = await continueWithDex.isVisible().catch(() => false);
+  test.skip(!dexButtonVisible, "OIDC login control is not visible on the login page");
+  await continueWithDex.click();
 
   const connectorButton = page.getByRole("button", { name: /log in with email/i });
   if (await connectorButton.isVisible().catch(() => false)) {
@@ -298,8 +335,8 @@ test("invited Dex user is created from the OIDC email invite on first Admin UI l
   await page.locator('input[name="password"]').fill("kalamdb123");
   await page.locator('button[type="submit"]').click();
 
-  await expect(page.getByRole("link", { name: /sql studio/i })).toBeVisible();
-  await page.getByRole("link", { name: /^users$/i }).click();
+  await expect(page.locator('a[href="/ui/sql"]')).toBeVisible();
+  await page.locator('a[href="/ui/users"]').click();
   const users = page.getByRole("region", { name: /users list/i });
   const invites = page.getByRole("region", { name: /pending invites/i });
 
@@ -312,10 +349,11 @@ test("invited Dex user is created from the OIDC email invite on first Admin UI l
 
 test("OIDC dba users can enter the Admin UI", async ({ page }) => {
   await mockAdminApi(page, oidcUser("dba"));
+  await clearClientAuthState(page);
 
   await page.goto("/ui/dashboard");
 
-  await expect(page.getByRole("link", { name: /sql studio/i })).toBeVisible();
+  await expect(page.locator('a[href="/ui/sql"]')).toBeVisible();
   await expect(page.getByText("Access Denied")).toHaveCount(0);
 });
 

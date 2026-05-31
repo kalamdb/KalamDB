@@ -19,7 +19,12 @@ pub mod subscription;
 pub mod unsubscribe;
 
 use actix_ws::{CloseCode, CloseReason, Session};
-use kalamdb_commons::{websocket::SerializationType, WebSocketMessage};
+use kalamdb_commons::{
+    websocket::{ChangeType, RowData, SerializationType},
+    WebSocketMessage,
+};
+use kalamdb_observability::record_subscription_delivery;
+use serde_json::Value as JsonValue;
 
 use crate::ws::{
     compression::{is_gzip, maybe_compress},
@@ -82,14 +87,83 @@ pub async fn send_wire_notification(
     serialization: SerializationType,
     compress: bool,
 ) -> Result<(), ()> {
-    match serialization {
+    let bytes = match serialization {
         SerializationType::MessagePack => {
             let bytes = notif.to_msgpack();
-            send_data_binary(session, &bytes, compress).await
+            send_data_binary(session, &bytes, compress).await?;
+            bytes
         },
         SerializationType::Json => {
             let bytes = notif.to_json();
-            send_data(session, &bytes, compress).await
+            send_data(session, &bytes, compress).await?;
+            bytes
+        },
+    };
+
+    let change_count = match notif.payload.change_type {
+        ChangeType::Insert | ChangeType::Update => {
+            notif.payload.rows.as_ref().map_or(0, |rows| rows.len() as u64)
+        },
+        ChangeType::Delete => {
+            notif.payload.old_values.as_ref().map_or(0, |rows| rows.len() as u64)
+        },
+    };
+    record_subscription_delivery(change_count, bytes.len() as u64);
+    Ok(())
+}
+
+pub fn estimate_rows_payload_bytes(rows: &[RowData]) -> u64 {
+    rows.iter().map(estimate_row_payload_bytes).sum::<usize>() as u64
+}
+
+fn estimate_row_payload_bytes(row: &RowData) -> usize {
+    let mut total = 2usize;
+    let mut first = true;
+
+    for (key, value) in row {
+        if !first {
+            total = total.saturating_add(1);
+        }
+        first = false;
+
+        total = total
+            .saturating_add(key.len().saturating_add(2))
+            .saturating_add(1)
+            .saturating_add(estimate_json_value_bytes(value.inner()));
+    }
+
+    total
+}
+
+fn estimate_json_value_bytes(value: &JsonValue) -> usize {
+    match value {
+        JsonValue::Null => 4,
+        JsonValue::Bool(true) => 4,
+        JsonValue::Bool(false) => 5,
+        JsonValue::Number(number) => number.to_string().len(),
+        JsonValue::String(text) => text.len().saturating_add(2),
+        JsonValue::Array(values) => {
+            let mut total = 2usize;
+            for (index, entry) in values.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total.saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
+        },
+        JsonValue::Object(map) => {
+            let mut total = 2usize;
+            for (index, (key, entry)) in map.iter().enumerate() {
+                if index > 0 {
+                    total = total.saturating_add(1);
+                }
+                total = total
+                    .saturating_add(key.len().saturating_add(2))
+                    .saturating_add(1)
+                    .saturating_add(estimate_json_value_bytes(entry));
+            }
+            total
         },
     }
 }

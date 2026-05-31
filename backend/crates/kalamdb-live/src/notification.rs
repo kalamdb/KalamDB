@@ -22,7 +22,6 @@ use kalamdb_commons::{
     models::{rows::Row, LiveQueryId, TableId, UserId},
     websocket::{RowData, SharedChangePayload, WireNotification},
 };
-use kalamdb_observability::record_subscription_changes_delivered;
 use kalamdb_system::NotificationService as NotificationServiceTrait;
 use tokio::sync::mpsc;
 
@@ -397,7 +396,7 @@ impl NotificationService {
         }
 
         match Self::dispatch_to_subscribers(&task.table_id, task.notification, handles).await {
-            Ok(delivered) => record_subscription_changes_delivered(delivered as u64),
+            Ok(_) => {},
             Err(e) => {
                 log::warn!(
                     "[worker-{}] Failed to notify subscribers for table {}: {}",

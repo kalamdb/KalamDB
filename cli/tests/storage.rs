@@ -16,5 +16,5 @@ mod test_hot_cold_storage;
 #[path = "storage/test_storage_lifecycle.rs"]
 mod test_storage_lifecycle;
 
-#[path = "storage/minio/test_minio_storage.rs"]
+#[path = "storage/minio/mod.rs"]
 mod test_minio_storage;
