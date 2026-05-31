@@ -65,6 +65,11 @@ path = "tests/storage.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
+name = "vector"
+path = "tests/vector.rs"
+required-features = ["e2e-tests"]
+
+[[test]]
 name = "subscription"
 path = "tests/subscription.rs"
 required-features = ["e2e-tests"]

@@ -1,4 +1,4 @@
-import { Key, KeyRound, Undo2, Trash2 } from "lucide-react";
+import { GripVertical, Key, KeyRound, Undo2, Trash2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -9,7 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { KALAMDB_TYPES, DEFAULT_PRESETS, DEFAULT_NONE, DEFAULT_CUSTOM, type DraftColumn } from "./types";
+import { KALAMDB_TYPES, DEFAULT_NONE, DEFAULT_CUSTOM, defaultPresetsForType, type DraftColumn } from "./types";
 
 interface ColumnRowProps {
   column: DraftColumn;
@@ -19,9 +19,27 @@ interface ColumnRowProps {
   error?: string | null;
   onChange: (next: DraftColumn) => void;
   onDelete: () => void;
+  onDragStart?: () => void;
+  onDragOver?: () => void;
+  onDrop?: () => void;
+  isDragging?: boolean;
+  canReorder?: boolean;
 }
 
-export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusName, error, onChange, onDelete }: ColumnRowProps) {
+export function ColumnRow({
+  column,
+  isEditingExistingTable,
+  readOnly,
+  autoFocusName,
+  error,
+  onChange,
+  onDelete,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  isDragging,
+  canReorder,
+}: ColumnRowProps) {
   const isExistingCol = isEditingExistingTable && !column.isNew;
   const lockName = readOnly || column.isDeleted;
   const lockPkUnique = isExistingCol || readOnly || column.isDeleted;
@@ -31,7 +49,8 @@ export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusN
     onChange({ ...column, [key]: value });
   };
 
-  const matchedPreset = DEFAULT_PRESETS.find(
+  const defaultPresets = defaultPresetsForType(column.type);
+  const matchedPreset = defaultPresets.find(
     (p) => p.value === column.defaultExpr && p.value !== DEFAULT_NONE && p.value !== DEFAULT_CUSTOM,
   );
   const presetValue = matchedPreset
@@ -48,8 +67,43 @@ export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusN
         "last:border-b-0",
         !error && "border-b border-border/50",
         column.isDeleted && "bg-destructive/10",
+        isDragging && "opacity-50",
       )}
+      onDragOver={(event) => {
+        if (!canReorder) return;
+        event.preventDefault();
+        onDragOver?.();
+      }}
+      onDrop={(event) => {
+        if (!canReorder) return;
+        event.preventDefault();
+        onDrop?.();
+      }}
     >
+      <td className="w-8 px-1 py-1 text-center align-middle">
+        <button
+          type="button"
+          aria-label={`Reorder ${column.name || "column"}`}
+          draggable={canReorder && !column.isDeleted}
+          disabled={!canReorder || column.isDeleted}
+          onDragStart={(event) => {
+            if (event.dataTransfer) {
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", column.id);
+            }
+            onDragStart?.();
+          }}
+          className={cn(
+            "cursor-grab rounded p-1 text-muted-foreground/60 transition-colors active:cursor-grabbing",
+            "hover:bg-accent hover:text-foreground",
+            (!canReorder || column.isDeleted) && "cursor-not-allowed opacity-30",
+          )}
+          title="Drag to reorder"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      </td>
+
       <td className="px-2 py-1 text-center align-middle">
         <button
           type="button"
@@ -81,7 +135,18 @@ export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusN
       <td className="px-1 py-1 align-middle">
         <Select
           value={column.type}
-          onValueChange={(v) => update("type", v)}
+          onValueChange={(v) => {
+            const nextDefaultPresets = defaultPresetsForType(v);
+            const defaultStillFits =
+              !column.defaultExpr ||
+              column.defaultExpr === DEFAULT_CUSTOM ||
+              nextDefaultPresets.some((preset) => preset.value === column.defaultExpr);
+            onChange({
+              ...column,
+              type: v,
+              defaultExpr: defaultStillFits ? column.defaultExpr : "",
+            });
+          }}
           disabled={lockEverything}
         >
           <SelectTrigger className="h-7 text-xs">
@@ -147,7 +212,7 @@ export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusN
               <SelectValue placeholder="(none)" />
             </SelectTrigger>
             <SelectContent>
-              {DEFAULT_PRESETS.map((p) => (
+              {defaultPresets.map((p) => (
                 <SelectItem key={p.value} value={p.value} className="text-xs">
                   {p.label}
                 </SelectItem>
@@ -181,7 +246,7 @@ export function ColumnRow({ column, isEditingExistingTable, readOnly, autoFocusN
     </tr>
     {error && (
       <tr className="border-b border-border/50">
-        <td colSpan={7} className="px-3 py-1 text-[11px] text-destructive">
+        <td colSpan={8} className="px-3 py-1 text-[11px] text-destructive">
           {error}
         </td>
       </tr>

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Plus, AlertCircle, Trash2, Pencil } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ import {
   COMPRESSION_OPTIONS,
   EVICTION_STRATEGY_OPTIONS,
   FLUSH_POLICY_KINDS,
-  TABLE_TYPES,
+  TABLE_TYPE_OPTIONS,
   defaultTableOptions,
   isReadOnlyNamespace,
   newDraftColumn,
@@ -125,6 +125,62 @@ function SelectField({
   );
 }
 
+function TableTypeSelectField({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: DraftTableType;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const selected = TABLE_TYPE_OPTIONS.find((option) => option.value === value);
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className={fieldLabelClassName}>Table type</span>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger
+          size="sm"
+          className="h-10 text-xs"
+          data-testid="table-type-select"
+        >
+          <SelectValue>
+            {selected ? (
+              <span className="flex min-w-0 items-center gap-2">
+                <selected.icon
+                  className={`h-3.5 w-3.5 shrink-0 ${selected.iconClassName}`}
+                />
+                <span>{selected.label}</span>
+              </span>
+            ) : null}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {TABLE_TYPE_OPTIONS.map((option) => (
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              className="py-2 text-xs"
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <option.icon
+                  className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${option.iconClassName}`}
+                />
+                <span className="min-w-0">
+                  <span className="block font-medium">{option.label}</span>
+                  <span className="block text-[11px] leading-snug text-muted-foreground">
+                    {option.description}
+                  </span>
+                </span>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
+
 function TableOptionsEditor({
   draft,
   disabled,
@@ -147,164 +203,177 @@ function TableOptionsEditor({
   return (
     <section className="space-y-3">
       <h3 className={sectionTitleClassName}>Options</h3>
-      <div className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/10 p-3 sm:grid-cols-2 lg:grid-cols-3">
-        {(draft.tableType === "user" || draft.tableType === "shared") && (
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabelClassName}>
-              Storage ID
-            </span>
-            <Input
-              value={options.storageId}
-              onChange={(e) => update({ storageId: e.target.value })}
-              disabled={disabled}
-              className="h-8 text-xs"
-              data-testid="table-option-storage-id"
-            />
-          </label>
-        )}
-
-        {draft.tableType === "user" && (
-          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
-            <span className={fieldLabelClassName}>
-              Use user storage
-            </span>
-            <Switch
-              size="sm"
-              checked={options.useUserStorage}
-              disabled={disabled}
-              onCheckedChange={(checked) => update({ useUserStorage: checked })}
-              aria-label="Use user storage"
-              data-testid="table-option-use-user-storage"
-            />
-          </div>
-        )}
-
-        {draft.tableType === "shared" && (
-          <SelectField
-            label="Access level"
-            value={options.accessLevel}
-            options={ACCESS_LEVEL_OPTIONS}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ accessLevel: value as DraftTableOptions["accessLevel"] })
-            }
-            testId="table-option-access-level"
-          />
-        )}
-
-        {(draft.tableType === "user" || draft.tableType === "shared") && (
-          <SelectField
-            label="Flush policy"
-            value={options.flushPolicyKind}
-            options={FLUSH_POLICY_KINDS}
-            disabled={disabled}
-            onChange={(value) =>
-              update({
-                flushPolicyKind: value as DraftTableOptions["flushPolicyKind"],
-              })
-            }
-            testId="table-option-flush-policy"
-          />
-        )}
-
-        {(draft.tableType === "user" || draft.tableType === "shared") &&
-          showFlushRows && (
+      <div className="rounded-md border border-border bg-muted/10 p-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {(draft.tableType === "user" || draft.tableType === "shared") && (
             <label className="flex flex-col gap-1.5">
-              <span className={fieldLabelClassName}>
-                Flush rows
-              </span>
+              <span className={fieldLabelClassName}>Storage ID</span>
               <Input
-                type="number"
-                min={1}
-                max={999999}
-                value={options.flushRows}
-                onChange={(e) => update({ flushRows: e.target.value })}
+                value={options.storageId}
+                onChange={(e) => update({ storageId: e.target.value })}
                 disabled={disabled}
                 className="h-8 text-xs"
-                data-testid="table-option-flush-rows"
+                data-testid="table-option-storage-id"
               />
             </label>
           )}
 
-        {(draft.tableType === "user" || draft.tableType === "shared") &&
-          showFlushInterval && (
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabelClassName}>
-                Flush interval
-              </span>
-              <Input
-                type="number"
-                min={1}
-                max={86399}
-                value={options.flushIntervalSeconds}
-                onChange={(e) =>
-                  update({ flushIntervalSeconds: e.target.value })
+          {draft.tableType === "user" && (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+              <span className={fieldLabelClassName}>Use user storage</span>
+              <Switch
+                size="sm"
+                checked={options.useUserStorage}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  update({ useUserStorage: checked })
                 }
-                disabled={disabled}
-                className="h-8 text-xs"
-                data-testid="table-option-flush-interval"
+                aria-label="Use user storage"
+                data-testid="table-option-use-user-storage"
               />
-            </label>
+            </div>
           )}
 
-        {draft.tableType === "stream" && (
-          <>
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabelClassName}>
-                TTL seconds
-              </span>
-              <Input
-                type="number"
-                min={1}
-                value={options.ttlSeconds}
-                onChange={(e) => update({ ttlSeconds: e.target.value })}
-                disabled={disabled}
-                className="h-8 text-xs"
-                data-testid="table-option-ttl-seconds"
-              />
-            </label>
+          {draft.tableType === "shared" && (
             <SelectField
-              label="Eviction strategy"
-              value={options.evictionStrategy}
-              options={EVICTION_STRATEGY_OPTIONS}
+              label="Access level"
+              value={options.accessLevel}
+              options={ACCESS_LEVEL_OPTIONS}
               disabled={disabled}
               onChange={(value) =>
                 update({
-                  evictionStrategy:
-                    value as DraftTableOptions["evictionStrategy"],
+                  accessLevel: value as DraftTableOptions["accessLevel"],
                 })
               }
-              testId="table-option-eviction-strategy"
+              testId="table-option-access-level"
             />
-            <label className="flex flex-col gap-1.5">
-              <span className={fieldLabelClassName}>
-                Max stream size
-              </span>
-              <Input
-                type="number"
-                min={0}
-                value={options.maxStreamSizeBytes}
-                onChange={(e) => update({ maxStreamSizeBytes: e.target.value })}
-                disabled={disabled}
-                className="h-8 text-xs"
-                data-testid="table-option-max-stream-size"
-              />
-            </label>
-          </>
-        )}
+          )}
 
-        {draft.tableType !== "stream" && (
-          <SelectField
-            label="Compression"
-            value={options.compression}
-            options={COMPRESSION_OPTIONS}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ compression: value as DraftTableOptions["compression"] })
-            }
-            testId="table-option-compression"
-          />
-        )}
+          {(draft.tableType === "user" || draft.tableType === "shared") && (
+            <div className="flex flex-col gap-2 rounded-md border border-border bg-background p-3 sm:col-span-2 lg:col-span-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(9rem,0.35fr)_minmax(12rem,0.65fr)]">
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground">
+                    Flush
+                  </h4>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                    Choose when buffered rows are persisted to cold storage.
+                  </p>
+                </div>
+                <SelectField
+                  label="Policy"
+                  value={options.flushPolicyKind}
+                  options={FLUSH_POLICY_KINDS}
+                  disabled={disabled}
+                  onChange={(value) =>
+                    update({
+                      flushPolicyKind:
+                        value as DraftTableOptions["flushPolicyKind"],
+                    })
+                  }
+                  testId="table-option-flush-policy"
+                />
+              </div>
+              {(showFlushRows || showFlushInterval) && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {showFlushRows && (
+                    <label className="flex flex-col gap-1.5">
+                      <span className={fieldLabelClassName}>Rows</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={999999}
+                        value={options.flushRows}
+                        onChange={(e) => update({ flushRows: e.target.value })}
+                        disabled={disabled}
+                        className="h-8 text-xs"
+                        data-testid="table-option-flush-rows"
+                      />
+                    </label>
+                  )}
+                  {showFlushInterval && (
+                    <label className="flex flex-col gap-1.5">
+                      <span className={fieldLabelClassName}>
+                        Interval seconds
+                      </span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={86399}
+                        value={options.flushIntervalSeconds}
+                        onChange={(e) =>
+                          update({ flushIntervalSeconds: e.target.value })
+                        }
+                        disabled={disabled}
+                        className="h-8 text-xs"
+                        data-testid="table-option-flush-interval"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {draft.tableType === "stream" && (
+            <>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldLabelClassName}>TTL seconds</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={options.ttlSeconds}
+                  onChange={(e) => update({ ttlSeconds: e.target.value })}
+                  disabled={disabled}
+                  className="h-8 text-xs"
+                  data-testid="table-option-ttl-seconds"
+                />
+              </label>
+              <SelectField
+                label="Eviction strategy"
+                value={options.evictionStrategy}
+                options={EVICTION_STRATEGY_OPTIONS}
+                disabled={disabled}
+                onChange={(value) =>
+                  update({
+                    evictionStrategy:
+                      value as DraftTableOptions["evictionStrategy"],
+                  })
+                }
+                testId="table-option-eviction-strategy"
+              />
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldLabelClassName}>Max stream size</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={options.maxStreamSizeBytes}
+                  onChange={(e) =>
+                    update({ maxStreamSizeBytes: e.target.value })
+                  }
+                  disabled={disabled}
+                  className="h-8 text-xs"
+                  data-testid="table-option-max-stream-size"
+                />
+              </label>
+            </>
+          )}
+
+          {draft.tableType !== "stream" && (
+            <SelectField
+              label="Compression"
+              value={options.compression}
+              options={COMPRESSION_OPTIONS}
+              disabled={disabled}
+              onChange={(value) =>
+                update({
+                  compression: value as DraftTableOptions["compression"],
+                })
+              }
+              testId="table-option-compression"
+            />
+          )}
+        </div>
       </div>
     </section>
   );
@@ -396,6 +465,8 @@ export function EditTableForm({
   const [showErrors, setShowErrors] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [focusColumnId, setFocusColumnId] = useState<string | null>(null);
+  const [draggingColumnId, setDraggingColumnId] = useState<string | null>(null);
+  const draggingColumnIdRef = useRef<string | null>(null);
   const [reloadKeyAfterRefresh, setReloadKeyAfterRefresh] = useState<
     string | null
   >(null);
@@ -477,6 +548,18 @@ export function EditTableForm({
     } else {
       updateDraftColumn({ ...col, isDeleted: !col.isDeleted });
     }
+  };
+
+  const moveColumn = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId || isEditing || isReadOnly) return;
+    const from = draft.columns.findIndex((column) => column.id === draggedId);
+    const to = draft.columns.findIndex((column) => column.id === targetId);
+    if (from < 0 || to < 0) return;
+    const nextColumns = [...draft.columns];
+    const [moved] = nextColumns.splice(from, 1);
+    if (!moved) return;
+    nextColumns.splice(to, 0, moved);
+    dispatch(setDraft({ ...draft, columns: nextColumns }));
   };
 
   const handleTableTypeChange = (value: string) => {
@@ -648,13 +731,10 @@ export function EditTableForm({
                 </span>
               )}
             </div>
-            <SelectField
-              label="Table type"
+            <TableTypeSelectField
               value={draft.tableType}
-              options={TABLE_TYPES}
               disabled={isEditing || isReadOnly}
               onChange={handleTableTypeChange}
-              testId="table-type-select"
             />
             <label className="flex flex-col gap-1.5">
               <h3 className={sectionTitleClassName}>Table name</h3>
@@ -707,6 +787,7 @@ export function EditTableForm({
               <table className="w-full text-xs">
                 <thead className="bg-muted/40">
                   <tr className={`border-b border-border ${chromeLabelClassName}`}>
+                    <th className="w-8 px-1 py-2"></th>
                     <th className="w-8 px-2 py-2 text-center">PK</th>
                     <th className="px-2 py-2 text-left">Name</th>
                     <th className="w-32 px-2 py-2 text-left">Type</th>
@@ -731,11 +812,24 @@ export function EditTableForm({
                       }
                       onChange={updateDraftColumn}
                       onDelete={() => deleteColumn(col)}
+                      canReorder={isCreating && !isReadOnly}
+                      isDragging={draggingColumnId === col.id}
+                      onDragStart={() => {
+                        draggingColumnIdRef.current = col.id;
+                        setDraggingColumnId(col.id);
+                      }}
+                      onDragOver={() => {}}
+                      onDrop={() => {
+                        const draggedId = draggingColumnIdRef.current;
+                        if (draggedId) moveColumn(draggedId, col.id);
+                        draggingColumnIdRef.current = null;
+                        setDraggingColumnId(null);
+                      }}
                     />
                   ))}
                   {liveColumns.length === 0 && !isReadOnly && (
                     <tr>
-                      <td colSpan={7} className="px-3 py-8">
+                      <td colSpan={8} className="px-3 py-8">
                         <div className="flex flex-col items-center gap-2 text-center">
                           <p className="text-xs text-muted-foreground">
                             This table has no columns yet.
@@ -756,7 +850,7 @@ export function EditTableForm({
                   {liveColumns.length === 0 && isReadOnly && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="px-3 py-6 text-center text-muted-foreground"
                       >
                         No columns.

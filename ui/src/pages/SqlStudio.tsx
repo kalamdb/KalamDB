@@ -85,26 +85,20 @@ import {
   updateWorkspaceTab,
 } from "@/features/sql-studio/state/sqlStudioWorkspaceSlice";
 import {
-  hydrateSqlStudioUi,
   setHorizontalLayout,
   setInspectorCollapsed,
-  setNamespaceExpanded,
   setSchemaFilter,
   setSelectedTableKey,
   setTableExpanded,
   setVerticalLayout,
   toggleFavoritesExpanded,
-  toggleNamespaceSectionExpanded,
-  toggleNamespaceExpanded,
   toggleTableExpanded,
 } from "@/features/sql-studio/state/sqlStudioUiSlice";
 import {
-  selectExpandedNamespaces,
   selectExpandedTables,
   selectFavoritesExpanded,
   selectHorizontalLayout,
   selectIsInspectorCollapsed,
-  selectNamespaceSectionExpanded,
   selectSchemaFilter,
   selectSelectedTableKey,
   selectVerticalLayout,
@@ -304,8 +298,6 @@ export default function SqlStudio() {
   } = useGetSqlStudioSchemaTreeQuery();
   const schemaFilter = useAppSelector(selectSchemaFilter);
   const favoritesExpanded = useAppSelector(selectFavoritesExpanded);
-  const namespaceSectionExpanded = useAppSelector(selectNamespaceSectionExpanded);
-  const expandedNamespaces = useAppSelector(selectExpandedNamespaces);
   const expandedTables = useAppSelector(selectExpandedTables);
   const selectedTableKey = useAppSelector(selectSelectedTableKey);
   const isRunning = useAppSelector(selectWorkspaceIsRunning);
@@ -474,24 +466,10 @@ export default function SqlStudio() {
   }, [dispatch, schema, selectedTableKey]);
 
   useEffect(() => {
-    if (schema.length === 0 || Object.keys(expandedNamespaces).length > 0) {
-      return;
-    }
-
-    const initialExpanded: Record<string, boolean> = {};
-    schema.slice(0, 3).forEach((namespace) => {
-      initialExpanded[namespace.name] = true;
-    });
-    dispatch(hydrateSqlStudioUi({ expandedNamespaces: initialExpanded }));
-  }, [dispatch, schema, expandedNamespaces]);
-
-  useEffect(() => {
     if (!selectedTableKey) {
       return;
     }
 
-    const [namespaceName] = selectedTableKey.split(".");
-    dispatch(setNamespaceExpanded({ namespaceName, expanded: true }));
     dispatch(setTableExpanded({ tableKey: selectedTableKey, expanded: true }));
   }, [dispatch, selectedTableKey]);
 
@@ -1498,16 +1476,12 @@ export default function SqlStudio() {
                     filter={schemaFilter}
                     savedQueries={savedQueries}
                     favoritesExpanded={favoritesExpanded}
-                    namespaceSectionExpanded={namespaceSectionExpanded}
-                    expandedNamespaces={expandedNamespaces}
                     expandedTables={expandedTables}
                     selectedTableKey={selectedTableKey}
                     isRefreshing={isSchemaRefreshing}
                     onFilterChange={(value) => dispatch(setSchemaFilter(value))}
                     onRefresh={() => void refreshExplorerSchema()}
                     onToggleFavorites={() => dispatch(toggleFavoritesExpanded())}
-                    onToggleNamespaceSection={() => dispatch(toggleNamespaceSectionExpanded())}
-                    onToggleNamespace={(namespaceName) => dispatch(toggleNamespaceExpanded(namespaceName))}
                     onToggleTable={(tableKey) => dispatch(toggleTableExpanded(tableKey))}
                     onOpenSavedQuery={openSavedQuery}
                     onSelectTable={(table) => dispatch(setSelectedTableKey(`${table.namespace}.${table.name}`))}

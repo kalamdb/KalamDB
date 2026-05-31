@@ -129,3 +129,4 @@ link/sdks/typescript/client/.npmrc
 /benchv2/logs
 /backend/kalamdb-nightly
 /tools/supabase-local
+/.playwright-mcp

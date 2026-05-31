@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Clock3,
+  DatabaseZap,
   Database,
   Gauge,
   MessageSquare,
@@ -11,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -45,6 +48,18 @@ const HISTORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HISTORY_RAW_AGE_MS = 60 * 60 * 1000;
 const HISTORY_MINUTE_AGE_MS = 24 * 60 * 60 * 1000;
 const HISTORY_MAX_SAMPLES = 5000;
+const DASHBOARD_SLOW_QUERIES_LIMIT = 50;
+const DASHBOARD_STATS_SQL = [
+  "SELECT metric_name, metric_value",
+  "FROM system.stats",
+  "ORDER BY metric_name;",
+].join("\n");
+
+interface MetricCardItem {
+  label: string;
+  displayValue: string;
+  exactValue?: string;
+}
 
 function parseInteger(value: string | undefined): number {
   if (!value) {
@@ -64,11 +79,67 @@ function parseNumber(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function formatDecimal(value: string | undefined, digits = 2): string {
-  return parseNumber(value).toLocaleString(undefined, {
+function trimTrailingZeros(value: string): string {
+  if (!value.includes(".")) {
+    return value;
+  }
+
+  return value.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function formatCompactNumber(value: number, digits = 1): string {
+  const abs = Math.abs(value);
+  if (abs < 1000) {
+    return value.toLocaleString();
+  }
+
+  const units = [
+    { threshold: 1_000_000_000_000, suffix: "t" },
+    { threshold: 1_000_000_000, suffix: "b" },
+    { threshold: 1_000_000, suffix: "m" },
+    { threshold: 1_000, suffix: "k" },
+  ];
+
+  for (const unit of units) {
+    if (abs >= unit.threshold) {
+      const scaled = value / unit.threshold;
+      return `${trimTrailingZeros(scaled.toFixed(digits))}${unit.suffix}`;
+    }
+  }
+
+  return value.toLocaleString();
+}
+
+function buildCountMetricItem(label: string, value: string | undefined): MetricCardItem {
+  const numeric = parseInteger(value);
+  const exactValue = numeric.toLocaleString();
+  const displayValue = formatCompactNumber(numeric);
+  return {
+    label,
+    displayValue,
+    exactValue: displayValue === exactValue ? undefined : exactValue,
+  };
+}
+
+function buildDecimalMetricItem(
+  label: string,
+  value: string | undefined,
+  digits = 2,
+  suffix = "",
+): MetricCardItem {
+  const numeric = parseNumber(value);
+  const exactCore = numeric.toLocaleString(undefined, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+  const exactValue = `${exactCore}${suffix}`;
+  const compactCore = Math.abs(numeric) >= 1000 ? formatCompactNumber(numeric, digits > 1 ? 1 : digits) : exactCore;
+  const displayValue = `${compactCore}${suffix}`;
+  return {
+    label,
+    displayValue,
+    exactValue: displayValue === exactValue ? undefined : exactValue,
+  };
 }
 
 function cardItemsClass(itemCount: number): string {
@@ -147,6 +218,7 @@ function formatUptime(seconds: string | undefined): string {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [timeRange, setTimeRange] = useState("24 HOURS");
   const [selectedStorageId, setSelectedStorageId] = useState("");
   const [metricSamples, setMetricSamples] = useState<DashboardMetricSample[]>([]);
@@ -177,7 +249,7 @@ export default function Dashboard() {
     data: slowQueries = [],
     isFetching: isSlowQueriesLoading,
     refetch: refetchSlowQueries,
-  } = useGetSlowQueriesQuery(10, {
+  } = useGetSlowQueriesQuery(DASHBOARD_SLOW_QUERIES_LIMIT, {
     pollingInterval: DASHBOARD_SLOW_QUERIES_POLL_INTERVAL_MS,
     refetchOnFocus: true,
     refetchOnReconnect: true,
@@ -234,7 +306,7 @@ export default function Dashboard() {
       items: [
         {
           label: "Process",
-          value: currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds),
+          displayValue: currentStats.server_uptime_human || formatUptime(currentStats.server_uptime_seconds),
         },
       ],
       icon: Clock3,
@@ -242,43 +314,45 @@ export default function Dashboard() {
     {
       title: "Tables & Namespaces",
       items: [
-        { label: "Tables", value: parseInteger(currentStats.total_tables).toLocaleString() },
-        { label: "Namespaces", value: parseInteger(currentStats.total_namespaces).toLocaleString() },
+        buildCountMetricItem("Tables", currentStats.total_tables),
+        buildCountMetricItem("Namespaces", currentStats.total_namespaces),
       ],
       icon: Database,
     },
     {
       title: "Connections & Subscriptions",
       items: [
-        { label: "Connections", value: parseInteger(currentStats.active_connections).toLocaleString() },
-        { label: "Peak Connections", value: parseInteger(currentStats.active_connections_peak).toLocaleString() },
-        { label: "Subscriptions", value: parseInteger(currentStats.active_subscriptions).toLocaleString() },
-        { label: "Changes/s", value: formatDecimal(currentStats.subscription_changes_delivered_per_second) },
+        buildCountMetricItem("Connections", currentStats.active_connections),
+        buildCountMetricItem("Peak Connections", currentStats.active_connections_peak),
+        buildCountMetricItem("Subscriptions", currentStats.active_subscriptions),
+        buildCountMetricItem("Peak Subscriptions", currentStats.active_subscriptions_peak),
+        buildDecimalMetricItem("Changes/s", currentStats.subscription_changes_delivered_per_second),
       ],
       icon: Wifi,
     },
     {
       title: "Pub/Sub",
       items: [
-        { label: "Messages", value: parseInteger(currentStats.pubsub_messages_published_total).toLocaleString() },
-        { label: "Consumers", value: parseInteger(currentStats.topic_consumer_group_count).toLocaleString() },
-        { label: "Topics", value: parseInteger(currentStats.topic_cache_topic_count).toLocaleString() },
+        buildCountMetricItem("Messages", currentStats.pubsub_messages_published_total),
+        buildCountMetricItem("Consumer Groups", currentStats.topic_consumer_group_count),
+        buildCountMetricItem("Active Consumers", currentStats.pubsub_active_consumers),
+        buildCountMetricItem("Topics", currentStats.topic_cache_topic_count),
       ],
       icon: MessageSquare,
     },
     {
       title: "Queries Total",
-      items: [{ label: "SQL statements", value: parseInteger(currentStats.queries_total).toLocaleString() }],
+      items: [buildCountMetricItem("SQL statements", currentStats.queries_total)],
       icon: Search,
     },
     {
       title: "Queries/s",
-      items: [{ label: "Throughput", value: formatDecimal(currentStats.queries_per_second) }],
+      items: [buildDecimalMetricItem("Throughput", currentStats.queries_per_second)],
       icon: Gauge,
     },
     {
       title: "Avg Latency",
-      items: [{ label: "Mean SQL duration", value: `${formatDecimal(currentStats.avg_query_latency_ms)} ms` }],
+      items: [buildDecimalMetricItem("Mean SQL duration", currentStats.avg_query_latency_ms, 2, " ms")],
       icon: Timer,
     },
   ];
@@ -289,6 +363,21 @@ export default function Dashboard() {
       description={`Welcome back, ${user?.username ?? "admin"}`}
       actions={
         <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              navigate("/sql", {
+                state: {
+                  prefillTitle: "Dashboard Stats",
+                  prefillSql: DASHBOARD_STATS_SQL,
+                },
+              });
+            }}
+          >
+            <DatabaseZap className="mr-1.5 h-4 w-4" />
+            Open Stats SQL
+          </Button>
           <Select value={timeRange} onValueChange={setTimeRange}>
             <SelectTrigger className="h-9 w-[140px]">
               <SelectValue placeholder="Time range" />
@@ -325,7 +414,14 @@ export default function Dashboard() {
               <div className={cardItemsClass(card.items.length)}>
                 {card.items.map((item) => (
                   <div key={item.label} className="flex min-w-0 flex-col items-center text-center">
-                    <p className={cardValueClass(card.items.length)}>{item.value}</p>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <p className={cardValueClass(card.items.length)}>{item.displayValue}</p>
+                        </TooltipTrigger>
+                        {item.exactValue ? <TooltipContent>{item.exactValue}</TooltipContent> : null}
+                      </Tooltip>
+                    </TooltipProvider>
                     <p className="text-center text-xs leading-snug text-muted-foreground">{item.label}</p>
                   </div>
                 ))}

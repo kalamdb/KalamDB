@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import Dashboard from "@/pages/Dashboard";
 
 const mockUseAuth = vi.fn();
@@ -194,7 +195,11 @@ describe("Dashboard page", () => {
   });
 
   it("renders dashboard metrics from the admin stats queries", async () => {
-    render(<Dashboard />);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText("Dashboard")).toBeTruthy();
     expect(screen.getByText("Welcome back, root")).toBeTruthy();
@@ -204,10 +209,12 @@ describe("Dashboard page", () => {
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("6")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText("Peak Subscriptions")).toBeTruthy();
     expect(screen.getByText("9.50")).toBeTruthy();
     expect(screen.getByText("Pub/Sub")).toBeTruthy();
-    expect(screen.getByText("1,234")).toBeTruthy();
-    expect(screen.getByText("4")).toBeTruthy();
+    expect(screen.getByText("1.2k")).toBeTruthy();
+    expect(screen.getByText("Consumer Groups")).toBeTruthy();
+    expect(screen.getByText("Active Consumers")).toBeTruthy();
     expect(screen.getByText("8")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
     expect(screen.getByText("1.25")).toBeTruthy();
@@ -225,7 +232,11 @@ describe("Dashboard page", () => {
   });
 
   it("renders metric charts above storage and cluster health", async () => {
-    render(<Dashboard />);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
 
     const metricsChart = await screen.findByText("Metrics chart 1");
     const storageWidget = screen.getByText("Storage usage local");
@@ -329,7 +340,11 @@ describe("Dashboard page", () => {
       refetch: clusterRefetch,
     });
 
-    render(<Dashboard />);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
 
     await waitFor(() => {
       expect(mockCheckStorageHealth).toHaveBeenCalledTimes(1);

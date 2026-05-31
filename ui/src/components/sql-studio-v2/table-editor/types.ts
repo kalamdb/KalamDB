@@ -1,3 +1,6 @@
+import type { ComponentType } from "react";
+import { Radio, User, Users } from "lucide-react";
+
 export function isReadOnlyNamespace(name: string): boolean {
   return (
     name === "information_schema" ||
@@ -37,22 +40,76 @@ export const DEFAULT_PRESETS: Array<{
   label: string;
   value: string;
   description?: string;
+  types?: readonly KalamDbType[];
 }> = [
   { label: "(none)", value: DEFAULT_NONE },
   {
     label: "SNOWFLAKE_ID()",
     value: "SNOWFLAKE_ID()",
     description: "Auto-generated bigint id",
+    types: ["BIGINT"],
   },
-  { label: "NOW()", value: "NOW()", description: "Current timestamp" },
   {
-    label: "UUID_GENERATE_V7()",
-    value: "UUID_GENERATE_V7()",
-    description: "Auto-generated UUID v7",
+    label: "NOW()",
+    value: "NOW()",
+    description: "Current timestamp",
+    types: ["TIMESTAMP", "DATETIME"],
   },
-  { label: "ULID()", value: "ULID()", description: "ULID string" },
+  {
+    label: "CURRENT_DATE",
+    value: "CURRENT_DATE",
+    description: "Current date",
+    types: ["DATE"],
+  },
+  {
+    label: "CURRENT_TIME",
+    value: "CURRENT_TIME",
+    description: "Current time",
+    types: ["TIME"],
+  },
+  { label: "TRUE", value: "TRUE", description: "Boolean true", types: ["BOOLEAN"] },
+  {
+    label: "FALSE",
+    value: "FALSE",
+    description: "Boolean false",
+    types: ["BOOLEAN"],
+  },
+  {
+    label: "0",
+    value: "0",
+    description: "Zero value",
+    types: ["SMALLINT", "INT", "FLOAT", "DOUBLE", "DECIMAL"],
+  },
+  {
+    label: "ULID()",
+    value: "ULID()",
+    description: "ULID string",
+    types: ["TEXT"],
+  },
+  {
+    label: "UUID_V7()",
+    value: "UUID_V7()",
+    description: "Auto-generated UUID v7",
+    types: ["TEXT", "UUID"],
+  },
+  {
+    label: "'{}'",
+    value: "'{}'",
+    description: "Empty JSON object",
+    types: ["JSON"],
+  },
   { label: "Custom...", value: DEFAULT_CUSTOM },
 ];
+
+export function defaultPresetsForType(type: string): typeof DEFAULT_PRESETS {
+  const normalized = type.trim().toUpperCase() as KalamDbType;
+  return DEFAULT_PRESETS.filter((preset) => {
+    if (preset.value === DEFAULT_NONE || preset.value === DEFAULT_CUSTOM) {
+      return true;
+    }
+    return preset.types?.includes(normalized) ?? false;
+  });
+}
 
 export interface DraftColumn {
   id: string;
@@ -70,6 +127,36 @@ export type EditorMode = "idle" | "create" | "edit";
 
 export const TABLE_TYPES = ["user", "shared", "stream"] as const;
 export type DraftTableType = (typeof TABLE_TYPES)[number];
+
+export const TABLE_TYPE_OPTIONS: Array<{
+  value: DraftTableType;
+  label: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+  iconClassName: string;
+}> = [
+  {
+    value: "user",
+    label: "User",
+    description: "per-user rows isolated by the authenticated user.",
+    icon: User,
+    iconClassName: "text-emerald-400",
+  },
+  {
+    value: "shared",
+    label: "Shared",
+    description: "shared data with an explicit access level for the table.",
+    icon: Users,
+    iconClassName: "text-cyan-400",
+  },
+  {
+    value: "stream",
+    label: "Stream",
+    description: "append-oriented event data with retention and eviction options.",
+    icon: Radio,
+    iconClassName: "text-violet-400",
+  },
+];
 
 export const COMPRESSION_OPTIONS = ["none", "snappy", "zstd"] as const;
 export type DraftCompression = (typeof COMPRESSION_OPTIONS)[number];

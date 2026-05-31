@@ -271,8 +271,12 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
   const websocketFrameCount = decoratedLogs.filter((item) => item.kind === "send" || item.kind === "receive").length;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col xl:flex-row">
-      <section aria-label="Trace timeline" className="flex min-h-[220px] min-w-0 flex-col border-b border-border bg-muted/10 xl:w-[40%] xl:min-w-[300px] xl:max-w-[500px] xl:border-b-0 xl:border-r">
+    <div data-testid="studio-execution-log-split" className="flex min-h-0 min-w-0 flex-1 flex-row">
+      <section
+        aria-label="Trace timeline"
+        className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/10"
+        style={{ width: "40%", minWidth: 280, maxWidth: 500 }}
+      >
           <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
             <PanelHeader
               title="Timeline Stream"

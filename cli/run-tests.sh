@@ -778,6 +778,55 @@ ensure_dex_for_oidc_tests() {
     ) || echo "Warning: could not start docker/utils Dex; Dex-backed OIDC tests may skip." >&2
 }
 
+should_start_minio_for_storage_tests() {
+    if [ "${KALAMDB_SKIP_DOCKER_MINIO:-false}" = "true" ]; then
+        return 1
+    fi
+
+    case "$TEST_TARGET:$TEST_FILTER" in
+        *storage*|*minio*|*MinIO*|*s3*|*S3*)
+            return 0
+            ;;
+    esac
+
+    if [ -n "$TEST_LIST_FILE" ]; then
+        if [ "$TEST_LIST_FILE" = "-" ]; then
+            return 0
+        fi
+
+        if grep -Eqi 'minio|storage' "$TEST_LIST_FILE"; then
+            return 0
+        fi
+
+        return 1
+    fi
+
+    if [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
+        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+ensure_minio_for_storage_tests() {
+    if ! should_start_minio_for_storage_tests; then
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker is not available; MinIO-backed storage tests may fail." >&2
+        return 0
+    fi
+
+    step "Starting shared MinIO for storage tests"
+    (
+        cd "$REPO_ROOT/docker/utils"
+        docker compose up -d --force-recreate minio
+    ) || echo "Warning: could not start docker/utils MinIO; MinIO-backed storage tests may fail." >&2
+}
+
 npm_install_dir() {
     if [ -f package-lock.json ]; then
         npm ci --include=dev --no-audit --no-fund
@@ -1185,6 +1234,7 @@ verify_cli_test_layout
 
 prebuild_cli_oidc_server_binary_if_needed
 ensure_dex_for_oidc_tests
+ensure_minio_for_storage_tests
 
 if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"

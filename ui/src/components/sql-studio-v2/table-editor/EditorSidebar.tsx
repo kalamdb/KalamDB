@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Plus, Search, Table2, FolderPlus, Trash2, MoreHorizontal, Upload } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, FolderPlus, Trash2, MoreHorizontal, Upload } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   Select,
@@ -23,7 +23,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toaster-provider";
@@ -45,6 +44,12 @@ import { discardEdit } from "@/features/sql-studio/state/editorTabSlice";
 import { useSqlPreview } from "@/components/sql-preview";
 import { StudioChromeLabel, StudioIconButton } from "../shared/StudioChrome";
 import {
+  NamespaceSearchControls,
+  TableColumnTree,
+  namespaceNames,
+  useNamespaceTables,
+} from "../shared/NamespaceTableBrowser";
+import {
   startTableImport,
   getTableImportStatus,
   type TableTransferInput,
@@ -64,6 +69,9 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   const draft = useAppSelector(selectEditorDraft);
   const original = useAppSelector(selectEditorOriginal);
   const [filter, setFilter] = useState("");
+  const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>(
+    {},
+  );
   const [showCreateNamespace, setShowCreateNamespace] = useState(false);
   const [showDropNamespace, setShowDropNamespace] = useState(false);
   const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
@@ -92,8 +100,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   };
 
   const namespaces = useMemo(() => {
-    const names = schema.map((ns) => ns.name);
-    return Array.from(new Set(names)).sort((a, b) => {
+    return namespaceNames(schema).sort((a, b) => {
       const sysA = isReadOnlyNamespace(a);
       const sysB = isReadOnlyNamespace(b);
       if (sysA !== sysB) return sysA ? 1 : -1;
@@ -106,17 +113,22 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     return namespaces[0] ?? defaultNamespace;
   });
 
+  useEffect(() => {
+    if (namespaces.length === 0 || namespaces.includes(activeNamespace)) {
+      return;
+    }
+    setActiveNamespace(
+      namespaces.includes(defaultNamespace) ? defaultNamespace : namespaces[0]!,
+    );
+  }, [activeNamespace, defaultNamespace, namespaces]);
+
   const activeNamespaceIsReadOnly = isReadOnlyNamespace(activeNamespace);
 
-  const tablesInNamespace = useMemo(() => {
-    const ns = schema.find((n) => n.name === activeNamespace);
-    if (!ns) return [];
-    const lower = filter.trim().toLowerCase();
-    const list = lower
-      ? ns.tables.filter((t) => t.name.toLowerCase().includes(lower))
-      : ns.tables;
-    return [...list].sort((a, b) => a.name.localeCompare(b.name));
-  }, [schema, activeNamespace, filter]);
+  const tablesInNamespace = useNamespaceTables({
+    schema,
+    activeNamespace,
+    filter,
+  });
 
   const handleCreate = () => {
     guardDirty(() => {
@@ -131,6 +143,13 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
 
   const handleNamespaceChange = (value: string) => {
     setActiveNamespace(value);
+  };
+
+  const handleToggleTable = (tableKey: string) => {
+    setExpandedTables((current) => ({
+      ...current,
+      [tableKey]: !(current[tableKey] ?? selectedKey === tableKey),
+    }));
   };
 
   const handleDropNamespaceClick = () => {
@@ -260,10 +279,14 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   return (
     <TooltipProvider delayDuration={250}>
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 space-y-2 border-b border-border px-2 py-2">
-        <div className="flex items-center justify-between">
-          <StudioChromeLabel>Namespace</StudioChromeLabel>
-          <div className="flex items-center gap-0.5">
+      <NamespaceSearchControls
+        namespaces={namespaces}
+        activeNamespace={activeNamespace}
+        filter={filter}
+        onNamespaceChange={handleNamespaceChange}
+        onFilterChange={setFilter}
+        actions={
+          <>
             <StudioIconButton
               onClick={() => setShowCreateNamespace(true)}
               tooltip="Create namespace"
@@ -272,7 +295,9 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
               <FolderPlus data-icon="only" />
             </StudioIconButton>
             {(() => {
-              const isSystem = activeNamespace.startsWith("system") || activeNamespace.startsWith("dba");
+              const isSystem =
+                activeNamespace.startsWith("system") ||
+                activeNamespace.startsWith("dba");
               const noNamespaces = namespaces.length === 0;
               const disabled = isSystem || noNamespaces;
               const tooltipLabel = noNamespaces
@@ -293,22 +318,9 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
                 </StudioIconButton>
               );
             })()}
-          </div>
-        </div>
-        {namespaces.length > 0 ? (
-          <Select value={activeNamespace} onValueChange={handleNamespaceChange}>
-            <SelectTrigger className="h-8 w-full text-xs">
-              <SelectValue placeholder="Select namespace" />
-            </SelectTrigger>
-            <SelectContent>
-              {namespaces.map((ns) => (
-                <SelectItem key={ns} value={ns} className="text-xs">
-                  {ns}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
+          </>
+        }
+        emptyAction={
           <button
             type="button"
             onClick={() => setShowCreateNamespace(true)}
@@ -317,17 +329,8 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
             <FolderPlus className="h-3.5 w-3.5" />
             No namespaces — create one
           </button>
-        )}
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter tables…"
-            className="h-8 pl-7 text-xs"
-          />
-        </div>
-      </div>
+        }
+      />
 
       {namespaces.length > 0 && (
         <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1.5">
@@ -365,9 +368,17 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
         </div>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
-        {tablesInNamespace.length === 0 && !filter && !activeNamespaceIsReadOnly && (
-          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+      <TableColumnTree
+        tables={tablesInNamespace}
+        activeNamespace={activeNamespace}
+        filter={filter}
+        selectedTableKey={selectedKey}
+        expandedTables={expandedTables}
+        onToggleTable={handleToggleTable}
+        onSelectTable={handleSelectTable}
+        createEmptyState={
+          !activeNamespaceIsReadOnly ? (
+            <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
             <p className="text-xs text-muted-foreground">
               No tables in <span className="font-mono">{activeNamespace}</span> yet.
             </p>
@@ -375,56 +386,28 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
               <Plus className="h-3.5 w-3.5" />
               Create your first table
             </Button>
-          </div>
-        )}
-        {tablesInNamespace.length === 0 && !filter && activeNamespaceIsReadOnly && (
-          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-            No tables in this namespace.
-          </div>
-        )}
-        {tablesInNamespace.length === 0 && filter && (
-          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-            No tables match the filter.
-          </div>
-        )}
-        <ul className="flex flex-col py-1">
-          {tablesInNamespace.map((table) => {
-            const key = `${table.namespace}.${table.name}`;
-            const isActive = mode === "edit" && selectedKey === key;
-            return (
-              <li key={key} className="group relative">
-                <button
-                  type="button"
-                  onClick={() => handleSelectTable(table)}
-                  className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 pr-9 text-left text-xs transition-colors",
-                    "hover:bg-accent hover:text-accent-foreground",
-                    isActive && "bg-accent text-accent-foreground font-medium",
-                  )}
-                >
-                  <Table2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{table.name}</span>
-                </button>
-                {!activeNamespaceIsReadOnly && (
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
-                    <StudioIconButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDropTable(table);
-                      }}
-                      tone="destructive"
-                      tooltip="Drop table"
-                      aria-label={`Drop table ${table.name}`}
-                    >
-                      <Trash2 data-icon="only" />
-                    </StudioIconButton>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </ScrollArea>
+            </div>
+          ) : undefined
+        }
+        readOnlyEmptyState="No tables in this namespace."
+        renderTableActions={(table) =>
+          !activeNamespaceIsReadOnly ? (
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+              <StudioIconButton
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDropTable(table);
+                }}
+                tone="destructive"
+                tooltip="Drop table"
+                aria-label={`Drop table ${table.name}`}
+              >
+                <Trash2 data-icon="only" />
+              </StudioIconButton>
+            </div>
+          ) : null
+        }
+      />
 
       <CreateNamespaceDialog
         open={showCreateNamespace}
