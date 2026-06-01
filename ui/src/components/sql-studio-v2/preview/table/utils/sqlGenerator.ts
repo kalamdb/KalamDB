@@ -7,6 +7,7 @@ function escapeSqlString(value: string): string {
 function toSqlLiteral(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "bigint") return value.toString();
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return `'${escapeSqlString(value)}'`;
   if (typeof value === "object") return `'${escapeSqlString(JSON.stringify(value))}'`;

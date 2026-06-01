@@ -145,7 +145,7 @@ export function InsertRowDialog({ open, table, onSubmit, onClose }: InsertRowDia
                 ) : (
                   <Input
                     type={
-                      kind === "smallint" || kind === "int" || kind === "float"
+                      kind === "smallint" || kind === "int" || kind === "bigint" || kind === "float" || kind === "decimal"
                         ? "number"
                         : kind === "datetime"
                           ? "datetime-local"
@@ -156,9 +156,9 @@ export function InsertRowDialog({ open, table, onSubmit, onClose }: InsertRowDia
                               : "text"
                     }
                     step={
-                      kind === "float"
+                      kind === "float" || kind === "decimal"
                         ? "any"
-                        : kind === "smallint" || kind === "int"
+                        : kind === "smallint" || kind === "int" || kind === "bigint"
                           ? "1"
                           : undefined
                     }

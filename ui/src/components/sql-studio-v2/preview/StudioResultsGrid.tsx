@@ -285,6 +285,34 @@ export function StudioResultsGrid({
   const parsedTableContext = useMemo(() => extractTableContext(activeSql), [activeSql]);
   const cellNamespace = parsedTableContext?.namespace ?? selectedTable?.namespace;
   const cellTableName = parsedTableContext?.tableName ?? selectedTable?.name;
+  const insertTargetTable = useMemo(() => {
+    if (parsedTableContext) {
+      const selectedMatchesParsed =
+        selectedTable
+        && selectedTable.namespace.toLowerCase() === parsedTableContext.namespace
+        && selectedTable.name.toLowerCase() === parsedTableContext.tableName;
+
+      if (selectedMatchesParsed && selectedTable) {
+        return selectedTable;
+      }
+
+      return {
+        database: selectedTable?.database ?? "kalamdb",
+        namespace: parsedTableContext.namespace,
+        name: parsedTableContext.tableName,
+        tableType: selectedTable?.tableType ?? "user",
+        columns: schema.map((field) => ({
+          name: field.name,
+          dataType: field.dataType,
+          isNullable: true,
+          isPrimaryKey: Boolean(field.isPrimaryKey),
+          ordinal: field.index,
+        })),
+      };
+    }
+
+    return selectedTable;
+  }, [parsedTableContext, selectedTable, schema]);
   const isSystemTable = cellNamespace?.toLowerCase() === "system";
   const isSuccess = !isRunning && result?.status === "success";
   const hasTabularResults = isSuccess && schema.length > 0;
@@ -768,7 +796,7 @@ export function StudioResultsGrid({
           {canMutateRows && (
             <div className="flex h-10 items-center justify-between border-b border-border bg-amber-50/70 px-3 /20">
               <div className="flex items-center gap-3">
-                {selectedTable && (
+                {insertTargetTable && (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -868,7 +896,7 @@ export function StudioResultsGrid({
                         >
                           {field.isPrimaryKey && (
                             <KeyRound
-                              className="h-3.5 w-3.5 shrink-0 text-emerald-500"
+                              className="h-3.5 w-3.5 shrink-0 text-amber-500"
                               aria-label="Primary key column"
                             />
                           )}
@@ -1014,6 +1042,12 @@ export function StudioResultsGrid({
                             <div
                               data-row-index={rowIndex}
                               data-column-name={field.name}
+                              onMouseDownCapture={() => {
+                                setSelectedCell({
+                                  rowIndex,
+                                  columnName: field.name,
+                                });
+                              }}
                               onClick={() => {
                                 setSelectedCell({
                                   rowIndex,
@@ -1041,10 +1075,10 @@ export function StudioResultsGrid({
                                 });
                               }}
                               className={cn(
-                                "min-h-9 overflow-hidden px-2 py-1.5 text-xs outline-none transition-colors duration-500",
+                                "h-7 truncate overflow-hidden whitespace-nowrap px-2 py-1 text-[11px] leading-4 outline-none transition-colors duration-500 [&_span]:inline-block [&_span]:max-w-full [&_span]:truncate [&_span]:align-middle [&_span]:text-[11px] [&_button]:max-w-full [&_button]:truncate [&_button]:text-[11px]",
                                 value === null && "italic text-muted-foreground",
                                 cellEdited && "bg-amber-500/20",
-                                selectedCellKey === cellKey && "ring-1 ring-ring",
+                                selectedCellKey === cellKey && "ring-2 ring-inset ring-sky-500/80 bg-sky-500/10",
                                 // Highlight changed cells during live updates
                                 isLiveUpdate && liveChangedCols?.has(field.name) && "bg-amber-400/25 ring-1 ring-amber-400/40",
                               )}
@@ -1066,15 +1100,18 @@ export function StudioResultsGrid({
               </tbody>
               </table>
             </div>
-            <ScrollBar orientation="horizontal" />
+            <ScrollBar
+              orientation="horizontal"
+              className="data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:p-0"
+            />
           </ScrollArea>
 
-          <div className="flex h-11 shrink-0 items-center border-t border-border bg-background px-2 text-xs text-muted-foreground">
+          <div className="flex h-9 shrink-0 items-center border-t border-border bg-background px-2 text-[11px] text-muted-foreground">
             <div className="flex items-center gap-2">
               <Button
                 size="icon"
                 variant="outline"
-                className="h-8 w-8"
+                className="h-7 w-7"
                 onClick={() => setPageIndex((previous) => Math.max(0, previous - 1))}
                 disabled={pageIndex === 0}
               >
@@ -1094,13 +1131,13 @@ export function StudioResultsGrid({
                   }
                   setPageIndex(Math.max(0, Math.min(pageCount - 1, parsedPage - 1)));
                 }}
-                className="h-8 w-16 text-center text-xs"
+                className="h-7 w-14 text-center text-[11px]"
               />
               <span>of {pageCount}</span>
               <Button
                 size="icon"
                 variant="outline"
-                className="h-8 w-8"
+                className="h-7 w-7"
                 onClick={() => setPageIndex((previous) => Math.min(pageCount - 1, previous + 1))}
                 disabled={pageIndex >= pageCount - 1}
               >
@@ -1113,12 +1150,12 @@ export function StudioResultsGrid({
                   setPageIndex(0);
                 }}
               >
-                <SelectTrigger className="h-8 w-[92px] text-xs">
+                <SelectTrigger className="h-7 w-[86px] text-[11px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {PAGE_SIZE_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={String(option)} className="text-xs">
+                    <SelectItem key={option} value={String(option)} className="text-[11px]">
                       {option} rows
                     </SelectItem>
                   ))}
@@ -1275,14 +1312,14 @@ export function StudioResultsGrid({
         </>
       )}
 
-      {selectedTable && (
+      {insertTargetTable && (
         <InsertRowDialog
           open={showInsertRow}
-          table={selectedTable}
+          table={insertTargetTable}
           onSubmit={(values) => {
             setShowInsertRow(false);
-            const fqn = `${selectedTable.namespace}.${selectedTable.name}`;
-            const sql = generateInsertSql(selectedTable.namespace, selectedTable.name, values);
+            const fqn = `${insertTargetTable.namespace}.${insertTargetTable.name}`;
+            const sql = generateInsertSql(insertTargetTable.namespace, insertTargetTable.name, values);
             openSqlPreview({
               sql,
               title: `Insert row into ${fqn}`,
