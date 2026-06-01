@@ -47,6 +47,18 @@ export interface CoerceResult {
 const FLOAT_REGEX = /^-?(\d+\.?\d*|\.\d+)([eE][+\-]?\d+)?$/;
 const INT_REGEX = /^-?\d+$/;
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const DATETIME_LOCAL_REGEX = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+function normalizeDatetimeLocalForSql(value: string): string | null {
+  const match = DATETIME_LOCAL_REGEX.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  const normalizedSecond = second ?? "00";
+  return `${year}-${month}-${day} ${hour}:${minute}:${normalizedSecond}`;
+}
 
 export function coerceFieldValue(raw: string, kind: FieldKind): CoerceResult {
   const trimmed = raw.trim();
@@ -81,9 +93,7 @@ export function coerceFieldValue(raw: string, kind: FieldKind): CoerceResult {
       if (big < BIGINT_MIN || big > BIGINT_MAX) {
         return { value: raw, error: "Out of range for BIGINT" };
       }
-      const n = Number(trimmed);
-      if (Number.isSafeInteger(n)) return { value: n, error: null };
-      return { value: trimmed, error: null };
+      return { value: big, error: null };
     }
     case "float": {
       if (!FLOAT_REGEX.test(trimmed)) return { value: raw, error: "Must be a number" };
@@ -93,9 +103,18 @@ export function coerceFieldValue(raw: string, kind: FieldKind): CoerceResult {
     }
     case "decimal": {
       if (!FLOAT_REGEX.test(trimmed)) return { value: raw, error: "Must be a decimal number" };
-      return { value: trimmed, error: null };
+      const n = Number(trimmed);
+      if (!Number.isFinite(n)) return { value: raw, error: "Out of range" };
+      return { value: n, error: null };
     }
     case "datetime":
+      {
+        const normalized = normalizeDatetimeLocalForSql(trimmed);
+        if (!normalized) {
+          return { value: raw, error: "Must be a valid datetime" };
+        }
+        return { value: normalized, error: null };
+      }
     case "date":
     case "time": {
       return { value: trimmed, error: null };
