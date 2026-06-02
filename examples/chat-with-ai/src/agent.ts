@@ -2,7 +2,7 @@ import { config as loadEnv } from 'dotenv';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Auth } from '@kalamdb/client';
-import { createConsumerClient, runConsumer } from '@kalamdb/consumer';
+import { ConsumerChange, ConsumerRunContext, createConsumerClient, runConsumer } from '@kalamdb/consumer';
 import { executeAsUser, kalamDriver } from '@kalamdb/orm';
 import { drizzle } from 'drizzle-orm/pg-proxy';
 import {
@@ -129,8 +129,8 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     timeoutSeconds: 30,
     stopSignal: options.stopSignal,
 
-    onChange: async (_ctx, change) => {
-      const row = change.data;
+    onChange: async (_ctx: ConsumerRunContext<ChatMessageRow>, change: ConsumerChange<ChatMessageRow>) => {
+      const row = change.data as ChatMessageRow;
       if (row.role !== 'user') {
         console.log(`[agent] skipping non-user message id=${row.id} role=${row.role}`);
         return;

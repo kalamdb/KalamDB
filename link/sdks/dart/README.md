@@ -521,7 +521,7 @@ Avoid this pattern. Build the UI first, then resolve auth and connect from a pro
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../../../LICENSE.txt](../../../LICENSE.txt) and [../../../NOTICE](../../../NOTICE).
+Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [LICENSE.txt](LICENSE.txt) and [NOTICE](NOTICE).
 
 ## Links
 
