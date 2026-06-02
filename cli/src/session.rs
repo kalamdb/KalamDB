@@ -120,7 +120,7 @@ pub struct CLISession {
     /// Enable spinners/animations
     animations: bool,
 
-    /// Authenticated user identifier
+    /// Authenticated user label shown in the prompt/session UI
     username: String,
 
     /// Session start time
@@ -371,6 +371,10 @@ impl CLISession {
                         .refresh_expires_at
                         .clone()
                         .or_else(|| creds.refresh_expires_at.clone()),
+                )
+                .with_identity_metadata(
+                    login_response.user.name.clone(),
+                    login_response.user.email.clone(),
                 );
                 if let Ok(mut s) = store.lock() {
                     let _ = s.set_credentials(&new_creds);

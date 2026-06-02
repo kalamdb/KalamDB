@@ -384,7 +384,7 @@ impl CLISession {
         );
         println!();
         println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
-        println!("  {}  {}", "👤".dimmed(), format!("User ID: {}", self.username).cyan());
+        println!("  {}  {}", "👤".dimmed(), format!("User: {}", self.username).cyan());
 
         if let Some(ref version) = self.server_version {
             println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());

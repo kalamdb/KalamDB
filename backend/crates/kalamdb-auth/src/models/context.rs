@@ -19,6 +19,8 @@ pub struct AuthenticatedUser {
     pub auth_type: AuthType,
     /// Email address (if available)
     pub email: Option<String>,
+    /// Preferred human-friendly display name (if available)
+    pub name: Option<String>,
     /// Account creation timestamp in milliseconds since epoch
     pub created_at: i64,
     /// Last update timestamp in milliseconds since epoch
@@ -32,6 +34,7 @@ impl AuthenticatedUser {
         user_id: UserId,
         role: Role,
         email: Option<String>,
+        name: Option<String>,
         created_at: i64,
         updated_at: i64,
         connection_info: ConnectionInfo,
@@ -41,6 +44,7 @@ impl AuthenticatedUser {
             role,
             AuthType::Password,
             email,
+            name,
             created_at,
             updated_at,
             connection_info,
@@ -52,6 +56,7 @@ impl AuthenticatedUser {
         role: Role,
         auth_type: AuthType,
         email: Option<String>,
+        name: Option<String>,
         created_at: i64,
         updated_at: i64,
         connection_info: ConnectionInfo,
@@ -61,6 +66,7 @@ impl AuthenticatedUser {
             role,
             auth_type,
             email,
+            name,
             created_at,
             updated_at,
             connection_info,
@@ -102,6 +108,7 @@ mod tests {
             UserId::new("user_123"),
             role,
             Some("test@example.com".to_string()),
+            Some("Test User".to_string()),
             0,
             0,
             ConnectionInfo::new(addr),

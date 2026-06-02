@@ -69,7 +69,7 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
             KalamDbError::ExecutionError(format!("Failed to set default namespace: {}", e))
         })?;
 
-        log::info!(
+        log::debug!(
             "User '{}' switched to namespace '{}'",
             context.user_id().as_str(),
             namespace_name

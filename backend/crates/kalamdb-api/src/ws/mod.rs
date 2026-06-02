@@ -72,6 +72,7 @@ mod tests {
             user_id: UserId::new("ws-test-user"),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::Dba,
+            name: None,
             email: Some("ws-test@example.com".to_string()),
             auth_type: AuthType::Password,
             auth_data: None,

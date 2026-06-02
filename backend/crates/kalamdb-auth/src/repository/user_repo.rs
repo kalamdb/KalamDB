@@ -31,12 +31,14 @@ pub trait UserRepository: Send + Sync {
     async fn accept_oidc_invite(&self, invite_user_id: &UserId, user: User) -> AuthResult<()>;
 }
 
-const USER_CACHE_TTL_SECS: u64 = 5;
+const USER_CACHE_TTL_SECS: u64 = 30;
 const USER_CACHE_MAX_CAPACITY: u64 = 1000;
 
 pub struct CachedUsersRepo {
     inner: CoreUsersRepo,
-    cache: Cache<UserId, User>,
+    /// `Some(user)` = found, `None` = confirmed not found (e.g. OIDC auto-provisioned users
+    /// that have no system.users row). Both outcomes are cached to avoid repeated RocksDB hits.
+    cache: Cache<UserId, Option<User>>,
 }
 
 impl CachedUsersRepo {
@@ -64,14 +66,32 @@ impl CachedUsersRepo {
 #[async_trait::async_trait]
 impl UserRepository for CachedUsersRepo {
     async fn get_user_by_id(&self, user_id: &UserId) -> AuthResult<User> {
-        if let Some(user) = self.cache.get(user_id) {
-            return Ok(user);
+        if let Some(entry) = self.cache.get(user_id) {
+            return match entry {
+                Some(user) => Ok(user),
+                None => Err(crate::AuthError::UserNotFound(format!(
+                    "User '{}' not found",
+                    user_id
+                ))),
+            };
         }
 
-        let user = self.inner.get_user_by_id(user_id).await?;
-        self.cache.insert(user_id.clone(), user.clone());
-
-        Ok(user)
+        match self.inner.get_user_by_id(user_id).await {
+            Ok(user) => {
+                self.cache.insert(user_id.clone(), Some(user.clone()));
+                Ok(user)
+            },
+            Err(crate::AuthError::UserNotFound(_)) => {
+                // Cache the miss so OIDC auto-provisioned users (no system.users row) don't
+                // trigger a RocksDB lookup on every request.
+                self.cache.insert(user_id.clone(), None);
+                Err(crate::AuthError::UserNotFound(format!(
+                    "User '{}' not found",
+                    user_id
+                )))
+            },
+            Err(e) => Err(e),
+        }
     }
 
     async fn get_active_oidc_invite_by_email(
@@ -88,6 +108,7 @@ impl UserRepository for CachedUsersRepo {
     }
 
     async fn create_user(&self, user: User) -> AuthResult<()> {
+        self.invalidate_user(&user.user_id);
         self.inner.create_user(user).await
     }
 

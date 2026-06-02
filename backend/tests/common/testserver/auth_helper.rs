@@ -112,6 +112,7 @@ pub async fn create_test_user(
         user_id,
         password_hash: String::new(), // Not needed for tests
         role,
+        name: None,
         email: Some(format!("{}@example.com", username)),
         auth_type: AuthType::Password,
         auth_data: None,
@@ -247,6 +248,7 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
         user_id: UserId::new(format!("sys_{}", username)),
         password_hash: String::new(), // No password for system users (localhost-only)
         role: Role::System,
+        name: None,
         email: None,
         auth_type: AuthType::Password,
         auth_data: None,

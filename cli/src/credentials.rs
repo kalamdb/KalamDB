@@ -65,6 +65,12 @@ struct StoredCredential {
     /// User associated with this token (for display)
     #[serde(skip_serializing_if = "Option::is_none")]
     user: Option<UserId>,
+    /// Preferred human-friendly account name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// Email associated with this token (for display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
     /// Token expiration time in RFC3339 format
     #[serde(skip_serializing_if = "Option::is_none")]
     expires_at: Option<String>,
@@ -226,6 +232,8 @@ impl CredentialStore for FileCredentialStore {
                 instance: instance.to_string(),
                 jwt_token: stored.jwt_token.clone(),
                 user: stored.user.clone(),
+                name: stored.name.clone(),
+                email: stored.email.clone(),
                 expires_at: stored.expires_at.clone(),
                 server_url: stored.server_url.clone(),
                 refresh_token: stored.refresh_token.clone(),
@@ -240,6 +248,8 @@ impl CredentialStore for FileCredentialStore {
         let stored = StoredCredential {
             jwt_token: credentials.jwt_token.clone(),
             user: credentials.user.clone(),
+            name: credentials.name.clone(),
+            email: credentials.email.clone(),
             expires_at: credentials.expires_at.clone(),
             server_url: credentials.server_url.clone(),
             refresh_token: credentials.refresh_token.clone(),

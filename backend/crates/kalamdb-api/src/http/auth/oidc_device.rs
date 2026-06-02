@@ -217,6 +217,7 @@ async fn complete_authorized_device_login(
             user: Some(UserInfo {
                 id: user.user_id,
                 role: user.role,
+                name: user.name,
                 email: user.email,
                 created_at,
                 updated_at,

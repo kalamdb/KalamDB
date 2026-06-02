@@ -336,7 +336,8 @@ export function UsersList() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Username</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>User ID</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Created</TableHead>
@@ -346,14 +347,15 @@ export function UsersList() {
                 <TableBody>
                   {users.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         {searchQuery ? "No users match your search" : "No users found"}
                       </TableCell>
                     </TableRow>
                   ) : (
                     users.map((user, index) => (
                       <TableRow key={user.user_id || `user-${index}`}>
-                        <TableCell className="font-medium">{user.user_id}</TableCell>
+                        <TableCell className="font-medium">{user.name || "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{user.user_id}</TableCell>
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
                             {user.role}

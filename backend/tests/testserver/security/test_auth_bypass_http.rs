@@ -84,6 +84,7 @@ async fn upsert_password_user(
             user_id,
             password_hash,
             role,
+            name: None,
             email: Some(format!("{}@example.com", user)),
             auth_type: AuthType::Password,
             auth_data: None,

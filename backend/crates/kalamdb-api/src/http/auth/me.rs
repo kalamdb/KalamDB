@@ -52,6 +52,7 @@ pub async fn me_handler(
         user: UserInfo {
             id: user.user_id,
             role: user.role,
+            name: user.name,
             email: user.email,
             created_at,
             updated_at,

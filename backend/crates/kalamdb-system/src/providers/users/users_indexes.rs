@@ -105,6 +105,7 @@ mod tests {
             user_id: UserId::new(id),
             password_hash: "hashed_password".to_string(),
             role,
+            name: None,
             email: Some(format!("{}@example.com", id)),
             auth_type: AuthType::Password,
             auth_data: None,

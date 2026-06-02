@@ -271,7 +271,10 @@ async function openTableEditor(page: Page) {
 
 async function chooseSelect(page: Page, testId: string, optionName: RegExp) {
   await page.getByTestId(testId).click();
-  await page.getByRole("option", { name: optionName }).click();
+  await page
+    .locator('[data-slot="select-item"]', { hasText: optionName })
+    .first()
+    .click();
 }
 
 test("admin creates a stream table with stream-specific options", async ({
@@ -282,10 +285,10 @@ test("admin creates a stream table with stream-specific options", async ({
   await openTableEditor(page);
 
   await page.getByRole("button", { name: /new table/i }).click();
-  await chooseSelect(page, "table-type-select", /^stream$/i);
+  await chooseSelect(page, "table-type-select", /stream/i);
   await page.getByPlaceholder("e.g. users").fill("audit_stream");
   await page.getByTestId("table-option-ttl-seconds").fill("7200");
-  await chooseSelect(page, "table-option-eviction-strategy", /^hybrid$/i);
+  await chooseSelect(page, "table-option-eviction-strategy", /hybrid/i);
   await page.getByTestId("table-option-max-stream-size").fill("1048576");
   await expect(page.getByTestId("table-option-compression")).toHaveCount(0);
 
@@ -308,12 +311,12 @@ test("admin edits shared table options", async ({ page }) => {
   await mockAdminApi(page, executedSql);
   await openTableEditor(page);
 
-  await page.getByRole("button", { name: /^settings$/i }).click();
-  await chooseSelect(page, "table-option-access-level", /^public$/i);
-  await chooseSelect(page, "table-option-flush-policy", /^combined$/i);
+  await page.getByText(/^settings$/i, { exact: true }).click();
+  await chooseSelect(page, "table-option-access-level", /public/i);
+  await chooseSelect(page, "table-option-flush-policy", /combined/i);
   await page.getByTestId("table-option-flush-rows").fill("2000");
   await page.getByTestId("table-option-flush-interval").fill("120");
-  await chooseSelect(page, "table-option-compression", /^none$/i);
+  await chooseSelect(page, "table-option-compression", /none/i);
 
   await page.getByRole("button", { name: /review & save/i }).click();
   await page.getByRole("button", { name: /^commit$/i }).click();

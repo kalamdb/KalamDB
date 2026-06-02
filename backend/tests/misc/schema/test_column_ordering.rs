@@ -247,6 +247,7 @@ async fn test_system_tables_have_correct_column_ordering() {
         "deleted_at",
         "invite_expires_at",
         "invited_by",
+        "name",
     ];
 
     // Verify Arrow schema matches expected column order

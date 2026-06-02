@@ -390,6 +390,7 @@ mod tests {
             user_id: UserId::new(id),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
+            name: None,
             email: Some(format!("{}@example.com", id)),
             auth_type: AuthType::Password,
             auth_data: None,
@@ -531,14 +532,14 @@ mod tests {
         // Scan all
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 17);
+        assert_eq!(batch.num_columns(), 18);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let provider = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 17);
+        assert_eq!(schema.fields().len(), 18);
         assert_eq!(schema.field(0).name(), "user_id");
     }
 

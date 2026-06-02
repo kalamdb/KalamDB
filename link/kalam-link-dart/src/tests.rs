@@ -212,6 +212,7 @@ mod tests {
             user: LoginUserInfo {
                 id: "user-1".into(),
                 role: kalam_client::Role::Dba,
+                name: Some("Alice Example".into()),
                 email: Some("alice@example.com".into()),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 updated_at: "2026-02-01T00:00:00Z".into(),

@@ -39,6 +39,7 @@ function user(overrides: Partial<User>): User {
   return {
     user_id: "user-1",
     role: "user",
+    name: "Default User",
     email: "user@example.org",
     auth_type: "password",
     auth_data: null,
@@ -93,6 +94,7 @@ describe("UsersList", () => {
       users: [
         user({
           user_id: "dev-carol",
+          name: "Carol Doe",
           role: "dba",
           email: "carol@example.org",
           auth_type: "oidc",
@@ -117,6 +119,7 @@ describe("UsersList", () => {
     expect(within(invites).getByText(/expired/i)).toBeTruthy();
 
     expect(within(users).queryByText("invite_alice")).toBeNull();
+    expect(within(users).getByText("Carol Doe")).toBeTruthy();
     expect(within(users).getByText("dev-carol")).toBeTruthy();
     expect(screen.getByPlaceholderText(/search users/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /next users page/i })).toBeTruthy();

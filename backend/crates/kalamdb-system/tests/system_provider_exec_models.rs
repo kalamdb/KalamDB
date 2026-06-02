@@ -24,6 +24,7 @@ async fn users_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             user_id: UserId::new("exec-model-user"),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
+            name: None,
             email: Some("exec-model@example.com".to_string()),
             auth_type: AuthType::Password,
             auth_data: None,
