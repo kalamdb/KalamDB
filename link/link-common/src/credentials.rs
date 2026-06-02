@@ -38,6 +38,14 @@ pub struct Credentials {
     #[serde(default)]
     pub user: Option<UserId>,
 
+    /// Preferred human-friendly name for this account, if available.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Email associated with this token (for display purposes)
+    #[serde(default)]
+    pub email: Option<String>,
+
     /// Token expiration time in RFC3339 format (optional, for cache invalidation)
     #[serde(default)]
     pub expires_at: Option<String>,
@@ -62,6 +70,8 @@ impl Credentials {
             instance,
             jwt_token,
             user: None,
+            name: None,
+            email: None,
             expires_at: None,
             server_url: None,
             refresh_token: None,
@@ -81,6 +91,8 @@ impl Credentials {
             instance,
             jwt_token,
             user: Some(user.into()),
+            name: None,
+            email: None,
             expires_at: Some(expires_at),
             server_url,
             refresh_token: None,
@@ -102,11 +114,38 @@ impl Credentials {
             instance,
             jwt_token,
             user: Some(user.into()),
+            name: None,
+            email: None,
             expires_at: Some(expires_at),
             server_url,
             refresh_token,
             refresh_expires_at,
         }
+    }
+
+    /// Attach human-friendly identity metadata.
+    pub fn with_identity_metadata(
+        mut self,
+        name: Option<String>,
+        email: Option<String>,
+    ) -> Self {
+        self.name = name.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+        self.email = email.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
+        self
+    }
+
+    /// Preferred display label for this identity.
+    pub fn display_label(&self) -> Option<&str> {
+        self.name
+            .as_deref()
+            .or(self.email.as_deref())
+            .or_else(|| self.user.as_ref().map(UserId::as_str))
     }
 
     /// Get the server URL, defaulting to instance name if not set

@@ -175,7 +175,7 @@ pub(super) async fn run_websocket(
                             )
                             .await
                             {
-                                error!("Error handling message: {}", err);
+                                warn!("Error handling message: {}", err);
                                 let _ = session.close(Some(CloseReason {
                                     code: CloseCode::Error,
                                     description: Some(err),
@@ -213,7 +213,7 @@ pub(super) async fn run_websocket(
                                     continue;
                                 }
 
-                                error!("Error handling binary message: {}", err);
+                                warn!("Error handling binary message: {}", err);
                                 let _ = session.close(Some(CloseReason {
                                     code: CloseCode::Error,
                                     description: Some(err),
@@ -231,7 +231,7 @@ pub(super) async fn run_websocket(
                             if is_expected_ws_disconnect(&err) {
                                 debug!("WebSocket client disconnected ({}): {}", connection_id, err);
                             } else {
-                                error!("WebSocket error ({}): {}", connection_id, err);
+                                warn!("WebSocket error ({}): {}", connection_id, err);
                             }
                             break;
                         }

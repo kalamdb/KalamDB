@@ -17,6 +17,8 @@ pub struct LoginUserInfo {
     pub id: UserId,
     /// User role (user, service, dba, system)
     pub role: Role,
+    /// Preferred human-friendly display name
+    pub name: Option<String>,
     /// User email (optional)
     pub email: Option<String>,
     /// Account creation time in RFC3339 format

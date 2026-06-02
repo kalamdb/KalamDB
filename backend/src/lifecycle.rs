@@ -1067,6 +1067,7 @@ async fn create_default_system_user(
                 user_id,
                 password_hash,
                 role,
+                name: None,
                 email: Some(email),
                 auth_type: AuthType::Password,
                 auth_data: None,

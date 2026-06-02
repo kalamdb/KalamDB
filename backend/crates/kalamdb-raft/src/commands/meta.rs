@@ -311,6 +311,7 @@ mod tests {
         User {
             user_id: UserId::from("test_user"),
             password_hash: "hash".to_string(),
+            name: None,
             email: None,
             auth_type: AuthType::Password,
             auth_data: None,

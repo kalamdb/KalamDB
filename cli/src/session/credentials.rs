@@ -16,8 +16,14 @@ impl CLISession {
                     Ok(Some(creds)) => {
                         println!("{}", "Stored Credentials".bold().cyan());
                         println!("  Instance: {}", creds.instance.green());
+                        if let Some(ref name) = creds.name {
+                            println!("  Name: {}", name.green());
+                        }
                         if let Some(ref user) = creds.user {
                             println!("  User: {}", user.as_str().green());
+                        }
+                        if let Some(ref email) = creds.email {
+                            println!("  Email: {}", email.green());
                         }
                         println!("  JWT Token: {}", "[redacted]".dimmed());
                         if let Some(ref expires) = creds.expires_at {
@@ -84,6 +90,10 @@ impl CLISession {
                             Some(self.server_url.clone()),
                             login_response.refresh_token.clone(),
                             login_response.refresh_expires_at.clone(),
+                        )
+                        .with_identity_metadata(
+                            login_response.user.name.clone(),
+                            login_response.user.email.clone(),
                         );
 
                         store
@@ -93,7 +103,13 @@ impl CLISession {
 
                         println!("{}", "✓ Credentials updated successfully".green().bold());
                         println!("  Instance: {}", instance.cyan());
-                        println!("  User: {}", login_response.user.id.to_string().cyan());
+                        let display_user = login_response
+                            .user
+                            .name
+                            .clone()
+                            .or_else(|| login_response.user.email.clone())
+                            .unwrap_or_else(|| login_response.user.id.to_string());
+                        println!("  User: {}", display_user.cyan());
                         println!("  Expires: {}", login_response.expires_at.cyan());
                         if let Some(ref refresh_expires) = login_response.refresh_expires_at {
                             println!("  Refresh expires: {}", refresh_expires.cyan());

@@ -96,6 +96,7 @@ pub struct CurrentUserResponse {
 pub struct CurrentUser {
     pub id: String,
     pub role: String,
+    pub name: Option<String>,
     pub email: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -105,6 +106,8 @@ pub struct CurrentUser {
 pub struct ExternalLoginSession {
     pub access_token: String,
     pub user_id: String,
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
     pub expires_at: String,
     pub refresh_token: Option<String>,
     pub refresh_expires_at: Option<String>,
@@ -178,6 +181,8 @@ pub async fn authenticate_external_token(
         expires_at: external_token_expires_at(&token),
         access_token: token,
         user_id: current_user.user.id,
+        user_name: current_user.user.name,
+        user_email: current_user.user.email,
         refresh_token: None,
         refresh_expires_at: None,
     })
@@ -244,6 +249,8 @@ async fn login_session_from_response(
     Ok(ExternalLoginSession {
         access_token: login.access_token,
         user_id: login.user.id,
+        user_name: login.user.name,
+        user_email: login.user.email,
         expires_at: login.expires_at,
         refresh_token: Some(login.refresh_token),
         refresh_expires_at: Some(login.refresh_expires_at),

@@ -63,6 +63,7 @@ impl StaticUserRepo {
                 password_hash: "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu"
                     .to_string(),
                 role,
+                name: None,
                 email: Some("pg-bridge@example.com".to_string()),
                 auth_type: AuthType::Password,
                 auth_data: None,

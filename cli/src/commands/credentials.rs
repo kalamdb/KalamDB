@@ -21,8 +21,7 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
             for instance in instances {
                 // Show additional info if available
                 if let Ok(Some(creds)) = credential_store.get_credentials(&instance) {
-                    let user_info =
-                        creds.user.as_ref().map(|user| user.as_str()).unwrap_or("unknown");
+                    let user_info = creds.display_label().unwrap_or("unknown");
                     let expired = if creds.is_expired() { " (expired)" } else { "" };
                     println!("  • {} (user: {}){}", instance, user_info, expired);
                 } else {
@@ -39,8 +38,14 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
         })? {
             Some(creds) => {
                 println!("Instance: {}", creds.instance);
+                if let Some(ref name) = creds.name {
+                    println!("Name: {}", name);
+                }
                 if let Some(ref user) = creds.user {
                     println!("User: {}", user);
+                }
+                if let Some(ref email) = creds.email {
+                    println!("Email: {}", email);
                 }
                 println!("JWT Token: [redacted]");
                 if let Some(ref expires) = creds.expires_at {
@@ -134,6 +139,10 @@ pub async fn login_and_store_credentials(
         Some(server_url),
         login_response.refresh_token.clone(),
         login_response.refresh_expires_at.clone(),
+    )
+    .with_identity_metadata(
+        login_response.user.name.clone(),
+        login_response.user.email.clone(),
     );
 
     credential_store

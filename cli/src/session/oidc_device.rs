@@ -180,6 +180,8 @@ pub async fn login_with_brokered_device(
                 return Ok(ExternalLoginSession {
                     access_token,
                     user_id: user.id,
+                    user_name: user.name,
+                    user_email: user.email,
                     expires_at: poll.expires_at.unwrap_or_else(|| {
                         (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339()
                     }),

@@ -29,6 +29,7 @@ describe("User type", () => {
     const user: User = {
       user_id: "root",
       role: "system",
+      name: "Root Admin",
       email: "root@localhost",
       auth_type: "password",
       auth_data: null,
@@ -88,6 +89,7 @@ describe("User type", () => {
       {
         user_id: "invite_alice",
         role: "dba",
+        name: null,
         email: "alice@example.com",
         auth_type: "oidc_invite",
         auth_data: null,
@@ -179,6 +181,7 @@ describe("User type", () => {
     const rows = Array.from({ length: 4 }, (_, index) => ({
       user_id: `dev-${index}`,
       role: "user",
+      name: `Developer ${index}`,
       email: `dev-${index}@example.com`,
       auth_type: "password",
       auth_data: null,

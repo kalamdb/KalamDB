@@ -92,6 +92,7 @@ async fn open_session(
         user_id: bridge_user_id.clone(),
         password_hash: "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu".to_string(),
         role: Role::Dba,
+        name: None,
         email: Some(format!("{}@example.com", bridge_user_id.as_str())),
         auth_type: AuthType::Password,
         auth_data: None,

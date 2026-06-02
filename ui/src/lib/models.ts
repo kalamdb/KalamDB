@@ -37,6 +37,7 @@ export type SystemUserRow = typeof system_users.$inferSelect;
 export type SystemUserListRow = Pick<SystemUserRow,
   | "user_id"
   | "role"
+  | "name"
   | "email"
   | "auth_type"
   | "auth_data"

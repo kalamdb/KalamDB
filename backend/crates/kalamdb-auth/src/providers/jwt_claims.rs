@@ -28,6 +28,8 @@ pub struct JwtClaims {
     pub iss: String,
     pub exp: usize,
     pub iat: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub email: Option<String>,
     pub role: Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,6 +86,7 @@ impl JwtClaims {
             iss: issuer.to_string(),
             exp: exp.timestamp() as usize,
             iat: now.timestamp() as usize,
+            name: None,
             email: email.map(|value| value.to_string()),
             role: Some(*role),
             auth_type: Some(auth_type),

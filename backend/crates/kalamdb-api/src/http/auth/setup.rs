@@ -34,6 +34,7 @@ fn build_setup_response(user: &User, message: String) -> ServerSetupResponse {
         user: UserInfo {
             id: user.user_id.clone(),
             role: user.role,
+            name: user.name.clone(),
             email: user.email.clone(),
             created_at: created_at_str,
             updated_at: updated_at_str,
@@ -175,6 +176,7 @@ pub async fn server_setup_handler(
         user_id: dba_user_id.clone(),
         password_hash: dba_password_hash,
         role: Role::Dba,
+        name: None,
         email: body.email.clone(),
         auth_type: AuthType::Password,
         auth_data: None,

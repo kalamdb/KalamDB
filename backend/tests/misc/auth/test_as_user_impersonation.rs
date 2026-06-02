@@ -25,6 +25,7 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
         user_id: user_id.clone(),
         password_hash: "".to_string(),
         role,
+        name: None,
         email: Some(format!("{}@test.local", username)),
         auth_type: AuthType::Password,
         auth_data: None,

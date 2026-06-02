@@ -58,6 +58,7 @@ pub(crate) struct CurrentUserResponse {
 pub(crate) struct CurrentUser {
     pub id: String,
     pub role: String,
+    pub name: Option<String>,
     pub email: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -102,6 +103,20 @@ fn password_from_cli_or_prompt(cli: &Cli) -> Result<String> {
     }
 
     Ok(String::new())
+}
+
+fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
+    name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            email
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| user_id.to_string())
 }
 
 pub(crate) async fn resolve_auth_context(
@@ -172,6 +187,10 @@ pub(crate) async fn resolve_auth_context(
                 Some(refresh_server_url.clone()),
                 login_response.refresh_token.clone(),
                 login_response.refresh_expires_at.clone(),
+            )
+            .with_identity_metadata(
+                login_response.user.name.clone(),
+                login_response.user.email.clone(),
             );
             credential_store.set_credentials(&refreshed).map_err(|error| {
                 CLIError::ConfigurationError(format!(
@@ -310,13 +329,24 @@ pub async fn handle_login(
             Some(server_url.clone()),
             login_response.refresh_token.clone(),
             login_response.refresh_expires_at.clone(),
+        )
+        .with_identity_metadata(
+            login_response.user.name.clone(),
+            login_response.user.email.clone(),
         );
         credential_store.set_credentials(&creds).map_err(|error| {
             CLIError::ConfigurationError(format!("Failed to save credentials: {}", error))
         })?;
     }
 
-    println!("Logged in as {}", login_response.user.id);
+    println!(
+        "Logged in as {}",
+        preferred_user_label(
+            login_response.user.id.as_str(),
+            login_response.user.name.as_deref(),
+            login_response.user.email.as_deref(),
+        )
+    );
     println!("Instance: {}", cli.instance);
     println!("Server: {}", server_url);
     if !args.no_save {
@@ -410,7 +440,15 @@ async fn handle_oidc_login(
         save_external_session(cli, credential_store, &server_url, &session)?;
     }
 
-    println!("Logged in with {} as {}", oidc.display_name, session.user_id);
+    println!(
+        "Logged in with {} as {}",
+        oidc.display_name,
+        preferred_user_label(
+            &session.user_id,
+            session.user_name.as_deref(),
+            session.user_email.as_deref(),
+        )
+    );
     println!("Instance: {}", cli.instance);
     println!("Server: {}", server_url);
     if !args.no_save {
@@ -442,7 +480,8 @@ fn save_external_session(
         Some(server_url.to_string()),
         session.refresh_token.clone(),
         session.refresh_expires_at.clone(),
-    );
+    )
+    .with_identity_metadata(session.user_name.clone(), session.user_email.clone());
     credential_store.set_credentials(&credentials).map_err(|error| {
         CLIError::ConfigurationError(format!("Failed to save credentials: {}", error))
     })
@@ -535,6 +574,9 @@ pub async fn handle_whoami(cli: &Cli, credential_store: &mut FileCredentialStore
         );
     } else {
         println!("User: {}", current.user.id);
+        if let Some(name) = current.user.name {
+            println!("Name: {}", name);
+        }
         println!("Role: {}", current.user.role);
         if let Some(email) = current.user.email {
             println!("Email: {}", email);
@@ -679,6 +721,10 @@ async fn handle_token_create(
             Some(auth_context.server_url.clone()),
             token_response.refresh_token.clone(),
             token_response.refresh_expires_at.clone(),
+        )
+        .with_identity_metadata(
+            token_response.user.name.clone(),
+            token_response.user.email.clone(),
         );
         credential_store.set_credentials(&creds).map_err(|error| {
             CLIError::ConfigurationError(format!("Failed to save generated token: {}", error))

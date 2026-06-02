@@ -136,6 +136,7 @@ pub async fn refresh_handler(
             user: UserInfo {
                 id: user.user_id.clone(),
                 role: user.role,
+                name: user.name,
                 email: user.email,
                 created_at,
                 updated_at,
@@ -161,6 +162,7 @@ mod tests {
             iss: "kalamdb".to_string(),
             exp: now + 3600,
             iat: now,
+            name: None,
             email: None,
             role: None,
             auth_type: None,

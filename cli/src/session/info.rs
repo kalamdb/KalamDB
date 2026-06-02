@@ -1,13 +1,50 @@
 use std::fmt::Display;
 
 use colored::Colorize;
-use kalam_client::KalamLinkError;
+use kalam_client::{AuthProvider, KalamLinkError};
+use serde::Deserialize;
 
 use super::CLISession;
 use crate::{history::CommandHistory, CLI_VERSION};
 
 fn print_info_row(label: &str, value: impl Display) {
     println!("  {:<20} {}", format!("{label}:"), value);
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionUserInfoResponse {
+    user: SessionUserInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionUserInfo {
+    id: String,
+    email: Option<String>,
+}
+
+impl CLISession {
+    async fn fetch_session_user_info(&self) -> Option<SessionUserInfo> {
+        let url = format!("{}/v1/api/auth/me", self.server_url.trim_end_matches('/'));
+        let request = reqwest::Client::new().get(url);
+        let request = match &self.auth {
+            AuthProvider::BasicAuth(username, password) => {
+                request.basic_auth(username.clone(), Some(password.clone()))
+            },
+            AuthProvider::JwtToken(token) => request.bearer_auth(token),
+            AuthProvider::None => request,
+        };
+
+        let response = request.send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+
+        response
+            .json::<SessionUserInfoResponse>()
+            .await
+            .ok()
+            .map(|payload| payload.user)
+    }
 }
 
 impl CLISession {
@@ -56,6 +93,12 @@ impl CLISession {
             self.adopt_cluster_metadata(info);
         }
 
+        let session_user_info = if self.connected {
+            self.fetch_session_user_info().await
+        } else {
+            None
+        };
+
         println!();
         println!("{}", "═══════════════════════════════════════".cyan().bold());
         println!("{}", "    Session Information".white().bold());
@@ -65,7 +108,18 @@ impl CLISession {
         // Connection info
         println!("{}", "Connection:".yellow().bold());
         print_info_row("Server URL", self.server_url.green());
-        print_info_row("User ID", self.username.green());
+        print_info_row("User", self.username.green());
+        if let Some(ref user_info) = session_user_info {
+            print_info_row("User ID", user_info.id.green());
+            if let Some(ref email) = user_info.email {
+                print_info_row("Email", email.green());
+            } else {
+                print_info_row("Email", "Unknown".dimmed());
+            }
+        } else {
+            print_info_row("User ID", "Unknown".dimmed());
+            print_info_row("Email", "Unknown".dimmed());
+        }
         print_info_row("Namespace", self.effective_namespace().green());
         print_info_row(
             "Connected",

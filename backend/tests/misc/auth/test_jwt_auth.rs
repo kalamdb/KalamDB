@@ -55,6 +55,7 @@ fn create_test_jwt_token(
         iss: issuer.to_string(),
         exp: ((now as i64) + exp_offset_secs) as usize,
         iat: now,
+        name: None,
         email: Some(format!("{}@example.com", username)),
         role: Some(Role::User),
         token_type: None,

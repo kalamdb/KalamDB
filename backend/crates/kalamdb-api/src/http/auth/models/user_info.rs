@@ -10,6 +10,8 @@ pub struct UserInfo {
     pub id: UserId,
     /// User role (user, service, dba, system)
     pub role: Role,
+    /// Preferred human-friendly display name
+    pub name: Option<String>,
     /// Email address (optional)
     pub email: Option<String>,
     /// Creation timestamp in RFC3339 format

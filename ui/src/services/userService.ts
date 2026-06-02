@@ -35,6 +35,7 @@ const INVITE_USER_ID_PATTERN = "invite_%";
 const userSelect = {
   user_id: system_users.user_id,
   role: system_users.role,
+  name: system_users.name,
   email: system_users.email,
   auth_type: system_users.auth_type,
   auth_data: system_users.auth_data,
@@ -60,6 +61,7 @@ function buildUserSearchCondition(search?: string): SQL | undefined {
   const searchPattern = `%${normalizedSearch}%`;
   return sql`(
     ${system_users.user_id} LIKE ${searchPattern}
+    OR ${system_users.name} LIKE ${searchPattern}
     OR ${system_users.email} LIKE ${searchPattern}
     OR ${system_users.role} LIKE ${searchPattern}
   )`;

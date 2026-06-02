@@ -30,8 +30,9 @@ pub(super) async fn authenticate_bearer(
     async move {
         let config = jwt_config::get_jwt_config();
 
-        let alg = jwt_auth::extract_algorithm_unverified(token)?;
-        let issuer = jwt_auth::extract_issuer_unverified(token)?;
+        // Single pass: extract alg, header typ, and issuer together — avoids three separate
+        // decode_header / base64 / JSON parses that the old two-call approach incurred.
+        let (alg, header_typ, issuer) = jwt_auth::extract_header_claims_unverified(token)?;
 
         jwt_auth::verify_issuer(&issuer, &config.trusted_issuers)?;
 
@@ -64,13 +65,9 @@ pub(super) async fn authenticate_bearer(
                 },
             }
         } else {
-            let header = jsonwebtoken::decode_header(token).map_err(|e| {
-                AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", e))
-            })?;
-
-            if let Some(typ) = header.typ {
-                let typ_lower = typ.to_lowercase();
-                if typ_lower.contains("refresh") {
+            // Use the typ already extracted above — no additional decode_header needed.
+            if let Some(typ) = header_typ {
+                if typ.to_lowercase().contains("refresh") {
                     log::warn!(
                         "External refresh token used as access token for user={}",
                         claims.sub
@@ -288,6 +285,7 @@ async fn try_accept_external_oidc_invite(
         invited_by: None,
         user_id: user_id.clone(),
         password_hash: String::new(),
+        name: claims.name.clone(),
         email: Some(email.to_ascii_lowercase()),
         auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
         storage_id: invite.storage_id.clone(),
@@ -338,6 +336,7 @@ async fn auto_provision_external_user(
         invite_expires_at: None,
         user_id: user_id.clone(),
         password_hash: String::new(),
+        name: claims.name.clone(),
         email: claims.email.clone(),
         auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
         storage_id: None,
@@ -428,6 +427,7 @@ fn authenticated_user_from_persisted_user(
         user.role,
         user.auth_type,
         user.email,
+        user.name,
         user.created_at,
         user.updated_at,
         connection_info.clone(),
@@ -447,6 +447,7 @@ fn authenticated_user_from_claims(
         role,
         auth_type,
         claims.email.clone(),
+        claims.name.clone(),
         issued_at,
         issued_at,
         connection_info.clone(),
@@ -561,6 +562,7 @@ mod tests {
             iss: "https://issuer.example".to_string(),
             exp: 99_999_999,
             iat: 1_700_000_000,
+            name: None,
             email: Some("user@example.com".to_string()),
             role,
             auth_type: Some(AuthType::Oidc),
@@ -574,6 +576,7 @@ mod tests {
             iss: jwt_auth::KALAMDB_ISSUER.to_string(),
             exp: 99_999_999,
             iat: 1_700_000_000,
+            name: None,
             email: Some("user@example.com".to_string()),
             role: Some(role),
             auth_type: Some(auth_type),
@@ -599,6 +602,7 @@ mod tests {
             invited_by: None,
             user_id,
             password_hash: String::new(),
+            name: None,
             email: Some("stored@example.com".to_string()),
             auth_data,
             storage_id: None,

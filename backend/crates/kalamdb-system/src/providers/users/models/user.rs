@@ -26,6 +26,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 /// - `password_hash`: bcrypt hash of password (cost factor 12)
 /// - `role`: User role (User, Service, DBA, System)
 /// - `email`: Optional email address
+/// - `name`: Optional human-friendly display name
 /// - `auth_type`: Authentication method (Password or OIDC)
 /// - `auth_data`: Linked OIDC issuer/subject identity (typed [`AuthData`])
 /// - `storage_mode`: Preferred storage partitioning mode (Table, Region)
@@ -54,6 +55,7 @@ pub const DEFAULT_LOCKOUT_DURATION_MINUTES: i64 = 15;
 ///     user_id:               UserId::new("u_123456"),
 ///     password_hash:         "$2b$12$...".to_string(),
 ///     role:                  Role::User,
+///     name:                  Some("Alice".to_string()),
 ///     email:                 Some("alice@example.com".to_string()),
 ///     auth_type:             AuthType::Password,
 ///     auth_data:             None,
@@ -180,6 +182,16 @@ pub struct User {
         comment = "User email address"
     )]
     pub email: Option<String>,
+    #[column(
+        id = 19,
+        ordinal = 18,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "User display name"
+    )]
+    pub name: Option<String>,
     #[column(
         id = 7,
         ordinal = 6,
@@ -309,6 +321,7 @@ mod tests {
             user_id: UserId::new("u_123"),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
+            name: None,
             email: Some("test@example.com".to_string()),
             auth_type: AuthType::Password,
             auth_data: None,

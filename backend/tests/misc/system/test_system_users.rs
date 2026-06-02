@@ -34,6 +34,7 @@ async fn create_system_user(
         user_id: UserId::new(format!("sys_{}", username)),
         password_hash,
         role: Role::System,
+        name: None,
         email: Some(format!("{}@system.local", username)),
         auth_type: AuthType::Password,
         auth_data: None,

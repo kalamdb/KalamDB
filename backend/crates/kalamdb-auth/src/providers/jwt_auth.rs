@@ -13,17 +13,17 @@ pub use crate::providers::jwt_claims::{JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_
 /// Default issuer for KalamDB-issued tokens.
 pub const KALAMDB_ISSUER: &str = "kalamdb";
 
-/// Extract the `alg` field from the JWT header without verifying the signature.
-pub(crate) fn extract_algorithm_unverified(token: &str) -> AuthResult<Algorithm> {
+/// Extract `alg` and `typ` (from the JWT header) and `iss` (from the JWT payload) in a single
+/// pass, without verifying the signature. Returns `(alg, header_typ, issuer)`.
+pub(crate) fn extract_header_claims_unverified(
+    token: &str,
+) -> AuthResult<(Algorithm, Option<String>, String)> {
+    // One header parse gives us alg + typ.
     let header = decode_header(token).map_err(|error| {
         AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", error))
     })?;
 
-    Ok(header.alg)
-}
-
-/// Extract the `iss` claim from the JWT payload without verifying the signature.
-pub(crate) fn extract_issuer_unverified(token: &str) -> AuthResult<String> {
+    // One payload parse gives us iss.
     let parts: Vec<&str> = token.splitn(3, '.').collect();
     if parts.len() < 2 {
         return Err(AuthError::MalformedAuthorization(
@@ -39,11 +39,13 @@ pub(crate) fn extract_issuer_unverified(token: &str) -> AuthResult<String> {
         AuthError::MalformedAuthorization(format!("Invalid JWT payload JSON: {}", error))
     })?;
 
-    payload
+    let issuer = payload
         .get("iss")
         .and_then(|value| value.as_str())
         .map(|value| value.to_string())
-        .ok_or_else(|| AuthError::MalformedAuthorization("Missing 'iss' claim".to_string()))
+        .ok_or_else(|| AuthError::MalformedAuthorization("Missing 'iss' claim".to_string()))?;
+
+    Ok((header.alg, header.typ, issuer))
 }
 
 /// Generate a new JWT token.
@@ -156,9 +158,6 @@ pub fn validate_jwt_token(
     secret: &str,
     trusted_issuers: &[String],
 ) -> AuthResult<JwtClaims> {
-    let _header = decode_header(token)
-        .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid JWT header: {}", e)))?;
-
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
     validation.validate_nbf = true;
@@ -235,6 +234,7 @@ mod tests {
             iss: "kalamdb-test".to_string(),
             exp: ((now as i64) + exp_offset_secs) as usize,
             iat: now,
+            name: None,
             email: Some("test@example.com".to_string()),
             role: Some(Role::User),
             auth_type: None,
@@ -390,6 +390,7 @@ mod tests {
             iss: "kalamdb-test".to_string(),
             exp: now + 3600,
             iat: now,
+            name: None,
             email: None,
             role: None,
             auth_type: None,

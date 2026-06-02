@@ -138,6 +138,7 @@ export const system_users = kTable('system.users', {
   user_id: text('user_id').notNull(),
   password_hash: text('password_hash').notNull(),
   role: text('role').notNull(),
+  name: text('name'),
   email: text('email'),
   auth_type: text('auth_type').notNull(),
   auth_data: jsonb('auth_data'),

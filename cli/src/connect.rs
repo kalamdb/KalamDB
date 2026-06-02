@@ -25,6 +25,40 @@ enum ServerUrlSource {
     DefaultLocalFallback,
 }
 
+fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
+    name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            email
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| user_id.to_string())
+}
+
+fn credentials_from_login_response(
+    instance: String,
+    server_url: Option<String>,
+    login_response: &LoginResponse,
+) -> Credentials {
+    Credentials::with_refresh_token(
+        instance,
+        login_response.access_token.clone(),
+        login_response.user.id.to_string(),
+        login_response.expires_at.clone(),
+        server_url,
+        login_response.refresh_token.clone(),
+        login_response.refresh_expires_at.clone(),
+    )
+    .with_identity_metadata(
+        login_response.user.name.clone(),
+        login_response.user.email.clone(),
+    )
+}
+
 impl ServerUrlSource {
     fn is_default_local_fallback(self) -> bool {
         matches!(self, Self::DefaultLocalFallback)
@@ -538,21 +572,21 @@ pub async fn create_session(
                         let authenticated_user = login_response.user.id.to_string();
 
                         if save_credentials {
-                            let new_creds = Credentials::with_refresh_token(
+                            let new_creds = credentials_from_login_response(
                                 instance.to_string(),
-                                login_response.access_token.clone(),
-                                login_response.user.id.to_string(),
-                                login_response.expires_at.clone(),
                                 Some(server_url.to_string()),
-                                login_response.refresh_token.clone(),
-                                login_response.refresh_expires_at.clone(),
+                                &login_response,
                             );
                             let _ = credential_store.set_credentials(&new_creds);
                         }
 
                         Ok((
                             AuthProvider::jwt_token(login_response.access_token),
-                            Some(authenticated_user),
+                            Some(preferred_user_label(
+                                authenticated_user.as_str(),
+                                login_response.user.name.as_deref(),
+                                login_response.user.email.as_deref(),
+                            )),
                             false,
                         ))
                     },
@@ -651,14 +685,10 @@ pub async fn create_session(
                 if save_choice.trim().eq_ignore_ascii_case("y")
                     || save_choice.trim().eq_ignore_ascii_case("yes")
                 {
-                    let new_creds = Credentials::with_refresh_token(
+                    let new_creds = credentials_from_login_response(
                         instance.to_string(),
-                        login_response.access_token.clone(),
-                        login_response.user.id.to_string(),
-                        login_response.expires_at.clone(),
                         Some(server_url.to_string()),
-                        login_response.refresh_token.clone(),
-                        login_response.refresh_expires_at.clone(),
+                        &login_response,
                     );
 
                     if let Err(e) = credential_store.set_credentials(&new_creds) {
@@ -671,7 +701,11 @@ pub async fn create_session(
                 println!();
                 Ok((
                     AuthProvider::jwt_token(login_response.access_token),
-                    Some(authenticated_user),
+                    Some(preferred_user_label(
+                        authenticated_user.as_str(),
+                        login_response.user.name.as_deref(),
+                        login_response.user.email.as_deref(),
+                    )),
                     false,
                 ))
             },
@@ -837,14 +871,10 @@ pub async fn create_session(
                 .await
                 {
                     // Save the refreshed credentials
-                    let new_creds = Credentials::with_refresh_token(
+                    let new_creds = credentials_from_login_response(
                         cli.instance.clone(),
-                        login_response.access_token.clone(),
-                        login_response.user.id.to_string(),
-                        login_response.expires_at.clone(),
                         Some(refresh_server_url),
-                        login_response.refresh_token.clone(),
-                        login_response.refresh_expires_at.clone(),
+                        &login_response,
                     );
 
                     if let Err(e) = credential_store.set_credentials(&new_creds) {
@@ -861,7 +891,11 @@ pub async fn create_session(
                     let authenticated_user = login_response.user.id.to_string();
                     (
                         AuthProvider::jwt_token(login_response.access_token),
-                        Some(authenticated_user),
+                        Some(preferred_user_label(
+                            authenticated_user.as_str(),
+                            login_response.user.name.as_deref(),
+                            login_response.user.email.as_deref(),
+                        )),
                         true,
                     )
                 } else {
@@ -1018,7 +1052,7 @@ pub async fn create_session(
             }
         } else {
             // Token is still valid
-            let stored_username = creds.user.as_ref().map(|user| user.to_string());
+            let stored_username = creds.display_label().map(str::to_string);
             if cli.verbose {
                 if let Some(ref user) = stored_username {
                     eprintln!(
@@ -1077,14 +1111,10 @@ pub async fn create_session(
                                     let authenticated_user = login_response.user.id.to_string();
 
                                     // Save credentials after successful setup
-                                    let new_creds = Credentials::with_refresh_token(
+                                    let new_creds = credentials_from_login_response(
                                         cli.instance.clone(),
-                                        login_response.access_token.clone(),
-                                        login_response.user.id.to_string(),
-                                        login_response.expires_at.clone(),
                                         Some(server_url.clone()),
-                                        login_response.refresh_token.clone(),
-                                        login_response.refresh_expires_at.clone(),
+                                        &login_response,
                                     );
                                     let _ = credential_store.set_credentials(&new_creds);
 

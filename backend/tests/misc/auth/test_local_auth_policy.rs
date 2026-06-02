@@ -52,6 +52,7 @@ async fn insert_password_user_with_role(
             user_id: user_id.clone(),
             password_hash,
             role,
+            name: None,
             email: Some(format!("{}@example.com", user_id.as_str())),
             auth_type: AuthType::Password,
             auth_data: None,

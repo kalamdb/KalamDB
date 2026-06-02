@@ -88,6 +88,7 @@ pub(super) async fn authenticate_user_password(
             user.role,
             user.auth_type,
             user.email,
+            user.name,
             user.created_at,
             user.updated_at,
             connection_info.clone(),
