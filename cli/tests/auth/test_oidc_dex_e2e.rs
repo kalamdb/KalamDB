@@ -1335,4 +1335,17 @@ fn docker_unavailable_message(message: &str) -> bool {
         || lower.contains("failed to initialize a docker client")
         || lower.contains("cannot connect to the docker daemon")
         || lower.contains("docker daemon is not running")
+        || lower.contains("client error (connect)")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::docker_unavailable_message;
+
+    #[test]
+    fn docker_unavailable_message_matches_hyper_connect_errors() {
+        assert!(docker_unavailable_message(
+            "failed to create a container: Error in the hyper legacy client: client error (Connect)"
+        ));
+    }
 }
