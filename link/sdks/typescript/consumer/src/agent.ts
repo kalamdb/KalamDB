@@ -6,6 +6,7 @@ import type {
   AgentLLMInput,
   ConsumePayload,
   ConsumerChange,
+  ConsumerConnectionErrorEvent,
   ConsumerRunContext,
   ConsumerFailureContext,
   ConsumerRunMessage,
@@ -51,6 +52,28 @@ const DEFAULT_CONNECTION_RETRY: NormalizedConnectionRetryPolicy = {
   jitterRatio: 0.2,
   shouldRetry: () => true,
 };
+
+function formatConnectionError(error: unknown): string {
+  if (error instanceof Error) {
+    const errorWithMeta = error as Error & { code?: unknown; cause?: unknown };
+    const details: string[] = [];
+    if (typeof errorWithMeta.code === 'string' || typeof errorWithMeta.code === 'number') {
+      details.push(`code=${String(errorWithMeta.code)}`);
+    }
+    if (errorWithMeta.cause !== undefined) {
+      details.push(`cause=${formatConnectionError(errorWithMeta.cause)}`);
+    }
+    return details.length > 0 ? `${error.message} (${details.join(', ')})` : error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
 
 function normalizeRetryPolicy(retry: AgentRetryPolicy | undefined): Required<AgentRetryPolicy> {
   const maxAttempts = Math.max(1, Math.floor(retry?.maxAttempts ?? DEFAULT_RETRY.maxAttempts));
@@ -371,6 +394,15 @@ export async function runConsumer<
     auto_ack: false,
   };
   let pendingConnectionRestoreAttempt: number | null = null;
+  let hasConnected = false;
+
+  const notifyConnect = () => {
+    if (hasConnected) {
+      return;
+    }
+    hasConnected = true;
+    options.onConnect?.();
+  };
 
   const notifyConnectionRestored = () => {
     if (pendingConnectionRestoreAttempt === null) {
@@ -379,7 +411,13 @@ export async function runConsumer<
 
     const attempt = pendingConnectionRestoreAttempt;
     pendingConnectionRestoreAttempt = null;
+    hasConnected = true;
     options.onConnectionRestored?.({ attempt });
+  };
+
+  const notifyConnectionError = (event: ConsumerConnectionErrorEvent) => {
+    hasConnected = false;
+    options.onConnectionError?.(event);
   };
 
   const runOnce = async (): Promise<void> => {
@@ -389,6 +427,7 @@ export async function runConsumer<
 
     try {
       await consumer.run(async (consumeCtx) => {
+        notifyConnect();
         notifyConnectionRestored();
         const data = changeParser(consumeCtx.message);
         if (!data) {
@@ -517,7 +556,16 @@ export async function runConsumer<
         }
       }, {
         onBatchSuccess: () => {
+          notifyConnect();
           notifyConnectionRestored();
+        },
+        onError: (error) => {
+          notifyConnectionError({
+            error,
+            message: `Consumer loop failed for ${options.topic}/${options.groupId}: ${formatConnectionError(error)}`,
+            recoverable: true,
+            context: `Consumer loop failed for ${options.topic}/${options.groupId}: ${formatConnectionError(error)}`,
+          });
         },
       });
     } finally {
@@ -542,22 +590,33 @@ export async function runConsumer<
         && !retryBudgetExhausted
         && connectionRetryPolicy.shouldRetry(error, connectionAttempt);
 
+      notifyConnectionError({
+        error,
+        message: `Connection lost: ${formatConnectionError(error)}`,
+        recoverable: shouldRetry,
+        attempt: connectionAttempt,
+        maxAttempts: connectionRetryPolicy.maxAttempts,
+        ...(shouldRetry
+          ? { backoffMs: backoffMsForAttempt(connectionAttempt + 1, connectionRetryPolicy) }
+          : {}),
+        context: `Connection lost: ${formatConnectionError(error)}`,
+      });
+
       if (!shouldRetry) {
         pendingConnectionRestoreAttempt = null;
-        options.onConnectionError?.({ error, attempt: connectionAttempt });
         throw error;
       }
 
       pendingConnectionRestoreAttempt = connectionAttempt;
-      const backoffMs = backoffMsForAttempt(connectionAttempt + 1, connectionRetryPolicy);
+      const retryBackoffMs = backoffMsForAttempt(connectionAttempt + 1, connectionRetryPolicy);
       options.onConnectionRetry?.({
         error,
         attempt: connectionAttempt,
         maxAttempts: connectionRetryPolicy.maxAttempts,
-        backoffMs,
+        backoffMs: retryBackoffMs,
       });
 
-      await sleep(backoffMs, options.stopSignal);
+      await sleep(retryBackoffMs, options.stopSignal);
     }
   }
 }

@@ -425,6 +425,12 @@ export interface ConnectionError {
   message: string;
   /** Whether this error is recoverable (i.e. auto-reconnect may succeed). */
   recoverable: boolean;
+  /** KalamDB base URL associated with the failed connection, when known. */
+  url?: string;
+  /** Auth user associated with the failed connection, when known. */
+  authUser?: string;
+  /** Actionable remediation hint for the caller, when known. */
+  hint?: string;
 }
 
 /**
@@ -624,7 +630,29 @@ export interface ClientOptions {
   onDisconnect?: OnDisconnectCallback;
 
   /**
+    * Called when a connection or connection-adjacent auth/bootstrap error occurs.
+    *
+    * This includes WebSocket transport failures as well as connect-time auth
+    * failures such as login/bootstrap or token refresh errors.
+    *
+    * Preferred over `onError` for new code. `onError` remains supported as a
+    * compatibility alias.
+    *
+    * @example
+    * ```typescript
+    * const client = createClient({
+    *   url: 'http://localhost:2900',
+    *   authProvider: async () => Auth.basic('admin', 'secret'),
+    *   onConnectionError: (err) => console.error('Connection error:', err.message),
+    * });
+    * ```
+    */
+    onConnectionError?: OnErrorCallback;
+
+    /**
    * Called when a connection error occurs.
+    *
+    * Compatibility alias for `onConnectionError`.
    *
    * @example
    * ```typescript

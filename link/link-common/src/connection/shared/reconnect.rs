@@ -38,6 +38,64 @@ use crate::{
     timeouts::KalamLinkTimeouts,
 };
 
+fn auth_user_from_auth(auth: &AuthProvider) -> Option<&str> {
+    match auth {
+        AuthProvider::BasicAuth(user, _) => Some(user.as_str()),
+        _ => None,
+    }
+}
+
+fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> &'static str {
+    let normalized = detail.to_lowercase();
+    if normalized.contains("invalid url")
+        || normalized.contains("relative url")
+        || normalized.contains("base url")
+        || normalized.contains("url parse")
+    {
+        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the client can reach.";
+    }
+    if normalized.contains("401")
+        || normalized.contains("403")
+        || normalized.contains("unauthorized")
+        || normalized.contains("authentication")
+        || normalized.contains("token")
+        || normalized.contains("invalid credentials")
+    {
+        return if auth_user.is_some() {
+            "Verify the configured auth user and password or JWT token. Basic auth must login successfully before opening realtime connections."
+        } else {
+            "Verify the configured JWT token or auth provider before retrying the connection."
+        };
+    }
+    if recoverable {
+        return "Verify KalamDB is running and reachable at the configured URL from this client, then retry.";
+    }
+    "Review the connection configuration and authentication settings for this client."
+}
+
+fn connection_error_with_context(
+    context: &str,
+    detail: &str,
+    base_url: &str,
+    auth_user: Option<&str>,
+    recoverable: bool,
+) -> ConnectionError {
+    let auth_fragment = auth_user
+        .map(|user| format!(" for user \"{}\"", user))
+        .unwrap_or_default();
+    let hint = connection_hint(detail, recoverable, auth_user);
+    let message = format!(
+        "{}{} at {}: {}. Hint: {}",
+        context, auth_fragment, base_url, detail, hint
+    );
+
+    let mut error = ConnectionError::new(message, recoverable).with_url(base_url);
+    if let Some(user) = auth_user {
+        error = error.with_auth_user(user);
+    }
+    error.with_hint(hint)
+}
+
 fn all_resumes_ready(subs: &HashMap<String, SubEntry>) -> bool {
     subs.values().all(|entry| !entry.reconnect_resubscribe_pending)
 }
@@ -68,6 +126,7 @@ async fn establish_ws(
     log::debug!("[kalam-sdk] Establishing WebSocket connection to {}", base_url);
     let resolved = resolved_auth.read().unwrap().clone();
     let auth = resolved.resolve().await?;
+    let auth_user = auth_user_from_auth(&auth);
 
     let uses_header_auth = matches!(&auth, AuthProvider::JwtToken(_));
 
@@ -136,17 +195,35 @@ async fn establish_ws(
                     }
                 },
             };
-            event_handlers.emit_error(ConnectionError::new(&message, false));
+            event_handlers.emit_error(connection_error_with_context(
+                "Failed to connect to KalamDB",
+                &message,
+                base_url,
+                auth_user,
+                false,
+            ));
             return Err(KalamLinkError::WebSocketError(message));
         },
         Ok(Err(error)) => {
             let message = format!("Connection failed: {}", error);
-            event_handlers.emit_error(ConnectionError::new(&message, true));
+            event_handlers.emit_error(connection_error_with_context(
+                "Failed to connect to KalamDB",
+                &message,
+                base_url,
+                auth_user,
+                true,
+            ));
             return Err(KalamLinkError::WebSocketError(message));
         },
         Err(_) => {
             let message = format!("Connection timeout ({:?})", timeouts.connection_timeout);
-            event_handlers.emit_error(ConnectionError::new(&message, true));
+            event_handlers.emit_error(connection_error_with_context(
+                "Failed to connect to KalamDB",
+                &message,
+                base_url,
+                auth_user,
+                true,
+            ));
             return Err(KalamLinkError::TimeoutError(message));
         },
     };

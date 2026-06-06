@@ -52,6 +52,22 @@ const client5 = createClient({
   wsLazyConnect: false,
 });
 
+const client6 = createClient({
+  url: 'http://localhost:2900',
+  authProvider: async () => Auth.basic('admin', 'admin'),
+  onConnectionError: (error) => {
+    const message: string = error.message;
+    const recoverable: boolean = error.recoverable;
+    console.log(message, recoverable);
+  },
+});
+
+client6.onConnectionError((error) => {
+  const message: string = error.message;
+  const recoverable: boolean = error.recoverable;
+  console.log(message, recoverable);
+});
+
 // Test: getAuthType
 const authType: 'basic' | 'jwt' | null = client1.getAuthType();
 

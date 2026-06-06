@@ -1,11 +1,13 @@
 {
-  "ai": "copilot",
+  "ai": "cursor-agent",
   "ai_commands_dir": null,
-  "ai_skills": false,
+  "ai_skills": true,
   "branch_numbering": "sequential",
+  "context_file": ".cursor/rules/specify-rules.mdc",
   "here": true,
+  "integration": "cursor-agent",
   "offline": false,
   "preset": null,
   "script": "sh",
-  "speckit_version": "0.3.2"
+  "speckit_version": "0.8.18"
 }

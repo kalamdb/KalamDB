@@ -306,6 +306,34 @@ test('update helper rejects empty update payloads', async () => {
   );
 });
 
+test('login failures are forwarded to onConnectionError with auth context', async () => {
+  const events = [];
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.basic('alice', 'secret'),
+    onConnectionError: (event) => events.push(event),
+  });
+
+  client.initialized = true;
+  client.auth = Auth.basic('alice', 'secret');
+  client.performDirectBasicLogin = async () => {
+    const cause = new AggregateError([], 'connect failed');
+    cause.code = 'ECONNREFUSED';
+    const error = new TypeError('fetch failed');
+    error.cause = cause;
+    throw error;
+  };
+
+  await assert.rejects(() => client.login(), /fetch failed/);
+
+  assert.equal(events.length, 1);
+  assert.match(events[0].message, /Authentication failed for user "alice" at http:\/\/127.0.0.1:2900: fetch failed/);
+  assert.equal(events[0].recoverable, false);
+  assert.equal(events[0].url, 'http://127.0.0.1:2900');
+  assert.equal(events[0].authUser, 'alice');
+  assert.match(events[0].hint, /auth user and password|JWT token/i);
+});
+
 test('liveEvents opens the low-level SQL event stream', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:2900',
@@ -465,6 +493,29 @@ test('connect delegates to wasm client and marks the client connected', async ()
 
   assert.equal(fakeWasmClient.connectCalls, 1);
   assert.equal(client.isConnected(), true);
+});
+
+test('connect forwards invalid URL style failures to onConnectionError as fatal', async () => {
+  const events = [];
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('coverage-token'),
+    onConnectionError: (event) => events.push(event),
+  });
+  const fakeWasmClient = createRuntimeCoverageWasmClient();
+  fakeWasmClient.connect = async () => {
+    throw new Error('Configuration error: Invalid URL');
+  };
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  await assert.rejects(() => client.connect(), /Invalid URL/);
+
+  assert.equal(events.length, 1);
+  assert.match(events[0].message, /Failed to connect to KalamDB at http:\/\/127.0.0.1:2900: Configuration error: Invalid URL/);
+  assert.equal(events[0].recoverable, false);
+  assert.equal(events[0].url, 'http://127.0.0.1:2900');
+  assert.match(events[0].hint, /absolute http:\/\/ or https:\/\//i);
 });
 
 test('live uses subscribe fallback when getKey is provided and handles updates/deletes/errors', async () => {

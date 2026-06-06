@@ -27,6 +27,7 @@ import {
 
 import type {
   ClientOptions,
+  ConnectionError,
   LiveCallback,
   LiveCheckpoint,
   LiveEventsCallback,
@@ -112,6 +113,59 @@ function isNodeRuntime(): boolean {
   return Boolean(getNodeProcess()?.versions?.node);
 }
 
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const details: string[] = [];
+    const errorWithCode = error as Error & { code?: unknown; cause?: unknown };
+    if (typeof errorWithCode.code === 'string' || typeof errorWithCode.code === 'number') {
+      details.push(`code=${String(errorWithCode.code)}`);
+    }
+    if (errorWithCode.cause !== undefined) {
+      details.push(`cause=${formatErrorMessage(errorWithCode.cause)}`);
+    }
+    return details.length > 0
+      ? `${error.message} (${details.join(', ')})`
+      : error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function connectionHint(message: string, recoverable: boolean, authUser?: string): string {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('invalid url')
+    || normalized.includes('relative url')
+    || normalized.includes('base url')
+    || normalized.includes('url parse')
+  ) {
+    return 'Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the client can reach.';
+  }
+  if (
+    normalized.includes('401')
+    || normalized.includes('403')
+    || normalized.includes('unauthorized')
+    || normalized.includes('authentication')
+    || normalized.includes('token')
+    || normalized.includes('invalid credentials')
+  ) {
+    return authUser
+      ? 'Verify the configured auth user and password or JWT token. Basic auth must login() successfully before opening realtime connections.'
+      : 'Verify the configured JWT token or auth provider before retrying the connection.';
+  }
+  return recoverable
+    ? 'Verify KalamDB is running and reachable at the configured URL from this client, then retry.'
+    : 'Review the connection configuration and authentication settings for this client.';
+}
+
+const REPORTED_CONNECTION_ERROR = Symbol.for('kalamdb.connectionErrorReported');
+
 const BUNDLED_BROWSER_WASM_URL = new URL('../wasm/kalam_client_bg.wasm', import.meta.url).href;
 
 /* ================================================================== */
@@ -167,6 +221,7 @@ export class KalamDBClient {
   private autoReconnectEnabled = true;
   /** Serialize direct WASM calls because the underlying bindings are not re-entrant. */
   private wasmCallQueue: Promise<unknown> = Promise.resolve();
+  private readonly reportedErrors = new WeakSet<object>();
 
   /** Current minimum log level. */
   private _logLevel: LogLevel;
@@ -179,6 +234,7 @@ export class KalamDBClient {
   /** Connection lifecycle event handlers */
   private _onConnect?: OnConnectCallback;
   private _onDisconnect?: OnDisconnectCallback;
+  private _onConnectionError?: OnErrorCallback;
   private _onError?: OnErrorCallback;
   private _onReceive?: OnReceiveCallback;
   private _onSend?: OnSendCallback;
@@ -218,6 +274,7 @@ export class KalamDBClient {
     this._logListener = options.logListener;
     this._onConnect = options.onConnect;
     this._onDisconnect = options.onDisconnect;
+    this._onConnectionError = options.onConnectionError;
     this._onError = options.onError;
     this._onReceive = options.onReceive;
     this._onSend = options.onSend;
@@ -370,6 +427,7 @@ export class KalamDBClient {
     try {
       await this.initializing;
     } catch (error) {
+      this.reportConnectionFailure(error, 'Failed to initialize WASM client', false);
       this.log(LogLevel.Error, 'init', `WASM initialization failed: ${error}`);
       throw new Error(`Failed to initialize WASM client: ${error}`);
     } finally {
@@ -418,6 +476,9 @@ export class KalamDBClient {
 
         await this.serializeWasmCall(() => wasmClient.connect());
         this.log(LogLevel.Info, 'connection', `Connected to ${this.url} successfully`);
+      } catch (error) {
+        this.reportConnectionFailure(error, 'Failed to connect to KalamDB', this.isRecoverableConnectionError(error));
+        throw error;
       } finally {
         this.connecting = null;
       }
@@ -585,7 +646,17 @@ export class KalamDBClient {
   onError(callback: OnErrorCallback): void {
     this._onError = callback;
     if (this.wasmClient) {
-      this.wasmClient.onError(callback as unknown as Function);
+      this.wasmClient.onError(this.createConnectionErrorHandler() as unknown as Function);
+    }
+  }
+
+  /**
+   * Register a handler called when a connection or connect-time auth error occurs.
+   */
+  onConnectionError(callback: OnErrorCallback): void {
+    this._onConnectionError = callback;
+    if (this.wasmClient) {
+      this.wasmClient.onError(this.createConnectionErrorHandler() as unknown as Function);
     }
   }
 
@@ -629,7 +700,7 @@ export class KalamDBClient {
     this.log(LogLevel.Debug, 'events', 'Wiring connection event handlers to WASM client');
     if (this._onConnect) this.wasmClient.onConnect(this._onConnect);
     if (this._onDisconnect) this.wasmClient.onDisconnect(this._onDisconnect as unknown as Function);
-    if (this._onError) this.wasmClient.onError(this._onError as unknown as Function);
+    this.wasmClient.onError(this.createConnectionErrorHandler() as unknown as Function);
     if (this._onReceive) this.wasmClient.onReceive(this._onReceive as unknown as Function);
     if (this._onSend) this.wasmClient.onSend(this._onSend as unknown as Function);
   }
@@ -1099,29 +1170,34 @@ export class KalamDBClient {
    * @returns The full LoginResponse (access_token, refresh_token, user info, etc.)
    */
   async login(): Promise<LoginResponse> {
-    await this.ensureInitialized();
-    let auth = this.auth;
-    if (!auth || auth.type !== 'basic') {
-      auth = await resolveAuthProviderWithRetry(this._authProvider, {
-        maxAttempts: this.authProviderMaxAttempts,
-        initialBackoffMs: this.authProviderInitialBackoffMs,
-        maxBackoffMs: this.authProviderMaxBackoffMs,
-      });
-      this.auth = auth;
+    try {
+      await this.ensureInitialized();
+      let auth = this.auth;
+      if (!auth || auth.type !== 'basic') {
+        auth = await resolveAuthProviderWithRetry(this._authProvider, {
+          maxAttempts: this.authProviderMaxAttempts,
+          initialBackoffMs: this.authProviderInitialBackoffMs,
+          maxBackoffMs: this.authProviderMaxBackoffMs,
+        });
+        this.auth = auth;
+      }
+
+      if (!auth || auth.type !== 'basic') {
+        throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(user, password)');
+      }
+      const response = await this.performDirectBasicLogin(auth.user, auth.password);
+
+      await this.replaceWasmClient(WasmClient.withJwt(this.url, response.access_token));
+
+      // Update TypeScript client's auth state to match
+      this.auth = { type: 'jwt', token: response.access_token };
+      this.log(LogLevel.Info, 'auth', 'Login successful, switched to JWT auth');
+
+      return response;
+    } catch (error) {
+      this.reportConnectionFailure(error, 'Authentication failed', false);
+      throw error;
     }
-
-    if (!auth || auth.type !== 'basic') {
-      throw new Error('login() requires Basic auth credentials. Use authProvider returning Auth.basic(user, password)');
-    }
-    const response = await this.performDirectBasicLogin(auth.user, auth.password);
-
-    await this.replaceWasmClient(WasmClient.withJwt(this.url, response.access_token));
-
-    // Update TypeScript client's auth state to match
-    this.auth = { type: 'jwt', token: response.access_token };
-    this.log(LogLevel.Info, 'auth', 'Login successful, switched to JWT auth');
-
-    return response;
   }
 
   /**
@@ -1134,20 +1210,25 @@ export class KalamDBClient {
    * @returns The full LoginResponse with new tokens
    */
   async refreshToken(refreshToken: string): Promise<LoginResponse> {
-    this.log(LogLevel.Debug, 'auth', 'Refreshing access token...');
-    await this.ensureInitialized();
-    const wasmClient = this.wasmClient;
-    if (!wasmClient) throw new Error('WASM client not initialized');
+    try {
+      this.log(LogLevel.Debug, 'auth', 'Refreshing access token...');
+      await this.ensureInitialized();
+      const wasmClient = this.wasmClient;
+      if (!wasmClient) throw new Error('WASM client not initialized');
 
-    const response = (await this.serializeWasmCall(
-      () => wasmClient.refresh_access_token(refreshToken),
-    )) as LoginResponse;
+      const response = (await this.serializeWasmCall(
+        () => wasmClient.refresh_access_token(refreshToken),
+      )) as LoginResponse;
 
-    // Update TypeScript client's auth state with new access token
-    this.auth = { type: 'jwt', token: response.access_token };
-    this.log(LogLevel.Info, 'auth', 'Access token refreshed successfully');
+      // Update TypeScript client's auth state with new access token
+      this.auth = { type: 'jwt', token: response.access_token };
+      this.log(LogLevel.Info, 'auth', 'Access token refreshed successfully');
 
-    return response;
+      return response;
+    } catch (error) {
+      this.reportConnectionFailure(error, 'Token refresh failed', false);
+      throw error;
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -1473,6 +1554,93 @@ export class KalamDBClient {
 
   private stringifyOptions<T>(options: T | undefined): string | undefined {
     return options === undefined ? undefined : JSON.stringify(options);
+  }
+
+  private createConnectionErrorHandler(): OnErrorCallback {
+    return (error: ConnectionError) => {
+      this.emitConnectionError(error);
+    };
+  }
+
+  private emitConnectionError(error: ConnectionError): void {
+    if (this.isErrorAlreadyReported(error)) {
+      return;
+    }
+    this.markErrorReported(error);
+
+    if (this._onConnectionError) {
+      try {
+        this._onConnectionError(error);
+      } catch (handlerError) {
+        this.log(LogLevel.Error, 'connection', `onConnectionError handler failed: ${formatErrorMessage(handlerError)}`);
+      }
+    }
+
+    if (this._onError) {
+      try {
+        this._onError(error);
+      } catch (handlerError) {
+        this.log(LogLevel.Error, 'connection', `onError handler failed: ${formatErrorMessage(handlerError)}`);
+      }
+    }
+
+    if (this._onConnectionError || this._onError) {
+      return;
+    }
+
+    const severity = error.recoverable ? 'recoverable' : 'fatal';
+    this.log(LogLevel.Error, 'connection', `${severity} connection error: ${error.message}`);
+  }
+
+  private reportConnectionFailure(error: unknown, context: string, recoverable: boolean): void {
+    const detail = formatErrorMessage(error);
+    const authUser = this.auth?.type === 'basic' ? this.auth.user : undefined;
+    const hint = connectionHint(`${context}: ${detail}`, recoverable, authUser);
+    this.emitConnectionError({
+      message: `${context}${authUser ? ` for user "${authUser}"` : ''} at ${this.url}: ${detail}. Hint: ${hint}`,
+      recoverable,
+      url: this.url,
+      authUser,
+      hint,
+    });
+  }
+
+  private isRecoverableConnectionError(error: unknown): boolean {
+    const message = formatErrorMessage(error).toLowerCase();
+    return !(
+      message.includes('401')
+      || message.includes('403')
+      || message.includes('unauthorized')
+      || message.includes('authentication')
+      || message.includes('token')
+      || message.includes('login failed')
+      || message.includes('invalid credentials')
+      || message.includes('invalid url')
+      || message.includes('relative url')
+      || message.includes('configuration error')
+      || message.includes('base url')
+    );
+  }
+
+  private markErrorReported(error: unknown): void {
+    if (error && typeof error === 'object') {
+      Object.defineProperty(error, REPORTED_CONNECTION_ERROR, {
+        value: true,
+        configurable: true,
+      });
+      this.reportedErrors.add(error);
+    }
+  }
+
+  private isErrorAlreadyReported(error: unknown): boolean {
+    return Boolean(
+      error
+      && typeof error === 'object'
+      && (
+        this.reportedErrors.has(error)
+        || Boolean((error as Record<PropertyKey, unknown>)[REPORTED_CONNECTION_ERROR])
+      ),
+    );
   }
 
   private trackSubscriptionMetadata(subscriptionId: string, tableName: string): void {

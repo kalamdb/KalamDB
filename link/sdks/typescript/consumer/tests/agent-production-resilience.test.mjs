@@ -117,6 +117,23 @@ test('manual ctx.ack inside onChange then successful return sends exactly one ac
   assert.deepEqual(state.ackedOffsets, [201]);
 });
 
+test('runConsumer fires onConnect once on the first healthy batch', async () => {
+  const message = makeMessage({ offset: 202 });
+  const { client } = createMockClient([message]);
+  const connects = [];
+
+  await runConsumer({
+    client,
+    name: 'connect-hook',
+    topic: message.topic,
+    groupId: message.group_id,
+    onConnect: () => connects.push('connected'),
+    onChange: async () => {},
+  });
+
+  assert.deepEqual(connects, ['connected']);
+});
+
 // ---------------------------------------------------------------------------
 // Scenario 2 — Manual ctx.ack() inside onChange, then onChange throws
 // ---------------------------------------------------------------------------
@@ -307,7 +324,7 @@ test('connectionRetry enabled false throws immediately on first connection error
 // ---------------------------------------------------------------------------
 // Scenario 7 — connectionRetry.maxAttempts exhausted
 // ---------------------------------------------------------------------------
-test('connectionRetry maxAttempts exhausted fires onConnectionError and rethrows', async () => {
+test('connectionRetry maxAttempts exhausted reports each connection error and rethrows', async () => {
   let runs = 0;
   const client = {
     query: async () => ({ status: 'success', results: [] }),
@@ -348,7 +365,7 @@ test('connectionRetry maxAttempts exhausted fires onConnectionError and rethrows
   // With maxAttempts=2: run 1 fails (attempt 1, retries [1]), run 2 fails (attempt 2, budget exhausted)
   assert.equal(runs, 2);
   assert.deepEqual(retries, [1]);
-  assert.deepEqual(connectionErrors, [2]);
+  assert.deepEqual(connectionErrors, [1, 2]);
 });
 
 // ---------------------------------------------------------------------------
@@ -587,7 +604,7 @@ test('stopSignal aborts per-message retry backoff without extra attempts or fail
   assert.deepEqual(state.ackedOffsets, []);
 });
 
-test('stopSignal aborts connection retry backoff without surfacing terminal connection errors', async () => {
+test('stopSignal aborts connection retry backoff after reporting the triggering connection error', async () => {
   let runs = 0;
   const controller = new AbortController();
   const retries = [];
@@ -629,7 +646,7 @@ test('stopSignal aborts connection retry backoff without surfacing terminal conn
 
   assert.equal(runs, 1);
   assert.deepEqual(retries, [1]);
-  assert.deepEqual(connectionErrors, []);
+  assert.deepEqual(connectionErrors, [1]);
 });
 
 test('connectionRetry shouldRetry false fails fast without scheduling connection retries', async () => {
@@ -677,6 +694,46 @@ test('connectionRetry shouldRetry false fails fast without scheduling connection
   assert.equal(runs, 1);
   assert.deepEqual(retries, []);
   assert.deepEqual(connectionErrors, [1]);
+});
+
+test('onConnectionError exposes message and recoverability for fatal connection failures', async () => {
+  const events = [];
+
+  const client = {
+    query: async () => ({ status: 'success', results: [] }),
+    queryOne: async () => null,
+    queryAll: async () => [],
+    consumer: () => ({
+      run: async () => {
+        throw new Error('Configuration error: Invalid URL');
+      },
+      stop: () => {},
+    }),
+  };
+
+  await assert.rejects(
+    () =>
+      runConsumer({
+        client,
+        name: 'fatal-connect-shape',
+        topic: 'events',
+        groupId: 'event-worker',
+        connectionRetry: {
+          shouldRetry: () => false,
+          initialBackoffMs: 0,
+          maxBackoffMs: 0,
+          jitterRatio: 0,
+        },
+        onConnectionError: (event) => events.push(event),
+        onChange: async () => {},
+      }),
+    /Invalid URL/,
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].attempt, 1);
+  assert.equal(events[0].recoverable, false);
+  assert.match(events[0].message, /Connection lost: Configuration error: Invalid URL/);
 });
 
 test('onConnectionRestored fires once for a recovered outage even when the first good batch has multiple messages', async () => {
