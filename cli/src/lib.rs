@@ -14,10 +14,13 @@ pub mod error;
 pub mod formatter;
 pub mod history;
 pub mod history_menu;
+pub mod output;
 pub mod parser;
 pub mod session;
+pub mod terminal_input;
 pub mod terminal_ui;
 pub mod update_check;
+pub mod workflow;
 
 pub use config::CLIConfiguration;
 pub use credentials::FileCredentialStore;

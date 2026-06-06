@@ -27,3 +27,27 @@ mod test_cli_update;
 
 #[path = "cli/test_cli_command_surface.rs"]
 mod test_cli_command_surface;
+
+#[path = "cli/test_project_workflow_init.rs"]
+mod test_project_workflow_init;
+
+#[path = "cli/test_project_workflow_schema.rs"]
+mod test_project_workflow_schema;
+
+#[path = "cli/test_project_workflow_dev.rs"]
+mod test_project_workflow_dev;
+
+#[path = "cli/test_project_workflow_dev_watch.rs"]
+mod test_project_workflow_dev_watch;
+
+#[path = "cli/test_project_workflow_status.rs"]
+mod test_project_workflow_status;
+
+#[path = "cli/test_project_workflow_resolution.rs"]
+mod test_project_workflow_resolution;
+
+#[path = "cli/test_project_workflow_deploy.rs"]
+mod test_project_workflow_deploy;
+
+#[path = "cli/test_project_workflow_deploy_guardrails.rs"]
+mod test_project_workflow_deploy_guardrails;

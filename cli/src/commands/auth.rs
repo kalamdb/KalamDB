@@ -1,6 +1,6 @@
 use std::{io::IsTerminal, time::Duration};
 
-use kalam_cli::{CLIConfiguration, CLIError, FileCredentialStore, Result};
+use kalam_cli::{terminal_ui, CLIConfiguration, CLIError, FileCredentialStore, Result};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, HttpVersion, KalamLinkClient, LoginResponse,
@@ -98,7 +98,7 @@ fn password_from_cli_or_prompt(cli: &Cli) -> Result<String> {
     }
 
     if std::io::stdin().is_terminal() {
-        return prompt_password("Password: ")
+        return prompt_password(&terminal_ui::prompt_label("Password:", !cli.no_color))
             .map_err(|error| CLIError::FileError(format!("Failed to read password: {}", error)));
     }
 
@@ -106,16 +106,10 @@ fn password_from_cli_or_prompt(cli: &Cli) -> Result<String> {
 }
 
 fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
-    name
-        .map(str::trim)
+    name.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| {
-            email
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+        .or_else(|| email.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned))
         .unwrap_or_else(|| user_id.to_string())
 }
 
@@ -304,7 +298,7 @@ pub async fn handle_login(
     let user = if let Some(user) = &cli.user {
         user.clone()
     } else if std::io::stdin().is_terminal() {
-        prompt_line("User: ")
+        prompt_line(&terminal_ui::prompt_label("User:", !cli.no_color))
             .map_err(|error| CLIError::FileError(format!("Failed to read user: {}", error)))?
     } else {
         return Err(CLIError::ConfigurationError(

@@ -1,3 +1,8 @@
+//! Remote schema watch command (legacy server polling).
+//!
+//! File-based schema watch during local development lives in
+//! `workflow::dev::watch` and is orchestrated by `kalam dev`.
+
 use std::{process::Stdio, time::Duration};
 
 use chrono::{SecondsFormat, Utc};

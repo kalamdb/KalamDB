@@ -4,5 +4,12 @@ alwaysApply: true
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read `specs/032-cli-dev-workflow/plan.md`
 <!-- SPECKIT END -->
+
+## Active Technologies
+- Rust 1.92 (workspace edition 2021) for the CLI and workflow engine; generated output targets for TypeScript and Dart in the first release + Existing `kalam-cli` stack (`clap`, `tokio`, `toml`, `reqwest`, `colored`, `indicatif`, `anyhow`, `thiserror`, `dirs`, `serde`), `kalam-client` for connectivity, existing TypeScript and Dart SDK packages under `link/sdks/typescript/**` and `link/sdks/dart/**`; no full tracing stack in the first pass (hotfixes/transfer)
+- Project `kalam.toml`; local schema files such as `schema.sql`; migration files under `kalam/migrations/`; generated project artifacts for TypeScript and Dart; existing CLI home data under `~/.kalam/`; optional workflow log file at a configured project or CLI path (hotfixes/transfer)
+
+## Recent Changes
+- hotfixes/transfer: Added Rust 1.92 (workspace edition 2021) for the CLI and workflow engine; generated output targets for TypeScript and Dart in the first release + Existing `kalam-cli` stack (`clap`, `tokio`, `toml`, `reqwest`, `colored`, `indicatif`, `anyhow`, `thiserror`, `dirs`, `serde`), `kalam-client` for connectivity, existing TypeScript and Dart SDK packages under `link/sdks/typescript/**` and `link/sdks/dart/**`; no full tracing stack in the first pass

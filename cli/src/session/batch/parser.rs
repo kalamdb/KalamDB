@@ -30,7 +30,9 @@ pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
         }
 
         if !in_single_quote && !in_double_quote && !in_backtick {
-            if ch == '-' && chars.peek() == Some(&'-') && is_sql_line_comment_start(&current, &chars)
+            if ch == '-'
+                && chars.peek() == Some(&'-')
+                && is_sql_line_comment_start(&current, &chars)
             {
                 current.push(ch);
                 current.push(chars.next().expect("peeked dash should be available"));
@@ -166,7 +168,10 @@ fn strip_leading_batch_comments(mut value: &str) -> &str {
     }
 }
 
-fn is_sql_line_comment_start(current: &str, chars: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+fn is_sql_line_comment_start(
+    current: &str,
+    chars: &std::iter::Peekable<std::str::Chars<'_>>,
+) -> bool {
     let prev = current.chars().last();
     let prev_ok = prev.is_none()
         || prev.is_some_and(|c| c.is_whitespace() || matches!(c, ';' | '(' | ')' | ','));

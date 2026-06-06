@@ -1,9 +1,9 @@
 use std::{io::IsTerminal, net::IpAddr, time::Duration};
 
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use kalam_cli::{
-    CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
+    terminal_ui, CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
@@ -26,16 +26,10 @@ enum ServerUrlSource {
 }
 
 fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
-    name
-        .map(str::trim)
+    name.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| {
-            email
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+        .or_else(|| email.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned))
         .unwrap_or_else(|| user_id.to_string())
 }
 
@@ -53,10 +47,7 @@ fn credentials_from_login_response(
         login_response.refresh_token.clone(),
         login_response.refresh_expires_at.clone(),
     )
-    .with_identity_metadata(
-        login_response.user.name.clone(),
-        login_response.user.email.clone(),
-    )
+    .with_identity_metadata(login_response.user.name.clone(), login_response.user.email.clone())
 }
 
 impl ServerUrlSource {
@@ -191,6 +182,19 @@ pub(crate) fn resolve_server_url(
     Ok(resolve_server_target(cli, credential_store)?.value)
 }
 
+/// Resolve server URL using workflow precedence when a project config is available.
+#[allow(dead_code)]
+pub(crate) fn resolve_workflow_server_url(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+    workflow_url: Option<&str>,
+) -> Result<String> {
+    if let Some(url) = workflow_url.map(str::trim).filter(|v| !v.is_empty()) {
+        return normalize_and_validate_server_url(url);
+    }
+    resolve_server_url(cli, credential_store)
+}
+
 fn resolve_server_target(
     cli: &Cli,
     credential_store: &FileCredentialStore,
@@ -221,25 +225,7 @@ fn resolve_server_target(
 }
 
 fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: bool) -> Vec<String> {
-    let title = " KALAMDB LOGIN ";
-    let border = "=".repeat(title.len());
-    let mut lines = Vec::with_capacity(9);
-
-    lines.push(if use_color {
-        border.bright_blue().bold().to_string()
-    } else {
-        border.clone()
-    });
-    lines.push(if use_color {
-        title.white().bold().on_blue().to_string()
-    } else {
-        title.to_string()
-    });
-    lines.push(if use_color {
-        border.bright_blue().bold().to_string()
-    } else {
-        border
-    });
+    let mut lines = terminal_ui::banner_lines("KalamDB login", None, use_color);
 
     let connection_message = match source {
         ServerUrlSource::DefaultLocalFallback => {
@@ -250,91 +236,47 @@ fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: boo
         ServerUrlSource::HostPort => "Using the host and port you provided.",
     };
     lines.push(if use_color && source.is_default_local_fallback() {
-        connection_message.yellow().bold().to_string()
+        terminal_ui::style_warning(connection_message, use_color)
     } else if use_color {
-        connection_message.bright_white().to_string()
+        terminal_ui::style_info(connection_message, use_color)
     } else {
         connection_message.to_string()
     });
 
-    let server_label = if use_color {
-        "Server:".bright_cyan().bold().to_string()
-    } else {
-        "Server:".to_string()
-    };
-    let server_value = if use_color {
-        server_url.cyan().bold().to_string()
-    } else {
-        server_url.to_string()
-    };
+    let server_label = terminal_ui::prompt_label("Server:", use_color);
+    let server_value = terminal_ui::style_value(server_url, use_color);
     lines.push(format!("{} {}", server_label, server_value));
 
     if source.is_default_local_fallback() {
         let hint = "Tip: pass --url <server> to connect to a different KalamDB server.";
-        lines.push(if use_color {
-            hint.bright_black().to_string()
-        } else {
-            hint.to_string()
-        });
+        lines.push(terminal_ui::style_muted(hint, use_color));
     }
 
     if is_localhost_url(server_url) {
         let setup_note =
             "This local server is already initialized, so setup is not available here.";
-        lines.push(if use_color {
-            setup_note.yellow().to_string()
-        } else {
-            setup_note.to_string()
-        });
+        lines.push(terminal_ui::style_warning(setup_note, use_color));
 
         let account_note = "Use an existing KalamDB account to sign in.";
-        lines.push(if use_color {
-            account_note.bright_black().to_string()
-        } else {
-            account_note.to_string()
-        });
+        lines.push(terminal_ui::style_muted(account_note, use_color));
 
         let cluster_note = "If this came from scripts/cluster.sh, sign in as 'root' with the configured root password (default: kalamdb123 unless changed).";
-        lines.push(if use_color {
-            cluster_note.bright_black().to_string()
-        } else {
-            cluster_note.to_string()
-        });
+        lines.push(terminal_ui::style_muted(cluster_note, use_color));
     }
 
     let section_title = "Credentials";
-    lines.push(if use_color {
-        section_title.bright_white().bold().to_string()
-    } else {
-        section_title.to_string()
-    });
-    lines.push(if use_color {
-        "-".repeat(section_title.len()).bright_black().to_string()
-    } else {
-        "-".repeat(section_title.len())
-    });
+    lines.push(terminal_ui::style_info(section_title, use_color));
+    lines.push(terminal_ui::style_muted(&"-".repeat(section_title.len()), use_color));
 
     lines
 }
 
 fn render_prompt_label(label: &str, use_color: bool) -> String {
-    if use_color {
-        format!("{} ", label.bright_cyan().bold())
-    } else {
-        format!("{} ", label)
-    }
+    terminal_ui::prompt_label(label, use_color)
 }
 
 fn create_connect_spinner(message: &str) -> ProgressBar {
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg} {elapsed_precise}")
-            .expect("connect spinner template should be valid"),
-    );
-    progress_bar.set_message(message.to_string());
-    progress_bar.enable_steady_tick(Duration::from_millis(80));
-    progress_bar
+    terminal_ui::create_spinner_with_elapsed(message)
 }
 
 pub async fn create_session(
@@ -453,22 +395,28 @@ pub async fn create_session(
     /// Run the server setup wizard
     ///
     /// Returns the user and password that were set up so the caller can log in.
-    async fn run_setup_wizard(server_url: &str) -> std::result::Result<(String, String), String> {
+    async fn run_setup_wizard(
+        server_url: &str,
+        use_color: bool,
+    ) -> std::result::Result<(String, String), String> {
         println!();
-        println!("╔═══════════════════════════════════════════════════════════════════╗");
-        println!("║                    KalamDB Server Setup                           ║");
-        println!("╠═══════════════════════════════════════════════════════════════════╣");
-        println!("║                                                                   ║");
-        println!("║  This server requires initial setup. You will need to:            ║");
-        println!("║  1. Set a root password (for system administration)               ║");
-        println!("║  2. Create your DBA user account                                  ║");
-        println!("║                                                                   ║");
-        println!("╚═══════════════════════════════════════════════════════════════════╝");
+        terminal_ui::print_banner(
+            "KalamDB server setup",
+            Some("This server requires initial setup before login."),
+            use_color,
+        );
+        println!(
+            "{}",
+            terminal_ui::style_info(
+                "You will set a root password and create your DBA user account.",
+                use_color
+            )
+        );
         println!();
 
         // Get DBA user
-        let username =
-            prompt_line("Enter the user for your DBA account: ").map_err(|e| e.to_string())?;
+        let username = prompt_line(&terminal_ui::prompt_label("DBA user:", use_color))
+            .map_err(|e| e.to_string())?;
         if username.is_empty() {
             return Err("User cannot be empty".to_string());
         }
@@ -477,36 +425,50 @@ pub async fn create_session(
         }
 
         // Get DBA password
-        let password =
-            prompt_password("Enter password for your DBA account: ").map_err(|e| e.to_string())?;
+        let password = prompt_password(&terminal_ui::prompt_label("DBA password:", use_color))
+            .map_err(|e| e.to_string())?;
         if password.is_empty() {
             return Err("Password cannot be empty".to_string());
         }
 
         // Confirm password
-        let password_confirm = prompt_password("Confirm password: ").map_err(|e| e.to_string())?;
+        let password_confirm =
+            prompt_password(&terminal_ui::prompt_label("Confirm password:", use_color))
+                .map_err(|e| e.to_string())?;
         if password != password_confirm {
             return Err("Passwords do not match".to_string());
         }
 
         // Get root password
         println!();
-        println!("Now set the root password (for system administration):");
-        let root_password = prompt_password("Enter root password: ").map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            terminal_ui::style_info(
+                "Now set the root password for system administration.",
+                use_color
+            )
+        );
+        let root_password =
+            prompt_password(&terminal_ui::prompt_label("Root password:", use_color))
+                .map_err(|e| e.to_string())?;
         if root_password.is_empty() {
             return Err("Root password cannot be empty".to_string());
         }
 
         // Confirm root password
         let root_password_confirm =
-            prompt_password("Confirm root password: ").map_err(|e| e.to_string())?;
+            prompt_password(&terminal_ui::prompt_label("Confirm root password:", use_color))
+                .map_err(|e| e.to_string())?;
         if root_password != root_password_confirm {
             return Err("Root passwords do not match".to_string());
         }
 
         // Optional email
-        let email = prompt_line("Enter email (optional, press Enter to skip): ")
-            .map_err(|e| e.to_string())?;
+        let email = prompt_line(&terminal_ui::prompt_label(
+            "Email (optional, press Enter to skip):",
+            use_color,
+        ))
+        .map_err(|e| e.to_string())?;
         let email = if email.is_empty() { None } else { Some(email) };
 
         println!();
@@ -553,11 +515,12 @@ pub async fn create_session(
         server_url: &str,
         verbose: bool,
         show_progress: bool,
+        use_color: bool,
         instance: &str,
         credential_store: &mut FileCredentialStore,
         save_credentials: bool,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
-        match run_setup_wizard(server_url).await {
+        match run_setup_wizard(server_url, use_color).await {
             Ok((setup_username, setup_password)) => {
                 match try_login(
                     server_url,
@@ -649,6 +612,7 @@ pub async fn create_session(
                 server_url,
                 verbose,
                 show_progress,
+                use_color,
                 instance,
                 credential_store,
                 true,
@@ -679,8 +643,11 @@ pub async fn create_session(
                 let authenticated_user = login_response.user.id.to_string();
 
                 // Ask if user wants to save credentials
-                let save_choice =
-                    prompt_line("\nSave credentials for future use? (y/N): ").unwrap_or_default();
+                let save_choice = prompt_line(&format!(
+                    "\n{}",
+                    terminal_ui::prompt_label("Save credentials for future use? (y/N):", use_color)
+                ))
+                .unwrap_or_default();
 
                 if save_choice.trim().eq_ignore_ascii_case("y")
                     || save_choice.trim().eq_ignore_ascii_case("yes")
@@ -714,6 +681,7 @@ pub async fn create_session(
                     server_url,
                     verbose,
                     show_progress,
+                    use_color,
                     instance,
                     credential_store,
                     true,
@@ -787,8 +755,12 @@ pub async fn create_session(
             pwd
         } else if std::io::stdin().is_terminal() {
             println!();
-            println!("User: {}", username);
-            prompt_password("Password: ")
+            println!(
+                "{} {}",
+                terminal_ui::prompt_label("User:", !cli.no_color),
+                terminal_ui::style_value(&username, !cli.no_color)
+            );
+            prompt_password(&terminal_ui::prompt_label("Password:", !cli.no_color))
                 .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
         } else {
             // Non-interactive mode without password - use empty password
@@ -834,6 +806,7 @@ pub async fn create_session(
                     &server_url,
                     cli.verbose,
                     !cli.no_spinner,
+                    !cli.no_color,
                     &cli.instance,
                     credential_store,
                     cli.save_credentials,
@@ -938,7 +911,7 @@ pub async fn create_session(
                             },
                             LoginResult::SetupRequired => {
                                 // Run setup wizard then login
-                                match run_setup_wizard(&server_url).await {
+                                match run_setup_wizard(&server_url, !cli.no_color).await {
                                     Ok((setup_username, setup_password)) => {
                                         match try_login(
                                             &server_url,
@@ -1013,7 +986,7 @@ pub async fn create_session(
                         },
                         LoginResult::SetupRequired => {
                             // Run setup wizard then login
-                            match run_setup_wizard(&server_url).await {
+                            match run_setup_wizard(&server_url, !cli.no_color).await {
                                 Ok((setup_username, setup_password)) => {
                                     match try_login(
                                         &server_url,
@@ -1096,7 +1069,7 @@ pub async fn create_session(
                 },
                 LoginResult::SetupRequired => {
                     // Server requires initial setup - run the setup wizard then login
-                    match run_setup_wizard(&server_url).await {
+                    match run_setup_wizard(&server_url, !cli.no_color).await {
                         Ok((setup_username, setup_password)) => {
                             match try_login(
                                 &server_url,
@@ -1252,6 +1225,7 @@ pub async fn create_session(
                     &server_url,
                     cli.verbose,
                     !cli.no_spinner,
+                    !cli.no_color,
                     &cli.instance,
                     credential_store,
                     cli.save_credentials,

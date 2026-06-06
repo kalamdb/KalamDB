@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use indicatif::{ProgressBar, ProgressStyle};
 use openidconnect::{
     core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
     reqwest::Client as OidcHttpClient,
@@ -24,7 +23,6 @@ use crate::{
 
 const DEFAULT_CLI_REDIRECT_URI: &str = "http://localhost:8787/callback";
 const CALLBACK_TIMEOUT_SECS: u64 = 120;
-const PROGRESS_TICK_MS: u64 = 80;
 
 #[derive(Debug)]
 struct ResolvedRedirectUri {
@@ -83,15 +81,9 @@ pub async fn login_with_browser(
     try_open_browser(&request.authorization_url);
 
     let wait_spinner = if show_progress {
-        let progress_bar = ProgressBar::new_spinner();
-        progress_bar.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg} {elapsed_precise}")
-                .expect("oidc spinner template should be valid"),
-        );
-        progress_bar.set_message("Waiting for OIDC browser verification...".to_string());
-        progress_bar.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_MS));
-        Some(progress_bar)
+        Some(terminal_ui::create_spinner_with_elapsed(
+            "Waiting for OIDC browser verification...",
+        ))
     } else {
         None
     };

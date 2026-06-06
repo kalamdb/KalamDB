@@ -204,6 +204,19 @@ await executeAsUser(
 
 Only pass a user id that your service account is authorized to impersonate.
 
+## Kalam CLI workflow generation
+
+When using the KalamDB project workflow, configure TypeScript output in `kalam.toml`:
+
+```toml
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+```
+
+Run `kalam schema gen` from the project root to regenerate `src/generated/kalam.ts` from `schema.sql`. The file is a generated artifact — do not edit it manually.
+
+During `kalam dev`, TypeScript output regenerates automatically when `dev.generate_types = true` and the schema pipeline succeeds. Schema apply failures pause regeneration until you fix migrations and retry with `kalam dev --force`.
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See the packaged `LICENSE.txt` and `NOTICE` files.

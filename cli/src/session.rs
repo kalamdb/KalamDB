@@ -15,11 +15,11 @@ use std::{
 
 use crate::{
     config::CLIConfiguration, error::Result, formatter::OutputFormatter, parser::CommandParser,
-    update_check::UpdateAvailability,
+    terminal_ui, update_check::UpdateAvailability,
 };
 use clap::ValueEnum;
 use colored::*;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, AuthRefreshCallback, ConnectionOptions, KalamLinkClient, KalamLinkError,
@@ -40,9 +40,6 @@ pub mod oidc_device;
 mod query;
 mod subscriptions;
 mod table_transfer;
-
-const SPINNER_TICKS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_TICK_INTERVAL_MS: u64 = 80;
 
 /// Output format for query results
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -478,16 +475,7 @@ impl CLISession {
     }
 
     fn create_spinner(message: &str) -> ProgressBar {
-        let progress_bar = ProgressBar::new_spinner();
-        progress_bar.set_style(
-            ProgressStyle::default_spinner()
-                .tick_strings(SPINNER_TICKS)
-                .template("{spinner:.cyan} {msg}")
-                .expect("spinner template should be valid"),
-        );
-        progress_bar.set_message(message.to_string());
-        progress_bar.enable_steady_tick(Duration::from_millis(SPINNER_TICK_INTERVAL_MS));
-        progress_bar
+        terminal_ui::create_spinner(message)
     }
 }
 

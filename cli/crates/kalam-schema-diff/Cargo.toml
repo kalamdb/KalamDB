@@ -1,0 +1,20 @@
+[package]
+name = "kalam-schema-diff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Schema diff helpers for KalamDB CLI migration generation"
+keywords = ["kalamdb", "schema", "migration", "sql"]
+categories = ["database"]
+
+[dependencies]
+thiserror = { workspace = true }
+
+# Reserved for a future sqlparser-backed structural diff implementation.
+# sqlparser = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

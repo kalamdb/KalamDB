@@ -21,7 +21,8 @@ fn test_minio_vector_index_manifest_snapshot_exists() {
     let full_table = format!("{}.{}", namespace, table);
 
     setup_minio_storage(&storage_id, "MinIO Vector Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, embedding EMBEDDING(3), body TEXT NOT NULL) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:100')",
         full_table, storage_id
@@ -45,19 +46,13 @@ fn test_minio_vector_index_manifest_snapshot_exists() {
         full_table
     ))
     .expect("create vector index");
-    let alter_json: serde_json::Value = serde_json::from_str(&alter_output).expect("vector alter json");
-    let alter_status = alter_json
-        .get("status")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
+    let alter_json: serde_json::Value =
+        serde_json::from_str(&alter_output).expect("vector alter json");
+    let alter_status =
+        alter_json.get("status").and_then(|value| value.as_str()).unwrap_or_default();
     assert_eq!(alter_status.to_lowercase(), "success", "vector index enable should succeed");
 
-    flush_user_table_and_wait(
-        &namespace,
-        &table,
-        &full_table,
-        "vector table flush storage",
-    );
+    flush_user_table_and_wait(&namespace, &table, &full_table, "vector table flush storage");
 
     assert_flush_storage_files_exist(&namespace, &table, true, "vector table flush storage");
 

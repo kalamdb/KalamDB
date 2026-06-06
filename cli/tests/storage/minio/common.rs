@@ -121,7 +121,10 @@ pub(super) fn minio_bucket_reachable(
         .map_err(|err| err.to_string())
 }
 
-pub(super) fn wait_for_storage_check_healthy(storage_id: &str, timeout: Duration) -> Result<(), String> {
+pub(super) fn wait_for_storage_check_healthy(
+    storage_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
     let start = std::time::Instant::now();
     let mut last_error = String::new();
 
@@ -131,7 +134,8 @@ pub(super) fn wait_for_storage_check_healthy(storage_id: &str, timeout: Duration
         let json = parse_cli_json_output(&output).map_err(|e| e.to_string())?;
         let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
         if let Some(row) = rows.first() {
-            let status_value = extract_typed_value(row.get("status").ok_or("status column missing")?);
+            let status_value =
+                extract_typed_value(row.get("status").ok_or("status column missing")?);
             let status = status_value.as_str().unwrap_or("unknown");
             if status == "healthy" {
                 return Ok(());
@@ -329,7 +333,8 @@ pub(super) fn manifest_segment_paths(namespace: &str, table_name: &str) -> Vec<S
             };
 
             if let Some(manifest_json) = manifest_json {
-                if let Some(segments) = manifest_json.get("segments").and_then(JsonValue::as_array) {
+                if let Some(segments) = manifest_json.get("segments").and_then(JsonValue::as_array)
+                {
                     for segment in segments {
                         if let Some(path) = segment.get("path").and_then(JsonValue::as_str) {
                             paths.push(path.to_string());
@@ -347,7 +352,11 @@ pub(super) fn manifest_segment_count(namespace: &str, table_name: &str) -> usize
     manifest_segment_paths(namespace, table_name).len()
 }
 
-pub(super) fn assert_manifest_segment_count(namespace: &str, table_name: &str, expected_count: usize) {
+pub(super) fn assert_manifest_segment_count(
+    namespace: &str,
+    table_name: &str,
+    expected_count: usize,
+) {
     let actual_count = manifest_segment_count(namespace, table_name);
     assert_eq!(
         actual_count, expected_count,
@@ -383,7 +392,9 @@ pub(super) fn query_count(sql: &str) -> i64 {
 pub(super) fn admin_access_token() -> String {
     let runtime = tokio::runtime::Runtime::new().expect("admin token runtime");
     runtime
-        .block_on(async { crate::common::get_access_token(default_username(), default_password()).await })
+        .block_on(async {
+            crate::common::get_access_token(default_username(), default_password()).await
+        })
         .expect("admin access token")
 }
 
@@ -430,10 +441,8 @@ pub(super) fn wait_for_terminal_job_status(
             .into());
         }
 
-        let query = format!(
-            "SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'",
-            job_id
-        );
+        let query =
+            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
 
         let output = execute_sql_as_root_via_client_json(&query)?;
         let json: JsonValue = serde_json::from_str(&output)?;
@@ -569,8 +578,9 @@ pub(super) fn start_table_import_sync(
 }
 
 pub(super) fn flush_table_and_wait(full_table_name: &str) {
-    let flush_output = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full_table_name))
-        .expect("storage flush table");
+    let flush_output =
+        execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full_table_name))
+            .expect("storage flush table");
 
     if let Ok(job_id) = parse_job_id_from_flush_output(&flush_output) {
         let timeout = if is_cluster_mode() {

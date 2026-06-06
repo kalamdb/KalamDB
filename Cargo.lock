@@ -4261,6 +4261,7 @@ dependencies = [
  "indicatif",
  "jsonwebtoken",
  "kalam-client",
+ "kalam-schema-diff",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-server",
@@ -4423,6 +4424,14 @@ version = "0.5.2-rc.1"
 dependencies = [
  "kalam-pg-common",
  "kalamdb-commons",
+]
+
+[[package]]
+name = "kalam-schema-diff"
+version = "0.5.2-rc.1"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

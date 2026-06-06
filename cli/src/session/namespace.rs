@@ -14,10 +14,7 @@ impl CLISession {
     }
 
     pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<String> {
-        let trimmed = Self::strip_leading_sql_comments(sql)
-            .trim()
-            .trim_end_matches(';')
-            .trim();
+        let trimmed = Self::strip_leading_sql_comments(sql).trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
             return None;
         }

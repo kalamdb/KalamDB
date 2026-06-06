@@ -22,7 +22,8 @@ impl CLISession {
 
     /// Execute multiple SQL statements from a script.
     pub async fn execute_batch(&mut self, sql: &str) -> Result<()> {
-        let statements = Self::coalesce_explicit_transaction_blocks(Self::split_batch_statements(sql))?;
+        let statements =
+            Self::coalesce_explicit_transaction_blocks(Self::split_batch_statements(sql))?;
         for statement in statements {
             let dispatch = Self::strip_leading_batch_comments(&statement);
             if dispatch.is_empty() {
@@ -217,10 +218,7 @@ mod tests {
         ];
 
         let err = CLISession::coalesce_explicit_transaction_blocks(statements).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("explicit transaction block without COMMIT/ROLLBACK")
-        );
+        assert!(err.to_string().contains("explicit transaction block without COMMIT/ROLLBACK"));
     }
 
     #[test]

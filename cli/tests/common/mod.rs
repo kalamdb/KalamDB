@@ -4413,6 +4413,40 @@ pub fn create_cli_command() -> assert_cmd::Command {
     cmd
 }
 
+/// Spawnable std::process::Command with the same test isolation as `create_cli_command`.
+pub fn create_cli_std_command() -> std::process::Command {
+    if is_server_reachable() {
+        static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        SETUP_DONE.get_or_init(|| {
+            ensure_cli_server_setup().expect("Failed to prepare CLI server setup");
+        });
+    }
+
+    let test_home = TEST_CLI_HOME_DIR.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("kalam-cli-test-home-{}", std::process::id()));
+        std::fs::create_dir_all(path.join(".kalam")).expect("failed to create isolated test home");
+        path
+    });
+    let credentials_path =
+        TEST_CLI_CREDENTIALS_PATH.get_or_init(|| test_home.join(".kalam").join("credentials.toml"));
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd.env("NO_PROXY", "127.0.0.1,localhost,::1")
+        .env("no_proxy", "127.0.0.1,localhost,::1")
+        .env("HOME", test_home)
+        .env("USERPROFILE", test_home)
+        .env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+        .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
+    cmd
+}
+
 pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &str) {
     if !server_requires_auth_for_url(server).unwrap_or(true) {
         return;

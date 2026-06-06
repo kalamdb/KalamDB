@@ -49,7 +49,8 @@ members = [
     "link/kalam-client",
     "link/kalam-consumer-wasm",
     "link/kalam-link-dart",
-    "cli"
+    "cli",
+    "cli/crates/kalam-schema-diff"
 ]
 exclude = ["benchv2"]
 

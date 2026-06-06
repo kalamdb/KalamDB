@@ -8,7 +8,7 @@ use std::{
 
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_cli::{update_check, CLIError, Result};
+use kalam_cli::{terminal_ui, update_check, CLIError, Result};
 use sha2::{Digest, Sha256};
 
 use crate::args::{Cli, UpdateArgs};
@@ -156,7 +156,12 @@ async fn download_bytes(
 }
 
 fn create_download_progress_bar(archive_name: &str, total_bytes: Option<u64>) -> ProgressBar {
-    let progress_bar = total_bytes.map_or_else(ProgressBar::new_spinner, ProgressBar::new);
+    let message = format!("Downloading {}", archive_name);
+    let progress_bar = if let Some(total_bytes) = total_bytes {
+        ProgressBar::new(total_bytes)
+    } else {
+        terminal_ui::create_spinner(&message)
+    };
     if total_bytes.is_some() {
         progress_bar.set_style(
             ProgressStyle::with_template(
@@ -165,14 +170,8 @@ fn create_download_progress_bar(archive_name: &str, total_bytes: Option<u64>) ->
             .expect("download progress template should be valid")
             .progress_chars("=> "),
         );
-    } else {
-        progress_bar.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg} {bytes}")
-                .expect("download spinner template should be valid"),
-        );
     }
-    progress_bar.set_message(format!("Downloading {}", archive_name));
+    progress_bar.set_message(message);
     progress_bar.enable_steady_tick(Duration::from_millis(80));
     progress_bar
 }

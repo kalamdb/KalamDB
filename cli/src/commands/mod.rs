@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod subscriptions;
 pub mod update;
 pub mod watch_schema;
+pub mod workflow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreSessionCommand {
@@ -41,7 +42,17 @@ fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
             CliCommand::Whoami => Some(PreSessionCommand::Whoami),
             CliCommand::Invite(_) => Some(PreSessionCommand::Invite),
             CliCommand::Token(_) => Some(PreSessionCommand::Token),
-            CliCommand::Version | CliCommand::Update(_) | CliCommand::Doctor(_) => None,
+            CliCommand::Version
+            | CliCommand::Update(_)
+            | CliCommand::Doctor(_)
+            | CliCommand::Init(_)
+            | CliCommand::Link(_)
+            | CliCommand::Schema(_)
+            | CliCommand::Migration(_)
+            | CliCommand::Db(_)
+            | CliCommand::Dev(_)
+            | CliCommand::Status(_)
+            | CliCommand::Deploy(_) => None,
         };
     }
 
