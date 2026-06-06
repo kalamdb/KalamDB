@@ -4,7 +4,9 @@
 #![cfg(target_arch = "wasm32")]
 
 use kalam_client::*;
+use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::JsValue;
+use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -20,6 +22,38 @@ fn create_test_client() -> KalamClient {
 
 fn js_error_text(err: JsValue) -> String {
     err.as_string().unwrap_or_else(|| format!("{:?}", err))
+}
+
+fn capture_connection_events(
+) -> (
+    Rc<RefCell<Vec<(String, bool, Option<String>, Option<String>, Option<String>)>>>,
+    Closure<dyn FnMut(JsValue)>,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let captured = Rc::clone(&events);
+    let closure = Closure::wrap(Box::new(move |event: JsValue| {
+        let message = js_sys::Reflect::get(&event, &"message".into())
+            .ok()
+            .and_then(|value| value.as_string())
+            .unwrap_or_else(|| format!("{:?}", event));
+        let recoverable = js_sys::Reflect::get(&event, &"recoverable".into())
+            .ok()
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let url = js_sys::Reflect::get(&event, &"url".into())
+            .ok()
+            .and_then(|value| value.as_string());
+        let auth_user = js_sys::Reflect::get(&event, &"authUser".into())
+            .ok()
+            .and_then(|value| value.as_string());
+        let hint = js_sys::Reflect::get(&event, &"hint".into())
+            .ok()
+            .and_then(|value| value.as_string());
+        captured
+            .borrow_mut()
+            .push((message, recoverable, url, auth_user, hint));
+    }) as Box<dyn FnMut(JsValue)>);
+    (events, closure)
 }
 
 // T063R: Test WASM client creation with valid and invalid parameters
@@ -62,13 +96,65 @@ fn test_client_creation_empty_password() {
 // T063S: Test connect() failure is surfaced cleanly when server is unavailable
 #[wasm_bindgen_test]
 async fn test_connect_errors_cleanly_when_server_unavailable() {
-    let mut client = create_test_client();
+    let mut client = KalamClient::with_jwt(
+        "http://127.0.0.1:1".to_string(),
+        "test-token".to_string(),
+    )
+    .expect("client creation should succeed");
+    let (events, on_error) = capture_connection_events();
+    client.on_error(on_error.as_ref().unchecked_ref::<js_sys::Function>().clone());
     let result = client.connect().await;
 
-    // This assertion keeps the test deterministic in local/CI environments.
-    if result.is_ok() {
-        let _ = client.disconnect().await;
-    }
+    let err = js_error_text(result.expect_err("unreachable connect should fail"));
+    assert!(
+        err.contains("WebSocket connection failed") || err.contains("closed") || err.contains("connect"),
+        "unexpected unreachable connect error: {err}"
+    );
+    assert_eq!(events.borrow().len(), 1, "onError should fire for unreachable server");
+    assert!(events.borrow()[0].0.contains("WebSocket connection failed"));
+    assert!(events.borrow()[0].1, "unreachable server should be recoverable");
+    assert_eq!(events.borrow()[0].2.as_deref(), Some("http://127.0.0.1:1"));
+    assert!(events.borrow()[0].4.as_deref().unwrap_or_default().contains("reachable"));
+}
+
+#[wasm_bindgen_test]
+async fn test_on_error_fires_for_invalid_url_before_socket_creation() {
+    let mut client = KalamClient::with_jwt("http://[::1".to_string(), "test-token".to_string())
+        .expect("client creation should succeed");
+    let (events, on_error) = capture_connection_events();
+    client.on_connection_error(on_error.as_ref().unchecked_ref::<js_sys::Function>().clone());
+
+    let err = js_error_text(client.connect().await.expect_err("invalid URL should fail"));
+    assert!(
+        err.to_lowercase().contains("url") || err.to_lowercase().contains("invalid"),
+        "unexpected invalid URL error: {err}"
+    );
+    assert_eq!(events.borrow().len(), 1, "onConnectionError should fire for invalid URL");
+    assert!(events.borrow()[0].0.contains("Failed to connect to KalamDB"));
+    assert!(!events.borrow()[0].1, "invalid URL should be fatal");
+    assert_eq!(events.borrow()[0].2.as_deref(), Some("http://[::1"));
+    assert!(events.borrow()[0].4.as_deref().unwrap_or_default().contains("absolute http:// or https://"));
+}
+
+#[wasm_bindgen_test]
+async fn test_on_error_fires_for_auth_provider_resolution_failure() {
+    let mut client = KalamClient::anonymous("http://localhost:2900".to_string())
+        .expect("client creation should succeed");
+    let (events, on_error) = capture_connection_events();
+    client.on_error(on_error.as_ref().unchecked_ref::<js_sys::Function>().clone());
+    let provider = js_sys::Function::new_no_args("return { jwt: {} }; ");
+    client.set_auth_provider(provider);
+
+    let err = js_error_text(client.connect().await.expect_err("invalid authProvider result should fail"));
+    assert!(
+        err.contains("authProvider result must have shape"),
+        "unexpected authProvider error: {err}"
+    );
+    assert_eq!(events.borrow().len(), 1, "onError should fire for authProvider resolution failure");
+    assert!(events.borrow()[0].0.contains("Authentication failed"));
+    assert!(!events.borrow()[0].1, "authProvider shape errors should be fatal");
+    assert_eq!(events.borrow()[0].2.as_deref(), Some("http://localhost:2900"));
+    assert!(events.borrow()[0].4.as_deref().unwrap_or_default().contains("JWT token or auth provider"));
 }
 
 // T063T: Test disconnect() properly closes WebSocket

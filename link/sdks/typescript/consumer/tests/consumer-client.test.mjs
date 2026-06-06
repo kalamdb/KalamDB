@@ -534,6 +534,126 @@ test('consumeBatch does not retry non-retriable topic authorization failures', a
   assert.equal(requestCalls, 1);
 });
 
+test('consumer client reports fatal invalid URL style failures to onConnectionError', async () => {
+  const connectionEvents = [];
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('jwt-123'),
+    onConnectionError: (event) => connectionEvents.push(event),
+  });
+
+  client.topicTransport = {
+    consume: async () => {
+      throw new Error('Configuration error: Invalid URL');
+    },
+    ack: async () => {
+      throw new Error('unexpected ack');
+    },
+  };
+
+  await assert.rejects(
+    () => client.consumeBatch({ topic: 'orders', group_id: 'billing' }),
+    /Invalid URL/,
+  );
+
+  assert.equal(connectionEvents.length, 1);
+  assert.match(connectionEvents[0].message, /Topic request failed at http:\/\/127.0.0.1:2900: Configuration error: Invalid URL/);
+  assert.equal(connectionEvents[0].recoverable, false);
+  assert.equal(connectionEvents[0].url, 'http://127.0.0.1:2900');
+  assert.match(connectionEvents[0].hint, /absolute http:\/\/ or https:\/\//i);
+});
+
+test('consumer client reports authentication failures to onConnectionError as fatal', async () => {
+  const connectionEvents = [];
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.jwt('jwt-123'),
+    onConnectionError: (event) => connectionEvents.push(event),
+  });
+
+  client.topicTransport = {
+    consume: async () => {
+      throw { status: 401, code: 'UNAUTHENTICATED', message: 'invalid credentials' };
+    },
+    ack: async () => {
+      throw new Error('unexpected ack');
+    },
+  };
+
+  await assert.rejects(
+    () => client.consumeBatch({ topic: 'orders', group_id: 'billing' }),
+    /invalid credentials/i,
+  );
+
+  assert.equal(connectionEvents.length, 2);
+  assert.equal(connectionEvents[0].recoverable, false);
+  assert.equal(connectionEvents[1].recoverable, false);
+  assert.match(connectionEvents[0].message, /Topic request failed at http:\/\/127.0.0.1:2900: invalid credentials/);
+  assert.match(connectionEvents[1].message, /Topic request failed after auth refresh at http:\/\/127.0.0.1:2900: invalid credentials/);
+  assert.equal(connectionEvents[0].url, 'http://127.0.0.1:2900');
+  assert.equal(connectionEvents[1].url, 'http://127.0.0.1:2900');
+  assert.match(connectionEvents[0].hint, /JWT token or auth provider/i);
+  assert.match(connectionEvents[1].hint, /JWT token or auth provider/i);
+});
+
+test('consumer client emits onConnect once after recovery and forwards raw connection failures', async () => {
+  const connectionEvents = [];
+  const connectEvents = [];
+
+  const client = createConsumerClient({
+    url: 'http://127.0.0.1:2900',
+    authProvider: async () => Auth.basic('worker', 'secret'),
+    onConnect: () => connectEvents.push('connect'),
+    onConnectionError: (event) => connectionEvents.push(event),
+  });
+
+  let loginCalls = 0;
+  client.sqlClient.login = async () => {
+    loginCalls += 1;
+    if (loginCalls === 1) {
+      const cause = new AggregateError([], 'connect failed');
+      cause.code = 'ECONNREFUSED';
+      const error = new TypeError('fetch failed');
+      error.cause = cause;
+      throw error;
+    }
+    return makeLoginResponse('worker-jwt');
+  };
+
+  client.topicTransport = {
+    consume: async () => ({
+      messages: [],
+      next_offset: 1,
+      has_more: false,
+    }),
+    ack: async () => ({
+      success: true,
+      acknowledged_offset: 1,
+    }),
+  };
+
+  await assert.rejects(
+    () => client.consumeBatch({ topic: 'orders', group_id: 'billing' }),
+    /fetch failed/,
+  );
+
+  assert.equal(connectionEvents.length, 1);
+  assert.match(connectionEvents[0].message, /Topic request failed for user "worker" at http:\/\/127.0.0.1:2900: fetch failed/);
+  assert.equal(connectionEvents[0].recoverable, true);
+  assert.equal(connectionEvents[0].attempt, 1);
+  assert.equal(connectionEvents[0].error.cause.code, 'ECONNREFUSED');
+  assert.equal(connectionEvents[0].url, 'http://127.0.0.1:2900');
+  assert.equal(connectionEvents[0].authUser, 'worker');
+  assert.match(connectionEvents[0].hint, /reachable at the configured URL/i);
+
+  await client.consumeBatch({ topic: 'orders', group_id: 'billing' });
+  await client.consumeBatch({ topic: 'orders', group_id: 'billing' });
+
+  assert.equal(connectEvents.length, 1);
+});
+
 test('consumer run keeps at most one consume request in flight and exits cleanly after stop', async () => {
   const client = createConsumerClient({
     url: 'http://127.0.0.1:2900',

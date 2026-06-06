@@ -8,6 +8,7 @@ import type {
   AuthCredentials,
   ClientOptions,
   LoginResponse,
+  OnConnectCallback,
   QueryResponse,
   RowData,
   UserId,
@@ -18,8 +19,12 @@ import type {
   ConsumeMessage,
   ConsumeContext,
   ConsumerClientOptions,
+  ConsumerConnectionErrorCallback,
+  ConsumerConnectionErrorEvent,
+  ConsumerConnectCallback,
   ConsumerHandle,
   ConsumerHandler,
+  ConsumerOnErrorCallback,
   ConsumerRunLifecycleHooks,
   ConsumeRequest,
   ConsumeResponse,
@@ -54,6 +59,8 @@ class TopicRequestError extends Error {
   }
 }
 
+const REPORTED_CONNECTION_ERROR = Symbol.for('kalamdb.connectionErrorReported');
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -66,6 +73,30 @@ type TopicErrorLike = {
 
 function isTopicErrorLike(value: unknown): value is TopicErrorLike {
   return Boolean(value) && typeof value === 'object';
+}
+
+function formatConsumerError(error: unknown): string {
+  if (error instanceof Error) {
+    const details: string[] = [];
+    const errorWithMeta = error as Error & { code?: unknown; cause?: unknown };
+    if (typeof errorWithMeta.code === 'string' || typeof errorWithMeta.code === 'number') {
+      details.push(`code=${String(errorWithMeta.code)}`);
+    }
+    if (errorWithMeta.cause !== undefined) {
+      details.push(`cause=${formatConsumerError(errorWithMeta.cause)}`);
+    }
+    return details.length > 0
+      ? `${error.message} (${details.join(', ')})`
+      : error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function normalizeConsumeMessage<TPayload extends ConsumePayload>(
@@ -115,7 +146,53 @@ function normalizeStart(start: ConsumeRequest['start']): TopicStartPayload {
   return 'Latest';
 }
 
+function isRecoverableConsumerConnectionError(error: unknown): boolean {
+  const message = formatConsumerError(error).toLowerCase();
+  return !(
+    message.includes('401')
+    || message.includes('403')
+    || message.includes('unauthorized')
+    || message.includes('authentication')
+    || message.includes('token')
+    || message.includes('login failed')
+    || message.includes('invalid credentials')
+    || message.includes('invalid url')
+    || message.includes('relative url')
+    || message.includes('configuration error')
+    || message.includes('base url')
+  );
+}
+
+function consumerConnectionHint(message: string, recoverable: boolean, authUser?: string): string {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('invalid url')
+    || normalized.includes('relative url')
+    || normalized.includes('base url')
+    || normalized.includes('url parse')
+  ) {
+    return 'Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the worker can reach.';
+  }
+  if (
+    normalized.includes('401')
+    || normalized.includes('403')
+    || normalized.includes('unauthorized')
+    || normalized.includes('authentication')
+    || normalized.includes('token')
+    || normalized.includes('login failed')
+    || normalized.includes('invalid credentials')
+  ) {
+    return authUser
+      ? 'Verify the configured auth user and password or JWT token. Topic consumers using Basic auth must login successfully before polling.'
+      : 'Verify the configured JWT token or auth provider before retrying the worker connection.';
+  }
+  return recoverable
+    ? 'Verify KalamDB is running and reachable at the configured URL from this worker, then retry.'
+    : 'Review the worker connection configuration and authentication settings.';
+}
+
 export class KalamConsumerClient {
+  private readonly url: string;
   private readonly sqlClient: KalamDBClient;
   private readonly authProvider: ClientOptions['authProvider'];
   private readonly authProviderMaxAttempts: number;
@@ -123,6 +200,13 @@ export class KalamConsumerClient {
   private readonly authProviderMaxBackoffMs: number;
   private readonly topicTransport: ConsumerWasmTransport;
   private cachedTopicAuth: TopicAuthCache | null = null;
+  private lastResolvedTopicAuthUser?: string;
+  private connectionEstablished = false;
+  private connectionAttempt = 0;
+  private consumerConnectHandler?: ConsumerConnectCallback;
+  private consumerConnectionErrorHandler?: ConsumerConnectionErrorCallback;
+  private consumerErrorHandler?: ConsumerOnErrorCallback;
+  private readonly reportedErrors = new WeakSet<object>();
 
   constructor(options: ConsumerClientOptions) {
     if (!options.url) {
@@ -132,11 +216,36 @@ export class KalamConsumerClient {
       throw new Error('KalamConsumerClient: authProvider is required');
     }
 
-    this.sqlClient = new KalamDBClient(options);
+    this.url = options.url;
+
+    const {
+      consumerWasmUrl: _consumerWasmUrl,
+      onConnectionError: consumerOnConnectionError,
+      ...baseOptions
+    } = options;
+
+    const sqlClientOptions: ClientOptions = {
+      ...baseOptions,
+      ...(options.onConnectionError
+        ? {
+            onConnectionError: (error) => {
+              consumerOnConnectionError?.({
+                ...error,
+                error,
+                context: 'Base client connection error',
+              });
+            },
+          }
+        : {}),
+    };
+
+    this.sqlClient = new KalamDBClient(sqlClientOptions);
     this.authProvider = options.authProvider;
     this.authProviderMaxAttempts = options.authProviderMaxAttempts ?? 3;
     this.authProviderInitialBackoffMs = options.authProviderInitialBackoffMs ?? 250;
     this.authProviderMaxBackoffMs = options.authProviderMaxBackoffMs ?? 2000;
+    this.consumerConnectHandler = options.onConnect;
+    this.consumerConnectionErrorHandler = consumerOnConnectionError;
     this.topicTransport = new ConsumerWasmTransport(
       options.url,
       options.consumerWasmUrl,
@@ -149,6 +258,18 @@ export class KalamConsumerClient {
 
   getAuthType(): 'basic' | 'jwt' | null {
     return this.sqlClient.getAuthType();
+  }
+
+  onError(callback: ConsumerOnErrorCallback): void {
+    this.consumerErrorHandler = callback;
+  }
+
+  onConnect(callback: OnConnectCallback): void {
+    this.consumerConnectHandler = callback;
+  }
+
+  onConnectionError(callback: ConsumerConnectionErrorCallback): void {
+    this.consumerConnectionErrorHandler = callback;
   }
 
   async query(sql: string, params?: unknown[]): Promise<QueryResponse> {
@@ -216,58 +337,67 @@ export class KalamConsumerClient {
         stopRequested = false;
         nextStart = options.start;
 
-        while (!stopRequested) {
-          const response = await this.consumeBatch<TPayload>({
-            ...options,
-            ...(nextStart === undefined ? {} : { start: nextStart }),
-          });
+        try {
+          while (!stopRequested) {
+            const response = await this.consumeBatch<TPayload>({
+              ...options,
+              ...(nextStart === undefined ? {} : { start: nextStart }),
+            });
 
-          hooks?.onBatchSuccess?.({
-            nextOffset: response.next_offset,
-            hasMore: response.has_more,
-            messageCount: response.messages.length,
-          });
+            hooks?.onBatchSuccess?.({
+              nextOffset: response.next_offset,
+              hasMore: response.has_more,
+              messageCount: response.messages.length,
+            });
 
-          // Keep the server cursor after empty polls so start='latest'
-          // continues from the observed high-water mark instead of skipping
-          // later inserts by recalculating "latest" on every loop.
-          if (response.messages.length === 0) {
-            nextStart = { offset: response.next_offset };
-          }
-
-          for (const message of response.messages) {
-            if (stopRequested) {
-              break;
+            // Keep the server cursor after empty polls so start='latest'
+            // continues from the observed high-water mark instead of skipping
+            // later inserts by recalculating "latest" on every loop.
+            if (response.messages.length === 0) {
+              nextStart = { offset: response.next_offset };
             }
 
-            let acked = false;
-            const ctx: ConsumeContext<TPayload> = {
-              user: message.user,
-              message,
-              ack: async () => {
-                if (acked) {
-                  return;
-                }
-                acked = true;
-                await this.ack(
-                  message.topic,
-                  message.group_id,
-                  message.partition_id,
-                  message.offset,
-                );
-              },
-            };
+            for (const message of response.messages) {
+              if (stopRequested) {
+                break;
+              }
 
-            await handler(ctx);
+              let acked = false;
+              const ctx: ConsumeContext<TPayload> = {
+                user: message.user,
+                message,
+                ack: async () => {
+                  if (acked) {
+                    return;
+                  }
+                  acked = true;
+                  await this.ack(
+                    message.topic,
+                    message.group_id,
+                    message.partition_id,
+                    message.offset,
+                  );
+                },
+              };
 
-            if (options.auto_ack && !acked) {
-              await ctx.ack();
+              await handler(ctx);
+
+              if (options.auto_ack && !acked) {
+                await ctx.ack();
+              }
+            }
+
+            if (!stopRequested && !response.has_more) {
+              await sleep(DEFAULT_IDLE_DELAY_MS);
             }
           }
-
-          if (!stopRequested && !response.has_more) {
-            await sleep(DEFAULT_IDLE_DELAY_MS);
-          }
+        } catch (error) {
+          hooks?.onError?.(error);
+          this.reportConsumerError(
+            error,
+            `Consumer run failed for topic ${options.topic} group ${options.group_id}`,
+          );
+          throw error;
         }
       },
       stop: () => {
@@ -322,14 +452,57 @@ export class KalamConsumerClient {
     operation: (authHeader: string | undefined, body: TBody) => Promise<TResponse>,
   ): Promise<TResponse> {
     try {
-      return await this.performTopicRequest(operation, body, false);
+      const response = await this.performTopicRequest(operation, body, false);
+      this.notifyConnected();
+      return response;
     } catch (error) {
+      this.connectionEstablished = false;
+      this.connectionAttempt += 1;
       const normalizedError = this.coerceTopicRequestError(error);
+      const authUser = this.connectionAuthUser();
+      const detail = formatConsumerError(normalizedError);
+      const recoverable = isRecoverableConsumerConnectionError(normalizedError);
+      const hint = consumerConnectionHint(detail, recoverable, authUser);
+      this.reportConnectionError({
+        error: normalizedError,
+        message: `Topic request failed${authUser ? ` for user "${authUser}"` : ''} at ${this.url}: ${detail}. Hint: ${hint}`,
+        recoverable,
+        attempt: this.connectionAttempt,
+        context: 'Topic request failed',
+        url: this.url,
+        authUser,
+        hint,
+      });
       if (!this.isRetryableTopicAuthError(normalizedError)) {
+        this.reportConsumerError(normalizedError, 'Topic request failed');
         throw normalizedError;
       }
 
-      return this.performTopicRequest(operation, body, true);
+      try {
+        const response = await this.performTopicRequest(operation, body, true);
+        this.notifyConnected();
+        return response;
+      } catch (refreshError) {
+        this.connectionEstablished = false;
+        this.connectionAttempt += 1;
+        const normalizedRefreshError = this.coerceTopicRequestError(refreshError);
+        const authUser = this.connectionAuthUser();
+        const detail = formatConsumerError(normalizedRefreshError);
+        const recoverable = isRecoverableConsumerConnectionError(normalizedRefreshError);
+        const hint = consumerConnectionHint(detail, recoverable, authUser);
+        this.reportConnectionError({
+          error: normalizedRefreshError,
+          message: `Topic request failed after auth refresh${authUser ? ` for user "${authUser}"` : ''} at ${this.url}: ${detail}. Hint: ${hint}`,
+          recoverable,
+          attempt: this.connectionAttempt,
+          context: 'Topic request failed after auth refresh',
+          url: this.url,
+          authUser,
+          hint,
+        });
+        this.reportConsumerError(normalizedRefreshError, 'Topic request failed after auth refresh');
+        throw normalizedRefreshError;
+      }
     }
   }
 
@@ -373,6 +546,7 @@ export class KalamConsumerClient {
       initialBackoffMs: this.authProviderInitialBackoffMs,
       maxBackoffMs: this.authProviderMaxBackoffMs,
     });
+    this.lastResolvedTopicAuthUser = creds.type === 'basic' ? creds.user : undefined;
     const sourceKey = this.authSourceKey(creds);
 
     if (!forceRefresh && this.cachedTopicAuth?.sourceKey === sourceKey) {
@@ -385,6 +559,14 @@ export class KalamConsumerClient {
       auth: effectiveAuth,
     };
     return effectiveAuth;
+  }
+
+  private connectionAuthUser(): string | undefined {
+    if (this.cachedTopicAuth?.auth.type === 'basic') {
+      return this.cachedTopicAuth.auth.user;
+    }
+
+    return this.lastResolvedTopicAuthUser;
   }
 
   private async normalizeTopicAuth(auth: AuthCredentials): Promise<AuthCredentials> {
@@ -418,6 +600,68 @@ export class KalamConsumerClient {
     return normalizedError.status === 401
       || normalizedError.code === 'TOKEN_EXPIRED'
       || normalizedError.code === 'UNAUTHENTICATED';
+  }
+
+  private reportConsumerError(error: unknown, context: string): void {
+    if (this.isErrorAlreadyReported(error)) {
+      return;
+    }
+    this.markErrorReported(error);
+
+    if (this.consumerErrorHandler) {
+      try {
+        this.consumerErrorHandler(error);
+        return;
+      } catch (handlerError) {
+        console.error('[KalamConsumerClient] onError handler failed:', handlerError);
+      }
+    }
+
+    console.error(`[KalamConsumerClient] ${context}: ${formatConsumerError(error)}`, error);
+  }
+
+  private notifyConnected(): void {
+    if (this.connectionEstablished) {
+      return;
+    }
+    this.connectionEstablished = true;
+    this.connectionAttempt = 0;
+    this.consumerConnectHandler?.();
+  }
+
+  private reportConnectionError(event: ConsumerConnectionErrorEvent): void {
+    const handler = this.consumerConnectionErrorHandler;
+    if (!handler) {
+      return;
+    }
+
+    if (this.isErrorAlreadyReported(event.error)) {
+      return;
+    }
+    this.markErrorReported(event.error);
+
+    handler(event);
+  }
+
+  private markErrorReported(error: unknown): void {
+    if (error && typeof error === 'object') {
+      Object.defineProperty(error, REPORTED_CONNECTION_ERROR, {
+        value: true,
+        configurable: true,
+      });
+      this.reportedErrors.add(error);
+    }
+  }
+
+  private isErrorAlreadyReported(error: unknown): boolean {
+    return Boolean(
+      error
+      && typeof error === 'object'
+      && (
+        this.reportedErrors.has(error)
+        || Boolean((error as Record<PropertyKey, unknown>)[REPORTED_CONNECTION_ERROR])
+      ),
+    );
   }
 }
 

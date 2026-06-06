@@ -1,6 +1,8 @@
 import type {
   ClientOptions,
+  ConnectionError,
   LoginResponse,
+  OnConnectCallback,
   QueryResponse,
   RowData,
   UserId,
@@ -19,14 +21,27 @@ export type {
   UserId,
 } from '@kalamdb/client';
 
-export interface ConsumerClientOptions extends ClientOptions {
+export interface ConsumerClientOptions extends Omit<ClientOptions, 'onConnectionError'> {
   /**
    * Explicit URL or buffer for the consumer-only WASM file.
    * - Browser: string URL like '/wasm/kalam_consumer_bg.wasm'
    * - Node.js: BufferSource from fs.readFile
    */
   consumerWasmUrl?: string | BufferSource;
+  onConnect?: OnConnectCallback;
+  onConnectionError?: ConsumerConnectionErrorCallback;
 }
+
+export interface ConsumerConnectionErrorEvent extends ConnectionError {
+  error: unknown;
+  attempt?: number;
+  maxAttempts?: number;
+  backoffMs?: number;
+  context?: string;
+}
+
+export type ConsumerConnectionErrorCallback = (event: ConsumerConnectionErrorEvent) => void;
+export type ConsumerConnectCallback = OnConnectCallback;
 
 export type ConsumeStart = 'latest' | 'earliest' | number | { offset: number } | { Offset: number };
 
@@ -100,7 +115,10 @@ export interface ConsumerRunLifecycleHooks {
     hasMore: boolean;
     messageCount: number;
   }) => void;
+  onError?: (error: unknown) => void;
 }
+
+export type ConsumerOnErrorCallback = (error: unknown) => void;
 
 export interface ConsumerHandle<TPayload extends ConsumePayload = ConsumePayload> {
   run: (handler: ConsumerHandler<TPayload>, hooks?: ConsumerRunLifecycleHooks) => Promise<void>;
@@ -114,6 +132,8 @@ export interface ConsumerClientLike {
   consumer: <TPayload extends ConsumePayload = ConsumePayload>(
     options: ConsumeRequest,
   ) => ConsumerHandle<TPayload>;
+  onConnect?: (callback: ConsumerConnectCallback) => void;
+  onConnectionError?: (callback: ConsumerConnectionErrorCallback) => void;
 }
 
 export type AgentLLMRole = 'system' | 'user' | 'assistant';
@@ -301,13 +321,9 @@ export interface RunConsumerOptions<
     maxAttempts: number | undefined;
     backoffMs: number;
   }) => void;
-  onConnectionRestored?: (args: {
-    attempt: number;
-  }) => void;
-  onConnectionError?: (args: {
-    error: unknown;
-    attempt: number;
-  }) => void;
+  onConnectionRestored?: (args: { attempt: number }) => void;
+  onConnect?: ConsumerConnectCallback;
+  onConnectionError?: ConsumerConnectionErrorCallback;
   onError?: (args: {
     error: unknown;
     runKey: string;

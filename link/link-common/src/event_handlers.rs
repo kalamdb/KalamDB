@@ -79,6 +79,12 @@ pub struct ConnectionError {
     pub message: String,
     /// Whether this error is recoverable (i.e. auto-reconnect may succeed).
     pub recoverable: bool,
+    /// KalamDB base URL associated with the failed connection, when known.
+    pub url: Option<String>,
+    /// Auth user associated with the failed connection, when known.
+    pub auth_user: Option<String>,
+    /// Actionable remediation hint for the caller, when known.
+    pub hint: Option<String>,
 }
 
 impl ConnectionError {
@@ -87,7 +93,28 @@ impl ConnectionError {
         Self {
             message: message.into(),
             recoverable,
+            url: None,
+            auth_user: None,
+            hint: None,
         }
+    }
+
+    /// Attach the connection URL when available.
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Attach the auth user when available.
+    pub fn with_auth_user(mut self, auth_user: impl Into<String>) -> Self {
+        self.auth_user = Some(auth_user.into());
+        self
+    }
+
+    /// Attach an actionable remediation hint when available.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 }
 

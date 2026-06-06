@@ -470,16 +470,144 @@ fn dispatch_subscription_server_message(
 
 fn emit_runtime_ws_error(
     on_error_cb: &Rc<RefCell<Option<js_sys::Function>>>,
-    message: &str,
-    recoverable: bool,
+    error: &crate::event_handlers::ConnectionError,
 ) {
     if let Some(cb) = on_error_cb.borrow().as_ref() {
         let err_obj = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&err_obj, &"message".into(), &JsValue::from_str(message));
-        let _ =
-            js_sys::Reflect::set(&err_obj, &"recoverable".into(), &JsValue::from_bool(recoverable));
+        let _ = js_sys::Reflect::set(
+            &err_obj,
+            &"message".into(),
+            &JsValue::from_str(&error.message),
+        );
+        let _ = js_sys::Reflect::set(
+            &err_obj,
+            &"recoverable".into(),
+            &JsValue::from_bool(error.recoverable),
+        );
+        if let Some(url) = &error.url {
+            let _ = js_sys::Reflect::set(&err_obj, &"url".into(), &JsValue::from_str(url));
+        }
+        if let Some(auth_user) = &error.auth_user {
+            let _ = js_sys::Reflect::set(
+                &err_obj,
+                &"authUser".into(),
+                &JsValue::from_str(auth_user),
+            );
+        }
+        if let Some(hint) = &error.hint {
+            let _ = js_sys::Reflect::set(&err_obj, &"hint".into(), &JsValue::from_str(hint));
+        }
         let _ = cb.call1(&JsValue::NULL, &err_obj);
     }
+}
+
+fn auth_user_from_wasm_auth(auth: &WasmAuthProvider) -> Option<&str> {
+    match auth {
+        WasmAuthProvider::Basic { username, .. } => Some(username.as_str()),
+        _ => None,
+    }
+}
+
+fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> &'static str {
+    let normalized = detail.to_lowercase();
+    if normalized.contains("invalid url")
+        || normalized.contains("relative url")
+        || normalized.contains("base url")
+        || normalized.contains("url parse")
+    {
+        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the client can reach.";
+    }
+    if normalized.contains("401")
+        || normalized.contains("403")
+        || normalized.contains("unauthorized")
+        || normalized.contains("authentication")
+        || normalized.contains("token")
+        || normalized.contains("invalid credentials")
+    {
+        return if auth_user.is_some() {
+            "Verify the configured auth user and password or JWT token. Basic auth must login() successfully before opening realtime connections." 
+        } else {
+            "Verify the configured JWT token or auth provider. Realtime connections require valid authentication before subscribing." 
+        };
+    }
+    if recoverable {
+        return "Verify KalamDB is running and reachable at the configured URL from this client, then retry.";
+    }
+    "Review the connection configuration and authentication settings for this client." 
+}
+
+fn build_runtime_connection_error(
+    context: &str,
+    detail: &str,
+    recoverable: bool,
+    url: &str,
+    auth_user: Option<&str>,
+) -> crate::event_handlers::ConnectionError {
+    let auth_fragment = auth_user
+        .map(|user| format!(" for user \"{}\"", user))
+        .unwrap_or_default();
+    let message = if context.is_empty() {
+        format!(
+            "{}{} at {}. Hint: {}",
+            detail,
+            auth_fragment,
+            url,
+            connection_hint(detail, recoverable, auth_user)
+        )
+    } else {
+        format!(
+            "{}{} at {}: {}. Hint: {}",
+            context,
+            auth_fragment,
+            url,
+            detail,
+            connection_hint(detail, recoverable, auth_user)
+        )
+    };
+
+    let mut error = crate::event_handlers::ConnectionError::new(message, recoverable).with_url(url);
+    if let Some(user) = auth_user {
+        error = error.with_auth_user(user);
+    }
+    error.with_hint(connection_hint(detail, recoverable, auth_user))
+}
+
+fn js_error_message(error: &JsValue) -> String {
+    error
+        .as_string()
+        .or_else(|| {
+            js_sys::Reflect::get(error, &"message".into())
+                .ok()
+                .and_then(|value| value.as_string())
+        })
+        .unwrap_or_else(|| format!("{:?}", error))
+}
+
+fn is_recoverable_preconnect_error(message: &str) -> bool {
+    let normalized = message.to_lowercase();
+    !(normalized.contains("401")
+        || normalized.contains("403")
+        || normalized.contains("unauthorized")
+        || normalized.contains("authentication")
+        || normalized.contains("token")
+        || normalized.contains("invalid credentials")
+        || normalized.contains("invalid url")
+        || normalized.contains("relative url")
+        || normalized.contains("configuration error")
+        || normalized.contains("base url"))
+}
+
+fn emit_runtime_js_error(
+    on_error_cb: &Rc<RefCell<Option<js_sys::Function>>>,
+    error: &JsValue,
+    context: &str,
+    url: &str,
+    auth_user: Option<&str>,
+) {
+    let detail = js_error_message(error);
+    let recoverable = is_recoverable_preconnect_error(&detail);
+    let event = build_runtime_connection_error(context, &detail, recoverable, url, auth_user);
+    emit_runtime_ws_error(on_error_cb, &event);
 }
 
 fn clear_active_socket(
@@ -541,7 +669,14 @@ fn schedule_auto_reconnect(
                     "KalamClient: Max reconnection attempts ({}) reached",
                     max
                 ));
-                emit_runtime_ws_error(&on_error_cb, "Max reconnection attempts reached", false);
+                let event = build_runtime_connection_error(
+                    "Max reconnection attempts reached",
+                    "auto-reconnect stopped after exhausting the configured retry budget",
+                    false,
+                    &url,
+                    auth_user_from_wasm_auth(&auth),
+                );
+                emit_runtime_ws_error(&on_error_cb, &event);
                 return;
             }
         }
@@ -606,6 +741,8 @@ fn schedule_auto_reconnect(
         let next_on_receive = Rc::clone(&on_receive_cb);
         let next_on_send = Rc::clone(&on_send_cb);
         let next_negotiated_ser = Rc::clone(&negotiated_ser);
+        let reconnect_error_url = reconnect_url.clone();
+        let reconnect_error_auth = reconnect_auth.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
             match reconnect_internal_with_auth(
@@ -625,6 +762,8 @@ fn schedule_auto_reconnect(
                         Rc::clone(&reconnect_ping_interval_id),
                         Rc::clone(&reconnect_on_disconnect),
                         Rc::clone(&reconnect_on_error),
+                        reconnect_error_url.clone(),
+                        auth_user_from_wasm_auth(&reconnect_error_auth).map(str::to_owned),
                     );
                     install_runtime_message_handler(
                         &ws,
@@ -707,6 +846,8 @@ fn install_runtime_disconnect_handlers(
     ping_interval_id: Rc<RefCell<i32>>,
     on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    url: String,
+    auth_user: Option<String>,
 ) {
     let subscriptions_for_error = Rc::clone(&subscriptions);
     let on_error_for_err = Rc::clone(&on_error_cb);
@@ -722,7 +863,14 @@ fn install_runtime_disconnect_handlers(
         ) {
             return;
         }
-        emit_runtime_ws_error(&on_error_for_err, "WebSocket connection failed", true);
+        let event = build_runtime_connection_error(
+            "Failed to connect to KalamDB",
+            "WebSocket connection failed",
+            true,
+            &url,
+            auth_user.as_deref(),
+        );
+        emit_runtime_ws_error(&on_error_for_err, &event);
         reject_pending_subscriptions(
             &subscriptions_for_error,
             "WebSocket connection failed before the subscription was acknowledged",
@@ -1022,6 +1170,15 @@ impl KalamClient {
         *self.on_error_cb.borrow_mut() = Some(callback);
     }
 
+    /// Register a callback invoked when a connection or pre-connection error occurs.
+    ///
+    /// Alias for `onError` so higher-level SDKs can use a more explicit name
+    /// without re-implementing connection lifecycle semantics.
+    #[wasm_bindgen(js_name = onConnectionError)]
+    pub fn on_connection_error(&self, callback: js_sys::Function) {
+        *self.on_error_cb.borrow_mut() = Some(callback);
+    }
+
     /// Register a callback invoked for every raw message received from the server.
     ///
     /// This is a debug/tracing hook. The callback receives the raw JSON string.
@@ -1132,21 +1289,59 @@ impl KalamClient {
         if self.auth_provider_cb.borrow().is_none()
             && matches!(&*self.auth.borrow(), WasmAuthProvider::Basic { .. })
         {
-            self.reauthenticate_for_http().await?;
+            if let Err(error) = self.reauthenticate_for_http().await {
+                let auth_user = {
+                    let auth = self.auth.borrow();
+                    auth_user_from_wasm_auth(&auth).map(str::to_owned)
+                };
+                emit_runtime_js_error(
+                    &self.on_error_cb,
+                    &error,
+                    "Authentication failed",
+                    &self.url,
+                    auth_user.as_deref(),
+                );
+                return Err(error);
+            }
         }
 
         // Resolve auth: dynamic provider takes precedence over static auth.
-        let resolved_auth = resolve_auth_provider(
+        let resolved_auth = match resolve_auth_provider(
             self.auth_provider_cb.borrow().clone(),
             self.auth.borrow().clone(),
         )
-        .await?;
+        .await
+        {
+            Ok(auth) => auth,
+            Err(error) => {
+                let auth_user = {
+                    let auth = self.auth.borrow();
+                    auth_user_from_wasm_auth(&auth).map(str::to_owned)
+                };
+                emit_runtime_js_error(
+                    &self.on_error_cb,
+                    &error,
+                    "Authentication failed",
+                    &self.url,
+                    auth_user.as_deref(),
+                );
+                return Err(error);
+            },
+        };
 
         if matches!(resolved_auth, WasmAuthProvider::Basic { .. }) {
-            return Err(JsValue::from_str(
+            let error = JsValue::from_str(
                 "WebSocket authentication requires a JWT token. Use KalamClient.withJwt, login \
                  first, or set an authProvider.",
-            ));
+            );
+            emit_runtime_js_error(
+                &self.on_error_cb,
+                &error,
+                "Authentication failed",
+                &self.url,
+                auth_user_from_wasm_auth(&resolved_auth),
+            );
+            return Err(error);
         }
 
         // Check if already connected - prevent duplicate connections
@@ -1160,10 +1355,34 @@ impl KalamClient {
 
         // Convert http(s) URL to ws(s) URL (no auth in URL)
         let disable_compression = self.connection_options.borrow().disable_compression;
-        let ws_url = super::helpers::ws_url_from_http_opts(&self.url, disable_compression)?;
+        let ws_url = match super::helpers::ws_url_from_http_opts(&self.url, disable_compression) {
+            Ok(url) => url,
+            Err(error) => {
+                emit_runtime_js_error(
+                    &self.on_error_cb,
+                    &error,
+                    "Failed to connect to KalamDB",
+                    &self.url,
+                    auth_user_from_wasm_auth(&resolved_auth),
+                );
+                return Err(error);
+            },
+        };
 
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
-        let ws = WebSocket::new(&ws_url)?;
+        let ws = match WebSocket::new(&ws_url) {
+            Ok(ws) => ws,
+            Err(error) => {
+                emit_runtime_js_error(
+                    &self.on_error_cb,
+                    &error,
+                    "Failed to connect to KalamDB",
+                    &self.url,
+                    auth_user_from_wasm_auth(&resolved_auth),
+                );
+                return Err(error);
+            },
+        };
 
         // Set binaryType to arraybuffer so binary messages come as ArrayBuffer, not Blob
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
@@ -1225,6 +1444,8 @@ impl KalamClient {
         let ws_ref_for_error = Rc::clone(&self.ws);
         let ping_interval_id_for_error = Rc::clone(&self.ping_interval_id);
         let source_ws_for_error = ws.clone();
+        let error_url = self.url.clone();
+        let error_auth_user = auth_user_from_wasm_auth(&resolved_auth).map(str::to_owned);
         let onerror_callback = Closure::wrap(Box::new(move |_e: ErrorEvent| {
             wasm_debug_log!(&format!("KalamClient: WebSocket error: {:?}", _e));
             if !clear_active_socket(
@@ -1234,22 +1455,19 @@ impl KalamClient {
             ) {
                 return;
             }
-            // Emit on_error callback
-            if let Some(cb) = on_error_for_err.borrow().as_ref() {
-                let err_obj = js_sys::Object::new();
-                let _ = js_sys::Reflect::set(
-                    &err_obj,
-                    &"message".into(),
-                    &JsValue::from_str("WebSocket connection failed"),
-                );
-                let _ = js_sys::Reflect::set(&err_obj, &"recoverable".into(), &JsValue::TRUE);
-                let _ = cb.call1(&JsValue::NULL, &err_obj);
-            }
+            let event = build_runtime_connection_error(
+                "Failed to connect to KalamDB",
+                "WebSocket connection failed",
+                true,
+                &error_url,
+                error_auth_user.as_deref(),
+            );
+            emit_runtime_ws_error(&on_error_for_err, &event);
             reject_pending_subscriptions(
                 &subscriptions_for_error,
                 "WebSocket connection failed before the subscription was acknowledged",
             );
-            let error_msg = JsValue::from_str("WebSocket connection failed");
+            let error_msg = JsValue::from_str(&event.message);
             let _ = connect_reject_clone.call1(&JsValue::NULL, &error_msg);
             let _ = auth_reject_clone.call1(&JsValue::NULL, &error_msg);
         }) as Box<dyn FnMut(ErrorEvent)>);

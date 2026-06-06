@@ -68,10 +68,25 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         // Check if namespace exists (offload sync RocksDB read)
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
-        let (namespace_opt, tables_in_namespace) = run_blocking(move || {
+        let (namespace_opt, tables_in_namespace, topics_in_namespace) = run_blocking(move || {
             let ns = app_ctx.system_tables().namespaces().get_namespace(&ns_id)?;
             let tables = app_ctx.system_tables().tables().list_tables_in_namespace(&ns_id)?;
-            Ok::<_, KalamDbError>((ns, tables))
+            let topics = app_ctx
+                .system_tables()
+                .topics()
+                .list_topics()?
+                .into_iter()
+                .filter(|topic| {
+                    matches!(
+                        topic.name.split_once('.'),
+                        Some((topic_namespace, local_name))
+                            if !topic_namespace.is_empty()
+                                && !local_name.is_empty()
+                                && topic_namespace == ns_id.as_str()
+                    )
+                })
+                .collect::<Vec<_>>();
+            Ok::<_, KalamDbError>((ns, tables, topics))
         })
         .await?;
 
@@ -125,6 +140,38 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                     table_type,
                     cleanup_job_id
                 )),
+                None,
+            );
+            audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
+        }
+
+        for topic in topics_in_namespace {
+            let topic_id = topic.topic_id.clone();
+            let topic_name = topic.name.clone();
+
+            let app_ctx = self.app_context.clone();
+            let tid = topic_id.clone();
+            run_blocking(move || {
+                app_ctx
+                    .topic_publisher()
+                    .clear_topic_data(&tid)
+                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))
+            })
+            .await?;
+
+            self.app_context
+                .system_tables()
+                .topics()
+                .delete_topic_async(&topic_id)
+                .await?;
+            self.app_context.topic_publisher().remove_topic(&topic_id);
+
+            let audit_entry = audit::log_ddl_operation(
+                context,
+                "DROP",
+                "TOPIC",
+                &topic_name,
+                Some("CASCADE from DROP NAMESPACE".to_string()),
                 None,
             );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;

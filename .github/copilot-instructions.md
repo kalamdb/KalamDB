@@ -1,4 +1,4 @@
-﻿# KalamDB Development Guidelines
+# KalamDB Development Guidelines
 
 **⚠️ PRIMARY DOCUMENTATION**: See [AGENTS.md](../AGENTS.md) in the root directory for complete development guidelines.
 
@@ -38,3 +38,8 @@ Priority reminders from `AGENTS.md`:
 
 ## Recent Changes
 - 007-user-auth: Added Rust 1.90 (edition 2021) + DataFusion 40, Apache Arrow 52, Apache Parquet 52, Actix-Web 4, `kalamdb-store` EntityStore traits, `kalamdb-commons` system models
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
