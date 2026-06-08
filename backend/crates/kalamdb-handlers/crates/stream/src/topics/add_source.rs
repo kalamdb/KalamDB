@@ -80,10 +80,9 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
             partition_key_expr: None,
         };
 
-        let duplicate = topic
-            .routes
-            .iter()
-            .any(|existing| Self::route_matches_statement(existing, &route, statement.table_name_qualified));
+        let duplicate = topic.routes.iter().any(|existing| {
+            Self::route_matches_statement(existing, &route, statement.table_name_qualified)
+        });
         if duplicate {
             return Ok(ExecutionResult::Success {
                 message: format!(

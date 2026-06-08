@@ -6,12 +6,14 @@ use tokio::time::{self, Duration};
 
 use crate::{
     error::Result,
-    output::WorkflowOutput,
+    output::{WorkflowDisplayMode, WorkflowOutput},
+    terminal_ui::ProgressTaskStatus,
     workflow::{
         dev::{
             logs::ServiceLogRegistry,
+            precheck::run_dev_prechecks,
             processes::ProcessSupervisor,
-            server::{build_local_server_command, server_already_ready, wait_for_server_ready},
+            server::{build_local_server_command, wait_for_server_ready},
             watch::{
                 run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
                 SCHEMA_WATCH_INTERVAL_SECS,
@@ -30,10 +32,11 @@ pub enum SchemaPipelineState {
 
 pub struct DevSessionOptions {
     pub force: bool,
+    pub display_mode: WorkflowDisplayMode,
 }
 
 pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) -> Result<()> {
-    let output = ctx.output();
+    let output = ctx.output().with_display_mode(options.display_mode);
     let mut registry = ServiceLogRegistry::new();
     registry.register("server");
 
@@ -44,21 +47,43 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     let server_source = registry.get("server").expect("server source registered").clone();
 
     output.service_log(&server_source, "starting kalam dev session");
+    output.progress_task(
+        "project",
+        ProgressTaskStatus::Succeeded,
+        project_ready_message(&ctx.config.project.name, &ctx.project_root),
+    );
+    let precheck = run_dev_prechecks(ctx, &output, &server_source).await?;
 
     let mut supervisor = ProcessSupervisor::new();
+    let mut local_server_spawned = false;
 
     if ctx.config.dev.auto_start_db {
-        let env = ctx.resolved_environment()?;
-        if server_already_ready(&env.url).await {
+        if precheck.local_server_reused {
             output.service_log(
                 &server_source,
-                format!("using existing KalamDB server at {}", env.url),
+                format!("using existing KalamDB server at {}", precheck.environment.url),
+            );
+            output.progress_task(
+                "server",
+                ProgressTaskStatus::Succeeded,
+                local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
             );
         } else {
-            let command = build_local_server_command(&ctx.project_root, &ctx.config)?;
+            let command = build_local_server_command(&ctx.project_root, &precheck.environment.url)?;
             output.service_log(&server_source, "starting local KalamDB server");
+            output.progress_task(
+                "server",
+                ProgressTaskStatus::Running,
+                "Starting local KalamDB server...",
+            );
             supervisor.spawn_one("server", &command, &registry, &output).await?;
-            wait_for_server_ready(&env.url, &output).await?;
+            wait_for_server_ready(&precheck.environment.url, &output).await?;
+            output.progress_task(
+                "server",
+                ProgressTaskStatus::Succeeded,
+                local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
+            );
+            local_server_spawned = true;
         }
     }
 
@@ -66,7 +91,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     let mut schema_mtime: Option<SystemTime> = None;
 
     if ctx.config.dev.apply_schema || ctx.config.dev.generate_types {
-        schema_state = run_initial_schema_pipeline(ctx, &output, options.force);
+        schema_state = run_initial_schema_pipeline(ctx, &output, options.force).await;
         if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
             schema_mtime = schema_file_mtime(&path);
         }
@@ -76,7 +101,13 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
         supervisor.spawn_all(&ctx.config.dev.processes, &registry, &output).await?;
     }
 
-    let watch_enabled = schema_watch_path(&ctx.project_root, &ctx.config).is_some();
+    let watch_enabled = precheck.watch_enabled;
+    if watch_enabled {
+        output.service_log(&server_source, "watching schema source for changes");
+    }
+    if ctx.config.dev.processes.is_empty() {
+        output.service_log(&server_source, "no custom dev processes configured");
+    }
     let mut watch_interval = time::interval(Duration::from_secs(SCHEMA_WATCH_INTERVAL_SECS));
     watch_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
@@ -99,15 +130,24 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 }
                 if schema_file_changed(&path, schema_mtime) {
                     output.service_log(&server_source, "schema change detected, running pipeline");
-                    schema_state = run_initial_schema_pipeline(ctx, &output, false);
+                    schema_state = run_initial_schema_pipeline(ctx, &output, false).await;
                     schema_mtime = schema_file_mtime(&path);
                 }
             }
             _ = time::sleep(Duration::from_millis(200)) => {
-                supervisor.reap_finished().await;
+                let finished = supervisor.reap_finished().await;
+                for (name, code) in &finished {
+                    if let Some(source) = registry.get(name) {
+                        output.service_log(source, format!("process exited with code {code}"));
+                    }
+                }
                 let managed_count = supervisor.count();
-                if managed_count == 0 && (!ctx.config.dev.processes.is_empty() || ctx.config.dev.auto_start_db) {
+                if managed_count == 0 && (local_server_spawned || !ctx.config.dev.processes.is_empty()) {
                     output.service_log(&server_source, "all dev processes exited");
+                    break;
+                }
+                if managed_count == 0 && !watch_enabled {
+                    output.service_log(&server_source, "dev session completed");
                     break;
                 }
             }
@@ -118,22 +158,35 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     Ok(())
 }
 
-fn run_initial_schema_pipeline(
+async fn run_initial_schema_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
     force: bool,
 ) -> SchemaPipelineState {
-    match run_schema_pipeline(ctx, output) {
+    output.progress_task("schema", ProgressTaskStatus::Running, "Applying schema...");
+    match run_schema_pipeline(ctx, output).await {
         Ok(()) => {
-            output.status("schema pipeline completed");
+            if output.display_mode == WorkflowDisplayMode::Progress {
+                output.progress_task("schema", ProgressTaskStatus::Succeeded, "Schema applied");
+            } else {
+                output.status("schema pipeline completed");
+            }
             SchemaPipelineState::Synced
         },
         Err(error) => {
             if force {
                 output.warn("retrying schema pipeline (--force)");
-                return match run_schema_pipeline(ctx, output) {
+                return match run_schema_pipeline(ctx, output).await {
                     Ok(()) => {
-                        output.status("schema pipeline recovered");
+                        if output.display_mode == WorkflowDisplayMode::Progress {
+                            output.progress_task(
+                                "schema",
+                                ProgressTaskStatus::Succeeded,
+                                "Schema recovered",
+                            );
+                        } else {
+                            output.status("schema pipeline recovered");
+                        }
                         SchemaPipelineState::Synced
                     },
                     Err(retry_error) => {
@@ -149,10 +202,29 @@ fn run_initial_schema_pipeline(
 }
 
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
+    if output.display_mode == WorkflowDisplayMode::Progress {
+        output.progress_task(
+            "schema",
+            ProgressTaskStatus::Failed,
+            format!("Schema failed: {error}"),
+        );
+        return;
+    }
     output.error(format!("schema pipeline failed: {error}"));
     output.warn(
         "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
     );
+}
+
+fn project_ready_message(project_name: &str, project_root: &std::path::Path) -> String {
+    format!("Project {project_name} at {}", project_root.display())
+}
+
+fn local_server_ready_message(server_url: &str, log_path: Option<&std::path::Path>) -> String {
+    match log_path {
+        Some(path) => format!("Local server ready at {server_url} (full log: {})", path.display()),
+        None => format!("Local server ready at {server_url} (full log disabled)"),
+    }
 }
 
 #[cfg(test)]
@@ -192,7 +264,7 @@ mod tests {
                     },
                 )]),
                 schema: SchemaSection {
-                    mode: SchemaMode::Sql,
+                    mode: SchemaMode::Remote,
                     path: Some("schema.sql".into()),
                     watch: false,
                     languages: vec!["typescript".into()],
@@ -228,13 +300,32 @@ mod tests {
         std::fs::write(root.join("schema.sql"), "CREATE TABLE t (id INT);").unwrap();
         let ctx = failing_ctx(root);
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        let paused = run_initial_schema_pipeline(&ctx, &output, false);
+        let paused = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, false));
         assert_eq!(paused, SchemaPipelineState::Paused);
 
         // Remove failing migration and retry with force.
         std::fs::remove_file(root.join("kalam/migrations/20250101120000_fail.sql")).unwrap();
-        let recovered = run_initial_schema_pipeline(&ctx, &output, true);
+        let recovered = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, true));
         assert_eq!(recovered, SchemaPipelineState::Synced);
+    }
+
+    #[test]
+    fn project_ready_message_includes_name_and_directory() {
+        let message = project_ready_message("demo", std::path::Path::new("/tmp/demo"));
+        assert_eq!(message, "Project demo at /tmp/demo");
+    }
+
+    #[test]
+    fn local_server_ready_message_includes_log_path() {
+        let message = local_server_ready_message(
+            "http://localhost:2900",
+            Some(std::path::Path::new("/tmp/demo/.kalam/logs/kalam.log")),
+        );
+        assert_eq!(
+            message,
+            "Local server ready at http://localhost:2900 (full log: /tmp/demo/.kalam/logs/kalam.log)"
+        );
     }
 }

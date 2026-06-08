@@ -1,5 +1,6 @@
 pub mod logs;
 pub mod orchestrator;
+pub mod precheck;
 pub mod processes;
 pub mod server;
 pub mod watch;

@@ -29,7 +29,8 @@ The workflow surface exists and is usable, but some parts are intentionally v1-l
   language targets, and server mode.
 - `kalam dev` can manage a local KalamDB server when `dev.auto_start_db = true`, or connect to
   an existing server when it is `false`.
-- `kalam schema gen` works from local SQL schema files.
+- `kalam schema gen` delegates TypeScript generation to `@kalamdb/orm` against the resolved
+  KalamDB environment and writes a Dart placeholder until a dedicated Dart generator exists.
 - `kalam migration create` creates ordered SQL migration files using the current schema diff helper.
 - `kalam migration status` and `kalam db migrate` use local file-based migration state.
 - `kalam deploy` performs guardrails, applies pending local migrations, runs a lightweight rollout
@@ -277,12 +278,13 @@ kalam link --env prod --url https://db.example.com --namespace my-app
 
 ### `kalam schema gen`
 
-Generates enabled language artifacts from the active schema source.
+Generates enabled language artifacts for the resolved workflow environment.
 
 Current behavior:
 
-- supported local source: `schema.mode = "sql"`
-- supported targets: `typescript`, `dart`
+- `typescript` is generated through `@kalamdb/orm`
+- generation targets the resolved `url` + `namespace` from `kalam.toml` / env overrides
+- `dart` currently writes a placeholder file only
 
 #### Options
 

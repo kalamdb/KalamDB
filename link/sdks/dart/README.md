@@ -549,8 +549,8 @@ Configure Dart output in your project's `kalam.toml`:
 output = "lib/generated/kalam.dart"
 ```
 
-Run `kalam schema gen` from the project root to regenerate typed Dart models from the active schema source. Import the generated file in application code; do not edit it manually.
+Today `kalam schema gen` only writes a placeholder file for Dart targets while the dedicated Dart generator package is still pending.
 
-`kalam dev` can regenerate Dart output on schema changes when configured in `kalam.toml`. Use `kalam status` to verify the resolved environment and migration readiness before `kalam deploy`.
+`kalam dev` preserves that placeholder behavior when Dart output is configured in `kalam.toml`. Use `kalam status` to verify the resolved environment and migration readiness before `kalam deploy`.
 
 > Native performance on iOS and Android is powered by [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/).

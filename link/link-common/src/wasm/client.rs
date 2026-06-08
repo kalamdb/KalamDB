@@ -474,11 +474,8 @@ fn emit_runtime_ws_error(
 ) {
     if let Some(cb) = on_error_cb.borrow().as_ref() {
         let err_obj = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(
-            &err_obj,
-            &"message".into(),
-            &JsValue::from_str(&error.message),
-        );
+        let _ =
+            js_sys::Reflect::set(&err_obj, &"message".into(), &JsValue::from_str(&error.message));
         let _ = js_sys::Reflect::set(
             &err_obj,
             &"recoverable".into(),
@@ -488,11 +485,8 @@ fn emit_runtime_ws_error(
             let _ = js_sys::Reflect::set(&err_obj, &"url".into(), &JsValue::from_str(url));
         }
         if let Some(auth_user) = &error.auth_user {
-            let _ = js_sys::Reflect::set(
-                &err_obj,
-                &"authUser".into(),
-                &JsValue::from_str(auth_user),
-            );
+            let _ =
+                js_sys::Reflect::set(&err_obj, &"authUser".into(), &JsValue::from_str(auth_user));
         }
         if let Some(hint) = &error.hint {
             let _ = js_sys::Reflect::set(&err_obj, &"hint".into(), &JsValue::from_str(hint));
@@ -525,15 +519,15 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
         || normalized.contains("invalid credentials")
     {
         return if auth_user.is_some() {
-            "Verify the configured auth user and password or JWT token. Basic auth must login() successfully before opening realtime connections." 
+            "Verify the configured auth user and password or JWT token. Basic auth must login() successfully before opening realtime connections."
         } else {
-            "Verify the configured JWT token or auth provider. Realtime connections require valid authentication before subscribing." 
+            "Verify the configured JWT token or auth provider. Realtime connections require valid authentication before subscribing."
         };
     }
     if recoverable {
         return "Verify KalamDB is running and reachable at the configured URL from this client, then retry.";
     }
-    "Review the connection configuration and authentication settings for this client." 
+    "Review the connection configuration and authentication settings for this client."
 }
 
 fn build_runtime_connection_error(
@@ -543,9 +537,7 @@ fn build_runtime_connection_error(
     url: &str,
     auth_user: Option<&str>,
 ) -> crate::event_handlers::ConnectionError {
-    let auth_fragment = auth_user
-        .map(|user| format!(" for user \"{}\"", user))
-        .unwrap_or_default();
+    let auth_fragment = auth_user.map(|user| format!(" for user \"{}\"", user)).unwrap_or_default();
     let message = if context.is_empty() {
         format!(
             "{}{} at {}. Hint: {}",

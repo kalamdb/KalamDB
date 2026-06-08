@@ -213,7 +213,7 @@ When using the KalamDB project workflow, configure TypeScript output in `kalam.t
 output = "src/generated/kalam.ts"
 ```
 
-Run `kalam schema gen` from the project root to regenerate `src/generated/kalam.ts` from `schema.sql`. The file is a generated artifact — do not edit it manually.
+Run `kalam schema gen` from the project root to regenerate `src/generated/kalam.ts` through `@kalamdb/orm` against the resolved workflow environment. The file is a generated artifact — do not edit it manually.
 
 During `kalam dev`, TypeScript output regenerates automatically when `dev.generate_types = true` and the schema pipeline succeeds. Schema apply failures pause regeneration until you fix migrations and retry with `kalam dev --force`.
 

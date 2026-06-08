@@ -98,7 +98,6 @@ impl TopicRoute {
         self.filter_expr = Some(filter_expr);
         self
     }
-
 }
 
 #[cfg(test)]

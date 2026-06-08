@@ -1,5 +1,4 @@
 pub mod diff;
-pub mod emitters;
 pub mod gen;
 pub mod load;
 pub mod model;

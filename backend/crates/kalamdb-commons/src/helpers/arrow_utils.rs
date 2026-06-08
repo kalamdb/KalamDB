@@ -205,7 +205,6 @@ impl RecordBatchBuilder {
     pub fn column_count(&self) -> usize {
         self.columns.len()
     }
-
 }
 
 /// Helper function to create an empty RecordBatch for a given schema.

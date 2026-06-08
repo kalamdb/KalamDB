@@ -105,7 +105,7 @@ fn default_true() -> bool {
 }
 
 fn default_languages() -> Vec<String> {
-    vec!["typescript".to_string(), "dart".to_string()]
+    vec!["typescript".to_string()]
 }
 
 fn default_migrations_dir() -> String {

@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use kalamdb_commons::{
-    models::ConsumerGroupId,
-    Role,
-};
+use kalamdb_commons::{models::ConsumerGroupId, Role};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,

@@ -6,13 +6,14 @@ pub mod dev;
 pub mod migration;
 pub mod project;
 pub mod schema;
+pub(crate) mod sql;
 
 use std::path::PathBuf;
 
 use crate::{
     config::{CLIConfiguration, WorkflowLoggingPolicy},
     error::{CLIError, Result},
-    output::WorkflowOutput,
+    output::{WorkflowDisplayMode, WorkflowOutput},
     workflow::{
         db::migrate::apply_migrations_for_db_command,
         migration::{
@@ -100,12 +101,7 @@ pub fn generate_schema(ctx: &WorkflowContext, languages: Option<Vec<String>>) ->
     if let Some(requested) = languages.as_ref() {
         validate_language_filter(requested, &ctx.config.schema.languages)?;
     }
-    generate_schema_artifacts(
-        &ctx.project_root,
-        &ctx.config,
-        &GenerateOptions { languages },
-        &output,
-    )
+    generate_schema_artifacts(ctx, &GenerateOptions { languages }, &output)
 }
 
 pub fn pull_schema(ctx: &WorkflowContext) -> Result<()> {
@@ -161,13 +157,24 @@ pub fn show_migration_status(ctx: &WorkflowContext) -> Result<()> {
     migration_status(&ctx.project_root, &ctx.config, &output)
 }
 
-pub fn migrate_database(ctx: &WorkflowContext) -> Result<()> {
+pub async fn migrate_database(ctx: &WorkflowContext) -> Result<()> {
     let output = ctx.output();
-    apply_migrations_for_db_command(&ctx.project_root, &ctx.config, &output)
+    apply_migrations_for_db_command(ctx, &output).await
 }
 
-pub async fn run_dev(ctx: &WorkflowContext, force: bool) -> Result<()> {
-    dev::run_dev_session(ctx, dev::DevSessionOptions { force }).await
+pub async fn run_dev(
+    ctx: &WorkflowContext,
+    force: bool,
+    display_mode: WorkflowDisplayMode,
+) -> Result<()> {
+    dev::run_dev_session(
+        ctx,
+        dev::DevSessionOptions {
+            force,
+            display_mode,
+        },
+    )
+    .await
 }
 
 pub fn link_project(ctx: &WorkflowContext, options: LinkOptions) -> Result<()> {

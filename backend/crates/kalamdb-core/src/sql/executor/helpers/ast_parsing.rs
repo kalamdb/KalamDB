@@ -85,14 +85,11 @@ mod tests {
 
         match statement {
             Statement::Query(query) => match *query.body {
-                SetExpr::Select(select) => match select
-                    .projection
-                    .into_iter()
-                    .next()
-                    .expect("one projection expression")
-                {
-                    SelectItem::UnnamedExpr(expr) => expr,
-                    other => panic!("unexpected select projection: {other:?}"),
+                SetExpr::Select(select) => {
+                    match select.projection.into_iter().next().expect("one projection expression") {
+                        SelectItem::UnnamedExpr(expr) => expr,
+                        other => panic!("unexpected select projection: {other:?}"),
+                    }
                 },
                 other => panic!("expected SELECT body, got {other:?}"),
             },
@@ -130,10 +127,7 @@ mod tests {
         assert_eq!(expr_to_scalar(&neg_int).unwrap(), ScalarValue::Int64(Some(-42)));
 
         let neg_float = parse_select_expr("-3.25");
-        assert_eq!(
-            expr_to_scalar(&neg_float).unwrap(),
-            ScalarValue::Float64(Some(-3.25))
-        );
+        assert_eq!(expr_to_scalar(&neg_float).unwrap(), ScalarValue::Float64(Some(-3.25)));
 
         let neg_string = parse_select_expr("-'x'");
         assert_eq!(expr_to_scalar(&neg_string), Err("unsupported unary literal"));

@@ -1,4 +1,5 @@
 use kalam_cli::{
+    output::WorkflowDisplayMode,
     workflow::{
         self,
         project::{init::InitOptions, link::LinkOptions},
@@ -35,7 +36,7 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
             Ok(true)
         },
         CliCommand::Db(args) => {
-            handle_db(cli, args)?;
+            handle_db(cli, args).await?;
             Ok(true)
         },
         CliCommand::Dev(args) => {
@@ -117,11 +118,11 @@ fn handle_migration(cli: &Cli, args: &MigrationArgs) -> Result<()> {
     }
 }
 
-fn handle_db(cli: &Cli, args: &DbArgs) -> Result<()> {
+async fn handle_db(cli: &Cli, args: &DbArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), args.env.as_deref(), None)?;
 
     match &args.command {
-        DbCommand::Migrate(_) => workflow::migrate_database(&ctx),
+        DbCommand::Migrate(_) => workflow::migrate_database(&ctx).await,
     }
 }
 
@@ -144,7 +145,14 @@ async fn handle_dev(cli: &Cli, args: &DevArgs) -> Result<()> {
         args.env.as_deref(),
         args.namespace.as_deref(),
     )?;
-    workflow::run_dev(&ctx, args.force).await
+    let display_mode = if cli.verbose {
+        WorkflowDisplayMode::Verbose
+    } else if args.progress {
+        WorkflowDisplayMode::Progress
+    } else {
+        WorkflowDisplayMode::Progress
+    };
+    workflow::run_dev(&ctx, args.force, display_mode).await
 }
 
 fn handle_status(cli: &Cli, args: &StatusArgs) -> Result<()> {

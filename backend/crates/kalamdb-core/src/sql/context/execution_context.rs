@@ -247,5 +247,4 @@ impl ExecutionContext {
 
         self.namespace_id.clone().unwrap_or_default()
     }
-
 }

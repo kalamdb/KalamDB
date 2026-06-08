@@ -488,10 +488,7 @@ mod tests {
             Self {
                 lookups: AtomicUsize::new(0),
                 users: Mutex::new(
-                    users
-                        .into_iter()
-                        .map(|user| (user.user_id.clone(), user))
-                        .collect(),
+                    users.into_iter().map(|user| (user.user_id.clone(), user)).collect(),
                 ),
             }
         }

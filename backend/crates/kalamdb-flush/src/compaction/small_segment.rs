@@ -1082,8 +1082,6 @@ mod tests {
         assert!(is_missing_parquet_file_error_msg(
             "Parquet error: External: Object at location /tmp/batch-0.parquet not found: No such file or directory"
         ));
-        assert!(!is_missing_parquet_file_error_msg(
-            "Parquet error: invalid footer magic bytes"
-        ));
+        assert!(!is_missing_parquet_file_error_msg("Parquet error: invalid footer magic bytes"));
     }
 }

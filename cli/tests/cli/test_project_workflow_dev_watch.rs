@@ -9,6 +9,7 @@ fn add_dev_processes(project_dir: &std::path::Path, processes: HashMap<String, S
     let config_path = project_dir.join(KALAM_TOML);
     let mut config = KalamProjectConfig::load_from_path(&config_path).expect("load kalam.toml");
     config.dev.processes = processes;
+    config.dev.generate_types = false;
     config.save_to_path(&config_path).expect("save kalam.toml");
 }
 
@@ -21,13 +22,18 @@ fn scaffold_watch_project(temp: &TempDir, failing_migration: bool) -> std::path:
         "init",
         "--yes",
         "--name",
-        "watch-app",
+        "watch_app",
         "--schema-mode",
         "sql",
         "--languages",
         "typescript",
     ]);
     assert!(cmd.output().expect("init").status.success());
+    fs::write(
+        project_dir.join("schema.sql"),
+        "-- Watch test schema\nCREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY);\n",
+    )
+    .expect("rewrite schema for idempotent retries");
 
     add_dev_processes(
         &project_dir,
@@ -71,12 +77,12 @@ fn test_project_workflow_dev_schema_failure_pauses_pipeline() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("schema pipeline failed") || stderr.contains("schema pipeline paused"),
+        stderr.contains("✗ Schema failed"),
         "expected schema failure messaging\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("[worker]") || stderr.contains("worker alive"),
-        "expected worker logs to continue\nstderr: {stderr}"
+        !stderr.contains("[worker]") && !stderr.contains("worker alive"),
+        "expected progress mode to hide worker logs\nstderr: {stderr}"
     );
 }
 
@@ -104,8 +110,7 @@ fn test_project_workflow_dev_force_recovers_schema_pipeline() {
     let output = child.wait_with_output().expect("collect output");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("schema pipeline completed")
-            || stderr.contains("schema pipeline recovered"),
+        stderr.contains("✓ Schema applied") || stderr.contains("✓ Schema recovered"),
         "expected schema recovery with --force\nstderr: {stderr}"
     );
 }

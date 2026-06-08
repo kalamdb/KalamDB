@@ -1,6 +1,10 @@
-use crate::session::CLISession;
+use crate::error::{CLIError, Result};
 
-pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
+pub(crate) fn parse_execution_batch(sql: &str) -> Result<Vec<String>> {
+    coalesce_explicit_transaction_blocks(split_batch_statements(sql))
+}
+
+pub(crate) fn split_batch_statements(sql: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut chars = sql.chars().peekable();
@@ -88,27 +92,26 @@ pub(super) fn split_batch_statements(sql: &str) -> Vec<String> {
     statements
 }
 
-pub(super) fn batch_table_readiness_target(statement: &str) -> Option<String> {
+pub(crate) fn batch_table_readiness_target(statement: &str) -> Option<String> {
     let trimmed = strip_leading_batch_comments(statement.trim().trim_end_matches(';'));
     if trimmed.is_empty() {
         return None;
     }
 
-    let remainder = if let Some(rest) = CLISession::strip_ascii_prefix(trimmed, "CREATE USER TABLE")
-    {
+    let remainder = if let Some(rest) = strip_ascii_prefix(trimmed, "CREATE USER TABLE") {
         rest
-    } else if let Some(rest) = CLISession::strip_ascii_prefix(trimmed, "CREATE SHARED TABLE") {
+    } else if let Some(rest) = strip_ascii_prefix(trimmed, "CREATE SHARED TABLE") {
         rest
-    } else if let Some(rest) = CLISession::strip_ascii_prefix(trimmed, "CREATE STREAM TABLE") {
+    } else if let Some(rest) = strip_ascii_prefix(trimmed, "CREATE STREAM TABLE") {
         rest
-    } else if let Some(rest) = CLISession::strip_ascii_prefix(trimmed, "CREATE TABLE") {
+    } else if let Some(rest) = strip_ascii_prefix(trimmed, "CREATE TABLE") {
         rest
     } else {
         return None;
     };
 
     let remainder = remainder.trim_start();
-    let remainder = if let Some(rest) = CLISession::strip_ascii_prefix(remainder, "IF NOT EXISTS") {
+    let remainder = if let Some(rest) = strip_ascii_prefix(remainder, "IF NOT EXISTS") {
         rest.trim_start()
     } else {
         remainder
@@ -145,7 +148,43 @@ pub(super) fn batch_table_readiness_target(statement: &str) -> Option<String> {
     }
 }
 
-fn strip_leading_batch_comments(mut value: &str) -> &str {
+pub(crate) fn coalesce_explicit_transaction_blocks(statements: Vec<String>) -> Result<Vec<String>> {
+    let mut merged = Vec::with_capacity(statements.len());
+    let mut in_tx = false;
+    let mut tx_buffer = String::new();
+
+    for statement in statements {
+        if !in_tx {
+            if is_explicit_transaction_begin(&statement) {
+                in_tx = true;
+                tx_buffer.push_str(statement.trim());
+                tx_buffer.push_str(";\n");
+            } else {
+                merged.push(statement);
+            }
+            continue;
+        }
+
+        tx_buffer.push_str(statement.trim());
+        tx_buffer.push_str(";\n");
+
+        if is_explicit_transaction_end(&statement) {
+            merged.push(tx_buffer.trim_end().to_string());
+            tx_buffer.clear();
+            in_tx = false;
+        }
+    }
+
+    if in_tx {
+        return Err(CLIError::ParseError(
+            "SQL file contains an explicit transaction block without COMMIT/ROLLBACK".to_string(),
+        ));
+    }
+
+    Ok(merged)
+}
+
+pub(crate) fn strip_leading_batch_comments(mut value: &str) -> &str {
     loop {
         let trimmed = value.trim_start();
         if let Some(rest) = trimmed.strip_prefix("--") {
@@ -166,6 +205,27 @@ fn strip_leading_batch_comments(mut value: &str) -> &str {
 
         return trimmed;
     }
+}
+
+fn is_explicit_transaction_begin(statement: &str) -> bool {
+    let trimmed = strip_leading_batch_comments(statement);
+    strip_ascii_prefix(trimmed, "BEGIN").is_some()
+        || strip_ascii_prefix(trimmed, "START TRANSACTION").is_some()
+}
+
+fn is_explicit_transaction_end(statement: &str) -> bool {
+    let trimmed = strip_leading_batch_comments(statement);
+    strip_ascii_prefix(trimmed, "COMMIT").is_some()
+        || strip_ascii_prefix(trimmed, "ROLLBACK").is_some()
+}
+
+fn strip_ascii_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let prefix_len = prefix.len();
+    if value.len() < prefix_len || !value[..prefix_len].eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+
+    Some(&value[prefix_len..])
 }
 
 fn is_sql_line_comment_start(

@@ -27,6 +27,12 @@ use crate::{
     },
 };
 
+const TEMPLATES_DIR: &str = "templates";
+const PROJECT_SCHEMA_TEMPLATE: &str = "project/schema.sql.template";
+const TYPESCRIPT_PACKAGE_TEMPLATE: &str = "typescript/package.json.template";
+const TYPESCRIPT_TSCONFIG_TEMPLATE: &str = "typescript/tsconfig.json.template";
+const TYPESCRIPT_INDEX_TEMPLATE: &str = "typescript/src/index.ts.template";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerMode {
     Local,
@@ -137,7 +143,7 @@ fn resolve_languages(options: &InitOptions, color: bool) -> Result<Vec<String>> 
         return Ok(normalize_languages(languages)?);
     }
     if options.yes {
-        return Ok(vec!["typescript".into(), "dart".into()]);
+        return Ok(vec!["typescript".into()]);
     }
 
     let options_list = [
@@ -145,7 +151,7 @@ fn resolve_languages(options: &InitOptions, color: bool) -> Result<Vec<String>> 
         SelectOption::described("Dart", "Generate lib/generated/kalam.dart"),
     ];
     let selected =
-        prompt_multi_select("Generated language targets", &options_list, &[true, true], color)?;
+        prompt_multi_select("Generated language targets", &options_list, &[true, false], color)?;
 
     let mut languages = Vec::new();
     for idx in selected {
@@ -318,18 +324,24 @@ fn write_project_scaffold(
     config.save_to_path(&root.join(KALAM_TOML))?;
     output.detail(format!("created {}", KALAM_TOML));
 
+    write_default_gitignore(root, &config.schema.languages, output)?;
+
     if matches!(schema_mode, SchemaMode::Sql) {
         let schema_path = root.join("schema.sql");
         if !schema_path.exists() {
-            fs::write(&schema_path, default_schema_sql(&config.project.name))?;
+            fs::write(&schema_path, default_schema_sql(&config.project.name)?)?;
             output.detail("created schema.sql");
         }
     }
 
     if matches!(server_mode, ServerMode::Local) {
         let port = crate::workflow::dev::server::parse_server_port(server_url)?;
+        let server_config_path = root.join(LOCAL_SERVER_CONFIG);
+        let created = !server_config_path.exists();
         write_local_server_config(root, port)?;
-        output.detail(format!("created {LOCAL_SERVER_CONFIG}"));
+        if created {
+            output.detail(format!("created {LOCAL_SERVER_CONFIG}"));
+        }
     }
 
     let migrations_dir = config.migrations_dir(root);
@@ -350,12 +362,16 @@ fn write_project_scaffold(
         }
     }
 
+    if config.schema.languages.iter().any(|language| language == "typescript") {
+        write_typescript_starter(root, &config.project.name, server_url, output)?;
+    }
+
     let env_example = root.join(".env.example");
     if !env_example.exists() {
         fs::write(
             &env_example,
             format!(
-                "# KalamDB workflow environment overrides\nKALAM_ENV=dev\nKALAM_URL={server_url}\nKALAM_NAMESPACE={}\n",
+                "# KalamDB workflow environment overrides\nKALAM_ENV=dev\nKALAM_URL={server_url}\nKALAM_NAMESPACE={}\n# Optional direct client auth for starter apps\nKALAM_USER=root\nKALAM_PASSWORD=mypass\n",
                 config.project.name
             ),
         )?;
@@ -365,27 +381,148 @@ fn write_project_scaffold(
     Ok(())
 }
 
-fn default_schema_sql(project_name: &str) -> String {
-    format!(
-        r#"-- Example schema for {project_name}
-CREATE TABLE users (
-  id INTEGER PRIMARY KEY,
-  email TEXT NOT NULL,
-  created_at TIMESTAMP
-);
-"#
-    )
+fn default_schema_sql(project_name: &str) -> Result<String> {
+    Ok(render_template(
+        &read_template(PROJECT_SCHEMA_TEMPLATE)?,
+        &[("project_name", project_name)],
+    ))
+}
+
+fn write_default_gitignore(
+    root: &Path,
+    languages: &[String],
+    output: &WorkflowOutput,
+) -> Result<()> {
+    let gitignore_path = root.join(".gitignore");
+    if gitignore_path.exists() {
+        return Ok(());
+    }
+
+    let mut lines = vec![
+        "# KalamDB local workflow state".to_string(),
+        ".kalam/".to_string(),
+        "kalam/.schema-baseline.sql".to_string(),
+    ];
+
+    if languages.iter().any(|language| language == "typescript") {
+        lines.push(String::new());
+        lines.push("# TypeScript / Node".to_string());
+        lines.push("node_modules/".to_string());
+        lines.push("dist/".to_string());
+    }
+
+    if languages.iter().any(|language| language == "dart") {
+        lines.push(String::new());
+        lines.push("# Dart".to_string());
+        lines.push(".dart_tool/".to_string());
+        lines.push("build/".to_string());
+    }
+
+    fs::write(&gitignore_path, format!("{}\n", lines.join("\n")))?;
+    output.detail("created .gitignore");
+    Ok(())
+}
+
+fn write_typescript_starter(
+    root: &Path,
+    project_name: &str,
+    server_url: &str,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    write_template_file(
+        root,
+        "package.json",
+        TYPESCRIPT_PACKAGE_TEMPLATE,
+        &[("project_name", project_name)],
+        output,
+    )?;
+    write_template_file(root, "tsconfig.json", TYPESCRIPT_TSCONFIG_TEMPLATE, &[], output)?;
+    write_template_file(
+        root,
+        "src/index.ts",
+        TYPESCRIPT_INDEX_TEMPLATE,
+        &[("project_name", project_name), ("server_url", server_url)],
+        output,
+    )?;
+
+    Ok(())
 }
 
 pub fn detect_package_manager(root: &Path) -> Option<&'static str> {
-    if root.join("pnpm-lock.yaml").exists() {
+    if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
+        Some("bun")
+    } else if root.join("pnpm-lock.yaml").exists() {
         Some("pnpm")
     } else if root.join("yarn.lock").exists() {
         Some("yarn")
-    } else if root.join("package-lock.json").exists() {
+    } else if root.join("package-lock.json").exists() || root.join("npm-shrinkwrap.json").exists() {
         Some("npm")
+    } else if let Some(manager) = package_manager_from_package_json(root) {
+        Some(manager)
     } else if root.join("pubspec.yaml").exists() {
         Some("dart pub")
+    } else {
+        None
+    }
+}
+
+fn template_path(relative_path: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(TEMPLATES_DIR).join(relative_path)
+}
+
+fn read_template(relative_path: &str) -> Result<String> {
+    let path = template_path(relative_path);
+    fs::read_to_string(&path).map_err(|error| {
+        crate::error::CLIError::FileError(format!(
+            "failed to read template '{}': {error}",
+            path.display()
+        ))
+    })
+}
+
+fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut rendered = template.to_string();
+    for (key, value) in replacements {
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    rendered
+}
+
+fn write_template_file(
+    root: &Path,
+    destination: &str,
+    template: &str,
+    replacements: &[(&str, &str)],
+    output: &WorkflowOutput,
+) -> Result<()> {
+    let destination_path = root.join(destination);
+    if destination_path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let rendered = render_template(&read_template(template)?, replacements);
+    fs::write(&destination_path, rendered)?;
+    output.detail(format!("created {destination}"));
+    Ok(())
+}
+
+fn package_manager_from_package_json(root: &Path) -> Option<&'static str> {
+    let package_json_path = root.join("package.json");
+    let contents = fs::read_to_string(package_json_path).ok()?;
+    let package_json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let manager = package_json.get("packageManager")?.as_str()?.trim();
+
+    if manager.starts_with("bun@") || manager == "bun" {
+        Some("bun")
+    } else if manager.starts_with("pnpm@") || manager == "pnpm" {
+        Some("pnpm")
+    } else if manager.starts_with("yarn@") || manager == "yarn" {
+        Some("yarn")
+    } else if manager.starts_with("npm@") || manager == "npm" {
+        Some("npm")
     } else {
         None
     }
@@ -443,5 +580,79 @@ mod tests {
         let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
         assert!(!config.dev.auto_start_db);
         assert!(!temp.path().join(LOCAL_SERVER_CONFIG).exists());
+    }
+
+    #[test]
+    fn detect_package_manager_supports_all_known_lockfiles() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+
+        fs::write(root.join("bun.lock"), "").unwrap();
+        assert_eq!(detect_package_manager(root), Some("bun"));
+        fs::remove_file(root.join("bun.lock")).unwrap();
+
+        fs::write(root.join("bun.lockb"), "").unwrap();
+        assert_eq!(detect_package_manager(root), Some("bun"));
+        fs::remove_file(root.join("bun.lockb")).unwrap();
+
+        fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(detect_package_manager(root), Some("pnpm"));
+        fs::remove_file(root.join("pnpm-lock.yaml")).unwrap();
+
+        fs::write(root.join("yarn.lock"), "").unwrap();
+        assert_eq!(detect_package_manager(root), Some("yarn"));
+        fs::remove_file(root.join("yarn.lock")).unwrap();
+
+        fs::write(root.join("package-lock.json"), "{}").unwrap();
+        assert_eq!(detect_package_manager(root), Some("npm"));
+        fs::remove_file(root.join("package-lock.json")).unwrap();
+
+        fs::write(root.join("npm-shrinkwrap.json"), "{}").unwrap();
+        assert_eq!(detect_package_manager(root), Some("npm"));
+        fs::remove_file(root.join("npm-shrinkwrap.json")).unwrap();
+
+        fs::write(root.join("pubspec.yaml"), "name: demo\n").unwrap();
+        assert_eq!(detect_package_manager(root), Some("dart pub"));
+    }
+
+    #[test]
+    fn detect_package_manager_reads_package_manager_field() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+
+        fs::write(root.join("package.json"), r#"{ "packageManager": "bun@1.2.0" }"#).unwrap();
+        assert_eq!(detect_package_manager(root), Some("bun"));
+
+        fs::write(root.join("package.json"), r#"{ "packageManager": "pnpm@10.0.0" }"#).unwrap();
+        assert_eq!(detect_package_manager(root), Some("pnpm"));
+
+        fs::write(root.join("package.json"), r#"{ "packageManager": "yarn@4.0.0" }"#).unwrap();
+        assert_eq!(detect_package_manager(root), Some("yarn"));
+
+        fs::write(root.join("package.json"), r#"{ "packageManager": "npm@10.0.0" }"#).unwrap();
+        assert_eq!(detect_package_manager(root), Some("npm"));
+    }
+
+    #[test]
+    fn project_templates_render_expected_values() {
+        let schema = default_schema_sql("demo-app").unwrap();
+        assert!(schema.contains("demo-app"));
+        assert!(schema.contains("CREATE TABLE users"));
+
+        let package_json = render_template(
+            &read_template(TYPESCRIPT_PACKAGE_TEMPLATE).unwrap(),
+            &[("project_name", "demo-app")],
+        );
+        assert!(package_json.contains(r#""name": "demo-app""#));
+
+        let starter = render_template(
+            &read_template(TYPESCRIPT_INDEX_TEMPLATE).unwrap(),
+            &[
+                ("project_name", "demo-app"),
+                ("server_url", "http://localhost:2900"),
+            ],
+        );
+        assert!(starter.contains("http://localhost:2900"));
+        assert!(starter.contains("demo-app"));
     }
 }

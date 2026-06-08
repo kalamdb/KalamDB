@@ -1,0 +1,32 @@
+import { Auth, createClient } from '@kalamdb/client';
+
+const url = process.env.KALAM_URL ?? 'http://localhost:2900';
+const namespace = process.env.KALAM_NAMESPACE ?? 'test6';
+const username = process.env.KALAM_USER ?? 'root';
+const password = process.env.KALAM_PASSWORD ?? 'mypass';
+
+function quoteIdentifier(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+async function main(): Promise<void> {
+  const client = createClient({
+    url,
+    authProvider: async () => Auth.basic(username, password),
+  });
+
+  const sql = `SELECT id, email, created_at FROM ${quoteIdentifier(namespace)}.users ORDER BY created_at DESC LIMIT 10`;
+  const result = await client.query(sql);
+  const rows = result.results?.[0]?.rows ?? [];
+
+  console.log('Hello from KalamDB');
+  console.log(`Fetched ${rows.length} row(s) from ${namespace}.users`);
+  console.dir(rows, { depth: null });
+
+  await client.disconnect();
+}
+
+main().catch((error) => {
+  console.error('Failed to query KalamDB:', error);
+  process.exitCode = 1;
+});

@@ -36,16 +36,11 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE TABLE failed");
 
-    let resp = server
-        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
-        .await?;
+    let resp = server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE TOPIC failed");
 
     let resp = server
-        .execute_sql(&format!(
-            "ALTER TOPIC {} ADD SOURCE {} ON INSERT",
-            topic, source_table
-        ))
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "ALTER TOPIC failed");
 
@@ -93,9 +88,7 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
                 other_topic
             ))
             .await?;
-        let consume_result = server
-            .execute_sql(&format!("CONSUME FROM {} LIMIT 1", topic))
-            .await?;
+        let consume_result = server.execute_sql(&format!("CONSUME FROM {} LIMIT 1", topic)).await?;
 
         let topic_gone =
             topic_count.status == ResponseStatus::Success && topic_count.get_i64("cnt") == Some(0);
@@ -159,9 +152,8 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         recreate_table.error
     );
 
-    let recreate_topic = server
-        .execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic))
-        .await?;
+    let recreate_topic =
+        server.execute_sql(&format!("CREATE TOPIC {} PARTITIONS 1", topic)).await?;
     anyhow::ensure!(
         recreate_topic.status == ResponseStatus::Success,
         "recreate topic failed: {:?}",
@@ -180,10 +172,7 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
     );
 
     let wire_topic = server
-        .execute_sql(&format!(
-            "ALTER TOPIC {} ADD SOURCE {} ON INSERT",
-            topic, source_table
-        ))
+        .execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, source_table))
         .await?;
     anyhow::ensure!(
         wire_topic.status == ResponseStatus::Success,
@@ -216,17 +205,13 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         "recreated topic should accept new events"
     );
 
-    let cleanup_recreated = server
-        .execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns))
-        .await?;
+    let cleanup_recreated = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await?;
     anyhow::ensure!(
         cleanup_recreated.status == ResponseStatus::Success,
         "cleanup recreated namespace failed"
     );
 
-    let cleanup_other = server
-        .execute_sql(&format!("DROP NAMESPACE {} CASCADE", other_ns))
-        .await?;
+    let cleanup_other = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", other_ns)).await?;
     anyhow::ensure!(
         cleanup_other.status == ResponseStatus::Success,
         "cleanup DROP NAMESPACE failed"

@@ -265,7 +265,6 @@ impl FileSubfolderState {
         self.count += 1;
         self.subfolder_name()
     }
-
 }
 
 #[cfg(test)]

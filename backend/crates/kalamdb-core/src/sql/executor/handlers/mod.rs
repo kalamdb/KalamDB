@@ -146,11 +146,7 @@ mod tests {
     }
 
     fn context_with_role(role: Role) -> ExecutionContext {
-        ExecutionContext::new(
-            UserId::from("test-user"),
-            role,
-            Arc::new(SessionContext::new()),
-        )
+        ExecutionContext::new(UserId::from("test-user"), role, Arc::new(SessionContext::new()))
     }
 
     #[tokio::test]

@@ -159,11 +159,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             })
             .await?;
 
-            self.app_context
-                .system_tables()
-                .topics()
-                .delete_topic_async(&topic_id)
-                .await?;
+            self.app_context.system_tables().topics().delete_topic_async(&topic_id).await?;
             self.app_context.topic_publisher().remove_topic(&topic_id);
 
             let audit_entry = audit::log_ddl_operation(

@@ -33,7 +33,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
 
     validate_deploy_readiness(&ctx.project_root, &ctx.config, target_env, &output)?;
 
-    apply_pending_migrations(&ctx.project_root, &ctx.config, &output)?;
+    apply_pending_migrations(ctx, &output).await?;
 
     run_rollout(&ctx.project_root, &ctx.config, target_env, &output)?;
 

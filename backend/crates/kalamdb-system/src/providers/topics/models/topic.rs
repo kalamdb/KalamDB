@@ -202,7 +202,6 @@ impl Topic {
     pub fn has_routes(&self) -> bool {
         !self.routes.is_empty()
     }
-
 }
 
 #[cfg(test)]

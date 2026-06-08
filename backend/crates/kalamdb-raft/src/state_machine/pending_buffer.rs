@@ -135,7 +135,6 @@ impl PendingBuffer {
         guard.clear();
         self.pending_count.store(0, std::sync::atomic::Ordering::Relaxed);
     }
-
 }
 
 #[cfg(test)]

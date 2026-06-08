@@ -185,11 +185,7 @@ impl OidcClientHandle {
                 .name()
                 .and_then(|value| value.get(None))
                 .map(|value| value.as_str().to_string())
-                .or_else(|| {
-                    claims
-                        .preferred_username()
-                        .map(|value| value.as_str().to_string())
-                }),
+                .or_else(|| claims.preferred_username().map(|value| value.as_str().to_string())),
             email: claims.email().map(|email| email.as_str().to_string()),
             role: None,
             auth_type: Some(KalamAuthType::Oidc),

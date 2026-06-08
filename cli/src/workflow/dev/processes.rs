@@ -147,7 +147,7 @@ fn spawn_log_reader(
         };
         let mut lines = BufReader::new(stream).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            output.service_log(&source, &line);
+            output.process_log(&source, &line);
         }
     })
 }

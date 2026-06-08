@@ -74,10 +74,8 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 
         // Extract providers from AppContext
         let storage_registry = self.app_context.storage_registry();
-        let (shared_tables_template, user_tables_template) = normalize_storage_templates(
-            shared_tables_template,
-            user_tables_template,
-        );
+        let (shared_tables_template, user_tables_template) =
+            normalize_storage_templates(shared_tables_template, user_tables_template);
 
         // Check if storage already exists (offload sync RocksDB read)
         let storage_id = StorageId::from(storage_id.as_str());
@@ -211,7 +209,10 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
 mod tests {
     use std::sync::Arc;
 
-    use kalamdb_commons::{models::ids::NamespaceId, models::TableName, models::TableId, models::UserId, Role, StorageId};
+    use kalamdb_commons::{
+        models::ids::NamespaceId, models::TableId, models::TableName, models::UserId, Role,
+        StorageId,
+    };
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_filestore::StorageCached;
     use kalamdb_system::{Storage, StorageType};
@@ -258,7 +259,10 @@ mod tests {
         };
 
         let cached = StorageCached::with_default_timeouts(storage);
-        let table_id = TableId::new(NamespaceId::new("sql_file_case_28_a"), TableName::new("case28_wide_user"));
+        let table_id = TableId::new(
+            NamespaceId::new("sql_file_case_28_a"),
+            TableName::new("case28_wide_user"),
+        );
         let user_id = UserId::new("case28_user");
 
         let result = cached.get_relative_path(

@@ -6,9 +6,10 @@ use std::{
 use kalam_client::KalamLinkError;
 
 use super::CLISession;
-use crate::error::{CLIError, Result};
-
-mod parser;
+use crate::{
+    error::{CLIError, Result},
+    sql_batch,
+};
 
 impl CLISession {
     /// Execute SQL statements from a file using the same batch importer as `--file`.
@@ -22,10 +23,9 @@ impl CLISession {
 
     /// Execute multiple SQL statements from a script.
     pub async fn execute_batch(&mut self, sql: &str) -> Result<()> {
-        let statements =
-            Self::coalesce_explicit_transaction_blocks(Self::split_batch_statements(sql))?;
+        let statements = sql_batch::parse_execution_batch(sql)?;
         for statement in statements {
-            let dispatch = Self::strip_leading_batch_comments(&statement);
+            let dispatch = sql_batch::strip_leading_batch_comments(&statement);
             if dispatch.is_empty() {
                 continue;
             }
@@ -39,84 +39,18 @@ impl CLISession {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn split_batch_statements(sql: &str) -> Vec<String> {
-        parser::split_batch_statements(sql)
+        sql_batch::split_batch_statements(sql)
     }
 
     pub(in crate::session) fn batch_table_readiness_target(statement: &str) -> Option<String> {
-        parser::batch_table_readiness_target(statement)
+        sql_batch::batch_table_readiness_target(statement)
     }
 
+    #[cfg(test)]
     fn coalesce_explicit_transaction_blocks(statements: Vec<String>) -> Result<Vec<String>> {
-        let mut merged = Vec::with_capacity(statements.len());
-        let mut in_tx = false;
-        let mut tx_buffer = String::new();
-
-        for statement in statements {
-            if !in_tx {
-                if Self::is_explicit_transaction_begin(&statement) {
-                    in_tx = true;
-                    tx_buffer.push_str(statement.trim());
-                    tx_buffer.push_str(";\n");
-                } else {
-                    merged.push(statement);
-                }
-                continue;
-            }
-
-            tx_buffer.push_str(statement.trim());
-            tx_buffer.push_str(";\n");
-
-            if Self::is_explicit_transaction_end(&statement) {
-                merged.push(tx_buffer.trim_end().to_string());
-                tx_buffer.clear();
-                in_tx = false;
-            }
-        }
-
-        if in_tx {
-            return Err(CLIError::ParseError(
-                "SQL file contains an explicit transaction block without COMMIT/ROLLBACK"
-                    .to_string(),
-            ));
-        }
-
-        Ok(merged)
-    }
-
-    fn is_explicit_transaction_begin(statement: &str) -> bool {
-        let trimmed = Self::strip_leading_batch_comments(statement);
-        Self::strip_ascii_prefix(trimmed, "BEGIN").is_some()
-            || Self::strip_ascii_prefix(trimmed, "START TRANSACTION").is_some()
-    }
-
-    fn is_explicit_transaction_end(statement: &str) -> bool {
-        let trimmed = Self::strip_leading_batch_comments(statement);
-        Self::strip_ascii_prefix(trimmed, "COMMIT").is_some()
-            || Self::strip_ascii_prefix(trimmed, "ROLLBACK").is_some()
-    }
-
-    fn strip_leading_batch_comments(mut value: &str) -> &str {
-        loop {
-            let trimmed = value.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("--") {
-                let Some(newline_index) = rest.find('\n') else {
-                    return "";
-                };
-                value = &rest[newline_index + 1..];
-                continue;
-            }
-
-            if let Some(rest) = trimmed.strip_prefix("/*") {
-                let Some(end_index) = rest.find("*/") else {
-                    return "";
-                };
-                value = &rest[end_index + 2..];
-                continue;
-            }
-
-            return trimmed;
-        }
+        sql_batch::coalesce_explicit_transaction_blocks(statements)
     }
 
     async fn wait_for_batch_table_ready(&mut self, table: &str) -> Result<()> {

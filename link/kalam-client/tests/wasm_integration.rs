@@ -24,8 +24,7 @@ fn js_error_text(err: JsValue) -> String {
     err.as_string().unwrap_or_else(|| format!("{:?}", err))
 }
 
-fn capture_connection_events(
-) -> (
+fn capture_connection_events() -> (
     Rc<RefCell<Vec<(String, bool, Option<String>, Option<String>, Option<String>)>>>,
     Closure<dyn FnMut(JsValue)>,
 ) {
@@ -49,9 +48,7 @@ fn capture_connection_events(
         let hint = js_sys::Reflect::get(&event, &"hint".into())
             .ok()
             .and_then(|value| value.as_string());
-        captured
-            .borrow_mut()
-            .push((message, recoverable, url, auth_user, hint));
+        captured.borrow_mut().push((message, recoverable, url, auth_user, hint));
     }) as Box<dyn FnMut(JsValue)>);
     (events, closure)
 }
@@ -96,18 +93,18 @@ fn test_client_creation_empty_password() {
 // T063S: Test connect() failure is surfaced cleanly when server is unavailable
 #[wasm_bindgen_test]
 async fn test_connect_errors_cleanly_when_server_unavailable() {
-    let mut client = KalamClient::with_jwt(
-        "http://127.0.0.1:1".to_string(),
-        "test-token".to_string(),
-    )
-    .expect("client creation should succeed");
+    let mut client =
+        KalamClient::with_jwt("http://127.0.0.1:1".to_string(), "test-token".to_string())
+            .expect("client creation should succeed");
     let (events, on_error) = capture_connection_events();
     client.on_error(on_error.as_ref().unchecked_ref::<js_sys::Function>().clone());
     let result = client.connect().await;
 
     let err = js_error_text(result.expect_err("unreachable connect should fail"));
     assert!(
-        err.contains("WebSocket connection failed") || err.contains("closed") || err.contains("connect"),
+        err.contains("WebSocket connection failed")
+            || err.contains("closed")
+            || err.contains("connect"),
         "unexpected unreachable connect error: {err}"
     );
     assert_eq!(events.borrow().len(), 1, "onError should fire for unreachable server");
@@ -133,7 +130,11 @@ async fn test_on_error_fires_for_invalid_url_before_socket_creation() {
     assert!(events.borrow()[0].0.contains("Failed to connect to KalamDB"));
     assert!(!events.borrow()[0].1, "invalid URL should be fatal");
     assert_eq!(events.borrow()[0].2.as_deref(), Some("http://[::1"));
-    assert!(events.borrow()[0].4.as_deref().unwrap_or_default().contains("absolute http:// or https://"));
+    assert!(events.borrow()[0]
+        .4
+        .as_deref()
+        .unwrap_or_default()
+        .contains("absolute http:// or https://"));
 }
 
 #[wasm_bindgen_test]
@@ -145,16 +146,25 @@ async fn test_on_error_fires_for_auth_provider_resolution_failure() {
     let provider = js_sys::Function::new_no_args("return { jwt: {} }; ");
     client.set_auth_provider(provider);
 
-    let err = js_error_text(client.connect().await.expect_err("invalid authProvider result should fail"));
+    let err =
+        js_error_text(client.connect().await.expect_err("invalid authProvider result should fail"));
     assert!(
         err.contains("authProvider result must have shape"),
         "unexpected authProvider error: {err}"
     );
-    assert_eq!(events.borrow().len(), 1, "onError should fire for authProvider resolution failure");
+    assert_eq!(
+        events.borrow().len(),
+        1,
+        "onError should fire for authProvider resolution failure"
+    );
     assert!(events.borrow()[0].0.contains("Authentication failed"));
     assert!(!events.borrow()[0].1, "authProvider shape errors should be fatal");
     assert_eq!(events.borrow()[0].2.as_deref(), Some("http://localhost:2900"));
-    assert!(events.borrow()[0].4.as_deref().unwrap_or_default().contains("JWT token or auth provider"));
+    assert!(events.borrow()[0]
+        .4
+        .as_deref()
+        .unwrap_or_default()
+        .contains("JWT token or auth provider"));
 }
 
 // T063T: Test disconnect() properly closes WebSocket

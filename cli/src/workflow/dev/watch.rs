@@ -11,8 +11,9 @@ use crate::{
     output::WorkflowOutput,
     workflow::{
         migration::apply::apply_pending_migrations,
-        project::config::KalamProjectConfig,
+        project::config::{KalamProjectConfig, SchemaMode},
         schema::gen::{generate_schema_artifacts, GenerateOptions},
+        sql::{build_workflow_client, ensure_namespace_exists, execute_sql_file},
         WorkflowContext,
     },
 };
@@ -20,25 +21,56 @@ use crate::{
 /// Poll interval for schema file changes during `kalam dev`.
 pub const SCHEMA_WATCH_INTERVAL_SECS: u64 = 2;
 
-/// Run apply-migrations, optional type generation, and baseline update.
-pub fn run_schema_pipeline(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
+/// Run schema bootstrap, migrations, optional type generation, and baseline update.
+pub async fn run_schema_pipeline(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
     let config = &ctx.config;
     let project_root = &ctx.project_root;
 
     if config.dev.apply_schema {
-        apply_pending_migrations(project_root, config, output)?;
+        apply_project_schema_to_server(ctx, output).await?;
+        apply_pending_migrations(ctx, output).await?;
     }
 
     if config.dev.generate_types {
-        generate_schema_artifacts(
-            project_root,
-            config,
-            &GenerateOptions { languages: None },
-            output,
-        )?;
+        generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
     }
 
     update_schema_baseline(project_root, config)?;
+    Ok(())
+}
+
+async fn apply_project_schema_to_server(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    if !matches!(ctx.config.schema.mode, SchemaMode::Sql) {
+        return Ok(());
+    }
+
+    let Some(schema_path) = ctx.config.schema_source_path(&ctx.project_root) else {
+        return Ok(());
+    };
+    if !schema_path.is_file() {
+        return Ok(());
+    }
+
+    let environment = ctx.resolved_environment()?;
+    let client = build_workflow_client(ctx, &environment)?;
+    ensure_namespace_exists(&client, &environment.namespace, output).await?;
+    let executed = execute_sql_file(
+        &client,
+        &schema_path,
+        Some(&environment.namespace),
+        output,
+        "executing schema file",
+    )
+    .await?;
+    output.status(format!(
+        "applied {} statement(s) from {} to {}",
+        executed,
+        schema_path.display(),
+        environment.namespace
+    ));
     Ok(())
 }
 
@@ -162,7 +194,8 @@ mod tests {
         let root = temp.path();
         fs::create_dir_all(root.join("src/generated")).unwrap();
         fs::write(root.join("schema.sql"), "CREATE TABLE users (id INT);").unwrap();
-        let config = sample_config();
+        let mut config = sample_config();
+        config.dev.apply_schema = false;
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let ctx = WorkflowContext {
             project_root: root.to_path_buf(),
@@ -175,7 +208,26 @@ mod tests {
             url_override: None,
         };
 
-        run_schema_pipeline(&ctx, &output).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(run_schema_pipeline(&ctx, &output)).unwrap();
         assert!(ctx.config.schema_baseline_path(root).is_file());
+    }
+
+    #[test]
+    fn shared_batch_parser_ignores_comments_and_empty_segments() {
+        let statements = crate::sql_batch::parse_execution_batch(
+            r#"
+-- comment
+CREATE TABLE users (id INT);
+
+/* another comment */
+INSERT INTO users VALUES ('hello;world');
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(statements.len(), 2);
+        assert!(statements[0].contains("CREATE TABLE users"));
+        assert!(statements[1].contains("'hello;world'"));
     }
 }

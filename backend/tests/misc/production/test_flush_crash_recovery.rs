@@ -68,7 +68,12 @@ fn reserve_local_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn write_config_file(base_dir: &Path, port: u16, root_password: &str, jwt_secret: &str) -> Result<PathBuf> {
+fn write_config_file(
+    base_dir: &Path,
+    port: u16,
+    root_password: &str,
+    jwt_secret: &str,
+) -> Result<PathBuf> {
     let data_path = base_dir.join("data");
     let logs_path = base_dir.join("logs");
     let config_path = base_dir.join("server.toml");
@@ -238,12 +243,7 @@ async fn crash_during_flush_restarts_and_recovers_visible_rows() -> Result<()> {
     }
 
     let flush_resp = client
-        .execute_query(
-            &format!("STORAGE FLUSH TABLE {}.{}", namespace, table),
-            None,
-            None,
-            None,
-        )
+        .execute_query(&format!("STORAGE FLUSH TABLE {}.{}", namespace, table), None, None, None)
         .await?;
     anyhow::ensure!(flush_resp.status == ResponseStatus::Success, "flush command failed");
 

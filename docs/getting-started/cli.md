@@ -603,7 +603,9 @@ This creates:
 ### Schema and migrations (sql mode)
 
 ```bash
-# Regenerate TypeScript and Dart artifacts from schema.sql
+# Regenerate workflow artifacts
+# TypeScript uses @kalamdb/orm against the resolved server/namespace.
+# Dart currently writes a placeholder file.
 kalam schema gen
 
 # Create a migration from the current schema

@@ -1,7 +1,8 @@
 //! Local KalamDB server lifecycle helpers for `kalam dev`.
 
 use std::{
-    env,
+    env, fs,
+    io::IsTerminal,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -11,12 +12,24 @@ use url::Url;
 
 use crate::{
     error::{CLIError, Result},
+    history::get_kalam_config_dir,
     output::WorkflowOutput,
-    workflow::project::config::KalamProjectConfig,
+    release_download::{
+        archive_kind_for_platform, archive_name, copy_file_with_executable_bit, create_temp_dir,
+        detect_platform, download_bytes, download_text, extract_archive, find_first_file_matching,
+        release_base_url, verify_checksum,
+    },
+    terminal_ui,
+    workflow::dev::logs::ServiceLogSource,
 };
 
 pub const DEFAULT_DEV_SERVER_URL: &str = "http://localhost:2900";
-pub const LOCAL_SERVER_CONFIG: &str = ".kalam/server.toml";
+pub const LOCAL_SERVER_DIR: &str = "kalam/server";
+pub const LOCAL_SERVER_CONFIG: &str = "kalam/server/server.toml";
+pub const LOCAL_SERVER_DATA_DIR: &str = "kalam/server/data";
+pub const LOCAL_SERVER_LOGS_DIR: &str = "kalam/server/logs";
+const SERVER_ARTIFACT_PREFIX: &str = "kalamdb-server";
+const SERVER_RELEASE_BASE_URL_ENV: &str = "KALAMDB_SERVER_RELEASE_BASE_URL";
 
 pub fn parse_server_port(server_url: &str) -> Result<u16> {
     let url = Url::parse(server_url).map_err(|e| {
@@ -33,28 +46,81 @@ pub fn local_server_config_path(project_root: &Path) -> PathBuf {
     project_root.join(LOCAL_SERVER_CONFIG)
 }
 
-pub fn write_local_server_config(project_root: &Path, port: u16) -> Result<PathBuf> {
-    let kalam_dir = project_root.join(".kalam");
-    std::fs::create_dir_all(kalam_dir.join("data"))?;
-    std::fs::create_dir_all(kalam_dir.join("logs"))?;
-
+pub fn local_server_root_password(project_root: &Path) -> Result<Option<String>> {
     let config_path = local_server_config_path(project_root);
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&config_path).map_err(|error| {
+        CLIError::FileError(format!(
+            "failed to read local server config '{}': {error}",
+            config_path.display()
+        ))
+    })?;
+    let value: toml::Value = toml::from_str(&contents).map_err(|error| {
+        CLIError::ConfigurationError(format!(
+            "failed to parse local server config '{}': {error}",
+            config_path.display()
+        ))
+    })?;
+
+    Ok(value
+        .get("auth")
+        .and_then(|auth| auth.get("root_password"))
+        .and_then(|password| password.as_str())
+        .map(ToString::to_string))
+}
+
+pub fn write_local_server_config(project_root: &Path, port: u16) -> Result<PathBuf> {
+    let config_path = local_server_config_path(project_root);
+    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_DIR))?;
+    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_DATA_DIR))?;
+    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_LOGS_DIR))?;
+    if config_path.is_file() {
+        return Ok(config_path);
+    }
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let contents = format!(
         r#"# Local KalamDB server config (managed by kalam dev)
 [server]
 host = "127.0.0.1"
 port = {port}
+public_origin = "http://localhost:{port}"
 
 [storage]
-data_path = ".kalam/data"
+data_path = "{LOCAL_SERVER_DATA_DIR}"
+
+[limits]
+
+[logging]
+logs_path = "{LOCAL_SERVER_LOGS_DIR}"
+log_to_console = true
+
+[performance]
 
 [auth]
-jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
 root_password = "mypass"
+jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
 "#
     );
     std::fs::write(&config_path, contents)?;
     Ok(config_path)
+}
+
+pub fn managed_server_install_dir() -> PathBuf {
+    get_kalam_config_dir().join("bin")
+}
+
+pub fn managed_server_binary_path() -> PathBuf {
+    let binary_name = if cfg!(windows) {
+        "kalamdb-server.exe"
+    } else {
+        "kalamdb-server"
+    };
+    managed_server_install_dir().join(binary_name)
 }
 
 pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
@@ -69,12 +135,17 @@ pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
         )));
     }
 
+    let managed_path = managed_server_binary_path();
+    if managed_path.is_file() {
+        return Ok(managed_path);
+    }
+
     if let Some(path) = find_on_path("kalamdb-server") {
         return Ok(path);
     }
 
     Err(CLIError::ConfigurationError(
-        "kalamdb-server not found on PATH; install KalamDB server or set KALAMDB_SERVER_BIN".into(),
+        "kalamdb-server not found in KALAMDB_SERVER_BIN, ~/.kalam/bin, or PATH".into(),
     ))
 }
 
@@ -96,18 +167,47 @@ fn find_on_path(binary: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn build_local_server_command(
-    project_root: &Path,
-    config: &KalamProjectConfig,
-) -> Result<String> {
-    let env = config.connection.get(&config.project.default_env).ok_or_else(|| {
-        CLIError::ConfigurationError(format!(
-            "connection.{} is not configured",
-            config.project.default_env
-        ))
-    })?;
+pub async fn ensure_local_server_binary(
+    use_color: bool,
+    output: &WorkflowOutput,
+    server_source: &ServiceLogSource,
+) -> Result<PathBuf> {
+    match resolve_kalamdb_server_bin() {
+        Ok(path) => Ok(path),
+        Err(error) => {
+            output.service_log(server_source, format!("precheck: {error}"));
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                return Err(CLIError::ConfigurationError(format!(
+                    "{error}; rerun interactively to download it automatically or set KALAMDB_SERVER_BIN"
+                )));
+            }
 
-    let port = parse_server_port(&env.url)?;
+            let install_dir = managed_server_install_dir();
+            let confirmed = terminal_ui::prompt_confirm(
+                &format!(
+                    "Download KalamDB server {} into {}",
+                    env!("CARGO_PKG_VERSION"),
+                    install_dir.display()
+                ),
+                true,
+                use_color,
+            )
+            .map_err(|prompt_error| {
+                CLIError::FileError(format!("failed to read download confirmation: {prompt_error}"))
+            })?;
+
+            if !confirmed {
+                return Err(CLIError::ConfigurationError(format!("{error}; download declined")));
+            }
+
+            output.service_log(server_source, "precheck: downloading kalamdb-server");
+            download_and_install_managed_server(output, server_source).await
+        },
+    }
+}
+
+pub fn build_local_server_command(project_root: &Path, server_url: &str) -> Result<String> {
+    let port = parse_server_port(server_url)?;
     let config_path = local_server_config_path(project_root);
     if !config_path.is_file() {
         write_local_server_config(project_root, port)?;
@@ -118,6 +218,105 @@ pub fn build_local_server_command(
     let bin = shell_escape(&server_bin.display().to_string());
     let cfg = shell_escape(&config_path.display().to_string());
     Ok(format!("cd {root} && exec {bin} {cfg}"))
+}
+
+async fn download_and_install_managed_server(
+    output: &WorkflowOutput,
+    server_source: &ServiceLogSource,
+) -> Result<PathBuf> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent(format!("kalam-cli/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!("failed to create HTTP client: {error}"))
+        })?;
+
+    let version = env!("CARGO_PKG_VERSION");
+    let platform = detect_platform()?;
+    let archive_kind = archive_kind_for_platform(&platform);
+    let archive_name = archive_name(SERVER_ARTIFACT_PREFIX, version, &platform, archive_kind);
+    let base_url = release_base_url(version, SERVER_RELEASE_BASE_URL_ENV);
+    let archive_url = format!("{base_url}/{archive_name}");
+    let checksums_url = format!("{base_url}/SHA256SUMS");
+
+    let archive_bytes = download_bytes(&client, &archive_url, &archive_name, true).await?;
+    let checksums = download_text(&client, &checksums_url, "checksum file").await?;
+    verify_checksum(&archive_name, &archive_bytes, &checksums)?;
+    output.service_log(server_source, "precheck: downloaded and verified kalamdb-server");
+
+    let temp_dir = create_temp_dir("kalamdb-server-install")?;
+    let cleanup_dir = temp_dir.clone();
+    let install_result = (|| -> Result<PathBuf> {
+        extract_archive(&archive_bytes, archive_kind, &temp_dir)?;
+        install_server_payload(&temp_dir)
+    })();
+    let _ = fs::remove_dir_all(cleanup_dir);
+    install_result
+}
+
+fn install_server_payload(extracted_root: &Path) -> Result<PathBuf> {
+    let install_dir = managed_server_install_dir();
+    fs::create_dir_all(&install_dir).map_err(|error| {
+        CLIError::FileError(format!(
+            "failed to create managed server install dir '{}': {error}",
+            install_dir.display()
+        ))
+    })?;
+
+    let primary_binary = find_first_file_matching(extracted_root, is_server_binary_candidate)
+        .ok_or_else(|| {
+            CLIError::ConfigurationError("downloaded archive did not contain kalamdb-server".into())
+        })?;
+
+    for file in collect_files_recursively(extracted_root)? {
+        let file_name = file.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+            CLIError::FileError(format!("invalid extracted filename '{}'", file.display()))
+        })?;
+        let target = if file == primary_binary {
+            managed_server_binary_path()
+        } else {
+            install_dir.join(file_name)
+        };
+        copy_file_with_executable_bit(&file, &target)?;
+    }
+
+    Ok(managed_server_binary_path())
+}
+
+fn collect_files_recursively(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+
+    while let Some(path) = stack.pop() {
+        for entry in fs::read_dir(&path).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to read extracted directory '{}': {error}",
+                path.display()
+            ))
+        })? {
+            let entry = entry.map_err(|error| {
+                CLIError::FileError(format!("failed to read extracted entry: {error}"))
+            })?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                stack.push(entry_path);
+            } else {
+                files.push(entry_path);
+            }
+        }
+    }
+
+    Ok(files)
+}
+
+fn is_server_binary_candidate(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name == "kalamdb-server"
+        || file_name == "kalamdb-server.exe"
+        || file_name.starts_with("kalamdb-server-")
 }
 
 pub async fn wait_for_server_ready(server_url: &str, output: &WorkflowOutput) -> Result<()> {
@@ -191,6 +390,108 @@ mod tests {
         let path = write_local_server_config(temp.path(), 3001).unwrap();
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("port = 3001"));
-        assert!(temp.path().join(".kalam/data").is_dir());
+        assert!(temp.path().join("kalam/server/data").is_dir());
+        assert!(temp.path().join("kalam/server/logs").is_dir());
+    }
+
+    #[test]
+    fn write_local_server_config_uses_project_server_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = write_local_server_config(temp.path(), 2900).unwrap();
+        assert_eq!(path, temp.path().join("kalam/server/server.toml"));
+    }
+
+    #[test]
+    fn write_local_server_config_includes_required_server_sections() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = write_local_server_config(temp.path(), 2900).unwrap();
+        let contents = std::fs::read_to_string(path).unwrap();
+        assert!(contents.contains("[limits]"));
+        assert!(contents.contains("[logging]"));
+        assert!(contents.contains("[performance]"));
+        assert!(contents.contains("data_path = \"kalam/server/data\""));
+        assert!(contents.contains("logs_path = \"kalam/server/logs\""));
+    }
+
+    #[test]
+    fn build_local_server_command_preserves_existing_server_config() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config_path = local_server_config_path(temp.path());
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, "# manual config\n[server]\nport = 2900\n").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        let original_path = std::env::var_os("PATH");
+        let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
+
+        let fake_home = temp.path().join("home");
+        let fake_bin = temp.path().join("kalamdb-server");
+        std::fs::create_dir_all(&fake_home).unwrap();
+        std::fs::write(&fake_bin, "#!/bin/sh\n").unwrap();
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var("USERPROFILE", &fake_home);
+        std::env::remove_var("PATH");
+        std::env::set_var("KALAMDB_SERVER_BIN", &fake_bin);
+
+        let _ = build_local_server_command(temp.path(), "http://localhost:2900").unwrap();
+        let contents = std::fs::read_to_string(&config_path).unwrap();
+        assert_eq!(contents, "# manual config\n[server]\nport = 2900\n");
+
+        match original_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match original_path {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        match original_server_bin {
+            Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
+            None => std::env::remove_var("KALAMDB_SERVER_BIN"),
+        }
+    }
+
+    #[test]
+    fn resolve_kalamdb_server_bin_prefers_managed_install_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let managed_bin = home.join(".kalam/bin/kalamdb-server");
+        std::fs::create_dir_all(managed_bin.parent().unwrap()).unwrap();
+        std::fs::write(&managed_bin, "#!/bin/sh\n").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        let original_path = std::env::var_os("PATH");
+        let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
+
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("PATH", temp.path().join("empty-bin"));
+        std::env::remove_var("KALAMDB_SERVER_BIN");
+
+        let resolved = resolve_kalamdb_server_bin().expect("resolve managed install");
+        assert_eq!(resolved, managed_bin);
+
+        match original_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match original_path {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        match original_server_bin {
+            Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
+            None => std::env::remove_var("KALAMDB_SERVER_BIN"),
+        }
     }
 }

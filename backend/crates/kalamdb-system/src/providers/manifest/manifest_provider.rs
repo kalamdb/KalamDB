@@ -104,16 +104,16 @@ impl ManifestTableProvider {
         row.map(|value| Self::decode_manifest_row(&value).map_err(Self::to_storage_error))
             .transpose()
     }
-    
-        /// Set the in-memory checker callback.
-        ///
-        /// This callback is injected from kalamdb-core to check if a cache key
-        /// is currently in the ManifestService process memory cache.
-        pub fn set_in_memory_checker(&self, checker: InMemoryChecker) {
-            if let Ok(mut guard) = self.in_memory_checker.write() {
-                *guard = Some(checker);
-            }
+
+    /// Set the in-memory checker callback.
+    ///
+    /// This callback is injected from kalamdb-core to check if a cache key
+    /// is currently in the ManifestService process memory cache.
+    pub fn set_in_memory_checker(&self, checker: InMemoryChecker) {
+        if let Ok(mut guard) = self.in_memory_checker.write() {
+            *guard = Some(checker);
         }
+    }
 
     /// Insert/replace a typed manifest cache entry.
     pub fn put_cache_entry(

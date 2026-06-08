@@ -148,11 +148,7 @@ mod tests {
     #[test]
     fn diff_schema_files_reads_both_paths() {
         let mut before = NamedTempFile::new().expect("before file");
-        write!(
-            before,
-            "CREATE TABLE users (id BIGINT PRIMARY KEY);"
-        )
-        .expect("write before");
+        write!(before, "CREATE TABLE users (id BIGINT PRIMARY KEY);").expect("write before");
 
         let mut after = NamedTempFile::new().expect("after file");
         write!(
@@ -172,9 +168,8 @@ mod tests {
         let mut after = NamedTempFile::new().expect("after file");
         write!(after, "CREATE TABLE users (id BIGINT PRIMARY KEY);").expect("write after");
 
-        let diff =
-            diff_schema_files(Path::new("/tmp/does-not-exist-schema.sql"), after.path())
-                .expect("diff files");
+        let diff = diff_schema_files(Path::new("/tmp/does-not-exist-schema.sql"), after.path())
+            .expect("diff files");
 
         assert!(diff.up.contains("empty baseline"));
         assert!(diff.up.contains("CREATE TABLE users"));

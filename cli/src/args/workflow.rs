@@ -101,6 +101,10 @@ pub struct DevArgs {
     /// Retry a paused schema pipeline on startup
     #[arg(long = "force")]
     pub force: bool,
+
+    /// Show compact human progress for dev startup and schema actions
+    #[arg(long = "progress", conflicts_with = "verbose")]
+    pub progress: bool,
 }
 
 #[derive(Args, Debug, Clone, Default)]

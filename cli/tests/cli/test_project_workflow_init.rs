@@ -62,6 +62,7 @@ fn test_project_workflow_init_scaffolds_project() {
         project_dir.join("kalam/migrations/.gitkeep").is_file(),
         "migrations dir missing"
     );
+    assert!(project_dir.join("kalam/server/server.toml").is_file(), "server config missing");
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
     assert!(project_dir.join("lib/generated").is_dir(), "dart output dir missing");
     assert!(project_dir.join(".env.example").is_file(), ".env.example missing");
@@ -71,4 +72,87 @@ fn test_project_workflow_init_scaffolds_project() {
     assert!(kalam_toml.contains("mode = \"sql\""));
     assert!(kalam_toml.contains("typescript"));
     assert!(kalam_toml.contains("dart"));
+}
+
+#[test]
+fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
+    let temp = TempDir::new().expect("temp dir");
+    let project_dir = temp.path().join("demo-defaults");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let mut cmd = create_cli_command();
+    cmd.current_dir(&project_dir).args([
+        "init",
+        "--yes",
+        "--name",
+        "demo-defaults",
+        "--schema-mode",
+        "sql",
+    ]);
+
+    let output = cmd.output().expect("run init");
+    assert!(
+        output.status.success(),
+        "init should succeed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let kalam_toml =
+        fs::read_to_string(project_dir.join("kalam.toml")).expect("read generated kalam.toml");
+    assert!(kalam_toml.contains("typescript"));
+    assert!(!kalam_toml.contains("dart"));
+    assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
+    assert!(
+        !project_dir.join("lib/generated").exists(),
+        "dart output dir should not be scaffolded by default"
+    );
+
+    let gitignore =
+        fs::read_to_string(project_dir.join(".gitignore")).expect("read generated .gitignore");
+    assert!(gitignore.contains(".kalam/"));
+    assert!(gitignore.contains("kalam/.schema-baseline.sql"));
+    assert!(gitignore.contains("node_modules/"));
+
+    let package_json =
+        fs::read_to_string(project_dir.join("package.json")).expect("read generated package.json");
+    assert!(package_json.contains("@kalamdb/client"));
+    assert!(package_json.contains("@kalamdb/orm"));
+    let index_ts =
+        fs::read_to_string(project_dir.join("src/index.ts")).expect("read generated src/index.ts");
+    assert!(index_ts.contains("createClient"));
+    assert!(index_ts.contains("demo-defaults"));
+    assert!(project_dir.join("tsconfig.json").is_file(), "tsconfig.json missing");
+}
+
+#[test]
+fn test_project_workflow_init_preserves_existing_gitignore() {
+    let temp = TempDir::new().expect("temp dir");
+    let project_dir = temp.path().join("demo-gitignore");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    fs::write(project_dir.join(".gitignore"), "custom-ignore\n").expect("write existing gitignore");
+
+    let mut cmd = create_cli_command();
+    cmd.current_dir(&project_dir).args([
+        "init",
+        "--yes",
+        "--name",
+        "demo-gitignore",
+        "--schema-mode",
+        "sql",
+        "--languages",
+        "typescript",
+    ]);
+
+    let output = cmd.output().expect("run init");
+    assert!(
+        output.status.success(),
+        "init should succeed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let gitignore =
+        fs::read_to_string(project_dir.join(".gitignore")).expect("read generated .gitignore");
+    assert_eq!(gitignore, "custom-ignore\n");
 }
