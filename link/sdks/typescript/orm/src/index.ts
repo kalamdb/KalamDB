@@ -5,10 +5,13 @@ export { bytes, embedding, file } from './file-column.js';
 export { executeAsUser } from './sql.js';
 export { compileLiveTableDescriptor, getLiveTableName, liveTable } from './live.js';
 export {
+	configureKalamOrm,
 	getKalamTableConfig,
+	getKalamOrmConfig,
 	kSystemColumns,
 	kTable,
 	kalamTableConfigSymbol,
+	type KalamOrmConfig,
 	type KalamSystemColumnName,
 	type KalamTableConfig,
 	type KalamTableOptions,

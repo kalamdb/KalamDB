@@ -32,7 +32,7 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
             Ok(true)
         },
         CliCommand::Migration(args) => {
-            handle_migration(cli, args)?;
+            handle_migration(cli, args).await?;
             Ok(true)
         },
         CliCommand::Db(args) => {
@@ -44,7 +44,7 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
             Ok(true)
         },
         CliCommand::Status(args) => {
-            handle_status(cli, args)?;
+            handle_status(cli, args).await?;
             Ok(true)
         },
         CliCommand::Deploy(args) => {
@@ -107,14 +107,31 @@ fn handle_schema(cli: &Cli, args: &SchemaArgs) -> Result<()> {
     }
 }
 
-fn handle_migration(cli: &Cli, args: &MigrationArgs) -> Result<()> {
+async fn handle_migration(cli: &Cli, args: &MigrationArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), args.env.as_deref(), None)?;
 
     match &args.command {
         MigrationCommand::Create(create_args) => {
             workflow::create_project_migration(&ctx, create_args.name.clone())
         },
-        MigrationCommand::Status(_) => workflow::show_migration_status(&ctx),
+        MigrationCommand::Status(_) => workflow::show_migration_status(&ctx).await,
+        MigrationCommand::Seal(_) => workflow::seal_project_migration(&ctx),
+        MigrationCommand::Retry(retry_args) => {
+            workflow::retry_project_migration(&ctx, retry_args.migration_id.clone()).await
+        },
+        MigrationCommand::Repair(repair_args) => {
+            if repair_args.mark_applied {
+                workflow::repair_project_migration_mark_applied(
+                    &ctx,
+                    repair_args.migration_id.clone(),
+                )
+                .await
+            } else {
+                Err(kalam_cli::CLIError::ConfigurationError(
+                    "migration repair requires --mark-applied".into(),
+                ))
+            }
+        },
     }
 }
 
@@ -155,14 +172,14 @@ async fn handle_dev(cli: &Cli, args: &DevArgs) -> Result<()> {
     workflow::run_dev(&ctx, args.force, display_mode).await
 }
 
-fn handle_status(cli: &Cli, args: &StatusArgs) -> Result<()> {
+async fn handle_status(cli: &Cli, args: &StatusArgs) -> Result<()> {
     let ctx = workflow_context(
         cli,
         args.project_dir.as_deref(),
         args.env.as_deref(),
         args.namespace.as_deref(),
     )?;
-    workflow::project_status(&ctx)
+    workflow::project_status(&ctx).await
 }
 
 async fn handle_deploy(cli: &Cli, args: &DeployArgs) -> Result<()> {

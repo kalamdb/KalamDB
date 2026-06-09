@@ -20,14 +20,10 @@ use crate::{
         release_base_url, verify_checksum,
     },
     terminal_ui,
-    workflow::dev::logs::ServiceLogSource,
+    workflow::{dev::logs::ServiceLogSource, project::config::KalamProjectConfig},
 };
 
 pub const DEFAULT_DEV_SERVER_URL: &str = "http://localhost:2900";
-pub const LOCAL_SERVER_DIR: &str = "kalam/server";
-pub const LOCAL_SERVER_CONFIG: &str = "kalam/server/server.toml";
-pub const LOCAL_SERVER_DATA_DIR: &str = "kalam/server/data";
-pub const LOCAL_SERVER_LOGS_DIR: &str = "kalam/server/logs";
 const SERVER_ARTIFACT_PREFIX: &str = "kalamdb-server";
 const SERVER_RELEASE_BASE_URL_ENV: &str = "KALAMDB_SERVER_RELEASE_BASE_URL";
 
@@ -42,12 +38,15 @@ pub fn parse_server_port(server_url: &str) -> Result<u16> {
     })
 }
 
-pub fn local_server_config_path(project_root: &Path) -> PathBuf {
-    project_root.join(LOCAL_SERVER_CONFIG)
+pub fn local_server_config_path(project_root: &Path, config: &KalamProjectConfig) -> PathBuf {
+    config.local_server_config_path(project_root)
 }
 
-pub fn local_server_root_password(project_root: &Path) -> Result<Option<String>> {
-    let config_path = local_server_config_path(project_root);
+pub fn local_server_root_password(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+) -> Result<Option<String>> {
+    let config_path = local_server_config_path(project_root, config);
     if !config_path.is_file() {
         return Ok(None);
     }
@@ -72,17 +71,23 @@ pub fn local_server_root_password(project_root: &Path) -> Result<Option<String>>
         .map(ToString::to_string))
 }
 
-pub fn write_local_server_config(project_root: &Path, port: u16) -> Result<PathBuf> {
-    let config_path = local_server_config_path(project_root);
-    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_DIR))?;
-    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_DATA_DIR))?;
-    std::fs::create_dir_all(project_root.join(LOCAL_SERVER_LOGS_DIR))?;
+pub fn write_local_server_config(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+    port: u16,
+) -> Result<PathBuf> {
+    let config_path = local_server_config_path(project_root, config);
+    std::fs::create_dir_all(config.local_server_dir(project_root))?;
+    std::fs::create_dir_all(config.local_server_dir(project_root).join("data"))?;
+    std::fs::create_dir_all(config.local_server_dir(project_root).join("logs"))?;
     if config_path.is_file() {
         return Ok(config_path);
     }
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let data_path = config.relative_local_server_data_path();
+    let logs_path = config.relative_local_server_logs_path();
     let contents = format!(
         r#"# Local KalamDB server config (managed by kalam dev)
 [server]
@@ -91,12 +96,12 @@ port = {port}
 public_origin = "http://localhost:{port}"
 
 [storage]
-data_path = "{LOCAL_SERVER_DATA_DIR}"
+data_path = "{data_path}"
 
 [limits]
 
 [logging]
-logs_path = "{LOCAL_SERVER_LOGS_DIR}"
+logs_path = "{logs_path}"
 log_to_console = true
 
 [performance]
@@ -115,15 +120,14 @@ pub fn managed_server_install_dir() -> PathBuf {
 }
 
 pub fn managed_server_binary_path() -> PathBuf {
-    let binary_name = if cfg!(windows) {
-        "kalamdb-server.exe"
-    } else {
-        "kalamdb-server"
-    };
-    managed_server_install_dir().join(binary_name)
+    managed_server_install_dir().join(server_binary_name())
 }
 
 pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
+    resolve_kalamdb_server_bin_from(std::env::current_exe().ok())
+}
+
+fn resolve_kalamdb_server_bin_from(current_exe: Option<PathBuf>) -> Result<PathBuf> {
     if let Ok(path) = env::var("KALAMDB_SERVER_BIN") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -133,6 +137,10 @@ pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
             "KALAMDB_SERVER_BIN points to missing file '{}'",
             path.display()
         )));
+    }
+
+    if let Some(path) = current_exe.as_deref().and_then(colocated_server_binary_path) {
+        return Ok(path);
     }
 
     let managed_path = managed_server_binary_path();
@@ -147,6 +155,22 @@ pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
     Err(CLIError::ConfigurationError(
         "kalamdb-server not found in KALAMDB_SERVER_BIN, ~/.kalam/bin, or PATH".into(),
     ))
+}
+
+fn colocated_server_binary_path(current_exe: &Path) -> Option<PathBuf> {
+    let candidate = current_exe.parent()?.join(server_binary_name());
+    if candidate == current_exe || !candidate.is_file() {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn server_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "kalamdb-server.exe"
+    } else {
+        "kalamdb-server"
+    }
 }
 
 fn find_on_path(binary: &str) -> Option<PathBuf> {
@@ -206,11 +230,15 @@ pub async fn ensure_local_server_binary(
     }
 }
 
-pub fn build_local_server_command(project_root: &Path, server_url: &str) -> Result<String> {
+pub fn build_local_server_command(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+    server_url: &str,
+) -> Result<String> {
     let port = parse_server_port(server_url)?;
-    let config_path = local_server_config_path(project_root);
+    let config_path = local_server_config_path(project_root, config);
     if !config_path.is_file() {
-        write_local_server_config(project_root, port)?;
+        write_local_server_config(project_root, config, port)?;
     }
 
     let server_bin = resolve_kalamdb_server_bin()?;
@@ -379,6 +407,23 @@ fn shell_escape(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_project_config() -> KalamProjectConfig {
+        KalamProjectConfig::parse(
+            r#"
+[project]
+name = "demo"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn parse_server_port_reads_explicit_port() {
         assert_eq!(parse_server_port("http://localhost:2900").unwrap(), 2900);
@@ -387,7 +432,8 @@ mod tests {
     #[test]
     fn write_local_server_config_uses_requested_port() {
         let temp = tempfile::TempDir::new().unwrap();
-        let path = write_local_server_config(temp.path(), 3001).unwrap();
+        let config = test_project_config();
+        let path = write_local_server_config(temp.path(), &config, 3001).unwrap();
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("port = 3001"));
         assert!(temp.path().join("kalam/server/data").is_dir());
@@ -397,14 +443,16 @@ mod tests {
     #[test]
     fn write_local_server_config_uses_project_server_directory() {
         let temp = tempfile::TempDir::new().unwrap();
-        let path = write_local_server_config(temp.path(), 2900).unwrap();
+        let config = test_project_config();
+        let path = write_local_server_config(temp.path(), &config, 2900).unwrap();
         assert_eq!(path, temp.path().join("kalam/server/server.toml"));
     }
 
     #[test]
     fn write_local_server_config_includes_required_server_sections() {
         let temp = tempfile::TempDir::new().unwrap();
-        let path = write_local_server_config(temp.path(), 2900).unwrap();
+        let config = test_project_config();
+        let path = write_local_server_config(temp.path(), &config, 2900).unwrap();
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("[limits]"));
         assert!(contents.contains("[logging]"));
@@ -416,7 +464,8 @@ mod tests {
     #[test]
     fn build_local_server_command_preserves_existing_server_config() {
         let temp = tempfile::TempDir::new().unwrap();
-        let config_path = local_server_config_path(temp.path());
+        let config = test_project_config();
+        let config_path = local_server_config_path(temp.path(), &config);
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
         std::fs::write(&config_path, "# manual config\n[server]\nport = 2900\n").unwrap();
 
@@ -434,7 +483,7 @@ mod tests {
         std::env::remove_var("PATH");
         std::env::set_var("KALAMDB_SERVER_BIN", &fake_bin);
 
-        let _ = build_local_server_command(temp.path(), "http://localhost:2900").unwrap();
+        let _ = build_local_server_command(temp.path(), &config, "http://localhost:2900").unwrap();
         let contents = std::fs::read_to_string(&config_path).unwrap();
         assert_eq!(contents, "# manual config\n[server]\nport = 2900\n");
 
@@ -474,8 +523,54 @@ mod tests {
         std::env::set_var("PATH", temp.path().join("empty-bin"));
         std::env::remove_var("KALAMDB_SERVER_BIN");
 
-        let resolved = resolve_kalamdb_server_bin().expect("resolve managed install");
+        let resolved = resolve_kalamdb_server_bin_from(None).expect("resolve managed install");
         assert_eq!(resolved, managed_bin);
+
+        match original_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match original_path {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        match original_server_bin {
+            Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
+            None => std::env::remove_var("KALAMDB_SERVER_BIN"),
+        }
+    }
+
+    #[test]
+    fn resolve_kalamdb_server_bin_prefers_colocated_binary_over_managed_install() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let managed_bin = home.join(".kalam/bin/kalamdb-server");
+        let release_dir = temp.path().join("target/release");
+        let cli_bin = release_dir.join("kalam");
+        let colocated_bin = release_dir.join("kalamdb-server");
+        std::fs::create_dir_all(managed_bin.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&release_dir).unwrap();
+        std::fs::write(&managed_bin, "#!/bin/sh\n").unwrap();
+        std::fs::write(&cli_bin, "#!/bin/sh\n").unwrap();
+        std::fs::write(&colocated_bin, "#!/bin/sh\n").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        let original_path = std::env::var_os("PATH");
+        let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
+
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("PATH", temp.path().join("empty-bin"));
+        std::env::remove_var("KALAMDB_SERVER_BIN");
+
+        let resolved =
+            resolve_kalamdb_server_bin_from(Some(cli_bin)).expect("resolve colocated install");
+        assert_eq!(resolved, colocated_bin);
 
         match original_home {
             Some(value) => std::env::set_var("HOME", value),

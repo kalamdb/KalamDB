@@ -3,7 +3,7 @@ pub mod create;
 pub mod status;
 
 pub use apply::apply_pending_migrations;
-pub use create::{create_migration, CreateMigrationOptions};
+pub use create::{create_migration, seal_draft_migration, CreateMigrationOptions};
 pub use status::migration_status;
 
 use std::{
@@ -16,7 +16,6 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{CLIError, Result};
 
-pub const STATE_FILE: &str = ".kalam-state.json";
 pub const DRAFT_MIGRATION_FILE: &str = "_draft.sql";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,30 +63,6 @@ pub struct MigrationState {
 }
 
 impl MigrationState {
-    pub fn load(migrations_dir: &Path) -> Result<Self> {
-        let path = state_path(migrations_dir);
-        if !path.is_file() {
-            return Ok(Self::default());
-        }
-        let contents = fs::read_to_string(&path)
-            .map_err(|e| CLIError::FileError(format!("failed to read migration state: {e}")))?;
-        let mut state: Self = serde_json::from_str(&contents).map_err(|e| {
-            CLIError::ConfigurationError(format!("invalid migration state file: {e}"))
-        })?;
-        state.upgrade_legacy_applied();
-        Ok(state)
-    }
-
-    pub fn save(&self, migrations_dir: &Path) -> Result<()> {
-        fs::create_dir_all(migrations_dir)?;
-        let path = state_path(migrations_dir);
-        let contents = serde_json::to_string_pretty(self).map_err(|e| {
-            CLIError::ConfigurationError(format!("failed to serialize migration state: {e}"))
-        })?;
-        fs::write(path, contents)?;
-        Ok(())
-    }
-
     pub fn is_applied(&self, filename: &str) -> bool {
         self.record(filename)
             .is_some_and(|record| record.status == MigrationStatus::Applied)
@@ -190,35 +165,17 @@ impl MigrationState {
         }
         Ok(())
     }
-
-    fn upgrade_legacy_applied(&mut self) {
-        let applied = self.applied.clone();
-        for filename in applied {
-            if self.records.iter().any(|record| record.migration_id == filename) {
-                continue;
-            }
-            self.records.push(MigrationRecord {
-                migration_id: filename.clone(),
-                namespace: String::new(),
-                name: migration_name_from_id(&filename),
-                checksum: String::new(),
-                status: MigrationStatus::Applied,
-                started_at: None,
-                finished_at: None,
-                error_message: None,
-                sql: None,
-                source: Some(filename),
-                kalam_version: None,
-            });
-        }
-    }
-}
-
-pub fn state_path(migrations_dir: &Path) -> PathBuf {
-    migrations_dir.join(STATE_FILE)
 }
 
 pub fn list_migration_files(migrations_dir: &Path) -> Result<Vec<PathBuf>> {
+    list_migration_files_inner(migrations_dir, false)
+}
+
+pub fn list_apply_migration_files(migrations_dir: &Path) -> Result<Vec<PathBuf>> {
+    list_migration_files_inner(migrations_dir, false)
+}
+
+fn list_migration_files_inner(migrations_dir: &Path, include_draft: bool) -> Result<Vec<PathBuf>> {
     if !migrations_dir.exists() {
         return Ok(Vec::new());
     }
@@ -235,7 +192,7 @@ pub fn list_migration_files(migrations_dir: &Path) -> Result<Vec<PathBuf>> {
         if path.is_file() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.ends_with(".sql") {
-                if name == DRAFT_MIGRATION_FILE {
+                if name == DRAFT_MIGRATION_FILE && !include_draft {
                     continue;
                 }
                 files.push(path);
@@ -275,19 +232,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn migration_state_roundtrip() {
-        let temp = TempDir::new().unwrap();
-        let dir = temp.path();
-        let mut state = MigrationState::default();
-        state.mark_applied_legacy("20250101120000_init.sql");
-        state.save(dir).unwrap();
-
-        let loaded = MigrationState::load(dir).unwrap();
-        assert_eq!(loaded.applied, vec!["20250101120000_init.sql".to_string()]);
-        assert!(loaded.is_applied("20250101120000_init.sql"));
-    }
-
-    #[test]
     fn list_migration_files_ignores_draft() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join(DRAFT_MIGRATION_FILE), "SELECT 1;").unwrap();
@@ -297,5 +241,17 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         assert_eq!(migration_filename(&files[0]), "0001_init.sql");
+    }
+
+    #[test]
+    fn list_apply_migration_files_ignores_draft() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(DRAFT_MIGRATION_FILE), "SELECT 2;").unwrap();
+        fs::write(temp.path().join("0001_init.sql"), "SELECT 1;").unwrap();
+
+        let files = list_apply_migration_files(temp.path()).unwrap();
+        let names: Vec<_> = files.iter().map(|path| migration_filename(path)).collect();
+
+        assert_eq!(names, vec!["0001_init.sql"]);
     }
 }

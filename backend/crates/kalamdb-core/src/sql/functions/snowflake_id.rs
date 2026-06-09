@@ -144,10 +144,6 @@ impl Default for SnowflakeIdFunction {
 }
 
 impl ScalarUDFImpl for SnowflakeIdFunction {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "snowflake_id"
     }

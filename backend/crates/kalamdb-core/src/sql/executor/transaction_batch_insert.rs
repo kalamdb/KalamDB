@@ -13,7 +13,7 @@ use kalamdb_commons::{
     TableId,
 };
 use kalamdb_transactions::build_insert_staged_mutations;
-use sqlparser::ast::{Expr, SetExpr, Statement};
+use sqlparser::ast::{Expr, Parens, SetExpr, Statement};
 use ulid::Ulid;
 use uuid::Uuid;
 
@@ -111,18 +111,18 @@ enum VolatileDefaultFunction {
 }
 
 fn values_to_rows(
-    value_rows: &[Vec<Expr>],
+    value_rows: &[Parens<Vec<Expr>>],
     column_names: &[String],
 ) -> Result<Vec<Row>, &'static str> {
     let mut rows = Vec::with_capacity(value_rows.len());
 
     for value_row in value_rows {
-        if value_row.len() != column_names.len() {
+        if value_row.content.len() != column_names.len() {
             return Err("column count mismatch");
         }
 
         let mut values = BTreeMap::new();
-        for (expr, col_name) in value_row.iter().zip(column_names.iter()) {
+        for (expr, col_name) in value_row.content.iter().zip(column_names.iter()) {
             let scalar = ast_parsing::expr_to_scalar(expr)?;
             values.insert(col_name.clone(), scalar);
         }
@@ -216,7 +216,7 @@ pub(crate) fn try_build_literal_insert_rows(
     }
 
     let requested_columns: Vec<String> =
-        insert.columns.iter().map(|ident| ident.value.clone()).collect();
+        insert.columns.iter().filter_map(kalamdb_sql::object_name_to_string).collect();
     let metadata_cache_key =
         InsertMetadataCacheKey::new(table_id.clone(), requested_columns.clone());
     let insert_metadata = match sql_cache_registry.insert_metadata_cache().get(&metadata_cache_key)
@@ -382,7 +382,11 @@ pub(crate) fn try_batch_inserts_in_transaction(
     }
 
     let requested_columns: Vec<String> =
-        first_insert.columns.iter().map(|ident| ident.value.clone()).collect();
+        first_insert
+            .columns
+            .iter()
+            .filter_map(kalamdb_sql::object_name_to_string)
+            .collect();
     let metadata_cache_key =
         InsertMetadataCacheKey::new(table_id.clone(), requested_columns.clone());
     let insert_metadata = match sql_cache_registry.insert_metadata_cache().get(&metadata_cache_key)
@@ -414,7 +418,7 @@ pub(crate) fn try_batch_inserts_in_transaction(
         };
 
         let statement_columns: Vec<String> =
-            insert.columns.iter().map(|ident| ident.value.clone()).collect();
+            insert.columns.iter().filter_map(kalamdb_sql::object_name_to_string).collect();
         if statement_columns != requested_columns {
             return Ok(None);
         }

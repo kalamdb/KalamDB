@@ -1,13 +1,16 @@
 //! Schema generation handlers.
 
-use std::{env, path::Path, process::Command};
+use std::{path::Path, process::Command};
+
+use kalam_client::credentials::CredentialStore;
+use url::Url;
 
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
         dev::server::local_server_root_password,
-        project::resolve::ResolvedEnvironment,
+        project::resolve::{resolve_kalam_profile, ResolvedEnvironment},
         schema::model::{parse_language_list, LanguageTarget},
         WorkflowContext,
     },
@@ -168,8 +171,12 @@ fn resolve_typescript_codegen_auth(
     ctx: &WorkflowContext,
     environment: &ResolvedEnvironment,
 ) -> Result<OrmCodegenAuth> {
+    if let Some(token) = load_project_profile_token(ctx)? {
+        return Ok(OrmCodegenAuth::Jwt { token });
+    }
+
     if ctx.config.dev.auto_start_db {
-        if let Some(password) = local_server_root_password(&ctx.project_root)? {
+        if let Some(password) = local_server_root_password(&ctx.project_root, &ctx.config)? {
             return Ok(OrmCodegenAuth::Basic {
                 user: "root".into(),
                 password,
@@ -177,16 +184,11 @@ fn resolve_typescript_codegen_auth(
         }
     }
 
-    let env_user = env::var("KALAM_USER")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| env::var("KALAMDB_USER").ok().filter(|value| !value.trim().is_empty()));
-    let env_password = env::var("KALAM_PASSWORD")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| env::var("KALAMDB_PASSWORD").ok().filter(|value| !value.trim().is_empty()));
-    if let (Some(user), Some(password)) = (env_user, env_password) {
-        return Ok(OrmCodegenAuth::Basic { user, password });
+    if ctx.config.dev.auto_start_db && is_loopback_server_url(&environment.url) {
+        return Ok(OrmCodegenAuth::Basic {
+            user: "root".into(),
+            password: "mypass".into(),
+        });
     }
 
     if let Some(token) = ctx.cli_config.auth.as_ref().and_then(|auth| auth.jwt_token.clone()) {
@@ -207,6 +209,40 @@ fn resolve_typescript_codegen_auth(
     }
 
     Ok(OrmCodegenAuth::None)
+}
+
+fn load_project_profile_token(ctx: &WorkflowContext) -> Result<Option<String>> {
+    let Some(profile) = resolve_kalam_profile(&ctx.project_root)? else {
+        return Ok(None);
+    };
+
+    let store = FileCredentialStore::new().map_err(|error| {
+        CLIError::ConfigurationError(format!("failed to open credentials store: {error}"))
+    })?;
+    let credentials = store.get_credentials(&profile).map_err(|error| {
+        CLIError::ConfigurationError(format!(
+            "failed to load credentials for profile '{profile}': {error}"
+        ))
+    })?;
+
+    let credentials = credentials.ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam login --instance {profile}`"
+        ))
+    })?;
+
+    Ok(Some(credentials.jwt_token))
+}
+
+fn is_loopback_server_url(server_url: &str) -> bool {
+    Url::parse(server_url)
+        .ok()
+        .and_then(|url| {
+            url.host_str().map(|host| {
+                host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub fn validate_language_filter(

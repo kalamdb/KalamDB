@@ -15,7 +15,7 @@ pub(crate) async fn cleanup_empty_shared_scope_if_needed<T: JobParams>(
     })?;
 
     let shared_provider =
-        provider.as_any().downcast_ref::<SharedTableProvider>().ok_or_else(|| {
+        (provider.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>().ok_or_else(|| {
             KalamDbError::InvalidOperation(format!(
                 "Provider for {} is not a SharedTableProvider",
                 table_id

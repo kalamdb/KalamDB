@@ -2,8 +2,9 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use url::Url;
@@ -13,7 +14,7 @@ use crate::{
     output::WorkflowOutput,
     terminal_ui::{self, SelectOption},
     workflow::{
-        dev::server::{write_local_server_config, DEFAULT_DEV_SERVER_URL, LOCAL_SERVER_CONFIG},
+        dev::server::{write_local_server_config, DEFAULT_DEV_SERVER_URL},
         project::{
             config::{
                 ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
@@ -32,6 +33,7 @@ const PROJECT_SCHEMA_TEMPLATE: &str = "project/schema.sql.template";
 const TYPESCRIPT_PACKAGE_TEMPLATE: &str = "typescript/package.json.template";
 const TYPESCRIPT_TSCONFIG_TEMPLATE: &str = "typescript/tsconfig.json.template";
 const TYPESCRIPT_INDEX_TEMPLATE: &str = "typescript/src/index.ts.template";
+const SKIP_PACKAGE_INSTALL_ENV: &str = "KALAM_TEST_SKIP_PACKAGE_INSTALL";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerMode {
@@ -51,6 +53,34 @@ pub struct InitOptions {
 }
 
 pub fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
+    run_init_with_installer(options, output, execute_install_command)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstallCommand {
+    program: &'static str,
+    args: Vec<&'static str>,
+    description: &'static str,
+}
+
+impl InstallCommand {
+    fn npm_install() -> Self {
+        Self {
+            program: "npm",
+            args: vec!["install"],
+            description: "installing npm dependencies",
+        }
+    }
+}
+
+fn run_init_with_installer<F>(
+    options: InitOptions,
+    output: &WorkflowOutput,
+    mut installer: F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &InstallCommand) -> Result<()>,
+{
     if options.cwd.join(KALAM_TOML).exists() {
         return Err(CLIError::ConfigurationError(format!(
             "project already initialized at '{}'",
@@ -78,8 +108,86 @@ pub fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
     config.validate()?;
 
     write_project_scaffold(&options.cwd, &config, schema_mode, server_mode, &server_url, output)?;
+    maybe_install_scaffold_dependencies(
+        &options.cwd,
+        &config.schema.languages,
+        output,
+        &mut installer,
+    )?;
     output.status(format!("initialized KalamDB project '{name}'"));
     Ok(())
+}
+
+fn maybe_install_scaffold_dependencies<F>(
+    root: &Path,
+    languages: &[String],
+    output: &WorkflowOutput,
+    installer: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &InstallCommand) -> Result<()>,
+{
+    if env::var_os(SKIP_PACKAGE_INSTALL_ENV).is_some() {
+        output.detail("skipped package install step");
+        return Ok(());
+    }
+
+    let Some(command) = scaffold_install_command(languages) else {
+        return Ok(());
+    };
+
+    output.status(command.description);
+    installer(root, &command)?;
+    output.status("installed npm dependencies");
+    Ok(())
+}
+
+fn scaffold_install_command(languages: &[String]) -> Option<InstallCommand> {
+    languages
+        .iter()
+        .any(|language| language == "typescript")
+        .then(InstallCommand::npm_install)
+}
+
+fn execute_install_command(root: &Path, command: &InstallCommand) -> Result<()> {
+    let output = Command::new(command.program)
+        .current_dir(root)
+        .args(&command.args)
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                CLIError::ConfigurationError(format!(
+                    "{} is required to finish project setup",
+                    command.program
+                ))
+            } else {
+                CLIError::FileError(format!(
+                    "failed to run '{} {}': {error}",
+                    command.program,
+                    command.args.join(" ")
+                ))
+            }
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let exit_status = output
+        .status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "terminated by signal".to_string());
+    let detail = format!(
+        "{} {} failed with exit status {exit_status}.\nstdout:\n{}\nstderr:\n{}",
+        command.program,
+        command.args.join(" "),
+        stdout.trim(),
+        stderr.trim()
+    );
+    Err(CLIError::ConfigurationError(detail))
 }
 
 fn ensure_interactive_or_yes(options: &InitOptions) -> Result<()> {
@@ -284,6 +392,7 @@ fn build_config(
         project: ProjectSection {
             name: name.to_string(),
             default_env: "dev".into(),
+            kalam_dir: "kalam".into(),
         },
         connection: HashMap::from([(
             "dev".into(),
@@ -325,6 +434,10 @@ fn write_project_scaffold(
     output.detail(format!("created {}", KALAM_TOML));
 
     write_default_gitignore(root, &config.schema.languages, output)?;
+    let kalam_gitignore = config.ensure_kalam_gitignore(root)?;
+    output.detail(format!("created {}", kalam_gitignore.display()));
+    let cli_log_dir = config.ensure_cli_log_dir(root)?;
+    output.detail(format!("created {}/", cli_log_dir.display()));
 
     if matches!(schema_mode, SchemaMode::Sql) {
         let schema_path = root.join("schema.sql");
@@ -336,11 +449,11 @@ fn write_project_scaffold(
 
     if matches!(server_mode, ServerMode::Local) {
         let port = crate::workflow::dev::server::parse_server_port(server_url)?;
-        let server_config_path = root.join(LOCAL_SERVER_CONFIG);
+        let server_config_path = config.local_server_config_path(root);
         let created = !server_config_path.exists();
-        write_local_server_config(root, port)?;
+        write_local_server_config(root, config, port)?;
         if created {
-            output.detail(format!("created {LOCAL_SERVER_CONFIG}"));
+            output.detail(format!("created {}", server_config_path.display()));
         }
     }
 
@@ -350,7 +463,7 @@ fn write_project_scaffold(
     if !gitkeep.exists() {
         fs::write(gitkeep, "")?;
     }
-    output.detail(format!("created {}/", config.migrations.dir));
+    output.detail(format!("created {}/", migrations_dir.display()));
 
     for language in &config.schema.languages {
         if let Some(target) = config.schema.targets.get(language) {
@@ -366,16 +479,18 @@ fn write_project_scaffold(
         write_typescript_starter(root, &config.project.name, server_url, output)?;
     }
 
-    let env_example = root.join(".env.example");
-    if !env_example.exists() {
+    let env_file = root.join(".env");
+    if !env_file.exists() {
+        let default_profile = crate::workflow::project::resolve::credential_instance_for_env(
+            &config.project.default_env,
+        );
         fs::write(
-            &env_example,
+            &env_file,
             format!(
-                "# KalamDB workflow environment overrides\nKALAM_ENV=dev\nKALAM_URL={server_url}\nKALAM_NAMESPACE={}\n# Optional direct client auth for starter apps\nKALAM_USER=root\nKALAM_PASSWORD=mypass\n",
-                config.project.name
+                "# KalamDB CLI profile used by kalam dev/deploy\n# kalam dev fills this automatically for managed local servers; use kalam login for remote servers.\nKALAM_PROFILE={default_profile}\n"
             ),
         )?;
-        output.detail("created .env.example");
+        output.detail("created .env");
     }
 
     Ok(())
@@ -399,8 +514,10 @@ fn write_default_gitignore(
     }
 
     let mut lines = vec![
-        "# KalamDB local workflow state".to_string(),
-        ".kalam/".to_string(),
+        "# KalamDB project state".to_string(),
+        ".env".to_string(),
+        "kalam/cli/logs/".to_string(),
+        "kalam/server/".to_string(),
         "kalam/.schema-baseline.sql".to_string(),
     ];
 
@@ -441,7 +558,7 @@ fn write_typescript_starter(
         root,
         "src/index.ts",
         TYPESCRIPT_INDEX_TEMPLATE,
-        &[("project_name", project_name), ("server_url", server_url)],
+        &[("server_url", server_url)],
         output,
     )?;
 
@@ -532,6 +649,7 @@ fn package_manager_from_package_json(root: &Path) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::config::WorkflowLoggingPolicy;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -556,7 +674,89 @@ mod tests {
         assert!(temp.path().join("schema.sql").is_file());
         assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
         assert!(temp.path().join("src/generated").is_dir());
-        assert!(temp.path().join(LOCAL_SERVER_CONFIG).is_file());
+        assert!(temp.path().join("kalam/server/server.toml").is_file());
+    }
+
+    #[test]
+    fn init_creates_project_env_file_and_ignores_it() {
+        let temp = TempDir::new().unwrap();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        run_init(
+            InitOptions {
+                name: Some("demo-app".into()),
+                schema_mode: Some(SchemaMode::Sql),
+                languages: Some(vec!["typescript".into()]),
+                server_mode: Some(ServerMode::Local),
+                server_url: None,
+                yes: true,
+                cwd: temp.path().to_path_buf(),
+            },
+            &output,
+        )
+        .unwrap();
+
+        let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
+        assert!(env_contents.contains("KALAM_PROFILE=kalam-dev"));
+
+        let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line.trim() == ".env"));
+    }
+
+    #[test]
+    fn init_typescript_project_requests_npm_install() {
+        let temp = TempDir::new().unwrap();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let mut observed: Option<(PathBuf, InstallCommand)> = None;
+
+        run_init_with_installer(
+            InitOptions {
+                name: Some("demo-app".into()),
+                schema_mode: Some(SchemaMode::Sql),
+                languages: Some(vec!["typescript".into()]),
+                server_mode: Some(ServerMode::Local),
+                server_url: None,
+                yes: true,
+                cwd: temp.path().to_path_buf(),
+            },
+            &output,
+            |root, command| {
+                observed = Some((root.to_path_buf(), command.clone()));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let (root, command) = observed.expect("typescript init should request a package install");
+        assert_eq!(root, temp.path());
+        assert_eq!(command.program, "npm");
+        assert_eq!(command.args, vec!["install"]);
+    }
+
+    #[test]
+    fn init_dart_only_project_skips_npm_install() {
+        let temp = TempDir::new().unwrap();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let mut called = false;
+
+        run_init_with_installer(
+            InitOptions {
+                name: Some("demo-dart".into()),
+                schema_mode: Some(SchemaMode::Sql),
+                languages: Some(vec!["dart".into()]),
+                server_mode: Some(ServerMode::Local),
+                server_url: None,
+                yes: true,
+                cwd: temp.path().to_path_buf(),
+            },
+            &output,
+            |_root, _command| {
+                called = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(!called, "dart-only init should not request npm install");
     }
 
     #[test]
@@ -579,7 +779,7 @@ mod tests {
 
         let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
         assert!(!config.dev.auto_start_db);
-        assert!(!temp.path().join(LOCAL_SERVER_CONFIG).exists());
+        assert!(!temp.path().join("kalam/server/server.toml").exists());
     }
 
     #[test]
@@ -647,12 +847,16 @@ mod tests {
 
         let starter = render_template(
             &read_template(TYPESCRIPT_INDEX_TEMPLATE).unwrap(),
-            &[
-                ("project_name", "demo-app"),
-                ("server_url", "http://localhost:2900"),
-            ],
+            &[("server_url", "http://localhost:2900")],
         );
         assert!(starter.contains("http://localhost:2900"));
-        assert!(starter.contains("demo-app"));
+        assert!(starter.contains("liveTable"));
+        assert!(starter.contains("createClient"));
+    }
+
+    #[test]
+    fn typescript_tsconfig_includes_node_types() {
+        let tsconfig = read_template(TYPESCRIPT_TSCONFIG_TEMPLATE).unwrap();
+        assert!(tsconfig.contains(r#""types": ["node"]"#));
     }
 }

@@ -320,8 +320,8 @@ async fn oidc_cli_browser_login_with_dex_works_and_auto_provisions_user() -> Res
         "unexpected OIDC browser login output: {login_stdout}"
     );
     assert!(
-        login_stdout.contains("KalamDB CLI") && login_stdout.contains("OIDC browser login"),
-        "OIDC browser login should show the shared KalamDB CLI prompt: {login_stdout}"
+        login_stdout.contains("OIDC BROWSER LOGIN"),
+        "OIDC browser login should show the shared CLI prompt: {login_stdout}"
     );
 
     let token = saved_access_token(&credentials_path, instance)?;
@@ -412,7 +412,7 @@ async fn oidc_cli_headless_direct_device_login_with_local_dex_works() -> Result<
 
     let login_stdout = String::from_utf8_lossy(&login_output.stdout);
     assert!(
-        login_stdout.contains("KalamDB CLI") && login_stdout.contains("OIDC device login"),
+        login_stdout.contains("OIDC DEVICE LOGIN"),
         "real Dex device login should show the shared prompt: {login_stdout}"
     );
     assert!(
@@ -507,8 +507,8 @@ async fn assert_headless_login_saves_usable_credentials(
         "unexpected OIDC login output: {login_stdout}"
     );
     assert!(
-        login_stdout.contains("KalamDB CLI") && login_stdout.contains("OIDC device login"),
-        "OIDC device login should show the shared KalamDB CLI prompt: {login_stdout}"
+        login_stdout.contains("OIDC DEVICE LOGIN"),
+        "OIDC device login should show the shared CLI prompt: {login_stdout}"
     );
     let refresh_token = saved_refresh_token(&credentials_path, instance)?;
     assert!(!refresh_token.is_empty(), "OIDC device login should save a refresh token");

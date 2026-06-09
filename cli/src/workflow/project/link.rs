@@ -84,6 +84,7 @@ mod tests {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                kalam_dir: "kalam".into(),
             },
             connection: HashMap::new(),
             schema: SchemaSection {

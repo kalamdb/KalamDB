@@ -2,7 +2,7 @@
 //!
 //! Returns the current user_id from the session context.
 
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},
@@ -26,10 +26,6 @@ impl CurrentUserFunction {
 }
 
 impl ScalarUDFImpl for CurrentUserFunction {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "kdb_current_user"
     }

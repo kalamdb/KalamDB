@@ -11,8 +11,8 @@ use crate::{
     workflow::{
         deploy::{health::check_deploy_health, rollout::run_rollout},
         migration::{
-            apply::apply_pending_migrations, list_migration_files, migration_filename,
-            MigrationState,
+            apply::{apply_pending_migrations, ApplyMigrationOptions},
+            list_migration_files,
         },
         project::config::{KalamProjectConfig, SchemaMode},
         schema::diff::diff_project_schema_files,
@@ -33,7 +33,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
 
     validate_deploy_readiness(&ctx.project_root, &ctx.config, target_env, &output)?;
 
-    apply_pending_migrations(ctx, &output).await?;
+    apply_pending_migrations(ctx, &output, &ApplyMigrationOptions::db_migrate()).await?;
 
     run_rollout(&ctx.project_root, &ctx.config, target_env, &output)?;
 
@@ -49,26 +49,11 @@ pub fn validate_deploy_readiness(
     env_name: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    let pending = pending_migration_count(project_root, config)?;
-    if pending > 0 {
-        return Err(CLIError::ConfigurationError(format!(
-            "deploy blocked: {pending} pending migration(s); run `kalam db migrate` first"
-        )));
-    }
-
     if is_production_like(env_name) {
         enforce_committed_migrations(project_root, config, output)?;
     }
 
     Ok(())
-}
-
-fn pending_migration_count(project_root: &Path, config: &KalamProjectConfig) -> Result<usize> {
-    let migrations_dir = config.migrations_dir(project_root);
-    let state = MigrationState::load(&migrations_dir)?;
-    let files = list_migration_files(&migrations_dir)?;
-
-    Ok(files.iter().filter(|path| !state.is_applied(&migration_filename(path))).count())
 }
 
 fn is_production_like(env_name: &str) -> bool {
@@ -155,6 +140,7 @@ mod tests {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([(
                 "prod".into(),

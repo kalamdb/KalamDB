@@ -18,5 +18,6 @@ fn map_schema_diff_error(error: SchemaDiffError) -> CLIError {
         SchemaDiffError::ReadFile { path, source } => {
             CLIError::FileError(format!("failed to read schema file '{path}': {source}"))
         },
+        SchemaDiffError::Parse { message } => CLIError::ConfigurationError(message),
     }
 }

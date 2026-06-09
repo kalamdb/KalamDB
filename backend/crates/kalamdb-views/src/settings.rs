@@ -787,13 +787,11 @@ mod tests {
 
         let names = batch
             .column(0)
-            .as_any()
-            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
             .expect("name column should be StringArray");
         let values = batch
             .column(1)
-            .as_any()
-            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
             .expect("value column should be StringArray");
 
         let topic_timeout_row =

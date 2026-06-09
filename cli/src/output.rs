@@ -157,8 +157,26 @@ impl WorkflowOutput {
         }
     }
 
+    pub fn progress_detail(&self, id: &str, message: impl AsRef<str>) {
+        let line = message.as_ref();
+        if let Some(progress_tasks) = &self.progress_tasks {
+            progress_tasks.push_task_detail(id, line, 8);
+            self.append_log(line);
+        } else {
+            self.detail(line);
+        }
+    }
+
     pub fn workflow_log_path(&self) -> Option<&Path> {
         self.logging.file_enabled.then_some(self.logging.path.as_path())
+    }
+
+    pub fn suspend_progress<F: FnOnce() -> R, R>(&self, f: F) -> R {
+        if let Some(progress_tasks) = &self.progress_tasks {
+            progress_tasks.suspend(f)
+        } else {
+            f()
+        }
     }
 
     fn append_log(&self, line: &str) {
@@ -206,6 +224,18 @@ mod tests {
         assert_eq!(lines[0], "⠋ Starting server");
         assert_eq!(lines[1], "    server line 2");
         assert_eq!(lines[8], "    server line 9");
+    }
+
+    #[test]
+    fn progress_detail_pushes_task_detail_lines() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled())
+            .with_display_mode(WorkflowDisplayMode::Progress);
+        output.progress_task("schema", ProgressTaskStatus::Running, "Applying schema");
+        output.progress_detail("schema", "sealed draft migration 0001_auto.sql");
+
+        let lines = output.progress_lines();
+        assert_eq!(lines[0], "⠋ Applying schema");
+        assert_eq!(lines[1], "    sealed draft migration 0001_auto.sql");
     }
 }
 

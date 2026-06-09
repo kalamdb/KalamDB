@@ -1,8 +1,7 @@
 //! Schema diff helpers for KalamDB workflow migrations.
 //!
-//! The first release exposes a stable file-based API and placeholder UP/DOWN
-//! generation. A future release will replace the placeholder body with a
-//! structural diff built on `sqlparser`.
+//! The crate parses KalamDB schema DDL into a normalized semantic model before
+//! producing deterministic migration statements.
 
 mod diff;
 

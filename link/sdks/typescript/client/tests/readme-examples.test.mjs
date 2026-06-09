@@ -185,6 +185,7 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
   try {
     const client = createClient({
       url: 'http://127.0.0.1:2900',
+      namespace: 'support',
       authProvider: async () => Auth.jwt('readme-token'),
     });
 
@@ -207,6 +208,7 @@ test('README queryWithFiles example posts multipart data with auth header', asyn
     assert.equal(fetchCall.options.headers.Authorization, 'Bearer token-123');
     assert.equal(fetchCall.options.body.get('sql'), 'INSERT INTO support.attachments (id, file_data) VALUES ($1, FILE("upload"))');
     assert.equal(fetchCall.options.body.get('params'), JSON.stringify(['att_1']));
+    assert.equal(fetchCall.options.body.get('namespace_id'), 'support');
 
     const uploaded = fetchCall.options.body.get('file:upload');
     assert.ok(uploaded instanceof Blob, 'uploaded file should be a Blob');

@@ -185,6 +185,12 @@ pub enum MigrationCommand {
     Create(MigrationCreateArgs),
     /// Show migration state for the current project
     Status(MigrationStatusArgs),
+    /// Create a numbered migration from kalam/migrations/_draft.sql
+    Seal(MigrationSealArgs),
+    /// Retry a failed migration
+    Retry(MigrationRetryArgs),
+    /// Repair migration state manually
+    Repair(MigrationRepairArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -195,6 +201,25 @@ pub struct MigrationCreateArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct MigrationStatusArgs {}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct MigrationSealArgs {}
+
+#[derive(Args, Debug, Clone)]
+pub struct MigrationRetryArgs {
+    /// Migration id or filename to retry
+    pub migration_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MigrationRepairArgs {
+    /// Migration id or filename to repair
+    pub migration_id: String,
+
+    /// Mark this migration as applied
+    #[arg(long = "mark-applied")]
+    pub mark_applied: bool,
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct DbArgs {

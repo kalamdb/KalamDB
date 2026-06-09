@@ -505,6 +505,23 @@ export interface ClientOptions {
   /** Server URL (e.g., 'http://localhost:2900') */
   url: string;
   /**
+   * Default namespace for unqualified table names.
+   *
+   * The SDK forwards this as `namespace_id` on `/v1/api/sql` requests and uses
+   * it as the fallback namespace for unqualified live queries and file
+   * contexts.
+   *
+   * @example
+   * ```typescript
+   * const client = createClient({
+   *   url: 'http://localhost:2900',
+   *   namespace: 'app',
+   *   authProvider: async () => Auth.jwt(token),
+   * });
+   * ```
+   */
+  namespace?: string;
+  /**
    * Authentication provider callback.
    *
     * Called before each (re-)connection to obtain credentials. Ideal for

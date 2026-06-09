@@ -277,9 +277,10 @@ fn test_project_workflow_migration_create_and_status() {
     assert!(migration_sql.contains("-- UP"), "migration should include UP section");
     assert!(migration_sql.contains("-- DOWN"), "migration should include DOWN section");
     assert!(
-        migration_sql.contains("sqlparser-backed"),
-        "migration UP should come from kalam-schema-diff placeholder"
+        migration_sql.contains("-- Generated KalamDB schema evolution"),
+        "migration UP should come from kalam-schema-diff semantic diff"
     );
+    assert!(migration_sql.contains("CREATE TABLE users"));
 
     let mut status_cmd = create_cli_command();
     status_cmd.current_dir(&project_dir).args(["migration", "status"]);
@@ -291,7 +292,10 @@ fn test_project_workflow_migration_create_and_status() {
     );
 
     let stderr = String::from_utf8_lossy(&status_output.stderr);
-    assert!(stderr.contains("pending"), "expected pending migration in status");
+    assert!(
+        stderr.to_ascii_lowercase().contains("pending"),
+        "expected pending migration in status\nstderr: {stderr}"
+    );
 }
 
 #[test]
@@ -334,13 +338,19 @@ fn test_project_workflow_db_migrate_local_state() {
     );
 
     let state_path = project_dir.join("kalam/migrations/.kalam-state.json");
-    assert!(state_path.is_file(), "migration state file missing");
+    assert!(
+        !state_path.exists(),
+        "migration state should be stored in system.migrations, not a local file"
+    );
 
     let mut status_cmd = create_cli_command();
     status_cmd.current_dir(&project_dir).args(["migration", "status"]);
     let status_output = status_cmd.output().expect("migration status");
     let stderr = String::from_utf8_lossy(&status_output.stderr);
-    assert!(stderr.contains("applied"), "expected applied migration");
+    assert!(
+        stderr.to_ascii_lowercase().contains("applied"),
+        "expected applied migration\nstderr: {stderr}"
+    );
 }
 
 #[test]

@@ -7,8 +7,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kalamdb/client": "0.5.2-rc.1",
-    "@kalamdb/orm": "0.5.2-rc.1",
+    "@kalamdb/client": "file:/Users/jamal/git/KalamDB/link/sdks/typescript/client",
+    "@kalamdb/orm": "file:/Users/jamal/git/KalamDB/link/sdks/typescript/orm",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {

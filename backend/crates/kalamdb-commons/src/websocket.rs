@@ -742,13 +742,14 @@ mod tests {
 
         let msg = ClientMessage::subscribe(SubscriptionRequest {
             id: "sub-1".to_string(),
-            sql: "SELECT * FROM messages".to_string(),
+            sql: "SELECT * FROM chat.messages".to_string(),
             options: Some(SubscriptionOptions::default()),
         });
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"subscribe\""));
         assert!(json.contains("sub-1"));
+        assert!(json.contains("chat.messages"));
     }
 
     #[test]

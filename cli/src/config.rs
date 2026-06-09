@@ -75,7 +75,7 @@ pub struct WorkflowLoggingPolicy {
 }
 
 fn default_workflow_log_path() -> String {
-    ".kalam/logs/kalam.log".to_string()
+    "kalam/cli/logs/kalam.log".to_string()
 }
 
 fn default_workflow_file_enabled() -> bool {
@@ -87,20 +87,21 @@ fn default_workflow_capture_process_output() -> bool {
 }
 
 impl WorkflowLoggingPolicy {
-    pub fn from_project(project_root: &Path, logging: &LoggingSection) -> Self {
+    pub fn from_project(log_path: PathBuf, logging: &LoggingSection) -> Self {
         Self {
             file_enabled: logging.file,
-            path: project_root.join(&logging.path),
+            path: log_path,
             capture_process_output: logging.capture_process_output,
         }
     }
 
     pub fn merge_global(
         project_root: &Path,
+        project_log_path: PathBuf,
         project_logging: &LoggingSection,
         global: Option<&WorkflowLoggingConfig>,
     ) -> Self {
-        let mut policy = Self::from_project(project_root, project_logging);
+        let mut policy = Self::from_project(project_log_path, project_logging);
         if let Some(global) = global {
             policy.file_enabled = global.file;
             policy.path = project_root.join(&global.path);
@@ -112,7 +113,7 @@ impl WorkflowLoggingPolicy {
     pub fn disabled() -> Self {
         Self {
             file_enabled: false,
-            path: PathBuf::from(".kalam/logs/kalam.log"),
+            path: PathBuf::from("kalam/cli/logs/kalam.log"),
             capture_process_output: false,
         }
     }

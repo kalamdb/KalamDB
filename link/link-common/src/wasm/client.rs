@@ -126,6 +126,8 @@ pub struct KalamClient {
     /// The callback must return a Promise that resolves to an object of the
     /// shape `{ jwt: { token: string } }` or `{ none: null }`.
     auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    /// Default namespace applied to unqualified SQL requests and live queries.
+    default_namespace: Rc<RefCell<Option<String>>>,
     /// Negotiated serialization format for this WebSocket connection.
     negotiated_ser: Rc<Cell<SerializationType>>,
 }
@@ -212,6 +214,7 @@ impl KalamClient {
             on_receive_cb: Rc::new(RefCell::new(None)),
             on_send_cb: Rc::new(RefCell::new(None)),
             auth_provider_cb: Rc::new(RefCell::new(None)),
+            default_namespace: Rc::new(RefCell::new(None)),
             negotiated_ser: Rc::new(Cell::new(SerializationType::Json)),
         }
     }
@@ -253,6 +256,133 @@ fn send_next_batch_traced(
 ) -> Result<(), JsValue> {
     let msg = next_batch_message(subscription_id, last_seq_id);
     send_ws_message_traced(ws, &msg, serialization, on_send_cb)
+}
+
+fn normalize_default_namespace(namespace: Option<String>) -> Option<String> {
+    namespace.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn find_subscription_from_clause(sql: &str) -> Option<usize> {
+    let chars: Vec<(usize, char)> = sql.char_indices().collect();
+    let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        let (index, ch) = chars[i];
+        match ch {
+            '\'' if !in_double_quotes => in_single_quotes = !in_single_quotes,
+            '"' if !in_single_quotes => in_double_quotes = !in_double_quotes,
+            _ if !in_single_quotes && !in_double_quotes => {
+                let candidate = &sql[index..];
+                if candidate.len() >= 4
+                    && candidate[..4].eq_ignore_ascii_case("from")
+                    && candidate[4..].chars().next().map_or(true, char::is_whitespace)
+                {
+                    return Some(index + 4);
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn find_subscription_relation_end(sql: &str, relation_start: usize) -> usize {
+    let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
+
+    for (index, ch) in sql[relation_start..].char_indices() {
+        match ch {
+            '\'' if !in_double_quotes => in_single_quotes = !in_single_quotes,
+            '"' if !in_single_quotes => in_double_quotes = !in_double_quotes,
+            _ if !in_single_quotes && !in_double_quotes && ch.is_whitespace() => {
+                return relation_start + index;
+            },
+            _ => {},
+        }
+    }
+
+    sql.len()
+}
+
+fn split_identifier_parts(identifier: &str) -> Result<Vec<String>, ()> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_double_quotes = false;
+
+    for ch in identifier.chars() {
+        match ch {
+            '"' => {
+                in_double_quotes = !in_double_quotes;
+                current.push(ch);
+            },
+            '.' if !in_double_quotes => {
+                if current.trim().is_empty() {
+                    return Err(());
+                }
+                parts.push(current.trim().to_string());
+                current.clear();
+            },
+            _ => current.push(ch),
+        }
+    }
+
+    if in_double_quotes || current.trim().is_empty() {
+        return Err(());
+    }
+
+    parts.push(current.trim().to_string());
+    Ok(parts)
+}
+
+fn qualify_subscription_sql(sql: &str, default_namespace: Option<&str>) -> String {
+    let Some(default_namespace) = default_namespace else {
+        return sql.trim().trim_end_matches(';').trim().to_string();
+    };
+
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Some(from_idx) = find_subscription_from_clause(trimmed) else {
+        return trimmed.to_string();
+    };
+
+    let relation_start = trimmed[from_idx..]
+        .char_indices()
+        .find_map(|(offset, ch)| (!ch.is_whitespace()).then_some(from_idx + offset));
+    let Some(relation_start) = relation_start else {
+        return trimmed.to_string();
+    };
+
+    let relation_end = find_subscription_relation_end(trimmed, relation_start);
+    let relation = trimmed[relation_start..relation_end].trim();
+    let Ok(parts) = split_identifier_parts(relation) else {
+        return trimmed.to_string();
+    };
+
+    if parts.len() != 1 {
+        return trimmed.to_string();
+    }
+
+    let qualified_relation = format!("{}.{}", quote_identifier(default_namespace), relation);
+    format!(
+        "{}{}{}",
+        &trimmed[..relation_start],
+        qualified_relation,
+        &trimmed[relation_end..]
+    )
 }
 
 fn reject_pending_subscriptions(
@@ -1223,6 +1353,12 @@ impl KalamClient {
         *self.auth_provider_cb.borrow_mut() = Some(callback);
     }
 
+    /// Set the default namespace for unqualified SQL queries and live subscriptions.
+    #[wasm_bindgen(js_name = setDefaultNamespace)]
+    pub fn set_default_namespace(&self, namespace: Option<String>) {
+        *self.default_namespace.borrow_mut() = normalize_default_namespace(namespace);
+    }
+
     /// Clear a previously set auth provider, reverting to the static auth
     /// configured at construction time.
     #[wasm_bindgen(js_name = clearAuthProvider)]
@@ -1862,7 +1998,8 @@ impl KalamClient {
             values.join(", ")
         );
 
-        self.execute_sql_internal(&sql, None).await
+        let namespace_id = self.default_namespace.borrow().clone();
+        self.execute_sql_internal(&sql, None, namespace_id).await
     }
 
     /// Delete a row from a table (T049, T063H)
@@ -1883,7 +2020,8 @@ impl KalamClient {
             quote_table_name(&table_name),
             row_id.replace('\'', "''")
         );
-        self.execute_sql_internal(&sql, None).await?;
+        let namespace_id = self.default_namespace.borrow().clone();
+        self.execute_sql_internal(&sql, None, namespace_id).await?;
         Ok(())
     }
 
@@ -1901,8 +2039,8 @@ impl KalamClient {
     /// const data = JSON.parse(result);
     /// ```
     pub async fn query(&self, sql: String) -> Result<String, JsValue> {
-        // T063F: Implement query() using web-sys fetch API
-        self.execute_sql_internal(&sql, None).await
+        let namespace_id = self.default_namespace.borrow().clone();
+        self.execute_sql_internal(&sql, None, namespace_id).await
     }
 
     /// Execute a SQL query with parameters
@@ -1935,7 +2073,8 @@ impl KalamClient {
             ),
             _ => None,
         };
-        self.execute_sql_internal(&sql, parsed_params).await
+        let namespace_id = self.default_namespace.borrow().clone();
+        self.execute_sql_internal(&sql, parsed_params, namespace_id).await
     }
 
     /// Subscribe to table changes (T051, T063I-T063J)
@@ -1998,9 +2137,11 @@ impl KalamClient {
         } else {
             SubscriptionOptions::default()
         };
+        let default_namespace = self.default_namespace.borrow().clone();
+        let qualified_sql = qualify_subscription_sql(&sql, default_namespace.as_deref());
 
         self.register_subscription(
-            sql,
+            qualified_sql,
             subscription_options,
             callback,
             SubscriptionCallbackMode::raw(),
@@ -2026,9 +2167,11 @@ impl KalamClient {
         } else {
             WasmLiveRowsOptions::default()
         };
+        let default_namespace = self.default_namespace.borrow().clone();
+        let qualified_sql = qualify_subscription_sql(&sql, default_namespace.as_deref());
 
         self.register_subscription(
-            sql,
+            qualified_sql,
             parsed_options.subscription_options.unwrap_or_default(),
             callback,
             SubscriptionCallbackMode::live_rows(crate::subscription::LiveRowsConfig {
@@ -2202,12 +2345,13 @@ impl KalamClient {
         &self,
         sql: &str,
         params: Option<Vec<serde_json::Value>>,
+        namespace_id: Option<String>,
     ) -> Result<String, JsValue> {
         if matches!(&*self.auth.borrow(), WasmAuthProvider::Basic { .. }) {
             self.reauthenticate_for_http().await?;
         }
 
-        let result = self.execute_sql_http(sql, &params).await;
+        let result = self.execute_sql_http(sql, &params, namespace_id.as_deref()).await;
 
         match result {
             Ok(result_str) => {
@@ -2221,7 +2365,7 @@ impl KalamClient {
                              query",
                         );
                         self.reauthenticate_for_http().await?;
-                        return self.execute_sql_http(sql, &params).await;
+                        return self.execute_sql_http(sql, &params, namespace_id.as_deref()).await;
                     }
                 }
                 Ok(result_str)
@@ -2238,7 +2382,9 @@ impl KalamClient {
                                  reauthenticating and retrying query",
                             );
                             self.reauthenticate_for_http().await?;
-                            return self.execute_sql_http(sql, &params).await;
+                            return self
+                                .execute_sql_http(sql, &params, namespace_id.as_deref())
+                                .await;
                         }
                     }
                 }
@@ -2253,11 +2399,12 @@ impl KalamClient {
         &self,
         sql: &str,
         params: &Option<Vec<serde_json::Value>>,
+        namespace_id: Option<&str>,
     ) -> Result<String, JsValue> {
         let body = BorrowedQueryRequest {
             sql,
             params: params.as_deref(),
-            namespace_id: None,
+            namespace_id,
         };
         let body_str = serde_json::to_string(&body)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
@@ -2292,7 +2439,7 @@ impl KalamClient {
         // Try the dynamic auth provider callback first (set by TS/Dart SDK).
         if let Some(cb) = self.auth_provider_cb.borrow().clone() {
             let resolved_auth = resolve_auth_provider(Some(cb), WasmAuthProvider::None).await?;
-            let log_message = match &resolved_auth {
+            let _log_message = match &resolved_auth {
                 WasmAuthProvider::Jwt { .. } => {
                     "KalamClient: Reauthenticated via authProvider (JWT)"
                 },
@@ -2300,7 +2447,7 @@ impl KalamClient {
                 WasmAuthProvider::Basic { .. } => unreachable!(),
             };
             *self.auth.borrow_mut() = resolved_auth;
-            wasm_debug_log!(log_message);
+            wasm_debug_log!(_log_message);
             return Ok(());
         }
 
@@ -2428,4 +2575,31 @@ fn install_auto_reconnect_listener(
     ws.add_event_listener_with_callback("close", onclose_reconnect.as_ref().unchecked_ref())
         .ok();
     onclose_reconnect.forget();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_default_namespace, qualify_subscription_sql};
+
+    #[test]
+    fn normalize_default_namespace_trims_and_drops_empty_values() {
+        assert_eq!(
+            normalize_default_namespace(Some(" chat ".to_string())),
+            Some("chat".to_string())
+        );
+        assert_eq!(normalize_default_namespace(Some("   ".to_string())), None);
+        assert_eq!(normalize_default_namespace(None), None);
+    }
+
+    #[test]
+    fn qualify_subscription_sql_uses_default_namespace_for_unqualified_relations() {
+        let sql = qualify_subscription_sql("SELECT * FROM messages WHERE id = 1", Some("chat"));
+        assert_eq!(sql, "SELECT * FROM \"chat\".messages WHERE id = 1");
+    }
+
+    #[test]
+    fn qualify_subscription_sql_preserves_explicit_namespace() {
+        let sql = qualify_subscription_sql("SELECT * FROM billing.messages", Some("chat"));
+        assert_eq!(sql, "SELECT * FROM billing.messages");
+    }
 }

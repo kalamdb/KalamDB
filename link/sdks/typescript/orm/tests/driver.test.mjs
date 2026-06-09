@@ -115,6 +115,7 @@ describe('kalamDriver', () => {
     await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
   });
 
+
   it('handles INSERT with multiple server-side DEFAULTs', async () => {
     await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_defaults');

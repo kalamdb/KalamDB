@@ -274,13 +274,13 @@ fn test_subscription_request_with_options() {
 
     let request = SubscriptionRequest {
         id: "sub-123".to_string(),
-        sql: "SELECT * FROM messages".to_string(),
+        sql: "SELECT * FROM chat.messages".to_string(),
         options: Some(opts),
     };
 
     let json = serde_json::to_string(&request).unwrap();
     assert!(json.contains("\"id\":\"sub-123\""));
-    assert!(json.contains("SELECT * FROM messages"));
+    assert!(json.contains("SELECT * FROM chat.messages"));
     assert!(json.contains("\"batch_size\":100"));
     assert!(json.contains("\"last_rows\":25"));
 }
@@ -338,7 +338,7 @@ fn test_client_message_subscribe_with_resume() {
     let msg = ClientMessage::Subscribe {
         subscription: SubscriptionRequest {
             id: "resume-sub".to_string(),
-            sql: "SELECT * FROM events".to_string(),
+            sql: "SELECT * FROM timeline.events".to_string(),
             options: Some(SubscriptionOptions::new().with_from(seq_id)),
         },
     };
@@ -346,6 +346,7 @@ fn test_client_message_subscribe_with_resume() {
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains("\"type\":\"subscribe\""));
     assert!(json.contains("\"from\":12345"));
+    assert!(json.contains("timeline.events"));
 }
 
 // ==================== BatchControl Tests ====================

@@ -52,7 +52,7 @@ async fn vector_search_scan_uses_deferred_batch_exec_and_keeps_empty_results_sta
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build vector plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect vector plan");
     assert_eq!(total_rows(&batches), 0);

@@ -1,6 +1,6 @@
 //! Environment resolution for workflow commands.
 
-use std::env;
+use std::{env, fs, path::Path};
 
 use kalam_client::CredentialStore;
 
@@ -13,6 +13,8 @@ use crate::{
 pub const ENV_VAR_KALAM_ENV: &str = "KALAM_ENV";
 pub const ENV_VAR_KALAM_URL: &str = "KALAM_URL";
 pub const ENV_VAR_KALAM_NAMESPACE: &str = "KALAM_NAMESPACE";
+pub const ENV_VAR_KALAM_PROFILE: &str = "KALAM_PROFILE";
+const PROJECT_ENV_FILE: &str = ".env";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionSource {
@@ -128,20 +130,73 @@ pub fn load_env_credentials(
         .map_err(|e| CLIError::ConfigurationError(format!("failed to load credentials: {e}")))
 }
 
+/// Resolve the saved CLI credential profile selected for this project.
+///
+/// `KALAM_PROFILE` from the process environment wins over the project `.env` file.
+pub fn resolve_kalam_profile(project_root: &Path) -> Result<Option<String>> {
+    if let Ok(profile) = env::var(ENV_VAR_KALAM_PROFILE) {
+        let trimmed = profile.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    read_project_env_value(project_root, ENV_VAR_KALAM_PROFILE)
+}
+
+fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<String>> {
+    let env_path = project_root.join(PROJECT_ENV_FILE);
+    if !env_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&env_path).map_err(|error| {
+        CLIError::FileError(format!(
+            "failed to read project environment file '{}': {error}",
+            env_path.display()
+        ))
+    })?;
+
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((candidate_key, candidate_value)) = line.split_once('=') else {
+            continue;
+        };
+        if candidate_key.trim() != key {
+            continue;
+        }
+
+        let value = candidate_value.trim().trim_matches('"').trim_matches('\'').trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(value.to_string()));
+    }
+
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs};
 
     use super::*;
     use crate::workflow::project::config::{
         ConnectionEnv, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
     };
+    use tempfile::TempDir;
 
     fn sample_config() -> KalamProjectConfig {
         KalamProjectConfig {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([
                 (
@@ -202,5 +257,27 @@ mod tests {
         let resolved = resolve_environment(&config, &EnvironmentOverrides::default()).unwrap();
         assert_eq!(resolved.name, "dev");
         assert_eq!(resolved.url, "http://localhost:2900");
+    }
+
+    #[test]
+    fn resolve_kalam_profile_reads_project_env_file() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(".env"), "KALAM_PROFILE=prod-admin\n").unwrap();
+
+        let profile = resolve_kalam_profile(temp.path()).unwrap();
+
+        assert_eq!(profile.as_deref(), Some("prod-admin"));
+    }
+
+    #[test]
+    fn resolve_kalam_profile_prefers_process_env() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(".env"), "KALAM_PROFILE=prod-admin\n").unwrap();
+        std::env::set_var(ENV_VAR_KALAM_PROFILE, "shell-profile");
+
+        let profile = resolve_kalam_profile(temp.path()).unwrap();
+
+        assert_eq!(profile.as_deref(), Some("shell-profile"));
+        std::env::remove_var(ENV_VAR_KALAM_PROFILE);
     }
 }

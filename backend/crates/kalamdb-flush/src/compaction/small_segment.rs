@@ -827,8 +827,7 @@ fn deleted_at(batch: &RecordBatch, deleted_idx: Option<usize>, row_idx: usize) -
         return Ok(false);
     }
     deleted_col
-        .as_any()
-        .downcast_ref::<BooleanArray>()
+        .as_any().downcast_ref::<BooleanArray>()
         .map(|array| array.value(row_idx))
         .ok_or_else(|| {
             FlushError::InvalidOperation(format!(

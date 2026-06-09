@@ -11,7 +11,7 @@ use crate::{
     workflow::{
         dev::{
             logs::ServiceLogRegistry,
-            precheck::run_dev_prechecks,
+            precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
             processes::ProcessSupervisor,
             server::{build_local_server_command, wait_for_server_ready},
             watch::{
@@ -69,7 +69,11 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
             );
         } else {
-            let command = build_local_server_command(&ctx.project_root, &precheck.environment.url)?;
+            let command = build_local_server_command(
+                &ctx.project_root,
+                &ctx.config,
+                &precheck.environment.url,
+            )?;
             output.service_log(&server_source, "starting local KalamDB server");
             output.progress_task(
                 "server",
@@ -78,6 +82,13 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
             );
             supervisor.spawn_one("server", &command, &registry, &output).await?;
             wait_for_server_ready(&precheck.environment.url, &output).await?;
+            ensure_local_dev_authentication_ready(
+                ctx,
+                &precheck.environment,
+                &output,
+                &server_source,
+            )
+            .await?;
             output.progress_task(
                 "server",
                 ProgressTaskStatus::Succeeded,
@@ -87,11 +98,10 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
         }
     }
 
-    let mut schema_state = SchemaPipelineState::Idle;
     let mut schema_mtime: Option<SystemTime> = None;
 
     if ctx.config.dev.apply_schema || ctx.config.dev.generate_types {
-        schema_state = run_initial_schema_pipeline(ctx, &output, options.force).await;
+        let _ = run_initial_schema_pipeline(ctx, &output, options.force, None).await;
         if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
             schema_mtime = schema_file_mtime(&path);
         }
@@ -125,12 +135,12 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) else {
                     continue;
                 };
-                if schema_state == SchemaPipelineState::Paused {
-                    continue;
-                }
                 if schema_file_changed(&path, schema_mtime) {
-                    output.service_log(&server_source, "schema change detected, running pipeline");
-                    schema_state = run_initial_schema_pipeline(ctx, &output, false).await;
+                    let watched_path = display_project_relative_path(&ctx.project_root, &path);
+                    let message = format!("Schema changed in {watched_path}; applying...");
+                    output.status(&message);
+                    let _ =
+                        run_initial_schema_pipeline(ctx, &output, options.force, Some(message)).await;
                     schema_mtime = schema_file_mtime(&path);
                 }
             }
@@ -162,9 +172,11 @@ async fn run_initial_schema_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
     force: bool,
+    running_message: Option<String>,
 ) -> SchemaPipelineState {
-    output.progress_task("schema", ProgressTaskStatus::Running, "Applying schema...");
-    match run_schema_pipeline(ctx, output).await {
+    let running_message = running_message.unwrap_or_else(|| "Applying schema...".to_string());
+    output.progress_task("schema", ProgressTaskStatus::Running, &running_message);
+    match run_schema_pipeline(ctx, output, force).await {
         Ok(()) => {
             if output.display_mode == WorkflowDisplayMode::Progress {
                 output.progress_task("schema", ProgressTaskStatus::Succeeded, "Schema applied");
@@ -176,7 +188,7 @@ async fn run_initial_schema_pipeline(
         Err(error) => {
             if force {
                 output.warn("retrying schema pipeline (--force)");
-                return match run_schema_pipeline(ctx, output).await {
+                return match run_schema_pipeline(ctx, output, true).await {
                     Ok(()) => {
                         if output.display_mode == WorkflowDisplayMode::Progress {
                             output.progress_task(
@@ -227,6 +239,10 @@ fn local_server_ready_message(server_url: &str, log_path: Option<&std::path::Pat
     }
 }
 
+fn display_project_relative_path(project_root: &std::path::Path, path: &std::path::Path) -> String {
+    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +271,7 @@ mod tests {
                 project: ProjectSection {
                     name: "demo".into(),
                     default_env: "dev".into(),
+                    kalam_dir: "kalam".into(),
                 },
                 connection: HashMap::from([(
                     "dev".into(),
@@ -302,12 +319,12 @@ mod tests {
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
-        let paused = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, false));
+        let paused = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, false, None));
         assert_eq!(paused, SchemaPipelineState::Paused);
 
         // Remove failing migration and retry with force.
         std::fs::remove_file(root.join("kalam/migrations/20250101120000_fail.sql")).unwrap();
-        let recovered = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, true));
+        let recovered = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, true, None));
         assert_eq!(recovered, SchemaPipelineState::Synced);
     }
 
@@ -327,5 +344,13 @@ mod tests {
             message,
             "Local server ready at http://localhost:2900 (full log: /tmp/demo/.kalam/logs/kalam.log)"
         );
+    }
+
+    #[test]
+    fn display_project_relative_path_prefers_project_relative_output() {
+        let root = std::path::Path::new("/tmp/demo");
+        let path = root.join("schema.sql");
+
+        assert_eq!(display_project_relative_path(root, &path), "schema.sql");
     }
 }

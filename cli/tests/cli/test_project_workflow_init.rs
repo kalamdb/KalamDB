@@ -63,6 +63,7 @@ fn test_project_workflow_init_scaffolds_project() {
         "migrations dir missing"
     );
     assert!(project_dir.join("kalam/server/server.toml").is_file(), "server config missing");
+    assert!(project_dir.join("kalam/cli/logs").is_dir(), "CLI logs dir missing");
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
     assert!(project_dir.join("lib/generated").is_dir(), "dart output dir missing");
     assert!(project_dir.join(".env.example").is_file(), ".env.example missing");
@@ -72,6 +73,14 @@ fn test_project_workflow_init_scaffolds_project() {
     assert!(kalam_toml.contains("mode = \"sql\""));
     assert!(kalam_toml.contains("typescript"));
     assert!(kalam_toml.contains("dart"));
+    assert!(!kalam_toml.contains("path = \".kalam/logs/kalam.log\""));
+    assert!(!kalam_toml.contains("dir = \"kalam/migrations\""));
+
+    let kalam_gitignore =
+        fs::read_to_string(project_dir.join("kalam/.gitignore")).expect("read kalam .gitignore");
+    assert!(kalam_gitignore.contains("/cli/logs/"));
+    assert!(kalam_gitignore.contains("/server/"));
+    assert!(!kalam_gitignore.contains(".kalam-state.json"));
 }
 
 #[test]
@@ -110,7 +119,8 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
 
     let gitignore =
         fs::read_to_string(project_dir.join(".gitignore")).expect("read generated .gitignore");
-    assert!(gitignore.contains(".kalam/"));
+    assert!(gitignore.contains("kalam/cli/logs/"));
+    assert!(gitignore.contains("kalam/server/"));
     assert!(gitignore.contains("kalam/.schema-baseline.sql"));
     assert!(gitignore.contains("node_modules/"));
 
@@ -118,10 +128,13 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
         fs::read_to_string(project_dir.join("package.json")).expect("read generated package.json");
     assert!(package_json.contains("@kalamdb/client"));
     assert!(package_json.contains("@kalamdb/orm"));
+    let tsconfig = fs::read_to_string(project_dir.join("tsconfig.json"))
+        .expect("read generated tsconfig.json");
+    assert!(tsconfig.contains(r#""types": ["node"]"#));
     let index_ts =
         fs::read_to_string(project_dir.join("src/index.ts")).expect("read generated src/index.ts");
     assert!(index_ts.contains("createClient"));
-    assert!(index_ts.contains("demo-defaults"));
+    assert!(index_ts.contains("liveTable"));
     assert!(project_dir.join("tsconfig.json").is_file(), "tsconfig.json missing");
 }
 

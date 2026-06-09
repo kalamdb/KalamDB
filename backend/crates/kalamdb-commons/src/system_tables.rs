@@ -103,6 +103,13 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: Some("system_topic_offsets"),
     },
     SystemTableMetadata {
+        table: SystemTable::Migrations,
+        sql_name: "migrations",
+        aliases: &["migrations", "system_migrations"],
+        is_view: false,
+        column_family_name: Some("system_migrations"),
+    },
+    SystemTableMetadata {
         table: SystemTable::Stats,
         sql_name: "stats",
         aliases: &["stats"],
@@ -242,6 +249,8 @@ pub enum SystemTable {
     Topics,
     /// system.topic_offsets - Consumer group offset tracking (persisted)
     TopicOffsets,
+    /// system.migrations - Applied and in-progress project migrations (persisted)
+    Migrations,
 
     // ==================== VIRTUAL VIEWS ====================
     /// system.stats - Runtime metrics (computed on-demand)
@@ -325,6 +334,7 @@ impl SystemTable {
             SystemTable::Manifest,
             SystemTable::Topics,
             SystemTable::TopicOffsets,
+            SystemTable::Migrations,
         ]
     }
 
@@ -362,6 +372,7 @@ impl SystemTable {
             SystemTable::Manifest,
             SystemTable::Topics,
             SystemTable::TopicOffsets,
+            SystemTable::Migrations,
             // Views
             SystemTable::Stats,
             SystemTable::Live,
@@ -403,6 +414,7 @@ impl SystemTable {
         static TOPICS: Lazy<Partition> = Lazy::new(|| Partition::new("system_topics"));
         static TOPIC_OFFSETS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_topic_offsets"));
+        static MIGRATIONS: Lazy<Partition> = Lazy::new(|| Partition::new("system_migrations"));
 
         match self {
             SystemTable::Users => Some(&USERS),
@@ -416,6 +428,7 @@ impl SystemTable {
             SystemTable::Manifest => Some(&MANIFEST),
             SystemTable::Topics => Some(&TOPICS),
             SystemTable::TopicOffsets => Some(&TOPIC_OFFSETS),
+            SystemTable::Migrations => Some(&MIGRATIONS),
             // Views have no partition
             SystemTable::Stats
             | SystemTable::Live
@@ -643,6 +656,7 @@ mod tests {
         assert_eq!(SystemTable::Namespaces.column_family_name(), Some("system_namespaces"));
         assert_eq!(SystemTable::Jobs.column_family_name(), Some("system_jobs"));
         assert_eq!(SystemTable::AuditLog.column_family_name(), Some("system_audit_log"));
+        assert_eq!(SystemTable::Migrations.column_family_name(), Some("system_migrations"));
         // Views have no column family
         assert_eq!(SystemTable::Stats.column_family_name(), None);
         assert_eq!(SystemTable::Sessions.column_family_name(), None);
@@ -656,6 +670,7 @@ mod tests {
         assert_eq!(SystemTable::from_name("system.users").unwrap(), SystemTable::Users);
         assert_eq!(SystemTable::from_name("system_users").unwrap(), SystemTable::Users);
         assert_eq!(SystemTable::from_name("storages").unwrap(), SystemTable::Storages);
+        assert_eq!(SystemTable::from_name("system.migrations").unwrap(), SystemTable::Migrations);
         // Views
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
         assert_eq!(SystemTable::from_name("sessions").unwrap(), SystemTable::Sessions);
@@ -726,11 +741,12 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 24); // 11 tables + 13 views
+        assert_eq!(all.len(), 25); // 12 tables + 13 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
         assert!(all.contains(&SystemTable::TopicOffsets));
+        assert!(all.contains(&SystemTable::Migrations));
         assert!(all.contains(&SystemTable::Stats));
         assert!(all.contains(&SystemTable::Live));
         assert!(all.contains(&SystemTable::Sessions));
@@ -744,7 +760,7 @@ mod tests {
     #[test]
     fn test_all_tables() {
         let tables = SystemTable::all_tables();
-        assert_eq!(tables.len(), 11);
+        assert_eq!(tables.len(), 12);
         assert!(tables.iter().all(|t| !t.is_view()));
     }
 

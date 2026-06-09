@@ -102,9 +102,8 @@ async fn explicit_commit_persists_same_table_same_user_user_inserts() {
         .schema_registry()
         .get_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = provider_arc
-        .as_any()
-        .downcast_ref::<UserTableProvider>()
+    let provider = (provider_arc
+        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         .expect("provider should downcast to UserTableProvider");
 
     let (first_key, first_row) = provider
@@ -182,9 +181,8 @@ async fn explicit_commit_preserves_user_scope_for_same_primary_keys() {
         .schema_registry()
         .get_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = provider_arc
-        .as_any()
-        .downcast_ref::<UserTableProvider>()
+    let provider = (provider_arc
+        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         .expect("provider should downcast to UserTableProvider");
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;
@@ -259,9 +257,8 @@ async fn operation_service_preserves_user_scope_for_same_primary_keys() {
         .schema_registry()
         .get_provider(&table_id)
         .expect("user provider should be registered");
-    let provider = provider_arc
-        .as_any()
-        .downcast_ref::<UserTableProvider>()
+    let provider = (provider_arc
+        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         .expect("provider should downcast to UserTableProvider");
 
     let first_user_first_row = load_user_row(provider, &first_user_id, 1).await;

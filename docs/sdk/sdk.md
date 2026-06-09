@@ -26,6 +26,21 @@ npm install @kalamdb/client @kalamdb/react react react-dom
 npm install @kalamdb/orm drizzle-orm
 ```
 
+When you use generated Drizzle tables from `@kalamdb/orm`, configure the KalamDB namespace once before importing the generated schema module:
+
+```typescript
+// db/kalam-orm.ts
+import { configureKalamOrm } from '@kalamdb/orm';
+
+configureKalamOrm({ namespace: 'app' });
+```
+
+```typescript
+// db/index.ts
+import './kalam-orm';
+export * from './schema.generated';
+```
+
 ## Building From Source (This Repo)
 
 This repo contains two related pieces:

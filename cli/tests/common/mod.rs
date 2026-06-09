@@ -4404,6 +4404,7 @@ pub fn create_cli_command() -> assert_cmd::Command {
         .env("HOME", test_home)
         .env("USERPROFILE", test_home)
         .env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+        .env("KALAM_TEST_SKIP_PACKAGE_INSTALL", "1")
         .env_remove("HTTP_PROXY")
         .env_remove("http_proxy")
         .env_remove("HTTPS_PROXY")

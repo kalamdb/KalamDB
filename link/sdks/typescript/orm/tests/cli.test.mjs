@@ -79,7 +79,9 @@ describe('CLI', () => {
     ].join(' '));
 
     const content = readFileSync(outFile, 'utf-8');
-    assert.ok(content.includes('test_cli_gen_'));
+    assert.ok(content.includes('export const cli_options = kTable'));
+    assert.ok(content.includes('"cli_options"'));
+    assert.ok(!content.includes('test_cli_gen_'));
     assert.ok(!content.includes('system_users'));
     assert.ok(content.includes('...kSystemColumns(["_seq","_deleted","_commit_seq"] as const),'));
     assert.ok(content.includes('bigint("id", { mode: "bigint" })'));

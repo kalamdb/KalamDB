@@ -2028,10 +2028,6 @@ impl std::fmt::Debug for SharedTableProvider {
 // Implement DataFusion TableProvider trait
 #[async_trait]
 impl TableProvider for SharedTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema_ref()
     }

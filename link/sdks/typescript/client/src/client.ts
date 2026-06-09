@@ -102,6 +102,11 @@ const dynamicImport = new Function(
   'return import(specifier)',
 ) as DynamicImport;
 
+function normalizeNamespace(namespace?: string): string | undefined {
+  const trimmed = namespace?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function getNodeProcess(): NodeProcessShim | undefined {
   const runtime = globalThis as typeof globalThis & {
     process?: NodeProcessShim;
@@ -218,6 +223,7 @@ export class KalamDBClient {
   private wasmUrl?: string | BufferSource;
   private wsLazyConnect: boolean;
   private pingIntervalMs: number;
+  private namespace?: string;
   private autoReconnectEnabled = true;
   /** Serialize direct WASM calls because the underlying bindings are not re-entrant. */
   private wasmCallQueue: Promise<unknown> = Promise.resolve();
@@ -270,6 +276,7 @@ export class KalamDBClient {
     this.wasmUrl = options.wasmUrl;
     this.wsLazyConnect = options.wsLazyConnect ?? true;
     this.pingIntervalMs = options.pingIntervalMs ?? 5_000;
+    this.namespace = normalizeNamespace(options.namespace);
     this._logLevel = options.logLevel ?? LogLevel.Warn;
     this._logListener = options.logListener;
     this._onConnect = options.onConnect;
@@ -845,6 +852,10 @@ export class KalamDBClient {
       formData.append('params', JSON.stringify(params));
     }
 
+    if (this.namespace) {
+      formData.append('namespace_id', this.namespace);
+    }
+
     for (const [name, file] of Object.entries(files)) {
       const filename = file instanceof File ? file.name : name;
       formData.append(`file:${name}`, file, filename);
@@ -1074,7 +1085,7 @@ export class KalamDBClient {
 
   /**
    * Parse a "namespace.table" or "table" string into a `FileRefContext`.
-   * Unqualified names fall back to the "default" namespace.
+   * Unqualified names fall back to the configured client namespace or `"default"`.
    * @internal
    */
   private tableContext(qualifiedName: string): FileRefContext {
@@ -1086,7 +1097,11 @@ export class KalamDBClient {
         table: qualifiedName.slice(dot + 1),
       };
     }
-    return { baseUrl: this.url, namespace: 'default', table: qualifiedName };
+    return {
+      baseUrl: this.url,
+      namespace: this.namespace ?? 'default',
+      table: qualifiedName,
+    };
   }
 
   /**
@@ -1703,14 +1718,18 @@ export class KalamDBClient {
 
   private attachWasmClientState(): void {
     this.requireInit();
-    this.wasmClient!.setAuthProvider(async () => this.resolveWasmAuthProvider());
+    const wasmClient = this.wasmClient as WasmClient & {
+      setDefaultNamespace?: (namespace?: string) => void;
+    };
+    wasmClient.setAuthProvider(async () => this.resolveWasmAuthProvider());
+    wasmClient.setDefaultNamespace?.(this.namespace);
 
     if (this.disableCompression) {
-      this.wasmClient!.setDisableCompression(true);
+      wasmClient.setDisableCompression(true);
     }
 
-    this.wasmClient!.setAutoReconnect(this.autoReconnectEnabled);
-    this.wasmClient!.setWsLazyConnect(this.wsLazyConnect);
+    wasmClient.setAutoReconnect(this.autoReconnectEnabled);
+    wasmClient.setWsLazyConnect(this.wsLazyConnect);
     this.applyEventHandlers();
   }
 

@@ -17,8 +17,11 @@ use crate::{
     workflow::{
         db::migrate::apply_migrations_for_db_command,
         migration::{
+            apply::{load_server_migration_state, save_server_migration_record},
             create::{create_migration, CreateMigrationOptions},
+            seal_draft_migration,
             status::migration_status,
+            MigrationStatus,
         },
         project::{
             config::KalamProjectConfig,
@@ -31,6 +34,7 @@ use crate::{
             gen::{generate_schema_artifacts, validate_language_filter, GenerateOptions},
             load::pull_remote_schema,
         },
+        sql::build_workflow_client,
     },
 };
 
@@ -73,6 +77,7 @@ impl WorkflowContext {
     pub fn output(&self) -> WorkflowOutput {
         let logging = WorkflowLoggingPolicy::merge_global(
             &self.project_root,
+            self.config.workflow_log_path(&self.project_root),
             &self.config.logging,
             self.cli_config.workflow_logging.as_ref(),
         );
@@ -152,9 +157,63 @@ pub fn create_project_migration(ctx: &WorkflowContext, name: String) -> Result<(
     create_migration(&ctx.project_root, &ctx.config, &CreateMigrationOptions { name }, &output)
 }
 
-pub fn show_migration_status(ctx: &WorkflowContext) -> Result<()> {
+pub async fn show_migration_status(ctx: &WorkflowContext) -> Result<()> {
     let output = ctx.output();
-    migration_status(&ctx.project_root, &ctx.config, &output)
+    migration_status(ctx, &output).await
+}
+
+pub fn seal_project_migration(ctx: &WorkflowContext) -> Result<()> {
+    let output = ctx.output();
+    match seal_draft_migration(&ctx.project_root, &ctx.config, &output)? {
+        Some(_) => Ok(()),
+        None => {
+            output.status("no draft migration to seal");
+            Ok(())
+        },
+    }
+}
+
+pub async fn retry_project_migration(ctx: &WorkflowContext, migration_id: String) -> Result<()> {
+    let output = ctx.output();
+    let environment = ctx.resolved_environment()?;
+    let client = build_workflow_client(ctx, &environment)?;
+    let mut state = load_server_migration_state(&client, &environment.namespace).await?;
+    let record = state.record(&migration_id).cloned().ok_or_else(|| {
+        CLIError::ConfigurationError(format!("migration record not found: {migration_id}"))
+    })?;
+    if record.status != MigrationStatus::Failed {
+        return Err(CLIError::ConfigurationError(format!(
+            "migration {migration_id} is not failed"
+        )));
+    }
+    state.upsert_applying(
+        &record.migration_id,
+        &record.namespace,
+        record.sql.as_deref().unwrap_or_default(),
+        record.source.as_deref().unwrap_or(&record.migration_id),
+    );
+    save_server_migration_record(&client, state.record(&migration_id).unwrap(), true).await?;
+    output.status(format!("queued migration {migration_id} for retry"));
+    Ok(())
+}
+
+pub async fn repair_project_migration_mark_applied(
+    ctx: &WorkflowContext,
+    migration_id: String,
+) -> Result<()> {
+    let output = ctx.output();
+    let environment = ctx.resolved_environment()?;
+    let client = build_workflow_client(ctx, &environment)?;
+    let mut state = load_server_migration_state(&client, &environment.namespace).await?;
+    if state.record(&migration_id).is_none() {
+        return Err(CLIError::ConfigurationError(format!(
+            "migration record not found: {migration_id}"
+        )));
+    }
+    state.mark_applied(&migration_id);
+    save_server_migration_record(&client, state.record(&migration_id).unwrap(), true).await?;
+    output.status(format!("marked migration {migration_id} as applied"));
+    Ok(())
 }
 
 pub async fn migrate_database(ctx: &WorkflowContext) -> Result<()> {
@@ -182,9 +241,9 @@ pub fn link_project(ctx: &WorkflowContext, options: LinkOptions) -> Result<()> {
     link_environment(ctx, &options, &output)
 }
 
-pub fn project_status(ctx: &WorkflowContext) -> Result<()> {
+pub async fn project_status(ctx: &WorkflowContext) -> Result<()> {
     let output = ctx.output();
-    show_status(ctx, &output)
+    show_status(ctx, &output).await
 }
 
 pub async fn deploy_project(ctx: &WorkflowContext, env: Option<String>) -> Result<()> {

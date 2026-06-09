@@ -233,22 +233,19 @@ async fn test_all_three_functions_together() {
     // current_user now returns user_id
     let current_user_col = batch.column(0);
     let current_user_array = current_user_col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     assert_eq!(current_user_array.value(0), "u_testuser");
 
     let user_id_col = batch.column(1);
     let user_id_array = user_id_col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     assert_eq!(user_id_array.value(0), "u_testuser");
 
     let role_col = batch.column(2);
     let role_array = role_col
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     assert_eq!(role_array.value(0), "dba");
 }
@@ -283,18 +280,15 @@ async fn test_context_function_execution_uses_rewritten_aliases() {
 
     let current_user_col = batches[0]
         .column(0)
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     let user_id_col = batches[0]
         .column(1)
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     let role_col = batches[0]
         .column(2)
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
 
     assert_eq!(current_user_col.value(0), "u_admin");

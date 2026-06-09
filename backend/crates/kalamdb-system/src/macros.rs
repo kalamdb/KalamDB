@@ -312,10 +312,6 @@ macro_rules! impl_indexed_system_table_provider {
 
         #[async_trait::async_trait]
         impl datafusion::datasource::TableProvider for $provider {
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
             fn schema(&self) -> datafusion::arrow::datatypes::SchemaRef {
                 let definition = Self::$definition_method();
                 (definition.schema)()
@@ -396,10 +392,6 @@ macro_rules! impl_simple_system_table_provider {
 
         #[async_trait::async_trait]
         impl datafusion::datasource::TableProvider for $provider {
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-
             fn schema(&self) -> datafusion::arrow::datatypes::SchemaRef {
                 let definition = Self::$definition_method();
                 (definition.schema)()

@@ -46,7 +46,7 @@ async fn users_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build users plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect users plan");
     assert_eq!(total_rows(&batches), 1);

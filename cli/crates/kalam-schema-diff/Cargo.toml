@@ -11,10 +11,8 @@ keywords = ["kalamdb", "schema", "migration", "sql"]
 categories = ["database"]
 
 [dependencies]
+sqlparser = { workspace = true }
 thiserror = { workspace = true }
-
-# Reserved for a future sqlparser-backed structural diff implementation.
-# sqlparser = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -324,15 +324,13 @@ mod tests {
 
         let job_ids = batches[0]
             .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
+            .as_any().downcast_ref::<StringArray>()
             .expect("job_id column should be Utf8");
         assert_eq!(job_ids.value(0), "UE-test-show-export");
 
         let job_types = batches[0]
             .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
+            .as_any().downcast_ref::<StringArray>()
             .expect("job_type column should be Utf8");
         assert_eq!(job_types.value(0), "user_export");
     }
@@ -397,8 +395,7 @@ mod tests {
 
         let download_urls = batches[0]
             .column(5)
-            .as_any()
-            .downcast_ref::<StringArray>()
+            .as_any().downcast_ref::<StringArray>()
             .expect("download_url column should be Utf8");
         assert_eq!(download_urls.value(0), "/v1/exports/alice/export-alice-2");
     }

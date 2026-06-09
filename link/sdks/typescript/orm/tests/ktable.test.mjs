@@ -1,11 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { sql } from 'drizzle-orm';
+import { PgDialect, text } from 'drizzle-orm/pg-core';
 import { getTableColumns } from 'drizzle-orm';
-import { text } from 'drizzle-orm/pg-core';
-import { getKalamTableConfig, kSystemColumns, kTable } from '../dist/index.js';
+import {
+  configureKalamOrm,
+  getKalamTableConfig,
+  kSystemColumns,
+  kTable,
+} from '../dist/index.js';
 
 describe('kTable', () => {
   it('preserves Drizzle table columns while attaching Kalam metadata', () => {
+    configureKalamOrm({});
     const orders = kTable.shared('app.orders', {
       id: text('id').notNull(),
       status: text('status'),
@@ -24,7 +31,25 @@ describe('kTable', () => {
     assert.deepEqual(config.systemColumns, []);
   });
 
+  it('applies the configured default namespace to unqualified table names', () => {
+    configureKalamOrm({ namespace: 'app' });
+    const orders = kTable.shared('orders', {
+      id: text('id').notNull(),
+    });
+    const config = getKalamTableConfig(orders);
+    const compiled = new PgDialect().sqlToQuery(sql`select * from ${orders}`.inlineParams());
+
+    assert.equal(config.qualifiedName, 'app.orders');
+    assert.equal(config.namespace, 'app');
+    assert.equal(config.name, 'orders');
+    assert.equal(config.tableId, 'app:orders');
+    assert.equal(compiled.sql, 'select * from "app"."orders"');
+
+    configureKalamOrm({});
+  });
+
   it('adds public MVCC system columns when requested', () => {
+    configureKalamOrm({});
     const messages = kTable.user('chat.messages', {
       id: text('id').notNull(),
       body: text('body'),
@@ -41,6 +66,7 @@ describe('kTable', () => {
   });
 
   it('uses stream-safe defaults for system columns', () => {
+    configureKalamOrm({});
     const events = kTable.stream('app.events', {
       id: text('id').notNull(),
     }, { systemColumns: true });
@@ -54,6 +80,7 @@ describe('kTable', () => {
   });
 
   it('keeps explicit system-column helper available for Drizzle-first schemas', () => {
+    configureKalamOrm({});
     const audit = kTable('app.audit', {
       ...kSystemColumns(),
       id: text('id').notNull(),
@@ -69,6 +96,7 @@ describe('kTable', () => {
   });
 
   it('preserves Drizzle extra config as the third argument', () => {
+    configureKalamOrm({});
     const table = kTable.shared('app.indexed', {
       id: text('id').notNull(),
     }, () => [], { systemColumns: true });

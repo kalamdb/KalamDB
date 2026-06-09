@@ -11,7 +11,7 @@
 //! UUIDv7 provides time-ordered UUIDs suitable for PRIMARY KEY columns
 //! while maintaining global uniqueness.
 
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},
@@ -58,10 +58,6 @@ impl Default for UuidV7Function {
 }
 
 impl ScalarUDFImpl for UuidV7Function {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "uuid_v7"
     }

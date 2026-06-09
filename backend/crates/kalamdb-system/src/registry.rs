@@ -20,11 +20,18 @@ use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 
 use super::providers::{
-    job_nodes::models::JobNode, jobs::models::Job, manifest::manifest_table_definition,
-    namespaces::models::Namespace, storages::models::Storage, tables::schemas_table_definition,
-    topic_offsets::models::TopicOffset, topics::models::Topic, users::models::User, AuditLogEntry,
-    AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider, ManifestTableProvider,
-    NamespacesTableProvider, SchemasTableProvider, StoragesTableProvider,
+    job_nodes::models::JobNode,
+    jobs::models::Job,
+    manifest::manifest_table_definition,
+    migrations::{models::Migration, MigrationsTableProvider},
+    namespaces::models::Namespace,
+    storages::models::Storage,
+    tables::schemas_table_definition,
+    topic_offsets::models::TopicOffset,
+    topics::models::Topic,
+    users::models::User,
+    AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
+    ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider, StoragesTableProvider,
     TopicOffsetsTableProvider, TopicsTableProvider, UsersTableProvider,
 };
 
@@ -48,6 +55,7 @@ pub struct SystemTablesRegistry {
     audit_logs: Arc<AuditLogsTableProvider>,
     topics: Arc<TopicsTableProvider>,
     topic_offsets: Arc<TopicOffsetsTableProvider>,
+    migrations: Arc<MigrationsTableProvider>,
     // ===== Manifest cache table =====
     manifest: Arc<ManifestTableProvider>,
 
@@ -77,6 +85,7 @@ impl SystemTablesRegistry {
             SystemTable::Manifest,
             SystemTable::Topics,
             SystemTable::TopicOffsets,
+            SystemTable::Migrations,
         ]
     }
 
@@ -109,6 +118,7 @@ impl SystemTablesRegistry {
             audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
             topics: Arc::new(TopicsTableProvider::new(storage_backend.clone())),
             topic_offsets: Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
+            migrations: Arc::new(MigrationsTableProvider::new(storage_backend.clone())),
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
@@ -140,6 +150,7 @@ impl SystemTablesRegistry {
                     (SystemTable::Manifest, manifest_table_definition()),
                     (SystemTable::Topics, Topic::definition()),
                     (SystemTable::TopicOffsets, TopicOffset::definition()),
+                    (SystemTable::Migrations, Migration::definition()),
                 ];
 
                 defs.into_iter().map(|(_, definition)| Arc::new(definition)).collect()
@@ -192,6 +203,11 @@ impl SystemTablesRegistry {
     /// Get the system.topic_offsets provider
     pub fn topic_offsets(&self) -> Arc<TopicOffsetsTableProvider> {
         self.topic_offsets.clone()
+    }
+
+    /// Get the system.migrations provider
+    pub fn migrations(&self) -> Arc<MigrationsTableProvider> {
+        self.migrations.clone()
     }
 
     /// Get the system.stats provider (virtual table)
@@ -277,6 +293,7 @@ impl SystemTablesRegistry {
             SystemTable::Manifest => Some(self.manifest.clone() as Arc<dyn TableProvider>),
             SystemTable::Topics => Some(self.topics.clone() as Arc<dyn TableProvider>),
             SystemTable::TopicOffsets => Some(self.topic_offsets.clone() as Arc<dyn TableProvider>),
+            SystemTable::Migrations => Some(self.migrations.clone() as Arc<dyn TableProvider>),
             _ => None,
         }
     }
@@ -316,6 +333,7 @@ impl SystemTablesRegistry {
             SystemTable::Manifest,
             SystemTable::Topics,
             SystemTable::TopicOffsets,
+            SystemTable::Migrations,
         ]
         .into_iter()
         .collect()

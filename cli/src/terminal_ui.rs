@@ -242,6 +242,11 @@ impl ProgressTasks {
         render_progress_tasks(&state.tasks, state.color)
     }
 
+    pub fn suspend<F: FnOnce() -> R, R>(&self, f: F) -> R {
+        let state = self.inner.lock().expect("progress task state");
+        state.multi.suspend(f)
+    }
+
     #[cfg(test)]
     fn new_hidden(color: bool) -> Self {
         Self::with_draw_target(color, ProgressDrawTarget::hidden())

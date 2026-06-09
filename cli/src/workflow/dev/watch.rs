@@ -10,10 +10,14 @@ use crate::{
     error::Result,
     output::WorkflowOutput,
     workflow::{
-        migration::apply::apply_pending_migrations,
+        migration::{
+            apply::{apply_pending_migrations, load_server_migration_state, ApplyMigrationOptions},
+            create::update_draft_migration,
+            list_migration_files, migration_filename, DRAFT_MIGRATION_FILE,
+        },
         project::config::{KalamProjectConfig, SchemaMode},
         schema::gen::{generate_schema_artifacts, GenerateOptions},
-        sql::{build_workflow_client, ensure_namespace_exists, execute_sql_file},
+        sql::build_workflow_client,
         WorkflowContext,
     },
 };
@@ -22,60 +26,62 @@ use crate::{
 pub const SCHEMA_WATCH_INTERVAL_SECS: u64 = 2;
 
 /// Run schema bootstrap, migrations, optional type generation, and baseline update.
-pub async fn run_schema_pipeline(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
+pub async fn run_schema_pipeline(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+    force: bool,
+) -> Result<()> {
     let config = &ctx.config;
     let project_root = &ctx.project_root;
+    let mut draft_updated = false;
 
     if config.dev.apply_schema {
-        apply_project_schema_to_server(ctx, output).await?;
-        apply_pending_migrations(ctx, output).await?;
+        if matches!(config.schema.mode, SchemaMode::Sql)
+            && !has_pending_numbered_migrations(ctx, output).await?
+        {
+            draft_updated = update_draft_migration(project_root, config, output)?.is_some();
+        }
+        apply_pending_migrations(ctx, output, &ApplyMigrationOptions::dev(force)).await?;
     }
 
     if config.dev.generate_types {
         generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
     }
 
-    update_schema_baseline(project_root, config)?;
+    let draft_still_pending =
+        draft_updated && config.migrations_dir(project_root).join(DRAFT_MIGRATION_FILE).is_file();
+
+    if draft_still_pending {
+        output.progress_detail(
+            "schema",
+            "schema draft is pending; baseline will update after the draft is sealed and applied",
+        );
+    } else {
+        update_schema_baseline(project_root, config, output)?;
+    }
     Ok(())
 }
 
-async fn apply_project_schema_to_server(
+async fn has_pending_numbered_migrations(
     ctx: &WorkflowContext,
-    output: &WorkflowOutput,
-) -> Result<()> {
-    if !matches!(ctx.config.schema.mode, SchemaMode::Sql) {
-        return Ok(());
-    }
-
-    let Some(schema_path) = ctx.config.schema_source_path(&ctx.project_root) else {
-        return Ok(());
-    };
-    if !schema_path.is_file() {
-        return Ok(());
-    }
-
+    _output: &WorkflowOutput,
+) -> Result<bool> {
     let environment = ctx.resolved_environment()?;
     let client = build_workflow_client(ctx, &environment)?;
-    ensure_namespace_exists(&client, &environment.namespace, output).await?;
-    let executed = execute_sql_file(
-        &client,
-        &schema_path,
-        Some(&environment.namespace),
-        output,
-        "executing schema file",
-    )
-    .await?;
-    output.status(format!(
-        "applied {} statement(s) from {} to {}",
-        executed,
-        schema_path.display(),
-        environment.namespace
-    ));
-    Ok(())
+    let state = load_server_migration_state(&client, &environment.namespace).await?;
+    let migrations_dir = ctx.config.migrations_dir(&ctx.project_root);
+    Ok(list_migration_files(&migrations_dir)?
+        .iter()
+        .map(|path| migration_filename(path))
+        .any(|filename| !state.is_applied(&filename)))
 }
 
 /// Copy the active schema source into `kalam/.schema-baseline.sql`.
-pub fn update_schema_baseline(project_root: &Path, config: &KalamProjectConfig) -> Result<()> {
+pub fn update_schema_baseline(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+    output: &WorkflowOutput,
+) -> Result<()> {
     let Some(source) = config.schema_source_path(project_root) else {
         return Ok(());
     };
@@ -88,6 +94,14 @@ pub fn update_schema_baseline(project_root: &Path, config: &KalamProjectConfig) 
         fs::create_dir_all(parent)?;
     }
     fs::copy(&source, &baseline)?;
+    output.progress_detail(
+        "schema",
+        format!(
+            "updated schema baseline {} from {}",
+            display_project_relative_path(project_root, &baseline),
+            display_project_relative_path(project_root, &source)
+        ),
+    );
     Ok(())
 }
 
@@ -110,6 +124,10 @@ pub fn schema_file_changed(path: &Path, previous: Option<SystemTime>) -> bool {
     current != previous
 }
 
+fn display_project_relative_path(project_root: &Path, path: &Path) -> String {
+    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +147,7 @@ mod tests {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([(
                 "dev".into(),
@@ -167,7 +186,8 @@ mod tests {
         fs::write(root.join("schema.sql"), "CREATE TABLE t (id INT);").unwrap();
         let config = sample_config();
 
-        update_schema_baseline(root, &config).unwrap();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        update_schema_baseline(root, &config, &output).unwrap();
 
         let baseline = config.schema_baseline_path(root);
         assert!(baseline.is_file());
@@ -209,7 +229,7 @@ mod tests {
         };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(run_schema_pipeline(&ctx, &output)).unwrap();
+        runtime.block_on(run_schema_pipeline(&ctx, &output, true)).unwrap();
         assert!(ctx.config.schema_baseline_path(root).is_file());
     }
 
@@ -229,5 +249,13 @@ INSERT INTO users VALUES ('hello;world');
         assert_eq!(statements.len(), 2);
         assert!(statements[0].contains("CREATE TABLE users"));
         assert!(statements[1].contains("'hello;world'"));
+    }
+
+    #[test]
+    fn display_project_relative_path_prefers_project_relative_output() {
+        let root = Path::new("/tmp/demo");
+        let path = root.join("kalam/.schema-baseline.sql");
+
+        assert_eq!(super::display_project_relative_path(root, &path), "kalam/.schema-baseline.sql");
     }
 }

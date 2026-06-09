@@ -4,11 +4,12 @@ use crate::{
     error::Result,
     output::WorkflowOutput,
     workflow::{
-        migration::{list_migration_files, MigrationState},
+        migration::{apply::load_server_migration_state, list_migration_files},
         project::{
             config::SchemaMode,
             resolve::{ResolutionSource, ResolvedEnvironment},
         },
+        sql::build_workflow_client,
         WorkflowContext,
     },
 };
@@ -24,10 +25,11 @@ pub struct ProjectStatus {
     pub total_migrations: usize,
 }
 
-pub fn collect_status(ctx: &WorkflowContext) -> Result<ProjectStatus> {
+pub async fn collect_status(ctx: &WorkflowContext) -> Result<ProjectStatus> {
     let environment = ctx.resolved_environment()?;
     let migrations_dir = ctx.config.migrations_dir(&ctx.project_root);
-    let state = MigrationState::load(&migrations_dir)?;
+    let client = build_workflow_client(ctx, &environment)?;
+    let state = load_server_migration_state(&client, &environment.namespace).await?;
     let files = list_migration_files(&migrations_dir)?;
 
     let applied = files
@@ -52,8 +54,8 @@ pub fn collect_status(ctx: &WorkflowContext) -> Result<ProjectStatus> {
     })
 }
 
-pub fn show_status(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
-    let status = collect_status(ctx)?;
+pub async fn show_status(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
+    let status = collect_status(ctx).await?;
 
     output.status(format!("project: {}", status.project_name));
     output.detail(format!(
