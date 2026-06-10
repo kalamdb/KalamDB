@@ -25,6 +25,7 @@ use crate::{
             },
             watch::schema_watch_path,
         },
+        display_project_path,
         project::config::SchemaMode,
         project::resolve::{
             credential_instance_for_env, resolve_kalam_profile, ResolvedEnvironment,
@@ -67,7 +68,10 @@ pub async fn run_dev_prechecks(
     if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
         output.service_log(
             server_source,
-            format!("precheck: schema watch enabled for {}", path.display()),
+            format!(
+                "precheck: schema watch enabled for {}",
+                display_project_path(&ctx.project_root, &path)
+            ),
         );
     } else {
         output.service_log(server_source, "precheck: schema watch disabled");
@@ -131,12 +135,17 @@ fn ensure_schema_source(
     if !path.is_file() {
         return Err(CLIError::ConfigurationError(format!(
             "precheck failed: schema source missing at {}",
-            path.display()
+            display_project_path(&ctx.project_root, &path)
         )));
     }
 
-    output
-        .service_log(server_source, format!("precheck: schema source found at {}", path.display()));
+    output.service_log(
+        server_source,
+        format!(
+            "precheck: schema source found at {}",
+            display_project_path(&ctx.project_root, &path)
+        ),
+    );
     output.progress_task("schema-source", ProgressTaskStatus::Succeeded, "Schema source found");
     Ok(())
 }
@@ -156,7 +165,7 @@ fn ensure_generated_targets(
         let parent = output_path.parent().ok_or_else(|| {
             CLIError::ConfigurationError(format!(
                 "precheck failed: invalid schema target output '{}'",
-                output_path.display()
+                display_project_path(&ctx.project_root, &output_path)
             ))
         })?;
         fs::create_dir_all(parent).map_err(|error| {
@@ -167,7 +176,10 @@ fn ensure_generated_targets(
         })?;
         output.service_log(
             server_source,
-            format!("precheck: target directory ready at {}", parent.display()),
+            format!(
+                "precheck: target directory ready at {}",
+                display_project_path(&ctx.project_root, parent)
+            ),
         );
         ready_count += 1;
     }
@@ -188,17 +200,20 @@ fn ensure_migrations_dir(
     fs::create_dir_all(&migrations_dir).map_err(|error| {
         CLIError::FileError(format!(
             "precheck failed: could not create migrations directory '{}': {error}",
-            migrations_dir.display()
+            display_project_path(&ctx.project_root, &migrations_dir)
         ))
     })?;
     output.service_log(
         server_source,
-        format!("precheck: migrations directory ready at {}", migrations_dir.display()),
+        format!(
+            "precheck: migrations directory ready at {}",
+            display_project_path(&ctx.project_root, &migrations_dir)
+        ),
     );
     output.progress_task(
         "migrations-dir",
         ProgressTaskStatus::Succeeded,
-        migrations_ready_message(&migrations_dir),
+        migrations_ready_message(&ctx.project_root, &migrations_dir),
     );
     Ok(())
 }
@@ -211,7 +226,10 @@ fn ensure_kalam_gitignore(
     let gitignore_path = ctx.config.ensure_kalam_gitignore(&ctx.project_root)?;
     output.service_log(
         server_source,
-        format!("precheck: KalamDB state .gitignore ready at {}", gitignore_path.display()),
+        format!(
+            "precheck: KalamDB state .gitignore ready at {}",
+            display_project_path(&ctx.project_root, &gitignore_path)
+        ),
     );
     Ok(())
 }
@@ -224,7 +242,10 @@ fn ensure_cli_log_dir(
     let log_dir = ctx.config.ensure_cli_log_dir(&ctx.project_root)?;
     output.service_log(
         server_source,
-        format!("precheck: KalamDB CLI log directory ready at {}", log_dir.display()),
+        format!(
+            "precheck: KalamDB CLI log directory ready at {}",
+            display_project_path(&ctx.project_root, &log_dir)
+        ),
     );
     Ok(())
 }
@@ -443,12 +464,18 @@ fn auth_guidance_message(project_root: &Path, profile: Option<&str>, detail: &st
 
     format!(
         "authentication failed: {detail}. Edit {} and set `KALAM_PROFILE={profile_name}` to a CLI-saved profile, or run `kalam login --instance {profile_name}` and then update `.env` to use that profile",
-        env_path.display()
+        display_project_path(project_root, &env_path)
     )
 }
 
-fn migrations_ready_message(migrations_dir: &std::path::Path) -> String {
-    format!("Migrations directory ready at {}", migrations_dir.display())
+fn migrations_ready_message(
+    project_root: &std::path::Path,
+    migrations_dir: &std::path::Path,
+) -> String {
+    format!(
+        "Migrations directory ready at {}",
+        display_project_path(project_root, migrations_dir)
+    )
 }
 
 #[cfg(test)]
@@ -466,8 +493,11 @@ mod tests {
 
     #[test]
     fn migrations_ready_message_includes_folder() {
-        let message = migrations_ready_message(std::path::Path::new("/tmp/app/kalam/migrations"));
-        assert_eq!(message, "Migrations directory ready at /tmp/app/kalam/migrations");
+        let message = migrations_ready_message(
+            std::path::Path::new("/tmp/app"),
+            std::path::Path::new("/tmp/app/kalam/migrations"),
+        );
+        assert_eq!(message, "Migrations directory ready at kalam/migrations");
     }
 
     #[test]

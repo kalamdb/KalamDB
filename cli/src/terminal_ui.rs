@@ -242,6 +242,25 @@ impl ProgressTasks {
         render_progress_tasks(&state.tasks, state.color)
     }
 
+    /// Remove all detail bars for a task and clear the task's detail list.
+    /// Call this before a state transition so stale detail lines from a
+    /// previous phase do not carry over into the next one.
+    pub fn clear_task_details(&self, id: &str) {
+        let mut state = self.inner.lock().expect("progress task state");
+        if let Some(task) = state.tasks.iter_mut().find(|t| t.id == id) {
+            task.details.clear();
+        }
+        if let Some(bars_index) = state.bars.iter().position(|b| b.id == id) {
+            while let Some(bar) = state.bars[bars_index].details.pop_front() {
+                // Remove from MultiProgress entirely so it does not leave a
+                // "ghost" empty slot that would push subsequent detail lines
+                // (including the "Apply? [y/N]:" prompt) off-screen on the
+                // second and subsequent draft-prompt cycles.
+                state.multi.remove(&bar);
+            }
+        }
+    }
+
     pub fn suspend<F: FnOnce() -> R, R>(&self, f: F) -> R {
         let state = self.inner.lock().expect("progress task state");
         state.multi.suspend(f)
@@ -308,6 +327,9 @@ fn sync_progress_task_bar(state: &mut ProgressTasksState, id: &str) {
     let bar = &state.bars[bars_index].bar;
     match task_snapshot.status {
         ProgressTaskStatus::Running => {
+            if bar.is_finished() {
+                bar.reset();
+            }
             bar.set_style(running_progress_style());
             bar.set_message(task_snapshot.message);
             bar.enable_steady_tick(Duration::from_millis(SPINNER_TICK_INTERVAL_MS));
@@ -328,7 +350,7 @@ fn sync_progress_task_detail_bars(state: &mut ProgressTasksState, id: &str, max_
 
     while state.bars[bars_index].details.len() > max_details {
         if let Some(bar) = state.bars[bars_index].details.pop_front() {
-            bar.finish_and_clear();
+            state.multi.remove(&bar);
         }
     }
 

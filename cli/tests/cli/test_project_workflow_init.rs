@@ -169,3 +169,79 @@ fn test_project_workflow_init_preserves_existing_gitignore() {
         fs::read_to_string(project_dir.join(".gitignore")).expect("read generated .gitignore");
     assert_eq!(gitignore, "custom-ignore\n");
 }
+
+fn create_local_only_cli_command() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd.env("KALAM_TEST_SKIP_PACKAGE_INSTALL", "1");
+    cmd
+}
+
+#[test]
+fn test_project_workflow_dev_requires_kalam_toml() {
+    let temp = TempDir::new().expect("temp dir");
+    let project_dir = temp.path().join("uninitialized");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let mut cmd = create_local_only_cli_command();
+    cmd.current_dir(&project_dir).args(["dev"]);
+
+    let output = cmd.output().expect("run dev");
+    assert!(!output.status.success(), "dev should fail without kalam.toml");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("kalam.toml is missing"),
+        "stderr should mention missing kalam.toml\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("kalam init"),
+        "stderr should suggest kalam init\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_project_workflow_dev_rejects_invalid_kalam_toml() {
+    let temp = TempDir::new().expect("temp dir");
+    let project_dir = temp.path().join("broken-config");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    fs::write(
+        project_dir.join("kalam.toml"),
+        r#"
+[project]
+name = "test1"
+default_env = "dev"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "test1"
+
+[schema]
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#,
+    )
+    .expect("write kalam.toml");
+
+    let mut cmd = create_local_only_cli_command();
+    cmd.current_dir(&project_dir).args(["dev"]);
+
+    let output = cmd.output().expect("run dev");
+    assert!(!output.status.success(), "dev should fail for invalid kalam.toml");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to parse kalam.toml"),
+        "stderr should describe parse failure\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("kalam init"),
+        "stderr should suggest kalam init\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("missing field `mode`"),
+        "stderr should include underlying parse error\nstderr: {stderr}"
+    );
+}

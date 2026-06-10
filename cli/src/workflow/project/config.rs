@@ -12,6 +12,22 @@ use crate::error::{CLIError, Result};
 
 pub const KALAM_TOML: &str = "kalam.toml";
 
+/// User-facing message when a workflow command runs outside an initialized project.
+pub fn missing_kalam_toml_message(location: &str) -> String {
+    format!(
+        "kalam.toml is missing in '{}'. Run `kalam init` to scaffold a new KalamDB project.",
+        location
+    )
+}
+
+fn invalid_kalam_toml_message(path: &Path, err: &toml::de::Error) -> String {
+    format!(
+        "failed to parse kalam.toml at '{}': {}\nRun `kalam init` to create a valid project configuration, or fix the existing kalam.toml.",
+        path.display(),
+        err
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KalamProjectConfig {
     pub project: ProjectSection,
@@ -145,10 +161,8 @@ impl KalamProjectConfig {
 
         let config_path = root.join(KALAM_TOML);
         if !config_path.is_file() {
-            return Err(CLIError::ConfigurationError(format!(
-                "no {} found in project root '{}'",
-                KALAM_TOML,
-                root.display()
+            return Err(CLIError::ConfigurationError(missing_kalam_toml_message(
+                &root.display().to_string(),
             )));
         }
 
@@ -158,13 +172,26 @@ impl KalamProjectConfig {
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return CLIError::ConfigurationError(missing_kalam_toml_message(
+                    &path.display().to_string(),
+                ));
+            }
             CLIError::ConfigurationError(format!("failed to read '{}': {}", path.display(), e))
         })?;
-        Self::parse(&contents)
+        let config: Self = toml::from_str(&contents)
+            .map_err(|err| CLIError::ConfigurationError(invalid_kalam_toml_message(path, &err)))?;
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn parse(contents: &str) -> Result<Self> {
-        let config: Self = toml::from_str(contents)?;
+        let config: Self = toml::from_str(contents).map_err(|err| {
+            CLIError::ConfigurationError(format!(
+                "failed to parse kalam.toml: {}\nRun `kalam init` to create a valid project configuration, or fix the existing kalam.toml.",
+                err
+            ))
+        })?;
         config.validate()?;
         Ok(config)
     }
@@ -336,10 +363,8 @@ fn discover_project_root(start: &Path) -> Result<PathBuf> {
         }
     }
 
-    Err(CLIError::ConfigurationError(format!(
-        "could not find {} walking up from '{}'",
-        KALAM_TOML,
-        start.display()
+    Err(CLIError::ConfigurationError(missing_kalam_toml_message(
+        &start.display().to_string(),
     )))
 }
 
@@ -395,6 +420,36 @@ output = "src/generated/kalam.ts"
         assert_eq!(config.workflow_log_path(root), root.join("db/cli/logs/kalam.log"));
         assert_eq!(config.schema_baseline_path(root), root.join("db/.schema-baseline.sql"));
         assert_eq!(config.local_server_config_path(root), root.join("db/server/server.toml"));
+    }
+
+    #[test]
+    fn missing_kalam_toml_message_includes_init_hint() {
+        let message = missing_kalam_toml_message("/tmp/demo");
+        assert!(message.contains("kalam.toml is missing"));
+        assert!(message.contains("kalam init"));
+    }
+
+    #[test]
+    fn parse_reports_invalid_kalam_toml_with_init_hint() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[schema]
+path = "schema.sql"
+"#;
+        let err = KalamProjectConfig::parse(toml).unwrap_err().to_string();
+        assert!(err.contains("failed to parse kalam.toml"));
+        assert!(err.contains("kalam init"));
+        assert!(err.contains("missing field `mode`"));
+    }
+
+    #[test]
+    fn discover_reports_missing_kalam_toml_with_init_hint() {
+        let temp = TempDir::new().unwrap();
+        let err = KalamProjectConfig::discover(temp.path(), None).unwrap_err().to_string();
+        assert!(err.contains("kalam.toml is missing"));
+        assert!(err.contains("kalam init"));
     }
 
     #[test]

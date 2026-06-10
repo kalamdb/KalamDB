@@ -4,7 +4,7 @@ use crate::common::*;
 use tempfile::TempDir;
 
 #[test]
-fn test_project_workflow_deploy_blocks_uncommitted_schema_on_prod() {
+fn test_project_workflow_deploy_is_not_supported_on_prod() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = temp.path().join("guardrails-app");
     fs::create_dir_all(&project_dir).expect("create project dir");
@@ -48,12 +48,12 @@ fn test_project_workflow_deploy_blocks_uncommitted_schema_on_prod() {
     let deploy_output = deploy_cmd.output().expect("deploy");
     assert!(
         !deploy_output.status.success(),
-        "prod deploy should block uncommitted schema drift"
+        "prod deploy should fail until rollout support ships"
     );
 
     let stderr = String::from_utf8_lossy(&deploy_output.stderr);
     assert!(
-        stderr.contains("committed migration") || stderr.contains("schema changes"),
-        "expected committed migration guardrail\nstderr: {stderr}"
+        stderr.contains("not supported"),
+        "expected deploy unsupported message\nstderr: {stderr}"
     );
 }

@@ -44,25 +44,21 @@ fn test_project_workflow_deploy_help_surface() {
 }
 
 #[test]
-fn test_project_workflow_deploy_fails_with_pending_migrations() {
+fn test_project_workflow_deploy_is_not_supported_yet() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = scaffold_sql_project(&temp);
-
-    let mut create_cmd = create_cli_command();
-    create_cmd.current_dir(&project_dir).args(["migration", "create", "initial"]);
-    assert!(create_cmd.output().expect("create migration").status.success());
 
     let mut deploy_cmd = create_cli_command();
     deploy_cmd.current_dir(&project_dir).args(["deploy", "--env", "dev"]);
     let deploy_output = deploy_cmd.output().expect("deploy");
     assert!(
         !deploy_output.status.success(),
-        "deploy should fail when migrations are pending"
+        "deploy should fail until rollout support ships"
     );
 
     let stderr = String::from_utf8_lossy(&deploy_output.stderr);
     assert!(
-        stderr.contains("pending migration"),
-        "expected pending migration guardrail\nstderr: {stderr}"
+        stderr.contains("not supported"),
+        "expected deploy unsupported message\nstderr: {stderr}"
     );
 }

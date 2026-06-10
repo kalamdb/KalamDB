@@ -164,10 +164,8 @@ async fn handle_dev(cli: &Cli, args: &DevArgs) -> Result<()> {
     )?;
     let display_mode = if cli.verbose {
         WorkflowDisplayMode::Verbose
-    } else if args.progress {
-        WorkflowDisplayMode::Progress
     } else {
-        WorkflowDisplayMode::Progress
+        WorkflowDisplayMode::Normal
     };
     workflow::run_dev(&ctx, args.force, display_mode).await
 }

@@ -479,18 +479,22 @@ fn write_project_scaffold(
         write_typescript_starter(root, &config.project.name, server_url, output)?;
     }
 
+    let default_profile =
+        crate::workflow::project::resolve::credential_instance_for_env(&config.project.default_env);
+    let env_template = format!(
+        "# KalamDB CLI profile used by kalam dev/deploy\n# kalam dev fills this automatically for managed local servers; use kalam login for remote servers.\nKALAM_PROFILE={default_profile}\n"
+    );
+
     let env_file = root.join(".env");
     if !env_file.exists() {
-        let default_profile = crate::workflow::project::resolve::credential_instance_for_env(
-            &config.project.default_env,
-        );
-        fs::write(
-            &env_file,
-            format!(
-                "# KalamDB CLI profile used by kalam dev/deploy\n# kalam dev fills this automatically for managed local servers; use kalam login for remote servers.\nKALAM_PROFILE={default_profile}\n"
-            ),
-        )?;
+        fs::write(&env_file, &env_template)?;
         output.detail("created .env");
+    }
+
+    let env_example = root.join(".env.example");
+    if !env_example.exists() {
+        fs::write(&env_example, env_template)?;
+        output.detail("created .env.example");
     }
 
     Ok(())

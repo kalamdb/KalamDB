@@ -9,9 +9,10 @@ use crate::{
     output::WorkflowOutput,
     sql_batch,
     workflow::{
+        display_project_path,
         migration::{list_migration_files, migration_filename, DRAFT_MIGRATION_FILE},
         project::config::KalamProjectConfig,
-        schema::diff::diff_project_schema_files,
+        schema::diff::{diff_project_schema_files, diff_project_schema_files_for_draft},
     },
 };
 
@@ -40,7 +41,7 @@ pub fn create_migration(
         )));
     }
 
-    let statements = build_migration_statements(project_root, config)?;
+    let statements = build_migration_statements(project_root, config, false)?;
     let contents = format!(
         "-- Migration: {name}\n-- Created: {}\n\n-- UP\n{}\n\n-- DOWN\n{}\n",
         Utc::now().to_rfc3339(),
@@ -76,7 +77,7 @@ pub fn update_draft_migration(
         ),
     );
 
-    let statements = build_migration_statements(project_root, config)?;
+    let statements = build_migration_statements(project_root, config, true)?;
     let migrations_dir = config.migrations_dir(project_root);
     let draft_path = migrations_dir.join(DRAFT_MIGRATION_FILE);
     if !has_executable_sql(&statements.up)? {
@@ -190,6 +191,7 @@ fn sanitize_migration_name(name: &str) -> Result<String> {
 fn build_migration_statements(
     project_root: &Path,
     config: &KalamProjectConfig,
+    for_draft: bool,
 ) -> Result<kalam_schema_diff::MigrationStatements> {
     let after_path = config.schema_source_path(project_root).ok_or_else(|| {
         CLIError::ConfigurationError("schema source path is required to create migrations".into())
@@ -203,7 +205,11 @@ fn build_migration_statements(
     }
 
     let before_path = config.schema_baseline_path(project_root);
-    diff_project_schema_files(&before_path, &after_path)
+    if for_draft {
+        diff_project_schema_files_for_draft(&before_path, &after_path)
+    } else {
+        diff_project_schema_files(&before_path, &after_path)
+    }
 }
 
 fn next_migration_number(migrations_dir: &Path) -> Result<u32> {
@@ -231,7 +237,7 @@ fn extract_between_markers(sql: &str, start_marker: &str, end_marker: &str) -> O
 }
 
 fn display_project_relative_path(project_root: &Path, path: &Path) -> String {
-    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+    display_project_path(project_root, path)
 }
 
 fn find_marker_line_end(sql: &str, marker: &str) -> Option<usize> {

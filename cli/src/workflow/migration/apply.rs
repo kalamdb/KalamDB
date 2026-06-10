@@ -14,6 +14,7 @@ use crate::{
     output::WorkflowOutput,
     terminal_ui::{self, ProgressTaskStatus},
     workflow::{
+        display_project_path,
         migration::{
             checksum_sql, create::seal_draft_migration, list_apply_migration_files,
             migration_filename, MigrationRecord, MigrationState, MigrationStatus,
@@ -42,6 +43,22 @@ impl ApplyMigrationOptions {
             force,
             confirm_pending: !force,
             include_draft: !force,
+        }
+    }
+
+    pub fn dev_watch() -> Self {
+        Self {
+            force: false,
+            confirm_pending: true,
+            include_draft: false,
+        }
+    }
+
+    pub fn dev_confirmed_draft() -> Self {
+        Self {
+            force: true,
+            confirm_pending: false,
+            include_draft: true,
         }
     }
 
@@ -115,7 +132,10 @@ pub async fn apply_pending_migrations(
     for path in pending {
         let filename = migration_filename(&path);
         let sql = fs::read_to_string(&path).map_err(|e| {
-            CLIError::FileError(format!("failed to read migration '{}': {e}", path.display()))
+            CLIError::FileError(format!(
+                "failed to read migration '{}': {e}",
+                display_project_path(&ctx.project_root, &path)
+            ))
         })?;
 
         let up_section = extract_up_section(&sql);
@@ -129,7 +149,10 @@ pub async fn apply_pending_migrations(
             save_server_migration_record(&client, state.record(&filename).unwrap(), true).await?;
             return Err(error);
         }
-        output.status(format!("applying migration {}", path.display()));
+        output.status(format!(
+            "applying migration {}",
+            display_project_path(&ctx.project_root, &path)
+        ));
         let result = execute_sql_batch(
             &client,
             &up_section,
@@ -690,6 +713,24 @@ mod tests {
         let decision = confirm_pending_migrations(&[], true, &output, &options).unwrap();
 
         assert_eq!(decision, PendingMigrationDecision::Skip);
+    }
+
+    #[test]
+    fn dev_watch_options_leave_draft_for_dev_prompt_manager() {
+        let options = ApplyMigrationOptions::dev_watch();
+
+        assert!(!options.force);
+        assert!(options.confirm_pending);
+        assert!(!options.include_draft);
+    }
+
+    #[test]
+    fn dev_confirmed_draft_options_apply_draft_without_prompting_again() {
+        let options = ApplyMigrationOptions::dev_confirmed_draft();
+
+        assert!(options.force);
+        assert!(!options.confirm_pending);
+        assert!(options.include_draft);
     }
 
     #[test]

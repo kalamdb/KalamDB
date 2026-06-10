@@ -1,5 +1,8 @@
 //! `kalam deploy` workflow with migration guardrails.
 
+pub const DEPLOY_NOT_SUPPORTED_MESSAGE: &str =
+    "kalam deploy is not supported yet; use `kalam db migrate` and your own rollout process";
+
 pub mod health;
 pub mod rollout;
 
@@ -9,11 +12,7 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
-        deploy::{health::check_deploy_health, rollout::run_rollout},
-        migration::{
-            apply::{apply_pending_migrations, ApplyMigrationOptions},
-            list_migration_files,
-        },
+        migration::list_migration_files,
         project::config::{KalamProjectConfig, SchemaMode},
         schema::diff::diff_project_schema_files,
         WorkflowContext,
@@ -24,25 +23,11 @@ pub struct DeployOptions {
     pub env: Option<String>,
 }
 
-pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Result<()> {
-    let output = ctx.output();
-    let env = ctx.resolved_environment()?;
-    let target_env = options.env.as_deref().unwrap_or(env.name.as_str());
-
-    output.status(format!("starting deploy to '{target_env}'"));
-
-    validate_deploy_readiness(&ctx.project_root, &ctx.config, target_env, &output)?;
-
-    apply_pending_migrations(ctx, &output, &ApplyMigrationOptions::db_migrate()).await?;
-
-    run_rollout(&ctx.project_root, &ctx.config, target_env, &output)?;
-
-    check_deploy_health(&env.url, &output).await?;
-
-    output.status(format!("deploy to '{target_env}' succeeded"));
-    Ok(())
+pub async fn run_deploy(_ctx: &WorkflowContext, _options: &DeployOptions) -> Result<()> {
+    Err(CLIError::ConfigurationError(DEPLOY_NOT_SUPPORTED_MESSAGE.into()))
 }
 
+#[allow(dead_code)]
 pub fn validate_deploy_readiness(
     project_root: &Path,
     config: &KalamProjectConfig,
@@ -127,12 +112,9 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    use crate::{
-        config::WorkflowLoggingPolicy,
-        workflow::project::config::{
-            ConnectionEnv, DevSection, LoggingSection, MigrationsSection, ProjectSection,
-            SchemaMode, SchemaSection, SchemaTarget,
-        },
+    use crate::workflow::project::config::{
+        ConnectionEnv, DevSection, LoggingSection, MigrationsSection, ProjectSection, SchemaMode,
+        SchemaSection, SchemaTarget,
     };
 
     fn sample_config() -> KalamProjectConfig {
@@ -170,17 +152,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn blocks_deploy_when_pending_migrations_exist() {
+    #[tokio::test]
+    async fn deploy_is_not_supported_yet() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
-        let config = sample_config();
-        let migrations_dir = config.migrations_dir(root);
-        std::fs::create_dir_all(&migrations_dir).unwrap();
-        std::fs::write(migrations_dir.join("20250101120000_init.sql"), "-- UP\n-- DOWN\n").unwrap();
+        let ctx = WorkflowContext {
+            project_root: root.to_path_buf(),
+            config: sample_config(),
+            cli_config: crate::config::CLIConfiguration::default(),
+            use_color: false,
+            project_dir: None,
+            env_override: None,
+            namespace_override: None,
+            url_override: None,
+        };
 
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        let err = validate_deploy_readiness(root, &config, "prod", &output).unwrap_err();
-        assert!(err.to_string().contains("pending migration"));
+        let err = run_deploy(
+            &ctx,
+            &DeployOptions {
+                env: Some("prod".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("not supported"));
     }
 }

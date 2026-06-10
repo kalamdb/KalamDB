@@ -8,7 +8,7 @@ pub mod project;
 pub mod schema;
 pub(crate) mod sql;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     config::{CLIConfiguration, WorkflowLoggingPolicy},
@@ -37,6 +37,10 @@ use crate::{
         sql::build_workflow_client,
     },
 };
+
+pub(crate) fn display_project_path(project_root: &Path, path: &Path) -> String {
+    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+}
 
 /// Shared workflow context for command handlers.
 #[derive(Debug, Clone)]
@@ -120,7 +124,10 @@ pub fn pull_schema(ctx: &WorkflowContext) -> Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&path, sql)?;
-        output.status(format!("pulled schema into {}", path.display()));
+        output.status(format!(
+            "pulled schema into {}",
+            display_project_path(&ctx.project_root, &path)
+        ));
     }
 
     Ok(())

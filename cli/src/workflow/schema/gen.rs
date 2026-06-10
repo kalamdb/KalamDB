@@ -80,7 +80,7 @@ fn generate_typescript_via_orm(
     let mut command = Command::new(resolve_node_binary());
     command
         .current_dir(&ctx.project_root)
-        .arg("--input-type=module")
+        .args(node_codegen_args())
         .arg("-e")
         .arg(ORM_CODEGEN_SCRIPT)
         .env("KALAM_SCHEMA_URL", &environment.url)
@@ -159,6 +159,10 @@ fn write_dart_placeholder(output_path: &Path) -> Result<()> {
 
 fn resolve_node_binary() -> &'static str {
     "node"
+}
+
+fn node_codegen_args() -> &'static [&'static str] {
+    &["--preserve-symlinks", "--input-type=module"]
 }
 
 enum OrmCodegenAuth {
@@ -262,4 +266,14 @@ pub fn validate_language_filter(
         }
     }
     Ok(requested.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_codegen_args_preserve_project_symlink_resolution() {
+        assert!(node_codegen_args().contains(&"--preserve-symlinks"));
+    }
 }

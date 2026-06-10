@@ -4414,6 +4414,27 @@ pub fn create_cli_command() -> assert_cmd::Command {
     cmd
 }
 
+const WORKFLOW_URL_ENV_VARS: &[&str] = &[
+    "KALAM_URL",
+    "KALAMDB_URL",
+    "KALAMDB_SERVER_URL",
+    "KALAM_NAMESPACE",
+];
+
+/// Clear process-wide URL overrides so workflow commands use `kalam.toml`.
+pub fn clear_workflow_url_env_overrides(cmd: &mut std::process::Command) {
+    for key in WORKFLOW_URL_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
+
+/// Clear process-wide URL overrides on an `assert_cmd` command.
+pub fn clear_workflow_url_env_overrides_assert_cmd(cmd: &mut assert_cmd::Command) {
+    for key in WORKFLOW_URL_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
+
 /// Spawnable std::process::Command with the same test isolation as `create_cli_command`.
 pub fn create_cli_std_command() -> std::process::Command {
     if is_server_reachable() {

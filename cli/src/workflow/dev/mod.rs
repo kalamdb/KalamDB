@@ -1,3 +1,4 @@
+pub mod draft_prompt;
 pub mod logs;
 pub mod orchestrator;
 pub mod precheck;

@@ -52,6 +52,22 @@ pub(crate) async fn ensure_namespace_exists(
     Ok(())
 }
 
+pub(crate) async fn drop_namespace_if_exists(
+    client: &KalamLinkClient,
+    namespace: &str,
+) -> Result<()> {
+    let sql = format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE");
+    execute_single_statement(client, &sql, None, "namespace reset").await
+}
+
+pub(crate) async fn reset_namespace_migration_state(
+    client: &KalamLinkClient,
+    namespace: &str,
+) -> Result<()> {
+    let sql = format!("DELETE FROM system.migrations WHERE namespace = {}", sql_string(namespace));
+    execute_single_statement(client, &sql, None, "migration state reset").await
+}
+
 pub(crate) async fn execute_sql_file(
     client: &KalamLinkClient,
     path: &Path,
@@ -130,6 +146,10 @@ fn summarize_sql(statement: &str) -> String {
     } else {
         format!("{}...", &normalized[..MAX_LEN])
     }
+}
+
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 pub(crate) fn resolve_workflow_auth_provider(

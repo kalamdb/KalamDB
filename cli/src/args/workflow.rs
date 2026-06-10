@@ -102,7 +102,7 @@ pub struct DevArgs {
     #[arg(long = "force")]
     pub force: bool,
 
-    /// Show compact human progress for dev startup and schema actions
+    /// Deprecated; kalam dev now streams append-only logs and uses modal prompts
     #[arg(long = "progress", conflicts_with = "verbose")]
     pub progress: bool,
 }

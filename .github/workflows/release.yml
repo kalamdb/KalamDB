@@ -27,7 +27,7 @@ on:
         default: true
 
       docker_push:
-        description: "Push Docker image to Docker Hub"
+        description: "Push Docker images to Docker Hub and GitHub Container Registry"
         type: boolean
         required: false
         default: true
@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -1674,7 +1675,7 @@ jobs:
           ./publish.sh --version "${{ needs.read_version.outputs.version }}"
 
   docker:
-    name: Push Docker image (Docker Hub)
+    name: Push Docker image (Docker Hub + GHCR)
     runs-on: ubuntu-latest
     needs:
       - build_cli_linux_x86_64
@@ -1942,6 +1943,37 @@ jobs:
 
           echo "✅ Multi-arch manifest created for ${REPO}:${VERSION}, ${REPO}:${VERSION_COMMIT_TAG}, and ${REPO}:latest"
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Mirror Docker image to GitHub Container Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC_REPO="${{ steps.vars.outputs.docker_repo }}"
+          GHCR_REPO="ghcr.io/$(echo "$SRC_REPO" | tr '[:upper:]' '[:lower:]')"
+          VERSION="${{ needs.read_version.outputs.version }}"
+          VERSION_COMMIT_TAG="${{ steps.vars.outputs.docker_version_commit_tag }}"
+
+          TAGS=(
+            "${VERSION}"
+            "${VERSION_COMMIT_TAG}"
+            "latest"
+            "${VERSION}-amd64"
+            "${VERSION}-arm64"
+          )
+
+          for tag in "${TAGS[@]}"; do
+            echo "Mirroring ${SRC_REPO}:${tag} -> ${GHCR_REPO}:${tag}"
+            docker buildx imagetools create -t "${GHCR_REPO}:${tag}" "${SRC_REPO}:${tag}"
+          done
+
+          echo "✅ Mirrored to ${GHCR_REPO}"
+
       - name: Update Docker Hub repository README
         id: dockerhub_readme
         continue-on-error: true
@@ -1962,7 +1994,7 @@ jobs:
   # DOCKER PG - Push PostgreSQL + pg_kalam extension image to Docker Hub
   # ═══════════════════════════════════════════════════════════════════════════
   docker_pg:
-    name: Push PG Extension Docker image
+    name: Push PG Extension Docker image (Docker Hub + GHCR)
     runs-on: ubuntu-latest
     needs:
       - build_pg_extension_x86_64
@@ -2195,4 +2227,31 @@ jobs:
           CANDIDATE_TAG="${{ steps.pg_vars.outputs.pg_candidate_tag }}"
           docker buildx imagetools create -t "${REPO}:${VERSION}-${PG_EXTENSION_FLAVOR}" "${REPO}:${CANDIDATE_TAG}"
           docker buildx imagetools create -t "${REPO}:latest-${PG_EXTENSION_FLAVOR}" "${REPO}:${CANDIDATE_TAG}"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Mirror PG Docker image to GitHub Container Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC_REPO="${{ steps.pg_vars.outputs.pg_repo }}"
+          GHCR_REPO="ghcr.io/$(echo "$SRC_REPO" | tr '[:upper:]' '[:lower:]')"
+          VERSION="${{ needs.read_version.outputs.version }}"
+
+          TAGS=(
+            "${VERSION}-${PG_EXTENSION_FLAVOR}"
+            "latest-${PG_EXTENSION_FLAVOR}"
+          )
+
+          for tag in "${TAGS[@]}"; do
+            echo "Mirroring ${SRC_REPO}:${tag} -> ${GHCR_REPO}:${tag}"
+            docker buildx imagetools create -t "${GHCR_REPO}:${tag}" "${SRC_REPO}:${tag}"
+          done
+
+          echo "✅ Mirrored to ${GHCR_REPO}"
 

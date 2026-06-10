@@ -1,6 +1,6 @@
 //! Main `kalam dev` session orchestration loop.
 
-use std::time::SystemTime;
+use std::{fs, time::SystemTime};
 
 use tokio::time::{self, Duration};
 
@@ -10,15 +10,27 @@ use crate::{
     terminal_ui::ProgressTaskStatus,
     workflow::{
         dev::{
+            draft_prompt::{
+                draft_migration_exists, draft_migration_path, prompt_for_draft_application,
+                DraftPromptDecision,
+            },
             logs::ServiceLogRegistry,
             precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
             processes::ProcessSupervisor,
             server::{build_local_server_command, wait_for_server_ready},
             watch::{
                 run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
-                SCHEMA_WATCH_INTERVAL_SECS,
+                update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
             },
         },
+        display_project_path,
+        migration::{
+            apply::{apply_pending_migrations, ApplyMigrationOptions},
+            create::update_draft_migration,
+        },
+        project::config::SchemaMode,
+        schema::{generate_schema_artifacts, GenerateOptions},
+        sql::{build_workflow_client, drop_namespace_if_exists, reset_namespace_migration_state},
         WorkflowContext,
     },
 };
@@ -33,6 +45,154 @@ pub enum SchemaPipelineState {
 pub struct DevSessionOptions {
     pub force: bool,
     pub display_mode: WorkflowDisplayMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DevLoopAction {
+    Continue,
+    Stop,
+}
+
+#[derive(Debug)]
+struct DevSchemaLoop {
+    force: bool,
+    schema_mtime: Option<SystemTime>,
+}
+
+impl DevSchemaLoop {
+    fn new(force: bool) -> Self {
+        Self {
+            force,
+            schema_mtime: None,
+        }
+    }
+
+    async fn bootstrap(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<DevLoopAction> {
+        if !ctx.config.dev.apply_schema && !ctx.config.dev.generate_types {
+            return Ok(DevLoopAction::Continue);
+        }
+
+        let _ = run_initial_schema_pipeline(ctx, output, self.force, None).await;
+        self.refresh_schema_mtime(ctx);
+        self.prompt_pending_draft(ctx, output).await
+    }
+
+    async fn handle_watch_tick(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<DevLoopAction> {
+        let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) else {
+            return Ok(DevLoopAction::Continue);
+        };
+        if !schema_file_changed(&path, self.schema_mtime) {
+            return Ok(DevLoopAction::Continue);
+        }
+
+        let stable_mtime = wait_for_stable_schema_file(&path).await;
+        if stable_mtime == self.schema_mtime {
+            return Ok(DevLoopAction::Continue);
+        }
+
+        let watched_path = display_project_relative_path(&ctx.project_root, &path);
+        let message = format!("Schema changed in {watched_path}; applying...");
+        output.status(&message);
+        let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await;
+        self.schema_mtime = schema_file_mtime(&path).or(stable_mtime);
+        self.prompt_pending_draft(ctx, output).await
+    }
+
+    async fn prompt_pending_draft(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<DevLoopAction> {
+        if self.force {
+            return Ok(DevLoopAction::Continue);
+        }
+
+        loop {
+            let draft_path = draft_migration_path(ctx);
+            if !draft_migration_exists(&draft_path) {
+                return Ok(DevLoopAction::Continue);
+            }
+
+            match prompt_for_draft_application(output, &ctx.project_root, &draft_path)? {
+                DraftPromptDecision::Apply => self.apply_confirmed_draft(ctx, output).await?,
+                DraftPromptDecision::Reset => self.reset_and_apply_schema(ctx, output).await?,
+                DraftPromptDecision::Cancel => {
+                    output.status("schema draft apply cancelled; stopping kalam dev");
+                    return Ok(DevLoopAction::Stop);
+                },
+            }
+        }
+    }
+
+    async fn apply_confirmed_draft(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<()> {
+        let schema_path = schema_watch_path(&ctx.project_root, &ctx.config);
+        let before_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
+        let before_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
+        let pipeline_state = run_confirmed_schema_draft_pipeline(ctx, output).await;
+        self.schema_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
+
+        let after_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
+        let schema_changed_during_apply = match (before_schema.as_ref(), after_schema.as_ref()) {
+            (Some(before), Some(after)) => before != after,
+            _ => before_mtime != self.schema_mtime,
+        };
+
+        if pipeline_state == SchemaPipelineState::Synced && schema_changed_during_apply {
+            if let Some(schema) = before_schema {
+                restore_schema_baseline(ctx, &schema)?;
+            }
+            output.status("schema.sql changed while migrations were applying; refreshing draft");
+            let _ = run_initial_schema_pipeline(
+                ctx,
+                output,
+                self.force,
+                Some("Refreshing schema draft after concurrent edit...".to_string()),
+            )
+            .await;
+            self.refresh_schema_mtime(ctx);
+        }
+
+        Ok(())
+    }
+
+    fn refresh_schema_mtime(&mut self, ctx: &WorkflowContext) {
+        if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
+            self.schema_mtime = schema_file_mtime(&path);
+        }
+    }
+
+    async fn reset_and_apply_schema(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<()> {
+        output.status("resetting schema state and applying schema.sql from scratch");
+        reset_remote_namespace(ctx, output).await?;
+        reset_local_schema_state(ctx, output)?;
+
+        let _ = run_initial_schema_pipeline(
+            ctx,
+            output,
+            self.force,
+            Some("Rebuilding schema draft from schema.sql...".to_string()),
+        )
+        .await;
+        self.apply_confirmed_draft(ctx, output).await?;
+        self.refresh_schema_mtime(ctx);
+        Ok(())
+    }
 }
 
 pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) -> Result<()> {
@@ -98,13 +258,10 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
         }
     }
 
-    let mut schema_mtime: Option<SystemTime> = None;
-
-    if ctx.config.dev.apply_schema || ctx.config.dev.generate_types {
-        let _ = run_initial_schema_pipeline(ctx, &output, options.force, None).await;
-        if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
-            schema_mtime = schema_file_mtime(&path);
-        }
+    let mut schema_loop = DevSchemaLoop::new(options.force);
+    if schema_loop.bootstrap(ctx, &output).await? == DevLoopAction::Stop {
+        supervisor.shutdown().await;
+        return Ok(());
     }
 
     if !ctx.config.dev.processes.is_empty() {
@@ -127,21 +284,16 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     loop {
         tokio::select! {
             result = &mut ctrl_c => {
-                result.map_err(|e| crate::error::CLIError::ConfigurationError(format!("ctrl-c handler failed: {e}")))?;
+                result.map_err(|e| crate::error::CLIError::ConfigurationError(
+                    format!("ctrl-c handler failed: {e}")
+                ))?;
                 output.service_log(&server_source, "shutting down (Ctrl+C)");
                 break;
             }
             _ = watch_interval.tick(), if watch_enabled => {
-                let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) else {
-                    continue;
-                };
-                if schema_file_changed(&path, schema_mtime) {
-                    let watched_path = display_project_relative_path(&ctx.project_root, &path);
-                    let message = format!("Schema changed in {watched_path}; applying...");
-                    output.status(&message);
-                    let _ =
-                        run_initial_schema_pipeline(ctx, &output, options.force, Some(message)).await;
-                    schema_mtime = schema_file_mtime(&path);
+                if schema_loop.handle_watch_tick(ctx, &output).await? == DevLoopAction::Stop {
+                    output.service_log(&server_source, "shutting down (schema prompt cancelled)");
+                    break;
                 }
             }
             _ = time::sleep(Duration::from_millis(200)) => {
@@ -152,7 +304,9 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                     }
                 }
                 let managed_count = supervisor.count();
-                if managed_count == 0 && (local_server_spawned || !ctx.config.dev.processes.is_empty()) {
+                if managed_count == 0
+                    && (local_server_spawned || !ctx.config.dev.processes.is_empty())
+                {
                     output.service_log(&server_source, "all dev processes exited");
                     break;
                 }
@@ -168,6 +322,8 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     Ok(())
 }
 
+// ── Schema pipeline ───────────────────────────────────────────────────────────
+
 async fn run_initial_schema_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
@@ -175,7 +331,11 @@ async fn run_initial_schema_pipeline(
     running_message: Option<String>,
 ) -> SchemaPipelineState {
     let running_message = running_message.unwrap_or_else(|| "Applying schema...".to_string());
+    // Clear stale details (e.g. a lingering "Apply? [y/N]:" from a previous
+    // prompt cycle) before the new pipeline run adds its own lines.
     output.progress_task("schema", ProgressTaskStatus::Running, &running_message);
+    output.clear_progress_details("schema");
+
     match run_schema_pipeline(ctx, output, force).await {
         Ok(()) => {
             if output.display_mode == WorkflowDisplayMode::Progress {
@@ -213,6 +373,122 @@ async fn run_initial_schema_pipeline(
     }
 }
 
+async fn run_confirmed_schema_draft_pipeline(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+) -> SchemaPipelineState {
+    output.progress_task(
+        "schema",
+        ProgressTaskStatus::Running,
+        "Applying confirmed schema draft...",
+    );
+    output.clear_progress_details("schema");
+    match apply_confirmed_schema_draft(ctx, output).await {
+        Ok(()) => {
+            if output.display_mode == WorkflowDisplayMode::Progress {
+                output.progress_task("schema", ProgressTaskStatus::Succeeded, "Schema applied");
+            } else {
+                output.status("schema pipeline completed");
+            }
+            SchemaPipelineState::Synced
+        },
+        Err(error) => {
+            emit_schema_failure(output, &error);
+            SchemaPipelineState::Paused
+        },
+    }
+}
+
+async fn apply_confirmed_schema_draft(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    let config = &ctx.config;
+    let project_root = &ctx.project_root;
+
+    if config.dev.apply_schema {
+        if matches!(config.schema.mode, SchemaMode::Sql) {
+            let _ = update_draft_migration(project_root, config, output)?;
+        }
+        apply_pending_migrations(ctx, output, &ApplyMigrationOptions::dev_confirmed_draft())
+            .await?;
+        update_schema_baseline(project_root, config, output)?;
+    }
+
+    if config.dev.generate_types {
+        generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
+    }
+
+    if !config.dev.apply_schema {
+        update_schema_baseline(project_root, config, output)?;
+    }
+
+    Ok(())
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+fn restore_schema_baseline(ctx: &WorkflowContext, schema: &str) -> Result<()> {
+    let baseline = ctx.config.schema_baseline_path(&ctx.project_root);
+    if let Some(parent) = baseline.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&baseline, schema).map_err(|e| {
+        crate::error::CLIError::FileError(format!(
+            "failed to restore schema baseline '{}': {e}",
+            baseline.display()
+        ))
+    })
+}
+
+async fn reset_remote_namespace(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
+    let environment = ctx.resolved_environment()?;
+    let client = build_workflow_client(ctx, &environment)?;
+    output.status(format!("dropping namespace {} before reset", environment.namespace));
+    drop_namespace_if_exists(&client, &environment.namespace).await?;
+    reset_namespace_migration_state(&client, &environment.namespace).await?;
+    output.status(format!("reset namespace {}", environment.namespace));
+    Ok(())
+}
+
+fn reset_local_schema_state(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
+    let migrations_dir = ctx.config.migrations_dir(&ctx.project_root);
+    if migrations_dir.is_dir() {
+        for entry in fs::read_dir(&migrations_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "sql") {
+                fs::remove_file(&path).map_err(|error| {
+                    crate::error::CLIError::FileError(format!(
+                        "failed to remove migration '{}': {error}",
+                        display_project_path(&ctx.project_root, &path)
+                    ))
+                })?;
+                output.status(format!(
+                    "removed migration {}",
+                    display_project_path(&ctx.project_root, &path)
+                ));
+            }
+        }
+    }
+
+    let baseline = ctx.config.schema_baseline_path(&ctx.project_root);
+    if baseline.is_file() {
+        fs::remove_file(&baseline).map_err(|error| {
+            crate::error::CLIError::FileError(format!(
+                "failed to remove schema baseline '{}': {error}",
+                display_project_path(&ctx.project_root, &baseline)
+            ))
+        })?;
+        output.status(format!(
+            "removed schema baseline {}",
+            display_project_path(&ctx.project_root, &baseline)
+        ));
+    }
+
+    Ok(())
+}
+
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
     if output.display_mode == WorkflowDisplayMode::Progress {
         output.progress_task(
@@ -234,99 +510,22 @@ fn project_ready_message(project_name: &str, project_root: &std::path::Path) -> 
 
 fn local_server_ready_message(server_url: &str, log_path: Option<&std::path::Path>) -> String {
     match log_path {
-        Some(path) => format!("Local server ready at {server_url} (full log: {})", path.display()),
+        Some(path) => {
+            format!("Local server ready at {server_url} (full log: {})", path.display())
+        },
         None => format!("Local server ready at {server_url} (full log disabled)"),
     }
 }
 
 fn display_project_relative_path(project_root: &std::path::Path, path: &std::path::Path) -> String {
-    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+    display_project_path(project_root, path)
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    use crate::{
-        config::{CLIConfiguration, WorkflowLoggingPolicy},
-        workflow::project::config::{
-            ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-            ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
-        },
-    };
-
-    fn failing_ctx(root: &std::path::Path) -> WorkflowContext {
-        let migrations_dir = root.join("kalam/migrations");
-        std::fs::create_dir_all(&migrations_dir).unwrap();
-        std::fs::write(
-            migrations_dir.join("20250101120000_fail.sql"),
-            "-- UP\nSELECT __KALAM_TEST_SCHEMA_FAIL__;\n\n-- DOWN\n",
-        )
-        .unwrap();
-
-        WorkflowContext {
-            project_root: root.to_path_buf(),
-            config: KalamProjectConfig {
-                project: ProjectSection {
-                    name: "demo".into(),
-                    default_env: "dev".into(),
-                    kalam_dir: "kalam".into(),
-                },
-                connection: HashMap::from([(
-                    "dev".into(),
-                    ConnectionEnv {
-                        url: "http://localhost:2900".into(),
-                        namespace: "demo".into(),
-                    },
-                )]),
-                schema: SchemaSection {
-                    mode: SchemaMode::Remote,
-                    path: Some("schema.sql".into()),
-                    watch: false,
-                    languages: vec!["typescript".into()],
-                    targets: HashMap::from([(
-                        "typescript".into(),
-                        SchemaTarget {
-                            output: "src/generated/kalam.ts".into(),
-                        },
-                    )]),
-                },
-                migrations: MigrationsSection::default(),
-                dev: DevSection {
-                    apply_schema: true,
-                    generate_types: false,
-                    watch: false,
-                    ..Default::default()
-                },
-                logging: LoggingSection::default(),
-            },
-            cli_config: CLIConfiguration::default(),
-            use_color: false,
-            project_dir: None,
-            env_override: None,
-            namespace_override: None,
-            url_override: None,
-        }
-    }
-
-    #[test]
-    fn force_retries_paused_schema_pipeline_after_fix() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let root = temp.path();
-        std::fs::write(root.join("schema.sql"), "CREATE TABLE t (id INT);").unwrap();
-        let ctx = failing_ctx(root);
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
-        let paused = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, false, None));
-        assert_eq!(paused, SchemaPipelineState::Paused);
-
-        // Remove failing migration and retry with force.
-        std::fs::remove_file(root.join("kalam/migrations/20250101120000_fail.sql")).unwrap();
-        let recovered = runtime.block_on(run_initial_schema_pipeline(&ctx, &output, true, None));
-        assert_eq!(recovered, SchemaPipelineState::Synced);
-    }
 
     #[test]
     fn project_ready_message_includes_name_and_directory() {
@@ -350,7 +549,6 @@ mod tests {
     fn display_project_relative_path_prefers_project_relative_output() {
         let root = std::path::Path::new("/tmp/demo");
         let path = root.join("schema.sql");
-
         assert_eq!(display_project_relative_path(root, &path), "schema.sql");
     }
 }

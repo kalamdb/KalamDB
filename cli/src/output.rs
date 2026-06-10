@@ -4,6 +4,10 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use colored::Colorize;
@@ -27,6 +31,7 @@ pub struct WorkflowOutput {
     pub logging: WorkflowLoggingPolicy,
     pub display_mode: WorkflowDisplayMode,
     progress_tasks: Option<ProgressTasks>,
+    terminal_paused: Arc<AtomicBool>,
 }
 
 /// Patterns that trigger redaction before persisting workflow logs.
@@ -46,6 +51,7 @@ impl WorkflowOutput {
             logging,
             display_mode: WorkflowDisplayMode::Normal,
             progress_tasks: None,
+            terminal_paused: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -61,6 +67,8 @@ impl WorkflowOutput {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(line);
+        } else if self.terminal_output_paused() {
+            self.append_log(line);
         } else if self.use_color {
             eprintln!("{}", line.green());
             self.append_log(line);
@@ -73,6 +81,8 @@ impl WorkflowOutput {
     pub fn warn(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
+            self.append_log(&format!("WARN: {line}"));
+        } else if self.terminal_output_paused() {
             self.append_log(&format!("WARN: {line}"));
         } else if self.use_color {
             eprintln!("{}", line.yellow());
@@ -87,6 +97,8 @@ impl WorkflowOutput {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(&format!("ERROR: {line}"));
+        } else if self.terminal_output_paused() {
+            self.append_log(&format!("ERROR: {line}"));
         } else if self.use_color {
             eprintln!("{}", line.red().bold());
             self.append_log(&format!("ERROR: {line}"));
@@ -99,6 +111,8 @@ impl WorkflowOutput {
     pub fn detail(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
+            self.append_log(line);
+        } else if self.terminal_output_paused() {
             self.append_log(line);
         } else if self.use_color {
             eprintln!("{}", line.bright_black());
@@ -132,7 +146,7 @@ impl WorkflowOutput {
         message: &str,
         process_output: bool,
     ) {
-        if self.display_mode != WorkflowDisplayMode::Progress {
+        if self.display_mode != WorkflowDisplayMode::Progress && !self.terminal_output_paused() {
             let formatted = source.format_line(message, self.use_color);
             eprintln!("{formatted}");
         } else if process_output && source.name == "server" {
@@ -147,8 +161,10 @@ impl WorkflowOutput {
     }
 
     pub fn progress_task(&self, id: &str, status: ProgressTaskStatus, message: impl AsRef<str>) {
-        if let Some(progress_tasks) = &self.progress_tasks {
-            progress_tasks.update_task(id, status, message.as_ref());
+        if !self.terminal_output_paused() {
+            if let Some(progress_tasks) = &self.progress_tasks {
+                progress_tasks.update_task(id, status, message.as_ref());
+            }
         }
         if status == ProgressTaskStatus::Failed {
             self.append_log(&format!("ERROR: {}", message.as_ref()));
@@ -157,14 +173,26 @@ impl WorkflowOutput {
         }
     }
 
+    /// Clear all detail lines for a progress task.
+    ///
+    /// Use this before a state transition so detail lines from a previous phase
+    /// (e.g. pipeline output) do not bleed into the next (e.g. draft prompt).
+    pub fn clear_progress_details(&self, id: &str) {
+        if let Some(progress_tasks) = &self.progress_tasks {
+            progress_tasks.clear_task_details(id);
+        }
+    }
+
     pub fn progress_detail(&self, id: &str, message: impl AsRef<str>) {
         let line = message.as_ref();
-        if let Some(progress_tasks) = &self.progress_tasks {
-            progress_tasks.push_task_detail(id, line, 8);
-            self.append_log(line);
-        } else {
-            self.detail(line);
+        if !self.terminal_output_paused() {
+            if let Some(progress_tasks) = &self.progress_tasks {
+                progress_tasks.push_task_detail(id, line, 8);
+                self.append_log(line);
+                return;
+            }
         }
+        self.detail(line);
     }
 
     pub fn workflow_log_path(&self) -> Option<&Path> {
@@ -177,6 +205,17 @@ impl WorkflowOutput {
         } else {
             f()
         }
+    }
+
+    pub fn pause_terminal_output(&self) -> TerminalOutputPause {
+        self.terminal_paused.store(true, Ordering::SeqCst);
+        TerminalOutputPause {
+            paused: Arc::clone(&self.terminal_paused),
+        }
+    }
+
+    fn terminal_output_paused(&self) -> bool {
+        self.terminal_paused.load(Ordering::SeqCst)
     }
 
     fn append_log(&self, line: &str) {
@@ -194,6 +233,16 @@ impl WorkflowOutput {
             .as_ref()
             .map(ProgressTasks::rendered_lines)
             .unwrap_or_default()
+    }
+}
+
+pub struct TerminalOutputPause {
+    paused: Arc<AtomicBool>,
+}
+
+impl Drop for TerminalOutputPause {
+    fn drop(&mut self) {
+        self.paused.store(false, Ordering::SeqCst);
     }
 }
 

@@ -118,14 +118,33 @@ impl Column {
     }
 }
 
+/// Options controlling which changes are emitted during a schema diff.
+#[derive(Debug, Clone, Default)]
+pub struct DiffOptions {
+    /// When `true`, `DROP TABLE` and `ALTER TABLE … DROP COLUMN` statements are
+    /// emitted for objects that exist in the current schema but not in the target.
+    /// When `false` (the default for manual `migration create`) those changes are
+    /// replaced with advisory comments so the developer reviews them explicitly.
+    pub allow_destructive: bool,
+}
+
 /// Compare two schema files and produce semantic UP SQL plus a conservative DOWN note.
 pub fn diff_schema_files(
     before_path: &Path,
     after_path: &Path,
 ) -> Result<MigrationStatements, SchemaDiffError> {
+    diff_schema_files_with_options(before_path, after_path, &DiffOptions::default())
+}
+
+/// Like [`diff_schema_files`] but accepts explicit [`DiffOptions`].
+pub fn diff_schema_files_with_options(
+    before_path: &Path,
+    after_path: &Path,
+    options: &DiffOptions,
+) -> Result<MigrationStatements, SchemaDiffError> {
     let before_sql = read_schema_file(before_path)?;
     let after_sql = read_schema_file(after_path)?;
-    diff_schema_sql(&before_sql, &after_sql)
+    diff_schema_sql_with_options(&before_sql, &after_sql, options)
 }
 
 /// Compare two schema SQL bodies and produce semantic UP SQL plus a conservative DOWN note.
@@ -133,9 +152,18 @@ pub fn diff_schema_sql(
     before_sql: &str,
     after_sql: &str,
 ) -> Result<MigrationStatements, SchemaDiffError> {
+    diff_schema_sql_with_options(before_sql, after_sql, &DiffOptions::default())
+}
+
+/// Like [`diff_schema_sql`] but accepts explicit [`DiffOptions`].
+pub fn diff_schema_sql_with_options(
+    before_sql: &str,
+    after_sql: &str,
+    options: &DiffOptions,
+) -> Result<MigrationStatements, SchemaDiffError> {
     let current = parse_schema("before schema", before_sql)?;
     let target = parse_schema("after schema", after_sql)?;
-    let up = diff_schema(&current, &target, false).join("\n");
+    let up = diff_schema(&current, &target, options.allow_destructive).join("\n");
 
     Ok(MigrationStatements {
         up,
