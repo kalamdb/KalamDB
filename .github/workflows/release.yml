@@ -3,16 +3,29 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      platforms:
-        description: "Comma-separated platforms (like --platforms). Ignored if all_platforms=true"
-        required: false
-        default: "linux-x86_64,macos-aarch64,linux-aarch64"
-
-      all_platforms:
-        description: "Build all platforms (like --all-platforms)"
+      platform_linux_x86_64:
+        description: "Server: Linux x86_64"
         type: boolean
         required: false
-        default: false
+        default: true
+
+      platform_linux_aarch64:
+        description: "Server: Linux ARM64"
+        type: boolean
+        required: false
+        default: true
+
+      platform_macos_aarch64:
+        description: "Server: macOS ARM64"
+        type: boolean
+        required: false
+        default: true
+
+      platform_windows_x86_64:
+        description: "Server: Windows x86_64"
+        type: boolean
+        required: false
+        default: true
 
       github_release:
         description: "Publish GitHub Release"
@@ -48,12 +61,45 @@ env:
   PG_EXTENSION_MAJOR: "16"
   PG_EXTENSION_FLAVOR: "pg16"
   PGRX_VERSION: "0.18.0"
-  DEFAULT_PLATFORMS: "linux-x86_64,macos-aarch64,linux-aarch64"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  resolve_platforms:
+    name: Resolve Server Platforms
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.resolve.outputs.platforms }}
+    steps:
+      - name: Resolve selected platforms
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLATFORMS=()
+
+          if [[ "${{ github.event.inputs.platform_linux_x86_64 }}" == "true" ]]; then
+            PLATFORMS+=("linux-x86_64")
+          fi
+          if [[ "${{ github.event.inputs.platform_linux_aarch64 }}" == "true" ]]; then
+            PLATFORMS+=("linux-aarch64")
+          fi
+          if [[ "${{ github.event.inputs.platform_macos_aarch64 }}" == "true" ]]; then
+            PLATFORMS+=("macos-aarch64")
+          fi
+          if [[ "${{ github.event.inputs.platform_windows_x86_64 }}" == "true" ]]; then
+            PLATFORMS+=("windows-x86_64")
+          fi
+
+          if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
+            echo "At least one server platform must be selected." >&2
+            exit 1
+          fi
+
+          IFS=,
+          echo "platforms=${PLATFORMS[*]}" >> "$GITHUB_OUTPUT"
+
   sync_versions_manifest:
     name: Sync Versions Manifest
     runs-on: ubuntu-latest
@@ -529,10 +575,9 @@ jobs:
   build_linux_x86_64:
     name: Build Server Linux x86_64
     runs-on: ubuntu-24.04
-    needs: [build_ui, read_version]
+    needs: [resolve_platforms, build_ui, read_version]
     env:
-      PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
-      ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
+      PLATFORMS_INPUT: ${{ needs.resolve_platforms.outputs.platforms }}
 
     steps:
       - name: Checkout
@@ -544,18 +589,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Determine requested platforms for this run
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
-          if [[ -z "${PLATFORMS_INPUT}" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${ALL_PLATFORMS_INPUT:-}" == "true" ]]; then
-            PLATFORMS_INPUT="linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64"
-          fi
-
           BUILD_LINUX=false
           if [[ "$PLATFORMS_INPUT" == *"linux-x86_64"* ]]; then BUILD_LINUX=true; fi
 
@@ -633,25 +667,26 @@ jobs:
   build_linux_aarch64:
     name: Build Server Linux ARM64
     runs-on: ubuntu-latest
-    needs: [build_ui, read_version]
+    needs: [resolve_platforms, build_ui, read_version]
     env:
-      PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
-      ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
+      PLATFORMS_INPUT: ${{ needs.resolve_platforms.outputs.platforms }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set build flags
+      - name: Determine platforms
         id: vars
         shell: bash
         run: |
           set -euo pipefail
 
-          # Always build linux-aarch64 for Docker multi-arch support
-          BUILD_LINUX_ARM=true
+          PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
+          BUILD_LINUX_ARM=false
+          if [[ "$PLATFORMS_INPUT" == *"linux-aarch64"* ]]; then BUILD_LINUX_ARM=true; fi
 
           {
+            echo "platforms=$PLATFORMS_INPUT"
             echo "build_linux_arm=$BUILD_LINUX_ARM"
           } >> "$GITHUB_OUTPUT"
 
@@ -778,10 +813,9 @@ jobs:
   build_windows_x86_64:
     name: Build Windows x86_64
     runs-on: ubuntu-latest
-    needs: [build_ui, read_version]
+    needs: [resolve_platforms, build_ui, read_version]
     env:
-      PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
-      ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
+      PLATFORMS_INPUT: ${{ needs.resolve_platforms.outputs.platforms }}
 
     steps:
       - name: Checkout
@@ -794,16 +828,6 @@ jobs:
           set -euo pipefail
 
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
-          if [[ -z "${PLATFORMS_INPUT}" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${ALL_PLATFORMS_INPUT:-}" == "true" ]]; then
-            PLATFORMS_INPUT="linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64"
-          fi
-
           BUILD_WINDOWS=false
           if [[ "$PLATFORMS_INPUT" == *"windows-x86_64"* ]]; then BUILD_WINDOWS=true; fi
 
@@ -898,10 +922,9 @@ jobs:
   build_macos_arm:
     name: Build macOS ARM
     runs-on: macos-14
-    needs: [build_ui, read_version]
+    needs: [resolve_platforms, build_ui, read_version]
     env:
-      PLATFORMS_INPUT: ${{ github.event.inputs.platforms }}
-      ALL_PLATFORMS_INPUT: ${{ github.event.inputs.all_platforms }}
+      PLATFORMS_INPUT: ${{ needs.resolve_platforms.outputs.platforms }}
 
     steps:
       - name: Checkout
@@ -914,16 +937,6 @@ jobs:
           set -euo pipefail
 
           PLATFORMS_INPUT="${PLATFORMS_INPUT:-}"
-          if [[ -z "${PLATFORMS_INPUT}" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            PLATFORMS_INPUT="${{ env.DEFAULT_PLATFORMS }}"
-          fi
-          if [[ "${ALL_PLATFORMS_INPUT:-}" == "true" ]]; then
-            PLATFORMS_INPUT="linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,windows-x86_64"
-          fi
-
           BUILD_MACOS=false
           if [[ "$PLATFORMS_INPUT" == *"macos-aarch64"* ]]; then BUILD_MACOS=true; fi
 
@@ -1152,9 +1165,11 @@ jobs:
     name: Smoke Tests (Linux x86_64)
     runs-on: ubuntu-latest
     needs:
+      - resolve_platforms
       - build_linux_x86_64
       - build_cli_linux_x86_64
       - read_version
+    if: ${{ github.event.inputs.platform_linux_x86_64 == 'true' }}
 
     steps:
       - name: Checkout
@@ -1543,7 +1558,15 @@ jobs:
       - docker
       - docker_pg
 
-    if: ${{ github.event_name == 'push' || github.event.inputs.github_release == 'true' }}
+    if: >-
+      ${{
+        (github.event_name == 'push' || github.event.inputs.github_release == 'true') &&
+        !cancelled() &&
+        !failure() &&
+        (needs.smoke_tests.result == 'success' || needs.smoke_tests.result == 'skipped') &&
+        (needs.docker.result == 'success' || needs.docker.result == 'skipped') &&
+        (needs.docker_pg.result == 'success' || needs.docker_pg.result == 'skipped')
+      }}
 
     steps:
       - name: Checkout
@@ -1596,7 +1619,7 @@ jobs:
           release_assets=( *.tar.gz *.zip *.exe *.dll )
 
           if [[ ${#release_assets[@]} -eq 0 ]]; then
-            echo "No release artifacts found. Check workflow inputs.platforms / all_platforms." >&2
+            echo "No release artifacts found. Check server platform checkboxes." >&2
             exit 1
           fi
 
@@ -1678,13 +1701,14 @@ jobs:
     name: Push Docker image (Docker Hub + GHCR)
     runs-on: ubuntu-latest
     needs:
+      - resolve_platforms
       - build_cli_linux_x86_64
       - build_cli_linux_aarch64
       - build_linux_x86_64
       - build_linux_aarch64
       - read_version
 
-    if: ${{ github.event_name == 'push' || github.event.inputs.docker_push == 'true' }}
+    if: ${{ (github.event_name == 'push' || github.event.inputs.docker_push == 'true') && github.event.inputs.platform_linux_x86_64 == 'true' && github.event.inputs.platform_linux_aarch64 == 'true' }}
     env:
       DOCKER_REPO_INPUT: ${{ github.event.inputs.docker_repo }}
 
@@ -2003,7 +2027,14 @@ jobs:
       - pg_extension_tests_native
       - read_version
 
-    if: ${{ github.event_name == 'push' || github.event.inputs.docker_push == 'true' }}
+    if: >-
+      ${{
+        (github.event_name == 'push' || github.event.inputs.docker_push == 'true') &&
+        !cancelled() &&
+        !failure() &&
+        (needs.docker.result == 'success' || needs.docker.result == 'skipped') &&
+        (needs.smoke_tests.result == 'success' || needs.smoke_tests.result == 'skipped')
+      }}
 
     steps:
       - name: Checkout
