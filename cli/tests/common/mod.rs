@@ -4435,6 +4435,29 @@ pub fn clear_workflow_url_env_overrides_assert_cmd(cmd: &mut assert_cmd::Command
     }
 }
 
+/// Store a `kalam-dev` profile for workflow tests that use a mock HTTP server.
+pub fn store_test_kalam_dev_credentials(credentials_path: &std::path::Path) {
+    let mut credential_store = FileCredentialStore::with_path(credentials_path.to_path_buf())
+        .expect("create credential store");
+    credential_store
+        .set_credentials(&Credentials::new("kalam-dev".to_string(), "test-dev-jwt".to_string()))
+        .expect("store test credentials");
+}
+
+/// Login and persist the default `kalam-dev` profile for a scaffolded project.
+pub fn login_kalam_dev_for_project(project_dir: &std::path::Path) {
+    let mut login = create_cli_command_with_root_auth();
+    login
+        .current_dir(project_dir)
+        .args(["login", "--instance", "kalam-dev"]);
+    let output = login.output().expect("login kalam-dev");
+    assert!(
+        output.status.success(),
+        "kalam-dev login failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Spawnable std::process::Command with the same test isolation as `create_cli_command`.
 pub fn create_cli_std_command() -> std::process::Command {
     if is_server_reachable() {

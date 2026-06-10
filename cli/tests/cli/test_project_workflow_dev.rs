@@ -17,7 +17,7 @@ use tempfile::TempDir;
 use wait_timeout::ChildExt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RecordedSqlRequest {
+pub(crate) struct RecordedSqlRequest {
     sql: String,
     namespace_id: Option<String>,
 }
@@ -183,7 +183,7 @@ fn start_recording_sql_server(
 /// result), this server maintains an in-memory migration table so that
 /// `has_pending_numbered_migrations` sees migrations as "applied" after the
 /// CLI has called `save_server_migration_record`.
-fn start_migration_tracking_server(
+pub(crate) fn start_migration_tracking_server(
 ) -> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
     use std::collections::HashMap as StdHashMap;
 

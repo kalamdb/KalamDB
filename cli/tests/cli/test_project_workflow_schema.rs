@@ -70,6 +70,8 @@ fn start_recording_sql_server(
 
             let response = if request_line.starts_with("GET /health") {
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 52\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"version\":\"test\",\"api_version\":\"v1\"}".to_vec()
+            } else if request_line.starts_with("GET /v1/api/auth/me") {
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 30\r\nConnection: close\r\n\r\n{\"user\":\"test\",\"role\":\"admin\"}".to_vec()
             } else if request_line.starts_with("POST /v1/api/sql") {
                 let payload: serde_json::Value =
                     serde_json::from_slice(body).expect("parse sql request body");
@@ -150,6 +152,7 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
         "init failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    login_kalam_dev_for_project(&project_dir);
 
     project_dir
 }
@@ -303,9 +306,14 @@ fn test_project_workflow_db_migrate_local_state() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = temp.path().join("db-migrate-app");
     fs::create_dir_all(&project_dir).expect("create project dir");
-    let (server_url, _requests, _server_handle) = start_recording_sql_server();
+    let isolated_home = temp.path().join("home");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    store_test_kalam_dev_credentials(&credentials_path);
+    let (server_url, _requests, _server_handle) =
+        crate::test_project_workflow_dev::start_migration_tracking_server();
 
-    let mut init_cmd = create_cli_command();
+    let mut init_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     init_cmd.current_dir(&project_dir).args([
         "init",
         "--yes",
@@ -322,13 +330,13 @@ fn test_project_workflow_db_migrate_local_state() {
     ]);
     assert!(init_cmd.output().expect("init").status.success());
 
-    let mut create_cmd = create_cli_command();
+    let mut create_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     create_cmd.current_dir(&project_dir).args(["migration", "create", "initial"]);
 
     let create_output = create_cmd.output().expect("migration create");
     assert!(create_output.status.success());
 
-    let mut migrate_cmd = create_cli_command();
+    let mut migrate_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     migrate_cmd.current_dir(&project_dir).args(["db", "migrate"]);
     let migrate_output = migrate_cmd.output().expect("db migrate");
     assert!(
@@ -343,7 +351,7 @@ fn test_project_workflow_db_migrate_local_state() {
         "migration state should be stored in system.migrations, not a local file"
     );
 
-    let mut status_cmd = create_cli_command();
+    let mut status_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     status_cmd.current_dir(&project_dir).args(["migration", "status"]);
     let status_output = status_cmd.output().expect("migration status");
     let stderr = String::from_utf8_lossy(&status_output.stderr);
@@ -353,14 +361,31 @@ fn test_project_workflow_db_migrate_local_state() {
     );
 }
 
+fn create_isolated_workflow_command(
+    home: &std::path::Path,
+    credentials_path: &std::path::Path,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd.env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+        .env("KALAM_TEST_SKIP_PACKAGE_INSTALL", "1");
+    clear_workflow_url_env_overrides(&mut cmd);
+    cmd
+}
+
 #[test]
 fn test_project_workflow_db_migrate_executes_pending_sql_against_server() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = temp.path().join("remote-migrate-app");
     fs::create_dir_all(&project_dir).expect("create dir");
+    let isolated_home = temp.path().join("home");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    store_test_kalam_dev_credentials(&credentials_path);
     let (server_url, requests, _server_handle) = start_recording_sql_server();
 
-    let mut init_cmd = create_cli_command();
+    let mut init_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     init_cmd.current_dir(&project_dir).args([
         "init",
         "--yes",
@@ -383,7 +408,7 @@ fn test_project_workflow_db_migrate_executes_pending_sql_against_server() {
     )
     .expect("write migration");
 
-    let mut migrate_cmd = create_cli_command();
+    let mut migrate_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     migrate_cmd.current_dir(&project_dir).args(["db", "migrate"]);
     let migrate_output = migrate_cmd.output().expect("db migrate");
     assert!(

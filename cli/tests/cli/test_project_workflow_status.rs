@@ -19,6 +19,7 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
         "typescript",
     ]);
     assert!(cmd.output().expect("init").status.success());
+    login_kalam_dev_for_project(&project_dir);
     project_dir
 }
 
@@ -54,6 +55,7 @@ fn test_project_workflow_status_and_link_help_surface() {
 fn test_project_workflow_link_and_status_report_environment() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = scaffold_sql_project(&temp);
+    let prod_url = server_url();
 
     let mut link_cmd = create_cli_command();
     link_cmd.current_dir(&project_dir).args([
@@ -61,7 +63,7 @@ fn test_project_workflow_link_and_status_report_environment() {
         "--env",
         "prod",
         "--url",
-        "https://db.example.com",
+        &prod_url,
         "--namespace",
         "prod-app",
     ]);
@@ -72,7 +74,7 @@ fn test_project_workflow_link_and_status_report_environment() {
         String::from_utf8_lossy(&link_output.stderr)
     );
 
-    let mut status_cmd = create_cli_command();
+    let mut status_cmd = create_cli_command_with_root_auth();
     status_cmd.current_dir(&project_dir).args(["status", "--env", "prod"]);
     let status_output = status_cmd.output().expect("status");
     assert!(
@@ -82,7 +84,7 @@ fn test_project_workflow_link_and_status_report_environment() {
     );
 
     let stderr = String::from_utf8_lossy(&status_output.stderr);
-    assert!(stderr.contains("https://db.example.com"), "expected url in status\n{stderr}");
+    assert!(stderr.contains(&prod_url), "expected url in status\n{stderr}");
     assert!(stderr.contains("prod-app"), "expected namespace in status\n{stderr}");
     assert!(stderr.contains("project: status-app"), "expected project name\n{stderr}");
 }

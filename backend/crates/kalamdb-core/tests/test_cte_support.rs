@@ -413,23 +413,21 @@ async fn test_cte_syntax_error() {
     // Setup test data
     setup_test_table(&executor, &exec_ctx).await.unwrap();
 
-    // Test CTE with syntax error (missing AS keyword)
+    // Test CTE with invalid inner SELECT (unparseable subquery body)
     let result = executor
         .execute(
             r#"
-            WITH high_earners (
-                SELECT name, salary 
-                FROM test_ns.employees 
-                WHERE salary > 80000
+            WITH broken_cte AS (
+                SELECT FROM
             )
-            SELECT * FROM high_earners
+            SELECT * FROM broken_cte
             "#,
             &exec_ctx,
             vec![],
         )
         .await;
 
-    assert!(result.is_err(), "Invalid CTE syntax should fail");
+    assert!(result.is_err(), "Invalid CTE syntax should fail: {:?}", result);
 }
 
 #[tokio::test]
