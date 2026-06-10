@@ -37,10 +37,7 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
-        let ns = statement
-            .namespace_id
-            .clone()
-            .unwrap_or_else(|| context.default_namespace());
+        let ns = statement.namespace_id.clone().unwrap_or_else(|| context.default_namespace());
         let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
 
         // TableDefinition gives us metadata only; stats system not yet implemented.

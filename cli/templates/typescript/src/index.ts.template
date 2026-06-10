@@ -1,0 +1,54 @@
+import { Auth, createClient } from '@kalamdb/client';
+import { liveTable } from '@kalamdb/orm';
+import { users } from './generated/kalam.js';
+
+const url = process.env.KALAM_URL ?? '{{server_url}}';
+const namespace = process.env.KALAM_NAMESPACE ?? 'test1';
+const username = process.env.KALAM_USER ?? 'root';
+const password = process.env.KALAM_PASSWORD ?? 'mypass';
+
+async function main(): Promise<void> {
+  const client = createClient({
+    url,
+    namespace,
+    authProvider: async () => Auth.basic(username, password),
+  });
+
+  console.log('Subscribing to users table...');
+  
+  const stop = await liveTable(client, users, (liveRows) => {
+    console.log(`\nReceived ${liveRows.length} row(s):`);
+    liveRows.forEach((row) => {
+      console.log(row);
+    });
+  }, { lastRows: 50 });
+
+  // Insert 3 random users after 1 second
+  setTimeout(async () => {
+    console.log('\n--- Inserting 3 random users ---');
+    for (let i = 0; i < 3; i++) {
+      const randomId = Math.floor(Math.random() * 1000000);
+      const email = `user${randomId}@example.com`;
+      
+      await client.insert(`users`, {
+        id: randomId,
+        email,
+        created_at: new Date(),
+      });
+      
+      console.log(`Inserted user: id=${randomId}, email=${email}`);
+    }
+  }, 1000);
+
+  // Keep listening for 30 seconds then stop
+  setTimeout(async () => {
+    console.log('\nStopping subscription...');
+    await stop();
+    await client.disconnect();
+  }, 30_000);
+}
+
+main().catch((error) => {
+  console.error('Failed to query KalamDB:', error);
+  process.exitCode = 1;
+});

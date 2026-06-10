@@ -49,7 +49,8 @@ fn find_batch_files(dir: &Path) -> Vec<PathBuf> {
 
 #[tokio::test]
 #[ntest::timeout(90000)]
-async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_http() -> Result<()> {
+async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_http() -> Result<()>
+{
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
 
@@ -83,20 +84,19 @@ async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_h
         }
 
         flush_table_and_wait(server, &namespace, table).await?;
-        let _ = wait_for_parquet_files_for_table(
-            server,
-            &namespace,
-            table,
-            1,
-            Duration::from_secs(20),
-        )
-        .await?;
+        let _ =
+            wait_for_parquet_files_for_table(server, &namespace, table, 1, Duration::from_secs(20))
+                .await?;
 
         let storage_root = server.storage_root();
         let manifest_path = find_manifest_files(&storage_root)
             .into_iter()
-            .find(|p| p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table))
-            .ok_or_else(|| anyhow::anyhow!("manifest.json not found for {}.{}", namespace, table))?;
+            .find(|p| {
+                p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("manifest.json not found for {}.{}", namespace, table)
+            })?;
 
         let table_id = TableId::from_strings(&namespace, table);
         let _ = server.app_context().manifest_service().invalidate_table(&table_id)?;
@@ -147,20 +147,19 @@ async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_h
         }
 
         flush_table_and_wait(server, &namespace, table).await?;
-        let _ = wait_for_parquet_files_for_table(
-            server,
-            &namespace,
-            table,
-            1,
-            Duration::from_secs(20),
-        )
-        .await?;
+        let _ =
+            wait_for_parquet_files_for_table(server, &namespace, table, 1, Duration::from_secs(20))
+                .await?;
 
         let storage_root = server.storage_root();
         let manifest_path = find_manifest_files(&storage_root)
             .into_iter()
-            .find(|p| p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table))
-            .ok_or_else(|| anyhow::anyhow!("manifest.json not found for {}.{}", namespace, table))?;
+            .find(|p| {
+                p.to_string_lossy().contains(&namespace) && p.to_string_lossy().contains(table)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("manifest.json not found for {}.{}", namespace, table)
+            })?;
         let table_dir = manifest_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("manifest path missing parent dir"))?;

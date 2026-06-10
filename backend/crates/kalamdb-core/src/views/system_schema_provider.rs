@@ -5,7 +5,7 @@
 //! Virtual views (stats, settings, etc.) are created lazily on first access and
 //! stored back into SchemaRegistry.
 
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -233,10 +233,6 @@ impl SystemSchemaProvider {
 
 #[async_trait]
 impl SchemaProvider for SystemSchemaProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn table_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .system_tables

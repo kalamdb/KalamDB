@@ -32,7 +32,11 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
       maxDelayMs: undefined,
       maxReconnectAttempts: undefined,
     },
+    defaultNamespace: undefined,
     setAuthProvider() {},
+    setDefaultNamespace(namespace) {
+      this.defaultNamespace = namespace ?? undefined;
+    },
     setWsLazyConnect() {},
     onConnect() {},
     onDisconnect() {},
@@ -250,6 +254,21 @@ test('queryRows wraps named_rows into KalamRow with typed cell access', async ()
   assert.equal(rows[0].cell('created_at').asDate().toISOString(), '2026-03-08T10:00:00.000Z');
 });
 
+test('attachWasmClientState forwards client namespace to the wasm client', async () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    namespace: 'workspace',
+    authProvider: async () => Auth.jwt('coverage-token'),
+  });
+  const fakeWasmClient = createRuntimeCoverageWasmClient();
+  client.initialized = true;
+  client.wasmClient = fakeWasmClient;
+
+  client.attachWasmClientState();
+
+  assert.equal(fakeWasmClient.defaultNamespace, 'workspace');
+});
+
 test('query serializes concurrent WASM calls per client', async () => {
   const client = createClient({
     url: 'http://127.0.0.1:2900',
@@ -267,6 +286,30 @@ test('query serializes concurrent WASM calls per client', async () => {
   assert.equal(first.status, 'success');
   assert.equal(second.status, 'success');
   assert.deepEqual(fakeWasmClient.queryCalls, ['SELECT 1', 'SELECT 2']);
+});
+
+test('wrapRow uses the client namespace for unqualified file contexts', () => {
+  const client = createClient({
+    url: 'http://127.0.0.1:2900',
+    namespace: 'workspace',
+    authProvider: async () => Auth.jwt('coverage-token'),
+  });
+
+  const row = client.wrapRow({
+    attachment: {
+      id: '42',
+      sub: 'f0001',
+      name: 'note.txt',
+      size: 11,
+      mime: 'text/plain',
+      sha256: 'abc123',
+    },
+  }, 'docs');
+
+  assert.equal(
+    row.file('attachment')?.relativeUrl(),
+    '/v1/files/workspace/docs/f0001/42-note.txt',
+  );
 });
 
 test('update helper uses quoted identifiers and bound parameters', async () => {

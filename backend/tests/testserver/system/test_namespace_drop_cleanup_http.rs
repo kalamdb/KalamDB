@@ -8,7 +8,8 @@ use super::test_support::{
     auth_helper::create_user_auth_header_default,
     consolidated_helpers::{unique_namespace, unique_table},
     flush::{
-        flush_table_and_wait, wait_for_parquet_files_for_table, wait_for_parquet_files_for_user_table,
+        flush_table_and_wait, wait_for_parquet_files_for_table,
+        wait_for_parquet_files_for_user_table,
     },
     jobs::wait_for_path_absent,
 };
@@ -107,9 +108,8 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
         Duration::from_secs(20),
     )
     .await?;
-    let _ =
-        wait_for_parquet_files_for_table(server, &ns, shared_table, 1, Duration::from_secs(20))
-            .await?;
+    let _ = wait_for_parquet_files_for_table(server, &ns, shared_table, 1, Duration::from_secs(20))
+        .await?;
 
     let namespace_storage_dir = server.storage_root().join(&ns);
 
@@ -131,9 +131,10 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
             ))
             .await?;
 
-        let ns_gone = ns_count.status == ResponseStatus::Success && ns_count.get_i64("cnt") == Some(0);
-        let schemas_gone =
-            schema_count.status == ResponseStatus::Success && schema_count.get_i64("cnt") == Some(0);
+        let ns_gone =
+            ns_count.status == ResponseStatus::Success && ns_count.get_i64("cnt") == Some(0);
+        let schemas_gone = schema_count.status == ResponseStatus::Success
+            && schema_count.get_i64("cnt") == Some(0);
 
         let table_query = server
             .execute_sql(&format!("SELECT COUNT(*) AS cnt FROM {}.{}", ns, shared_table))

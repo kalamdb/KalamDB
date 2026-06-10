@@ -2,8 +2,8 @@ use tokio::runtime::Runtime;
 
 use crate::common::{
     admin_username, execute_sql_as_root_via_cli, execute_sql_as_root_via_client_json,
-    generate_unique_namespace, generate_unique_table, get_rows_as_hashmaps,
-    is_server_running, parse_cli_json_output,
+    generate_unique_namespace, generate_unique_table, get_rows_as_hashmaps, is_server_running,
+    parse_cli_json_output,
 };
 
 use super::common::*;
@@ -60,7 +60,8 @@ fn test_minio_storage_end_to_end() {
         &user_table,
         Some(&admin_user_id),
     );
-    let shared_dir = resolve_template(&storage_meta.shared_template, &namespace, &shared_table, None);
+    let shared_dir =
+        resolve_template(&storage_meta.shared_template, &namespace, &shared_table, None);
 
     assert_minio_files(&runtime, &store, &user_dir, "user end-to-end table");
     assert_minio_files(&runtime, &store, &shared_dir, "shared end-to-end table");
@@ -87,8 +88,9 @@ fn test_minio_storage_check() {
     let storage_id = generate_unique_namespace("minio_check");
     setup_minio_storage(&storage_id, "MinIO Check Storage");
 
-    let basic_output = execute_sql_as_root_via_client_json(&format!("STORAGE CHECK {}", storage_id))
-        .expect("storage check basic");
+    let basic_output =
+        execute_sql_as_root_via_client_json(&format!("STORAGE CHECK {}", storage_id))
+            .expect("storage check basic");
     let basic_json = parse_cli_json_output(&basic_output).expect("basic check json");
     let basic_rows = get_rows_as_hashmaps(&basic_json).unwrap_or_default();
     assert_eq!(basic_rows.len(), 1, "expected one row from STORAGE CHECK");
@@ -100,11 +102,9 @@ fn test_minio_storage_check() {
         .unwrap_or_else(|| "unknown".to_string());
     assert_eq!(status_value, "healthy", "STORAGE CHECK should be healthy");
 
-    let extended_output = execute_sql_as_root_via_client_json(&format!(
-        "STORAGE CHECK {} EXTENDED",
-        storage_id
-    ))
-    .expect("storage check extended");
+    let extended_output =
+        execute_sql_as_root_via_client_json(&format!("STORAGE CHECK {} EXTENDED", storage_id))
+            .expect("storage check extended");
     let extended_json = parse_cli_json_output(&extended_output).expect("extended check json");
     let extended_rows = get_rows_as_hashmaps(&extended_json).unwrap_or_default();
     assert_eq!(extended_rows.len(), 1, "expected one row from STORAGE CHECK EXTENDED");

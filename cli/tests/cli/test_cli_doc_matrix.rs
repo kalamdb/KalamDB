@@ -936,6 +936,19 @@ fn test_cli_short_version_command() {
 }
 
 #[test]
+fn test_cli_init_help_documents_workflow_flags() {
+    let mut cmd = create_cli_command();
+    cmd.args(["init", "--help"]);
+
+    cmd.assert()
+        .success()
+        .stdout(predicates::str::contains("--name"))
+        .stdout(predicates::str::contains("--schema-mode"))
+        .stdout(predicates::str::contains("--languages"))
+        .stdout(predicates::str::contains("--yes"));
+}
+
+#[test]
 fn test_cli_meta_commands_doc_smoke_non_interactive() {
     let parser = CommandParser::new();
     let documented_commands = [

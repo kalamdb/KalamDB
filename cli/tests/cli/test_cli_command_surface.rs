@@ -18,10 +18,18 @@ fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
         (&["whoami", "--help"], &["Show the currently authenticated user"]),
         (
             &["invite", "--help"],
-            &["Create an OIDC email invite", "--email", "--role", "--expires-in-days"],
+            &[
+                "Create an OIDC email invite",
+                "--email",
+                "--role",
+                "--expires-in-days",
+            ],
         ),
         (&["token", "--help"], &["Manage service tokens", "create"]),
-        (&["token", "create", "--help"], &["Token/service account name", "--name", "--save"]),
+        (
+            &["token", "create", "--help"],
+            &["Token/service account name", "--name", "--save"],
+        ),
         (&["update", "--help"], &["Update this kalam binary", "--version", "--dry-run"]),
     ];
 
@@ -54,14 +62,8 @@ fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
 #[test]
 fn test_cli_login_flag_combination_validation_binary_style() {
     let invalid_cases: Vec<(&[&str], &[&str])> = vec![
-        (
-            &["login", "--local", "--oidc"],
-            &["cannot be used with", "--oidc"],
-        ),
-        (
-            &["login", "--no-browser"],
-            &["required arguments were not provided", "--oidc"],
-        ),
+        (&["login", "--local", "--oidc"], &["cannot be used with", "--oidc"]),
+        (&["login", "--no-browser"], &["required arguments were not provided", "--oidc"]),
         (
             &["login", "--brokered"],
             &["required arguments were not provided", "--no-browser"],
@@ -151,7 +153,11 @@ fn test_cli_runtime_top_level_commands_binary_style() {
         );
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("User:"), "whoami output should include user\nstdout: {}", stdout);
+        assert!(
+            stdout.contains("User:"),
+            "whoami output should include user\nstdout: {}",
+            stdout
+        );
     }
 
     // logout (after storing credentials for a unique instance)
@@ -254,7 +260,8 @@ fn test_cli_runtime_top_level_commands_binary_style() {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("Created service token") && stdout.contains("Saved credential instance"),
+            stdout.contains("Created service token")
+                && stdout.contains("Saved credential instance"),
             "token create output should include creation + save details\nstdout: {}",
             stdout
         );
@@ -337,7 +344,8 @@ fn test_cli_export_import_shared_table_with_args_binary_style() {
 
     let import_stdout = String::from_utf8_lossy(&import_output.stdout);
     assert!(
-        import_stdout.contains("Import job started") && import_stdout.contains("completed successfully"),
+        import_stdout.contains("Import job started")
+            && import_stdout.contains("completed successfully"),
         "shared import output should include job + completion details\nstdout: {}",
         import_stdout
     );
@@ -390,21 +398,18 @@ fn test_cli_export_import_user_table_with_all_args_binary_style() {
     ))
     .expect("create user target table");
 
-    execute_sql_via_cli_as(&user_id, password, &format!(
-        "INSERT INTO {} (id, note) VALUES (1, 'u1'), (2, 'u2')",
-        source
-    ))
+    execute_sql_via_cli_as(
+        &user_id,
+        password,
+        &format!("INSERT INTO {} (id, note) VALUES (1, 'u1'), (2, 'u2')", source),
+    )
     .expect("insert user rows into source");
 
     let temp_dir = TempDir::new().expect("create temp dir for user export zip");
     let zip_path = temp_dir.path().join("user-export.zip");
 
-    let export_cmd_text = format!(
-        "export {} --user-id {} --output {}",
-        source,
-        user_id,
-        zip_path.display()
-    );
+    let export_cmd_text =
+        format!("export {} --user-id {} --output {}", source, user_id, zip_path.display());
 
     let mut export_cmd = create_cli_command_with_root_auth();
     export_cmd
@@ -447,7 +452,8 @@ fn test_cli_export_import_user_table_with_all_args_binary_style() {
 
     let import_stdout = String::from_utf8_lossy(&import_output.stdout);
     assert!(
-        import_stdout.contains("Import job started") && import_stdout.contains("completed successfully"),
+        import_stdout.contains("Import job started")
+            && import_stdout.contains("completed successfully"),
         "user import output should include job + completion details\nstdout: {}",
         import_stdout
     );

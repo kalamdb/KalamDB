@@ -283,12 +283,9 @@ impl ExtensionStatement {
         }
         if sql_upper.starts_with("ALTER TOPIC") {
             let words: Vec<&str> = sql_upper.split_whitespace().collect();
-            let has_set_retention = words
-                .windows(2)
-                .any(|window| window == ["SET", "RETENTION"]);
-            let has_clear_retention = words
-                .windows(2)
-                .any(|window| window == ["CLEAR", "RETENTION"]);
+            let has_set_retention = words.windows(2).any(|window| window == ["SET", "RETENTION"]);
+            let has_clear_retention =
+                words.windows(2).any(|window| window == ["CLEAR", "RETENTION"]);
 
             if has_set_retention {
                 if let Some(result) = Self::parse_with_prefix(

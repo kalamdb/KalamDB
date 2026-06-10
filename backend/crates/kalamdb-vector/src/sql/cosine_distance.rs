@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use datafusion::{
     arrow::{
@@ -24,10 +24,6 @@ impl CosineDistanceFunction {
 }
 
 impl ScalarUDFImpl for CosineDistanceFunction {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "cosine_distance"
     }

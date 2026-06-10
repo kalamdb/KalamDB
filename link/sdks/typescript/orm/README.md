@@ -20,6 +20,7 @@ import { messages } from './schema';
 
 const client = createClient({
   url: 'http://localhost:2900',
+  namespace: 'app',
   authProvider: async () => Auth.basic('admin', 'AdminPass123!'),
 });
 
@@ -28,6 +29,8 @@ const rows = await db.select().from(messages).limit(20);
 ```
 
 The driver normalizes KalamDB temporal wire values for Drizzle columns: `timestamp(..., { mode: 'date' })`, `date(..., { mode: 'date' })`, and `time(...)` are converted from the numeric wire representation when needed.
+
+When your client works inside one default namespace, set `createClient({ namespace: 'app' })` so unqualified ORM queries and `liveTable()` subscriptions resolve through that namespace automatically. Keep `configureKalamOrm({ namespace: 'app' })` for generated or hand-written unqualified table definitions so the Drizzle metadata matches the same scope.
 
 ## Table helpers
 
@@ -59,6 +62,33 @@ kTable.stream('app.events', columns);
 kTable.system('system.users', columns);
 ```
 
+When you want Drizzle-style simple symbols like `users` while keeping a shared namespace outside the generated file, configure a default namespace before importing those tables:
+
+```ts
+// db/kalam-orm.ts
+import { configureKalamOrm } from '@kalamdb/orm';
+
+configureKalamOrm({ namespace: 'app' });
+```
+
+```ts
+// db/schema.generated.ts
+import { getKalamTableConfig, kTable } from '@kalamdb/orm';
+import { text } from 'drizzle-orm/pg-core';
+
+export const users = kTable.shared('users', {
+  id: text('id').primaryKey(),
+});
+export const usersConfig = getKalamTableConfig(users)!;
+```
+
+```ts
+// db/index.ts
+import './kalam-orm';
+
+export * from './schema.generated';
+```
+
 Pass `{ systemColumns: true }` when your app needs typed `_seq`/`_deleted` fields for ordering, resume checks, or diagnostics. Streams only receive `_seq`; shared and user tables receive `_seq` and `_deleted`.
 
 ## Consumer And ORM Coverage
@@ -86,6 +116,8 @@ Generator options:
 - `--no-type-aliases`: skip generated `$inferSelect` and `$inferInsert` aliases.
 
 The generator introspects `SHOW TABLES`, uses `DESCRIBE` when column metadata is incomplete, preserves primary keys and non-null columns, and emits imports only for builders used by the generated schema. Generated schemas include `${tableName}Config`, `$inferSelect`, and `$inferInsert` exports next to each table, so browser apps and agents can import `schema.generated.ts` directly without a wrapper file.
+
+When you generate with exactly one `--namespace`, the emitted tables use unqualified names like `users = kTable.shared("users", ...)` and expect your app to configure that namespace once via `configureKalamOrm({ namespace: 'app' })` before importing the generated schema module. Multi-namespace generation keeps fully qualified table names to avoid collisions.
 
 ## Watch `schema.ts` in local development
 
@@ -203,6 +235,19 @@ await executeAsUser(
 ```
 
 Only pass a user id that your service account is authorized to impersonate.
+
+## Kalam CLI workflow generation
+
+When using the KalamDB project workflow, configure TypeScript output in `kalam.toml`:
+
+```toml
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+```
+
+Run `kalam schema gen` from the project root to regenerate `src/generated/kalam.ts` through `@kalamdb/orm` against the resolved workflow environment. The file is a generated artifact — do not edit it manually.
+
+During `kalam dev`, TypeScript output regenerates automatically when `dev.generate_types = true` and the schema pipeline succeeds. Schema apply failures pause regeneration until you fix migrations and retry with `kalam dev --force`.
 
 ## License
 

@@ -80,14 +80,10 @@ fn connection_error_with_context(
     auth_user: Option<&str>,
     recoverable: bool,
 ) -> ConnectionError {
-    let auth_fragment = auth_user
-        .map(|user| format!(" for user \"{}\"", user))
-        .unwrap_or_default();
+    let auth_fragment = auth_user.map(|user| format!(" for user \"{}\"", user)).unwrap_or_default();
     let hint = connection_hint(detail, recoverable, auth_user);
-    let message = format!(
-        "{}{} at {}: {}. Hint: {}",
-        context, auth_fragment, base_url, detail, hint
-    );
+    let message =
+        format!("{}{} at {}: {}. Hint: {}", context, auth_fragment, base_url, detail, hint);
 
     let mut error = ConnectionError::new(message, recoverable).with_url(base_url);
     if let Some(user) = auth_user {

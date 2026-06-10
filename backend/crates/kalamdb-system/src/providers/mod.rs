@@ -16,6 +16,7 @@ pub mod job_nodes;
 pub mod jobs;
 pub mod live;
 pub mod manifest;
+pub mod migrations;
 pub mod namespaces;
 pub mod storages;
 pub mod tables;
@@ -32,6 +33,7 @@ pub use base::{
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;
 pub use manifest::{manifest_table_definition, InMemoryChecker, ManifestTableProvider};
+pub use migrations::MigrationsTableProvider;
 pub use namespaces::NamespacesTableProvider;
 pub use storages::StoragesTableProvider;
 pub use tables::{schemas_table_definition, SchemasTableProvider};

@@ -80,9 +80,8 @@ impl<M: RepositoryModel> SharedTableRepository<M> {
             .schema_registry()
             .get_provider(&table_id)
             .ok_or_else(|| DbaError::ProviderMismatch(table_id.to_string()))?;
-        let shared_provider = provider
-            .as_any()
-            .downcast_ref::<SharedTableProvider>()
+        let shared_provider = (provider
+            .as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
             .ok_or_else(|| DbaError::ProviderMismatch(table_id.to_string()))?;
         Ok(find_row_by_pk(shared_provider, None, primary_key).await?.is_some())
     }

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
 use openidconnect::{
     core::CoreDeviceAuthorizationResponse, reqwest::Client as OidcHttpClient,
     DeviceAuthorizationUrl, DeviceCodeErrorResponse, DeviceCodeErrorResponseType, HttpClientError,
@@ -19,18 +19,8 @@ use crate::{
     terminal_ui,
 };
 
-const PROGRESS_TICK_MS: u64 = 80;
-
 fn create_oidc_wait_spinner(message: &str) -> ProgressBar {
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg} {elapsed_precise}")
-            .expect("oidc spinner template should be valid"),
-    );
-    progress_bar.set_message(message.to_string());
-    progress_bar.enable_steady_tick(Duration::from_millis(PROGRESS_TICK_MS));
-    progress_bar
+    terminal_ui::create_spinner_with_elapsed(message)
 }
 
 pub async fn login_with_direct_device(

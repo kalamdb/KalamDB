@@ -217,6 +217,15 @@ impl FileCredentialStore {
     pub fn path(&self) -> &Path {
         &self.file_path
     }
+
+    /// Resolve credentials for a workflow environment name (e.g. `dev`, `prod`).
+    pub fn get_workflow_env_credentials(
+        &self,
+        env_name: &str,
+    ) -> kalam_client::Result<Option<Credentials>> {
+        let instance = format!("kalam-{env_name}");
+        self.get_credentials(&instance)
+    }
 }
 
 impl Default for FileCredentialStore {

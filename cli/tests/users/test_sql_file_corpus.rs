@@ -34,7 +34,7 @@ fn run_cli_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
         Err(format!("CLI --file failed. stderr: {}\nstdout: {}", stderr, stdout).into())
     }
 }
- 
+
 #[test]
 fn test_sql_file_corpus_runs_twice_via_cli_command() {
     if !is_server_running() {

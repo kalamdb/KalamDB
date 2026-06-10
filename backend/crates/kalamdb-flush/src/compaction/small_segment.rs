@@ -827,8 +827,7 @@ fn deleted_at(batch: &RecordBatch, deleted_idx: Option<usize>, row_idx: usize) -
         return Ok(false);
     }
     deleted_col
-        .as_any()
-        .downcast_ref::<BooleanArray>()
+        .as_any().downcast_ref::<BooleanArray>()
         .map(|array| array.value(row_idx))
         .ok_or_else(|| {
             FlushError::InvalidOperation(format!(
@@ -1082,8 +1081,6 @@ mod tests {
         assert!(is_missing_parquet_file_error_msg(
             "Parquet error: External: Object at location /tmp/batch-0.parquet not found: No such file or directory"
         ));
-        assert!(!is_missing_parquet_file_error_msg(
-            "Parquet error: invalid footer magic bytes"
-        ));
+        assert!(!is_missing_parquet_file_error_msg("Parquet error: invalid footer magic bytes"));
     }
 }

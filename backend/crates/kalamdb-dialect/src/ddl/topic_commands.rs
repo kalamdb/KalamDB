@@ -193,11 +193,8 @@ pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
         return Err("Expected CREATE TOPIC".to_string());
     }
 
-    let tokens: Vec<&str> = definition_sql
-        .trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect();
+    let tokens: Vec<&str> =
+        definition_sql.trim().trim_end_matches(';').split_whitespace().collect();
     if tokens.len() < 3 {
         return Err("Topic name required after CREATE TOPIC".to_string());
     }
@@ -511,12 +508,10 @@ pub fn parse_reset_consumer_group(sql: &str) -> Result<ResetConsumerGroupStateme
 fn parse_table_id(table_str: &str) -> Result<(TableId, bool), String> {
     let (namespace, table_name) = parse_table_reference(table_str)?;
     match namespace {
-        Some(namespace) => TableId::try_from_strings(&namespace, &table_name).map(|table_id| {
-            (table_id, true)
-        }),
-        None => TableId::try_from_strings("default", &table_name).map(|table_id| {
-            (table_id, false)
-        }),
+        Some(namespace) => {
+            TableId::try_from_strings(&namespace, &table_name).map(|table_id| (table_id, true))
+        },
+        None => TableId::try_from_strings("default", &table_name).map(|table_id| (table_id, false)),
     }
 }
 
@@ -859,10 +854,9 @@ mod tests {
 
     #[test]
     fn test_parse_alter_topic_add_source_tracks_unqualified_table_names() {
-        let stmt = parse_alter_topic_add_source(
-            "ALTER TOPIC app.events ADD SOURCE messages ON INSERT",
-        )
-        .unwrap();
+        let stmt =
+            parse_alter_topic_add_source("ALTER TOPIC app.events ADD SOURCE messages ON INSERT")
+                .unwrap();
 
         assert_eq!(stmt.table_id.namespace_id().as_str(), "default");
         assert_eq!(stmt.table_id.table_name().as_str(), "messages");

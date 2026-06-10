@@ -116,7 +116,6 @@ impl Namespace {
             table_count: 0,
         }
     }
-
 }
 
 #[cfg(test)]

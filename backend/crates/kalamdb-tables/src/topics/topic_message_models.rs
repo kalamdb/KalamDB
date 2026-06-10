@@ -92,7 +92,6 @@ impl TopicRetentionIndexKey {
     ) -> Vec<u8> {
         encode_key(&(topic_id.as_str(), partition_id, timestamp_ms, offset))
     }
-
 }
 
 impl StorageKey for TopicRetentionIndexKey {

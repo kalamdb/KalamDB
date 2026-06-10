@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use actix_ws::Session;
 use kalamdb_commons::{ids::SeqId, websocket::BatchControl, WebSocketMessage};
-use kalamdb_observability::record_subscription_delivery;
 use kalamdb_core::providers::arrow_json_conversion::row_into_json_map;
 use kalamdb_live::{LiveQueryManager, SharedConnectionState};
+use kalamdb_observability::record_subscription_delivery;
 use log::error;
 use tracing::debug;
 

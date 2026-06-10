@@ -582,6 +582,93 @@ kalam --csv
 
 ---
 
+## Project workflow commands
+
+KalamDB projects use a `kalam.toml` file at the repository root to configure schema sources, generated language targets, migrations, and local development orchestration.
+
+### Initialize a project
+
+```bash
+kalam init --yes --name my-app --schema-mode sql --languages typescript,dart
+```
+
+This creates:
+
+- `kalam.toml` — project configuration
+- `schema.sql` — file-based schema source (sql mode)
+- `kalam/migrations/` — ordered migration history
+- `src/generated/kalam.ts` and `lib/generated/kalam.dart` — generated output directories
+- `.env.example` — environment override template
+
+### Schema and migrations (sql mode)
+
+```bash
+# Regenerate workflow artifacts
+# TypeScript uses @kalamdb/orm against the resolved server/namespace.
+# Dart currently writes a placeholder file.
+kalam schema gen
+
+# Create a migration from the current schema
+kalam migration create add_profile
+
+# Inspect local migration state
+kalam migration status
+
+# Apply pending migrations (local state tracking in v1)
+kalam db migrate
+```
+
+Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml` → default `dev`.
+
+`kalam schema pull` requires a connected KalamDB server when using remote schema mode.
+
+### Link environments
+
+```bash
+kalam link --env prod --url https://db.example.com --namespace app
+```
+
+Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/`.
+
+### Local development orchestration
+
+```bash
+kalam dev
+kalam dev --force   # retry a paused schema pipeline
+```
+
+`kalam dev`:
+
+- applies pending migrations and regenerates enabled language targets when configured
+- watches `schema.sql` for changes (2s poll) and re-runs the schema pipeline
+- supervises `[dev.processes]` child commands with prefixed, color-coded stderr logs
+- pauses only the schema pipeline on migration/apply failure while keeping processes running
+
+### Inspect project state
+
+```bash
+kalam status
+kalam status --env prod
+```
+
+Reports project name, resolved environment (with precedence source), schema mode, generated targets, and migration counts.
+
+### Deploy with migration guardrails
+
+```bash
+kalam db migrate          # apply locally first
+kalam deploy --env prod
+```
+
+Deploy blocks when:
+
+- pending migrations exist (run `kalam db migrate` first)
+- production schema drift exists without a committed migration file
+
+After rollout, deploy runs `GET {url}/ui` and accepts 2xx/3xx responses.
+
+---
+
 ## Support
 
 For issues, questions, or contributions:

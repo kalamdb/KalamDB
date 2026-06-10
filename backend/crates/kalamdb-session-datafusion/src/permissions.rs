@@ -21,8 +21,7 @@ pub fn session_error_to_datafusion(err: SessionError) -> DataFusionError {
 
 pub fn extract_session_context(session: &dyn Session) -> Result<&SessionUserContext, SessionError> {
     session
-        .as_any()
-        .downcast_ref::<SessionState>()
+        .as_any().downcast_ref::<SessionState>()
         .ok_or(SessionError::InvalidSessionState("Expected SessionState".to_string()))?
         .config()
         .options()

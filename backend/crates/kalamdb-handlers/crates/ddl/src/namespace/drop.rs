@@ -54,6 +54,22 @@ impl DropNamespaceHandler {
             namespace_id.as_str()
         );
     }
+
+    async fn delete_namespace_migrations(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<usize, KalamDbError> {
+        let app_ctx = self.app_context.clone();
+        let ns_id = namespace_id.clone();
+        run_blocking(move || {
+            app_ctx
+                .system_tables()
+                .migrations()
+                .delete_migrations_for_namespace(&ns_id)
+                .map_err(KalamDbError::from)
+        })
+        .await
+    }
 }
 
 impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
@@ -159,11 +175,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             })
             .await?;
 
-            self.app_context
-                .system_tables()
-                .topics()
-                .delete_topic_async(&topic_id)
-                .await?;
+            self.app_context.system_tables().topics().delete_topic_async(&topic_id).await?;
             self.app_context.topic_publisher().remove_topic(&topic_id);
 
             let audit_entry = audit::log_ddl_operation(
@@ -176,6 +188,8 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
         }
+
+        self.delete_namespace_migrations(&namespace_id).await?;
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context
@@ -232,7 +246,7 @@ mod tests {
     };
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_store::EntityStore;
-    use kalamdb_system::Namespace;
+    use kalamdb_system::{Migration, Namespace};
 
     use super::*;
 
@@ -307,6 +321,89 @@ mod tests {
         if let Ok(ExecutionResult::Success { message }) = result {
             assert!(message.contains("does not exist"));
         }
+    }
+
+    #[tokio::test]
+    async fn test_delete_namespace_migrations_only_removes_target_namespace() {
+        let app_ctx = test_app_context_simple();
+        let suffix = unique_suffix();
+        let namespace_id = NamespaceId::new(format!("drop_migrations_{}", suffix));
+        let other_namespace_id = NamespaceId::new(format!("keep_migrations_{}", suffix));
+        let handler = DropNamespaceHandler::new(app_ctx.clone());
+
+        for ns_id in [&namespace_id, &other_namespace_id] {
+            app_ctx
+                .system_tables()
+                .namespaces()
+                .create_namespace(Namespace {
+                    namespace_id: ns_id.clone(),
+                    name: ns_id.as_str().to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    options: Some(serde_json::json!({})),
+                    table_count: 0,
+                })
+                .expect("create namespace");
+        }
+
+        let target_key = format!("{}:0001_init.sql", namespace_id.as_str());
+        let other_key = format!("{}:0001_init.sql", other_namespace_id.as_str());
+        app_ctx
+            .system_tables()
+            .migrations()
+            .upsert_migration_async(Migration {
+                migration_key: kalamdb_commons::models::MigrationId::new(target_key.clone()),
+                migration_id: "0001_init.sql".to_string(),
+                namespace: namespace_id.as_str().to_string(),
+                name: "init".to_string(),
+                checksum: "abc".to_string(),
+                status: "applied".to_string(),
+                started_at: Some(1_700_000_000_000),
+                finished_at: Some(1_700_000_000_100),
+                error_message: None,
+                source: Some("0001_init.sql".to_string()),
+                kalam_version: Some("test".to_string()),
+            })
+            .await
+            .expect("insert target migration");
+        app_ctx
+            .system_tables()
+            .migrations()
+            .upsert_migration_async(Migration {
+                migration_key: kalamdb_commons::models::MigrationId::new(other_key.clone()),
+                migration_id: "0001_init.sql".to_string(),
+                namespace: other_namespace_id.as_str().to_string(),
+                name: "init".to_string(),
+                checksum: "abc".to_string(),
+                status: "applied".to_string(),
+                started_at: Some(1_700_000_000_000),
+                finished_at: Some(1_700_000_000_100),
+                error_message: None,
+                source: Some("0001_init.sql".to_string()),
+                kalam_version: Some("test".to_string()),
+            })
+            .await
+            .expect("insert other migration");
+
+        let deleted = handler
+            .delete_namespace_migrations(&namespace_id)
+            .await
+            .expect("delete namespace migrations");
+
+        assert_eq!(deleted, 1);
+        assert!(app_ctx
+            .system_tables()
+            .migrations()
+            .get_migration_async(&kalamdb_commons::models::MigrationId::new(target_key))
+            .await
+            .expect("load target migration")
+            .is_none());
+        assert!(app_ctx
+            .system_tables()
+            .migrations()
+            .get_migration_async(&kalamdb_commons::models::MigrationId::new(other_key))
+            .await
+            .expect("load other migration")
+            .is_some());
     }
 
     #[tokio::test]

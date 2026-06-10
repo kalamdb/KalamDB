@@ -717,9 +717,8 @@ pub(super) async fn execute_batch_path(
             }
         }
 
-        let routing_user_id = execute_as_user
-            .as_ref()
-            .unwrap_or_else(|| statement_exec_ctx.user_id());
+        let routing_user_id =
+            execute_as_user.as_ref().unwrap_or_else(|| statement_exec_ctx.user_id());
 
         if route_statements_individually {
             if let Some(target_group) =

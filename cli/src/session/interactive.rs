@@ -352,56 +352,46 @@ impl CLISession {
 
     fn print_banner(&self) {
         println!();
-        println!(
-            "{}",
-            "╔═══════════════════════════════════════════════════════════╗"
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}",
-            "║                                                           ║"
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}{}{}",
-            "║        ".bright_blue().bold(),
-            "🗄️  Kalam CLI - Interactive Database Terminal".white().bold(),
-            "       ║".bright_blue().bold()
-        );
-        println!(
-            "{}",
-            "║                                                           ║"
-                .bright_blue()
-                .bold()
-        );
-        println!(
-            "{}",
-            "╚═══════════════════════════════════════════════════════════╝"
-                .bright_blue()
-                .bold()
+        crate::terminal_ui::print_banner(
+            "KalamDB interactive shell",
+            Some("Run SQL, inspect metadata, and manage live subscriptions."),
+            self.color,
         );
         println!();
-        println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
-        println!("  {}  {}", "👤".dimmed(), format!("User: {}", self.username).cyan());
+        println!(
+            "{} {}",
+            crate::terminal_ui::prompt_label("Server:", self.color),
+            crate::terminal_ui::style_value(&self.server_url, self.color)
+        );
+        println!(
+            "{} {}",
+            crate::terminal_ui::prompt_label("User:", self.color),
+            crate::terminal_ui::style_value(&self.username, self.color)
+        );
 
         if let Some(ref version) = self.server_version {
-            println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());
+            println!(
+                "{} {}",
+                crate::terminal_ui::prompt_label("Server version:", self.color),
+                crate::terminal_ui::style_muted(version, self.color)
+            );
         }
 
         println!(
-            "  {}  {}",
-            "📚".dimmed(),
-            format!("CLI version: {} (built: {})", CLI_VERSION, env!("BUILD_DATE")).dimmed()
+            "{} {}",
+            crate::terminal_ui::prompt_label("CLI version:", self.color),
+            crate::terminal_ui::style_muted(
+                &format!("{} (built: {})", CLI_VERSION, env!("BUILD_DATE")),
+                self.color
+            )
         );
 
         println!(
-            "  {}  Type {} for help, {} for session info, {} to exit",
-            "💡".dimmed(),
-            "\\help".cyan().bold(),
-            "\\info".cyan().bold(),
-            "\\quit".cyan().bold()
+            "{} Type {} for help, {} for session info, {} to exit",
+            crate::terminal_ui::style_muted("Tip:", self.color),
+            crate::terminal_ui::style_value("\\help", self.color),
+            crate::terminal_ui::style_value("\\info", self.color),
+            crate::terminal_ui::style_value("\\quit", self.color)
         );
         println!();
     }

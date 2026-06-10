@@ -9,9 +9,9 @@ use kalamdb_commons::{
     websocket::{BatchControl, SubscriptionOptions, SubscriptionRequest, MAX_ROWS_PER_BATCH},
     WebSocketMessage,
 };
-use kalamdb_observability::record_subscription_delivery;
 use kalamdb_core::providers::arrow_json_conversion::row_into_json_map;
 use kalamdb_live::{InitialDataOptions, LiveQueryManager, SharedConnectionState};
+use kalamdb_observability::record_subscription_delivery;
 use log::{debug, error, warn};
 
 use super::{estimate_rows_payload_bytes, send_error, send_message};

@@ -41,6 +41,62 @@ import {
 } from '../wasm/kalam_client.js';
 import type { RowData } from './cell_value.js';
 
+function isWasmNotInitializedError(error: unknown): boolean {
+  return error instanceof TypeError && error.message.includes('__wbindgen_add_to_stack_pointer');
+}
+
+function withFileRefFallback<T>(primary: () => T, fallback: () => T): T {
+  try {
+    return primary();
+  } catch (error) {
+    if (isWasmNotInitializedError(error)) {
+      return fallback();
+    }
+    throw error;
+  }
+}
+
+function sanitizeFilename(name: string): string {
+  const nameWithoutExt = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
+  const sanitized = Array.from(nameWithoutExt)
+    .flatMap((ch) => {
+      if (/^[A-Za-z0-9]$/.test(ch)) return ch.toLowerCase();
+      if (ch === ' ' || ch === '_' || ch === '-') return '-';
+      return '';
+    })
+    .join('')
+    .slice(0, 50);
+
+  let result = '';
+  let lastWasDash = true;
+  for (const ch of sanitized) {
+    if (ch === '-') {
+      if (!lastWasDash) {
+        result += ch;
+      }
+      lastWasDash = true;
+    } else {
+      result += ch;
+      lastWasDash = false;
+    }
+  }
+
+  return result.replace(/-+$/g, '');
+}
+
+function extractExtension(name: string): string {
+  const dot = name.lastIndexOf('.');
+  if (dot === -1) return 'bin';
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ext.length <= 10 && /^[a-z0-9]+$/.test(ext) ? ext : 'bin';
+}
+
+function storedNameFallback(data: FileRefData): string {
+  const sanitized = sanitizeFilename(data.name);
+  const ext = extractExtension(data.name);
+  return sanitized.length === 0 ? `${data.id}.${ext}` : `${data.id}-${sanitized}.${ext}`;
+}
+
 /**
  * Data shape for a file reference stored in FILE columns.
  *
@@ -181,7 +237,10 @@ export class FileRef implements FileRefData {
    * ```
    */
   getDownloadUrl(baseUrl: string, namespace: string, table: string): string {
-    return fileRefDownloadUrl(this.toJson(), baseUrl, namespace, table);
+    return withFileRefFallback(
+      () => fileRefDownloadUrl(this.toJson(), baseUrl, namespace, table),
+      () => `${baseUrl.replace(/\/+$/g, '')}/v1/files/${namespace}/${table}/${this.sub}/${storedNameFallback(this)}`,
+    );
   }
 
   /**
@@ -192,7 +251,10 @@ export class FileRef implements FileRefData {
    * @returns Stored filename
    */
   storedName(): string {
-    return fileRefStoredName(this.toJson());
+    return withFileRefFallback(
+      () => fileRefStoredName(this.toJson()),
+      () => storedNameFallback(this),
+    );
   }
 
   /**
@@ -204,7 +266,12 @@ export class FileRef implements FileRefData {
    * @returns Relative path
    */
   relativePath(): string {
-    return fileRefRelativePath(this.toJson());
+    return withFileRefFallback(
+      () => fileRefRelativePath(this.toJson()),
+      () => (this.shard === undefined
+        ? `${this.sub}/${storedNameFallback(this)}`
+        : `shard-${this.shard}/${this.sub}/${storedNameFallback(this)}`),
+    );
   }
 
   /**
@@ -425,7 +492,10 @@ export class BoundFileRef extends FileRef {
    * ```
    */
   relativeUrl(): string {
-    return fileRefRelativeUrl(this.toJson(), this._ctx.namespace, this._ctx.table);
+    return withFileRefFallback(
+      () => fileRefRelativeUrl(this.toJson(), this._ctx.namespace, this._ctx.table),
+      () => `/v1/files/${this._ctx.namespace}/${this._ctx.table}/${this.sub}/${storedNameFallback(this)}`,
+    );
   }
 }
 

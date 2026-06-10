@@ -102,6 +102,7 @@ import { Auth, createClient } from '@kalamdb/client';
 
 const client = createClient({
   url: 'http://localhost:2900',
+  namespace: 'support',
   authProvider: async () => Auth.basic('alice', 'Secret123!'),
 });
 
@@ -157,6 +158,7 @@ import { Auth, SeqId, createClient } from '@kalamdb/client';
 
 const client = createClient({
   url: 'http://localhost:2900',
+  namespace: 'support',
   authProvider: async () => Auth.jwt(await getFreshToken()),
 });
 
@@ -286,6 +288,7 @@ The SDK handles:
 
 - WASM initialization
 - Basic-auth-to-JWT exchange
+- default namespace forwarding for `/v1/api/sql` plus unqualified live/file contexts
 - lazy or eager WebSocket connection
 - reconnect controls and `SeqId` tracking
 

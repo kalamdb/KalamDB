@@ -11,7 +11,7 @@
 //! ULIDs are URL-safe, case-insensitive, and time-ordered, making them
 //! suitable for PRIMARY KEY columns and correlation IDs.
 
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},
@@ -58,10 +58,6 @@ impl Default for UlidFunction {
 }
 
 impl ScalarUDFImpl for UlidFunction {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "ulid"
     }

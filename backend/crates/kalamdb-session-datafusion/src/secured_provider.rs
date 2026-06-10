@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
@@ -43,10 +43,6 @@ impl SecuredSystemTableProvider {
 
 #[async_trait]
 impl TableProvider for SecuredSystemTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.inner.schema()
     }

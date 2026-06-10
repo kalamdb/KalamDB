@@ -358,7 +358,8 @@ impl UserTableProvider {
         }
 
         let pk_column_id = self.core.primary_key_column_id();
-        let mut pk_values_for_cold_check: Vec<String> = Vec::with_capacity(pk_values_to_check.len());
+        let mut pk_values_for_cold_check: Vec<String> =
+            Vec::with_capacity(pk_values_to_check.len());
         for (pk_str, pk_value) in &pk_values_to_check {
             // A hot tombstone must shadow older cold rows for the same PK.
             // Without this guard, async flush output can cause false duplicate errors.
@@ -2080,10 +2081,6 @@ impl std::fmt::Debug for UserTableProvider {
 // Implement DataFusion TableProvider trait
 #[async_trait]
 impl TableProvider for UserTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema_ref()
     }

@@ -43,6 +43,7 @@ const client4 = createClient({
   url: 'http://localhost:2900',
   authProvider: async () => Auth.basic('admin', 'admin'),
   wsLazyConnect: true,
+  namespace: 'app',
 });
 
 // Test: wsLazyConnect defaults to true — connection is managed internally

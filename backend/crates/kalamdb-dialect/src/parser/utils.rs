@@ -324,10 +324,27 @@ pub fn extract_dml_table_id_from_statement(
     }
 }
 
+pub fn object_name_to_string(name: &ObjectName) -> Option<String> {
+    let parts: Vec<String> = name
+        .0
+        .iter()
+        .filter_map(|part| match part {
+            ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+            _ => None,
+        })
+        .collect();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("."))
+    }
+}
+
 pub fn insert_column_names_from_statement(statement: &Statement) -> Option<Vec<String>> {
     match statement {
         Statement::Insert(insert) => {
-            Some(insert.columns.iter().map(|ident| ident.value.clone()).collect())
+            Some(insert.columns.iter().filter_map(object_name_to_string).collect())
         },
         _ => None,
     }
@@ -336,12 +353,12 @@ pub fn insert_column_names_from_statement(statement: &Statement) -> Option<Vec<S
 pub fn insert_columns_match(statement: &Statement, expected_columns: &[String]) -> bool {
     match statement {
         Statement::Insert(insert) => {
-            insert.columns.len() == expected_columns.len()
-                && insert
-                    .columns
-                    .iter()
-                    .zip(expected_columns.iter())
-                    .all(|(column, expected)| column.value == *expected)
+            let columns: Vec<String> =
+                insert.columns.iter().filter_map(object_name_to_string).collect();
+            columns.len() == expected_columns.len()
+                && columns.iter().zip(expected_columns.iter()).all(|(column, expected)| {
+                    column == expected
+                })
         },
         _ => false,
     }

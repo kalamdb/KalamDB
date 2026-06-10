@@ -69,10 +69,9 @@ impl UserRepository for CachedUsersRepo {
         if let Some(entry) = self.cache.get(user_id) {
             return match entry {
                 Some(user) => Ok(user),
-                None => Err(crate::AuthError::UserNotFound(format!(
-                    "User '{}' not found",
-                    user_id
-                ))),
+                None => {
+                    Err(crate::AuthError::UserNotFound(format!("User '{}' not found", user_id)))
+                },
             };
         }
 
@@ -85,10 +84,7 @@ impl UserRepository for CachedUsersRepo {
                 // Cache the miss so OIDC auto-provisioned users (no system.users row) don't
                 // trigger a RocksDB lookup on every request.
                 self.cache.insert(user_id.clone(), None);
-                Err(crate::AuthError::UserNotFound(format!(
-                    "User '{}' not found",
-                    user_id
-                )))
+                Err(crate::AuthError::UserNotFound(format!("User '{}' not found", user_id)))
             },
             Err(e) => Err(e),
         }

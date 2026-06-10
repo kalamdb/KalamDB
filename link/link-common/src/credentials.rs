@@ -124,11 +124,7 @@ impl Credentials {
     }
 
     /// Attach human-friendly identity metadata.
-    pub fn with_identity_metadata(
-        mut self,
-        name: Option<String>,
-        email: Option<String>,
-    ) -> Self {
+    pub fn with_identity_metadata(mut self, name: Option<String>, email: Option<String>) -> Self {
         self.name = name.and_then(|value| {
             let trimmed = value.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())

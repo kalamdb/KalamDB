@@ -5,8 +5,14 @@ use kalam_cli::OutputFormat;
 
 #[path = "args/parsers.rs"]
 mod parsers;
+#[path = "args/workflow.rs"]
+mod workflow;
 
 use parsers::parse_watch_interval;
+pub use workflow::{
+    DbArgs, DbCommand, DeployArgs, DevArgs, InitArgs, LinkArgs, MigrationArgs, MigrationCommand,
+    SchemaArgs, SchemaCommand, StatusArgs,
+};
 
 // Build information - Create a static version string at compile time
 
@@ -291,6 +297,30 @@ pub enum CliCommand {
 
     /// Manage service tokens
     Token(TokenArgs),
+
+    /// Initialize or scaffold a KalamDB project workflow
+    Init(InitArgs),
+
+    /// Link this project to an environment namespace
+    Link(LinkArgs),
+
+    /// Generate or pull schema artifacts for the current project
+    Schema(SchemaArgs),
+
+    /// Create and inspect schema migration history
+    Migration(MigrationArgs),
+
+    /// Run database migration operations for the linked project
+    Db(DbArgs),
+
+    /// Run the local development orchestrator for this project
+    Dev(DevArgs),
+
+    /// Show project workflow status for the current environment
+    Status(StatusArgs),
+
+    /// Apply migrations and health checks for a deployment
+    Deploy(DeployArgs),
 }
 
 #[derive(Args, Debug, Clone)]

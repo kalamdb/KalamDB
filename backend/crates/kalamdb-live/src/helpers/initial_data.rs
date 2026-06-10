@@ -446,8 +446,7 @@ impl InitialDataFetcher {
         let batch = &batches[0];
         let array = batch
             .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
+            .as_any().downcast_ref::<Int64Array>()
             .ok_or_else(|| LiveError::Other("max_seq column is not Int64".to_string()))?;
 
         if array.is_null(0) {

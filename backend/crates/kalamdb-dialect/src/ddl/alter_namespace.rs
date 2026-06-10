@@ -221,10 +221,9 @@ mod tests {
 
     #[test]
     fn test_parse_alter_namespace_set_description() {
-        let stmt = AlterNamespaceStatement::parse(
-            "ALTER NAMESPACE app SET DESCRIPTION 'Chat namespace'",
-        )
-        .unwrap();
+        let stmt =
+            AlterNamespaceStatement::parse("ALTER NAMESPACE app SET DESCRIPTION 'Chat namespace'")
+                .unwrap();
 
         assert_eq!(stmt.name.as_str(), "app");
         assert_eq!(

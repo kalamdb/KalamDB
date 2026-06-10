@@ -87,6 +87,14 @@ impl LiveQueryManager {
         }
     }
 
+    fn parse_subscription_table_id(raw_table: &str) -> Result<TableId, LiveError> {
+        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
+            LiveError::InvalidSql("Query must use namespace.table format".to_string())
+        })?;
+
+        Ok(TableId::new(NamespaceId::from(namespace), TableName::from(table)))
+    }
+
     pub(crate) fn build_subscription_schema(
         table_def: &TableDefinition,
         projections: Option<&[String]>,
@@ -222,14 +230,8 @@ impl LiveQueryManager {
         let parsed_query = QueryParser::analyze_subscription_query(&request.sql)?;
 
         // Parse table name from SQL
-        let raw_table = parsed_query.table_name.clone();
-        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
-            LiveError::InvalidSql("Query must use namespace.table format".to_string())
-        })?;
-
-        let namespace_id = NamespaceId::from(namespace);
-        let table_name = TableName::from(table);
-        let table_id = TableId::new(namespace_id.clone(), table_name);
+        let table_id = Self::parse_subscription_table_id(&parsed_query.table_name)?;
+        let namespace_id = table_id.namespace_id().clone();
 
         if namespace_id.is_system_namespace() && !matches!(user_role, Role::Dba | Role::System) {
             return Err(LiveError::PermissionDenied(format!(
@@ -635,6 +637,24 @@ mod tests {
         )
         .expect("supported WHERE should compile");
         assert!(filter.is_some());
+    }
+
+    #[test]
+    fn parse_subscription_table_id_accepts_qualified_table_names() {
+        let table_id = LiveQueryManager::parse_subscription_table_id("test_live.items")
+            .expect("qualified subscription table should parse");
+
+        assert_eq!(table_id.namespace_id().as_str(), "test_live");
+        assert_eq!(table_id.table_name().as_str(), "items");
+    }
+
+    #[test]
+    fn parse_subscription_table_id_rejects_unqualified_table_names() {
+        let error = LiveQueryManager::parse_subscription_table_id("items")
+            .expect_err("unqualified subscription table should be rejected");
+
+        assert!(matches!(error, LiveError::InvalidSql(_)));
+        assert!(error.to_string().contains("namespace.table format"));
     }
 
     #[test]

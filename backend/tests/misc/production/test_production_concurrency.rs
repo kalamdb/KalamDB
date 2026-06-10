@@ -200,7 +200,10 @@ async fn concurrent_duplicate_primary_key_handling() {
     // Coverage/instrumented runs can surface non-deterministic status accounting even when
     // PK enforcement is correct. Require at least one duplicate-key failure and validate the
     // invariant via final row count.
-    assert!(error_count >= 1, "At least one concurrent insert should fail with duplicate key");
+    assert!(
+        error_count >= 1,
+        "At least one concurrent insert should fail with duplicate key"
+    );
     assert_eq!(
         success_count + error_count,
         3,

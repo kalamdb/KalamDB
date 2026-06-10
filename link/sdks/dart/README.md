@@ -540,4 +540,17 @@ Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [LICENSE.txt]
 
 ---
 
+## Kalam CLI workflow generation
+
+Configure Dart output in your project's `kalam.toml`:
+
+```toml
+[schema.targets.dart]
+output = "lib/generated/kalam.dart"
+```
+
+Today `kalam schema gen` only writes a placeholder file for Dart targets while the dedicated Dart generator package is still pending.
+
+`kalam dev` preserves that placeholder behavior when Dart output is configured in `kalam.toml`. Use `kalam status` to verify the resolved environment and migration readiness before `kalam deploy`.
+
 > Native performance on iOS and Android is powered by [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/).

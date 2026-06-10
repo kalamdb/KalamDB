@@ -8,7 +8,7 @@
 //! Views memoize their Arrow schema using a `static OnceLock<SchemaRef>`.
 //! Each view's schema is computed once and shared across all uses.
 
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -137,10 +137,6 @@ impl<V: VirtualView> ViewTableProvider<V> {
 
 #[async_trait]
 impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.view.schema()
     }

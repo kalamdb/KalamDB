@@ -43,7 +43,6 @@ impl PkCheckResult {
     pub fn exists(&self) -> bool {
         matches!(self, PkCheckResult::FoundInHot | PkCheckResult::FoundInCold { .. })
     }
-
 }
 
 /// Primary Key Existence Checker
@@ -382,9 +381,7 @@ impl PkExistenceChecker {
                     );
                     return Ok(false);
                 }
-                return Err(
-                    KalamDbError::Other(format!("Failed to open Parquet stream: {}", err))
-                );
+                return Err(KalamDbError::Other(format!("Failed to open Parquet stream: {}", err)));
             },
         };
 

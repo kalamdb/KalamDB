@@ -328,7 +328,10 @@ fn convert_operation(operation: &AlterTableOperation) -> DdlResult<ColumnOperati
     }
 }
 
-fn build_add_column_operation(column_def: &ColumnDef, if_not_exists: bool) -> DdlResult<ColumnOperation> {
+fn build_add_column_operation(
+    column_def: &ColumnDef,
+    if_not_exists: bool,
+) -> DdlResult<ColumnOperation> {
     let default_nullable = true;
     let column_name = column_def.name.value.clone();
     let data_type = map_sql_type_to_kalam(&column_def.data_type)?;

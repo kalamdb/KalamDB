@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{CLIError, Result},
     history::get_cli_home_dir,
+    workflow::project::config::LoggingSection,
 };
 
 /// CLI configuration loaded from TOML file
@@ -49,6 +50,73 @@ pub struct CLIConfiguration {
 
     /// UI preferences
     pub ui: Option<UIConfig>,
+
+    /// Workflow logging preferences (optional global override)
+    #[serde(default)]
+    pub workflow_logging: Option<WorkflowLoggingConfig>,
+}
+
+/// Workflow log sink policy for project commands.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowLoggingConfig {
+    #[serde(default = "default_workflow_file_enabled")]
+    pub file: bool,
+    #[serde(default = "default_workflow_log_path")]
+    pub path: String,
+    #[serde(default = "default_workflow_capture_process_output")]
+    pub capture_process_output: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowLoggingPolicy {
+    pub file_enabled: bool,
+    pub path: PathBuf,
+    pub capture_process_output: bool,
+}
+
+fn default_workflow_log_path() -> String {
+    "kalam/cli/logs/kalam.log".to_string()
+}
+
+fn default_workflow_file_enabled() -> bool {
+    true
+}
+
+fn default_workflow_capture_process_output() -> bool {
+    true
+}
+
+impl WorkflowLoggingPolicy {
+    pub fn from_project(log_path: PathBuf, logging: &LoggingSection) -> Self {
+        Self {
+            file_enabled: logging.file,
+            path: log_path,
+            capture_process_output: logging.capture_process_output,
+        }
+    }
+
+    pub fn merge_global(
+        project_root: &Path,
+        project_log_path: PathBuf,
+        project_logging: &LoggingSection,
+        global: Option<&WorkflowLoggingConfig>,
+    ) -> Self {
+        let mut policy = Self::from_project(project_log_path, project_logging);
+        if let Some(global) = global {
+            policy.file_enabled = global.file;
+            policy.path = project_root.join(&global.path);
+            policy.capture_process_output = global.capture_process_output;
+        }
+        policy
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            file_enabled: false,
+            path: PathBuf::from("kalam/cli/logs/kalam.log"),
+            capture_process_output: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +244,7 @@ impl Default for CLIConfiguration {
                 history_size: default_history_size(),
                 timestamp_format: default_timestamp_format(),
             }),
+            workflow_logging: None,
         }
     }
 }

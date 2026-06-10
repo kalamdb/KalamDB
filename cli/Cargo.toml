@@ -97,6 +97,7 @@ required-features = ["e2e-tests"]
 [dependencies]
 # KalamDB connectivity
 kalam-client = { path = "../link/kalam-client", default-features = false, features = ["native-cli"] }
+kalam-schema-diff = { path = "crates/kalam-schema-diff" }
 
 # CLI argument parsing
 clap = { workspace = true }
@@ -123,7 +124,7 @@ openidconnect = { workspace = true }
 rpassword = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["process", "signal"] }
 libc = { workspace = true }
 
 # Serialization

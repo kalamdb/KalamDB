@@ -123,8 +123,10 @@ pub use crate::utils::row_utils::{
     resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
 };
 use crate::{
-    error::{KalamDbError, TableError}, error_extensions::KalamDbResultExt,
-    manifest::ManifestAccessPlanner, utils::unified_dml,
+    error::{KalamDbError, TableError},
+    error_extensions::KalamDbResultExt,
+    manifest::ManifestAccessPlanner,
+    utils::unified_dml,
 };
 
 #[async_trait]

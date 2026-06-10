@@ -15,7 +15,7 @@ async fn datatypes_view_scan_uses_deferred_batch_exec_and_returns_rows() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build datatypes plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect datatypes plan");
     assert!(total_rows(&batches) > 0);

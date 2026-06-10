@@ -71,6 +71,7 @@ pub use providers::{
         SegmentStatus, SyncState, VectorEngine, VectorIndexMetadata, VectorIndexState,
         VectorMetric,
     },
+    migrations::models::Migration,
     namespaces::models::Namespace,
     storages::models::{Storage, StorageType},
     users::models::{
@@ -80,8 +81,8 @@ pub use providers::{
 // Re-export all providers
 pub use providers::{
     AuditLogsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
-    ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider, StoragesTableProvider,
-    UsersTableProvider,
+    ManifestTableProvider, MigrationsTableProvider, NamespacesTableProvider, SchemasTableProvider,
+    StoragesTableProvider, UsersTableProvider,
 };
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;

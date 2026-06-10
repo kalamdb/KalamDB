@@ -42,7 +42,12 @@ pub(super) fn vector_query_ids(full_table: &str, query_vector: &str) -> Vec<i64>
         .collect()
 }
 
-pub(super) fn flush_user_table_and_wait(namespace: &str, table_name: &str, full_table: &str, context: &str) {
+pub(super) fn flush_user_table_and_wait(
+    namespace: &str,
+    table_name: &str,
+    full_table: &str,
+    context: &str,
+) {
     let flush_output = execute_sql_as_root_via_cli(&format!("STORAGE FLUSH TABLE {}", full_table))
         .expect("storage flush table");
 

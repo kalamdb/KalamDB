@@ -541,7 +541,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build stream plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect stream plan");
     assert_eq!(total_rows(&batches), 1);
@@ -587,7 +587,7 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build user plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect user plan");
     assert_eq!(total_rows(&batches), 1);
@@ -656,8 +656,7 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
     let names = batch
         .column_by_name("name")
         .expect("name column")
-        .as_any()
-        .downcast_ref::<StringArray>()
+        .as_any().downcast_ref::<StringArray>()
         .expect("utf8 name array");
     assert_eq!(names.value(0), "jamal-row");
 }
@@ -731,8 +730,7 @@ async fn user_provider_delete_only_tombstones_subject_row() {
     let root_names = root_batches[0]
         .column_by_name("name")
         .expect("root name column")
-        .as_any()
-        .downcast_ref::<StringArray>()
+        .as_any().downcast_ref::<StringArray>()
         .expect("root utf8 name array");
     assert_eq!(root_names.value(0), "root-row");
 
@@ -796,9 +794,9 @@ async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build user plan");
 
-    assert!(plan.as_any().is::<TransactionOverlayExec>());
+    assert!(plan.is::<TransactionOverlayExec>());
     let child = plan.children().into_iter().next().expect("overlay child plan");
-    assert!(child.as_ref().as_any().is::<DeferredBatchExec>());
+    assert!(child.as_ref().is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect user plan");
     assert_eq!(total_rows(&batches), 2);
@@ -843,7 +841,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build shared plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect shared plan");
     assert_eq!(total_rows(&batches), 1);
@@ -900,9 +898,9 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build shared plan");
 
-    assert!(plan.as_any().is::<TransactionOverlayExec>());
+    assert!(plan.is::<TransactionOverlayExec>());
     let child = plan.children().into_iter().next().expect("overlay child plan");
-    assert!(child.as_ref().as_any().is::<DeferredBatchExec>());
+    assert!(child.as_ref().is::<DeferredBatchExec>());
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect shared plan");
     assert_eq!(total_rows(&batches), 2);

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kalam_cli::{CLIError, FileCredentialStore, Result};
+use kalam_cli::{terminal_ui, CLIError, FileCredentialStore, Result};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     KalamLinkClient,
@@ -107,14 +107,14 @@ pub async fn login_and_store_credentials(
     let user = if let Some(user) = &cli.user {
         user.clone()
     } else {
-        prompt_line("User: ")
+        prompt_line(&terminal_ui::prompt_label("User:", !cli.no_color))
             .map_err(|e| CLIError::FileError(format!("Failed to read user: {}", e)))?
     };
 
     let password = if let Some(pass) = &cli.password {
         pass.clone()
     } else {
-        prompt_password("Password: ")
+        prompt_password(&terminal_ui::prompt_label("Password:", !cli.no_color))
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
     };
 
@@ -140,10 +140,7 @@ pub async fn login_and_store_credentials(
         login_response.refresh_token.clone(),
         login_response.refresh_expires_at.clone(),
     )
-    .with_identity_metadata(
-        login_response.user.name.clone(),
-        login_response.user.email.clone(),
-    );
+    .with_identity_metadata(login_response.user.name.clone(), login_response.user.email.clone());
 
     credential_store
         .set_credentials(&creds)

@@ -270,7 +270,7 @@ impl CreateUserHandler {
             app_ctx
                 .system_tables()
                 .users()
-            .get_active_user_by_email(&invite_email_for_lookup)
+                .get_active_user_by_email(&invite_email_for_lookup)
         })
         .await?;
         if existing_email.is_some() {

@@ -2,7 +2,7 @@ import type { Table } from 'drizzle-orm';
 import type { BuildColumns, BuildExtraConfigColumns } from 'drizzle-orm/column-builder';
 import type { PgColumnBuilderBase } from 'drizzle-orm/pg-core';
 import type { PgTableExtraConfig, PgTableExtraConfigValue, PgTableWithColumns } from 'drizzle-orm/pg-core/table';
-import { boolean, pgTable, text } from 'drizzle-orm/pg-core';
+import { boolean, pgSchema, pgTable, text } from 'drizzle-orm/pg-core';
 
 export type KalamTableType = 'shared' | 'user' | 'stream' | 'system';
 
@@ -21,6 +21,10 @@ export interface KalamTableOptions {
 	 * only for diagnostics because `_commit_seq` is internal replication metadata.
 	 */
 	systemColumns?: boolean | 'all' | readonly KalamSystemColumnName[];
+}
+
+export interface KalamOrmConfig {
+	namespace?: string;
 }
 
 export interface KalamTableConfig {
@@ -85,6 +89,20 @@ export const kalamTableConfigSymbol: unique symbol = Symbol.for('kalamdb.orm.tab
 const DEFAULT_VERSIONED_COLUMNS: readonly KalamSystemColumnName[] = ['_seq', '_deleted'];
 const STREAM_COLUMNS: readonly KalamSystemColumnName[] = ['_seq'];
 const ALL_SYSTEM_COLUMNS: readonly KalamSystemColumnName[] = ['_seq', '_deleted', '_commit_seq'];
+let kalamOrmConfig: KalamOrmConfig = {};
+
+function normalizeNamespace(namespace?: string): string | undefined {
+	const trimmed = namespace?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+export function configureKalamOrm(config: KalamOrmConfig): void {
+	kalamOrmConfig = { namespace: normalizeNamespace(config.namespace) };
+}
+
+export function getKalamOrmConfig(): Readonly<KalamOrmConfig> {
+	return Object.freeze({ ...kalamOrmConfig });
+}
 
 function parseQualifiedName(qualifiedName: string): Pick<KalamTableConfig, 'namespace' | 'name' | 'tableId'> {
 	const [namespace, ...tableParts] = qualifiedName.split('.');
@@ -94,6 +112,21 @@ function parseQualifiedName(qualifiedName: string): Pick<KalamTableConfig, 'name
 
 	const tableName = tableParts.join('.');
 	return { namespace, name: tableName, tableId: `${namespace}:${tableName}` };
+}
+
+function resolveTableName(inputName: string): KalamTableConfig {
+	const trimmedName = inputName.trim();
+	const parsedName = parseQualifiedName(trimmedName);
+	const namespace = parsedName.namespace ?? kalamOrmConfig.namespace;
+	const name = parsedName.name;
+
+	return {
+		qualifiedName: namespace ? `${namespace}.${name}` : name,
+		namespace,
+		name,
+		tableId: namespace ? `${namespace}:${name}` : name,
+		systemColumns: [],
+	};
 }
 
 function normalizeSystemColumns(options: KalamTableOptions): readonly KalamSystemColumnName[] {
@@ -168,13 +201,18 @@ function createKTable(defaultTableType?: KalamTableType) {
 			...(isKalamOptions(third) ? third : undefined),
 			...fourth,
 		} satisfies KalamTableOptions;
+		const resolvedTable = resolveTableName(name);
 		const systemColumns = normalizeSystemColumns(options);
 		const resolvedColumns = withSystemColumns(columns, systemColumns);
-		const table = hasExtraConfig
-			? pgTable(name, resolvedColumns as never, third as never)
-			: pgTable(name, resolvedColumns as never);
+		const table = resolvedTable.namespace
+			? hasExtraConfig
+				? pgSchema(resolvedTable.namespace).table(resolvedTable.name, resolvedColumns as never, third as never)
+				: pgSchema(resolvedTable.namespace).table(resolvedTable.name, resolvedColumns as never)
+			: hasExtraConfig
+				? pgTable(resolvedTable.name, resolvedColumns as never, third as never)
+				: pgTable(resolvedTable.name, resolvedColumns as never);
 
-		return attachConfig(table, name, options);
+		return attachConfig(table, resolvedTable.qualifiedName, options);
 	};
 }
 

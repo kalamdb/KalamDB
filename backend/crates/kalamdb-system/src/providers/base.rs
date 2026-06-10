@@ -896,8 +896,7 @@ mod tests {
         let batch = system_rows_to_batch(&schema, vec![row]).expect("system batch");
         let timestamps = batch
             .column(0)
-            .as_any()
-            .downcast_ref::<TimestampMicrosecondArray>()
+            .as_any().downcast_ref::<TimestampMicrosecondArray>()
             .expect("timestamp column");
 
         assert_eq!(timestamps.value(0), 1_735_689_600_000_000);
@@ -975,8 +974,7 @@ mod tests {
             .flat_map(|batch| {
                 batch
                     .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
+                    .as_any().downcast_ref::<StringArray>()
                     .unwrap()
                     .iter()
                     .flatten()

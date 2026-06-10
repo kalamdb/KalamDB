@@ -1,8 +1,11 @@
-use std::{sync::{Arc, Barrier}, thread};
+use std::{
+    sync::{Arc, Barrier},
+    thread,
+};
 
 use crate::common::{
-    admin_username, execute_sql_as_root_via_cli, generate_unique_namespace,
-    generate_unique_table, is_server_running,
+    admin_username, execute_sql_as_root_via_cli, generate_unique_namespace, generate_unique_table,
+    is_server_running,
 };
 
 use super::common::*;
@@ -20,7 +23,8 @@ fn test_minio_user_flush_manifest_and_query() {
     let table = generate_unique_table("minio_flush_user_table");
 
     setup_minio_storage(&storage_id, "MinIO User Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:2')",
         namespace, table, storage_id
@@ -43,12 +47,8 @@ fn test_minio_user_flush_manifest_and_query() {
     let storage_meta = fetch_storage_metadata(&storage_id);
     let store = build_minio_store(&storage_meta.base_directory);
     let admin_user_id = admin_username().to_string();
-    let table_dir = resolve_template(
-        &storage_meta.user_template,
-        &namespace,
-        &table,
-        Some(&admin_user_id),
-    );
+    let table_dir =
+        resolve_template(&storage_meta.user_template, &namespace, &table, Some(&admin_user_id));
     let runtime = Runtime::new().expect("runtime");
     assert_minio_files(&runtime, &store, &table_dir, "user flush manifest");
     assert_manifest_segment_count(&namespace, &table, 1);
@@ -69,7 +69,8 @@ fn test_minio_shared_flush_manifest_and_query() {
     let table = generate_unique_table("minio_flush_shared_table");
 
     setup_minio_storage(&storage_id, "MinIO Shared Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:2')",
         namespace, table, storage_id
@@ -112,7 +113,8 @@ fn test_minio_user_multiple_flushes_and_segments() {
     let table = generate_unique_table("minio_multi_user_table");
 
     setup_minio_storage(&storage_id, "MinIO Multi Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='USER', STORAGE_ID='{}', FLUSH_POLICY='rows:1')",
         namespace, table, storage_id
@@ -146,7 +148,8 @@ fn test_minio_shared_multiple_flushes_and_segments() {
     let table = generate_unique_table("minio_multi_shared_table");
 
     setup_minio_storage(&storage_id, "MinIO Shared Multi Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:1')",
         namespace, table, storage_id
@@ -181,7 +184,8 @@ fn test_minio_parallel_flushes_across_tables() {
     let table_b = generate_unique_table("minio_parallel_b");
 
     setup_minio_storage(&storage_id, "MinIO Parallel Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     for table in [&table_a, &table_b] {
         execute_sql_as_root_via_cli(&format!(
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:1')",

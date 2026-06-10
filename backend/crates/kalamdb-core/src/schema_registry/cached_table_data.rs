@@ -289,7 +289,6 @@ impl CachedTableData {
     pub fn set_provider(&self, provider: Arc<dyn TableProvider + Send + Sync>) {
         self.provider.set(provider);
     }
-
 }
 
 #[cfg(test)]

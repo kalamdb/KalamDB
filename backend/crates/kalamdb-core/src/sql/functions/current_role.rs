@@ -3,7 +3,7 @@
 //! This module provides a user-defined function for DataFusion that returns the current user's role
 //! from the session context.
 
-use std::{any::Any, sync::Arc};
+use std::{sync::Arc};
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},
@@ -30,10 +30,6 @@ impl CurrentRoleFunction {
 }
 
 impl ScalarUDFImpl for CurrentRoleFunction {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "kdb_current_role"
     }

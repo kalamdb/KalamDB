@@ -4,13 +4,9 @@ use crate::common::{
     is_server_running,
 };
 
-use crate::minio_common::{
-    cleanup_minio_resources, query_count, setup_minio_storage,
-};
+use crate::minio_common::{cleanup_minio_resources, query_count, setup_minio_storage};
 
-use super::helpers::{
-    embedding_literal, flush_user_table_and_wait, vector_query_ids,
-};
+use super::helpers::{embedding_literal, flush_user_table_and_wait, vector_query_ids};
 
 #[test]
 fn test_minio_embedding_flush_multiple_common_dimensions() {
@@ -34,7 +30,11 @@ fn test_minio_embedding_flush_multiple_common_dimensions() {
         ))
         .expect("embedding table creation");
 
-        for (id, active_index, body) in [(1, 0usize, "alpha"), (2, 1usize, "beta"), (3, 2usize, "gamma")] {
+        for (id, active_index, body) in [
+            (1, 0usize, "alpha"),
+            (2, 1usize, "beta"),
+            (3, 2usize, "gamma"),
+        ] {
             let embedding = embedding_literal(dimension, active_index);
             execute_sql_as_root_via_cli(&format!(
                 "INSERT INTO {} (id, embedding, body) VALUES ({}, '{}', '{}')",
@@ -48,17 +48,11 @@ fn test_minio_embedding_flush_multiple_common_dimensions() {
             full_table
         ))
         .expect("create vector index");
-        let alter_json: serde_json::Value = serde_json::from_str(&alter_output)
-            .expect("embedding alter json");
-        let alter_status = alter_json
-            .get("status")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        assert_eq!(
-            alter_status.to_lowercase(),
-            "success",
-            "embedding index enable should succeed"
-        );
+        let alter_json: serde_json::Value =
+            serde_json::from_str(&alter_output).expect("embedding alter json");
+        let alter_status =
+            alter_json.get("status").and_then(|value| value.as_str()).unwrap_or_default();
+        assert_eq!(alter_status.to_lowercase(), "success", "embedding index enable should succeed");
 
         flush_user_table_and_wait(
             &namespace,

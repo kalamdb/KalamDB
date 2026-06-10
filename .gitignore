@@ -130,3 +130,4 @@ link/sdks/typescript/client/.npmrc
 /backend/kalamdb-nightly
 /tools/supabase-local
 /.playwright-mcp
+cli/kalam.toml

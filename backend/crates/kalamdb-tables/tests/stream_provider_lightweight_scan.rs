@@ -372,7 +372,7 @@ async fn stream_provider_planning_stays_lightweight_until_execution() {
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build stream plan");
 
-    assert!(plan.as_any().is::<DeferredBatchExec>());
+    assert!(plan.is::<DeferredBatchExec>());
 
     provider
         .insert(

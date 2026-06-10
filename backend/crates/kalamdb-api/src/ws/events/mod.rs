@@ -104,9 +104,7 @@ pub async fn send_wire_notification(
         ChangeType::Insert | ChangeType::Update => {
             notif.payload.rows.as_ref().map_or(0, |rows| rows.len() as u64)
         },
-        ChangeType::Delete => {
-            notif.payload.old_values.as_ref().map_or(0, |rows| rows.len() as u64)
-        },
+        ChangeType::Delete => notif.payload.old_values.as_ref().map_or(0, |rows| rows.len() as u64),
     };
     record_subscription_delivery(change_count, bytes.len() as u64);
     Ok(())

@@ -1,4 +1,4 @@
-use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -377,8 +377,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
     match array.data_type() {
         DataType::Float32 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<Float32Array>()
+                .as_any().downcast_ref::<Float32Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid Float32 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -387,8 +386,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
         },
         DataType::Float64 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<Float64Array>()
+                .as_any().downcast_ref::<Float64Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid Float64 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -397,8 +395,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
         },
         DataType::Int64 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<Int64Array>()
+                .as_any().downcast_ref::<Int64Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid Int64 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -407,8 +404,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
         },
         DataType::Int32 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<Int32Array>()
+                .as_any().downcast_ref::<Int32Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid Int32 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -417,8 +413,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
         },
         DataType::UInt64 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<UInt64Array>()
+                .as_any().downcast_ref::<UInt64Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid UInt64 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -427,8 +422,7 @@ fn parse_f32_vec_from_array(array: &dyn Array) -> Result<Vec<f32>> {
         },
         DataType::UInt32 => {
             let typed = array
-                .as_any()
-                .downcast_ref::<UInt32Array>()
+                .as_any().downcast_ref::<UInt32Array>()
                 .ok_or_else(|| DataFusionError::Plan("Invalid UInt32 vector array".to_string()))?;
             Ok((0..typed.len())
                 .filter(|idx| !typed.is_null(*idx))
@@ -554,10 +548,6 @@ fn parse_args(args: &[Expr]) -> Result<VectorSearchArgs> {
 
 #[async_trait]
 impl TableProvider for VectorSearchTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         Arc::clone(&self.output_schema)
     }

@@ -178,11 +178,11 @@ pub async fn collect_input_rows(
 }
 
 fn try_collect_memory_input_rows(input: &dyn ExecutionPlan) -> DataFusionResult<Option<Vec<Row>>> {
-    if let Some(data_source_exec) = input.as_any().downcast_ref::<DataSourceExec>() {
+    if let Some(data_source_exec) = input.downcast_ref::<DataSourceExec>() {
         return try_collect_rows_from_data_source_exec(data_source_exec);
     }
 
-    if let Some(projection_exec) = input.as_any().downcast_ref::<ProjectionExec>() {
+    if let Some(projection_exec) = input.downcast_ref::<ProjectionExec>() {
         let Some(source_batches) =
             try_read_memory_source_batches(projection_exec.input().as_ref())?
         else {
@@ -224,12 +224,12 @@ fn try_collect_rows_from_data_source_exec(
 fn try_read_memory_source_batches(
     input: &dyn ExecutionPlan,
 ) -> DataFusionResult<Option<Vec<RecordBatch>>> {
-    let Some(data_source_exec) = input.as_any().downcast_ref::<DataSourceExec>() else {
+    let Some(data_source_exec) = input.downcast_ref::<DataSourceExec>() else {
         return Ok(None);
     };
 
     let Some(memory_source) =
-        data_source_exec.data_source().as_any().downcast_ref::<MemorySourceConfig>()
+        data_source_exec.data_source().downcast_ref::<MemorySourceConfig>()
     else {
         return Ok(None);
     };

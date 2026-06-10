@@ -20,7 +20,8 @@ fn test_minio_file_datatype_roundtrip() {
     let full_table = format!("{}.{}", namespace, table);
 
     setup_minio_storage(&storage_id, "MinIO File Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)).expect("namespace creation");
+    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id TEXT PRIMARY KEY, name TEXT, attachment FILE) WITH (TYPE='SHARED', STORAGE_ID='{}', FLUSH_POLICY='rows:1')",
         full_table, storage_id
@@ -37,15 +38,13 @@ fn test_minio_file_datatype_roundtrip() {
         full_table
     );
     let test_content = b"This is the file content for testing FILE datatype!".to_vec();
-    let form = reqwest::multipart::Form::new()
-        .text("sql", sql)
-        .part(
-            "file:myfile.txt",
-            reqwest::multipart::Part::bytes(test_content.clone())
-                .file_name("test-attachment.txt")
-                .mime_str("text/plain")
-                .expect("mime type"),
-        );
+    let form = reqwest::multipart::Form::new().text("sql", sql).part(
+        "file:myfile.txt",
+        reqwest::multipart::Part::bytes(test_content.clone())
+            .file_name("test-attachment.txt")
+            .mime_str("text/plain")
+            .expect("mime type"),
+    );
     let response = runtime.block_on(async {
         client
             .post(format!("{}/v1/api/sql", base_url))
@@ -55,16 +54,22 @@ fn test_minio_file_datatype_roundtrip() {
             .await
     });
     let response = response.expect("multipart sql response");
-    assert!(response.status().is_success(), "file upload should succeed: {}", response.status());
+    assert!(
+        response.status().is_success(),
+        "file upload should succeed: {}",
+        response.status()
+    );
 
-    let query = runtime.block_on(async {
-        execute_sql_via_http_as(default_username(), default_password(), &format!(
-            "SELECT id, name, attachment FROM {} WHERE id = 'doc1'",
-            full_table
-        ))
-        .await
-    })
-    .expect("query inserted file row");
+    let query = runtime
+        .block_on(async {
+            execute_sql_via_http_as(
+                default_username(),
+                default_password(),
+                &format!("SELECT id, name, attachment FROM {} WHERE id = 'doc1'", full_table),
+            )
+            .await
+        })
+        .expect("query inserted file row");
     let rows = query["results"][0]["rows"].as_array().expect("query rows");
     assert_eq!(rows.len(), 1, "expected one FILE row");
 
@@ -76,13 +81,16 @@ fn test_minio_file_datatype_roundtrip() {
 
     let subfolder = file_ref["sub"].as_str().unwrap();
     let stored_name = stored_filename_from_file_ref(&file_ref);
-    let download_url = format!(
-        "{}/v1/files/{}/{}/{}/{}",
-        base_url, namespace, table, subfolder, stored_name
-    );
-    let download = runtime.block_on(async { client.get(&download_url).bearer_auth(&token).send().await })
+    let download_url =
+        format!("{}/v1/files/{}/{}/{}/{}", base_url, namespace, table, subfolder, stored_name);
+    let download = runtime
+        .block_on(async { client.get(&download_url).bearer_auth(&token).send().await })
         .expect("download file");
-    assert!(download.status().is_success(), "file download should succeed: {}", download.status());
+    assert!(
+        download.status().is_success(),
+        "file download should succeed: {}",
+        download.status()
+    );
     let body = runtime.block_on(async { download.bytes().await }).expect("download bytes");
     assert_eq!(body.as_ref(), test_content.as_slice(), "downloaded file content should match");
 

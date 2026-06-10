@@ -94,10 +94,6 @@ impl ExecutionPlan for TransactionOverlayExec {
         Self::static_name()
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
@@ -570,10 +566,6 @@ mod tests {
                 Self::static_name()
             }
 
-            fn as_any(&self) -> &dyn Any {
-                self
-            }
-
             fn properties(&self) -> &Arc<PlanProperties> {
                 &self.properties
             }
@@ -655,8 +647,7 @@ mod tests {
         assert_eq!(
             batches[0]
                 .column(1)
-                .as_any()
-                .downcast_ref::<StringArray>()
+                .as_any().downcast_ref::<StringArray>()
                 .expect("name array")
                 .value(0),
             "alpha"

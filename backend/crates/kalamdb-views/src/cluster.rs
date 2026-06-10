@@ -593,10 +593,6 @@ impl std::fmt::Debug for ClusterTableProvider {
 
 #[async_trait::async_trait]
 impl datafusion::datasource::TableProvider for ClusterTableProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.view.schema()
     }

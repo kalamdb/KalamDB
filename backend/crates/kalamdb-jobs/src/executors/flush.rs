@@ -104,7 +104,7 @@ impl FlushTarget {
         match table_type {
             TableType::User => {
                 let provider =
-                    provider_arc.as_any().downcast_ref::<UserTableProvider>().ok_or_else(|| {
+                    (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>().ok_or_else(|| {
                         KalamDbError::InvalidOperation(
                             "Cached provider type mismatch for user table".into(),
                         )
@@ -113,9 +113,8 @@ impl FlushTarget {
                 Ok(Some(Self::User(provider.store())))
             },
             TableType::Shared => {
-                let provider = provider_arc
-                    .as_any()
-                    .downcast_ref::<SharedTableProvider>()
+                let provider = (provider_arc
+                    .as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(
                             "Cached provider type mismatch for shared table".into(),

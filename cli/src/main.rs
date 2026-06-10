@@ -18,7 +18,7 @@
 use std::io::IsTerminal;
 
 use clap::Parser;
-use kalam_cli::{CLIConfiguration, CLIError, FileCredentialStore, Result};
+use kalam_cli::{terminal_ui, CLIConfiguration, CLIError, FileCredentialStore, Result};
 
 mod args;
 mod commands;
@@ -26,7 +26,7 @@ mod connect;
 mod terminal_input;
 
 use args::{Cli, CliCommand};
-use commands::{handle_early_commands, handle_pre_session_commands, PreSessionResult};
+use commands::{handle_early_commands, handle_pre_session_commands, workflow, PreSessionResult};
 use connect::create_session;
 use terminal_input::prompt_password;
 
@@ -56,7 +56,7 @@ async fn run() -> Result<()> {
         ) || (cli.subcommand.is_none() && cli.command.is_none() && cli.file.is_none());
     if cli.password.as_deref() == Some("") && password_prompt_mode && std::io::stdin().is_terminal()
     {
-        let password = prompt_password("Password: ")
+        let password = prompt_password(&terminal_ui::prompt_label("Password:", !cli.no_color))
             .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?;
         cli.password = Some(password);
     }
@@ -86,6 +86,10 @@ async fn run() -> Result<()> {
             cli.user = None;
             cli.password = None;
         },
+    }
+
+    if workflow::handle_workflow_command(&cli).await? {
+        return Ok(());
     }
 
     if cli.subcommand.is_some() {

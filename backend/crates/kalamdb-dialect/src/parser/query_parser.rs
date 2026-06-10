@@ -241,7 +241,9 @@ impl QueryParser {
                     break;
                 },
                 SelectItem::UnnamedExpr(expr) => columns.push(Self::projection_column_name(expr)?),
-                SelectItem::ExprWithAlias { .. } => return Err(Self::unsupported_projection()),
+                SelectItem::ExprWithAlias { .. } | SelectItem::ExprWithAliases { .. } => {
+                    return Err(Self::unsupported_projection());
+                },
                 SelectItem::QualifiedWildcard(_, _) => return Err(Self::unsupported_projection()),
             }
         }
@@ -443,7 +445,9 @@ impl QueryParser {
             let column_name = match item {
                 SelectItem::Wildcard(_) => continue,
                 SelectItem::UnnamedExpr(expr) => Some(Self::projection_column_name(expr)?),
-                SelectItem::ExprWithAlias { .. } | SelectItem::QualifiedWildcard(..) => {
+                SelectItem::ExprWithAlias { .. }
+                | SelectItem::ExprWithAliases { .. }
+                | SelectItem::QualifiedWildcard(..) => {
                     return Err(Self::unsupported_projection());
                 },
             };

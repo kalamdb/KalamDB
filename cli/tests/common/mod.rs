@@ -4404,12 +4404,91 @@ pub fn create_cli_command() -> assert_cmd::Command {
         .env("HOME", test_home)
         .env("USERPROFILE", test_home)
         .env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+        .env("KALAM_TEST_SKIP_PACKAGE_INSTALL", "1")
         .env_remove("HTTP_PROXY")
         .env_remove("http_proxy")
         .env_remove("HTTPS_PROXY")
         .env_remove("https_proxy")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy");
+    cmd
+}
+
+const WORKFLOW_URL_ENV_VARS: &[&str] = &[
+    "KALAM_URL",
+    "KALAMDB_URL",
+    "KALAMDB_SERVER_URL",
+    "KALAM_NAMESPACE",
+];
+
+/// Clear process-wide URL overrides so workflow commands use `kalam.toml`.
+pub fn clear_workflow_url_env_overrides(cmd: &mut std::process::Command) {
+    for key in WORKFLOW_URL_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
+
+/// Clear process-wide URL overrides on an `assert_cmd` command.
+pub fn clear_workflow_url_env_overrides_assert_cmd(cmd: &mut assert_cmd::Command) {
+    for key in WORKFLOW_URL_ENV_VARS {
+        cmd.env_remove(key);
+    }
+}
+
+/// Store a `kalam-dev` profile for workflow tests that use a mock HTTP server.
+pub fn store_test_kalam_dev_credentials(credentials_path: &std::path::Path) {
+    let mut credential_store = FileCredentialStore::with_path(credentials_path.to_path_buf())
+        .expect("create credential store");
+    credential_store
+        .set_credentials(&Credentials::new("kalam-dev".to_string(), "test-dev-jwt".to_string()))
+        .expect("store test credentials");
+}
+
+/// Login and persist the default `kalam-dev` profile for a scaffolded project.
+pub fn login_kalam_dev_for_project(project_dir: &std::path::Path) {
+    let mut login = create_cli_command_with_root_auth();
+    login
+        .current_dir(project_dir)
+        .args(["login", "--instance", "kalam-dev"]);
+    let output = login.output().expect("login kalam-dev");
+    assert!(
+        output.status.success(),
+        "kalam-dev login failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Spawnable std::process::Command with the same test isolation as `create_cli_command`.
+pub fn create_cli_std_command() -> std::process::Command {
+    if is_server_reachable() {
+        static SETUP_DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        SETUP_DONE.get_or_init(|| {
+            ensure_cli_server_setup().expect("Failed to prepare CLI server setup");
+        });
+    }
+
+    let test_home = TEST_CLI_HOME_DIR.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("kalam-cli-test-home-{}", std::process::id()));
+        std::fs::create_dir_all(path.join(".kalam")).expect("failed to create isolated test home");
+        path
+    });
+    let credentials_path =
+        TEST_CLI_CREDENTIALS_PATH.get_or_init(|| test_home.join(".kalam").join("credentials.toml"));
+
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd.env("NO_PROXY", "127.0.0.1,localhost,::1")
+        .env("no_proxy", "127.0.0.1,localhost,::1")
+        .env("HOME", test_home)
+        .env("USERPROFILE", test_home)
+        .env("KALAMDB_CREDENTIALS_PATH", credentials_path)
+        .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped());
     cmd
 }
 

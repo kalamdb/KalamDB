@@ -582,6 +582,20 @@ cd cli
 cargo build --release
 ```
 
+### Project Workflow
+
+Project-oriented workflow commands such as `kalam init`, `kalam dev`, `kalam link`,
+`kalam schema gen`, `kalam migration create`, `kalam status`, and `kalam deploy` are
+documented in [`DEV.md`](./DEV.md).
+
+Use that guide for:
+
+- interactive and non-interactive project initialization
+- local vs remote server mode
+- `kalam.toml` structure and environment resolution
+- the day-to-day development loop
+- production-like environment linking and deploy guardrails
+
 ## License
 
 Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [../LICENSE.txt](../LICENSE.txt) and [../NOTICE](../NOTICE).
@@ -592,6 +606,7 @@ Contributions welcome! Please see the main KalamDB repository for contribution g
 
 ## Related Documentation
 
+- [Project Workflow Guide](./DEV.md)
 - [KalamDB API Reference](../../docs/api/api-reference.md)
 - [SQL Syntax Guide](../../docs/reference/sql.md)
 - [WebSocket Protocol](../../docs/api/websocket-protocol.md)

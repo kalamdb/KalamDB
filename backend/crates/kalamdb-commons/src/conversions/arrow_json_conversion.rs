@@ -588,8 +588,7 @@ mod tests {
         let batch = json_rows_to_arrow_batch(&schema, rows).unwrap();
         let embedding = batch
             .column(1)
-            .as_any()
-            .downcast_ref::<FixedSizeListArray>()
+            .as_any().downcast_ref::<FixedSizeListArray>()
             .expect("embedding array");
 
         assert!(embedding.is_null(0));

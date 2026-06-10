@@ -27,6 +27,7 @@ interface RenderContext {
   pgImports: Set<string>;
   needsSql: boolean;
   options: GenerateOptions;
+  emitUnqualifiedNames: boolean;
 }
 
 const HIDDEN_TABLES = ['system.live', 'system.server_logs', 'system.cluster', 'system.settings', 'system.stats'];
@@ -173,8 +174,10 @@ function toIdentifier(raw: string, fallback: string): string {
   return identifier;
 }
 
-function toVariableName(namespaceId: string, tableName: string): string {
-  return toIdentifier(`${namespaceId}_${tableName}`, 'table');
+function toVariableName(namespaceId: string, tableName: string, emitUnqualifiedNames: boolean): string {
+  return emitUnqualifiedNames
+    ? toIdentifier(tableName, 'table')
+    : toIdentifier(`${namespaceId}_${tableName}`, 'table');
 }
 
 function uniqueIdentifier(base: string, used: Map<string, number>): string {
@@ -183,11 +186,14 @@ function uniqueIdentifier(base: string, used: Map<string, number>): string {
   return count === 0 ? base : `${base}_${count + 1}`;
 }
 
-function tableVariableNames(tables: TableInfo[]): Map<string, string> {
+function tableVariableNames(tables: TableInfo[], emitUnqualifiedNames: boolean): Map<string, string> {
   const used = new Map<string, number>();
   const names = new Map<string, string>();
   for (const table of tables) {
-    names.set(table.tableId, uniqueIdentifier(toVariableName(table.namespaceId, table.tableName), used));
+    names.set(
+      table.tableId,
+      uniqueIdentifier(toVariableName(table.namespaceId, table.tableName, emitUnqualifiedNames), used),
+    );
   }
   return names;
 }
@@ -332,7 +338,9 @@ function generateTableDefinition(
   varName: string,
   ctx: RenderContext,
 ): string {
-  const qualifiedName = `${table.namespaceId}.${table.tableName}`;
+  const generatedTableName = ctx.emitUnqualifiedNames
+    ? table.tableName
+    : `${table.namespaceId}.${table.tableName}`;
   const factoryName = table.tableType ? `kTable.${table.tableType}` : 'kTable';
   const tableOptions = renderSystemColumnsOption(ctx.options.includeSystemColumns);
   const systemColumnsSpread = renderSystemColumnsSpread(
@@ -340,7 +348,7 @@ function generateTableDefinition(
   );
   const lines: string[] = [];
 
-  lines.push(`export const ${varName} = ${factoryName}(${renderString(qualifiedName)}, {`);
+  lines.push(`export const ${varName} = ${factoryName}(${renderString(generatedTableName)}, {`);
   if (systemColumnsSpread) {
     addOrmImport(ctx, 'kSystemColumns');
     lines.push(systemColumnsSpread);
@@ -422,12 +430,14 @@ export async function generateSchema(
     if (!options.includeSystem && (table.namespaceId === 'system' || table.namespaceId === 'dba')) return false;
     return true;
   });
-  const names = tableVariableNames(filtered);
+  const emitUnqualifiedNames = namespaceAllowlist.size === 1;
+  const names = tableVariableNames(filtered, emitUnqualifiedNames);
   const ctx: RenderContext = {
     ormImports: new Set(['kTable']),
     pgImports: new Set(),
     needsSql: false,
     options,
+    emitUnqualifiedNames,
   };
 
   const definitions: string[] = [];
@@ -436,7 +446,7 @@ export async function generateSchema(
     definitions.push(generateTableDefinition(
       table,
       columns,
-      names.get(table.tableId) ?? toVariableName(table.namespaceId, table.tableName),
+      names.get(table.tableId) ?? toVariableName(table.namespaceId, table.tableName, emitUnqualifiedNames),
       ctx,
     ));
   }
