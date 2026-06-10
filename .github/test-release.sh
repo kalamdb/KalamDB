@@ -111,7 +111,8 @@ if ! command -v cross &> /dev/null; then
 fi
 rustup target add x86_64-pc-windows-gnu
 cross build --profile docker --target x86_64-pc-windows-gnu -p kalam-cli --bin kalam
-cross build --profile docker --target x86_64-pc-windows-gnu -p kalamdb-server --no-default-features --features embedded-ui,traceability --bin kalamdb-server
+# Server requires native MSVC on Windows (usearch/numkong + RocksDB); cross MinGW is unsupported.
+echo "Skipping kalamdb-server Windows cross build — use native MSVC on Windows instead."
 print_success "Windows build successful"
 echo ""
 

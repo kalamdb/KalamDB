@@ -811,8 +811,9 @@ jobs:
           if-no-files-found: error
 
   build_windows_x86_64:
-    name: Build Windows x86_64
-    runs-on: ubuntu-latest
+    # Native MSVC build on Windows (RocksDB + usearch/numkong do not support MinGW cross-compile).
+    name: Build Server Windows x86_64
+    runs-on: windows-latest
     needs: [resolve_platforms, build_ui, read_version]
     env:
       PLATFORMS_INPUT: ${{ needs.resolve_platforms.outputs.platforms }}
@@ -836,6 +837,11 @@ jobs:
             echo "build_windows=$BUILD_WINDOWS"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Enable Windows long paths
+        if: ${{ steps.vars.outputs.build_windows == 'true' }}
+        shell: bash
+        run: git config --global core.longpaths true
+
       - name: Download UI dist
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         uses: actions/download-artifact@v6
@@ -843,73 +849,61 @@ jobs:
           name: ui-dist
           path: ui/dist
 
-      - name: Setup Rust
+      - name: Setup Rust (MSVC)
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: x86_64-pc-windows-gnu
+
+      - name: Install LLVM (bindgen / RocksDB)
+        if: ${{ steps.vars.outputs.build_windows == 'true' }}
+        uses: llvm/actions/setup-llvm@v2
+        with:
+          version: "16.0.0"
+
+      - name: Configure bindgen environment
+        if: ${{ steps.vars.outputs.build_windows == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
 
       - name: Cache Rust
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: server-windows-x86_64
+          shared-key: server-windows-x86_64-msvc
           cache-on-failure: true
 
-      - name: Install system deps
+      - name: Build windows-x86_64 (MSVC, release-dist profile)
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zip mingw-w64
-
-      - name: Install cross
-        if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install cross --locked
-
-      - name: Build windows-x86_64 (cross, release-dist profile)
-        if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        shell: bash
+        shell: pwsh
         env:
-          CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
           SKIP_UI_BUILD: "1"
         run: |
-          set -euo pipefail
-          cross build \
-            -p kalamdb-server \
-            --no-default-features \
-            --features embedded-ui,traceability \
-            --profile release-dist \
-            --target x86_64-pc-windows-gnu \
+          $ErrorActionPreference = "Stop"
+          cargo build `
+            -p kalamdb-server `
+            --no-default-features `
+            --features embedded-ui,traceability `
+            --profile release-dist `
             --bin kalamdb-server
 
       - name: Package windows artifacts
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          VERSION="${{ needs.read_version.outputs.version }}"
-          mkdir -p dist/$VERSION
+          $ErrorActionPreference = "Stop"
+          $version = "${{ needs.read_version.outputs.version }}"
+          $distDir = "dist/$version"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
-          SRV_OUT="kalamdb-server-${VERSION}-windows-x86_64.exe"
+          $srvOut = "kalamdb-server-$version-windows-x86_64.exe"
+          Copy-Item "target/release-dist/kalamdb-server.exe" "$distDir/$srvOut"
 
-          cp "target/x86_64-pc-windows-gnu/release-dist/kalamdb-server.exe" "dist/$VERSION/$SRV_OUT"
-          for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do
-            dll_path="$(x86_64-w64-mingw32-gcc -print-file-name="$dll" 2>/dev/null || true)"
-            if [[ -z "$dll_path" || "$dll_path" == "$dll" || ! -f "$dll_path" ]]; then
-              dll_path="$(find /usr /opt -path "*x86_64-w64-mingw32*" -type f -name "$dll" -print -quit 2>/dev/null || true)"
-            fi
-            if [[ -z "$dll_path" || ! -f "$dll_path" ]]; then
-              echo "Missing $dll (searched via x86_64-w64-mingw32-gcc and /usr,/opt)" >&2
-              exit 1
-            fi
-            cp "$dll_path" "dist/$VERSION/"
-          done
-
-          (cd "dist/$VERSION" && zip -q "${SRV_OUT%.exe}.zip" "$SRV_OUT" libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+          $zipPath = "$distDir/$($srvOut -replace '\.exe$','').zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          Compress-Archive -Path "$distDir/$srvOut" -DestinationPath $zipPath
 
       - name: Upload artifacts
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
