@@ -857,16 +857,24 @@ jobs:
 
       - name: Install LLVM (bindgen / RocksDB)
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        uses: llvm/actions/setup-llvm@v2
+        uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "16.0.0"
+          version: "16.0.6"
 
       - name: Configure bindgen environment
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
+          $ErrorActionPreference = "Stop"
+          if (-not $env:LLVM_PATH) {
+            throw "LLVM_PATH was not set by install-llvm-action"
+          }
+          $libClangPath = Join-Path $env:LLVM_PATH "bin"
+          if (-not (Test-Path (Join-Path $libClangPath "libclang.dll"))) {
+            throw "libclang.dll not found under $libClangPath"
+          }
+          "LIBCLANG_PATH=$libClangPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & (Join-Path $libClangPath "clang.exe") --version
 
       - name: Cache Rust
         if: ${{ steps.vars.outputs.build_windows == 'true' }}
