@@ -50,6 +50,12 @@ on:
         required: false
         default: "jamals86/kalamdb"
 
+      publish_npm_cli:
+        description: "Publish @kalamdb/cli to npm (skips if version already published)"
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: write
   packages: write
@@ -152,13 +158,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Resolve GHCR login user
+        if: ${{ github.event.inputs.docker_push == 'true' }}
+        id: ghcr_login
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Login to GitHub Container Registry
         if: ${{ github.event.inputs.docker_push == 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          username: ${{ steps.ghcr_login.outputs.owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
 
   sync_versions_manifest:
     name: Sync Versions Manifest
@@ -1697,7 +1711,7 @@ jobs:
       - read_version
       - release
 
-    if: ${{ github.event_name == 'push' || github.event.inputs.github_release == 'true' }}
+    if: ${{ github.event.inputs.publish_npm_cli == 'true' }}
     permissions:
       contents: read
       id-token: write
@@ -1748,6 +1762,9 @@ jobs:
       - read_version
 
     if: ${{ (github.event_name == 'push' || github.event.inputs.docker_push == 'true') && github.event.inputs.platform_linux_x86_64 == 'true' && github.event.inputs.platform_linux_aarch64 == 'true' }}
+    permissions:
+      contents: read
+      packages: write
     env:
       DOCKER_REPO_INPUT: ${{ github.event.inputs.docker_repo }}
 
@@ -1779,6 +1796,7 @@ jobs:
           GHCR_OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           GHCR_REPO="ghcr.io/${GHCR_OWNER}/kalamdb"
           echo "docker_repo=$DOCKER_REPO" >> "$GITHUB_OUTPUT"
+          echo "ghcr_owner=$GHCR_OWNER" >> "$GITHUB_OUTPUT"
           echo "ghcr_repo=$GHCR_REPO" >> "$GITHUB_OUTPUT"
           echo "docker_version_commit_tag=$DOCKER_VERSION_COMMIT_TAG" >> "$GITHUB_OUTPUT"
           echo "docker_validate_tag_amd64=$DOCKER_VALIDATE_TAG_AMD64" >> "$GITHUB_OUTPUT"
@@ -2013,10 +2031,12 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          username: ${{ steps.vars.outputs.ghcr_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
 
       - name: Mirror Docker image to GitHub Container Registry
+        id: ghcr_mirror
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -2039,6 +2059,14 @@ jobs:
           done
 
           echo "✅ Mirrored to ${GHCR_REPO}"
+
+      - name: Warn if GHCR mirror failed
+        if: steps.ghcr_mirror.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::Docker Hub publish succeeded, but GHCR mirror failed."
+          echo "::warning::Ensure the workflow has packages:write permission and GHCR login uses the lowercase org/user name."
+          echo "::warning::If the org restricts GITHUB_TOKEN package writes, add a GHCR_TOKEN secret with write:packages scope."
 
       - name: Update Docker Hub repository README
         id: dockerhub_readme
@@ -2068,6 +2096,9 @@ jobs:
       - smoke_tests
       - pg_extension_tests_native
       - read_version
+    permissions:
+      contents: read
+      packages: write
 
     if: >-
       ${{
@@ -2099,6 +2130,7 @@ jobs:
           GHCR_PG_REPO="ghcr.io/${GHCR_OWNER}/pg-kalam"
           PG_CANDIDATE_TAG="${VERSION}-${PG_EXTENSION_FLAVOR}-ci-${SHORT_SHA}"
           echo "pg_repo=$PG_REPO" >> "$GITHUB_OUTPUT"
+          echo "ghcr_owner=$GHCR_OWNER" >> "$GITHUB_OUTPUT"
           echo "ghcr_pg_repo=$GHCR_PG_REPO" >> "$GITHUB_OUTPUT"
           echo "pg_candidate_tag=$PG_CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
 
@@ -2308,10 +2340,12 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
+          username: ${{ steps.pg_vars.outputs.ghcr_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
 
       - name: Mirror PG Docker image to GitHub Container Registry
+        id: ghcr_pg_mirror
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -2330,4 +2364,12 @@ jobs:
           done
 
           echo "✅ Mirrored to ${GHCR_REPO}"
+
+      - name: Warn if PG GHCR mirror failed
+        if: steps.ghcr_pg_mirror.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::Docker Hub PG image publish succeeded, but GHCR mirror failed."
+          echo "::warning::Ensure the workflow has packages:write permission and GHCR login uses the lowercase org/user name."
+          echo "::warning::If the org restricts GITHUB_TOKEN package writes, add a GHCR_TOKEN secret with write:packages scope."
 
