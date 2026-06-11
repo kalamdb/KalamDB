@@ -4,8 +4,8 @@
   "collaborators": [
     "KalamDB Team"
   ],
-  "description": "Lightweight KalamDB client library",
-  "version": "0.5.2-rc.1",
+  "description": "Official Rust SDK for KalamDB — SQL, materialized live rows, and optional topic consumers",
+  "version": "0.5.2-rc.2",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -17,6 +17,7 @@
     "kalam_link_dart.d.ts"
   ],
   "main": "kalam_link_dart.js",
+  "homepage": "https://kalamdb.org/docs/sdk/rust",
   "types": "kalam_link_dart.d.ts",
   "sideEffects": [
     "./snippets/*"
@@ -26,6 +27,6 @@
     "database",
     "client",
     "websocket",
-    "wasm"
+    "realtime"
   ]
 }
