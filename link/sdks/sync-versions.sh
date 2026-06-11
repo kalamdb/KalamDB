@@ -12,6 +12,170 @@ PYTHON_PYPROJECT="$SDKS_DIR/python/pyproject.toml"
 PYTHON_CARGO="$SDKS_DIR/python/Cargo.toml"
 DART_PUBSPEC="$SDKS_DIR/dart/pubspec.yaml"
 
+RUST_PUBLISH_MODE=""
+RUST_PUBLISH_VERSION_OVERRIDE=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bash link/sdks/sync-versions.sh
+  bash link/sdks/sync-versions.sh --rust-publish-deps [--version VERSION]
+  bash link/sdks/sync-versions.sh --rust-publish-deps-restore
+
+Default mode syncs TypeScript, Dart, Python, and versions.json to the root
+Cargo workspace version.
+
+Rust publish modes update [workspace.dependencies] path entries used by the
+kalam-client crates.io publish chain:
+  kalamdb-observability -> kalamdb-commons -> link-common -> kalam-client
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rust-publish-deps)
+      RUST_PUBLISH_MODE="apply"
+      shift
+      ;;
+    --rust-publish-deps-restore)
+      RUST_PUBLISH_MODE="restore"
+      shift
+      ;;
+    --version)
+      RUST_PUBLISH_VERSION_OVERRIDE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+resolve_workspace_version() {
+  python3 - "$ROOT_CARGO" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+workspace = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+version = workspace["workspace"]["package"]["version"]
+if not isinstance(version, str) or not version:
+    raise SystemExit("failed to resolve workspace version")
+print(version)
+PY
+}
+
+sync_rust_publish_dependency_versions() {
+  local mode="$1"
+  local version="${2:-}"
+
+  python3 - "$ROOT_CARGO" "$mode" "$version" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+cargo_path = Path(sys.argv[1])
+mode = sys.argv[2]
+version = sys.argv[3]
+
+dependency_names = (
+    "kalamdb-observability",
+    "kalamdb-commons",
+    "link-common",
+)
+
+lines = cargo_path.read_text(encoding="utf-8").splitlines()
+in_workspace_dependencies = False
+changed = False
+found = 0
+
+for index, line in enumerate(lines):
+    if re.match(r"^\[workspace\.dependencies\]\s*$", line):
+        in_workspace_dependencies = True
+        continue
+
+    if in_workspace_dependencies and re.match(r"^\[[^\]]+\]\s*$", line):
+        in_workspace_dependencies = False
+
+    if not in_workspace_dependencies:
+        continue
+
+    for dependency_name in dependency_names:
+        prefix = f"{dependency_name} = {{"
+        if not line.strip().startswith(prefix):
+            continue
+
+        if mode == "apply":
+            if not version:
+                raise SystemExit("missing version for --rust-publish-deps")
+            if re.search(r'\bversion\s*=\s*"[^"]+"', line):
+                updated = re.sub(
+                    r'\bversion\s*=\s*"[^"]+"',
+                    f'version = "{version}"',
+                    line,
+                    count=1,
+                )
+            else:
+                updated = re.sub(
+                    r'(\bpath\s*=\s*"[^"]+")\s*,',
+                    rf'\1, version = "{version}",',
+                    line,
+                    count=1,
+                )
+        elif mode == "restore":
+            updated = re.sub(
+                r',\s*version\s*=\s*"[^"]+"\s*',
+                "",
+                line,
+                count=1,
+            )
+            updated = re.sub(r",\s{2,}", ", ", updated)
+        else:
+            raise SystemExit(f"unsupported rust publish mode: {mode}")
+
+        found += 1
+        if updated != line:
+            lines[index] = updated
+            changed = True
+        break
+
+if found != len(dependency_names):
+    raise SystemExit(
+        "failed to locate all Rust SDK workspace path dependencies in [workspace.dependencies]"
+    )
+
+cargo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+if changed:
+    print("Updated root Cargo.toml workspace path dependency versions")
+elif mode == "restore":
+    print("Rust publish path dependency versions already absent")
+else:
+    print("Rust publish path dependency versions already up to date")
+PY
+}
+
+if [[ -n "$RUST_PUBLISH_MODE" ]]; then
+  if [[ "$RUST_PUBLISH_MODE" == "apply" ]]; then
+    if [[ -n "$RUST_PUBLISH_VERSION_OVERRIDE" ]]; then
+      VERSION="$RUST_PUBLISH_VERSION_OVERRIDE"
+    else
+      VERSION="$(resolve_workspace_version)"
+    fi
+    echo "Applying crates.io path dependency versions for Rust SDK publish: $VERSION"
+    sync_rust_publish_dependency_versions apply "$VERSION"
+  else
+    echo "Restoring workspace path dependencies for local development"
+    sync_rust_publish_dependency_versions restore ""
+  fi
+  exit 0
+fi
+
 TS_PACKAGE_JSON_FILES=(
     "$TS_DIR/cli/package.json"
   "$TS_DIR/client/package.json"

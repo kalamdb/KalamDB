@@ -15,6 +15,7 @@ use crate::{
     terminal_ui::{self, SelectOption},
     workflow::{
         dev::server::{write_local_server_config, DEFAULT_DEV_SERVER_URL},
+        display_project_path,
         project::{
             config::{
                 ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
@@ -24,16 +25,18 @@ use crate::{
                 interactive_available, print_workflow_banner, prompt_multi_select, prompt_select,
                 prompt_text, prompt_text_with_default,
             },
+            templates::{self, EmbeddedTemplate, DEFAULT_TYPESCRIPT_TEMPLATE},
         },
     },
 };
 
-const TEMPLATES_DIR: &str = "templates";
-const PROJECT_SCHEMA_TEMPLATE: &str = "project/schema.sql.template";
-const TYPESCRIPT_PACKAGE_TEMPLATE: &str = "typescript/package.json.template";
-const TYPESCRIPT_TSCONFIG_TEMPLATE: &str = "typescript/tsconfig.json.template";
-const TYPESCRIPT_INDEX_TEMPLATE: &str = "typescript/src/index.ts.template";
 const SKIP_PACKAGE_INSTALL_ENV: &str = "KALAM_TEST_SKIP_PACKAGE_INSTALL";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateSource {
+    Builtin,
+    Repository,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerMode {
@@ -46,6 +49,7 @@ pub struct InitOptions {
     pub name: Option<String>,
     pub schema_mode: Option<SchemaMode>,
     pub languages: Option<Vec<String>>,
+    pub template: Option<String>,
     pub server_mode: Option<ServerMode>,
     pub server_url: Option<String>,
     pub yes: bool,
@@ -101,13 +105,23 @@ where
     let name = resolve_project_name(&options, output.use_color)?;
     let schema_mode = resolve_schema_mode(&options, output.use_color)?;
     let languages = resolve_languages(&options, output.use_color)?;
+    let typescript_template =
+        resolve_typescript_template(&options, &languages, output.use_color)?;
     let server_mode = resolve_server_mode(&options, output.use_color)?;
     let server_url = resolve_server_url(&options, server_mode, output.use_color)?;
 
     let config = build_config(&name, schema_mode, &languages, server_mode, &server_url);
     config.validate()?;
 
-    write_project_scaffold(&options.cwd, &config, schema_mode, server_mode, &server_url, output)?;
+    write_project_scaffold(
+        &options.cwd,
+        &config,
+        schema_mode,
+        server_mode,
+        &server_url,
+        typescript_template,
+        output,
+    )?;
     maybe_install_scaffold_dependencies(
         &options.cwd,
         &config.schema.languages,
@@ -223,6 +237,11 @@ fn resolve_project_name(options: &InitOptions, color: bool) -> Result<String> {
 
 fn resolve_schema_mode(options: &InitOptions, color: bool) -> Result<SchemaMode> {
     if let Some(mode) = options.schema_mode {
+        if matches!(mode, SchemaMode::Remote) {
+            return Err(CLIError::ConfigurationError(
+                "remote schema mode is not available yet; use --schema-mode sql".into(),
+            ));
+        }
         return Ok(mode);
     }
     if options.yes {
@@ -231,13 +250,15 @@ fn resolve_schema_mode(options: &InitOptions, color: bool) -> Result<SchemaMode>
 
     let options_list = [
         SelectOption::described("SQL file", "Use schema.sql as the source of truth"),
-        SelectOption::described("Remote schema", "Read schema from a linked KalamDB server"),
+        SelectOption::disabled("Remote schema", "Coming soon"),
     ];
     let selected = prompt_select("Schema mode", &options_list, 0, color)?;
-    let mode = match selected {
-        0 => SchemaMode::Sql,
-        _ => SchemaMode::Remote,
-    };
+    let mode = SchemaMode::Sql;
+    if selected != 0 {
+        return Err(CLIError::ConfigurationError(
+            "remote schema mode is not available yet".into(),
+        ));
+    }
     eprintln!(
         "{} {}",
         terminal_ui::prompt_label("Schema mode:", color),
@@ -276,6 +297,66 @@ fn resolve_languages(options: &InitOptions, color: bool) -> Result<Vec<String>> 
         terminal_ui::style_value(&languages.join(", "), color)
     );
     Ok(languages)
+}
+
+fn resolve_typescript_template(
+    options: &InitOptions,
+    languages: &[String],
+    color: bool,
+) -> Result<Option<&'static EmbeddedTemplate>> {
+    if !languages.iter().any(|language| language == "typescript") {
+        return Ok(None);
+    }
+
+    if let Some(template_id) =
+        options.template.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty())
+    {
+        return templates::resolve_typescript_template(Some(template_id)).map(Some);
+    }
+
+    if options.yes {
+        return templates::resolve_typescript_template(Some(DEFAULT_TYPESCRIPT_TEMPLATE)).map(Some);
+    }
+
+    let source_options = [
+        SelectOption::described("Built-in templates", "Use templates bundled with the CLI"),
+        SelectOption::disabled("From repository", "Load a template from a local path (coming soon)"),
+    ];
+    let source_selected = prompt_select("Template source", &source_options, 0, color)?;
+    let source = match source_selected {
+        0 => TemplateSource::Builtin,
+        _ => TemplateSource::Repository,
+    };
+
+    if matches!(source, TemplateSource::Repository) {
+        return Err(CLIError::ConfigurationError(
+            "loading templates from a repository is not available yet".into(),
+        ));
+    }
+
+    let available = templates::templates_for_language("typescript");
+    if available.is_empty() {
+        return Err(CLIError::ConfigurationError(
+            "no built-in typescript templates are available".into(),
+        ));
+    }
+
+    let template_options: Vec<SelectOption<'_>> = available
+        .iter()
+        .map(|template| SelectOption::described(template.id, template.description))
+        .collect();
+    let default_index = available
+        .iter()
+        .position(|template| template.id == DEFAULT_TYPESCRIPT_TEMPLATE)
+        .unwrap_or(0);
+    let selected = prompt_select("Project template", &template_options, default_index, color)?;
+    let template = available[selected];
+    eprintln!(
+        "{} {}",
+        terminal_ui::prompt_label("Template:", color),
+        terminal_ui::style_value(template.id, color)
+    );
+    Ok(Some(template))
 }
 
 fn resolve_server_mode(options: &InitOptions, color: bool) -> Result<ServerMode> {
@@ -426,6 +507,7 @@ fn write_project_scaffold(
     schema_mode: SchemaMode,
     server_mode: ServerMode,
     server_url: &str,
+    typescript_template: Option<&EmbeddedTemplate>,
     output: &WorkflowOutput,
 ) -> Result<()> {
     fs::create_dir_all(root)?;
@@ -435,15 +517,30 @@ fn write_project_scaffold(
 
     write_default_gitignore(root, &config.schema.languages, output)?;
     let kalam_gitignore = config.ensure_kalam_gitignore(root)?;
-    output.detail(format!("created {}", kalam_gitignore.display()));
+    output.detail(format!(
+        "created {}",
+        display_project_path(root, &kalam_gitignore)
+    ));
     let cli_log_dir = config.ensure_cli_log_dir(root)?;
-    output.detail(format!("created {}/", cli_log_dir.display()));
+    output.detail(format!(
+        "created {}/",
+        display_project_path(root, &cli_log_dir)
+    ));
 
-    if matches!(schema_mode, SchemaMode::Sql) {
+    if let Some(template) = typescript_template {
+        let replacements = template_replacements(&config.project.name, server_url);
+        apply_embedded_template(root, template, &replacements, output)?;
+    } else if matches!(schema_mode, SchemaMode::Sql) {
         let schema_path = root.join("schema.sql");
         if !schema_path.exists() {
-            fs::write(&schema_path, default_schema_sql(&config.project.name)?)?;
-            output.detail("created schema.sql");
+            fs::write(
+                &schema_path,
+                "-- Add your schema here\n",
+            )?;
+            output.detail(format!(
+                "created {}",
+                display_project_path(root, &schema_path)
+            ));
         }
     }
 
@@ -453,7 +550,10 @@ fn write_project_scaffold(
         let created = !server_config_path.exists();
         write_local_server_config(root, config, port)?;
         if created {
-            output.detail(format!("created {}", server_config_path.display()));
+            output.detail(format!(
+                "created {}",
+                display_project_path(root, &server_config_path)
+            ));
         }
     }
 
@@ -463,7 +563,10 @@ fn write_project_scaffold(
     if !gitkeep.exists() {
         fs::write(gitkeep, "")?;
     }
-    output.detail(format!("created {}/", migrations_dir.display()));
+    output.detail(format!(
+        "created {}/",
+        display_project_path(root, &migrations_dir)
+    ));
 
     for language in &config.schema.languages {
         if let Some(target) = config.schema.targets.get(language) {
@@ -471,12 +574,11 @@ fn write_project_scaffold(
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            output.detail(format!("created output directory for {language}"));
+            output.detail(format!(
+                "created {}",
+                display_project_path(root, out_path.parent().unwrap_or(&out_path))
+            ));
         }
-    }
-
-    if config.schema.languages.iter().any(|language| language == "typescript") {
-        write_typescript_starter(root, &config.project.name, server_url, output)?;
     }
 
     let default_profile =
@@ -500,11 +602,33 @@ fn write_project_scaffold(
     Ok(())
 }
 
-fn default_schema_sql(project_name: &str) -> Result<String> {
-    Ok(render_template(
-        &read_template(PROJECT_SCHEMA_TEMPLATE)?,
-        &[("project_name", project_name)],
-    ))
+fn template_replacements<'a>(project_name: &'a str, server_url: &'a str) -> [(&'a str, &'a str); 2] {
+    [("project_name", project_name), ("server_url", server_url)]
+}
+
+fn apply_embedded_template(
+    root: &Path,
+    template: &EmbeddedTemplate,
+    replacements: &[(&str, &str)],
+    output: &WorkflowOutput,
+) -> Result<()> {
+    for file in template.files {
+        let destination_path = root.join(file.project_path);
+        if destination_path.exists() {
+            continue;
+        }
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let rendered = render_template(file.content, replacements);
+        fs::write(&destination_path, rendered)?;
+        output.detail(format!(
+            "created {}",
+            display_project_path(root, &destination_path)
+        ));
+    }
+    Ok(())
 }
 
 fn write_default_gitignore(
@@ -544,31 +668,6 @@ fn write_default_gitignore(
     Ok(())
 }
 
-fn write_typescript_starter(
-    root: &Path,
-    project_name: &str,
-    server_url: &str,
-    output: &WorkflowOutput,
-) -> Result<()> {
-    write_template_file(
-        root,
-        "package.json",
-        TYPESCRIPT_PACKAGE_TEMPLATE,
-        &[("project_name", project_name)],
-        output,
-    )?;
-    write_template_file(root, "tsconfig.json", TYPESCRIPT_TSCONFIG_TEMPLATE, &[], output)?;
-    write_template_file(
-        root,
-        "src/index.ts",
-        TYPESCRIPT_INDEX_TEMPLATE,
-        &[("server_url", server_url)],
-        output,
-    )?;
-
-    Ok(())
-}
-
 pub fn detect_package_manager(root: &Path) -> Option<&'static str> {
     if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
         Some("bun")
@@ -587,47 +686,12 @@ pub fn detect_package_manager(root: &Path) -> Option<&'static str> {
     }
 }
 
-fn template_path(relative_path: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(TEMPLATES_DIR).join(relative_path)
-}
-
-fn read_template(relative_path: &str) -> Result<String> {
-    let path = template_path(relative_path);
-    fs::read_to_string(&path).map_err(|error| {
-        crate::error::CLIError::FileError(format!(
-            "failed to read template '{}': {error}",
-            path.display()
-        ))
-    })
-}
-
 fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
     let mut rendered = template.to_string();
     for (key, value) in replacements {
         rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
     }
     rendered
-}
-
-fn write_template_file(
-    root: &Path,
-    destination: &str,
-    template: &str,
-    replacements: &[(&str, &str)],
-    output: &WorkflowOutput,
-) -> Result<()> {
-    let destination_path = root.join(destination);
-    if destination_path.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = destination_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let rendered = render_template(&read_template(template)?, replacements);
-    fs::write(&destination_path, rendered)?;
-    output.detail(format!("created {destination}"));
-    Ok(())
 }
 
 fn package_manager_from_package_json(root: &Path) -> Option<&'static str> {
@@ -665,6 +729,7 @@ mod tests {
                 name: Some("demo-app".into()),
                 schema_mode: Some(SchemaMode::Sql),
                 languages: Some(vec!["typescript".into()]),
+                template: Some("simple-live".into()),
                 server_mode: Some(ServerMode::Local),
                 server_url: None,
                 yes: true,
@@ -676,6 +741,7 @@ mod tests {
 
         assert!(temp.path().join(KALAM_TOML).is_file());
         assert!(temp.path().join("schema.sql").is_file());
+        assert!(temp.path().join("package.json").is_file());
         assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
         assert!(temp.path().join("src/generated").is_dir());
         assert!(temp.path().join("kalam/server/server.toml").is_file());
@@ -690,6 +756,7 @@ mod tests {
                 name: Some("demo-app".into()),
                 schema_mode: Some(SchemaMode::Sql),
                 languages: Some(vec!["typescript".into()]),
+                template: None,
                 server_mode: Some(ServerMode::Local),
                 server_url: None,
                 yes: true,
@@ -717,6 +784,7 @@ mod tests {
                 name: Some("demo-app".into()),
                 schema_mode: Some(SchemaMode::Sql),
                 languages: Some(vec!["typescript".into()]),
+                template: None,
                 server_mode: Some(ServerMode::Local),
                 server_url: None,
                 yes: true,
@@ -747,6 +815,7 @@ mod tests {
                 name: Some("demo-dart".into()),
                 schema_mode: Some(SchemaMode::Sql),
                 languages: Some(vec!["dart".into()]),
+                template: None,
                 server_mode: Some(ServerMode::Local),
                 server_url: None,
                 yes: true,
@@ -772,6 +841,7 @@ mod tests {
                 name: Some("remote-app".into()),
                 schema_mode: Some(SchemaMode::Sql),
                 languages: Some(vec!["typescript".into()]),
+                template: None,
                 server_mode: Some(ServerMode::Remote),
                 server_url: Some("http://localhost:2900".into()),
                 yes: true,
@@ -839,28 +909,46 @@ mod tests {
 
     #[test]
     fn project_templates_render_expected_values() {
-        let schema = default_schema_sql("demo-app").unwrap();
-        assert!(schema.contains("demo-app"));
-        assert!(schema.contains("CREATE TABLE users"));
+        let template =
+            templates::find_template("typescript", "simple-live").expect("simple-live template");
+        let schema = template
+            .files
+            .iter()
+            .find(|file| file.project_path == "schema.sql")
+            .expect("schema.sql template");
+        let rendered_schema = render_template(schema.content, &[("project_name", "demo-app")]);
+        assert!(rendered_schema.contains("demo-app"));
+        assert!(rendered_schema.contains("CREATE TABLE users"));
 
-        let package_json = render_template(
-            &read_template(TYPESCRIPT_PACKAGE_TEMPLATE).unwrap(),
-            &[("project_name", "demo-app")],
-        );
-        assert!(package_json.contains(r#""name": "demo-app""#));
+        let package_json = template
+            .files
+            .iter()
+            .find(|file| file.project_path == "package.json")
+            .expect("package.json template");
+        let rendered_package = render_template(package_json.content, &[("project_name", "demo-app")]);
+        assert!(rendered_package.contains(r#""name": "demo-app""#));
 
-        let starter = render_template(
-            &read_template(TYPESCRIPT_INDEX_TEMPLATE).unwrap(),
-            &[("server_url", "http://localhost:2900")],
-        );
-        assert!(starter.contains("http://localhost:2900"));
-        assert!(starter.contains("liveTable"));
-        assert!(starter.contains("createClient"));
+        let starter = template
+            .files
+            .iter()
+            .find(|file| file.project_path == "src/index.ts")
+            .expect("src/index.ts template");
+        let rendered_starter =
+            render_template(starter.content, &[("server_url", "http://localhost:2900")]);
+        assert!(rendered_starter.contains("http://localhost:2900"));
+        assert!(rendered_starter.contains("liveTable"));
+        assert!(rendered_starter.contains("createClient"));
     }
 
     #[test]
     fn typescript_tsconfig_includes_node_types() {
-        let tsconfig = read_template(TYPESCRIPT_TSCONFIG_TEMPLATE).unwrap();
-        assert!(tsconfig.contains(r#""types": ["node"]"#));
+        let template =
+            templates::find_template("typescript", "simple-live").expect("simple-live template");
+        let tsconfig = template
+            .files
+            .iter()
+            .find(|file| file.project_path == "tsconfig.json")
+            .expect("tsconfig.json template");
+        assert!(tsconfig.content.contains(r#""types": ["node"]"#));
     }
 }

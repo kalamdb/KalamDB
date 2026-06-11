@@ -182,6 +182,8 @@ rand = "0.10.1"
 rcgen = "0.14.8"
 x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = false }
+kalamdb-observability = { path = "backend/crates/kalamdb-observability", default-features = false }
+link-common = { path = "link/link-common", default-features = false }
 kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
 kalamdb-transfer = { path = "backend/crates/kalamdb-transfer" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }

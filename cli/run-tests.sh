@@ -105,7 +105,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
     echo "         using features: kalam-cli/e2e-tests and kalamdb-server/e2e-tests."
     echo "         Untargeted full runs also execute"
-    echo "         TypeScript SDK unit/browser/e2e, example, UI, and Dart test suites."
+    echo "         TypeScript SDK unit/browser/e2e, example, UI, Dart, and Rust SDK test suites."
     echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
@@ -499,7 +499,7 @@ if [ -z "$TEST_FILTER" ] \
     && [ -z "$TEST_TARGET" ] \
     && [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
     RUN_SUPPLEMENTARY_SUITES=true
-    SUPPLEMENTARY_MODE="TypeScript SDK unit/browser/e2e, examples, UI, and Dart"
+    SUPPLEMENTARY_MODE="TypeScript SDK unit/browser/e2e, examples, UI, Dart, and Rust SDK"
 fi
 
 # Display configuration
@@ -1099,6 +1099,12 @@ run_supplementary_suites() {
     step "Running Dart SDK tests"
     (
         cd "$REPO_ROOT/link/sdks/dart"
+        ./test.sh
+    )
+
+    step "Running Rust SDK tests"
+    (
+        cd "$REPO_ROOT/link/sdks/rust"
         ./test.sh
     )
 }
