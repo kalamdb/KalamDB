@@ -73,14 +73,14 @@ Full package builds also compile/copy the package-specific WASM artifacts.
 
 ## Publishing and release checks
 
-The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` owns the shared TypeScript package test matrix and the publish automation for the app/runtime SDKs.
+The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` is **manual-only** (`workflow_dispatch`). It runs the shared TypeScript package test matrix and optional npm publishing for the app/runtime SDKs.
 
-- Manual input `publish=true` publishes the npm packages under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
-- Manual input `publish_github_packages=true` publishes the GitHub Packages variants under `@kalamdb/*` for `client`, `consumer`, `orm`, and `react`.
+- Manual input `publish=true` publishes `@kalamdb/client`, `@kalamdb/consumer`, `@kalamdb/orm`, and `@kalamdb/react` to npm. Each package `publish.sh` skips when that version already exists.
+- Manual input `publish_github_packages=true` publishes the GitHub Packages variants for the same four packages.
 - Manual input `force_publish=true` asks each package `publish.sh` to attempt an unpublish and republish when the registry allows it.
-- The shared test matrix now runs `client`, `consumer`, `orm`, `react`, and `cli`.
-- Publish order matters for the app/runtime SDKs: `client` first, then `consumer`, then `orm`, then `react`.
-- `@kalamdb/cli` publishes after GitHub release assets exist, so its automation stays in `.github/workflows/release.yml` and uses the package-local `link/sdks/typescript/cli/publish.sh` entrypoint.
+- The shared test matrix runs `client`, `consumer`, `orm`, `react`, and `cli`.
+- Publish order: `client` → `consumer` → `orm` → `react`.
+- `@kalamdb/cli` publishes from `.github/workflows/release.yml` when the **Publish @kalamdb/cli to npm** checkbox is enabled (also skips existing versions).
 
 Expected registry secrets and tokens:
 
