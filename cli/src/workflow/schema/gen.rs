@@ -17,7 +17,7 @@ use crate::{
     FileCredentialStore,
 };
 
-const ORM_CODEGEN_SCRIPT: &str = include_str!("../../../templates/typescript/orm-codegen.mjs");
+const ORM_CODEGEN_SCRIPT: &str = include_str!("../../../assets/orm-codegen.mjs");
 
 pub struct GenerateOptions {
     pub languages: Option<Vec<String>>,

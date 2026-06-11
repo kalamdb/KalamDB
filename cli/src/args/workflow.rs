@@ -18,6 +18,10 @@ pub struct InitArgs {
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
 
+    /// Built-in project template id (for example simple-live)
+    #[arg(long = "template")]
+    pub template: Option<String>,
+
     /// Non-interactive mode (use defaults for unspecified values)
     #[arg(long = "yes")]
     pub yes: bool,

@@ -448,22 +448,40 @@ fn test_project_workflow_db_migrate_executes_pending_sql_against_server() {
 fn test_project_workflow_schema_pull_requires_server() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = temp.path().join("remote-app");
+    let isolated_home = temp.path().join("home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    fs::create_dir_all(credentials_path.parent().expect("credentials parent"))
+        .expect("create credentials dir");
     fs::create_dir_all(&project_dir).expect("create dir");
 
-    let mut init_cmd = create_cli_command();
+    let mut init_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     init_cmd.current_dir(&project_dir).args([
         "init",
         "--yes",
         "--name",
         "remote-app",
         "--schema-mode",
-        "remote",
+        "sql",
         "--languages",
         "typescript",
     ]);
-    assert!(init_cmd.output().expect("init").status.success());
+    let init_output = init_cmd.output().expect("init");
+    assert!(
+        init_output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init_output.stderr)
+    );
 
-    let mut pull_cmd = create_cli_command();
+    // Remote schema mode is not available during init yet; emulate a pull-based project.
+    let kalam_toml_path = project_dir.join("kalam.toml");
+    let kalam_toml = fs::read_to_string(&kalam_toml_path).expect("read kalam.toml");
+    fs::write(
+        &kalam_toml_path,
+        kalam_toml.replace("mode = \"sql\"", "mode = \"remote\""),
+    )
+    .expect("write kalam.toml");
+
+    let mut pull_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     pull_cmd.current_dir(&project_dir).args(["schema", "pull"]);
     let pull_output = pull_cmd.output().expect("schema pull");
     assert!(!pull_output.status.success(), "schema pull should fail without server");

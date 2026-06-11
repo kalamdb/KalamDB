@@ -1,0 +1,9 @@
+[package]
+name = "live-inbox"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+kalam-client = { path = "../../../../kalam-client", default-features = false, features = ["native-sdk"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -64,6 +64,7 @@ struct ProgressTaskBars {
 pub struct SelectOption<'a> {
     pub label: &'a str,
     pub description: Option<&'a str>,
+    pub disabled: bool,
 }
 
 impl<'a> SelectOption<'a> {
@@ -71,6 +72,7 @@ impl<'a> SelectOption<'a> {
         Self {
             label,
             description: None,
+            disabled: false,
         }
     }
 
@@ -78,6 +80,15 @@ impl<'a> SelectOption<'a> {
         Self {
             label,
             description: Some(description),
+            disabled: false,
+        }
+    }
+
+    pub const fn disabled(label: &'a str, description: &'a str) -> Self {
+        Self {
+            label,
+            description: Some(description),
+            disabled: true,
         }
     }
 }
@@ -417,7 +428,7 @@ pub fn prompt_select(
         ));
     }
 
-    let mut selected = default_index.min(options.len() - 1);
+    let mut selected = first_enabled_index(options, default_index);
     run_menu(|stdout, rendered_lines| loop {
         redraw_menu(stdout, *rendered_lines, |stdout| {
             render_select_menu(stdout, title, options, selected, color)
@@ -425,13 +436,14 @@ pub fn prompt_select(
         *rendered_lines = menu_line_count(options);
 
         match read_menu_key()? {
-            MenuKey::Up => selected = selected.saturating_sub(1),
-            MenuKey::Down => {
-                if selected + 1 < options.len() {
-                    selected += 1;
+            MenuKey::Up => selected = previous_enabled_index(options, selected),
+            MenuKey::Down => selected = next_enabled_index(options, selected),
+            MenuKey::Confirm => {
+                if options[selected].disabled {
+                    continue;
                 }
+                return Ok(selected);
             },
-            MenuKey::Confirm => return Ok(selected),
             MenuKey::Cancel => {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "setup cancelled"));
             },
@@ -570,7 +582,9 @@ fn render_select_menu(
     for (idx, option) in options.iter().enumerate() {
         let cursor = if idx == selected { ">" } else { " " };
         let radio = if idx == selected { "(*)" } else { "( )" };
-        let label = if idx == selected {
+        let label = if option.disabled {
+            style_muted(option.label, color)
+        } else if idx == selected {
             style_value(option.label, color)
         } else {
             option.label.to_string()
@@ -582,6 +596,44 @@ fn render_select_menu(
     }
     menu_blank_line(stdout)?;
     menu_line(stdout, style_muted("  Up/Down move, Enter confirm, Esc cancel", color))
+}
+
+fn first_enabled_index(options: &[SelectOption<'_>], preferred: usize) -> usize {
+    if options.is_empty() {
+        return 0;
+    }
+    if !options[preferred.min(options.len() - 1)].disabled {
+        return preferred.min(options.len() - 1);
+    }
+    next_enabled_index(options, options.len() - 1)
+}
+
+fn next_enabled_index(options: &[SelectOption<'_>], current: usize) -> usize {
+    if options.is_empty() {
+        return 0;
+    }
+    let len = options.len();
+    for offset in 1..=len {
+        let idx = (current + offset) % len;
+        if !options[idx].disabled {
+            return idx;
+        }
+    }
+    current
+}
+
+fn previous_enabled_index(options: &[SelectOption<'_>], current: usize) -> usize {
+    if options.is_empty() {
+        return 0;
+    }
+    let len = options.len();
+    for offset in 1..=len {
+        let idx = (current + len - offset) % len;
+        if !options[idx].disabled {
+            return idx;
+        }
+    }
+    current
 }
 
 fn render_multi_select_menu(

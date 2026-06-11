@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/pg-proxy';
 import { text, bigint, timestamp } from 'drizzle-orm/pg-core';
 import { eq, desc } from 'drizzle-orm';
 import { kalamDriver, executeAsUser, file, kTable } from '../dist/index.js';
-import { requirePassword, createTestClient } from './helpers.mjs';
+import { requirePassword, createTestClient, USER } from './helpers.mjs';
 
 requirePassword();
 
@@ -394,9 +394,9 @@ describe('kalamDriver', () => {
       name: text('name'),
     });
 
-    await executeAsUser(client, db.insert(table).values({ name: 'executed-as-user' }), 'admin');
+    await executeAsUser(client, db.insert(table).values({ name: 'executed-as-user' }), USER);
     const rows = await db.select().from(table);
-    assert.equal(rows.length, 1);
+    assert.equal(rows.length, 1, `expected one row for user ${USER}`);
     assert.equal(rows[0].name, 'executed-as-user');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');

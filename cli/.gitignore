@@ -1,0 +1,9 @@
+# KalamDB project state
+.env
+kalam/cli/logs/
+kalam/server/
+kalam/.schema-baseline.sql
+
+# TypeScript / Node
+node_modules/
+dist/

@@ -33,7 +33,7 @@ rmp-serde = { workspace = true, optional = true }
 rmp = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
-kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
+kalamdb-observability = { workspace = true, default-features = false }
 tracing = { workspace = true }
 
 [dev-dependencies]

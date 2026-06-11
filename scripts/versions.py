@@ -70,6 +70,16 @@ DOCS_VERSIONED_SECTIONS: dict[str, dict[str, Any]] = {
             {"slug": "0-4-1-beta-2", "label": "0.4.1-beta.2"},
         ),
     },
+    "rust-sdk": {
+        "folder_name": "rust-sdk",
+        "root_href": "/docs/rust-sdk",
+        "legacy_root_hrefs": ("/docs/sdk/rust",),
+        "legacy_sdk_child_name": "rust",
+        "current_packages": (
+            {"source_group": "rust", "package_name": "kalam-client"},
+        ),
+        "archived": (),
+    },
 }
 
 DOCS_COMPATIBILITY_MATRIX: tuple[dict[str, Any], ...] = (
@@ -80,7 +90,7 @@ DOCS_COMPATIBILITY_MATRIX: tuple[dict[str, Any], ...] = (
             "typescript-sdk": "0-4-2-rc-1",
             "dart-sdk": "0-4-1-beta-2",
         },
-        "rust_sdk": "Beta source package",
+        "rust_sdk": "0-5-2-rc-2",
         "notes": "Recommended release-candidate pairing for 0.4.2 testing.",
     },
     {
@@ -90,7 +100,7 @@ DOCS_COMPATIBILITY_MATRIX: tuple[dict[str, Any], ...] = (
             "typescript-sdk": "0-4-1-beta",
             "dart-sdk": "0-4-1-beta-2",
         },
-        "rust_sdk": "Beta source package",
+        "rust_sdk": "0-4-2-rc-3",
         "notes": "Use for older beta applications that are not ready to move to 0.4.2 release candidates.",
     },
 )
@@ -100,6 +110,7 @@ BACKEND_CARGO = ROOT / "backend" / "Cargo.toml"
 CLI_CARGO = ROOT / "cli" / "Cargo.toml"
 CLI_NPM_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "cli" / "package.json"
 PG_CARGO = ROOT / "pg" / "Cargo.toml"
+RUST_SDK_DIR = ROOT / "link" / "sdks" / "rust"
 RUST_SDK_CARGO = ROOT / "link" / "kalam-client" / "Cargo.toml"
 PYTHON_PYPROJECT = ROOT / "link" / "sdks" / "python" / "pyproject.toml"
 PYTHON_CARGO = ROOT / "link" / "sdks" / "python" / "Cargo.toml"

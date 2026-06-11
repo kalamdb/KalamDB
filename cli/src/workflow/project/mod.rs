@@ -4,6 +4,7 @@ pub mod link;
 pub mod prompts;
 pub mod resolve;
 pub mod status;
+pub mod templates;
 
 pub use config::KalamProjectConfig;
 pub use link::{link_environment, LinkOptions};

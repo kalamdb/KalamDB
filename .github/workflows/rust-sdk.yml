@@ -1,0 +1,346 @@
+name: Rust SDK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'link/sdks/rust/**'
+      - 'link/kalam-client/**'
+      - 'link/link-common/**'
+      - 'backend/crates/kalamdb-commons/**'
+      - 'backend/crates/kalamdb-observability/**'
+      - 'backend/server.example.toml'
+      - 'scripts/download-release-server.sh'
+      - 'scripts/resolve-latest-release-asset.py'
+      - 'scripts/start-sdk-test-server.sh'
+      - 'scripts/test-rust-sdk-release.sh'
+      - 'versions.json'
+      - 'scripts/versions.py'
+      - '.github/workflows/rust-sdk.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish kalam-client to crates.io"
+        type: boolean
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      publish:
+        description: "Publish kalam-client to crates.io"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.92.0"
+  RUSTC_WRAPPER: ""
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  resolve_versions:
+    name: Resolve Rust SDK Version
+    runs-on: ubuntu-latest
+    outputs:
+      root_version: ${{ steps.versions.outputs.root_version }}
+      rust_sdk_version: ${{ steps.versions.outputs.rust_sdk_version }}
+      latest_server_release_tag: ${{ steps.latest_server.outputs.release_tag }}
+      selected_server_version: ${{ steps.latest_server.outputs.selected_version }}
+      selected_server_selection_reason: ${{ steps.latest_server.outputs.selection_reason }}
+      latest_server_asset_name: ${{ steps.latest_server.outputs.asset_name }}
+      latest_server_asset_api_url: ${{ steps.latest_server.outputs.asset_api_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify versions.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py verify
+
+      - name: Resolve versions from versions.json
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py github-outputs --github-output "$GITHUB_OUTPUT" --repository "$GITHUB_REPOSITORY"
+
+      - name: Resolve latest released server asset
+        id: latest_server
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/resolve-latest-release-asset.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT" \
+            --token "$GITHUB_TOKEN" \
+            --preferred-version "${{ steps.versions.outputs.root_version }}" \
+            --asset-pattern '^kalamdb-server-.*-linux-x86_64\.tar\.gz$'
+
+  download_release_server_binary:
+    name: Download Latest Released SDK Server Binary
+    runs-on: ubuntu-latest
+    needs: resolve_versions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download latest release server asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/download-release-server.sh \
+            "${{ needs.resolve_versions.outputs.latest_server_asset_name }}" \
+            "${{ needs.resolve_versions.outputs.latest_server_asset_api_url }}" \
+            "$PWD/release-server/kalamdb-server"
+          echo "Using SDK test server release ${{ needs.resolve_versions.outputs.latest_server_release_tag }} (${{ needs.resolve_versions.outputs.selected_server_version }}, ${{ needs.resolve_versions.outputs.selected_server_selection_reason }}) for requested version ${{ needs.resolve_versions.outputs.root_version }}"
+
+      - name: Upload SDK test server binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: release-server/kalamdb-server
+          if-no-files-found: error
+
+  test:
+    name: Rust SDK Tests
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_versions
+      - download_release_server_binary
+    outputs:
+      total: ${{ steps.parse_badge.outputs.total }}
+      passed: ${{ steps.parse_badge.outputs.passed }}
+      failed: ${{ steps.parse_badge.outputs.failed }}
+      message: ${{ steps.parse_badge.outputs.message }}
+      color: ${{ steps.parse_badge.outputs.color }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download server binary
+        uses: actions/download-artifact@v6
+        with:
+          name: sdk-test-server-linux-x86_64
+          path: .
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libclang-dev pkg-config libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sdk-tests-rust
+          cache-on-failure: true
+          workspaces: link/sdks/rust -> link/sdks/rust/target
+
+      - name: Prepare server binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./kalamdb-server
+          echo "SDK test source: latest-release"
+
+      - name: Run Rust SDK tests
+        id: run_tests
+        continue-on-error: true
+        shell: bash
+        env:
+          KALAMDB_URL: "http://localhost:2900"
+          KALAMDB_SERVER_URL: "http://localhost:2900"
+          KALAMDB_ROOT_PASSWORD: "kalamdb123"
+          KALAMDB_SERVER_BIN: ${{ github.workspace }}/kalamdb-server
+          RUST_SDK_SERVER_LOG: ${{ github.workspace }}/rust-sdk-server.log
+          RUST_SDK_TEST_OUTPUT: ${{ github.workspace }}/rust-sdk-test-output.txt
+        run: |
+          set -euo pipefail
+          ./scripts/test-rust-sdk-release.sh
+
+      - name: Parse Rust SDK test counts
+        if: always()
+        id: parse_badge
+        shell: bash
+        env:
+          STEP_OUTCOME: ${{ steps.run_tests.outcome }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYTHON'
+          import os
+          import re
+          from pathlib import Path
+
+          output = Path("rust-sdk-test-output.txt")
+          text = output.read_text(encoding="utf-8", errors="replace") if output.exists() else ""
+
+          def read_count(label: str) -> int | None:
+              match = re.search(rf"^# {label} (\d+)$", text, flags=re.MULTILINE)
+              return int(match.group(1)) if match else None
+
+          total = read_count("tests")
+          passed = read_count("pass")
+          failed = read_count("fail")
+          outcome = os.environ.get("STEP_OUTCOME", "failure")
+
+          if total is None or passed is None or failed is None:
+              passed = sum(int(value) for value in re.findall(r"^test result: ok\. (\d+) passed", text, flags=re.MULTILINE))
+              failed = sum(int(match[1]) for match in re.findall(r"^test result: FAILED\. (\d+) passed; (\d+) failed", text, flags=re.MULTILINE))
+              total = passed + failed
+
+          if total == 0 and outcome == "success":
+              message = "passed"
+              color = "brightgreen"
+          elif total == 0:
+              message = "failed"
+              color = "red"
+          else:
+              message = f"{passed}/{total} passed" if failed == 0 and outcome == "success" else f"{passed}/{total} passed, {failed} failed"
+              color = "brightgreen" if failed == 0 and outcome == "success" else "red"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"total={total}\n")
+              handle.write(f"passed={passed}\n")
+              handle.write(f"failed={failed}\n")
+              handle.write(f"message={message}\n")
+              handle.write(f"color={color}\n")
+          PYTHON
+
+      - name: Print Rust SDK server log
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Rust SDK server log ==="
+          cat rust-sdk-server.log || true
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-sdk-server-log
+          path: rust-sdk-server.log
+          if-no-files-found: ignore
+
+      - name: Upload Rust SDK test output
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-sdk-test-output
+          path: rust-sdk-test-output.txt
+          if-no-files-found: ignore
+
+      - name: Fail if Rust SDK tests failed
+        if: always() && steps.run_tests.outcome != 'success'
+        shell: bash
+        run: |
+          echo "Rust SDK tests failed" >&2
+          exit 1
+
+  update_badge:
+    name: Update Rust SDK Badge
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.test.result != 'cancelled' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update Rust SDK badge file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          render_badge() {
+            mkdir -p .github/badges
+
+            cat > .github/badges/sdk-rust-tests.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "rust sdk tests (${{ needs.test.outputs.total }})",
+            "message": "${{ needs.test.outputs.message }}",
+            "color": "${{ needs.test.outputs.color }}"
+          }
+          EOF
+          }
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B sdk-rust-badge-update origin/main
+
+            render_badge
+
+            if git diff --quiet -- .github/badges/sdk-rust-tests.json; then
+              echo "Rust SDK badge file already up to date"
+              exit 0
+            fi
+
+            git add .github/badges/sdk-rust-tests.json
+            git commit -m "docs: update rust sdk test badge"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "Rust SDK badge push was not a fast-forward; retrying from latest origin/main (attempt ${attempt}/3)."
+            sleep 2
+          done
+
+          echo "Failed to push Rust SDK badge update after retries" >&2
+          exit 1
+
+  publish:
+    name: Publish kalam-client to crates.io
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_versions
+      - test
+    if: ${{ inputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-sdk-publish
+          cache-on-failure: true
+
+      - name: Publish Rust SDK crates
+        shell: bash
+        working-directory: link/sdks/rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve_versions.outputs.rust_sdk_version }}"
+          chmod +x ./publish.sh
+          ./publish.sh --version "$VERSION"

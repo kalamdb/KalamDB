@@ -6,7 +6,8 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-build = "../../build.rs"
+description = "Runtime metrics and observability helpers for KalamDB"
+build = "build.rs"
 
 [dependencies]
 # System monitoring

@@ -1,0 +1,36 @@
+[package]
+name = "rust-sdk-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kalam-client = { path = "../../kalam-client", default-features = false, features = [
+    "native-sdk",
+    "consumer",
+    "healthcheck",
+] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde_json = "1"
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "examples/quickstart",
+    "examples/live-inbox",
+    "examples/topic-consumer",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.92"
+license = "Apache-2.0"
+authors = ["KalamDB Team"]
+repository = "https://github.com/kalamdb/KalamDB"

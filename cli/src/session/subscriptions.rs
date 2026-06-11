@@ -1,10 +1,8 @@
 #[cfg(unix)]
 use std::io::IsTerminal;
 
-use kalam_client::{
-    SeqId, SqlSubscriptionDescriptor, SqlSubscriptionStatus, SubscriptionConfig,
-    SubscriptionOptions,
-};
+use kalam_client::{SeqId, SubscriptionConfig, SubscriptionOptions};
+use kalamdb_commons::{SqlSubscriptionDescriptor, SqlSubscriptionStatus};
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
 

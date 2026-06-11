@@ -66,6 +66,7 @@ fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
             name: args.name.clone(),
             schema_mode: args.schema_mode.map(Into::into),
             languages: args.languages.clone(),
+            template: args.template.clone(),
             server_mode: args.server_mode.map(Into::into),
             server_url: args.server_url.clone(),
             yes: args.yes,
