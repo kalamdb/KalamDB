@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "label": "rust sdk tests (0)",
-  "message": "pending",
-  "color": "lightgrey"
+  "label": "rust sdk tests (22)",
+  "message": "22/22 passed",
+  "color": "brightgreen"
 }
