@@ -532,7 +532,8 @@ mod tests {
         let is_latest = batch
             .column_by_name("is_latest")
             .unwrap()
-            .as_any().downcast_ref::<datafusion::arrow::array::BooleanArray>()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::BooleanArray>()
             .unwrap();
         assert!(!is_latest.value(0));
         assert!(is_latest.value(1));

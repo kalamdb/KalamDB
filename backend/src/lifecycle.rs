@@ -13,6 +13,7 @@ use std::{
 
 use actix_web::{App, HttpServer};
 use anyhow::Result;
+use chrono::Utc;
 use kalamdb_api::limiter::RateLimiter;
 use kalamdb_auth::CachedUsersRepo;
 use kalamdb_commons::{AuthType, Role, StorageId, UserId};
@@ -193,8 +194,9 @@ pub async fn prepare_components(
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(CachedUsersRepo::new(users_provider));
+    let cached_user_repo = Arc::new(CachedUsersRepo::new(users_provider));
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::clone(&cached_user_repo) as _;
+    app_context.set_cached_user_repo(cached_user_repo);
 
     let handler_registry = Arc::new(HandlerRegistry::new());
     kalamdb_handlers::register_all_handlers(
@@ -502,6 +504,33 @@ pub async fn bootstrap_isolated_without_cluster_init(
     bootstrap_isolated_inner(config, false).await
 }
 
+fn log_server_started(
+    config: &ServerConfig,
+    elapsed_ms: f64,
+    http_version: &str,
+    bind_addr: &str,
+    ui_status: &str,
+) {
+    let ui_segment = if crate::http_runtime::should_print_terminal_hyperlinks(config) {
+        crate::http_runtime::format_startup_ui_status_with_links(config, ui_status)
+    } else {
+        crate::http_runtime::format_startup_ui_status_plain(config, ui_status)
+    };
+    let message = format!(
+        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr} | UI: {ui_segment})"
+    );
+
+    if crate::http_runtime::should_print_terminal_hyperlinks(config) {
+        // tracing-subscriber escapes OSC-8 sequences in log messages, so write
+        // trusted startup output directly to the interactive console instead.
+        let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ");
+        println!("{timestamp}  INFO main kalamdb_server::lifecycle: {message}");
+        return;
+    }
+
+    info!("{message}");
+}
+
 /// Start the HTTP server and manage graceful shutdown.
 pub async fn run(
     config: &ServerConfig,
@@ -631,12 +660,12 @@ pub async fn run(
         server.bind(&bind_addr)?
     };
 
-    info!(
-        "🚀 Server started in {:.2}ms ({} on {} | UI: {})",
+    log_server_started(
+        config,
         main_start.elapsed().as_secs_f64() * 1000.0,
         http_version,
-        bind_addr,
-        ui_status
+        &bind_addr,
+        ui_status,
     );
 
     let server = server

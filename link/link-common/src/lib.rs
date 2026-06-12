@@ -36,7 +36,7 @@ pub mod wasm;
 #[cfg(feature = "tokio-runtime")]
 pub use auth::{ArcDynAuthProvider, AuthProvider, DynamicAuthProvider, ResolvedAuth};
 #[cfg(feature = "tokio-runtime")]
-pub use client::{KalamLinkClient, QueryUploadFile};
+pub use client::KalamLinkClient;
 #[cfg(all(feature = "tokio-runtime", feature = "consumer"))]
 pub use consumer::ConsumerConfig;
 #[cfg(feature = "consumer")]
@@ -56,9 +56,11 @@ pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, Messa
 pub use kalamdb_commons::ids::SeqId;
 #[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
 pub use kalamdb_commons::Role;
+pub use kalamdb_commons::TableId;
 pub use kalamdb_commons::UserId;
 pub use models::{
-    parse_i64, FieldFlag, FieldFlags, FileRef, KalamCellValue, KalamDataType, RowData, SchemaField,
+    parse_i64, BoundFileRef, FieldFlag, FieldFlags, FileDownload, FileRef, FileRefContext,
+    FileUpload, KalamCellValue, KalamDataType, RowData, SchemaField,
 };
 #[cfg(feature = "consumer")]
 pub use models::{AckResponse, ConsumeMessage, ConsumeRequest, ConsumeResponse};
@@ -70,6 +72,8 @@ pub use models::{
     SetupUserInfo, SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
     SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
 };
+#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+pub use query::models::QueryParam;
 #[cfg(feature = "tokio-runtime")]
 pub use query::AuthRefreshCallback;
 #[cfg(feature = "tokio-runtime")]

@@ -11,7 +11,11 @@ use tokio::{
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
-    workflow::dev::logs::{ServiceLogRegistry, ServiceLogSource},
+    process_util::{configure_tokio_shell_command, shell_command_program},
+    workflow::{
+        dev::logs::{ServiceLogRegistry, ServiceLogSource},
+        project::guidance::{dev_empty_process_command, dev_process_spawn_failed},
+    },
 };
 
 pub struct ManagedProcess {
@@ -39,9 +43,7 @@ impl ProcessSupervisor {
     ) -> Result<()> {
         for (name, command) in commands {
             if command.trim().is_empty() {
-                return Err(CLIError::ConfigurationError(format!(
-                    "dev.processes.{name} command must not be empty"
-                )));
+                return Err(CLIError::ConfigurationError(dev_empty_process_command(name)));
             }
             self.spawn_one(name, command, registry, output).await?;
         }
@@ -68,15 +70,20 @@ impl ProcessSupervisor {
             })?
             .clone();
 
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(command)
+        let mut child = Command::new(shell_command_program());
+        configure_tokio_shell_command(&mut child, command);
+        let mut child = child
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| {
-                CLIError::ConfigurationError(format!("failed to start dev process '{name}': {e}"))
+            .map_err(|error| {
+                CLIError::ConfigurationError(dev_process_spawn_failed(
+                    name,
+                    shell_command_program(),
+                    command,
+                    &error.to_string(),
+                ))
             })?;
 
         let stdout = child.stdout.take();

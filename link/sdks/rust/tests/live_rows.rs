@@ -1,18 +1,19 @@
 //! Materialized `live()` subscription tests.
 
+mod common;
+
 use kalam_client::{LiveRowsConfig, LiveRowsEvent, SubscriptionConfig, SubscriptionOptions};
-use rust_sdk_tests::{build_client, is_server_running, unique_ident};
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]
 async fn live_rows_reflects_insert() {
-    if !is_server_running().await {
+    if !common::is_server_running().await {
         return;
     }
 
-    let client = build_client().expect("client should build");
-    let suffix = unique_ident("rust_live");
+    let client = common::create_client().expect("client should build");
+    let suffix = common::unique_ident("rust_live");
     let table = format!("default.{suffix}");
 
     client
@@ -32,7 +33,8 @@ async fn live_rows_reflects_insert() {
 
     client.connect().await.expect("connect");
 
-    let mut config = SubscriptionConfig::new(format!("live-{suffix}"), format!("SELECT * FROM {table}"));
+    let mut config =
+        SubscriptionConfig::new(format!("live-{suffix}"), format!("SELECT * FROM {table}"));
     config.options = Some(SubscriptionOptions::new().with_last_rows(10));
 
     let mut live = client
@@ -87,10 +89,7 @@ async fn live_rows_reflects_insert() {
 
     let rows = updated.expect("rows after insert");
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].get("value").and_then(|value| value.as_text()),
-        Some("live-value")
-    );
+    assert_eq!(rows[0].get("value").and_then(|value| value.as_text()), Some("live-value"));
 
     live.close().await.expect("close");
     let _ = client

@@ -228,8 +228,7 @@ fn try_read_memory_source_batches(
         return Ok(None);
     };
 
-    let Some(memory_source) =
-        data_source_exec.data_source().downcast_ref::<MemorySourceConfig>()
+    let Some(memory_source) = data_source_exec.data_source().downcast_ref::<MemorySourceConfig>()
     else {
         return Ok(None);
     };

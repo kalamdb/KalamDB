@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,11 +22,26 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const packageJsonPath = path.join(packageDir, 'package.json');
 const installScriptPath = path.join(packageDir, 'scripts', 'install.js');
 const fixtureVersion = '9.9.9-test.1';
-const fixtureOutput = 'npm-cli-installed-fixture';
 
-test('install script downloads and installs the wrapped kalam binary', async (t) => {
+function resolveKalamBinaryForTests() {
+  const candidates = [
+    process.env.KALAM_TEST_BINARY,
+    path.join(packageDir, 'dist', process.platform === 'win32' ? 'kalam.exe' : 'kalam'),
+    path.join(packageDir, '../../../../target/debug/kalam'),
+    path.join(packageDir, '../../../../target/release/kalam'),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+test('install script bootstraps then delegates verification to kalam update', async (t) => {
   if (process.platform === 'win32') {
-    t.skip('unix shell fixture only');
+    t.skip('unix fixture only');
+  }
+
+  const kalamBinary = resolveKalamBinaryForTests();
+  if (!kalamBinary) {
+    t.skip('kalam binary not available for install test');
   }
 
   const installRoot = mkdtempSync(path.join(tmpdir(), 'kalam-npm-install-'));
@@ -30,7 +54,7 @@ test('install script downloads and installs the wrapped kalam binary', async (t)
   t.after(() => rmSync(releaseDir, { recursive: true, force: true }));
 
   const archivePath = path.join(releaseDir, archiveName);
-  await createFixtureArchive(releaseDir, archivePath, fixtureVersion, platform, fixtureOutput);
+  await createFixtureArchive(releaseDir, archivePath, fixtureVersion, platform, kalamBinary);
   const checksum = createHash('sha256').update(readFileSync(archivePath)).digest('hex');
   const checksums = `${checksum}  ${archiveName}\n`;
 
@@ -72,18 +96,24 @@ test('install script downloads and installs the wrapped kalam binary', async (t)
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Bootstrapping kalamcli-/);
 
-  const installedBinary = path.join(installRoot, 'dist', process.platform === 'win32' ? 'kalam.exe' : 'kalam');
+  const installedBinary = path.join(installRoot, 'dist', 'kalam');
   assert.ok(existsSync(installedBinary), 'expected install script to place a binary in dist/');
 
-  const binaryRun = spawnSync(installedBinary, [], { encoding: 'utf8' });
-  assert.equal(binaryRun.status, 0, binaryRun.stderr || binaryRun.stdout);
-  assert.equal(binaryRun.stdout.trim(), fixtureOutput);
+  const versionRun = spawnSync(installedBinary, ['--version'], { encoding: 'utf8' });
+  assert.equal(versionRun.status, 0, versionRun.stderr || versionRun.stdout);
+  assert.match(versionRun.stdout, /^kalam\s+/m);
 });
 
-test('install script reuses the existing dist binary when the version already matches', async (t) => {
+test('install script delegates to kalam update when a binary already exists', async (t) => {
   if (process.platform === 'win32') {
-    t.skip('unix shell fixture only');
+    t.skip('unix fixture only');
+  }
+
+  const kalamBinary = resolveKalamBinaryForTests();
+  if (!kalamBinary) {
+    t.skip('kalam binary not available for install test');
   }
 
   const installRoot = mkdtempSync(path.join(tmpdir(), 'kalam-npm-reuse-'));
@@ -92,17 +122,42 @@ test('install script reuses the existing dist binary when the version already ma
   mkdirSync(path.join(installRoot, 'dist'), { recursive: true });
 
   const binaryPath = path.join(installRoot, 'dist', 'kalam');
-  writeFileSync(
-    binaryPath,
-    `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  printf 'kalam ${fixtureVersion}\\n'
-else
-  printf 'reused-binary\\n'
-fi
-`
-  );
+  copyFileSync(kalamBinary, binaryPath);
   chmodSync(binaryPath, 0o755);
+
+  const platform = detectPlatform();
+  const archiveName = `kalamcli-${fixtureVersion}-${platform}.tar.gz`;
+  const releaseDir = mkdtempSync(path.join(tmpdir(), 'kalam-npm-release-'));
+  t.after(() => rmSync(releaseDir, { recursive: true, force: true }));
+
+  const archivePath = path.join(releaseDir, archiveName);
+  await createFixtureArchive(releaseDir, archivePath, fixtureVersion, platform, kalamBinary);
+  const checksum = createHash('sha256').update(readFileSync(archivePath)).digest('hex');
+  const checksums = `${checksum}  ${archiveName}\n`;
+
+  const server = http.createServer((req, res) => {
+    if (req.url === `/releases/download/v${fixtureVersion}/${archiveName}`) {
+      const body = readFileSync(archivePath);
+      res.writeHead(200, { 'Content-Length': body.length });
+      res.end(body);
+      return;
+    }
+
+    if (req.url === `/releases/download/v${fixtureVersion}/SHA256SUMS`) {
+      res.writeHead(200, { 'Content-Length': Buffer.byteLength(checksums) });
+      res.end(checksums);
+      return;
+    }
+
+    res.writeHead(404);
+    res.end('not found');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}/releases/download/v${fixtureVersion}`;
 
   const result = await runProcess(process.execPath, [installScriptPath], {
     cwd: packageDir,
@@ -111,19 +166,15 @@ fi
       ...process.env,
       KALAM_CLI_PACKAGE_ROOT: installRoot,
       KALAM_CLI_VERSION: fixtureVersion,
-      KALAM_CLI_RELEASE_BASE_URL: 'http://127.0.0.1:9/releases/download/v9.9.9-test.1',
+      KALAM_CLI_RELEASE_BASE_URL: baseUrl,
       NO_PROXY: '127.0.0.1,localhost,::1',
       no_proxy: '127.0.0.1,localhost,::1',
     },
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /Reusing KalamDB CLI 9\.9\.9-test\.1/);
-  assert.doesNotMatch(result.stdout, /Downloading kalamcli-/);
-
-  const binaryRun = spawnSync(binaryPath, [], { encoding: 'utf8' });
-  assert.equal(binaryRun.status, 0, binaryRun.stderr || binaryRun.stdout);
-  assert.equal(binaryRun.stdout.trim(), 'reused-binary');
+  assert.doesNotMatch(result.stdout, /Bootstrapping kalamcli-/);
+  assert.ok(existsSync(binaryPath), 'expected existing binary to remain installed');
 });
 
 function runProcess(command, args, options) {
@@ -156,11 +207,11 @@ function detectPlatform() {
   return `${osName}-${arch}`;
 }
 
-async function createFixtureArchive(releaseDir, archivePath, version, platform, output) {
+async function createFixtureArchive(releaseDir, archivePath, version, platform, kalamBinary) {
   const stagingRoot = path.join(releaseDir, `kalamcli-${version}-${platform}`);
   const binaryPath = path.join(stagingRoot, 'kalam');
   mkdirSync(stagingRoot, { recursive: true });
-  writeFileSync(binaryPath, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`);
+  copyFileSync(kalamBinary, binaryPath);
   chmodSync(binaryPath, 0o755);
   await tar.c({ cwd: releaseDir, file: archivePath, gzip: true }, [path.basename(stagingRoot)]);
 }

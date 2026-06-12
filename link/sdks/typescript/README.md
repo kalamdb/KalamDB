@@ -2,7 +2,7 @@
 
 This folder contains the publishable TypeScript SDK packages:
 
-- `cli/` for `@kalamdb/cli`: npm wrapper that installs the released native `kalam` binary, verifies `SHA256SUMS`, and exposes the `kalam` command.
+- `cli/` for `@kalamdb/cli`: lightweight npm wrapper that bootstraps the native `kalam` binary and delegates install/update logic to `kalam update`.
 - `client/` for `@kalamdb/client`: auth, SQL, FILE columns, live queries, subscriptions, and typed cell values.
 - `consumer/` for `@kalamdb/consumer`: topic polling, acknowledgements, and the agent/worker runtime.
 - `orm/` for `@kalamdb/orm`: Drizzle ORM driver, KalamDB table helpers, FILE/BYTES/EMBEDDING columns, live table helpers, and schema generation.

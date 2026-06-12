@@ -8,7 +8,7 @@
 //! Views memoize their Arrow schema using a `static OnceLock<SchemaRef>`.
 //! Each view's schema is computed once and shared across all uses.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::{

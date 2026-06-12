@@ -1,6 +1,6 @@
 # Rust SDK Examples
 
-Runnable examples for `kalam-client`. Each crate depends on the workspace copy at `link/kalam-client/`.
+Runnable examples for `kalam-client`. Each example depends on the crate at `link/sdks/rust/`.
 
 ## Prerequisites
 
@@ -21,6 +21,7 @@ Common environment variables:
 | Example | Source | Command | Features |
 |---------|--------|---------|----------|
 | `quickstart` | [src](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/quickstart/src) | `cargo run -p quickstart` | HTTP query only |
+| `file-attachments` | [src](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/file-attachments/src) | `cargo run -p file-attachments` | `file-uploads`, `TableId`, `download_bound_file` |
 | `live-inbox` | [src](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/live-inbox/src) | `cargo run -p live-inbox` | `live()` materialized rows |
 | `topic-consumer` | [src](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/topic-consumer/src) | `cargo run -p topic-consumer` | `consumer` topic polling |
 
@@ -28,6 +29,7 @@ From `link/sdks/rust/`:
 
 ```bash
 cargo run -p quickstart
+cargo run -p file-attachments
 cargo run -p live-inbox
 cargo run -p topic-consumer
 ```

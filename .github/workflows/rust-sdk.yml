@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'link/sdks/rust/**'
-      - 'link/kalam-client/**'
+      - 'link/sdks/rust/**'
       - 'link/link-common/**'
       - 'backend/crates/kalamdb-commons/**'
       - 'backend/crates/kalamdb-observability/**'

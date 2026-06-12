@@ -11,7 +11,7 @@
 //! UUIDv7 provides time-ordered UUIDs suitable for PRIMARY KEY columns
 //! while maintaining global uniqueness.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},

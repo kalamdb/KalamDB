@@ -1,8 +1,8 @@
 //! Offline API surface tests — no running server required.
 
 use kalam_client::{
-    AuthProvider, AutoOffsetReset, KalamCellValue, LiveRowsConfig, SeqId, SubscriptionConfig,
-    SubscriptionOptions, TopicConsumer,
+    AuthProvider, AutoOffsetReset, FileUpload, KalamCellValue, LiveRowsConfig, QueryParam, SeqId,
+    SubscriptionConfig, SubscriptionOptions, TopicConsumer,
 };
 
 #[test]
@@ -89,4 +89,11 @@ fn consumer_builder_accepts_auto_offset_reset() {
         .build();
 
     assert!(built.is_ok(), "expected valid consumer builder");
+}
+
+#[test]
+fn file_and_query_param_types_are_available() {
+    let _ = QueryParam::from("doc1");
+    let _ = QueryParam::from(42_i64);
+    let _ = FileUpload::new("upload", "photo.jpg", vec![1, 2, 3]).with_mime("image/jpeg");
 }

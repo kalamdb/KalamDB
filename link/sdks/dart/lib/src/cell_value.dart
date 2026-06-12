@@ -1,4 +1,5 @@
 import 'package:kalam_link/src/file_ref.dart';
+import 'package:kalam_link/src/generated/api.dart' as bridge;
 import 'package:kalam_link/src/seq_id.dart';
 
 /// Type-safe wrapper for a single cell value in a KalamDB query result row.
@@ -242,6 +243,12 @@ class KalamCellValue {
   /// ```
   KalamFileRef? asFile() {
     if (isNull) return null;
+    if (_raw is String) {
+      final parsed = bridge.dartTryParseFileRef(fileRefJson: _raw);
+      if (parsed != null) {
+        return KalamFileRef.fromBridge(parsed);
+      }
+    }
     return KalamFileRef.tryParse(_raw);
   }
 

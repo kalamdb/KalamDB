@@ -8,7 +8,7 @@ on:
       - 'backend/Cargo.toml'
       - 'cli/Cargo.toml'
       - 'pg/Cargo.toml'
-      - 'link/kalam-client/Cargo.toml'
+      - 'link/sdks/rust/Cargo.toml'
       - 'link/sdks/rust/**'
       - 'link/sdks/typescript/**/package.json'
       - 'link/sdks/dart/pubspec.yaml'

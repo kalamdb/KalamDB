@@ -29,8 +29,9 @@ impl UserExecutor {
         log::debug!("CommandExecutorImpl: Creating user {}", user.user_id);
         let app_context = self.app_context.clone();
         let user = user.clone();
-        run_blocking_applier(move || {
-            let user_id = user.user_id.clone();
+        let cache_user_id = user.user_id.clone();
+        let user_id = cache_user_id.clone();
+        let result = run_blocking_applier(move || {
             app_context
                 .system_tables()
                 .users()
@@ -38,7 +39,9 @@ impl UserExecutor {
                 .map_err(|e| ApplierError::Execution(format!("Failed to create user: {}", e)))?;
             Ok(format!("User {} created successfully", user_id))
         })
-        .await
+        .await?;
+        self.app_context.invalidate_cached_user(&cache_user_id);
+        Ok(result)
     }
 
     /// Execute ALTER USER (update)
@@ -46,8 +49,9 @@ impl UserExecutor {
         log::debug!("CommandExecutorImpl: Updating user {}", user.user_id);
         let app_context = self.app_context.clone();
         let user = user.clone();
-        run_blocking_applier(move || {
-            let user_id = user.user_id.clone();
+        let cache_user_id = user.user_id.clone();
+        let user_id = cache_user_id.clone();
+        let result = run_blocking_applier(move || {
             app_context
                 .system_tables()
                 .users()
@@ -55,7 +59,9 @@ impl UserExecutor {
                 .map_err(|e| ApplierError::Execution(format!("Failed to update user: {}", e)))?;
             Ok(format!("User {} updated successfully", user_id))
         })
-        .await
+        .await?;
+        self.app_context.invalidate_cached_user(&cache_user_id);
+        Ok(result)
     }
 
     /// Execute DROP USER (soft delete)
@@ -64,8 +70,9 @@ impl UserExecutor {
     pub async fn delete_user(&self, user_id: &UserId) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Deleting user {}", user_id);
         let app_context = self.app_context.clone();
-        let user_id = user_id.clone();
-        run_blocking_applier(move || {
+        let cache_user_id = user_id.clone();
+        let user_id = cache_user_id.clone();
+        let result = run_blocking_applier(move || {
             app_context
                 .system_tables()
                 .users()
@@ -73,7 +80,9 @@ impl UserExecutor {
                 .map_err(|e| ApplierError::Execution(format!("Failed to delete user: {}", e)))?;
             Ok(format!("User {} deleted successfully", user_id))
         })
-        .await
+        .await?;
+        self.app_context.invalidate_cached_user(&cache_user_id);
+        Ok(result)
     }
 
     /// Record user login timestamp
@@ -84,8 +93,9 @@ impl UserExecutor {
     ) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Recording login for user {}", user_id);
         let app_context = self.app_context.clone();
-        let user_id = user_id.clone();
-        run_blocking_applier(move || {
+        let cache_user_id = user_id.clone();
+        let user_id = cache_user_id.clone();
+        let result = run_blocking_applier(move || {
             if let Some(mut user) = app_context
                 .system_tables()
                 .users()
@@ -100,7 +110,9 @@ impl UserExecutor {
             }
             Ok(format!("User {} not found for login recording", user_id))
         })
-        .await
+        .await?;
+        self.app_context.invalidate_cached_user(&cache_user_id);
+        Ok(result)
     }
 
     /// Set user lock status
@@ -115,8 +127,9 @@ impl UserExecutor {
             locked_until
         );
         let app_context = self.app_context.clone();
-        let user_id = user_id.clone();
-        run_blocking_applier(move || {
+        let cache_user_id = user_id.clone();
+        let user_id = cache_user_id.clone();
+        let result = run_blocking_applier(move || {
             if let Some(mut user) = app_context
                 .system_tables()
                 .users()
@@ -135,6 +148,8 @@ impl UserExecutor {
             }
             Ok(format!("User {} not found for lock update", user_id))
         })
-        .await
+        .await?;
+        self.app_context.invalidate_cached_user(&cache_user_id);
+        Ok(result)
     }
 }

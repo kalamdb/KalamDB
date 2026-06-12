@@ -931,10 +931,7 @@ mod tests {
             CLISession::parse_namespace_switch("USE NAMESPACE chat;"),
             Some(kalamdb_commons::NamespaceId::new("chat"))
         );
-        assert_eq!(
-            CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""),
-            None
-        );
+        assert_eq!(CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""), None);
         assert_eq!(
             CLISession::parse_namespace_switch("USE billing"),
             Some(kalamdb_commons::NamespaceId::new("billing"))

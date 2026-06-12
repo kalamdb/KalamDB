@@ -7,7 +7,7 @@ use std::{
 };
 
 use indicatif::ProgressBar;
-use kalam_client::{UploadProgress, UploadProgressCallback};
+use kalam_client::{FileUpload, UploadProgress, UploadProgressCallback};
 
 use super::{CLISession, OutputFormat};
 use crate::{
@@ -70,21 +70,20 @@ impl CLISession {
         let result = if upload_parts.is_empty() {
             self.client.execute_query(&sql_to_send, None, None, request_namespace).await
         } else {
-            let mut parts_for_send = Vec::with_capacity(upload_parts.len());
+            let mut uploads = Vec::with_capacity(upload_parts.len());
             for part in upload_parts.iter_mut() {
                 let data = std::mem::take(&mut part.data);
-                parts_for_send.push((
-                    part.placeholder.as_str(),
-                    part.filename.as_str(),
-                    data,
-                    part.mime.as_deref(),
-                ));
+                let mut upload = FileUpload::new(&part.placeholder, &part.filename, data);
+                if let Some(mime) = part.mime.as_deref() {
+                    upload = upload.with_mime(mime);
+                }
+                uploads.push(upload);
             }
 
             self.client
                 .execute_query_with_progress(
                     &sql_to_send,
-                    Some(parts_for_send),
+                    Some(uploads),
                     None,
                     request_namespace,
                     upload_progress,

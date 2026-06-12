@@ -9,14 +9,18 @@
 //! - Subscription: [`crate::subscription::models`]
 
 // ── Core shared types (defined here) ────────────────────────────────────────
+pub mod file_download;
 pub mod file_ref;
+pub mod file_upload;
 pub mod kalam_cell_value;
 pub mod utils;
 
 #[cfg(test)]
 mod tests;
 
-pub use file_ref::FileRef;
+pub use file_download::FileDownload;
+pub use file_ref::{BoundFileRef, FileRef, FileRefContext};
+pub use file_upload::FileUpload;
 pub use kalam_cell_value::{KalamCellValue, RowData};
 pub use kalamdb_commons::{FieldFlag, FieldFlags, KalamDataType, SchemaField, UserId};
 pub use utils::parse_i64;

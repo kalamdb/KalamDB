@@ -656,7 +656,8 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
     let names = batch
         .column_by_name("name")
         .expect("name column")
-        .as_any().downcast_ref::<StringArray>()
+        .as_any()
+        .downcast_ref::<StringArray>()
         .expect("utf8 name array");
     assert_eq!(names.value(0), "jamal-row");
 }
@@ -730,7 +731,8 @@ async fn user_provider_delete_only_tombstones_subject_row() {
     let root_names = root_batches[0]
         .column_by_name("name")
         .expect("root name column")
-        .as_any().downcast_ref::<StringArray>()
+        .as_any()
+        .downcast_ref::<StringArray>()
         .expect("root utf8 name array");
     assert_eq!(root_names.value(0), "root-row");
 

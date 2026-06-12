@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
@@ -164,8 +161,8 @@ pub fn local_binary_matches_release_checksum(
     archive_name: &str,
 ) -> Result<bool> {
     let local_hash = release_download::sha256_file(local_exe)?;
-    let remote_hash = release_download::checksum_for_archive(checksums, archive_name)
-        .ok_or_else(|| {
+    let remote_hash =
+        release_download::checksum_for_archive(checksums, archive_name).ok_or_else(|| {
             CLIError::ConfigurationError(format!(
                 "SHA256SUMS does not include an entry for {archive_name}"
             ))
@@ -173,10 +170,7 @@ pub fn local_binary_matches_release_checksum(
     Ok(local_hash == remote_hash)
 }
 
-pub fn update_needed_for_release(
-    latest_version: &str,
-    remote_build_date: Option<&str>,
-) -> bool {
+pub fn update_needed_for_release(latest_version: &str, remote_build_date: Option<&str>) -> bool {
     if version_is_newer(latest_version, CLI_VERSION) {
         return true;
     }
@@ -185,8 +179,7 @@ pub fn update_needed_for_release(
         return false;
     }
 
-    remote_build_date
-        .is_some_and(|remote| build_timestamp_is_newer(remote, CLI_BUILD_DATE))
+    remote_build_date.is_some_and(|remote| build_timestamp_is_newer(remote, CLI_BUILD_DATE))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,40 +285,22 @@ mod tests {
 
     #[test]
     fn build_timestamp_comparison_orders_same_version_builds() {
-        assert!(build_timestamp_is_newer(
-            "2026-06-12 10:00:00 UTC",
-            "2026-06-11 18:50:49 UTC"
-        ));
-        assert!(!build_timestamp_is_newer(
-            "2026-06-11 18:50:49 UTC",
-            "2026-06-12 10:00:00 UTC"
-        ));
-        assert!(!build_timestamp_is_newer(
-            "2026-06-11 18:50:49 UTC",
-            "2026-06-11 18:50:49 UTC"
-        ));
+        assert!(build_timestamp_is_newer("2026-06-12 10:00:00 UTC", "2026-06-11 18:50:49 UTC"));
+        assert!(!build_timestamp_is_newer("2026-06-11 18:50:49 UTC", "2026-06-12 10:00:00 UTC"));
+        assert!(!build_timestamp_is_newer("2026-06-11 18:50:49 UTC", "2026-06-11 18:50:49 UTC"));
     }
 
     #[test]
     fn parse_built_line_reads_version_output() {
         let output = "kalam 0.5.2-rc.2\nCommit: abc (main)\nBuilt: 2026-06-11 18:50:49 UTC\n";
-        assert_eq!(
-            parse_built_line(output),
-            Some("2026-06-11 18:50:49 UTC".to_string())
-        );
+        assert_eq!(parse_built_line(output), Some("2026-06-11 18:50:49 UTC".to_string()));
     }
 
     #[test]
     fn update_needed_for_release_prefers_version_then_build_date() {
         assert!(update_needed_for_release("0.5.3", None));
-        assert!(!update_needed_for_release("0.5.1", Some("2026-06-12 10:00:00 UTC")));
-        assert!(update_needed_for_release(
-            "0.5.2-rc.2",
-            Some("2026-06-12 10:00:00 UTC")
-        ));
-        assert!(!update_needed_for_release(
-            "0.5.2-rc.2",
-            Some("2026-06-10 10:00:00 UTC")
-        ));
+        assert!(!update_needed_for_release("0.5.1", Some("2099-01-01 00:00:00 UTC")));
+        assert!(update_needed_for_release(CLI_VERSION, Some("2099-01-01 00:00:00 UTC")));
+        assert!(!update_needed_for_release(CLI_VERSION, Some("2000-01-01 00:00:00 UTC")));
     }
 }

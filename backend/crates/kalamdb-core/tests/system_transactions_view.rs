@@ -173,7 +173,8 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
     let request_ctx = request_exec_ctx(&app_ctx, "txn-view-request");
     let executor_handle = app_ctx.executor();
     let raft_executor = executor_handle
-        .as_any().downcast_ref::<RaftExecutor>()
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
         .expect("raft executor available");
     let pg_service = raft_executor.pg_service().expect("pg service is wired");
 
@@ -263,7 +264,8 @@ async fn stale_idle_pg_sessions_drop_out_of_sessions_view() {
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let executor_handle = app_ctx.executor();
     let raft_executor = executor_handle
-        .as_any().downcast_ref::<RaftExecutor>()
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
         .expect("raft executor available");
     let pg_service = raft_executor.pg_service().expect("pg service is wired");
 
@@ -307,7 +309,8 @@ async fn pg_passive_timeout_hides_stale_transaction_fields_from_sessions_view() 
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let executor_handle = app_ctx.executor();
     let raft_executor = executor_handle
-        .as_any().downcast_ref::<RaftExecutor>()
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
         .expect("raft executor available");
     let pg_service = raft_executor.pg_service().expect("pg service is wired");
 
@@ -385,7 +388,8 @@ async fn pg_timeout_after_write_clears_sessions_and_transactions_views() {
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let executor_handle = app_ctx.executor();
     let raft_executor = executor_handle
-        .as_any().downcast_ref::<RaftExecutor>()
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
         .expect("raft executor available");
     let pg_service = raft_executor.pg_service().expect("pg service is wired");
 
@@ -504,7 +508,8 @@ async fn pg_timeout_after_read_clears_sessions_and_transactions_views() {
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let executor_handle = app_ctx.executor();
     let raft_executor = executor_handle
-        .as_any().downcast_ref::<RaftExecutor>()
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
         .expect("raft executor available");
     let pg_service = raft_executor.pg_service().expect("pg service is wired");
 

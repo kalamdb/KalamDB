@@ -20,8 +20,8 @@ async fn load_user_rows(
         .schema_registry()
         .get_provider(table_id)
         .expect("user provider should be registered");
-    let provider = (provider_arc
-        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<UserTableProvider>()
         .expect("provider should downcast to UserTableProvider");
 
     let (_, first_row) = provider

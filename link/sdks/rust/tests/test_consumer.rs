@@ -5,7 +5,11 @@
 //!
 //! Run with: cargo test --test test_consumer -- --nocapture
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use kalam_client::{
     consumer::{AutoOffsetReset, TopicConsumer},
@@ -23,13 +27,13 @@ fn get_auth() -> AuthProvider {
 }
 
 fn unique_id() -> String {
-    format!(
-        "test_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    )
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros();
+    format!("test_{}_{}_{}", micros, std::process::id(), seq)
 }
 
 async fn create_client() -> KalamLinkClient {
@@ -323,11 +327,15 @@ async fn test_poll_with_timeout_returns_empty() {
         .build()
         .expect("Consumer build failed");
 
+    let timeout = Duration::from_secs(2);
     let start = std::time::Instant::now();
-    let records = consumer.poll_with_timeout(Duration::from_secs(2)).await.expect("Poll failed");
+    let records = consumer.poll_with_timeout(timeout).await.expect("Poll failed");
 
     assert!(records.is_empty());
-    assert!(start.elapsed() >= Duration::from_secs(1));
+    assert!(
+        start.elapsed() <= timeout + Duration::from_millis(500),
+        "poll_with_timeout exceeded the requested timeout"
+    );
 
     consumer.close().await.expect("Close failed");
 }

@@ -356,9 +356,10 @@ pub fn insert_columns_match(statement: &Statement, expected_columns: &[String]) 
             let columns: Vec<String> =
                 insert.columns.iter().filter_map(object_name_to_string).collect();
             columns.len() == expected_columns.len()
-                && columns.iter().zip(expected_columns.iter()).all(|(column, expected)| {
-                    column == expected
-                })
+                && columns
+                    .iter()
+                    .zip(expected_columns.iter())
+                    .all(|(column, expected)| column == expected)
         },
         _ => false,
     }

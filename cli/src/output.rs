@@ -1,12 +1,13 @@
 //! Shared CLI output helpers for workflow commands.
 
 use std::{
+    collections::VecDeque,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, IsTerminal, Write},
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -15,8 +16,65 @@ use colored::Colorize;
 use crate::{
     config::WorkflowLoggingPolicy,
     error::{CLIError, Result},
-    terminal_ui::{ProgressTaskStatus, ProgressTasks},
+    terminal_ui::{self, ProgressTaskStatus, ProgressTasks},
 };
+
+const TERMINAL_LOG_BUFFER_CAPACITY: usize = 100;
+const TERMINAL_CLI_VIEW_LINES: usize = 5;
+const TERMINAL_SERVICE_VIEW_LINES: usize = 5;
+
+#[derive(Debug)]
+struct TerminalLogBuffer {
+    cli_lines: VecDeque<String>,
+    service_lines: VecDeque<String>,
+}
+
+impl TerminalLogBuffer {
+    fn new() -> Self {
+        Self {
+            cli_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
+            service_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
+        }
+    }
+
+    fn push_cli(&mut self, line: String) {
+        push_bounded(&mut self.cli_lines, line);
+    }
+
+    fn push_service(&mut self, line: String) {
+        push_bounded(&mut self.service_lines, line);
+    }
+
+    fn rendered_lines(&self) -> Vec<String> {
+        let mut lines =
+            Vec::with_capacity(TERMINAL_CLI_VIEW_LINES + TERMINAL_SERVICE_VIEW_LINES + 1);
+        lines.extend(tail_lines(&self.cli_lines, TERMINAL_CLI_VIEW_LINES));
+        if !self.cli_lines.is_empty() && !self.service_lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.extend(tail_lines(&self.service_lines, TERMINAL_SERVICE_VIEW_LINES));
+        lines
+    }
+
+    #[cfg(test)]
+    fn all_lines(&self) -> Vec<String> {
+        let mut lines = Vec::with_capacity(self.cli_lines.len() + self.service_lines.len());
+        lines.extend(self.cli_lines.iter().cloned());
+        lines.extend(self.service_lines.iter().cloned());
+        lines
+    }
+}
+
+fn push_bounded(lines: &mut VecDeque<String>, line: String) {
+    if lines.len() >= TERMINAL_LOG_BUFFER_CAPACITY {
+        lines.pop_front();
+    }
+    lines.push_back(line);
+}
+
+fn tail_lines(lines: &VecDeque<String>, max_lines: usize) -> impl Iterator<Item = String> + '_ {
+    lines.iter().skip(lines.len().saturating_sub(max_lines)).cloned()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowDisplayMode {
@@ -32,6 +90,7 @@ pub struct WorkflowOutput {
     pub display_mode: WorkflowDisplayMode,
     progress_tasks: Option<ProgressTasks>,
     terminal_paused: Arc<AtomicBool>,
+    terminal_log_buffer: Arc<Mutex<TerminalLogBuffer>>,
 }
 
 /// Patterns that trigger redaction before persisting workflow logs.
@@ -52,6 +111,7 @@ impl WorkflowOutput {
             display_mode: WorkflowDisplayMode::Normal,
             progress_tasks: None,
             terminal_paused: Arc::new(AtomicBool::new(false)),
+            terminal_log_buffer: Arc::new(Mutex::new(TerminalLogBuffer::new())),
         }
     }
 
@@ -67,60 +127,58 @@ impl WorkflowOutput {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(line);
-        } else if self.terminal_output_paused() {
-            self.append_log(line);
-        } else if self.use_color {
-            eprintln!("{}", line.green());
-            self.append_log(line);
-        } else {
-            eprintln!("{line}");
-            self.append_log(line);
+            return;
         }
+        let formatted = if self.use_color {
+            line.green().to_string()
+        } else {
+            line.to_string()
+        };
+        self.emit_cli_line(&formatted, line);
     }
 
     pub fn warn(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(&format!("WARN: {line}"));
-        } else if self.terminal_output_paused() {
-            self.append_log(&format!("WARN: {line}"));
-        } else if self.use_color {
-            eprintln!("{}", line.yellow());
-            self.append_log(&format!("WARN: {line}"));
-        } else {
-            eprintln!("{line}");
-            self.append_log(&format!("WARN: {line}"));
+            return;
         }
+        let persisted = format!("WARN: {line}");
+        let formatted = if self.use_color {
+            line.yellow().to_string()
+        } else {
+            line.to_string()
+        };
+        self.emit_cli_line(&formatted, &persisted);
     }
 
     pub fn error(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(&format!("ERROR: {line}"));
-        } else if self.terminal_output_paused() {
-            self.append_log(&format!("ERROR: {line}"));
-        } else if self.use_color {
-            eprintln!("{}", line.red().bold());
-            self.append_log(&format!("ERROR: {line}"));
-        } else {
-            eprintln!("{line}");
-            self.append_log(&format!("ERROR: {line}"));
+            return;
         }
+        let persisted = format!("ERROR: {line}");
+        let formatted = if self.use_color {
+            line.red().bold().to_string()
+        } else {
+            line.to_string()
+        };
+        self.emit_cli_line(&formatted, &persisted);
     }
 
     pub fn detail(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(line);
-        } else if self.terminal_output_paused() {
-            self.append_log(line);
-        } else if self.use_color {
-            eprintln!("{}", line.bright_black());
-            self.append_log(line);
-        } else {
-            eprintln!("{line}");
-            self.append_log(line);
+            return;
         }
+        let formatted = if self.use_color {
+            line.bright_black().to_string()
+        } else {
+            line.to_string()
+        };
+        self.emit_cli_line(&formatted, line);
     }
 
     /// Emit a prefixed line from a managed dev service.
@@ -146,13 +204,15 @@ impl WorkflowOutput {
         message: &str,
         process_output: bool,
     ) {
-        if self.display_mode != WorkflowDisplayMode::Progress && !self.terminal_output_paused() {
-            let formatted = source.format_line(message, self.use_color);
-            eprintln!("{formatted}");
-        } else if process_output && source.name == "server" {
-            if let Some(progress_tasks) = &self.progress_tasks {
-                progress_tasks.push_task_detail("server", message, 8);
+        let formatted = source.format_line(message, self.use_color);
+        if self.display_mode == WorkflowDisplayMode::Progress {
+            if process_output && source.name == "server" {
+                if let Some(progress_tasks) = &self.progress_tasks {
+                    progress_tasks.push_task_detail("server", message, 8);
+                }
             }
+        } else {
+            self.emit_service_line(&formatted, &formatted);
         }
         if self.logging.capture_process_output {
             let persisted = format!("[{}] {}", source.name, message);
@@ -199,6 +259,10 @@ impl WorkflowOutput {
         self.logging.file_enabled.then_some(self.logging.path.as_path())
     }
 
+    pub fn workflow_event(&self, message: impl AsRef<str>) {
+        self.append_log(message.as_ref());
+    }
+
     pub fn suspend_progress<F: FnOnce() -> R, R>(&self, f: F) -> R {
         if let Some(progress_tasks) = &self.progress_tasks {
             progress_tasks.suspend(f)
@@ -212,6 +276,84 @@ impl WorkflowOutput {
         TerminalOutputPause {
             paused: Arc::clone(&self.terminal_paused),
         }
+    }
+
+    pub fn run_terminal_modal<F: FnOnce() -> Result<R>, R>(&self, f: F) -> Result<R> {
+        let result = self.suspend_progress(|| {
+            let _pause = self.pause_terminal_output();
+            terminal_ui::clear_terminal().map_err(clear_terminal_error)?;
+            let result = f();
+            let clear_result = terminal_ui::clear_terminal().map_err(clear_terminal_error);
+            match (result, clear_result) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(error), _) => Err(error),
+                (Ok(_), Err(error)) => Err(error),
+            }
+        });
+        let restore_result = self.restore_dev_session_view();
+        match (result, restore_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Replay the recent dev-session log view after a modal prompt clears the screen.
+    pub fn restore_dev_session_view(&self) -> Result<()> {
+        if self.display_mode == WorkflowDisplayMode::Progress {
+            if let Some(progress_tasks) = &self.progress_tasks {
+                if io::stdout().is_terminal() {
+                    terminal_ui::clear_terminal().map_err(|error| {
+                        CLIError::FileError(format!("failed to clear terminal: {error}"))
+                    })?;
+                }
+                for line in progress_tasks.rendered_lines() {
+                    eprintln!("{line}");
+                }
+            }
+            return Ok(());
+        }
+
+        let lines = self.rendered_terminal_view_lines();
+        if lines.is_empty() || !io::stderr().is_terminal() {
+            return Ok(());
+        }
+
+        terminal_ui::clear_terminal()
+            .map_err(|error| CLIError::FileError(format!("failed to clear terminal: {error}")))?;
+        for line in lines {
+            eprintln!("{line}");
+        }
+        Ok(())
+    }
+
+    fn emit_cli_line(&self, formatted: &str, persisted: &str) {
+        self.emit_display_line(&format_cli_line(formatted), TerminalLineKind::Cli);
+        self.append_log(persisted);
+    }
+
+    fn emit_service_line(&self, formatted: &str, persisted: &str) {
+        self.emit_display_line(&formatted_service_line(formatted), TerminalLineKind::Service);
+        self.append_log(persisted);
+    }
+
+    fn emit_display_line(&self, line: &str, kind: TerminalLineKind) {
+        self.buffer_terminal_line(line, kind);
+        if !self.terminal_output_paused() {
+            eprintln!("{line}");
+        }
+    }
+
+    fn buffer_terminal_line(&self, line: &str, kind: TerminalLineKind) {
+        let mut buffer = self.terminal_log_buffer.lock().expect("terminal log buffer");
+        match kind {
+            TerminalLineKind::Cli => buffer.push_cli(line.to_string()),
+            TerminalLineKind::Service => buffer.push_service(line.to_string()),
+        }
+    }
+
+    fn rendered_terminal_view_lines(&self) -> Vec<String> {
+        self.terminal_log_buffer.lock().expect("terminal log buffer").rendered_lines()
     }
 
     fn terminal_output_paused(&self) -> bool {
@@ -234,6 +376,11 @@ impl WorkflowOutput {
             .map(ProgressTasks::rendered_lines)
             .unwrap_or_default()
     }
+
+    #[cfg(test)]
+    fn buffered_terminal_lines(&self) -> Vec<String> {
+        self.terminal_log_buffer.lock().expect("terminal log buffer").all_lines()
+    }
 }
 
 pub struct TerminalOutputPause {
@@ -244,6 +391,27 @@ impl Drop for TerminalOutputPause {
     fn drop(&mut self) {
         self.paused.store(false, Ordering::SeqCst);
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TerminalLineKind {
+    Cli,
+    Service,
+}
+
+fn format_cli_line(line: &str) -> String {
+    format!("[cli] {line}")
+}
+
+fn formatted_service_line(line: &str) -> String {
+    match line.split_once(' ') {
+        Some((prefix, message)) => format!("{prefix}\t{message}"),
+        None => line.to_string(),
+    }
+}
+
+fn clear_terminal_error(error: io::Error) -> CLIError {
+    CLIError::FileError(format!("failed to clear terminal: {error}"))
 }
 
 #[cfg(test)]
@@ -285,6 +453,77 @@ mod tests {
         let lines = output.progress_lines();
         assert_eq!(lines[0], "⠋ Applying schema");
         assert_eq!(lines[1], "    sealed draft migration 0001_auto.sql");
+    }
+
+    #[test]
+    fn terminal_log_buffer_keeps_latest_service_lines() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let source = ServiceLogSource::new("server", ServiceColor::Cyan);
+
+        for idx in 0..TERMINAL_LOG_BUFFER_CAPACITY + 5 {
+            output.service_log(&source, format!("server line {idx}"));
+        }
+
+        let buffered = output.buffered_terminal_lines();
+        assert_eq!(buffered.len(), TERMINAL_LOG_BUFFER_CAPACITY);
+        assert_eq!(buffered[0], "[server]\tserver line 5");
+        assert_eq!(buffered.last().map(String::as_str), Some("[server]\tserver line 104"));
+    }
+
+    #[test]
+    fn terminal_view_preserves_service_region_when_cli_output_overflows() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let source = ServiceLogSource::new("server", ServiceColor::Cyan);
+        output.service_log(&source, "server still running");
+
+        for idx in 0..TERMINAL_LOG_BUFFER_CAPACITY + 20 {
+            output.status(format!("migration output {idx}"));
+        }
+
+        let rendered = output.rendered_terminal_view_lines();
+        assert!(rendered.iter().any(|line| line == "[server]\tserver still running"));
+        assert!(rendered.iter().any(|line| line == "[cli] migration output 119"));
+    }
+
+    #[test]
+    fn workflow_event_does_not_change_terminal_view() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let source = ServiceLogSource::new("server", ServiceColor::Cyan);
+        output.service_log(&source, "server ready");
+
+        output.workflow_event("Apply schema draft?");
+        output.status("applied 1 migration(s)");
+
+        assert_eq!(
+            output.rendered_terminal_view_lines(),
+            vec!["[cli] applied 1 migration(s)", "", "[server]\tserver ready"]
+        );
+    }
+
+    #[test]
+    fn terminal_modal_keeps_service_logs_emitted_while_prompt_is_open() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let source = ServiceLogSource::new("server", ServiceColor::Cyan);
+        output.service_log(&source, "server ready");
+
+        output
+            .run_terminal_modal(|| {
+                output.workflow_event("Apply schema draft?");
+                output.service_log(&source, "server tick during prompt");
+                Ok(())
+            })
+            .unwrap();
+        output.status("applied 1 migration(s)");
+
+        assert_eq!(
+            output.rendered_terminal_view_lines(),
+            vec![
+                "[cli] applied 1 migration(s)",
+                "",
+                "[server]\tserver ready",
+                "[server]\tserver tick during prompt"
+            ]
+        );
     }
 }
 

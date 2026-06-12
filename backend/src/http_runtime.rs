@@ -1,5 +1,6 @@
 //! Lightweight HTTP runtime state shared by Actix workers.
 
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use actix_web::web;
@@ -80,5 +81,116 @@ impl HttpRuntimeState {
 
     pub fn ui_status(&self) -> &'static str {
         self.ui_status
+    }
+}
+
+fn terminal_hyperlinks_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+pub(crate) fn should_print_terminal_hyperlinks(config: &ServerConfig) -> bool {
+    config.logging.log_to_console && terminal_hyperlinks_enabled()
+}
+
+/// Format `url` as an OSC-8 terminal hyperlink.
+fn format_terminal_hyperlink(url: &str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
+}
+
+/// Plain Admin UI segment for log files and non-interactive output.
+pub fn format_startup_ui_status_plain(config: &ServerConfig, ui_status: &str) -> String {
+    if ui_status == "disabled" {
+        return "disabled".to_string();
+    }
+
+    let public_url = config.server.admin_ui_url();
+    let mut message = format!("{ui_status} at {public_url}");
+
+    if config.server.configured_public_origin().is_some() {
+        let local_url = config.server.local_admin_ui_url();
+        if local_url != public_url {
+            message.push_str(&format!(" | local: {local_url}"));
+        }
+    }
+
+    message
+}
+
+/// Admin UI segment with OSC-8 hyperlinks for direct terminal output.
+pub fn format_startup_ui_status_with_links(config: &ServerConfig, ui_status: &str) -> String {
+    if ui_status == "disabled" {
+        return "disabled".to_string();
+    }
+
+    let public_url = config.server.admin_ui_url();
+    let public_link = format_terminal_hyperlink(&public_url);
+    let mut message = format!("{ui_status} at {public_link}");
+
+    if config.server.configured_public_origin().is_some() {
+        let local_url = config.server.local_admin_ui_url();
+        if local_url != public_url {
+            let local_link = format_terminal_hyperlink(&local_url);
+            message.push_str(&format!(" | local: {local_link}"));
+        }
+    }
+
+    message
+}
+
+#[cfg(test)]
+mod tests {
+    use kalamdb_configs::ServerConfig;
+
+    use super::*;
+
+    #[test]
+    fn startup_ui_status_disabled_when_ui_unavailable() {
+        let config = ServerConfig::default();
+
+        assert_eq!(format_startup_ui_status_plain(&config, "disabled"), "disabled");
+    }
+
+    #[test]
+    fn startup_ui_status_uses_public_origin_when_configured() {
+        let mut config = ServerConfig::default();
+        config.server.port = 2900;
+        config.server.host = "127.0.0.1".to_string();
+        config.server.public_origin = Some("https://db.example.com".to_string());
+
+        let status = format_startup_ui_status_plain(&config, "embedded in binary");
+
+        assert!(status.contains("embedded in binary at "));
+        assert!(status.contains("https://db.example.com/ui"));
+        assert!(status.contains("local: http://127.0.0.1:2900/ui"));
+    }
+
+    #[test]
+    fn startup_ui_status_uses_localhost_fallback_without_public_origin() {
+        let mut config = ServerConfig::default();
+        config.server.port = 2900;
+        config.server.host = "127.0.0.1".to_string();
+
+        let status = format_startup_ui_status_plain(&config, "embedded in binary");
+
+        assert_eq!(status, "embedded in binary at http://localhost:2900/ui");
+    }
+
+    #[test]
+    fn startup_ui_status_with_links_includes_osc8_sequences() {
+        let mut config = ServerConfig::default();
+        config.server.port = 2900;
+
+        let status = format_startup_ui_status_with_links(&config, "embedded in binary");
+
+        assert!(status.contains("\x1b]8;;http://localhost:2900/ui\x1b\\"));
+    }
+
+    #[test]
+    fn terminal_hyperlink_plain_when_not_tty() {
+        let url = "http://localhost:2900/ui";
+        let link = format_terminal_hyperlink(url);
+
+        assert!(link.contains("\x1b]8;;http://localhost:2900/ui\x1b\\"));
+        assert!(link.contains("http://localhost:2900/ui"));
     }
 }

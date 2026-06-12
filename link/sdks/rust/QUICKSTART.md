@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 Inside this repository, depend on the workspace crate directly:
 
 ```toml
-kalam-client = { path = "../../kalam-client", features = ["native-sdk"] }
+kalam-client = { path = "../..", features = ["native-sdk"] }
 ```
 
 ## 1. Create a Client

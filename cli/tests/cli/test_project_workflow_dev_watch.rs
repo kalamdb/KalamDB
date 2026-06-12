@@ -8,7 +8,10 @@ use std::{
 };
 
 use crate::common::*;
-use kalam_cli::{FileCredentialStore, workflow::project::config::{KalamProjectConfig, KALAM_TOML}};
+use kalam_cli::{
+    workflow::project::config::{KalamProjectConfig, KALAM_TOML},
+    FileCredentialStore,
+};
 use kalam_client::credentials::Credentials;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;

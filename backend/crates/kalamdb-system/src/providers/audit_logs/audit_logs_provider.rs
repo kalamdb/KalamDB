@@ -266,7 +266,8 @@ mod tests {
         // Verify actions column
         let actions = batch
             .column(3)
-            .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
             .unwrap();
         assert_eq!(actions.len(), 3);
     }

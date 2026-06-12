@@ -451,14 +451,8 @@ async fn autocommit_read_write_latency_regression_stays_within_five_percent() {
     seed_shared_table(&service, &read_table, 10_000, READ_SEED_ROWS).await;
 
     let _ = measure_insert_round(&service, &write_table, None, 100_000, 4).await;
-    let _ = measure_insert_round(
-        &service,
-        &write_table,
-        Some(VALID_IDLE_SESSION_ID),
-        200_000,
-        4,
-    )
-    .await;
+    let _ =
+        measure_insert_round(&service, &write_table, Some(VALID_IDLE_SESSION_ID), 200_000, 4).await;
     let _ = measure_scan_round(&service, &read_table, None, 4).await;
     let _ = measure_scan_round(&service, &read_table, Some(VALID_IDLE_SESSION_ID), 4).await;
 

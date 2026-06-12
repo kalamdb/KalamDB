@@ -1,8 +1,8 @@
 //! Type-safe identifier parsing for workflow configuration and execution.
 
 use kalamdb_commons::{
-    models::NamespaceIdValidationError,
-    normalize_sql_identifier, NamespaceId, TableId, TableName, UserId,
+    models::NamespaceIdValidationError, normalize_sql_identifier, NamespaceId, TableId, TableName,
+    UserId,
 };
 use serde::{Deserialize, Deserializer, Serializer};
 
@@ -30,8 +30,7 @@ pub fn parse_table_name(name: &str) -> Result<TableName> {
 
 /// Parse a validated table identifier for workflow execution.
 pub fn parse_table_id(namespace: &str, table_name: &str) -> Result<TableId> {
-    TableId::try_from_strings(namespace, table_name)
-        .map_err(CLIError::ConfigurationError)
+    TableId::try_from_strings(namespace, table_name).map_err(CLIError::ConfigurationError)
 }
 
 /// Parse a `namespace.table` reference into a validated [`TableId`].
@@ -55,11 +54,7 @@ fn split_qualified_table_ref(table_ref: &str) -> Result<(&str, &str)> {
     Ok((namespace, table_name))
 }
 
-pub fn preferred_user_label(
-    user_id: &UserId,
-    name: Option<&str>,
-    email: Option<&str>,
-) -> String {
+pub fn preferred_user_label(user_id: &UserId, name: Option<&str>, email: Option<&str>) -> String {
     name.filter(|value| !value.trim().is_empty())
         .or_else(|| email.filter(|value| !value.trim().is_empty()))
         .map(ToString::to_string)

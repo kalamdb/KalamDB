@@ -1,19 +1,20 @@
 //! Topic consumer feature tests.
 
+mod common;
+
 use std::time::Duration;
 
 use kalam_client::AutoOffsetReset;
-use rust_sdk_tests::{build_client, is_server_running, unique_ident};
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]
 async fn consumer_polls_and_commits_topic_messages() {
-    if !is_server_running().await {
+    if !common::is_server_running().await {
         return;
     }
 
-    let client = build_client().expect("client should build");
-    let suffix = unique_ident("rust_consumer");
+    let client = common::create_client().expect("client should build");
+    let suffix = common::unique_ident("rust_consumer");
     let topic = format!("default.topic_{suffix}");
     let table = format!("default.table_{suffix}");
     let group_id = format!("group_{suffix}");
@@ -43,9 +44,7 @@ async fn consumer_polls_and_commits_topic_messages() {
         .await;
     let _ = client
         .execute_query(
-            &format!(
-                "ALTER TOPIC {topic} ADD SOURCE {table} ON INSERT WITH (payload = 'full')"
-            ),
+            &format!("ALTER TOPIC {topic} ADD SOURCE {table} ON INSERT WITH (payload = 'full')"),
             None,
             None,
             None,
@@ -79,11 +78,7 @@ async fn consumer_polls_and_commits_topic_messages() {
         consumer.mark_processed(record);
     }
 
-    let expected_offset = records
-        .iter()
-        .map(|record| record.offset)
-        .max()
-        .expect("record offset");
+    let expected_offset = records.iter().map(|record| record.offset).max().expect("record offset");
     let commit = consumer.commit_sync().await.expect("commit");
     assert_eq!(commit.acknowledged_offset, expected_offset);
     assert_eq!(commit.group_id, group_id);

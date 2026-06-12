@@ -25,6 +25,7 @@ use crate::{
 
 mod builder;
 mod endpoints;
+mod files;
 mod runtime;
 
 #[cfg(test)]
@@ -72,6 +73,8 @@ pub struct KalamLinkClient {
 }
 
 /// Borrowed file upload tuple used by query helpers.
+///
+/// Prefer [`FileUpload`] for a clearer, type-safe API.
 pub type QueryUploadFile<'a> = (&'a str, &'a str, Vec<u8>, Option<&'a str>);
 
 /// Builder for configuring [`KalamLinkClient`] instances.

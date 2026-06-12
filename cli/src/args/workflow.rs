@@ -22,6 +22,10 @@ pub struct InitArgs {
     #[arg(long = "template")]
     pub template: Option<String>,
 
+    /// JavaScript package manager for TypeScript projects (npm, pnpm, yarn, bun)
+    #[arg(long = "package-manager", value_enum)]
+    pub package_manager: Option<PackageManagerArg>,
+
     /// Non-interactive mode (use defaults for unspecified values)
     #[arg(long = "yes")]
     pub yes: bool,
@@ -37,6 +41,25 @@ pub struct InitArgs {
     /// Project directory to initialize (defaults to current directory)
     #[arg(long = "project-dir")]
     pub project_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PackageManagerArg {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+impl From<PackageManagerArg> for kalam_cli::workflow::project::ts::PackageManager {
+    fn from(value: PackageManagerArg) -> Self {
+        match value {
+            PackageManagerArg::Npm => Self::Npm,
+            PackageManagerArg::Pnpm => Self::Pnpm,
+            PackageManagerArg::Yarn => Self::Yarn,
+            PackageManagerArg::Bun => Self::Bun,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

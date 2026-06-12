@@ -354,10 +354,7 @@ mod tests {
     fn test_try_new_rejects_hyphenated_names() {
         let result = NamespaceId::try_new("dev-test1");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .reason
-            .contains("invalid characters"));
+        assert!(result.unwrap_err().reason.contains("invalid characters"));
     }
 
     #[test]

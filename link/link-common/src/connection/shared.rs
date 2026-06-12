@@ -102,6 +102,7 @@ impl SharedConnection {
 
         let connected_clone = connected.clone();
         let reconnect_clone = reconnect_attempts.clone();
+        let auto_reconnect = connection_options.auto_reconnect;
         let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
 
         let task = tokio::spawn(async move {
@@ -122,8 +123,10 @@ impl SharedConnection {
         match ready_rx.await {
             Ok(Ok(())) => {},
             Ok(Err(error)) => {
-                task.abort();
-                return Err(error);
+                if !auto_reconnect {
+                    task.abort();
+                    return Err(error);
+                }
             },
             Err(_) => {
                 task.abort();

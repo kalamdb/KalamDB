@@ -91,8 +91,7 @@ pub use helpers::{
     file_helpers, naming,
     naming::{
         normalize_sql_identifier, validate_namespace_reference, validate_sql_identifier,
-        validate_user_namespace_name,
-        SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
+        validate_user_namespace_name, SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
     },
     security, string_interner,
 };
@@ -104,6 +103,7 @@ pub use models::{
     AuthType,
     FieldFlag,
     FieldFlags,
+    FileRef,
     JobId,
     KalamDataType,
     LiveQueryId,

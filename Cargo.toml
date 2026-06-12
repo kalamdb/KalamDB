@@ -46,7 +46,7 @@ members = [
     "backend/crates/kalamdb-server-auth",
     "backend",
     "link/link-common",
-    "link/kalam-client",
+    "link/sdks/rust",
     "link/kalam-consumer-wasm",
     "link/kalam-link-dart",
     "cli",
@@ -185,6 +185,7 @@ x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = false }
 kalamdb-observability = { path = "backend/crates/kalamdb-observability", default-features = false }
 link-common = { path = "link/link-common", default-features = false }
+kalam-client = { path = "link/sdks/rust", default-features = false }
 kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
 kalamdb-transfer = { path = "backend/crates/kalamdb-transfer" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }

@@ -118,6 +118,10 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     config.storage.data_path = data_path.to_string_lossy().into_owned();
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
+    config.rate_limit.max_auth_requests_per_ip_per_sec = 200_000;
+    config.rate_limit.max_connections_per_ip = 200_000;
+    config.rate_limit.max_requests_per_ip_per_sec = 200_000;
+    config.rate_limit.max_subscriptions_per_user = 200_000;
 
     let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running =
@@ -389,4 +393,24 @@ pub fn websocket_url() -> String {
     } else {
         base.replacen("http://", "ws://", 1)
     }
+}
+
+pub fn create_client() -> kalam_client::Result<kalam_client::KalamLinkClient> {
+    let token = root_access_token_blocking()
+        .map_err(|err| kalam_client::KalamLinkError::ConfigurationError(err.to_string()))?;
+    kalam_client::KalamLinkClient::builder()
+        .base_url(server_url())
+        .auth(kalam_client::AuthProvider::jwt_token(token))
+        .timeout(Duration::from_secs(30))
+        .build()
+}
+
+pub fn unique_ident(prefix: &str) -> String {
+    format!(
+        "{prefix}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
 }

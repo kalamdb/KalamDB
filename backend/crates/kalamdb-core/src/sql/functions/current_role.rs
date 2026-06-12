@@ -3,7 +3,7 @@
 //! This module provides a user-defined function for DataFusion that returns the current user's role
 //! from the session context.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},

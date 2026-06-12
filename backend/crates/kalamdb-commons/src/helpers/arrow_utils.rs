@@ -324,16 +324,20 @@ pub fn compute_min_max(array: &ArrayRef) -> (Option<StoredScalarValue>, Option<S
 pub fn array_value_to_string(array: &dyn arrow::array::Array, row_idx: usize) -> Option<String> {
     match array.data_type() {
         ArrowDataType::Int64 => array
-            .as_any().downcast_ref::<Int64Array>()
+            .as_any()
+            .downcast_ref::<Int64Array>()
             .map(|arr| arr.value(row_idx).to_string()),
         ArrowDataType::Int32 => array
-            .as_any().downcast_ref::<Int32Array>()
+            .as_any()
+            .downcast_ref::<Int32Array>()
             .map(|arr| arr.value(row_idx).to_string()),
         ArrowDataType::Utf8 => array
-            .as_any().downcast_ref::<StringArray>()
+            .as_any()
+            .downcast_ref::<StringArray>()
             .map(|arr| arr.value(row_idx).to_string()),
         ArrowDataType::LargeUtf8 => array
-            .as_any().downcast_ref::<LargeStringArray>()
+            .as_any()
+            .downcast_ref::<LargeStringArray>()
             .map(|arr| arr.value(row_idx).to_string()),
         _ => None,
     }

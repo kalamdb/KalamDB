@@ -7,7 +7,10 @@ use crate::{
     auth::{AuthProvider, ResolvedAuth},
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
-    models::{LoginResponse, QueryResponse, SubscriptionConfig, SubscriptionInfo},
+    models::file_upload::uploads_to_owned,
+    models::{FileUpload, LoginResponse, QueryResponse, SubscriptionConfig, SubscriptionInfo},
+    query::models::query_param::params_to_json,
+    query::models::QueryParam,
     query::UploadProgressCallback,
     subscription::{LiveRowsConfig, LiveRowsSubscription, SubscriptionManager},
     timeouts::KalamLinkTimeouts,
@@ -35,7 +38,7 @@ impl KalamLinkClient {
     /// let result = client.execute_query("SELECT * FROM users", None, None, None).await?;
     ///
     /// // Query with parameters
-    /// let params = vec![serde_json::json!(42)];
+    /// let params = vec![QueryParam::from("doc1"), QueryParam::from(42_i64)];
     /// let result = client.execute_query("SELECT * FROM users WHERE id = $1", None, Some(params), None).await?;
     ///
     /// // Query in specific namespace
@@ -46,8 +49,8 @@ impl KalamLinkClient {
     pub async fn execute_query(
         &self,
         sql: &str,
-        files: Option<Vec<QueryUploadFile<'_>>>,
-        params: Option<Vec<serde_json::Value>>,
+        files: Option<Vec<FileUpload>>,
+        params: Option<Vec<QueryParam>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
         self.execute_query_with_progress(sql, files, params, namespace_id, None).await
@@ -57,28 +60,43 @@ impl KalamLinkClient {
     pub async fn execute_query_with_progress(
         &self,
         sql: &str,
-        files: Option<Vec<QueryUploadFile<'_>>>,
-        params: Option<Vec<serde_json::Value>>,
+        files: Option<Vec<FileUpload>>,
+        params: Option<Vec<QueryParam>>,
         namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
     ) -> Result<QueryResponse> {
-        let files_owned = files.map(|items| {
+        self.query_executor
+            .execute_with_progress_ref(
+                sql,
+                uploads_to_owned(files),
+                params_to_json(params),
+                namespace_id,
+                progress,
+            )
+            .await
+    }
+
+    /// Execute a SQL query with legacy borrowed upload tuples.
+    pub async fn execute_query_with_tuples(
+        &self,
+        sql: &str,
+        files: Option<Vec<QueryUploadFile<'_>>>,
+        params: Option<Vec<QueryParam>>,
+        namespace_id: Option<&str>,
+    ) -> Result<QueryResponse> {
+        let files = files.map(|items| {
             items
                 .into_iter()
                 .map(|(placeholder, filename, data, mime)| {
-                    (
-                        placeholder.to_string(),
-                        filename.to_string(),
-                        data,
-                        mime.map(|m| m.to_string()),
-                    )
+                    let mut upload = FileUpload::new(placeholder, filename, data);
+                    if let Some(mime) = mime {
+                        upload = upload.with_mime(mime);
+                    }
+                    upload
                 })
                 .collect()
         });
-
-        self.query_executor
-            .execute_with_progress_ref(sql, files_owned, params, namespace_id, progress)
-            .await
+        self.execute_query(sql, files, params, namespace_id).await
     }
 
     /// Execute a SQL query with file uploads (FILE datatype support).
@@ -89,8 +107,8 @@ impl KalamLinkClient {
     pub async fn execute_with_files(
         &self,
         sql: &str,
-        files: Vec<QueryUploadFile<'_>>,
-        params: Option<Vec<serde_json::Value>>,
+        files: Vec<FileUpload>,
+        params: Option<Vec<QueryParam>>,
         namespace_id: Option<&str>,
     ) -> Result<QueryResponse> {
         self.execute_query(sql, Some(files), params, namespace_id).await
@@ -101,8 +119,8 @@ impl KalamLinkClient {
     pub async fn execute_with_files_with_progress(
         &self,
         sql: &str,
-        files: Vec<QueryUploadFile<'_>>,
-        params: Option<Vec<serde_json::Value>>,
+        files: Vec<FileUpload>,
+        params: Option<Vec<QueryParam>>,
         namespace_id: Option<&str>,
         progress: Option<UploadProgressCallback>,
     ) -> Result<QueryResponse> {
@@ -309,16 +327,6 @@ impl KalamLinkClient {
     }
 
     #[cfg(feature = "consumer")]
-    pub(crate) fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
-    #[cfg(feature = "consumer")]
-    pub(crate) fn http_client(&self) -> reqwest::Client {
-        self.http_client.clone()
-    }
-
-    #[cfg(feature = "consumer")]
     pub(crate) fn auth(&self) -> &AuthProvider {
         &self.auth
     }
@@ -347,6 +355,24 @@ impl KalamLinkClient {
     /// Resolve fresh credentials from the auth source.
     pub async fn fresh_auth(&self) -> Result<AuthProvider> {
         self.resolved_auth.resolve().await
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn http_client(&self) -> reqwest::Client {
+        self.http_client.clone()
+    }
+
+    pub(crate) async fn jwt_for_http_request(&self) -> Result<AuthProvider> {
+        match self.fresh_auth().await? {
+            AuthProvider::BasicAuth(user, password) => {
+                let login = self.exchange_login_credentials(&user, &password).await?;
+                Ok(AuthProvider::jwt_token(login.access_token))
+            },
+            auth @ (AuthProvider::JwtToken(_) | AuthProvider::None) => Ok(auth),
+        }
     }
 
     async fn exchange_login_credentials(

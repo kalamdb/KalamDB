@@ -475,11 +475,8 @@ fn test_project_workflow_schema_pull_requires_server() {
     // Remote schema mode is not available during init yet; emulate a pull-based project.
     let kalam_toml_path = project_dir.join("kalam.toml");
     let kalam_toml = fs::read_to_string(&kalam_toml_path).expect("read kalam.toml");
-    fs::write(
-        &kalam_toml_path,
-        kalam_toml.replace("mode = \"sql\"", "mode = \"remote\""),
-    )
-    .expect("write kalam.toml");
+    fs::write(&kalam_toml_path, kalam_toml.replace("mode = \"sql\"", "mode = \"remote\""))
+        .expect("write kalam.toml");
 
     let mut pull_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     pull_cmd.current_dir(&project_dir).args(["schema", "pull"]);

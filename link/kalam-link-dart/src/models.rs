@@ -5,8 +5,8 @@
 
 use kalam_client::{
     models::{
-        BatchStatus, ChangeEvent, ErrorDetail, LoginResponse, LoginUserInfo, QueryResponse,
-        QueryResult, ResponseStatus, SchemaField,
+        BatchStatus, ChangeEvent, ErrorDetail, FileDownload, FileRef, FileUpload, LoginResponse,
+        LoginUserInfo, QueryResponse, QueryResult, ResponseStatus, SchemaField,
     },
     LiveRowsConfig, LiveRowsEvent, Role,
 };
@@ -524,6 +524,98 @@ impl From<kalam_client::models::SubscriptionInfo> for DartSubscriptionInfo {
             last_event_time_ms: info.last_event_time_ms.map(|v| v as i64),
             created_at_ms: info.created_at_ms as i64,
             closed: info.closed,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FILE datatype
+// ---------------------------------------------------------------------------
+
+/// Typed FILE column reference (mirrors [`kalam_client::FileRef`]).
+pub struct DartFileRef {
+    pub id: String,
+    pub sub: String,
+    pub name: String,
+    pub size: u64,
+    pub mime: String,
+    pub sha256: String,
+    pub shard: Option<u32>,
+}
+
+impl From<FileRef> for DartFileRef {
+    fn from(file_ref: FileRef) -> Self {
+        Self {
+            id: file_ref.id,
+            sub: file_ref.sub,
+            name: file_ref.name,
+            size: file_ref.size,
+            mime: file_ref.mime,
+            sha256: file_ref.sha256,
+            shard: file_ref.shard,
+        }
+    }
+}
+
+impl From<&FileRef> for DartFileRef {
+    fn from(file_ref: &FileRef) -> Self {
+        Self {
+            id: file_ref.id.clone(),
+            sub: file_ref.sub.clone(),
+            name: file_ref.name.clone(),
+            size: file_ref.size,
+            mime: file_ref.mime.clone(),
+            sha256: file_ref.sha256.clone(),
+            shard: file_ref.shard,
+        }
+    }
+}
+
+impl From<DartFileRef> for FileRef {
+    fn from(file_ref: DartFileRef) -> Self {
+        Self {
+            id: file_ref.id,
+            sub: file_ref.sub,
+            name: file_ref.name,
+            size: file_ref.size,
+            mime: file_ref.mime,
+            sha256: file_ref.sha256,
+            shard: file_ref.shard,
+        }
+    }
+}
+
+/// Multipart upload payload for SQL `FILE("placeholder")` expressions.
+pub struct DartFileUpload {
+    pub placeholder: String,
+    pub filename: String,
+    pub data: Vec<u8>,
+    pub mime: Option<String>,
+}
+
+impl From<DartFileUpload> for FileUpload {
+    fn from(upload: DartFileUpload) -> Self {
+        let mut file_upload = FileUpload::new(upload.placeholder, upload.filename, upload.data);
+        if let Some(mime) = upload.mime {
+            file_upload = file_upload.with_mime(mime);
+        }
+        file_upload
+    }
+}
+
+/// Bytes and HTTP metadata from [`KalamLinkClient::download_file`].
+pub struct DartFileDownload {
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
+    pub content_disposition: Option<String>,
+}
+
+impl From<FileDownload> for DartFileDownload {
+    fn from(download: FileDownload) -> Self {
+        Self {
+            bytes: download.bytes,
+            content_type: download.content_type,
+            content_disposition: download.content_disposition,
         }
     }
 }

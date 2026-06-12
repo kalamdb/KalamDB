@@ -1,20 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
-
-const exampleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-test.beforeAll(() => {
-  execFileSync(process.execPath, ['setup.mjs', '--force'], {
-    cwd: exampleRoot,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
-    },
-  });
-});
 
 test('two tabs stay in sync through the live SQL subscription', async ({ browser, baseURL }) => {
   const context = await browser.newContext();

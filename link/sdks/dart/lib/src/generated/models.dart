@@ -190,6 +190,105 @@ class DartErrorDetail {
           details == other.details;
 }
 
+/// Bytes and HTTP metadata from [`KalamLinkClient::download_file`].
+class DartFileDownload {
+  final Uint8List bytes;
+  final String? contentType;
+  final String? contentDisposition;
+
+  const DartFileDownload({
+    required this.bytes,
+    this.contentType,
+    this.contentDisposition,
+  });
+
+  @override
+  int get hashCode =>
+      bytes.hashCode ^ contentType.hashCode ^ contentDisposition.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartFileDownload &&
+          runtimeType == other.runtimeType &&
+          bytes == other.bytes &&
+          contentType == other.contentType &&
+          contentDisposition == other.contentDisposition;
+}
+
+/// Typed FILE column reference (mirrors [`kalam_client::FileRef`]).
+class DartFileRef {
+  final String id;
+  final String sub;
+  final String name;
+  final BigInt size;
+  final String mime;
+  final String sha256;
+  final int? shard;
+
+  const DartFileRef({
+    required this.id,
+    required this.sub,
+    required this.name,
+    required this.size,
+    required this.mime,
+    required this.sha256,
+    this.shard,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      sub.hashCode ^
+      name.hashCode ^
+      size.hashCode ^
+      mime.hashCode ^
+      sha256.hashCode ^
+      shard.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartFileRef &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sub == other.sub &&
+          name == other.name &&
+          size == other.size &&
+          mime == other.mime &&
+          sha256 == other.sha256 &&
+          shard == other.shard;
+}
+
+/// Multipart upload payload for SQL `FILE("placeholder")` expressions.
+class DartFileUpload {
+  final String placeholder;
+  final String filename;
+  final Uint8List data;
+  final String? mime;
+
+  const DartFileUpload({
+    required this.placeholder,
+    required this.filename,
+    required this.data,
+    this.mime,
+  });
+
+  @override
+  int get hashCode =>
+      placeholder.hashCode ^ filename.hashCode ^ data.hashCode ^ mime.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DartFileUpload &&
+          runtimeType == other.runtimeType &&
+          placeholder == other.placeholder &&
+          filename == other.filename &&
+          data == other.data &&
+          mime == other.mime;
+}
+
 /// Configuration for Rust-side live row materialization.
 class DartLiveRowsConfig {
   final int? limit;

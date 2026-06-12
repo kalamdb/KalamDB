@@ -1,18 +1,19 @@
 //! Shared WebSocket connection lifecycle tests.
 
+mod common;
+
 use kalam_client::SubscriptionConfig;
-use rust_sdk_tests::{build_client, is_server_running, unique_ident};
 use tokio::time::{timeout, Duration};
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]
 async fn connect_multiplexes_live_subscriptions() {
-    if !is_server_running().await {
+    if !common::is_server_running().await {
         return;
     }
 
-    let client = build_client().expect("client should build");
-    let suffix = unique_ident("rust_conn");
+    let client = common::create_client().expect("client should build");
+    let suffix = common::unique_ident("rust_conn");
     let table = format!("default.{suffix}");
 
     client
@@ -32,20 +33,26 @@ async fn connect_multiplexes_live_subscriptions() {
 
     client.connect().await.expect("connect");
 
-    let config = SubscriptionConfig::new(format!("conn-{suffix}"), format!("SELECT * FROM {table}"));
-    let mut events = client
-        .live_events_with_config(config)
-        .await
-        .expect("subscribe");
+    let sub_a =
+        SubscriptionConfig::new(format!("sub_a_{suffix}"), format!("SELECT * FROM {table}"));
+    let sub_b =
+        SubscriptionConfig::new(format!("sub_b_{suffix}"), format!("SELECT * FROM {table}"));
 
-    let _ = timeout(Duration::from_secs(15), events.next())
-        .await
-        .expect("initial event timeout");
+    let mut manager_a = client.live_events_with_config(sub_a).await.expect("sub a");
+    let mut manager_b = client.live_events_with_config(sub_b).await.expect("sub b");
 
-    events.close().await.expect("close subscription");
+    client
+        .execute_query(
+            &format!("INSERT INTO {table} (id, value) VALUES ('1', 'hello')"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("insert");
+
+    let _ = timeout(Duration::from_secs(10), manager_a.next()).await;
+    let _ = timeout(Duration::from_secs(10), manager_b.next()).await;
+
     client.disconnect().await;
-
-    let _ = client
-        .execute_query(&format!("DROP TABLE IF EXISTS {table}"), None, None, None)
-        .await;
 }

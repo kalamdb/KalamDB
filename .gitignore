@@ -131,3 +131,5 @@ link/sdks/typescript/client/.npmrc
 /tools/supabase-local
 /.playwright-mcp
 cli/kalam.toml
+/link/sdks/rust/sdks/typescript/client/.wasm-cargo-home
+/link/sdks/rust/sdks/typescript/client/.wasm-target

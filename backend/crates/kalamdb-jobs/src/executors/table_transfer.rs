@@ -555,7 +555,9 @@ fn user_table_has_hot_rows(
     let Some(provider_arc) = ctx.app_ctx.schema_registry().get_provider(table_id) else {
         return false;
     };
-    let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>() else {
+    let Some(provider) =
+        (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+    else {
         return true;
     };
 

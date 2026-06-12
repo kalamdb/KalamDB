@@ -5,9 +5,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use kalam_client::{
-    AuthProvider, KalamLinkClient, KalamLinkError, LiveRowsConfig, LiveRowsEvent,
-    LiveRowsSubscription, SeqId, SubscriptionConfig, SubscriptionManager, SubscriptionOptions,
+    AuthProvider, FileDownload, FileRef, FileUpload, KalamLinkClient, KalamLinkError,
+    LiveRowsConfig, LiveRowsEvent, LiveRowsSubscription, QueryParam, SeqId, SubscriptionConfig,
+    SubscriptionManager, SubscriptionOptions,
 };
+use kalam_client::query::models::query_param::from_json_value;
 use kalam_client::{AutoOffsetReset, TopicConsumer};
 
 create_exception!(kalamdb, KalamError, PyException, "Base class for all KalamDB SDK errors.");
@@ -68,29 +70,21 @@ async fn ensure_authenticated_locked(state: &mut ClientState) -> PyResult<()> {
 async fn execute_with_auth_retry(
     state: &Arc<Mutex<ClientState>>,
     sql: &str,
-    files: Option<Vec<(String, String, Vec<u8>, Option<String>)>>,
-    params: Option<Vec<serde_json::Value>>,
+    files: Option<Vec<FileUpload>>,
+    params: Option<Vec<QueryParam>>,
 ) -> PyResult<kalam_client::QueryResponse> {
     for attempt in 0..2u32 {
         let mut guard = state.lock().await;
         ensure_authenticated_locked(&mut guard).await?;
 
-        // Borrow files as &str for the Rust API
-        let borrowed_files: Option<Vec<(&str, &str, Vec<u8>, Option<&str>)>> =
-            files.as_ref().map(|items| {
-                items
-                    .iter()
-                    .map(|(p, f, d, m)| (p.as_str(), f.as_str(), d.clone(), m.as_deref()))
-                    .collect()
-            });
-
-        let result = guard.client.execute_query(sql, borrowed_files, params.clone(), None).await;
+        let result = guard
+            .client
+            .execute_query(sql, files.clone(), params.clone(), None)
+            .await;
 
         match result {
             Ok(response) => return Ok(response),
             Err(e) if attempt == 0 && is_token_expired_error(&e) => {
-                // Token expired mid-session. Clear our cached JWT, mark the
-                // client as needing re-auth, and retry on the next iteration.
                 guard.authenticated = false;
                 guard.jwt = None;
                 continue;
@@ -248,6 +242,182 @@ fn to_py_err(err: KalamLinkError) -> PyErr {
         KalamLinkError::SerializationError(_) | KalamLinkError::Cancelled => {
             PyRuntimeError::new_err(message)
         },
+    }
+}
+
+/// Typed FILE column reference (mirrors the Rust [`FileRef`] model).
+#[pyclass]
+#[derive(Clone)]
+struct PyFileRef {
+    inner: FileRef,
+}
+
+#[pymethods]
+impl PyFileRef {
+    #[new]
+    #[pyo3(signature = (id, sub, name, size, mime, sha256, shard=None))]
+    fn new(
+        id: String,
+        sub: String,
+        name: String,
+        size: u64,
+        mime: String,
+        sha256: String,
+        shard: Option<u32>,
+    ) -> Self {
+        Self {
+            inner: FileRef {
+                id,
+                sub,
+                name,
+                size,
+                mime,
+                sha256,
+                shard,
+            },
+        }
+    }
+
+    #[staticmethod]
+    fn from_value(value: Bound<'_, PyAny>) -> PyResult<Option<Self>> {
+        let json_value = py_to_json_value(&value)?;
+        Ok(FileRef::from_json_value(&json_value).map(|inner| Self { inner }))
+    }
+
+    #[getter]
+    fn id(&self) -> &str {
+        &self.inner.id
+    }
+
+    #[getter]
+    fn sub(&self) -> &str {
+        &self.inner.sub
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    #[getter]
+    fn size(&self) -> u64 {
+        self.inner.size
+    }
+
+    #[getter]
+    fn mime(&self) -> &str {
+        &self.inner.mime
+    }
+
+    #[getter]
+    fn sha256(&self) -> &str {
+        &self.inner.sha256
+    }
+
+    #[getter]
+    fn shard(&self) -> Option<u32> {
+        self.inner.shard
+    }
+
+    fn is_image(&self) -> bool {
+        self.inner.is_image()
+    }
+
+    fn is_pdf(&self) -> bool {
+        self.inner.is_pdf()
+    }
+
+    fn format_size(&self) -> String {
+        self.inner.format_size()
+    }
+
+    fn download_url(&self, base_url: &str, namespace: &str, table: &str) -> String {
+        self.inner.download_url(base_url, namespace, table)
+    }
+
+    fn relative_url(&self, namespace: &str, table: &str) -> String {
+        self.inner.relative_url(namespace, table)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("FileRef({}, {}, {})", self.inner.id, self.inner.name, self.inner.mime)
+    }
+}
+
+impl From<FileRef> for PyFileRef {
+    fn from(inner: FileRef) -> Self {
+        Self { inner }
+    }
+}
+
+/// Multipart upload payload for SQL `FILE("placeholder")` expressions.
+#[pyclass]
+#[derive(Clone)]
+struct PyFileUpload {
+    placeholder: String,
+    filename: String,
+    data: Vec<u8>,
+    mime: Option<String>,
+}
+
+#[pymethods]
+impl PyFileUpload {
+    #[new]
+    #[pyo3(signature = (placeholder, filename, data, mime=None))]
+    fn new(
+        placeholder: String,
+        filename: String,
+        data: Vec<u8>,
+        mime: Option<String>,
+    ) -> Self {
+        Self {
+            placeholder,
+            filename,
+            data,
+            mime,
+        }
+    }
+
+    fn into_upload(&self) -> FileUpload {
+        let mut upload = FileUpload::new(
+            self.placeholder.clone(),
+            self.filename.clone(),
+            self.data.clone(),
+        );
+        if let Some(mime) = &self.mime {
+            upload = upload.with_mime(mime.clone());
+        }
+        upload
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FileUpload(placeholder={:?}, filename={:?}, bytes={})",
+            self.placeholder,
+            self.filename,
+            self.data.len()
+        )
+    }
+}
+
+/// Bytes and HTTP metadata from a file download response.
+#[pyclass]
+struct PyFileDownload {
+    #[pyo3(get)]
+    bytes: Vec<u8>,
+    #[pyo3(get)]
+    content_type: Option<String>,
+    #[pyo3(get)]
+    content_disposition: Option<String>,
+}
+
+impl From<FileDownload> for PyFileDownload {
+    fn from(download: FileDownload) -> Self {
+        Self {
+            bytes: download.bytes,
+            content_type: download.content_type,
+            content_disposition: download.content_disposition,
+        }
     }
 }
 
@@ -463,10 +633,10 @@ impl KalamClient {
         params: Option<Bound<'py, pyo3::types::PyList>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let params_json = py_params_to_json(params)?;
+        let params = py_params_to_query_params(params)?;
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = execute_with_auth_retry(&state, &sql, None, params_json).await?;
+            let response = execute_with_auth_retry(&state, &sql, None, params).await?;
             Python::with_gil(|py| serialize_to_py(py, &response))
         })
     }
@@ -490,10 +660,10 @@ impl KalamClient {
         params: Option<Bound<'py, pyo3::types::PyList>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let params_json = py_params_to_json(params)?;
+        let params = py_params_to_query_params(params)?;
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = execute_with_auth_retry(&state, &sql, None, params_json).await?;
+            let response = execute_with_auth_retry(&state, &sql, None, params).await?;
 
             Python::with_gil(|py| {
                 let rows = pyo3::types::PyList::empty(py);
@@ -558,15 +728,19 @@ impl KalamClient {
         params: Option<Bound<'py, pyo3::types::PyList>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let params_json = py_params_to_json(params)?;
+        let params = py_params_to_query_params(params)?;
 
-        // Convert {placeholder: (filename, bytes[, mime])} to owned Vec
-        let mut owned_files: Vec<(String, String, Vec<u8>, Option<String>)> = Vec::new();
+        let mut owned_files: Vec<FileUpload> = Vec::new();
         for (key, value) in files.iter() {
             let placeholder: String = key.extract()?;
+            if let Ok(upload) = value.extract::<PyRef<PyFileUpload>>() {
+                owned_files.push(upload.into_upload());
+                continue;
+            }
+
             let tuple = value.downcast::<pyo3::types::PyTuple>().map_err(|_| {
                 KalamConfigError::new_err(format!(
-                    "files['{placeholder}'] must be a tuple of (filename, bytes[, mime])"
+                    "files['{placeholder}'] must be a FileUpload or a tuple of (filename, bytes[, mime])"
                 ))
             })?;
 
@@ -584,13 +758,49 @@ impl KalamClient {
                 None
             };
 
-            owned_files.push((placeholder, filename, data, mime));
+            let mut upload = FileUpload::new(placeholder.clone(), filename, data);
+            if let Some(mime) = mime {
+                upload = upload.with_mime(mime);
+            }
+            owned_files.push(upload);
         }
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response =
-                execute_with_auth_retry(&state, &sql, Some(owned_files), params_json).await?;
+                execute_with_auth_retry(&state, &sql, Some(owned_files), params).await?;
             Python::with_gil(|py| serialize_to_py(py, &response))
+        })
+    }
+
+    /// Download bytes for a [`FileRef`] returned from a query row.
+    #[pyo3(signature = (file_ref, namespace, table, target_user_id=None))]
+    fn download_file<'py>(
+        &self,
+        py: Python<'py>,
+        file_ref: PyRef<'py, PyFileRef>,
+        namespace: String,
+        table: String,
+        target_user_id: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let state = self.state.clone();
+        let file_ref = file_ref.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let download = {
+                let mut guard = state.lock().await;
+                ensure_authenticated_locked(&mut guard).await?;
+                guard
+                    .client
+                    .download_file(
+                        &file_ref,
+                        &namespace,
+                        &table,
+                        target_user_id.as_deref(),
+                    )
+                    .await
+                    .map_err(to_py_err)?
+            };
+            Python::with_gil(|py| Py::new(py, PyFileDownload::from(download)).map(Into::into))
         })
     }
 
@@ -619,12 +829,12 @@ impl KalamClient {
         // Build a parameterized INSERT: INSERT INTO t (c1, c2) VALUES ($1, $2)
         let mut columns: Vec<String> = Vec::new();
         let mut placeholders: Vec<String> = Vec::new();
-        let mut params: Vec<serde_json::Value> = Vec::new();
+        let mut params: Vec<QueryParam> = Vec::new();
 
         for (key, val) in data.iter() {
             let col: String = key.extract()?;
             columns.push(col);
-            params.push(py_to_json_value(&val)?);
+            params.push(py_to_query_param(&val)?);
             placeholders.push(format!("${}", params.len()));
         }
 
@@ -662,7 +872,7 @@ impl KalamClient {
         pk_column: &str,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let id_value = py_to_json_value(&row_id)?;
+        let id_value = py_to_query_param(&row_id)?;
         let pk_column = pk_column.to_string();
 
         let sql = format!("DELETE FROM {} WHERE {} = $1", table, pk_column);
@@ -1273,6 +1483,29 @@ fn serialize_to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<P
     serde_json_value_to_py(py, &json_value)
 }
 
+/// Convert a Python list of values into typed query parameters.
+fn py_params_to_query_params(
+    params: Option<Bound<'_, pyo3::types::PyList>>,
+) -> PyResult<Option<Vec<QueryParam>>> {
+    let Some(list) = params else {
+        return Ok(None);
+    };
+
+    let mut out = Vec::with_capacity(list.len());
+    for item in list.iter() {
+        out.push(py_to_query_param(&item)?);
+    }
+    Ok(Some(out))
+}
+
+/// Convert a single Python value into a [`QueryParam`].
+fn py_to_query_param(value: &Bound<'_, PyAny>) -> PyResult<QueryParam> {
+    if let Ok(file_ref) = value.extract::<PyRef<PyFileRef>>() {
+        return Ok(QueryParam::File(file_ref.inner.clone()));
+    }
+    Ok(from_json_value(py_to_json_value(value)?))
+}
+
 /// Convert a Python list of values into Vec<serde_json::Value> for parameterized queries.
 fn py_params_to_json(
     params: Option<Bound<'_, pyo3::types::PyList>>,
@@ -1331,6 +1564,10 @@ fn py_to_json_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
 
 /// Convert a serde_json::Value to a Python object.
 fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+    if let Some(file_ref) = FileRef::from_json_value(value) {
+        return Ok(Py::new(py, PyFileRef::from(file_ref))?.into());
+    }
+
     match value {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().unbind().into()),
@@ -1364,13 +1601,20 @@ fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult
 /// KalamDB Python SDK — internal Rust module (exposed as `kalamdb._native`).
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+
     m.add_class::<KalamClient>()?;
     m.add_class::<Auth>()?;
+    m.add_class::<PyFileRef>()?;
+    m.add("FileRef", py.get_type::<PyFileRef>())?;
+    m.add_class::<PyFileUpload>()?;
+    m.add("FileUpload", py.get_type::<PyFileUpload>())?;
+    m.add_class::<PyFileDownload>()?;
+    m.add("FileDownload", py.get_type::<PyFileDownload>())?;
     m.add_class::<LiveEvents>()?;
     m.add_class::<LiveRows>()?;
     m.add_class::<Consumer>()?;
 
-    let py = m.py();
     m.add("KalamError", py.get_type::<KalamError>())?;
     m.add("KalamConnectionError", py.get_type::<KalamConnectionError>())?;
     m.add("KalamAuthError", py.get_type::<KalamAuthError>())?;

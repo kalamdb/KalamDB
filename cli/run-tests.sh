@@ -1026,10 +1026,6 @@ start_supplementary_server_if_needed() {
     local server_pid_file
     local server_port
 
-    if [ "$SERVER_TYPE" != "fresh" ]; then
-        return 0
-    fi
-
     if [ -n "$SUPPLEMENTARY_SERVER_PID" ]; then
         return 0
     fi

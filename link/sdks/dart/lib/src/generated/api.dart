@@ -7,7 +7,7 @@ import 'frb_generated.dart';
 import 'models.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `parse_dart_file_ref`, `push_connection_event`, `push_debug_connection_event`
+// These functions are ignored because they are not marked as `pub`: `build_dart_connection_options`, `build_event_handlers`, `create_client_inner`, `parse_dart_file_ref`, `parse_dart_query_params`, `push_connection_event`, `push_debug_connection_event`
 
 /// Build a FILE download URL using the canonical `link-common` FileRef model.
 String dartFileRefDownloadUrl(
@@ -38,6 +38,14 @@ String dartFileRefStoredName({required String fileRefJson}) =>
 String dartFileRefRelativePath({required String fileRefJson}) =>
     RustLib.instance.api
         .crateApiDartFileRefRelativePath(fileRefJson: fileRefJson);
+
+/// Parse a FILE column JSON value into a typed [`DartFileRef`].
+DartFileRef dartParseFileRef({required String fileRefJson}) =>
+    RustLib.instance.api.crateApiDartParseFileRef(fileRefJson: fileRefJson);
+
+/// Parse a FILE column JSON value, returning `None` for invalid input.
+DartFileRef? dartTryParseFileRef({required String fileRefJson}) =>
+    RustLib.instance.api.crateApiDartTryParseFileRef(fileRefJson: fileRefJson);
 
 /// Create a new KalamDB client.
 ///
@@ -112,6 +120,36 @@ Future<DartQueryResponse> dartExecuteQuery(
         String? namespace}) =>
     RustLib.instance.api.crateApiDartExecuteQuery(
         client: client, sql: sql, paramsJson: paramsJson, namespace: namespace);
+
+/// Execute a SQL query with multipart file uploads.
+///
+/// Use `FILE("placeholder")` in SQL and pass matching [`DartFileUpload`] items.
+Future<DartQueryResponse> dartExecuteQueryWithFiles(
+        {required DartKalamClient client,
+        required String sql,
+        required List<DartFileUpload> files,
+        String? paramsJson,
+        String? namespace}) =>
+    RustLib.instance.api.crateApiDartExecuteQueryWithFiles(
+        client: client,
+        sql: sql,
+        files: files,
+        paramsJson: paramsJson,
+        namespace: namespace);
+
+/// Download file bytes for a [`DartFileRef`] returned from a query row.
+Future<DartFileDownload> dartDownloadFile(
+        {required DartKalamClient client,
+        required DartFileRef fileRef,
+        required String namespace,
+        required String table,
+        String? targetUserId}) =>
+    RustLib.instance.api.crateApiDartDownloadFile(
+        client: client,
+        fileRef: fileRef,
+        namespace: namespace,
+        table: table,
+        targetUserId: targetUserId);
 
 /// Log in with user and password. Returns tokens and user info.
 Future<DartLoginResponse> dartLogin(

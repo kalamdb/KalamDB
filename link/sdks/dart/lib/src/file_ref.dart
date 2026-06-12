@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'generated/api.dart' as bridge;
+import 'generated/models.dart' as gen;
 
 /// Data shape for a file reference stored in a KalamDB FILE column.
 ///
@@ -75,6 +77,19 @@ class KalamFileRef implements KalamFileRefData {
     required this.sha256,
     this.shard,
   });
+
+  /// Create from a bridge-generated [`DartFileRef`].
+  factory KalamFileRef.fromBridge(gen.DartFileRef ref) {
+    return KalamFileRef(
+      id: ref.id,
+      sub: ref.sub,
+      name: ref.name,
+      size: ref.size.toInt(),
+      mime: ref.mime,
+      sha256: ref.sha256,
+      shard: ref.shard,
+    );
+  }
 
   /// Create from a [KalamFileRefData] or a raw map.
   factory KalamFileRef.fromData(KalamFileRefData data) {
@@ -187,6 +202,16 @@ class KalamFileRef implements KalamFileRefData {
     return '${unitIndex == 0 ? s.toInt() : s.toStringAsFixed(1)} ${units[unitIndex]}';
   }
 
+  gen.DartFileRef toBridge() => gen.DartFileRef(
+        id: id,
+        sub: sub,
+        name: name,
+        size: BigInt.from(size),
+        mime: mime,
+        sha256: sha256,
+        shard: shard,
+      );
+
   /// Serialize back to a JSON string.
   String toJson() {
     final map = <String, dynamic>{
@@ -217,4 +242,47 @@ class KalamFileRef implements KalamFileRefData {
 
   @override
   String toString() => 'KalamFileRef($name, $mime, ${formatSize()})';
+}
+
+/// Multipart upload payload for SQL `FILE("placeholder")` expressions.
+class KalamFileUpload {
+  final String placeholder;
+  final String filename;
+  final List<int> data;
+  final String? mime;
+
+  const KalamFileUpload({
+    required this.placeholder,
+    required this.filename,
+    required this.data,
+    this.mime,
+  });
+
+  gen.DartFileUpload toBridge() => gen.DartFileUpload(
+        placeholder: placeholder,
+        filename: filename,
+        data: Uint8List.fromList(data),
+        mime: mime,
+      );
+}
+
+/// Bytes and HTTP metadata from a file download response.
+class KalamFileDownload {
+  final List<int> bytes;
+  final String? contentType;
+  final String? contentDisposition;
+
+  const KalamFileDownload({
+    required this.bytes,
+    this.contentType,
+    this.contentDisposition,
+  });
+
+  factory KalamFileDownload.fromBridge(gen.DartFileDownload download) {
+    return KalamFileDownload(
+      bytes: download.bytes,
+      contentType: download.contentType,
+      contentDisposition: download.contentDisposition,
+    );
+  }
 }

@@ -106,11 +106,7 @@ pub fn validate_sql_identifier(name: &str) -> Result<(), SqlIdentifierError> {
         return Err(SqlIdentifierError::StartsWithUnderscore);
     }
 
-    if name
-        .chars()
-        .next()
-        .is_some_and(|character| character.is_ascii_digit())
-    {
+    if name.chars().next().is_some_and(|character| character.is_ascii_digit()) {
         return Err(SqlIdentifierError::StartsWithNumber);
     }
 
@@ -152,9 +148,7 @@ pub fn validate_namespace_reference(name: &str) -> Result<(), SqlIdentifierError
     }
 
     if is_reserved_namespace_name(name)
-        && !BUILTIN_NAMESPACE_ALIASES
-            .iter()
-            .any(|alias| *alias == lowered.as_str())
+        && !BUILTIN_NAMESPACE_ALIASES.iter().any(|alias| *alias == lowered.as_str())
     {
         return Err(SqlIdentifierError::ReservedNamespace(name.to_string()));
     }
@@ -176,19 +170,13 @@ mod tests {
     #[test]
     fn validate_sql_identifier_rejects_hyphens() {
         let err = validate_sql_identifier("dev-test1").unwrap_err();
-        assert_eq!(
-            err,
-            SqlIdentifierError::InvalidCharacters("dev-test1".to_string())
-        );
+        assert_eq!(err, SqlIdentifierError::InvalidCharacters("dev-test1".to_string()));
     }
 
     #[test]
     fn validate_user_namespace_name_rejects_reserved_names() {
         let err = validate_user_namespace_name("system").unwrap_err();
-        assert_eq!(
-            err,
-            SqlIdentifierError::ReservedNamespace("system".to_string())
-        );
+        assert_eq!(err, SqlIdentifierError::ReservedNamespace("system".to_string()));
     }
 
     #[test]
@@ -200,18 +188,12 @@ mod tests {
     #[test]
     fn validate_namespace_reference_rejects_system_namespaces() {
         let err = validate_namespace_reference("system").unwrap_err();
-        assert_eq!(
-            err,
-            SqlIdentifierError::ReservedNamespace("system".to_string())
-        );
+        assert_eq!(err, SqlIdentifierError::ReservedNamespace("system".to_string()));
     }
 
     #[test]
     fn validate_namespace_reference_rejects_user_reserved_names() {
         let err = validate_namespace_reference("kalamdb").unwrap_err();
-        assert_eq!(
-            err,
-            SqlIdentifierError::ReservedNamespace("kalamdb".to_string())
-        );
+        assert_eq!(err, SqlIdentifierError::ReservedNamespace("kalamdb".to_string()));
     }
 }

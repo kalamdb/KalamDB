@@ -113,10 +113,7 @@ fn resolve_namespace(
     if let Ok(namespace) = env::var(ENV_VAR_KALAM_NAMESPACE) {
         let trimmed = namespace.trim();
         if !trimmed.is_empty() {
-            return Ok((
-                parse_namespace_id(trimmed)?,
-                ResolutionSource::EnvironmentVariable,
-            ));
+            return Ok((parse_namespace_id(trimmed)?, ResolutionSource::EnvironmentVariable));
         }
     }
 
@@ -207,6 +204,7 @@ mod tests {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                package_manager: None,
                 kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([

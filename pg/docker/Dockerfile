@@ -101,7 +101,7 @@ COPY backend/crates/kalamdb-jobs/Cargo.toml          backend/crates/kalamdb-jobs
 COPY backend/crates/kalamdb-plan-cache/Cargo.toml    backend/crates/kalamdb-plan-cache/Cargo.toml
 COPY backend/crates/kalamdb-dialect/Cargo.toml       backend/crates/kalamdb-dialect/Cargo.toml
 COPY link/link-common/Cargo.toml       link/link-common/Cargo.toml
-COPY link/kalam-client/Cargo.toml      link/kalam-client/Cargo.toml
+COPY link/sdks/rust/Cargo.toml      link/sdks/rust/Cargo.toml
 COPY link/kalam-consumer-wasm/Cargo.toml link/kalam-consumer-wasm/Cargo.toml
 COPY link/kalam-link-dart/Cargo.toml link/kalam-link-dart/Cargo.toml
 COPY cli/Cargo.toml               cli/Cargo.toml
@@ -113,7 +113,7 @@ RUN set -e \
     && mkdir -p cli/src    && echo 'fn main(){}' > cli/src/main.rs \
     && echo 'fn main(){}' > cli/build.rs \
     && mkdir -p link/link-common/src && touch link/link-common/src/lib.rs \
-    && mkdir -p link/kalam-client/src && touch link/kalam-client/src/lib.rs \
+    && mkdir -p link/sdks/rust/src && touch link/sdks/rust/src/lib.rs \
     && mkdir -p link/kalam-consumer-wasm/src && touch link/kalam-consumer-wasm/src/lib.rs \
     && mkdir -p link/kalam-link-dart/src && touch link/kalam-link-dart/src/lib.rs \
         && for c in kalamdb-row-filter kalamdb-configs kalamdb-store kalamdb-system kalamdb-filestore \

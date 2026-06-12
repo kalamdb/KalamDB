@@ -150,7 +150,7 @@ kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
 kalamdb-raft = { path = "crates/kalamdb-raft" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
-kalam-client = { path = "../link/kalam-client", default-features = false, features = ["tokio-runtime", "cluster"] }
+kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["tokio-runtime", "cluster"] }
 
 # External dependencies
 tempfile = { workspace = true }

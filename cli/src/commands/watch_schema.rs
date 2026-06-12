@@ -7,6 +7,7 @@ use std::{process::Stdio, time::Duration};
 
 use chrono::{SecondsFormat, Utc};
 use kalam_cli::{
+    process_util,
     workflow::project::identifiers::{parse_namespace_id, parse_table_ref},
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, Result,
 };
@@ -114,12 +115,8 @@ fn describe_scope(config: &WatchSchemaConfig) -> String {
     let mut parts = Vec::new();
 
     if !config.namespaces.is_empty() {
-        let namespaces = config
-            .namespaces
-            .iter()
-            .map(NamespaceId::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let namespaces =
+            config.namespaces.iter().map(NamespaceId::as_str).collect::<Vec<_>>().join(", ");
         parts.push(format!(" for namespaces {namespaces}"));
     }
 
@@ -144,16 +141,7 @@ async fn run_shell_command(command: &str) -> Result<()> {
     let command = command.to_string();
     let spawned_command = command.clone();
     let status = tokio::task::spawn_blocking(move || {
-        let mut child = if cfg!(windows) {
-            let mut cmd = std::process::Command::new("cmd");
-            cmd.arg("/C").arg(&spawned_command);
-            cmd
-        } else {
-            let mut cmd = std::process::Command::new("sh");
-            cmd.arg("-c").arg(&spawned_command);
-            cmd
-        };
-
+        let mut child = process_util::shell_command(&spawned_command);
         child
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -197,12 +185,7 @@ fn build_schema_change_query(
 fn build_scope_predicate(namespaces: &[NamespaceId], tables: &[TableSelector]) -> String {
     let namespace_predicates = namespaces
         .iter()
-        .map(|namespace| {
-            format!(
-                "namespace_id = '{}'",
-                escape_sql_literal(namespace.as_str())
-            )
-        })
+        .map(|namespace| format!("namespace_id = '{}'", escape_sql_literal(namespace.as_str())))
         .collect::<Vec<_>>();
     let table_predicates = tables
         .iter()
@@ -284,11 +267,8 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_filters_one_namespace() {
-        let query = build_schema_change_query(
-            &[NamespaceId::new("chat")],
-            &[],
-            "2026-05-05T11:05:27.741Z",
-        );
+        let query =
+            build_schema_change_query(&[NamespaceId::new("chat")], &[], "2026-05-05T11:05:27.741Z");
 
         assert_eq!(
             query,

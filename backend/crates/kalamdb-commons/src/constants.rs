@@ -122,6 +122,17 @@ pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
 
 /// SQL keywords that must never be used as namespace, table, or column identifiers.
 pub const CRITICAL_RESERVED_SQL_KEYWORDS: &[&str] = &[
-    "TABLE", "TABLES", "TABLESPACE", "INDEX", "VIEW", "SCHEMA", "DATABASE", "INSERT", "UPDATE",
-    "DELETE", "CREATE", "DROP", "ALTER",
+    "TABLE",
+    "TABLES",
+    "TABLESPACE",
+    "INDEX",
+    "VIEW",
+    "SCHEMA",
+    "DATABASE",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "CREATE",
+    "DROP",
+    "ALTER",
 ];

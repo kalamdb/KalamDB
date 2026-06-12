@@ -30,7 +30,7 @@ use crate::{
         },
         project::config::SchemaMode,
         schema::{generate_schema_artifacts, GenerateOptions},
-        sql::{build_workflow_client, drop_namespace_if_exists, reset_namespace_migration_state},
+        sql::{build_workflow_client, drop_namespace_if_exists},
         WorkflowContext,
     },
 };
@@ -164,6 +164,7 @@ impl DevSchemaLoop {
             self.refresh_schema_mtime(ctx);
         }
 
+        output.restore_dev_session_view()?;
         Ok(())
     }
 
@@ -206,7 +207,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
 
     let server_source = registry.get("server").expect("server source registered").clone();
 
-    output.service_log(&server_source, "starting kalam dev session");
+    output.status("starting kalam dev session");
     output.progress_task(
         "project",
         ProgressTaskStatus::Succeeded,
@@ -219,10 +220,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
 
     if ctx.config.dev.auto_start_db {
         if precheck.local_server_reused {
-            output.service_log(
-                &server_source,
-                format!("using existing KalamDB server at {}", precheck.environment.url),
-            );
+            output.status(format!("using existing KalamDB server at {}", precheck.environment.url));
             output.progress_task(
                 "server",
                 ProgressTaskStatus::Succeeded,
@@ -234,14 +232,22 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 &ctx.config,
                 &precheck.environment.url,
             )?;
-            output.service_log(&server_source, "starting local KalamDB server");
+            output.status("starting local KalamDB server");
             output.progress_task(
                 "server",
                 ProgressTaskStatus::Running,
                 "Starting local KalamDB server...",
             );
-            supervisor.spawn_one("server", &command, &registry, &output).await?;
-            wait_for_server_ready(&precheck.environment.url, &output).await?;
+            if let Err(error) = supervisor.spawn_one("server", &command, &registry, &output).await {
+                output.status(format!("failed to start local KalamDB server: {error}"));
+                return Err(error);
+            }
+            wait_for_server_ready(&precheck.environment.url, &output)
+                .await
+                .map_err(|error| {
+                    output.status(format!("local KalamDB server did not become ready: {error}"));
+                    error
+                })?;
             ensure_local_dev_authentication_ready(
                 ctx,
                 &precheck.environment,
@@ -270,10 +276,10 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
 
     let watch_enabled = precheck.watch_enabled;
     if watch_enabled {
-        output.service_log(&server_source, "watching schema source for changes");
+        output.status("watching schema source for changes");
     }
     if ctx.config.dev.processes.is_empty() {
-        output.service_log(&server_source, "no custom dev processes configured");
+        output.status("no custom dev processes configured");
     }
     let mut watch_interval = time::interval(Duration::from_secs(SCHEMA_WATCH_INTERVAL_SECS));
     watch_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -287,31 +293,29 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 result.map_err(|e| crate::error::CLIError::ConfigurationError(
                     format!("ctrl-c handler failed: {e}")
                 ))?;
-                output.service_log(&server_source, "shutting down (Ctrl+C)");
+                output.status("shutting down (Ctrl+C)");
                 break;
             }
             _ = watch_interval.tick(), if watch_enabled => {
                 if schema_loop.handle_watch_tick(ctx, &output).await? == DevLoopAction::Stop {
-                    output.service_log(&server_source, "shutting down (schema prompt cancelled)");
+                    output.status("shutting down (schema prompt cancelled)");
                     break;
                 }
             }
             _ = time::sleep(Duration::from_millis(200)) => {
                 let finished = supervisor.reap_finished().await;
                 for (name, code) in &finished {
-                    if let Some(source) = registry.get(name) {
-                        output.service_log(source, format!("process exited with code {code}"));
-                    }
+                    output.status(format!("process {name} exited with code {code}"));
                 }
                 let managed_count = supervisor.count();
                 if managed_count == 0
                     && (local_server_spawned || !ctx.config.dev.processes.is_empty())
                 {
-                    output.service_log(&server_source, "all dev processes exited");
+                    output.status("all dev processes exited");
                     break;
                 }
                 if managed_count == 0 && !watch_enabled {
-                    output.service_log(&server_source, "dev session completed");
+                    output.status("dev session completed");
                     break;
                 }
             }
@@ -446,7 +450,6 @@ async fn reset_remote_namespace(ctx: &WorkflowContext, output: &WorkflowOutput) 
     let client = build_workflow_client(ctx, &environment)?;
     output.status(format!("dropping namespace {} before reset", environment.namespace));
     drop_namespace_if_exists(&client, &environment.namespace).await?;
-    reset_namespace_migration_state(&client, &environment.namespace).await?;
     output.status(format!("reset namespace {}", environment.namespace));
     Ok(())
 }

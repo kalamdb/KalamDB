@@ -10,7 +10,7 @@ use std::{
 
 use async_trait::async_trait;
 use datafusion::{catalog::SchemaProvider, prelude::SessionContext};
-use kalamdb_auth::{CoreUsersRepo, UserRepository};
+use kalamdb_auth::{CachedUsersRepo, CoreUsersRepo, UserRepository};
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
     models::{NamespaceId, TransactionOrigin, UserId},
@@ -164,6 +164,9 @@ pub struct AppContext {
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
 
+    // ===== Auth user cache (invalidated after DDL user mutations) =====
+    cached_user_repo: OnceCell<Arc<CachedUsersRepo>>,
+
     // ===== Server Start Time (for uptime calculation) =====
     server_start_time: Instant,
 }
@@ -192,6 +195,7 @@ impl std::fmt::Debug for AppContext {
             .field("manifest_service", &"Arc<ManifestService>")
             .field("topic_publisher", &"Arc<TopicPublisherService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
+            .field("cached_user_repo", &"OnceCell<Arc<CachedUsersRepo>>")
             .finish()
     }
 }
@@ -513,6 +517,7 @@ impl AppContext {
                 file_storage_service,
                 topic_publisher: Arc::clone(&topic_publisher),
                 sql_executor: OnceCell::new(),
+                cached_user_repo: OnceCell::new(),
                 server_start_time,
             });
 
@@ -916,6 +921,7 @@ impl AppContext {
             file_storage_service,
             topic_publisher: Arc::clone(&topic_publisher),
             sql_executor: OnceCell::new(),
+            cached_user_repo: OnceCell::new(),
             server_start_time,
         });
 
@@ -1242,6 +1248,22 @@ impl AppContext {
     /// - Table-to-topic routing for CDC
     pub fn topic_publisher(&self) -> Arc<TopicPublisherService> {
         self.topic_publisher.clone()
+    }
+
+    /// Register the cached auth user repository (called once during bootstrap).
+    pub fn set_cached_user_repo(self: &Arc<Self>, user_repo: Arc<CachedUsersRepo>) {
+        if self.cached_user_repo.set(user_repo).is_err() {
+            log::warn!(
+                "CachedUsersRepo already initialized in AppContext; ignoring duplicate registration"
+            );
+        }
+    }
+
+    /// Drop a cached auth user entry after direct system.users mutations.
+    pub fn invalidate_cached_user(&self, user_id: &UserId) {
+        if let Some(repo) = self.cached_user_repo.get() {
+            repo.invalidate_user(user_id);
+        }
     }
 
     /// Register the shared SqlExecutor (called once during bootstrap)

@@ -54,8 +54,7 @@ pub async fn run_dev_prechecks(
             environment.url
         ))
     })?;
-    output
-        .service_log(server_source, format!("precheck: environment ready at {}", environment.url));
+    output.status(format!("precheck: environment ready at {}", environment.url));
     output.progress_task("environment", ProgressTaskStatus::Succeeded, "Environment ready");
 
     ensure_schema_source(ctx, output, server_source)?;
@@ -66,30 +65,21 @@ pub async fn run_dev_prechecks(
 
     let watch_enabled = schema_watch_path(&ctx.project_root, &ctx.config).is_some();
     if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
-        output.service_log(
-            server_source,
-            format!(
-                "precheck: schema watch enabled for {}",
-                display_project_path(&ctx.project_root, &path)
-            ),
-        );
+        output.status(format!(
+            "precheck: schema watch enabled for {}",
+            display_project_path(&ctx.project_root, &path)
+        ));
     } else {
-        output.service_log(server_source, "precheck: schema watch disabled");
+        output.status("precheck: schema watch disabled");
     }
 
     let local_server_reused = if ctx.config.dev.auto_start_db {
         if server_already_ready(&environment.url).await {
-            output.service_log(
-                server_source,
-                format!("precheck: local server reachable at {}", environment.url),
-            );
+            output.status(format!("precheck: local server reachable at {}", environment.url));
             true
         } else {
             let binary = ensure_local_server_binary(ctx.use_color, output, server_source).await?;
-            output.service_log(
-                server_source,
-                format!("precheck: local server binary ready at {}", binary.display()),
-            );
+            output.status(format!("precheck: local server binary ready at {}", binary.display()));
             false
         }
     } else {
@@ -99,10 +89,7 @@ pub async fn run_dev_prechecks(
                 environment.url
             )));
         }
-        output.service_log(
-            server_source,
-            format!("precheck: remote server reachable at {}", environment.url),
-        );
+        output.status(format!("precheck: remote server reachable at {}", environment.url));
         false
     };
 
@@ -122,7 +109,7 @@ pub async fn run_dev_prechecks(
 fn ensure_schema_source(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     if !matches!(ctx.config.schema.mode, SchemaMode::Sql) {
         return Ok(());
@@ -139,13 +126,10 @@ fn ensure_schema_source(
         )));
     }
 
-    output.service_log(
-        server_source,
-        format!(
-            "precheck: schema source found at {}",
-            display_project_path(&ctx.project_root, &path)
-        ),
-    );
+    output.status(format!(
+        "precheck: schema source found at {}",
+        display_project_path(&ctx.project_root, &path)
+    ));
     output.progress_task("schema-source", ProgressTaskStatus::Succeeded, "Schema source found");
     Ok(())
 }
@@ -153,7 +137,7 @@ fn ensure_schema_source(
 fn ensure_generated_targets(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     if !ctx.config.dev.generate_types {
         return Ok(());
@@ -174,13 +158,10 @@ fn ensure_generated_targets(
                 parent.display()
             ))
         })?;
-        output.service_log(
-            server_source,
-            format!(
-                "precheck: target directory ready at {}",
-                display_project_path(&ctx.project_root, parent)
-            ),
-        );
+        output.status(format!(
+            "precheck: target directory ready at {}",
+            display_project_path(&ctx.project_root, parent)
+        ));
         ready_count += 1;
     }
 
@@ -194,7 +175,7 @@ fn ensure_generated_targets(
 fn ensure_migrations_dir(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     let migrations_dir: PathBuf = ctx.config.migrations_dir(&ctx.project_root);
     fs::create_dir_all(&migrations_dir).map_err(|error| {
@@ -203,13 +184,10 @@ fn ensure_migrations_dir(
             display_project_path(&ctx.project_root, &migrations_dir)
         ))
     })?;
-    output.service_log(
-        server_source,
-        format!(
-            "precheck: migrations directory ready at {}",
-            display_project_path(&ctx.project_root, &migrations_dir)
-        ),
-    );
+    output.status(format!(
+        "precheck: migrations directory ready at {}",
+        display_project_path(&ctx.project_root, &migrations_dir)
+    ));
     output.progress_task(
         "migrations-dir",
         ProgressTaskStatus::Succeeded,
@@ -221,32 +199,26 @@ fn ensure_migrations_dir(
 fn ensure_kalam_gitignore(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     let gitignore_path = ctx.config.ensure_kalam_gitignore(&ctx.project_root)?;
-    output.service_log(
-        server_source,
-        format!(
-            "precheck: KalamDB state .gitignore ready at {}",
-            display_project_path(&ctx.project_root, &gitignore_path)
-        ),
-    );
+    output.status(format!(
+        "precheck: KalamDB state .gitignore ready at {}",
+        display_project_path(&ctx.project_root, &gitignore_path)
+    ));
     Ok(())
 }
 
 fn ensure_cli_log_dir(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     let log_dir = ctx.config.ensure_cli_log_dir(&ctx.project_root)?;
-    output.service_log(
-        server_source,
-        format!(
-            "precheck: KalamDB CLI log directory ready at {}",
-            display_project_path(&ctx.project_root, &log_dir)
-        ),
-    );
+    output.status(format!(
+        "precheck: KalamDB CLI log directory ready at {}",
+        display_project_path(&ctx.project_root, &log_dir)
+    ));
     Ok(())
 }
 
@@ -254,7 +226,7 @@ pub async fn ensure_authentication_ready(
     ctx: &WorkflowContext,
     environment: &ResolvedEnvironment,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     let profile = resolve_kalam_profile(&ctx.project_root)?;
     if let Err(detail) = verify_workflow_auth(ctx, environment).await {
@@ -265,10 +237,7 @@ pub async fn ensure_authentication_ready(
         )));
     }
 
-    output.service_log(
-        server_source,
-        format!("precheck: authentication ready for {}", environment.url),
-    );
+    output.status(format!("precheck: authentication ready for {}", environment.url));
     output.progress_task("authentication", ProgressTaskStatus::Succeeded, "Authentication ready");
     Ok(())
 }
@@ -277,14 +246,11 @@ pub async fn ensure_local_dev_authentication_ready(
     ctx: &WorkflowContext,
     environment: &ResolvedEnvironment,
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<()> {
     match verify_workflow_auth(ctx, environment).await {
         Ok(()) => {
-            output.service_log(
-                server_source,
-                format!("precheck: authentication ready for {}", environment.url),
-            );
+            output.status(format!("precheck: authentication ready for {}", environment.url));
             output.progress_task(
                 "authentication",
                 ProgressTaskStatus::Succeeded,
@@ -292,18 +258,15 @@ pub async fn ensure_local_dev_authentication_ready(
             );
             return Ok(());
         },
-        Err(detail) => output.service_log(
-            server_source,
-            format!("precheck: saved local dev authentication is not ready: {detail}"),
-        ),
+        Err(detail) => output
+            .status(format!("precheck: saved local dev authentication is not ready: {detail}")),
     }
 
     let profile = local_dev_auth_profile(ctx, environment)?;
     let password = local_dev_root_password(ctx, environment)?;
-    output.service_log(
-        server_source,
-        format!("precheck: logging into local KalamDB server as root for profile '{profile}'"),
-    );
+    output.status(format!(
+        "precheck: logging into local KalamDB server as root for profile '{profile}'"
+    ));
     let login = login_local_root(&environment.url, &password).await.map_err(|detail| {
         CLIError::ConfigurationError(auth_guidance_message(
             &ctx.project_root,
@@ -312,10 +275,7 @@ pub async fn ensure_local_dev_authentication_ready(
         ))
     })?;
     save_local_dev_credentials(&profile, &environment.url, &login)?;
-    output.service_log(
-        server_source,
-        format!("precheck: saved local dev credentials for profile '{profile}'"),
-    );
+    output.status(format!("precheck: saved local dev credentials for profile '{profile}'"));
 
     verify_jwt_auth(&environment.url, &login.access_token).await.map_err(|detail| {
         CLIError::ConfigurationError(auth_guidance_message(
@@ -587,6 +547,7 @@ mod tests {
                 project: ProjectSection {
                     name: "demo".into(),
                     default_env: "dev".into(),
+                    package_manager: None,
                     kalam_dir: "kalam".into(),
                 },
                 connection: HashMap::from([(

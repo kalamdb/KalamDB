@@ -20,17 +20,42 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
   <a href="https://hub.docker.com/r/jamals86/pg-kalam"><img src="https://img.shields.io/docker/pulls/jamals86/pg-kalam?label=pg-kalam%20docker" alt="pg-kalam Docker Pulls" /></a>
 </p>
 
-<p align="center"><strong>SDKs</strong></p>
+<p align="center"><strong>Official SDKs</strong></p>
 
-<p align="center">
-  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/typescript-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK Tests" /></a>
-  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/dart-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK Tests" /></a>
-  <a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/v/%40kalamdb%2Fclient?label=typescript%20sdk" alt="TypeScript SDK" /></a>
-  <a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=dart%20sdk" alt="Dart SDK" /></a>
-</p>
-
-
-SDKs: [TypeScript/JavaScript](https://www.npmjs.com/package/@kalamdb/client) and [Dart/Flutter](https://pub.dev/packages/kalam_link).
+<table align="center">
+  <thead>
+    <tr>
+      <th>SDK</th>
+      <th>Package</th>
+      <th>Release</th>
+      <th>Tests</th>
+      <th>Downloads</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><strong>TypeScript / JavaScript</strong></a></td>
+      <td><code>@kalamdb/client</code></td>
+      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/v/%40kalamdb%2Fclient?label=npm" alt="TypeScript SDK version" /></a></td>
+      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/typescript-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK tests" /></a></td>
+      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/dm/%40kalamdb%2Fclient?label=downloads" alt="TypeScript SDK monthly downloads" /></a></td>
+    </tr>
+    <tr>
+      <td><a href="https://pub.dev/packages/kalam_link"><strong>Dart / Flutter</strong></a></td>
+      <td><code>kalam_link</code></td>
+      <td><a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=pub.dev" alt="Dart SDK version" /></a></td>
+      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/dart-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK tests" /></a></td>
+      <td><a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/dm/kalam_link?label=downloads" alt="Dart SDK monthly downloads" /></a></td>
+    </tr>
+    <tr>
+      <td><a href="https://crates.io/crates/kalam-client"><strong>Rust</strong></a></td>
+      <td><code>kalam-client</code></td>
+      <td><a href="https://crates.io/crates/kalam-client"><img src="https://img.shields.io/crates/v/kalam-client?label=crates.io" alt="Rust SDK version" /></a></td>
+      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/rust-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-rust-tests.json" alt="Rust SDK tests" /></a></td>
+      <td><a href="https://crates.io/crates/kalam-client"><img src="https://img.shields.io/crates/d/kalam-client?label=downloads" alt="Rust SDK downloads" /></a></td>
+    </tr>
+  </tbody>
+</table>
 
 PostgreSQL extension Docker image: [jamals86/pg-kalam](https://hub.docker.com/r/jamals86/pg-kalam) with `pg_kalam` preinstalled.
 
