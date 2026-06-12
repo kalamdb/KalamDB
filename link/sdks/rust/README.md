@@ -313,6 +313,7 @@ The SDK handles:
 | Example | What it shows |
 |---------|----------------|
 | [quickstart](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/quickstart/src) | Connect, run `SELECT CURRENT_USER()`, disconnect |
+| [file-attachments](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/file-attachments/src) | FILE upload, `as_bound_file`, `download_bound_file` |
 | [live-inbox](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/live-inbox/src) | USER table + materialized `live()` loop |
 | [topic-consumer](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/topic-consumer/src) | `consumer` feature + `TopicConsumer` |
 | `tests/*.rs` | Offline API guards plus server-backed integration tests |
@@ -329,6 +330,7 @@ From the repo root:
 ```bash
 cd link/sdks/rust
 cargo run -p quickstart
+cargo run -p file-attachments
 cargo run -p live-inbox
 cargo run -p topic-consumer
 ```

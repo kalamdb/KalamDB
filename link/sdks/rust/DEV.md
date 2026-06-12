@@ -80,6 +80,7 @@ export KALAMDB_SERVER_URL=http://localhost:2900
 export KALAMDB_ROOT_PASSWORD=kalamdb123
 
 cargo run -p quickstart
+cargo run -p file-attachments
 cargo run -p live-inbox
 cargo run -p topic-consumer
 ```
