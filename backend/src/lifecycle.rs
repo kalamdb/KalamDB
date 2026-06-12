@@ -194,8 +194,9 @@ pub async fn prepare_components(
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
-    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
-        Arc::new(CachedUsersRepo::new(users_provider));
+    let cached_user_repo = Arc::new(CachedUsersRepo::new(users_provider));
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> = Arc::clone(&cached_user_repo) as _;
+    app_context.set_cached_user_repo(cached_user_repo);
 
     let handler_registry = Arc::new(HandlerRegistry::new());
     kalamdb_handlers::register_all_handlers(

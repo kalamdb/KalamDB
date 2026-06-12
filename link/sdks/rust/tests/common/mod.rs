@@ -118,6 +118,10 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     config.storage.data_path = data_path.to_string_lossy().into_owned();
     config.rate_limit.max_queries_per_sec = 100000;
     config.rate_limit.max_messages_per_sec = 10000;
+    config.rate_limit.max_auth_requests_per_ip_per_sec = 200_000;
+    config.rate_limit.max_connections_per_ip = 200_000;
+    config.rate_limit.max_requests_per_ip_per_sec = 200_000;
+    config.rate_limit.max_subscriptions_per_user = 200_000;
 
     let (components, app_context) = kalamdb_server::lifecycle::bootstrap_isolated(&config).await?;
     let running =

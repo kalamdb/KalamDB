@@ -3940,7 +3940,10 @@ fn execute_sql_via_client_internal(
                     let client = shared_test_client_for_url_with_timeouts(
                         url, username, password, &timeouts,
                     )?;
-                    let response = client.execute_query(sql, None, params.clone(), None).await?;
+                    let query_params = params
+                        .as_ref()
+                        .map(|values| kalam_client::query::models::query_param::params_from_json_values(values.clone()));
+                    let response = client.execute_query(sql, None, query_params, None).await?;
                     Ok(response)
                 }
 

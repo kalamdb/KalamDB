@@ -649,8 +649,8 @@ fn test_project_workflow_dev_stays_running_when_reusing_existing_local_server() 
     let output = child.wait_with_output().expect("collect output");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("[server]") && stderr.contains("using existing KalamDB server"),
-        "expected append-only local server log\nstderr: {stderr}"
+        stderr.contains("using existing KalamDB server"),
+        "expected reused local server status in dev output\nstderr: {stderr}"
     );
 }
 

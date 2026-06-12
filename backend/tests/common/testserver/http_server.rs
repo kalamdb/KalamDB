@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context, Result};
 use kalam_client::{
     models::{QueryResponse, ResponseStatus},
+    query::models::query_param::params_from_json_values,
     AuthProvider, KalamLinkClient, KalamLinkTimeouts,
 };
 use kalamdb_commons::{NamespaceId, Role, UserId};
@@ -594,7 +595,7 @@ impl HttpTestServer {
                 if params.is_empty() {
                     None
                 } else {
-                    Some(params)
+                    Some(params_from_json_values(params))
                 },
                 None,
             )

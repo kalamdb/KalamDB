@@ -44,9 +44,12 @@ pub fn prompt_for_draft_application(
     project_root: &Path,
     draft_path: &Path,
 ) -> Result<DraftPromptDecision> {
+    let summary = draft_summary_lines(draft_path);
     output.workflow_event(DRAFT_PROMPT_MESSAGE);
+    for line in &summary {
+        output.workflow_event(line);
+    }
     output.run_terminal_modal(|| {
-        let summary = draft_summary_lines(draft_path);
         let draft_display = display_project_path(project_root, draft_path);
         render_draft_summary(&summary, &draft_display, output.use_color);
 
