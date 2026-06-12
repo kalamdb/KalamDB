@@ -1,6 +1,6 @@
 # Rust SDK Examples
 
-Runnable examples for `kalam-client`. Each crate depends on the workspace copy at `link/kalam-client/`.
+Runnable examples for `kalam-client`. Each example depends on the crate at `link/sdks/rust/`.
 
 ## Prerequisites
 

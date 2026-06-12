@@ -19,6 +19,7 @@ pub mod history;
 pub mod history_menu;
 pub mod output;
 pub mod parser;
+pub mod process_util;
 pub mod release_download;
 pub mod session;
 pub mod sql_batch;

@@ -82,7 +82,7 @@ fn find_files_recursive(root: &Path) -> Vec<PathBuf> {
 
 fn parse_file_ref(value: &JsonValue) -> anyhow::Result<FileRef> {
     if let Some(raw) = value.as_str() {
-        return Ok(FileRef::from_json(raw)?);
+        return Ok(FileRef::try_from_json(raw)?);
     }
 
     Ok(serde_json::from_value(value.clone())?)

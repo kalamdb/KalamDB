@@ -1,17 +1,18 @@
 //! HTTP query API tests.
 
-use rust_sdk_tests::{build_client, is_server_running};
-use serde_json::json;
+mod common;
+
+use kalam_client::QueryParam;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]
 async fn execute_query_returns_current_user() {
-    if !is_server_running().await {
-        eprintln!("Skipping: server not available at {}", rust_sdk_tests::server_url());
+    if !common::is_server_running().await {
+        eprintln!("Skipping: server not available at {}", common::server_url());
         return;
     }
 
-    let client = build_client().expect("client should build");
+    let client = common::create_client().expect("client should build");
     let response = client
         .execute_query("SELECT CURRENT_USER()", None, None, None)
         .await
@@ -24,12 +25,12 @@ async fn execute_query_returns_current_user() {
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]
 async fn execute_query_supports_bound_parameters() {
-    if !is_server_running().await {
+    if !common::is_server_running().await {
         return;
     }
 
-    let client = build_client().expect("client should build");
-    let suffix = rust_sdk_tests::unique_ident("rust_sdk_param");
+    let client = common::create_client().expect("client should build");
+    let suffix = common::unique_ident("rust_sdk_param");
     let table = format!("default.{suffix}");
 
     client
@@ -48,7 +49,7 @@ async fn execute_query_supports_bound_parameters() {
         .execute_query(
             &format!("INSERT INTO {table} (id, value) VALUES ($1, $2)"),
             None,
-            Some(vec![json!("row-1"), json!("hello")]),
+            Some(vec![QueryParam::from("row-1"), QueryParam::from("hello")]),
             None,
         )
         .await
@@ -58,7 +59,7 @@ async fn execute_query_supports_bound_parameters() {
         .execute_query(
             &format!("SELECT value FROM {table} WHERE id = $1"),
             None,
-            Some(vec![json!("row-1")]),
+            Some(vec![QueryParam::from("row-1")]),
             None,
         )
         .await

@@ -6,6 +6,6 @@
 mod diff;
 
 pub use diff::{
-    diff_schema_files, diff_schema_files_with_options, diff_schema_sql, diff_schema_sql_with_options,
-    DiffOptions, MigrationStatements, SchemaDiffError,
+    diff_schema_files, diff_schema_files_with_options, diff_schema_sql,
+    diff_schema_sql_with_options, DiffOptions, MigrationStatements, SchemaDiffError,
 };

@@ -147,8 +147,7 @@ async fn resolve_same_version_update(
     show_progress: bool,
 ) -> Result<SameVersionUpdate> {
     let checksums = download_text(client, checksums_url, "checksum file").await?;
-    if update_check::local_binary_matches_release_checksum(current_exe, &checksums, archive_name)?
-    {
+    if update_check::local_binary_matches_release_checksum(current_exe, &checksums, archive_name)? {
         return Ok(SameVersionUpdate::UpToDate);
     }
 

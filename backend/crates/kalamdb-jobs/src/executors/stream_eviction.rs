@@ -135,8 +135,9 @@ impl JobExecutor for StreamEvictionExecutor {
             Some(p) => p,
             None => return Ok(false),
         };
-        let stream_provider =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>().ok_or_else(|| {
+        let stream_provider = (provider_arc.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<StreamTableProvider>()
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",
                     params.table_id
@@ -201,8 +202,9 @@ impl JobExecutor for StreamEvictionExecutor {
                 });
             },
         };
-        let stream_provider =
-            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>().ok_or_else(|| {
+        let stream_provider = (provider_arc.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<StreamTableProvider>()
+            .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
                     "Cached provider for {} is not a StreamTableProvider",
                     table_id

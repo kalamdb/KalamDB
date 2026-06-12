@@ -96,7 +96,7 @@ required-features = ["e2e-tests"]
 
 [dependencies]
 # KalamDB connectivity
-kalam-client = { path = "../link/kalam-client", default-features = false, features = ["native-cli"] }
+kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["native-cli"] }
 kalamdb-commons = { workspace = true, default-features = false, features = ["serde", "websocket-auth"] }
 kalam-schema-diff = { path = "crates/kalam-schema-diff" }
 

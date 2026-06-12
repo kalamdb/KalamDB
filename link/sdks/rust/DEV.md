@@ -1,6 +1,6 @@
 # kalam-client — Developer Notes
 
-This document is for contributors and developers working on the Rust SDK packaging in `link/sdks/rust/` and the underlying crate in `link/kalam-client/`.
+This document is for contributors working on the Rust SDK in `link/sdks/rust/`.
 
 For usage documentation, see [README.md](https://github.com/kalamdb/KalamDB/blob/main/link/sdks/rust/README.md).
 
@@ -10,7 +10,7 @@ The Rust SDK is a native Tokio client built on the shared link implementation:
 
 ```
 Application (Rust service, CLI, worker)
-  └─ kalam-client (crates.io)              ← app-facing API, feature flags
+  └─ kalam-client (crates.io, source in link/sdks/rust/)
       └─ link/link-common/src/             ← shared transport, auth, live rows, consumer
           └─ backend/crates/kalamdb-commons ← protocol types and shared IDs
 ```
@@ -31,10 +31,9 @@ TypeScript splits consumer into `@kalamdb/consumer`. Rust keeps topic workers in
 | `link/sdks/rust/README.md` | Canonical user-facing SDK readme (referenced by the crate manifest) |
 | `link/sdks/rust/QUICKSTART.md` | Short onboarding guide |
 | `link/sdks/rust/examples/` | Runnable example binaries |
+| `link/sdks/rust/` | The `kalam-client` crate published to crates.io |
 | `link/sdks/rust/tests/` | SDK integration tests (`tests/*.rs`) |
-| `link/sdks/rust/src/lib.rs` | Shared test helpers (`rust-sdk-tests` lib) |
 | `link/sdks/rust/publish.sh` | crates.io publish helper |
-| `link/kalam-client/` | The `kalam-client` library crate published to crates.io |
 | `link/link-common/` | Shared implementation (path dependency today) |
 
 ## Prerequisites
@@ -49,7 +48,7 @@ TypeScript splits consumer into `@kalamdb/consumer`. Rust keeps topic workers in
 Compile the library crate:
 
 ```bash
-cd link/kalam-client
+cd link/sdks/rust
 cargo build --features native-sdk
 ```
 
@@ -103,7 +102,7 @@ CI uses the release-server harness:
 KALAMDB_SERVER_BIN=./kalamdb-server ./scripts/test-rust-sdk-release.sh
 ```
 
-Additional integration coverage exists in `link/kalam-client` with `cargo test --features e2e-tests`.
+Additional integration coverage lives in `link/sdks/rust/tests/` with `cargo test --features e2e-tests`.
 
 ## Feature Flags
 
@@ -131,7 +130,7 @@ kalam-client = { version = "0.5", features = ["native-sdk", "consumer"] }
 
 ## Publishing to crates.io
 
-The published crate name is **`kalam-client`**. User docs and examples live in `link/sdks/rust/`, but `cargo publish` runs from `link/kalam-client/`.
+The published crate name is **`kalam-client`**. Source, docs, examples, and tests all live under `link/sdks/rust/`.
 
 Today the crate depends on path-only workspace crates (`link-common`, `kalamdb-commons`, …). Before the first public release, publish or vendor those dependencies so `cargo publish --dry-run` succeeds without path references.
 
@@ -150,7 +149,7 @@ Options mirror the TypeScript SDK publish script:
 
 - `--dry-run` — validate packaging without uploading
 - `--skip-check` — skip `cargo test` gate
-- `--version VERSION` — override version written into `link/kalam-client/Cargo.toml`
+- `--version VERSION` — override version written into `link/sdks/rust/Cargo.toml`
 
 ## Versioning
 

@@ -52,7 +52,8 @@ pub fn extract_transaction_query_context(
     session: &dyn Session,
 ) -> Option<&TransactionQueryContext> {
     session
-        .as_any().downcast_ref::<SessionState>()?
+        .as_any()
+        .downcast_ref::<SessionState>()?
         .config()
         .options()
         .extensions

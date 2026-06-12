@@ -36,7 +36,7 @@ pub fn collect_file_refs_from_row(
             };
 
             if let Some(json) = json_opt {
-                match FileRef::from_json(json) {
+                match FileRef::try_from_json(json) {
                     Ok(file_ref) => refs.push(file_ref),
                     Err(err) => log::warn!(
                         "Failed to parse FileRef JSON for {}.{}: {}",
@@ -91,7 +91,7 @@ pub fn collect_replaced_file_refs_for_update(
         };
 
         let prior_ref = match prior_json {
-            Some(json) => match FileRef::from_json(json) {
+            Some(json) => match FileRef::try_from_json(json) {
                 Ok(file_ref) => Some(file_ref),
                 Err(err) => {
                     log::warn!(
@@ -107,7 +107,7 @@ pub fn collect_replaced_file_refs_for_update(
         };
 
         let update_ref = match update_json {
-            Some(json) => match FileRef::from_json(json) {
+            Some(json) => match FileRef::try_from_json(json) {
                 Ok(file_ref) => Some(file_ref),
                 Err(err) => {
                     log::warn!(

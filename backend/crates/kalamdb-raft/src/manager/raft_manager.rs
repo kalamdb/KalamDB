@@ -1947,11 +1947,6 @@ impl RaftManager {
                     "[CLUSTER] Leadership transfer attempts completed (explicit transfer may be \
                      unsupported by current OpenRaft version)"
                 );
-            } else {
-                log::warn!(
-                    "[CLUSTER] No peers available for leadership transfer - cluster may \
-                     experience brief unavailability"
-                );
             }
         }
 

@@ -486,6 +486,22 @@ mod tests {
     }
 
     #[test]
+    fn test_admin_ui_urls_use_public_and_local_origins() {
+        let mut config = ServerConfig::default();
+        config.server.port = 2900;
+        config.server.host = "0.0.0.0".to_string();
+
+        assert_eq!(config.server.admin_ui_url(), "http://localhost:2900/ui");
+        assert_eq!(config.server.local_admin_ui_url(), "http://localhost:2900/ui");
+
+        config.server.host = "127.0.0.1".to_string();
+        config.server.public_origin = Some("https://db.example.com/".to_string());
+
+        assert_eq!(config.server.admin_ui_url(), "https://db.example.com/ui");
+        assert_eq!(config.server.local_admin_ui_url(), "http://127.0.0.1:2900/ui");
+    }
+
+    #[test]
     fn test_configured_public_origin_treats_blank_as_unset() {
         let mut config = ServerConfig::default();
 

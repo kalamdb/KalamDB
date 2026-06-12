@@ -148,8 +148,8 @@ impl JobExecutor for UserExportExecutor {
             let has_rocksdb_data = {
                 let provider_opt = schema_registry.get_provider(&table_id);
                 if let Some(provider_arc) = provider_opt {
-                    if let Some(provider) =
-                        (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+                    if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<UserTableProvider>()
                     {
                         let store = provider.store();
                         // Scan with the user-specific prefix to check only this user's data

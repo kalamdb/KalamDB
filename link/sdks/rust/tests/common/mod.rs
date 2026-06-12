@@ -390,3 +390,23 @@ pub fn websocket_url() -> String {
         base.replacen("http://", "ws://", 1)
     }
 }
+
+pub fn create_client() -> kalam_client::Result<kalam_client::KalamLinkClient> {
+    let token = root_access_token_blocking()
+        .map_err(|err| kalam_client::KalamLinkError::ConfigurationError(err.to_string()))?;
+    kalam_client::KalamLinkClient::builder()
+        .base_url(server_url())
+        .auth(kalam_client::AuthProvider::jwt_token(token))
+        .timeout(Duration::from_secs(30))
+        .build()
+}
+
+pub fn unique_ident(prefix: &str) -> String {
+    format!(
+        "{prefix}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
+}

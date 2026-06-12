@@ -10,7 +10,7 @@ name = "kalamdb-bench"
 path = "src/main.rs"
 
 [dependencies]
-kalam-client = { path = "../link/kalam-client", default-features = false, features = ["native-bench"] }
+kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["native-bench"] }
 # benchv2 is excluded from the root workspace, so this must stay aligned with
 # the Tokio version inherited by linked workspace crates like `link-common`.
 tokio = { version = "1.52.1", features = ["rt-multi-thread", "macros", "sync", "time"] }

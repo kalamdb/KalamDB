@@ -1,6 +1,9 @@
 [project]
 name = "{{project_name}}"
 default_env = "dev"
+{{#if package_manager}}
+package_manager = "{{package_manager}}"
+{{/if}}
 
 [connection.dev]
 url = "{{server_url}}"

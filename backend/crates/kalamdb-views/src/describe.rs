@@ -348,7 +348,8 @@ mod tests {
         // Verify column names
         let names = batch
             .column(0)
-            .as_any().downcast_ref::<datafusion::arrow::array::StringArray>()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
             .unwrap();
         assert_eq!(names.value(0), "id");
         assert_eq!(names.value(1), "name");

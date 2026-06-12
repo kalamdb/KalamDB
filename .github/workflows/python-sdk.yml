@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'link/sdks/python/**'
-      - 'link/kalam-client/**'
+      - 'link/sdks/rust/**'
       - 'link/link-common/**'
       - '.github/workflows/python-sdk.yml'
   workflow_dispatch:

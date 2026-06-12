@@ -57,8 +57,6 @@ Agents and frontends use the same backend directly: SQL over HTTP for reads and 
   </tbody>
 </table>
 
-SDKs: [TypeScript/JavaScript](https://www.npmjs.com/package/@kalamdb/client), [Dart/Flutter](https://pub.dev/packages/kalam_link), and [Rust](https://crates.io/crates/kalam-client).
-
 PostgreSQL extension Docker image: [jamals86/pg-kalam](https://hub.docker.com/r/jamals86/pg-kalam) with `pg_kalam` preinstalled.
 
 > Frontend clients can execute SQL directly against KalamDB. You keep one SQL API plus live subscriptions instead of maintaining a custom REST or GraphQL CRUD layer for every agent workflow.

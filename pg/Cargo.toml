@@ -49,7 +49,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 libc = { workspace = true }
-kalam-client = { path = "../link/kalam-client", default-features = false, features = ["tokio-runtime", "file-uploads"] }
+kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["tokio-runtime", "file-uploads"] }
 kalamdb-commons = { path = "../backend/crates/kalamdb-commons", default-features = false, features = ["rows"] }
 kalamdb-pg = { path = "../backend/crates/kalamdb-pg", features = ["server"] }
 ntest = { workspace = true }

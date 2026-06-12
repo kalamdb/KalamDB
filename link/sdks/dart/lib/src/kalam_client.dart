@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'auth.dart';
 import 'cell_value.dart';
+import 'file_ref.dart';
 import 'logger.dart';
 import 'models.dart';
 import 'seq_id.dart';
@@ -393,6 +394,74 @@ class KalamClient {
       return _fromBridgeQueryResponse(retryResp);
     }
     return result;
+  }
+
+  /// Execute a SQL query with multipart file uploads.
+  ///
+  /// Use `FILE("placeholder")` in SQL and pass matching [KalamFileUpload] items.
+  ///
+  /// ```dart
+  /// final bytes = await File('avatar.png').readAsBytes();
+  /// await client.queryWithFiles(
+  ///   r"INSERT INTO app.users (name, avatar) VALUES ($1, FILE('avatar'))",
+  ///   files: [
+  ///     KalamFileUpload(
+  ///       placeholder: 'avatar',
+  ///       filename: 'avatar.png',
+  ///       data: bytes,
+  ///       mime: 'image/png',
+  ///     ),
+  ///   ],
+  ///   params: ['alice'],
+  /// );
+  /// ```
+  Future<QueryResponse> queryWithFiles(
+    String sql, {
+    required List<KalamFileUpload> files,
+    List<dynamic>? params,
+    String? namespace,
+  }) async {
+    await _ensureJwtForBasicAuth();
+    final paramsJson = params != null ? jsonEncode(params) : null;
+    final bridgeFiles = files.map((file) => file.toBridge()).toList();
+
+    Future<QueryResponse> runOnce() async {
+      final resp = await bridge.dartExecuteQueryWithFiles(
+        client: _handle,
+        sql: sql,
+        files: bridgeFiles,
+        paramsJson: paramsJson,
+        namespace: namespace,
+      );
+      return _fromBridgeQueryResponse(resp);
+    }
+
+    final result = await runOnce();
+    if (result.error?.code == 'TOKEN_EXPIRED') {
+      KalamLogger.warn(
+          'auth', 'TOKEN_EXPIRED — refreshing credentials via authProvider');
+      await refreshAuth();
+      return runOnce();
+    }
+    return result;
+  }
+
+  /// Download bytes for a [KalamFileRef] returned from a query row.
+  Future<KalamFileDownload> downloadFile(
+    KalamFileRef fileRef, {
+    required String namespace,
+    required String table,
+    String? targetUserId,
+  }) async {
+    await _ensureJwtForBasicAuth();
+    final download = await bridge.dartDownloadFile(
+      client: _handle,
+      fileRef: fileRef.toBridge(),
+      namespace: namespace,
+      table: table,
+      targetUserId: targetUserId,
+    );
+    return KalamFileDownload.fromBridge(download);
   }
 
   // ---------------------------------------------------------------------------

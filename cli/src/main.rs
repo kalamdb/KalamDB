@@ -33,9 +33,17 @@ use terminal_input::prompt_password;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        // Use Display formatting instead of Debug to show nice error messages
-        eprintln!("Error: {}", e);
+        print_cli_error(&e);
         std::process::exit(1);
+    }
+}
+
+fn print_cli_error(err: &CLIError) {
+    let message = err.to_string();
+    if message.contains('\n') {
+        eprintln!("Error:\n{message}");
+    } else {
+        eprintln!("Error: {message}");
     }
 }
 

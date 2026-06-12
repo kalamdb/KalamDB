@@ -16,6 +16,7 @@ use crate::{
     error::{CLIError, Result},
     history::get_kalam_config_dir,
     output::WorkflowOutput,
+    process_util::build_cd_and_run_command,
     release_download::{
         archive_kind_for_platform, archive_name, copy_file_with_executable_bit, create_temp_dir,
         detect_platform, download_bytes, download_text, extract_archive, find_first_file_matching,
@@ -26,6 +27,10 @@ use crate::{
         dev::logs::ServiceLogSource,
         project::{
             config::KalamProjectConfig,
+            guidance::{
+                dev_kalamdb_server_bin_missing, dev_kalamdb_server_non_interactive_download,
+                dev_kalamdb_server_not_found,
+            },
             templates::{find_template_file, render_template, resolve_scaffold_template},
         },
     },
@@ -39,9 +44,7 @@ const SCAFFOLD_SERVER_CONFIG_PATH: &str = "kalam/server/server.toml";
 fn scaffold_template_file(project_path: &str) -> Result<&'static str> {
     let template = resolve_scaffold_template()?;
     find_template_file(template, project_path).ok_or_else(|| {
-        CLIError::ConfigurationError(format!(
-            "missing scaffold template file '{project_path}'"
-        ))
+        CLIError::ConfigurationError(format!("missing scaffold template file '{project_path}'"))
     })
 }
 
@@ -137,10 +140,7 @@ fn resolve_kalamdb_server_bin_from(current_exe: Option<PathBuf>) -> Result<PathB
         if path.is_file() {
             return Ok(path);
         }
-        return Err(CLIError::ConfigurationError(format!(
-            "KALAMDB_SERVER_BIN points to missing file '{}'",
-            path.display()
-        )));
+        return Err(CLIError::ConfigurationError(dev_kalamdb_server_bin_missing(&path)));
     }
 
     if let Some(path) = current_exe.as_deref().and_then(colocated_server_binary_path) {
@@ -156,9 +156,7 @@ fn resolve_kalamdb_server_bin_from(current_exe: Option<PathBuf>) -> Result<PathB
         return Ok(path);
     }
 
-    Err(CLIError::ConfigurationError(
-        "kalamdb-server not found in KALAMDB_SERVER_BIN, ~/.kalam/bin, or PATH".into(),
-    ))
+    Err(CLIError::ConfigurationError(dev_kalamdb_server_not_found()))
 }
 
 fn colocated_server_binary_path(current_exe: &Path) -> Option<PathBuf> {
@@ -214,11 +212,11 @@ pub async fn ensure_local_server_binary(
             Ok(path)
         },
         Err(error) => {
-            output.service_log(server_source, format!("precheck: {error}"));
+            output.status(format!("precheck: {error}"));
             if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-                return Err(CLIError::ConfigurationError(format!(
-                    "{error}; rerun interactively to download it automatically or set KALAMDB_SERVER_BIN"
-                )));
+                return Err(CLIError::ConfigurationError(
+                    dev_kalamdb_server_non_interactive_download(&error.to_string()),
+                ));
             }
 
             let install_dir = managed_server_install_dir();
@@ -239,7 +237,7 @@ pub async fn ensure_local_server_binary(
                 return Err(CLIError::ConfigurationError(format!("{error}; download declined")));
             }
 
-            output.service_log(server_source, "precheck: downloading kalamdb-server");
+            output.status("precheck: downloading kalamdb-server");
             download_and_install_managed_server(output, server_source).await
         },
     }
@@ -252,15 +250,12 @@ async fn refresh_managed_server_binary(
     installed_version: &str,
 ) -> Result<PathBuf> {
     let target_version = env!("CARGO_PKG_VERSION");
-    output.service_log(
-        server_source,
-        format!(
-            "precheck: managed kalamdb-server is {installed_version}, updating to {target_version}"
-        ),
-    );
+    output.status(format!(
+        "precheck: managed kalamdb-server is {installed_version}, updating to {target_version}"
+    ));
 
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        output.service_log(server_source, "precheck: downloading kalamdb-server");
+        output.status("precheck: downloading kalamdb-server");
         return download_and_install_managed_server(output, server_source).await;
     }
 
@@ -283,7 +278,7 @@ async fn refresh_managed_server_binary(
         )));
     }
 
-    output.service_log(server_source, "precheck: downloading kalamdb-server");
+    output.status("precheck: downloading kalamdb-server");
     download_and_install_managed_server(output, server_source).await
 }
 
@@ -298,9 +293,7 @@ fn managed_server_version_if_stale(path: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    Ok(Some(
-        installed_version.unwrap_or_else(|| "unknown".to_string()),
-    ))
+    Ok(Some(installed_version.unwrap_or_else(|| "unknown".to_string())))
 }
 
 fn is_managed_server_binary(path: &Path) -> bool {
@@ -316,15 +309,12 @@ fn is_managed_server_binary(path: &Path) -> bool {
 }
 
 fn read_server_binary_version(path: &Path) -> Result<Option<String>> {
-    let output = Command::new(path)
-        .arg("--version")
-        .output()
-        .map_err(|error| {
-            CLIError::ConfigurationError(format!(
-                "failed to read version from kalamdb-server '{}': {error}",
-                path.display()
-            ))
-        })?;
+    let output = Command::new(path).arg("--version").output().map_err(|error| {
+        CLIError::ConfigurationError(format!(
+            "failed to read version from kalamdb-server '{}': {error}",
+            path.display()
+        ))
+    })?;
 
     if !output.status.success() {
         return Ok(None);
@@ -354,15 +344,16 @@ pub fn build_local_server_command(
     }
 
     let server_bin = resolve_kalamdb_server_bin()?;
-    let root = shell_escape(&project_root.display().to_string());
-    let bin = shell_escape(&server_bin.display().to_string());
-    let cfg = shell_escape(&config_path.display().to_string());
-    Ok(format!("cd {root} && exec {bin} {cfg}"))
+    Ok(build_cd_and_run_command(
+        project_root,
+        &server_bin,
+        &[config_path.display().to_string()],
+    ))
 }
 
 async fn download_and_install_managed_server(
     output: &WorkflowOutput,
-    server_source: &ServiceLogSource,
+    _server_source: &ServiceLogSource,
 ) -> Result<PathBuf> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -383,7 +374,7 @@ async fn download_and_install_managed_server(
     let archive_bytes = download_bytes(&client, &archive_url, &archive_name, true).await?;
     let checksums = download_text(&client, &checksums_url, "checksum file").await?;
     verify_checksum(&archive_name, &archive_bytes, &checksums)?;
-    output.service_log(server_source, "precheck: downloaded and verified kalamdb-server");
+    output.status("precheck: downloaded and verified kalamdb-server");
 
     let temp_dir = create_temp_dir("kalamdb-server-install")?;
     let cleanup_dir = temp_dir.clone();
@@ -505,14 +496,6 @@ async fn check_server_health(client: &reqwest::Client, server_url: &str) -> bool
     }
 
     false
-}
-
-fn shell_escape(value: &str) -> String {
-    if value.chars().all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c)) {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
 }
 
 #[cfg(test)]
@@ -672,11 +655,8 @@ output = "src/generated/kalam.ts"
     fn managed_server_version_if_stale_ignores_explicit_override() {
         let temp = tempfile::TempDir::new().unwrap();
         let custom_bin = temp.path().join("custom-kalamdb-server");
-        std::fs::write(
-            &custom_bin,
-            "#!/bin/sh\necho 'KalamDB Server v0.1.0 | Build: old'\n",
-        )
-        .unwrap();
+        std::fs::write(&custom_bin, "#!/bin/sh\necho 'KalamDB Server v0.1.0 | Build: old'\n")
+            .unwrap();
 
         let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
         std::env::set_var("KALAMDB_SERVER_BIN", &custom_bin);

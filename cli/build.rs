@@ -2,13 +2,7 @@
 // Sets environment variables for use in the binary at compile time
 // Falls back to version.toml if git is not available (e.g., Docker builds)
 
-use std::{
-    env,
-    ffi::OsStr,
-    fs,
-    path::Path,
-    process::Command,
-};
+use std::{env, ffi::OsStr, fs, path::Path, process::Command};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -276,7 +270,13 @@ fn collect_template_files(
 fn sanitize_ident(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

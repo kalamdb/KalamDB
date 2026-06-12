@@ -4447,9 +4447,7 @@ pub fn store_test_kalam_dev_credentials(credentials_path: &std::path::Path) {
 /// Login and persist the default `kalam-dev` profile for a scaffolded project.
 pub fn login_kalam_dev_for_project(project_dir: &std::path::Path) {
     let mut login = create_cli_command_with_root_auth();
-    login
-        .current_dir(project_dir)
-        .args(["login", "--instance", "kalam-dev"]);
+    login.current_dir(project_dir).args(["login", "--instance", "kalam-dev"]);
     let output = login.output().expect("login kalam-dev");
     assert!(
         output.status.success(),

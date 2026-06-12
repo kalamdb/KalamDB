@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-CRATE_MANIFEST="$REPO_ROOT/link/kalam-client/Cargo.toml"
+CRATE_MANIFEST="$REPO_ROOT/link/sdks/rust/Cargo.toml"
 
 # Optional .env override; cargo login (~/.cargo/credentials.toml) also works.
 if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
@@ -111,7 +111,6 @@ prepare_publish_crates() {
   else
     bash "$SYNC_VERSIONS_SCRIPT" --rust-publish-deps
   fi
-  cp "$REPO_ROOT/link/sdks/rust/README.md" "$REPO_ROOT/link/kalam-client/README.md"
 }
 
 restore_publish_crates() {
@@ -144,7 +143,7 @@ manifests = {
     "kalamdb-observability": repo_root / "backend/crates/kalamdb-observability/Cargo.toml",
     "kalamdb-commons": repo_root / "backend/crates/kalamdb-commons/Cargo.toml",
     "link-common": repo_root / "link/link-common/Cargo.toml",
-    "kalam-client": repo_root / "link/kalam-client/Cargo.toml",
+    "kalam-client": repo_root / "link/sdks/rust/Cargo.toml",
 }
 manifest = tomllib.loads(manifests[package].read_text(encoding="utf-8"))
 meta = manifest.get("package", {})

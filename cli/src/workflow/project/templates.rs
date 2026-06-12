@@ -8,7 +8,6 @@ use serde_json::{Map, Value};
 
 use crate::error::{CLIError, Result};
 
-pub const DEFAULT_TYPESCRIPT_TEMPLATE: &str = "simple-live";
 pub const DEFAULT_SCAFFOLD_TEMPLATE: &str = "default";
 
 pub fn templates_for_language(language: &str) -> Vec<&'static EmbeddedTemplate> {
@@ -34,18 +33,6 @@ pub fn default_template_for_language(language: &str) -> Result<&'static Embedded
     Ok(templates[0])
 }
 
-pub fn resolve_typescript_template(template_id: Option<&str>) -> Result<&'static EmbeddedTemplate> {
-    if let Some(template_id) = template_id {
-        find_template("typescript", template_id).ok_or_else(|| {
-            CLIError::ConfigurationError(format!(
-                "unknown typescript template '{template_id}'"
-            ))
-        })
-    } else {
-        default_template_for_language("typescript")
-    }
-}
-
 pub fn resolve_scaffold_template() -> Result<&'static EmbeddedTemplate> {
     find_template("scaffold", DEFAULT_SCAFFOLD_TEMPLATE).ok_or_else(|| {
         CLIError::ConfigurationError(format!(
@@ -54,10 +41,7 @@ pub fn resolve_scaffold_template() -> Result<&'static EmbeddedTemplate> {
     })
 }
 
-pub fn find_template_file(
-    template: &EmbeddedTemplate,
-    project_path: &str,
-) -> Option<&'static str> {
+pub fn find_template_file(template: &EmbeddedTemplate, project_path: &str) -> Option<&'static str> {
     template
         .files
         .iter()
@@ -142,7 +126,8 @@ mod tests {
         assert!(typescript_only.contains("[schema.targets.typescript]"));
         assert!(!typescript_only.contains("[schema.targets.dart]"));
         assert!(!typescript_only.contains("&quot;"));
-        let parsed = KalamProjectConfig::parse(&typescript_only).expect("parse typescript kalam.toml");
+        let parsed =
+            KalamProjectConfig::parse(&typescript_only).expect("parse typescript kalam.toml");
         assert!(parsed.schema.targets.contains_key("typescript"));
         assert!(!parsed.schema.targets.contains_key("dart"));
 

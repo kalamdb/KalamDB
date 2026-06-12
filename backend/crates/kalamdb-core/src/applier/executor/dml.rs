@@ -176,7 +176,9 @@ impl DmlExecutor {
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
         // Try UserTableProvider first, then StreamTableProvider
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+        {
             let row_ids = provider
                 .insert_batch_with_commit_seq(user_id, rows.to_vec(), commit_seq)
                 .await
@@ -184,7 +186,9 @@ impl DmlExecutor {
             self.observe_commit_seq(commit_seq);
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
-        } else if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>() {
+        } else if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
+        {
             let row_ids = provider.insert_batch(user_id, rows.to_vec()).await.map_err(|e| {
                 ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
             })?;
@@ -230,7 +234,9 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+        {
             let replaced_refs = if self.table_has_file_columns(table_id) {
                 self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
                     .await
@@ -269,7 +275,9 @@ impl DmlExecutor {
             } else {
                 Ok(0)
             }
-        } else if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>() {
+        } else if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
+        {
             self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
                 .await
         } else {
@@ -309,7 +317,9 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+        {
             let mut deleted_count = 0;
             for pk_value in pk_values {
                 let file_refs = if self.table_has_file_columns(table_id) {
@@ -346,7 +356,9 @@ impl DmlExecutor {
                 self.observe_commit_seq(commit_seq);
             }
             Ok(deleted_count)
-        } else if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>() {
+        } else if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
+        {
             let mut deleted_count = 0;
             for pk_value in pk_values {
                 if provider
@@ -396,7 +408,9 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
+        {
             let row_ids = provider
                 .insert_batch_with_commit_seq(actor_user_id, rows.to_vec(), commit_seq)
                 .await
@@ -449,7 +463,9 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
+        {
             let update_row = updates[0].clone();
 
             let replaced_refs = if self.table_has_file_columns(table_id) {
@@ -533,7 +549,9 @@ impl DmlExecutor {
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
-        if let Some(provider) = (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>() {
+        if let Some(provider) =
+            (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
+        {
             let mut deleted_count = 0;
 
             for pk_value in pk_values {
@@ -597,8 +615,8 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc
-                        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<UserTableProvider>()
                         .ok_or_else(|| {
                             ApplierError::Execution(format!(
                                 "Provider type mismatch for user table {}",
@@ -658,8 +676,9 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider =
-                (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>().ok_or_else(|| {
+            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                .downcast_ref::<UserTableProvider>()
+                .ok_or_else(|| {
                     ApplierError::Execution(format!(
                         "Provider type mismatch for user table {}",
                         mutation.table_id
@@ -722,8 +741,9 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider =
-                (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>().ok_or_else(|| {
+            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                .downcast_ref::<SharedTableProvider>()
+                .ok_or_else(|| {
                     ApplierError::Execution(format!(
                         "Provider type mismatch for shared table {}",
                         mutation.table_id
@@ -773,8 +793,8 @@ impl DmlExecutor {
                 if all_inserts_same_table_and_user {
                     let provider_arc =
                         self.load_provider(&first_mutation.table_id, "Table provider").await?;
-                    let provider = (provider_arc
-                        .as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
+                    let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<UserTableProvider>()
                         .ok_or_else(|| {
                             ApplierError::Execution(format!(
                                 "Provider type mismatch for user table {}",
@@ -875,8 +895,9 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider =
-                (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>().ok_or_else(|| {
+            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                .downcast_ref::<UserTableProvider>()
+                .ok_or_else(|| {
                     ApplierError::Execution(format!(
                         "Provider type mismatch for user table {}",
                         mutation.table_id
@@ -972,8 +993,8 @@ impl DmlExecutor {
             if all_inserts_same_table {
                 let provider_arc =
                     self.load_provider(&first_mutation.table_id, "Shared table provider").await?;
-                let provider = (provider_arc
-                    .as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
+                let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                    .downcast_ref::<SharedTableProvider>()
                     .ok_or_else(|| {
                         ApplierError::Execution(format!(
                             "Provider type mismatch for shared table {}",
@@ -1066,8 +1087,9 @@ impl DmlExecutor {
                 cached_provider = Some((mutation.table_id.clone(), Arc::clone(&provider_arc)));
                 provider_arc
             };
-            let provider =
-                (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>().ok_or_else(|| {
+            let provider = (provider_arc.as_ref() as &dyn std::any::Any)
+                .downcast_ref::<SharedTableProvider>()
+                .ok_or_else(|| {
                     ApplierError::Execution(format!(
                         "Provider type mismatch for shared table {}",
                         mutation.table_id

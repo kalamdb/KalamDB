@@ -251,6 +251,24 @@ impl ServerSettings {
         self.configured_public_origin()
             .unwrap_or_else(|| format!("http://localhost:{}", self.port))
     }
+
+    /// Hostname suitable for local browser access when `host` is an any-address bind.
+    pub fn local_access_host(&self) -> &str {
+        match self.host.as_str() {
+            "0.0.0.0" | "::" | "[::]" => "localhost",
+            host => host,
+        }
+    }
+
+    /// Admin UI URL for direct local access via the bound listen port.
+    pub fn local_admin_ui_url(&self) -> String {
+        format!("http://{}:{}/ui", self.local_access_host(), self.port)
+    }
+
+    /// Preferred Admin UI URL, using `public_origin` when configured.
+    pub fn admin_ui_url(&self) -> String {
+        format!("{}/ui", self.effective_public_origin())
+    }
 }
 
 /// Storage settings

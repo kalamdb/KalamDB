@@ -21,9 +21,7 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
     assert!(cmd.output().expect("init").status.success());
 
     let mut login = create_cli_command_with_root_auth();
-    login
-        .current_dir(&project_dir)
-        .args(["login", "--instance", "kalam-dev"]);
+    login.current_dir(&project_dir).args(["login", "--instance", "kalam-dev"]);
     assert!(
         login.output().expect("login").status.success(),
         "failed to store kalam-dev credentials for status"
@@ -91,9 +89,6 @@ fn test_project_workflow_environment_precedence_env_over_config() {
     assert!(output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&env_url),
-        "env var should override kalam.toml\n{stderr}"
-    );
+    assert!(stderr.contains(&env_url), "env var should override kalam.toml\n{stderr}");
     assert!(stderr.contains("env_ns"), "env namespace should override config\n{stderr}");
 }

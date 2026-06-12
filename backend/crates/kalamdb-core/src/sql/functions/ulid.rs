@@ -11,7 +11,7 @@
 //! ULIDs are URL-safe, case-insensitive, and time-ordered, making them
 //! suitable for PRIMARY KEY columns and correlation IDs.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},

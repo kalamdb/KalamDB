@@ -12,7 +12,7 @@ categories = ["database", "web-programming::websocket"]
 readme = "README.md"
 
 [dependencies]
-kalamdb-commons = { workspace = true, default-features = false }
+kalamdb-commons = { workspace = true, default-features = false, features = ["serde"] }
 tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls"], optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
@@ -58,7 +58,7 @@ rustls-webpki = { workspace = true, optional = true }
 
 [features]
 default = []
-commons-sdk = ["kalamdb-commons/serde", "kalamdb-commons/websocket-auth"]
+commons-sdk = ["kalamdb-commons/websocket-auth"]
 client-core = [
 	"commons-sdk",
 	"dep:futures-util",

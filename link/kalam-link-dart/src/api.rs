@@ -27,13 +27,14 @@ use std::{
 };
 
 use flutter_rust_bridge::frb;
-use kalam_client::FileRef;
+use kalam_client::query::models::query_param::params_from_json_values;
+use kalam_client::{FileRef, QueryParam};
 use tokio::sync::{Mutex, Notify};
 
 use crate::models::{
     DartAuthProvider, DartChangeEvent, DartConnectionError, DartConnectionEvent,
-    DartDisconnectReason, DartLiveRowsConfig, DartLiveRowsEvent, DartLoginResponse,
-    DartQueryResponse, DartSubscriptionConfig,
+    DartDisconnectReason, DartFileDownload, DartFileRef, DartFileUpload, DartLiveRowsConfig,
+    DartLiveRowsEvent, DartLoginResponse, DartQueryResponse, DartSubscriptionConfig,
 };
 
 const DART_INITIAL_RECONNECT_DELAY_MS: u64 = 200;
@@ -42,6 +43,14 @@ const DART_CONNECTION_EVENT_QUEUE_CAPACITY: usize = 256;
 
 fn parse_dart_file_ref(file_ref_json: &str) -> anyhow::Result<FileRef> {
     FileRef::from_json(file_ref_json).ok_or_else(|| anyhow::anyhow!("invalid FileRef JSON"))
+}
+
+fn parse_dart_query_params(params_json: Option<String>) -> anyhow::Result<Option<Vec<QueryParam>>> {
+    let Some(json) = params_json else {
+        return Ok(None);
+    };
+    let values: Vec<serde_json::Value> = serde_json::from_str(&json)?;
+    Ok(Some(params_from_json_values(values)))
 }
 
 /// Build a FILE download URL using the canonical `link-common` FileRef model.
@@ -75,6 +84,18 @@ pub fn dart_file_ref_stored_name(file_ref_json: String) -> anyhow::Result<String
 #[frb(sync)]
 pub fn dart_file_ref_relative_path(file_ref_json: String) -> anyhow::Result<String> {
     Ok(parse_dart_file_ref(&file_ref_json)?.relative_path())
+}
+
+/// Parse a FILE column JSON value into a typed [`DartFileRef`].
+#[frb(sync)]
+pub fn dart_parse_file_ref(file_ref_json: String) -> anyhow::Result<DartFileRef> {
+    Ok(parse_dart_file_ref(&file_ref_json)?.into())
+}
+
+/// Parse a FILE column JSON value, returning `None` for invalid input.
+#[frb(sync)]
+pub fn dart_try_parse_file_ref(file_ref_json: String) -> Option<DartFileRef> {
+    FileRef::from_json(&file_ref_json).map(DartFileRef::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -473,12 +494,44 @@ pub async fn dart_execute_query(
     params_json: Option<String>,
     namespace: Option<String>,
 ) -> anyhow::Result<DartQueryResponse> {
-    let params: Option<Vec<serde_json::Value>> = match params_json {
-        Some(json) => Some(serde_json::from_str(&json)?),
-        None => None,
-    };
+    let params = parse_dart_query_params(params_json)?;
     let response = client.inner.execute_query(&sql, None, params, namespace.as_deref()).await?;
     Ok(DartQueryResponse::from(response))
+}
+
+/// Execute a SQL query with multipart file uploads.
+///
+/// Use `FILE("placeholder")` in SQL and pass matching [`DartFileUpload`] items.
+pub async fn dart_execute_query_with_files(
+    client: &DartKalamClient,
+    sql: String,
+    files: Vec<DartFileUpload>,
+    params_json: Option<String>,
+    namespace: Option<String>,
+) -> anyhow::Result<DartQueryResponse> {
+    let params = parse_dart_query_params(params_json)?;
+    let uploads = files.into_iter().map(Into::into).collect();
+    let response = client
+        .inner
+        .execute_query(&sql, Some(uploads), params, namespace.as_deref())
+        .await?;
+    Ok(DartQueryResponse::from(response))
+}
+
+/// Download file bytes for a [`DartFileRef`] returned from a query row.
+pub async fn dart_download_file(
+    client: &DartKalamClient,
+    file_ref: DartFileRef,
+    namespace: String,
+    table: String,
+    target_user_id: Option<String>,
+) -> anyhow::Result<DartFileDownload> {
+    let file_ref = FileRef::from(file_ref);
+    let download = client
+        .inner
+        .download_file(&file_ref, &namespace, &table, target_user_id.as_deref())
+        .await?;
+    Ok(download.into())
 }
 
 // ---------------------------------------------------------------------------

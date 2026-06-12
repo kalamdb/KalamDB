@@ -545,8 +545,8 @@ fn test_project_workflow_dev_streams_prefixed_process_logs_by_default() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("[server]") && stderr.contains("starting kalam dev session"),
-        "expected append-only server logs\nstderr: {stderr}"
+        stderr.contains("[cli] starting kalam dev session"),
+        "expected append-only CLI logs\nstderr: {stderr}"
     );
     assert!(
         stderr.contains("[frontend]") || stderr.contains("frontend tick"),
@@ -1619,6 +1619,13 @@ fn test_project_workflow_dev_prompt_reset_restarts_schema_from_clean_namespace()
                 .iter()
                 .any(|request| request.sql.to_ascii_uppercase().contains("DROP NAMESPACE")),
             "reset should drop the namespace before rebuilding\nrequests: {recorded:?}"
+        );
+        assert!(
+            recorded.iter().all(|request| {
+                let sql = request.sql.to_ascii_uppercase();
+                !(sql.contains("DELETE") && sql.contains("SYSTEM.MIGRATIONS"))
+            }),
+            "reset should not delete system.migrations directly\nrequests: {recorded:?}"
         );
         assert!(
             recorded.iter().any(|request| {

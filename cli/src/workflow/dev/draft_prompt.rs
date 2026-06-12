@@ -6,7 +6,7 @@
 
 use std::{
     fs,
-    io::{self, IsTerminal, Read, Write},
+    io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
 };
 
@@ -44,41 +44,36 @@ pub fn prompt_for_draft_application(
     project_root: &Path,
     draft_path: &Path,
 ) -> Result<DraftPromptDecision> {
-    let _pause = output.pause_terminal_output();
-    output.status(DRAFT_PROMPT_MESSAGE);
-    clear_terminal()?;
-    let summary = draft_summary_lines(draft_path);
-    for line in &summary {
-        output.detail(line);
-    }
-    let draft_display = display_project_path(project_root, draft_path);
-    output.detail(format!("Full changes: {draft_display}"));
-    render_draft_summary(&summary, &draft_display, output.use_color);
+    output.workflow_event(DRAFT_PROMPT_MESSAGE);
+    output.run_terminal_modal(|| {
+        let summary = draft_summary_lines(draft_path);
+        let draft_display = display_project_path(project_root, draft_path);
+        render_draft_summary(&summary, &draft_display, output.use_color);
 
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return read_noninteractive_decision();
-    }
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            return read_noninteractive_decision();
+        }
 
-    let options = [
-        SelectOption::described("Apply changes", "Seal and apply this schema draft now"),
-        SelectOption::described(
-            "Reset and rebuild",
-            "Drop the namespace, clear migrations, and apply schema.sql from scratch",
-        ),
-        SelectOption::described("Cancel", "Stop kalam dev without applying this draft"),
-    ];
-    let selected =
-        match terminal_ui::prompt_select(DRAFT_PROMPT_MESSAGE, &options, 0, output.use_color) {
-            Ok(selected) => selected,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => 2,
-            Err(error) => return Err(prompt_error(error)),
-        };
+        let options = [
+            SelectOption::described("Apply changes", "Seal and apply this schema draft now"),
+            SelectOption::described(
+                "Reset and rebuild",
+                "Drop the namespace, clear migrations, and apply schema.sql from scratch",
+            ),
+            SelectOption::described("Cancel", "Stop kalam dev without applying this draft"),
+        ];
+        let selected =
+            match terminal_ui::prompt_select(DRAFT_PROMPT_MESSAGE, &options, 0, output.use_color) {
+                Ok(selected) => selected,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => 2,
+                Err(error) => return Err(prompt_error(error)),
+            };
 
-    clear_terminal()?;
-    Ok(match selected {
-        0 => DraftPromptDecision::Apply,
-        1 => DraftPromptDecision::Reset,
-        _ => DraftPromptDecision::Cancel,
+        Ok(match selected {
+            0 => DraftPromptDecision::Apply,
+            1 => DraftPromptDecision::Reset,
+            _ => DraftPromptDecision::Cancel,
+        })
     })
 }
 
@@ -92,13 +87,6 @@ fn read_noninteractive_decision() -> Result<DraftPromptDecision> {
         'r' | 'R' => Ok(DraftPromptDecision::Reset),
         _ => Ok(DraftPromptDecision::Cancel),
     }
-}
-
-fn clear_terminal() -> Result<()> {
-    let mut stdout = io::stdout();
-    write!(stdout, "\x1b[2J\x1b[H")
-        .and_then(|_| stdout.flush())
-        .map_err(|e| CLIError::FileError(format!("failed to clear terminal: {e}")))
 }
 
 fn render_draft_summary(summary: &[String], draft_display: &str, color: bool) {

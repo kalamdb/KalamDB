@@ -9,11 +9,11 @@ use std::{
     time::Duration,
 };
 
-fn start_login_options_server(login_options_body: &str) -> (String, Arc<AtomicBool>, thread::JoinHandle<()>) {
+fn start_login_options_server(
+    login_options_body: &str,
+) -> (String, Arc<AtomicBool>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind login-options server");
-    listener
-        .set_nonblocking(true)
-        .expect("set login-options listener nonblocking");
+    listener.set_nonblocking(true).expect("set login-options listener nonblocking");
     let server_url = format!("http://{}", listener.local_addr().expect("server addr"));
     let served = Arc::new(AtomicBool::new(false));
     let served_handle = Arc::clone(&served);
@@ -58,8 +58,7 @@ fn start_login_options_server(login_options_body: &str) -> (String, Arc<AtomicBo
 #[test]
 fn cli_local_login_explains_disabled_policy_without_password_prompt() {
     let login_options_body = r#"{"local":{"enabled":false},"oidc":null}"#;
-    let (server_url, served, server) =
-        start_login_options_server(login_options_body);
+    let (server_url, served, server) = start_login_options_server(login_options_body);
 
     let temp_home = tempfile::tempdir().expect("temp home");
     let credentials_path = temp_home.path().join("credentials.toml");

@@ -54,6 +54,9 @@ pub struct ProjectSection {
     pub name: String,
     #[serde(default = "default_env_name")]
     pub default_env: String,
+    /// JavaScript package manager for TypeScript tooling (`npm`, `pnpm`, `yarn`, `bun`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_manager: Option<String>,
     #[serde(
         default = "default_kalam_dir",
         skip_serializing_if = "is_default_kalam_dir"
@@ -218,6 +221,10 @@ impl KalamProjectConfig {
         }
 
         validate_relative_project_path("project.kalam_dir", &self.project.kalam_dir)?;
+
+        if let Some(manager) = self.project.package_manager.as_deref() {
+            crate::workflow::project::ts::PackageManager::parse(manager)?;
+        }
 
         match self.schema.mode {
             SchemaMode::Sql => {
@@ -384,8 +391,7 @@ fn discover_project_root(start: &Path) -> Result<PathBuf> {
 
 pub use super::identifiers::{
     normalize_namespace_name, parse_namespace_id, parse_table_id, parse_table_name,
-    parse_table_ref, parse_user_id,
-    preferred_user_label,
+    parse_table_ref, parse_user_id, preferred_user_label,
 };
 
 #[cfg(test)]
@@ -393,6 +399,80 @@ mod tests {
     use super::*;
     use kalamdb_commons::NamespaceId;
     use tempfile::TempDir;
+
+    #[test]
+    fn parse_config_with_package_manager_field() {
+        let toml = r#"
+[project]
+name = "demo"
+default_env = "dev"
+package_manager = "pnpm"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "app"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#;
+        let config = KalamProjectConfig::parse(toml).expect("parse");
+        assert_eq!(config.project.package_manager.as_deref(), Some("pnpm"));
+    }
+
+    #[test]
+    fn validate_rejects_unknown_package_manager() {
+        let toml = r#"
+[project]
+name = "demo"
+package_manager = "deno"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "app"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#;
+        let err = KalamProjectConfig::parse(toml).unwrap_err().to_string();
+        assert!(err.contains("unsupported package manager 'deno'"));
+    }
+
+    #[test]
+    fn validate_accepts_supported_package_manager_values() {
+        for manager in ["npm", "pnpm", "yarn", "bun"] {
+            let toml = format!(
+                r#"
+[project]
+name = "demo"
+package_manager = "{manager}"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "app"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#
+            );
+            let config = KalamProjectConfig::parse(&toml).expect("parse supported manager");
+            assert_eq!(config.project.package_manager.as_deref(), Some(manager));
+        }
+    }
 
     #[test]
     fn parse_minimal_config() {
@@ -513,6 +593,7 @@ output = "src/generated/kalam.ts"
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                package_manager: None,
                 kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([(

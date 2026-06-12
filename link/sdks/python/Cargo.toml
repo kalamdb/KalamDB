@@ -13,7 +13,7 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-kalam-client = { path = "../../kalam-client", default-features = false, features = ["native-sdk", "consumer", "file-uploads"] }
+kalam-client = { path = "../../sdks/rust", default-features = false, features = ["native-sdk", "consumer", "file-uploads"] }
 pyo3 = { version = "0.28.3", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

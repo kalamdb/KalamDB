@@ -110,6 +110,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartErrorDetail dco_decode_box_autoadd_dart_error_detail(dynamic raw);
 
   @protected
+  DartFileRef dco_decode_box_autoadd_dart_file_ref(dynamic raw);
+
+  @protected
   DartLiveRowsConfig dco_decode_box_autoadd_dart_live_rows_config(dynamic raw);
 
   @protected
@@ -129,6 +132,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
   DartAuthProvider dco_decode_dart_auth_provider(dynamic raw);
 
   @protected
@@ -145,6 +151,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartErrorDetail dco_decode_dart_error_detail(dynamic raw);
+
+  @protected
+  DartFileDownload dco_decode_dart_file_download(dynamic raw);
+
+  @protected
+  DartFileRef dco_decode_dart_file_ref(dynamic raw);
+
+  @protected
+  DartFileUpload dco_decode_dart_file_upload(dynamic raw);
 
   @protected
   DartLiveRowsConfig dco_decode_dart_live_rows_config(dynamic raw);
@@ -189,6 +204,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<DartFileUpload> dco_decode_list_dart_file_upload(dynamic raw);
+
+  @protected
   List<DartQueryResult> dco_decode_list_dart_query_result(dynamic raw);
 
   @protected
@@ -218,6 +236,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartErrorDetail? dco_decode_opt_box_autoadd_dart_error_detail(dynamic raw);
 
   @protected
+  DartFileRef? dco_decode_opt_box_autoadd_dart_file_ref(dynamic raw);
+
+  @protected
   DartLiveRowsConfig? dco_decode_opt_box_autoadd_dart_live_rows_config(
       dynamic raw);
 
@@ -239,7 +260,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -332,6 +362,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  DartFileRef sse_decode_box_autoadd_dart_file_ref(
+      SseDeserializer deserializer);
+
+  @protected
   DartLiveRowsConfig sse_decode_box_autoadd_dart_live_rows_config(
       SseDeserializer deserializer);
 
@@ -353,6 +387,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   DartAuthProvider sse_decode_dart_auth_provider(SseDeserializer deserializer);
 
   @protected
@@ -372,6 +409,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DartErrorDetail sse_decode_dart_error_detail(SseDeserializer deserializer);
+
+  @protected
+  DartFileDownload sse_decode_dart_file_download(SseDeserializer deserializer);
+
+  @protected
+  DartFileRef sse_decode_dart_file_ref(SseDeserializer deserializer);
+
+  @protected
+  DartFileUpload sse_decode_dart_file_upload(SseDeserializer deserializer);
 
   @protected
   DartLiveRowsConfig sse_decode_dart_live_rows_config(
@@ -423,6 +469,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<DartFileUpload> sse_decode_list_dart_file_upload(
+      SseDeserializer deserializer);
+
+  @protected
   List<DartQueryResult> sse_decode_list_dart_query_result(
       SseDeserializer deserializer);
 
@@ -456,6 +506,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  DartFileRef? sse_decode_opt_box_autoadd_dart_file_ref(
+      SseDeserializer deserializer);
+
+  @protected
   DartLiveRowsConfig? sse_decode_opt_box_autoadd_dart_live_rows_config(
       SseDeserializer deserializer);
 
@@ -477,7 +531,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -571,6 +634,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       DartErrorDetail self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_dart_file_ref(
+      DartFileRef self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_dart_live_rows_config(
       DartLiveRowsConfig self, SseSerializer serializer);
 
@@ -591,6 +658,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_i_64(
       PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_dart_auth_provider(
@@ -615,6 +685,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_dart_error_detail(
       DartErrorDetail self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_file_download(
+      DartFileDownload self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_file_ref(DartFileRef self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_dart_file_upload(
+      DartFileUpload self, SseSerializer serializer);
 
   @protected
   void sse_encode_dart_live_rows_config(
@@ -668,6 +749,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_dart_file_upload(
+      List<DartFileUpload> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_dart_query_result(
       List<DartQueryResult> self, SseSerializer serializer);
 
@@ -702,6 +787,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       DartErrorDetail? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_dart_file_ref(
+      DartFileRef? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_dart_live_rows_config(
       DartLiveRowsConfig? self, SseSerializer serializer);
 
@@ -724,7 +813,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PlatformInt64? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

@@ -313,6 +313,22 @@ impl KalamCellValue {
     pub fn as_file(&self) -> Option<super::file_ref::FileRef> {
         super::file_ref::FileRef::from_json_value(&self.0)
     }
+
+    /// Extract the cell as a table-bound [`FileRef`](super::file_ref::FileRef).
+    ///
+    /// Pass a shared [`TableId`](kalamdb_commons::TableId) when parsing many FILE
+    /// cells from the same table. For joins or multi-table projections, bind each
+    /// FILE column with the source table known by the caller instead of inferring
+    /// it from the cell.
+    pub fn as_bound_file(
+        &self,
+        table_id: &kalamdb_commons::TableId,
+    ) -> Option<super::file_ref::BoundFileRef> {
+        self.as_file().map(|file_ref| {
+            let context = super::file_ref::FileRefContext::new(table_id.clone());
+            super::file_ref::BoundFileRef::new(file_ref, context)
+        })
+    }
 }
 
 // ── Trait impls ─────────────────────────────────────────────────────────────

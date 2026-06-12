@@ -2,7 +2,6 @@
 
 use std::{
     fs,
-    io::IsTerminal,
     path::{Path, PathBuf},
 };
 
@@ -12,7 +11,6 @@ use serde::Deserialize;
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
-    terminal_ui::{self, ProgressTaskStatus},
     workflow::{
         display_project_path,
         migration::{
@@ -27,29 +25,20 @@ use crate::{
 
 pub struct ApplyMigrationOptions {
     pub force: bool,
-    pub confirm_pending: bool,
     pub include_draft: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingMigrationDecision {
-    Apply,
-    Skip,
-}
-
 impl ApplyMigrationOptions {
-    pub fn dev(force: bool) -> Self {
+    pub fn dev_force() -> Self {
         Self {
-            force,
-            confirm_pending: !force,
-            include_draft: !force,
+            force: true,
+            include_draft: false,
         }
     }
 
     pub fn dev_watch() -> Self {
         Self {
             force: false,
-            confirm_pending: true,
             include_draft: false,
         }
     }
@@ -57,7 +46,6 @@ impl ApplyMigrationOptions {
     pub fn dev_confirmed_draft() -> Self {
         Self {
             force: true,
-            confirm_pending: false,
             include_draft: true,
         }
     }
@@ -65,7 +53,6 @@ impl ApplyMigrationOptions {
     pub fn db_migrate() -> Self {
         Self {
             force: true,
-            confirm_pending: false,
             include_draft: false,
         }
     }
@@ -102,11 +89,7 @@ pub async fn apply_pending_migrations(
         return Ok(());
     }
 
-    if confirm_pending_migrations(&pending, draft_pending, output, options)?
-        == PendingMigrationDecision::Skip
-    {
-        return Ok(());
-    }
+    report_pending_migrations(&pending, draft_pending, output, options);
 
     ensure_namespace_exists(&client, &environment.namespace, output).await?;
 
@@ -419,15 +402,15 @@ fn pending_migration_files(state: &MigrationState, files: Vec<PathBuf>) -> Resul
     Ok(pending)
 }
 
-fn confirm_pending_migrations(
+fn report_pending_migrations(
     pending: &[PathBuf],
     draft_pending: bool,
     output: &WorkflowOutput,
     options: &ApplyMigrationOptions,
-) -> Result<PendingMigrationDecision> {
+) {
     let pending_count = pending.len() + usize::from(draft_pending);
     if pending_count == 0 {
-        return Ok(PendingMigrationDecision::Apply);
+        return;
     }
     if options.force {
         if draft_pending {
@@ -437,80 +420,17 @@ fn confirm_pending_migrations(
             output
                 .status(format!("applying {pending_count} migration(s) because --force was used"));
         }
-        return Ok(PendingMigrationDecision::Apply);
+        return;
     }
-    if !options.confirm_pending {
-        output.status(format!("KalamDB found {pending_count} pending migration(s):"));
-        for path in pending {
-            output.status(format!("  {}", migration_filename(path)));
-        }
-        if draft_pending {
-            output.status(format!(
-                "  {DRAFT_MIGRATION_FILE} (will be sealed into the next numbered migration)"
-            ));
-        }
-        return Ok(PendingMigrationDecision::Apply);
-    }
-    if !std::io::stdin().is_terminal() {
-        if draft_pending && pending.is_empty() {
-            output.status(format!(
-                "schema draft {DRAFT_MIGRATION_FILE} is pending; run `kalam migration seal` and `kalam db migrate` to apply it"
-            ));
-            return Ok(PendingMigrationDecision::Skip);
-        }
-        return Err(CLIError::ConfigurationError(
-            "pending migrations require confirmation; rerun with --force for non-interactive use"
-                .into(),
-        ));
-    }
-    output.progress_task(
-        "schema",
-        ProgressTaskStatus::Running,
-        "Pending migrations found; waiting for confirmation...",
-    );
-    let confirmed = output
-        .suspend_progress(|| {
-            eprintln!();
-            eprint!("{}", render_pending_confirmation_message(pending, draft_pending));
-            terminal_ui::prompt_confirm("Apply these migrations now?", false, true)
-        })
-        .map_err(|e| CLIError::FileError(format!("failed to read migration confirmation: {e}")))?;
-    if !confirmed {
-        if draft_pending && pending.is_empty() {
-            output.status(format!(
-                "kept schema draft {DRAFT_MIGRATION_FILE} pending; continuing to watch"
-            ));
-            return Ok(PendingMigrationDecision::Skip);
-        }
-        return Err(CLIError::Cancelled);
-    }
-    Ok(PendingMigrationDecision::Apply)
-}
-
-fn render_pending_confirmation_message(pending: &[PathBuf], draft_pending: bool) -> String {
-    let total = pending.len() + usize::from(draft_pending);
-    let mut message = format!("KalamDB found {total} pending migration(s):\n");
+    output.status(format!("KalamDB found {pending_count} pending migration(s):"));
     for path in pending {
-        message.push_str(&format!("  {}\n", migration_filename(path)));
+        output.status(format!("  {}", migration_filename(path)));
     }
     if draft_pending {
-        message.push_str(&format!(
-            "  {DRAFT_MIGRATION_FILE} (will be sealed into the next numbered migration)\n"
+        output.status(format!(
+            "  {DRAFT_MIGRATION_FILE} (will be sealed into the next numbered migration)"
         ));
     }
-    message.push('\n');
-    if draft_pending {
-        message.push_str(
-            "Choose y to seal and apply these changes now, or n to keep the draft and continue watching.\n",
-        );
-        message.push_str(
-            "Use `kalam migration seal` and `kalam db migrate` to apply the draft later.\n",
-        );
-    } else {
-        message.push_str("Choose y to apply now, or n to pause schema application.\n");
-        message.push_str("Use `kalam dev --force` to apply pending migrations automatically.\n");
-    }
-    message
 }
 
 fn draft_migration_has_sql(migrations_dir: &Path) -> Result<bool> {
@@ -678,49 +598,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pending_confirmation_message_tells_user_what_to_do() {
-        let pending = vec![
-            PathBuf::from("kalam/migrations/0001_init.sql"),
-            PathBuf::from("kalam/migrations/0002_add_users.sql"),
-        ];
-
-        let message = render_pending_confirmation_message(&pending, false);
-
-        assert!(message.contains("KalamDB found 2 pending migration(s):"));
-        assert!(message.contains("0001_init.sql"));
-        assert!(message.contains("Choose y to apply now"));
-        assert!(message.contains("kalam dev --force"));
-    }
-
-    #[test]
-    fn pending_confirmation_message_describes_draft_sealing() {
-        let pending = vec![PathBuf::from("kalam/migrations/0001_init.sql")];
-
-        let message = render_pending_confirmation_message(&pending, true);
-
-        assert!(message.contains("KalamDB found 2 pending migration(s):"));
-        assert!(message.contains(DRAFT_MIGRATION_FILE));
-        assert!(message.contains("will be sealed into the next numbered migration"));
-        assert!(message.contains("Choose y to seal and apply these changes now"));
-        assert!(message.contains("keep the draft and continue watching"));
-    }
-
-    #[test]
-    fn noninteractive_draft_confirmation_keeps_draft_pending() {
-        let output = WorkflowOutput::new(false, crate::config::WorkflowLoggingPolicy::disabled());
-        let options = ApplyMigrationOptions::dev(false);
-
-        let decision = confirm_pending_migrations(&[], true, &output, &options).unwrap();
-
-        assert_eq!(decision, PendingMigrationDecision::Skip);
-    }
-
-    #[test]
     fn dev_watch_options_leave_draft_for_dev_prompt_manager() {
         let options = ApplyMigrationOptions::dev_watch();
 
         assert!(!options.force);
-        assert!(options.confirm_pending);
+        assert!(!options.include_draft);
+    }
+
+    #[test]
+    fn dev_force_options_apply_numbered_migrations_without_draft_prompt() {
+        let options = ApplyMigrationOptions::dev_force();
+
+        assert!(options.force);
         assert!(!options.include_draft);
     }
 
@@ -729,7 +618,6 @@ mod tests {
         let options = ApplyMigrationOptions::dev_confirmed_draft();
 
         assert!(options.force);
-        assert!(!options.confirm_pending);
         assert!(options.include_draft);
     }
 
@@ -753,7 +641,7 @@ mod tests {
             }],
         };
         let output = WorkflowOutput::new(false, crate::config::WorkflowLoggingPolicy::disabled());
-        let options = ApplyMigrationOptions::dev(false);
+        let options = ApplyMigrationOptions::dev_watch();
 
         handle_failed_records(&mut state, temp.path(), &options, &output).unwrap();
     }

@@ -5,5 +5,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
-kalam-client = { path = "../../../../kalam-client", default-features = false, features = ["native-sdk", "consumer"] }
+kalam-client = { path = "../..", default-features = false, features = ["native-sdk", "consumer"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

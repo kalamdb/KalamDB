@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
+    process_util::resolve_program_on_path,
     workflow::{
         dev::server::local_server_root_password,
         project::resolve::{resolve_kalam_profile, ResolvedEnvironment},
@@ -157,8 +158,10 @@ fn write_dart_placeholder(output_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_node_binary() -> &'static str {
-    "node"
+fn resolve_node_binary() -> String {
+    resolve_program_on_path("node")
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "node".to_string())
 }
 
 fn node_codegen_args() -> &'static [&'static str] {

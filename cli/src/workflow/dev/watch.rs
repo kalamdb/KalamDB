@@ -49,7 +49,7 @@ pub async fn run_schema_pipeline(
             draft_updated = update_draft_migration(project_root, config, output)?.is_some();
         }
         let apply_options = if force {
-            ApplyMigrationOptions::dev(true)
+            ApplyMigrationOptions::dev_force()
         } else {
             ApplyMigrationOptions::dev_watch()
         };
@@ -212,6 +212,7 @@ mod tests {
             project: ProjectSection {
                 name: "demo".into(),
                 default_env: "dev".into(),
+                package_manager: None,
                 kalam_dir: "kalam".into(),
             },
             connection: HashMap::from([(

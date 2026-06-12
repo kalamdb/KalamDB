@@ -37,8 +37,8 @@ pub use dialect::KalamDbDialect;
 pub use execute_as::{extract_inner_sql, parse_execute_as, ExecuteAsEnvelope};
 pub use parser::{
     extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
-    insert_column_names_from_statement, insert_columns_match, object_name_to_string,
-    normalize_context_keyword_calls_for_sqlparser, parse_single_statement,
+    insert_column_names_from_statement, insert_columns_match,
+    normalize_context_keyword_calls_for_sqlparser, object_name_to_string, parse_single_statement,
     query_parser::{QueryParseError, QueryParser, SubscriptionQueryAnalysis},
     rewrite_context_functions_for_datafusion, SqlParser,
 };

@@ -234,6 +234,56 @@ let consumer = client
 
 See [examples/topic-consumer](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples/topic-consumer/src) for a fuller worker loop.
 
+## Files
+
+KalamDB tables can include `FILE` columns. Upload with multipart SQL, read metadata from query results, and download bytes through the same client.
+
+Enable uploads with the `file-uploads` feature (included in `native-cli` / `e2e-tests`):
+
+```toml
+kalam-client = { version = "0.5", features = ["native-sdk", "file-uploads"] }
+```
+
+```rust,no_run
+use kalam_client::{FileUpload, QueryParam};
+
+let files = vec![FileUpload::new("upload", "photo.jpg", std::fs::read("photo.jpg")?).with_mime("image/jpeg")];
+
+client.execute_with_files(
+    "INSERT INTO docs.files (id, attachment) VALUES ($1, FILE(\"upload\"))",
+    files,
+    Some(vec![QueryParam::from("doc1")]),
+    None,
+).await?;
+
+let rows = client
+    .execute_query(
+        "SELECT attachment FROM docs.files WHERE id = $1",
+        None,
+        Some(vec![QueryParam::from("doc1")]),
+        None,
+    )
+    .await?;
+
+let table_id = TableId::from_strings("docs", "files");
+let file_ref = rows.results[0].rows[0][0]
+    .as_bound_file(&table_id)
+    .expect("FILE column");
+let download = client.download_bound_file(&file_ref, None).await?;
+std::fs::write("downloaded.jpg", &download.bytes)?;
+```
+
+Key types:
+
+- `FileRef` — table-agnostic file metadata plus `stored_name()`
+- `TableId` — type-safe namespace/table identity from `kalamdb-commons`
+- `BoundFileRef` — `FileRef` plus table context for downloads
+- `FileUpload` — multipart upload payload for `FILE("placeholder")` SQL
+- `QueryParam` — type-safe SQL parameters (`Text`, `Int`, `File`, …)
+- `KalamCellValue::as_file()` — parse FILE cells from query/live rows
+- `KalamCellValue::as_bound_file(&TableId)` — parse and attach table context
+- `FileDownload` — bytes plus response headers from `download_bound_file()` / `download_file()`
+
 ## Authentication
 
 `AuthProvider` is the canonical way to configure the client.
@@ -288,6 +338,9 @@ Set `KALAMDB_SERVER_URL` (default `http://localhost:2900`) and credentials as ne
 ## API Pointers
 
 - `execute_query()` and related SQL helpers for reads and writes
+- `QueryParam`, `FileUpload`, `FileRef`, and `FileDownload` for typed SQL and FILE columns
+- `execute_with_files()` for FILE column uploads (`file-uploads` feature)
+- `download_bound_file()` for context-bound FILE downloads; `download_file()` remains available for explicit namespace/table calls
 - `live()` and `live_with_config()` for materialized realtime rows
 - `live_events()` and `live_events_with_config()` for low-level subscription frames
 - `TopicConsumer` and `client.consumer()` (feature `consumer`) for topic consumption and commits

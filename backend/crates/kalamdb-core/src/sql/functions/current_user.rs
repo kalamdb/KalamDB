@@ -2,7 +2,7 @@
 //!
 //! Returns the current user_id from the session context.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use datafusion::{
     arrow::array::{ArrayRef, StringArray},

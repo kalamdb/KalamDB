@@ -646,7 +646,8 @@ mod tests {
         assert_eq!(
             batches[0]
                 .column(1)
-                .as_any().downcast_ref::<StringArray>()
+                .as_any()
+                .downcast_ref::<StringArray>()
                 .expect("name array")
                 .value(0),
             "alpha"

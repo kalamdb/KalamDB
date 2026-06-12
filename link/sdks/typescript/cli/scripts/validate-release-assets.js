@@ -4,7 +4,7 @@
 const http = require('node:http');
 const https = require('node:https');
 const path = require('node:path');
-const { archiveNameForPlatform, releaseBaseUrlForVersion, supportedPlatforms } = require('./install.js');
+const { archiveNameForPlatform, releaseBaseUrlForVersion, supportedPlatforms } = require('./platforms');
 
 const packageRoot = path.resolve(__dirname, '..');
 const packageJson = require(path.join(packageRoot, 'package.json'));

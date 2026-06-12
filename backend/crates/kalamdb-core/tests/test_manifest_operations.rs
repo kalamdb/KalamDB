@@ -73,22 +73,26 @@ async fn read_test_rows_from_parquet(
         let id_array = batch
             .column_by_name("id")
             .expect("id column")
-            .as_any().downcast_ref::<Int64Array>()
+            .as_any()
+            .downcast_ref::<Int64Array>()
             .expect("id int64");
         let name_array = batch
             .column_by_name("name")
             .expect("name column")
-            .as_any().downcast_ref::<StringArray>()
+            .as_any()
+            .downcast_ref::<StringArray>()
             .expect("name utf8");
         let seq_array = batch
             .column_by_name(SystemColumnNames::SEQ)
             .expect("_seq column")
-            .as_any().downcast_ref::<Int64Array>()
+            .as_any()
+            .downcast_ref::<Int64Array>()
             .expect("_seq int64");
         let deleted_array = batch
             .column_by_name(SystemColumnNames::DELETED)
             .expect("_deleted column")
-            .as_any().downcast_ref::<BooleanArray>()
+            .as_any()
+            .downcast_ref::<BooleanArray>()
             .expect("_deleted bool");
 
         for row_idx in 0..batch.num_rows() {

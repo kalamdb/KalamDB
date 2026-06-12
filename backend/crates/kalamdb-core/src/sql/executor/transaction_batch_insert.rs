@@ -381,12 +381,11 @@ pub(crate) fn try_batch_inserts_in_transaction(
         .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
     }
 
-    let requested_columns: Vec<String> =
-        first_insert
-            .columns
-            .iter()
-            .filter_map(kalamdb_sql::object_name_to_string)
-            .collect();
+    let requested_columns: Vec<String> = first_insert
+        .columns
+        .iter()
+        .filter_map(kalamdb_sql::object_name_to_string)
+        .collect();
     let metadata_cache_key =
         InsertMetadataCacheKey::new(table_id.clone(), requested_columns.clone());
     let insert_metadata = match sql_cache_registry.insert_metadata_cache().get(&metadata_cache_key)

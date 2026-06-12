@@ -93,6 +93,13 @@ impl<'a> SelectOption<'a> {
     }
 }
 
+/// Clear the entire terminal screen and move the cursor to the home row.
+pub fn clear_terminal() -> io::Result<()> {
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b[2J\x1b[H")?;
+    stdout.flush()
+}
+
 pub fn print_banner(title: &str, subtitle: Option<&str>, color: bool) {
     for line in banner_lines(title, subtitle, color) {
         println!("{line}");
