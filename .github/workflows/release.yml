@@ -56,6 +56,12 @@ on:
         required: false
         default: false
 
+      publish_github_packages_cli:
+        description: "Publish @kalamdb/cli to GitHub Packages (skips if version already published)"
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: write
   packages: write
@@ -1747,6 +1753,52 @@ jobs:
             echo "NPM_TOKEN is not configured; skipping npm publish"
             exit 0
           fi
+          chmod +x ./publish.sh
+          ./publish.sh --version "${{ needs.read_version.outputs.version }}"
+
+  publish_github_packages_cli:
+    name: Publish CLI to GitHub Packages
+    runs-on: ubuntu-latest
+    needs:
+      - sync_versions_manifest
+      - read_version
+      - release
+
+    if: ${{ github.event.inputs.publish_github_packages_cli == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH_REGISTRY_URL: 'https://npm.pkg.github.com'
+      PUBLISH_REGISTRY_NAME: 'GitHub Packages'
+      PUBLISH_ACCESS: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+
+      - name: Validate npm CLI package
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "${{ needs.read_version.outputs.version }}"
+          bash ./test.sh
+
+      - name: Publish @kalamdb/cli to GitHub Packages
+        shell: bash
+        working-directory: link/sdks/typescript/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
           chmod +x ./publish.sh
           ./publish.sh --version "${{ needs.read_version.outputs.version }}"
 

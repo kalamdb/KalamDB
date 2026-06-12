@@ -3,7 +3,7 @@ import { liveTable } from '@kalamdb/orm';
 import { users } from './generated/kalam.js';
 
 const url = process.env.KALAM_URL ?? '{{server_url}}';
-const namespace = process.env.KALAM_NAMESPACE ?? 'test1';
+const namespace = process.env.KALAM_NAMESPACE ?? '{{namespace}}';
 const username = process.env.KALAM_USER ?? 'root';
 const password = process.env.KALAM_PASSWORD ?? 'mypass';
 

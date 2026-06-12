@@ -404,7 +404,12 @@ fn write_project_scaffold(
     output.detail(format!("created {}/", display_project_path(root, &cli_log_dir)));
 
     if let Some(template) = typescript_template {
-        apply_scaffold(root, template, &config.project.name, server_url, output)?;
+        let namespace = config
+            .connection
+            .get("dev")
+            .map(|connection| connection.namespace.as_str())
+            .unwrap_or("");
+        apply_scaffold(root, template, &config.project.name, server_url, namespace, output)?;
     } else if matches!(schema_mode, SchemaMode::Sql) {
         let schema_path = root.join("schema.sql");
         if !schema_path.exists() {
@@ -458,9 +463,19 @@ fn write_project_scaffold(
 
     let default_profile =
         crate::workflow::project::resolve::credential_instance_for_env(&config.project.default_env);
+    let namespace = config
+        .connection
+        .get("dev")
+        .map(|connection| connection.namespace.as_str())
+        .unwrap_or("");
     let env_template = scaffold_template_file(".env.example")?;
-    let env_contents =
-        render_template(env_template, &json!({ "default_profile": default_profile }))?;
+    let env_contents = render_template(
+        env_template,
+        &json!({
+            "default_profile": default_profile,
+            "namespace": namespace,
+        }),
+    )?;
 
     let env_file = root.join(".env");
     if !env_file.exists() {
@@ -612,6 +627,9 @@ mod tests {
 
         let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
         assert!(env_contents.contains("KALAM_PROFILE=kalam-dev"));
+        assert!(env_contents.contains("KALAM_NAMESPACE=demo_app"));
+        assert!(env_contents.contains("KALAM_USER=root"));
+        assert!(env_contents.contains("KALAM_PASSWORD="));
 
         let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
         assert!(gitignore.lines().any(|line| line.trim() == ".env"));
@@ -707,6 +725,9 @@ mod tests {
             config.connection.get("dev").expect("dev env").namespace,
             kalamdb_commons::NamespaceId::new("dev_test1")
         );
+
+        let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
+        assert!(env_contents.contains("KALAM_NAMESPACE=dev_test1"));
     }
 
     #[test]
