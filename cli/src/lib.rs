@@ -7,6 +7,9 @@
 /// CLI version constant (avoids repeated env! macro calls)
 pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// UTC build timestamp captured at compile time.
+pub const CLI_BUILD_DATE: &str = env!("BUILD_DATE");
+
 pub mod completer;
 pub mod config;
 pub mod credentials;

@@ -25,6 +25,7 @@ export const kalamclient_liveTable: (a: number, b: number, c: number, d: number,
 export const kalamclient_login: (a: number) => number;
 export const kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const kalamclient_onConnect: (a: number, b: number) => void;
+export const kalamclient_onConnectionError: (a: number, b: number) => void;
 export const kalamclient_onDisconnect: (a: number, b: number) => void;
 export const kalamclient_onError: (a: number, b: number) => void;
 export const kalamclient_onReceive: (a: number, b: number) => void;
@@ -36,6 +37,7 @@ export const kalamclient_requestNextBatch: (a: number, b: number, c: number, d: 
 export const kalamclient_sendPing: (a: number, b: number) => void;
 export const kalamclient_setAuthProvider: (a: number, b: number) => void;
 export const kalamclient_setAutoReconnect: (a: number, b: number) => void;
+export const kalamclient_setDefaultNamespace: (a: number, b: number, c: number) => void;
 export const kalamclient_setDisableCompression: (a: number, b: number) => void;
 export const kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
 export const kalamclient_setPingInterval: (a: number, b: number) => void;
@@ -49,12 +51,12 @@ export const wasmtimestampformatter_formatRelative: (a: number, b: number, c: nu
 export const wasmtimestampformatter_new: () => number;
 export const wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
 export const timestampNow: () => number;
-export const __wasm_bindgen_func_elem_371: (a: number, b: number, c: number, d: number) => void;
-export const __wasm_bindgen_func_elem_379: (a: number, b: number, c: number, d: number) => void;
-export const __wasm_bindgen_func_elem_3632: (a: number, b: number, c: number) => void;
-export const __wasm_bindgen_func_elem_3632_2: (a: number, b: number, c: number) => void;
-export const __wasm_bindgen_func_elem_3632_3: (a: number, b: number, c: number) => void;
-export const __wasm_bindgen_func_elem_3631: (a: number, b: number) => void;
+export const __wasm_bindgen_func_elem_771: (a: number, b: number, c: number, d: number) => void;
+export const __wasm_bindgen_func_elem_787: (a: number, b: number, c: number, d: number) => void;
+export const __wasm_bindgen_func_elem_3661: (a: number, b: number, c: number) => void;
+export const __wasm_bindgen_func_elem_3661_2: (a: number, b: number, c: number) => void;
+export const __wasm_bindgen_func_elem_3661_3: (a: number, b: number, c: number) => void;
+export const __wasm_bindgen_func_elem_3660: (a: number, b: number) => void;
 export const __wbindgen_export: (a: number, b: number) => number;
 export const __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_export3: (a: number) => void;

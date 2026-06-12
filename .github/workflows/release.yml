@@ -977,12 +977,13 @@ jobs:
           $zipPath = "$distDir/$($srvOut -replace '\.exe$','').zip"
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
           Compress-Archive -Path "$distDir/$srvOut" -DestinationPath $zipPath
+          Remove-Item "$distDir/$srvOut" -Force
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
           name: dist-windows-x86_64
-          path: dist/${{ needs.read_version.outputs.version }}/*
+          path: dist/${{ needs.read_version.outputs.version }}/*.zip
           if-no-files-found: error
 
   build_macos_arm:
@@ -1669,7 +1670,7 @@ jobs:
 
           cd "dist/$VERSION"
           shopt -s nullglob
-          release_assets=( *.tar.gz *.zip *.exe *.dll )
+          release_assets=( *.tar.gz *.zip *.dll )
 
           if [[ ${#release_assets[@]} -eq 0 ]]; then
             echo "No release artifacts found. Check server platform checkboxes." >&2
@@ -1695,7 +1696,6 @@ jobs:
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz
             dist/${{ needs.read_version.outputs.version }}/*.zip
-            dist/${{ needs.read_version.outputs.version }}/*.exe
             dist/${{ needs.read_version.outputs.version }}/*.dll
             dist/${{ needs.read_version.outputs.version }}/SHA256SUMS
             dist/${{ needs.read_version.outputs.version }}/LICENSE.txt

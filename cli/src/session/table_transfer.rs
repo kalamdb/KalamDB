@@ -8,27 +8,19 @@ use std::time::{Duration, Instant};
 
 use colored::Colorize;
 use kalam_client::KalamLinkError;
+use kalamdb_commons::UserId;
 use reqwest::multipart;
 
 use super::CLISession;
-use crate::error::{CLIError, Result};
+use crate::{
+    error::{CLIError, Result},
+    workflow::project::identifiers::parse_table_ref,
+};
 
 /// Maximum time to wait for an export or import job to complete.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long to wait between status-poll attempts.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-
-/// Split a `namespace.table` reference into `(namespace, table_name)`.
-fn parse_table_ref(table_ref: &str) -> Result<(String, String)> {
-    let parts: Vec<&str> = table_ref.splitn(2, '.').collect();
-    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return Err(CLIError::ParseError(format!(
-            "Expected <namespace>.<table>, got '{}'",
-            table_ref
-        )));
-    }
-    Ok((parts[0].to_string(), parts[1].to_string()))
-}
 
 /// Build a reqwest `Client` with a 60-second timeout.
 fn http_client() -> reqwest::Result<reqwest::Client> {
@@ -40,10 +32,12 @@ impl CLISession {
     pub(super) async fn cmd_export_table(
         &self,
         table_ref: &str,
-        user_id: Option<&str>,
+        user_id: Option<&UserId>,
         output: Option<&str>,
     ) -> Result<()> {
-        let (namespace, table_name) = parse_table_ref(table_ref)?;
+        let table_id = parse_table_ref(table_ref)?;
+        let namespace = table_id.namespace_id().as_str();
+        let table_name = table_id.table_name().as_str();
 
         let client = http_client().map_err(|e| {
             CLIError::LinkError(KalamLinkError::NetworkError(format!(
@@ -60,10 +54,10 @@ impl CLISession {
             "table_name": table_name,
         });
         if let Some(uid) = user_id {
-            body["user_id"] = serde_json::Value::String(uid.to_string());
+            body["user_id"] = serde_json::Value::String(uid.as_str().to_string());
         }
 
-        println!("Starting export of {}.{}…", namespace, table_name);
+        println!("Starting export of {table_id}…");
 
         let mut req = client.post(format!("{}/v1/api/table-exports", base)).json(&body);
 
@@ -133,9 +127,11 @@ impl CLISession {
         &self,
         table_ref: &str,
         zip_path: &str,
-        user_id: Option<&str>,
+        user_id: Option<&UserId>,
     ) -> Result<()> {
-        let (namespace, table_name) = parse_table_ref(table_ref)?;
+        let table_id = parse_table_ref(table_ref)?;
+        let namespace = table_id.namespace_id().as_str();
+        let table_name = table_id.table_name().as_str();
 
         // Read the ZIP file
         let zip_bytes = tokio::fs::read(zip_path)
@@ -151,14 +147,14 @@ impl CLISession {
 
         let base = self.api_base();
 
-        println!("Importing {} into {}.{}…", zip_path, namespace, table_name);
+        println!("Importing {zip_path} into {table_id}…");
 
         let mut form = multipart::Form::new()
-            .text("namespace_id", namespace.clone())
-            .text("table_name", table_name.clone());
+            .text("namespace_id", namespace.to_string())
+            .text("table_name", table_name.to_string());
 
         if let Some(uid) = user_id {
-            form = form.text("user_id", uid.to_string());
+            form = form.text("user_id", uid.as_str().to_string());
         }
 
         let file_name = std::path::Path::new(zip_path)

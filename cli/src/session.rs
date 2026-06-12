@@ -106,7 +106,7 @@ pub struct CLISession {
     connected: bool,
 
     /// Current namespace for unqualified SQL statements
-    current_namespace: Option<String>,
+    current_namespace: Option<kalamdb_commons::NamespaceId>,
 
     /// Active subscription paused state
     subscription_paused: bool,
@@ -929,19 +929,22 @@ mod tests {
     fn test_parse_namespace_switch_statements() {
         assert_eq!(
             CLISession::parse_namespace_switch("USE NAMESPACE chat;"),
-            Some("chat".to_string())
+            Some(kalamdb_commons::NamespaceId::new("chat"))
         );
         assert_eq!(
             CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""),
-            Some("team chat".to_string())
+            None
         );
-        assert_eq!(CLISession::parse_namespace_switch("USE billing"), Some("billing".to_string()));
+        assert_eq!(
+            CLISession::parse_namespace_switch("USE billing"),
+            Some(kalamdb_commons::NamespaceId::new("billing"))
+        );
         assert_eq!(CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"), None);
         assert_eq!(
             CLISession::parse_namespace_switch(
                 "-- setup namespace\n/* next */\nUSE NAMESPACE batch_case;"
             ),
-            Some("batch_case".to_string())
+            Some(kalamdb_commons::NamespaceId::new("batch_case"))
         );
     }
 
@@ -1006,7 +1009,10 @@ mod tests {
             .await
             .expect("follow-up query should succeed");
 
-        assert_eq!(session.current_namespace.as_deref(), Some("chat"));
+        assert_eq!(
+            session.current_namespace.as_ref().map(kalamdb_commons::NamespaceId::as_str),
+            Some("chat")
+        );
 
         let state = server.state.lock().await;
         assert_eq!(state.sql_request_bodies.len(), 2);

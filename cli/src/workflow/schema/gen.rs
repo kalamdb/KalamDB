@@ -84,7 +84,7 @@ fn generate_typescript_via_orm(
         .arg("-e")
         .arg(ORM_CODEGEN_SCRIPT)
         .env("KALAM_SCHEMA_URL", &environment.url)
-        .env("KALAM_SCHEMA_NAMESPACE", &environment.namespace)
+        .env("KALAM_SCHEMA_NAMESPACE", environment.namespace.as_str())
         .env("KALAM_SCHEMA_OUT", output_path);
 
     match auth {

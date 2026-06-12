@@ -248,6 +248,13 @@ export class KalamClient {
      */
     onConnect(callback: Function): void;
     /**
+     * Register a callback invoked when a connection or pre-connection error occurs.
+     *
+     * Alias for `onError` so higher-level SDKs can use a more explicit name
+     * without re-implementing connection lifecycle semantics.
+     */
+    onConnectionError(callback: Function): void;
+    /**
      * Register a callback invoked when the WebSocket connection is closed.
      *
      * The callback receives an object: `{ message: string, code?: number }`.
@@ -395,6 +402,10 @@ export class KalamClient {
      * * `enabled` - Whether to automatically reconnect on connection loss
      */
     setAutoReconnect(enabled: boolean): void;
+    /**
+     * Set the default namespace for unqualified SQL queries and live subscriptions.
+     */
+    setDefaultNamespace(namespace?: string | null): void;
     /**
      * Enable or disable compression for WebSocket messages.
      *
@@ -604,6 +615,7 @@ export interface InitOutput {
     readonly kalamclient_login: (a: number) => number;
     readonly kalamclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly kalamclient_onConnect: (a: number, b: number) => void;
+    readonly kalamclient_onConnectionError: (a: number, b: number) => void;
     readonly kalamclient_onDisconnect: (a: number, b: number) => void;
     readonly kalamclient_onError: (a: number, b: number) => void;
     readonly kalamclient_onReceive: (a: number, b: number) => void;
@@ -615,6 +627,7 @@ export interface InitOutput {
     readonly kalamclient_sendPing: (a: number, b: number) => void;
     readonly kalamclient_setAuthProvider: (a: number, b: number) => void;
     readonly kalamclient_setAutoReconnect: (a: number, b: number) => void;
+    readonly kalamclient_setDefaultNamespace: (a: number, b: number, c: number) => void;
     readonly kalamclient_setDisableCompression: (a: number, b: number) => void;
     readonly kalamclient_setMaxReconnectAttempts: (a: number, b: number) => void;
     readonly kalamclient_setPingInterval: (a: number, b: number) => void;
@@ -628,12 +641,12 @@ export interface InitOutput {
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
     readonly timestampNow: () => number;
-    readonly __wasm_bindgen_func_elem_371: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_379: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_3632: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3632_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3632_3: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3631: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_771: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_787: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3661: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3661_2: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3661_3: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3660: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

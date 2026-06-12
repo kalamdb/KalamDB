@@ -573,7 +573,7 @@ mod tests {
         ResolvedEnvironment {
             name: name.into(),
             url: "http://localhost:2900".into(),
-            namespace: "demo".into(),
+            namespace: kalamdb_commons::NamespaceId::new("demo"),
             env_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             url_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             namespace_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
@@ -593,7 +593,7 @@ mod tests {
                     "dev".into(),
                     ConnectionEnv {
                         url: "http://localhost:2900".into(),
-                        namespace: "demo".into(),
+                        namespace: kalamdb_commons::NamespaceId::new("demo"),
                     },
                 )]),
                 schema: SchemaSection {

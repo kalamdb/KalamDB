@@ -1,8 +1,10 @@
+use kalamdb_commons::NamespaceId;
+
 use super::CLISession;
 
 impl CLISession {
     pub(in crate::session) fn request_namespace(&self) -> Option<&str> {
-        self.current_namespace.as_deref()
+        self.current_namespace.as_ref().map(NamespaceId::as_str)
     }
 
     pub(in crate::session) fn effective_namespace(&self) -> &str {
@@ -13,7 +15,7 @@ impl CLISession {
         format!("ns:{}", self.effective_namespace())
     }
 
-    pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<String> {
+    pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<NamespaceId> {
         let trimmed = Self::strip_leading_sql_comments(sql).trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
             return None;
@@ -77,7 +79,7 @@ impl CLISession {
         Some(&value[prefix_len..])
     }
 
-    fn parse_namespace_identifier(input: &str) -> Option<String> {
+    fn parse_namespace_identifier(input: &str) -> Option<NamespaceId> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return None;
@@ -102,10 +104,10 @@ impl CLISession {
             return None;
         }
 
-        Some(namespace.to_string())
+        NamespaceId::try_new(namespace).ok()
     }
 
-    fn parse_quoted_namespace_identifier(input: &str, quote: char) -> Option<String> {
+    fn parse_quoted_namespace_identifier(input: &str, quote: char) -> Option<NamespaceId> {
         let mut namespace = String::new();
         let mut chars = input.char_indices().peekable();
         let (_, opening_quote) = chars.next()?;
@@ -129,7 +131,7 @@ impl CLISession {
                     return None;
                 }
 
-                return Some(namespace);
+                return NamespaceId::try_new(namespace).ok();
             }
 
             namespace.push(ch);

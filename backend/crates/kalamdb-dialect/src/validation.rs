@@ -2,7 +2,13 @@
 
 use std::collections::HashSet;
 
-use kalamdb_commons::constants::{SystemColumnNames, RESERVED_NAMESPACE_NAMES};
+use kalamdb_commons::{
+    constants::{SystemColumnNames, CRITICAL_RESERVED_SQL_KEYWORDS, RESERVED_NAMESPACE_NAMES},
+    helpers::naming::{
+        is_reserved_sql_keyword, validate_sql_identifier, validate_user_namespace_name,
+        SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
+    },
+};
 use once_cell::sync::Lazy;
 use sqlparser::keywords::{
     Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX, RESERVED_FOR_COLUMN_ALIAS, RESERVED_FOR_IDENTIFIER,
@@ -28,22 +34,6 @@ pub static RESERVED_COLUMN_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     set
 });
 
-const CRITICAL_RESERVED_KEYWORDS: &[&str] = &[
-    "TABLE",
-    "TABLES",
-    "TABLESPACE",
-    "INDEX",
-    "VIEW",
-    "SCHEMA",
-    "DATABASE",
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "CREATE",
-    "DROP",
-    "ALTER",
-];
-
 pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<String>> = Lazy::new(|| {
     let mut keywords: HashSet<String> = RESERVED_FOR_TABLE_ALIAS
         .iter()
@@ -54,7 +44,7 @@ pub static RESERVED_SQL_KEYWORDS: Lazy<HashSet<String>> = Lazy::new(|| {
         .map(|keyword| keyword.to_ascii_uppercase())
         .collect();
 
-    for keyword in CRITICAL_RESERVED_KEYWORDS {
+    for keyword in CRITICAL_RESERVED_SQL_KEYWORDS {
         keywords.insert(keyword.to_ascii_uppercase());
     }
 
@@ -106,14 +96,10 @@ impl std::fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-pub const MAX_NAME_LENGTH: usize = 64;
+pub const MAX_NAME_LENGTH: usize = MAX_SQL_IDENTIFIER_LENGTH;
 
 pub fn validate_namespace_name(name: &str) -> Result<(), ValidationError> {
-    if is_reserved_case_insensitive(&RESERVED_NAMESPACES, name) {
-        return Err(ValidationError::ReservedNamespace(name.to_string()));
-    }
-
-    validate_identifier_base(name)?;
+    validate_user_namespace_name(name).map_err(map_sql_identifier_error)?;
     ensure_not_reserved_sql_keyword(name)?;
     Ok(())
 }
@@ -135,31 +121,7 @@ pub fn validate_column_name(name: &str) -> Result<(), ValidationError> {
 }
 
 fn validate_identifier_base(name: &str) -> Result<(), ValidationError> {
-    if name.is_empty() {
-        return Err(ValidationError::Empty);
-    }
-
-    if name.len() > MAX_NAME_LENGTH {
-        return Err(ValidationError::TooLong(name.len()));
-    }
-
-    if name.contains(' ') {
-        return Err(ValidationError::ContainsSpaces);
-    }
-
-    if name.starts_with('_') {
-        return Err(ValidationError::StartsWithUnderscore);
-    }
-
-    if name.chars().next().expect("non-empty checked above").is_ascii_digit() {
-        return Err(ValidationError::StartsWithNumber);
-    }
-
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(ValidationError::InvalidCharacters(name.to_string()));
-    }
-
-    Ok(())
+    validate_sql_identifier(name).map_err(map_sql_identifier_error)
 }
 
 fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
@@ -174,7 +136,24 @@ fn ensure_not_reserved_sql_keyword(name: &str) -> Result<(), ValidationError> {
         }
     }
 
+    if is_reserved_sql_keyword(name) {
+        return Err(ValidationError::ReservedSqlKeyword(name.to_string()));
+    }
+
     Ok(())
+}
+
+fn map_sql_identifier_error(error: SqlIdentifierError) -> ValidationError {
+    match error {
+        SqlIdentifierError::Empty => ValidationError::Empty,
+        SqlIdentifierError::TooLong(len) => ValidationError::TooLong(len),
+        SqlIdentifierError::StartsWithUnderscore => ValidationError::StartsWithUnderscore,
+        SqlIdentifierError::InvalidCharacters(name) => ValidationError::InvalidCharacters(name),
+        SqlIdentifierError::ReservedNamespace(name) => ValidationError::ReservedNamespace(name),
+        SqlIdentifierError::ReservedSqlKeyword(name) => ValidationError::ReservedSqlKeyword(name),
+        SqlIdentifierError::StartsWithNumber => ValidationError::StartsWithNumber,
+        SqlIdentifierError::ContainsSpaces => ValidationError::ContainsSpaces,
+    }
 }
 
 fn is_reserved_case_insensitive(reserved: &HashSet<&'static str>, name: &str) -> bool {

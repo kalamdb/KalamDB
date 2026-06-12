@@ -6,7 +6,10 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
-        project::config::{ConnectionEnv, KalamProjectConfig, KALAM_TOML},
+        project::{
+            config::{ConnectionEnv, KalamProjectConfig, KALAM_TOML},
+            identifiers::parse_namespace_id,
+        },
         WorkflowContext,
     },
 };
@@ -48,7 +51,13 @@ pub fn link_environment(
     };
 
     let mut config = ctx.config.clone();
-    config.connection.insert(env_name.clone(), ConnectionEnv { url, namespace });
+    config.connection.insert(
+        env_name.clone(),
+        ConnectionEnv {
+            url,
+            namespace: parse_namespace_id(&namespace)?,
+        },
+    );
 
     let config_path = ctx.project_root.join(KALAM_TOML);
     save_project_config(&config_path, &config)?;
@@ -131,6 +140,6 @@ mod tests {
         let loaded = KalamProjectConfig::load_from_path(&root.join(KALAM_TOML)).unwrap();
         let prod = loaded.connection.get("prod").expect("prod link");
         assert_eq!(prod.url, "https://db.example.com");
-        assert_eq!(prod.namespace, "app");
+        assert_eq!(prod.namespace, kalamdb_commons::NamespaceId::new("app"));
     }
 }

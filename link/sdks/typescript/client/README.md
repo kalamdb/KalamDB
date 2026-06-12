@@ -2,8 +2,6 @@
 
 Official TypeScript / JavaScript SDK for [KalamDB](https://kalamdb.org) — SQL, realtime rows, and strong tenant isolation in one client.
 
-> Status: **Beta** — the API surface is still evolving.
-
 KalamDB is built for apps where every user or tenant owns a private data space. The same SQL can run for every signed-in customer, while USER tables ensure each query only touches that caller's data. On the frontend, the default realtime API is now `live()`: you get the current materialized row set, not a stream of low-level diff frames that your UI has to reconcile.
 
 → **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs/sdk/typescript) · [GitHub](https://github.com/kalamdb/KalamDB)

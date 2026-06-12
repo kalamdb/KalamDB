@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::{self, File},
-    io::{self, Cursor},
+    io::{self, Cursor, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -132,19 +132,14 @@ pub async fn download_text(client: &reqwest::Client, url: &str, label: &str) -> 
 }
 
 pub fn verify_checksum(archive_name: &str, archive_bytes: &[u8], checksums: &str) -> Result<()> {
-    let expected = checksums
-        .lines()
-        .find_map(|line| parse_checksum_line(line, archive_name))
-        .ok_or_else(|| {
-            CLIError::ConfigurationError(format!(
-                "SHA256SUMS does not include an entry for {}",
-                archive_name
-            ))
-        })?;
+    let expected = checksum_for_archive(checksums, archive_name).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "SHA256SUMS does not include an entry for {}",
+            archive_name
+        ))
+    })?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(archive_bytes);
-    let actual = hex::encode(hasher.finalize());
+    let actual = sha256_bytes(archive_bytes);
 
     if actual != expected {
         return Err(CLIError::ConfigurationError(format!(
@@ -154,6 +149,36 @@ pub fn verify_checksum(archive_name: &str, archive_bytes: &[u8], checksums: &str
     }
 
     Ok(())
+}
+
+pub fn checksum_for_archive(checksums: &str, archive_name: &str) -> Option<String> {
+    checksums
+        .lines()
+        .find_map(|line| parse_checksum_line(line, archive_name))
+        .map(str::to_string)
+}
+
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)
+        .map_err(|error| CLIError::FileError(format!("Failed to open {}: {}", path.display(), error)))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| CLIError::FileError(format!("Failed to read {}: {}", path.display(), error)))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
 }
 
 pub fn create_temp_dir(prefix: &str) -> Result<PathBuf> {

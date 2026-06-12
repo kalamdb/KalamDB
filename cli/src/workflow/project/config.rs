@@ -6,9 +6,16 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CLIError, Result};
+use crate::{
+    error::{CLIError, Result},
+    workflow::project::{
+        identifiers::serde_namespace,
+        templates::{find_template_file, resolve_scaffold_template},
+    },
+};
 
 pub const KALAM_TOML: &str = "kalam.toml";
 
@@ -57,7 +64,8 @@ pub struct ProjectSection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionEnv {
     pub url: String,
-    pub namespace: String,
+    #[serde(with = "serde_namespace")]
+    pub namespace: NamespaceId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -279,11 +287,17 @@ impl KalamProjectConfig {
 
         let gitignore_path = kalam_dir.join(".gitignore");
         if !gitignore_path.exists() {
-            fs::write(
-                &gitignore_path,
-                "# KalamDB generated local state\n/cli/logs/\n/server/\n/.schema-baseline.sql\n",
-            )
-            .map_err(|error| {
+            let template = resolve_scaffold_template().map_err(|error| {
+                CLIError::ConfigurationError(format!(
+                    "failed to load scaffold template for kalam/.gitignore: {error}"
+                ))
+            })?;
+            let contents = find_template_file(template, "kalam/.gitignore").ok_or_else(|| {
+                CLIError::ConfigurationError(
+                    "missing scaffold template file 'kalam/.gitignore'".into(),
+                )
+            })?;
+            fs::write(&gitignore_path, contents).map_err(|error| {
                 CLIError::FileError(format!(
                     "failed to write '{}': {error}",
                     gitignore_path.display()
@@ -368,9 +382,16 @@ fn discover_project_root(start: &Path) -> Result<PathBuf> {
     )))
 }
 
+pub use super::identifiers::{
+    normalize_namespace_name, parse_namespace_id, parse_table_id, parse_table_name,
+    parse_table_ref, parse_user_id,
+    preferred_user_label,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::NamespaceId;
     use tempfile::TempDir;
 
     #[test]
@@ -453,6 +474,36 @@ path = "schema.sql"
     }
 
     #[test]
+    fn normalize_namespace_name_replaces_invalid_characters() {
+        assert_eq!(normalize_namespace_name("dev-test1"), "dev_test1");
+        assert_eq!(normalize_namespace_name("demo.app"), "demo_app");
+        assert_eq!(normalize_namespace_name("  my app  "), "my_app");
+    }
+
+    #[test]
+    fn parse_rejects_invalid_namespace_in_connection() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "dev-test1"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#;
+        let err = KalamProjectConfig::parse(toml).unwrap_err().to_string();
+        assert!(err.contains("Invalid namespace ID 'dev-test1'"));
+        assert!(err.contains("dev_test1"));
+    }
+
+    #[test]
     fn discover_walks_up_directories() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("proj");
@@ -468,7 +519,7 @@ path = "schema.sql"
                 "dev".into(),
                 ConnectionEnv {
                     url: "http://localhost:2900".into(),
-                    namespace: "app".into(),
+                    namespace: NamespaceId::new("app"),
                 },
             )]),
             schema: SchemaSection {

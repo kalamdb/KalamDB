@@ -61,7 +61,7 @@ impl TableId {
     /// Create from string components with validation errors instead of panics.
     #[inline]
     pub fn try_from_strings(namespace_id: &str, table_name: &str) -> Result<Self, String> {
-        let namespace_id = NamespaceId::try_new(namespace_id)
+        let namespace_id = NamespaceId::try_parse_reference(namespace_id)
             .map_err(|e| format!("invalid namespace_id '{}': {}", namespace_id, e))?;
         let table_name = TableName::try_new(table_name)
             .map_err(|e| format!("invalid table_name '{}': {}", table_name, e))?;
@@ -303,8 +303,8 @@ mod tests {
     }
 
     #[test]
-    fn test_table_id_with_special_chars() {
-        let table_id = TableId::from_strings("my-namespace", "table_name");
+    fn test_table_id_with_underscore_namespace() {
+        let table_id = TableId::try_from_strings("my_namespace", "table_name").unwrap();
         let key = table_id.as_storage_key();
         let parsed = TableId::from_storage_key(&key).unwrap();
 

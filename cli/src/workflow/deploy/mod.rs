@@ -128,7 +128,7 @@ mod tests {
                 "prod".into(),
                 ConnectionEnv {
                     url: "https://db.example.com".into(),
-                    namespace: "app".into(),
+                    namespace: kalamdb_commons::NamespaceId::new("app"),
                 },
             )]),
             schema: SchemaSection {

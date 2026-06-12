@@ -5,7 +5,7 @@ use kalamdb_jobs::health_monitor::{
     decrement_websocket_sessions, increment_websocket_sessions, record_activity_now,
 };
 use kalamdb_live::{ConnectionEvent, ConnectionRegistration};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 
 use super::{
     context::{UpgradeAuth, WsHandlerContext},

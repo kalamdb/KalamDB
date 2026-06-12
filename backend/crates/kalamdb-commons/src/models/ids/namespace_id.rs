@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     constants::{RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE},
+    helpers::naming::{
+        validate_namespace_reference, validate_user_namespace_name, SqlIdentifierError,
+    },
     StorageKey,
 };
 
@@ -27,6 +30,15 @@ impl fmt::Display for NamespaceIdValidationError {
 }
 
 impl std::error::Error for NamespaceIdValidationError {}
+
+impl From<SqlIdentifierError> for NamespaceIdValidationError {
+    fn from(error: SqlIdentifierError) -> Self {
+        Self {
+            name: String::new(),
+            reason: error.to_string(),
+        }
+    }
+}
 
 /// Type-safe wrapper for namespace identifiers.
 ///
@@ -95,12 +107,30 @@ impl NamespaceId {
 
     /// Creates a new NamespaceId from a string, with validation.
     ///
-    /// Returns an error if the ID fails security validation.
+    /// Returns an error if the ID fails security, SQL identifier, or reserved-name validation.
     ///
     /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
     pub fn try_new(id: impl Into<String>) -> Result<Self, NamespaceIdValidationError> {
         let id = id.into();
         Self::validate(&id)?;
+        validate_user_namespace_name(&id).map_err(|error| NamespaceIdValidationError {
+            name: id.clone(),
+            reason: error.to_string(),
+        })?;
+        Ok(Self(Arc::<str>::from(id.to_lowercase())))
+    }
+
+    /// Parse a namespace referenced in SQL or API requests.
+    ///
+    /// Allows built-in catalog aliases such as `default` and `main` that users cannot create
+    /// via `try_new`, but still rejects system namespaces and other reserved names.
+    pub fn try_parse_reference(id: impl Into<String>) -> Result<Self, NamespaceIdValidationError> {
+        let id = id.into();
+        Self::validate(&id)?;
+        validate_namespace_reference(&id).map_err(|error| NamespaceIdValidationError {
+            name: id.clone(),
+            reason: error.to_string(),
+        })?;
         Ok(Self(Arc::<str>::from(id.to_lowercase())))
     }
 
@@ -318,6 +348,36 @@ mod tests {
         assert!(NamespaceId::try_new("my_namespace").is_ok());
         assert!(NamespaceId::try_new("namespace123").is_ok());
         assert!(NamespaceId::try_new("a").is_ok());
+    }
+
+    #[test]
+    fn test_try_new_rejects_hyphenated_names() {
+        let result = NamespaceId::try_new("dev-test1");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .reason
+            .contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_try_new_rejects_reserved_namespace_names() {
+        let result = NamespaceId::try_new("kalamdb");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("reserved"));
+    }
+
+    #[test]
+    fn test_try_parse_reference_allows_default_namespace() {
+        let ns = NamespaceId::try_parse_reference("default").expect("default should parse");
+        assert_eq!(ns.as_str(), "default");
+    }
+
+    #[test]
+    fn test_try_parse_reference_rejects_system_namespace() {
+        let result = NamespaceId::try_parse_reference("system");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().reason.contains("reserved"));
     }
 
     #[test]

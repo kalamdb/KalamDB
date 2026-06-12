@@ -1,0 +1,17 @@
+# KalamDB project state
+.env
+kalam/cli/logs/
+kalam/server/
+kalam/.schema-baseline.sql
+{{#if typescript}}
+
+# TypeScript / Node
+node_modules/
+dist/
+{{/if}}
+{{#if dart}}
+
+# Dart
+.dart_tool/
+build/
+{{/if}}

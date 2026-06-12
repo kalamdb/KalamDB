@@ -1,0 +1,35 @@
+[project]
+name = "{{project_name}}"
+default_env = "dev"
+
+[connection.dev]
+url = "{{server_url}}"
+namespace = "{{namespace}}"
+
+[schema]
+mode = "{{schema_mode}}"
+path = "{{schema_path}}"
+watch = true
+languages = {{languages_array}}
+
+{{#if typescript}}
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+{{/if}}
+{{#if dart}}
+[schema.targets.dart]
+output = "lib/generated/kalam.dart"
+{{/if}}
+
+[migrations]
+auto_create = true
+
+[dev]
+auto_start_db = {{auto_start_db}}
+apply_schema = true
+generate_types = true
+watch = true
+
+[logging]
+file = true
+capture_process_output = true

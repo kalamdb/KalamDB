@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -42,7 +43,7 @@ impl std::fmt::Display for MigrationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationRecord {
     pub migration_id: String,
-    pub namespace: String,
+    pub namespace: NamespaceId,
     pub name: String,
     pub checksum: String,
     pub status: MigrationStatus,
@@ -99,7 +100,7 @@ impl MigrationState {
     pub fn upsert_applying(
         &mut self,
         migration_id: &str,
-        namespace: &str,
+        namespace: &NamespaceId,
         sql: &str,
         source: &str,
     ) {
@@ -108,7 +109,7 @@ impl MigrationState {
         let now = now_timestamp();
         let record = MigrationRecord {
             migration_id: migration_id.to_string(),
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
             name,
             checksum,
             status: MigrationStatus::Applying,

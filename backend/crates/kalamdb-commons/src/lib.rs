@@ -74,7 +74,9 @@ pub use api_models::{
     ClusterHealthResponse, ClusterNodeHealth, HealthCheckResponse, ResponseStatus,
     SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
 };
-pub use constants::{MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES};
+pub use constants::{
+    CRITICAL_RESERVED_SQL_KEYWORDS, MAX_SQL_QUERY_LENGTH, RESERVED_NAMESPACE_NAMES,
+};
 #[cfg(feature = "conversions")]
 pub use conversions::{
     as_f64, estimate_scalar_value_size, json_value_to_scalar_for_column, scalar_to_f64,
@@ -85,7 +87,15 @@ pub use errors::{CommonError, NotLeaderError, Result};
 pub use helpers::arrow_utils;
 #[cfg(feature = "arrow-utils")]
 pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
-pub use helpers::{file_helpers, security, string_interner};
+pub use helpers::{
+    file_helpers, naming,
+    naming::{
+        normalize_sql_identifier, validate_namespace_reference, validate_sql_identifier,
+        validate_user_namespace_name,
+        SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
+    },
+    security, string_interner,
+};
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types
     datatypes,

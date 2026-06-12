@@ -12,7 +12,6 @@
 //! - PK Index for efficient row lookup (Phase 14)
 
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     sync::Arc,
 };

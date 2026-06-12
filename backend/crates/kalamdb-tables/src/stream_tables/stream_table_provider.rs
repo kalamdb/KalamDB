@@ -12,7 +12,6 @@
 //! - TTL-based eviction in scan operations
 
 use std::{
-    any::Any,
     collections::HashSet,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
