@@ -152,9 +152,14 @@ pub fn apply_scaffold(
     template: &EmbeddedTemplate,
     project_name: &str,
     server_url: &str,
+    namespace: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    let replacements = [("project_name", project_name), ("server_url", server_url)];
+    let replacements = [
+        ("project_name", project_name),
+        ("server_url", server_url),
+        ("namespace", namespace),
+    ];
     for file in template.files {
         let destination_path = root.join(file.project_path);
         if destination_path.exists() {
@@ -339,10 +344,16 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "src/index.ts")
             .expect("src/index.ts template");
-        let rendered_starter =
-            render_template_pairs(starter.content, &[("server_url", "http://localhost:2900")])
-                .unwrap();
+        let rendered_starter = render_template_pairs(
+            starter.content,
+            &[
+                ("server_url", "http://localhost:2900"),
+                ("namespace", "demo_app"),
+            ],
+        )
+        .unwrap();
         assert!(rendered_starter.contains("http://localhost:2900"));
+        assert!(rendered_starter.contains("demo_app"));
         assert!(rendered_starter.contains("liveTable"));
         assert!(rendered_starter.contains("createClient"));
     }

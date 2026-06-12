@@ -80,7 +80,7 @@ The GitHub Actions workflow `.github/workflows/typescript-sdk.yml` is **manual-o
 - Manual input `force_publish=true` asks each package `publish.sh` to attempt an unpublish and republish when the registry allows it.
 - The shared test matrix runs `client`, `consumer`, `orm`, `react`, and `cli`.
 - Publish order: `client` → `consumer` → `orm` → `react`.
-- `@kalamdb/cli` publishes from `.github/workflows/release.yml` when the **Publish @kalamdb/cli to npm** checkbox is enabled (also skips existing versions).
+- `@kalamdb/cli` publishes from `.github/workflows/release.yml` when the **Publish @kalamdb/cli to npm** or **Publish @kalamdb/cli to GitHub Packages** checkbox is enabled (also skips existing versions).
 
 Expected registry secrets and tokens:
 

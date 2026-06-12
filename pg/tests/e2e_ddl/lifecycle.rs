@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use kalam_client::{AuthProvider, KalamLinkClient};
+use kalam_client::{AuthProvider, FileUpload, KalamLinkClient};
 
 use super::common::{ensure_schema_exists, require_ddl_env, unique_name};
 
@@ -253,7 +253,7 @@ async fn e2e_ddl_file_column_roundtrip_via_kalamlink() {
     let insert_result = client
         .execute_with_files(
             &insert_sql,
-            vec![("attachment", file_name, file_bytes.clone(), Some(file_mime))],
+            vec![FileUpload::new("attachment", file_name, file_bytes.clone()).with_mime(file_mime)],
             None,
             None,
         )
@@ -356,8 +356,9 @@ async fn e2e_ddl_multiple_file_columns_roundtrip_via_kalamlink() {
         .execute_with_files(
             &insert_sql,
             vec![
-                ("avatar", avatar_name, avatar_bytes.clone(), Some(avatar_mime)),
-                ("contract", contract_name, contract_bytes.clone(), Some(contract_mime)),
+                FileUpload::new("avatar", avatar_name, avatar_bytes.clone()).with_mime(avatar_mime),
+                FileUpload::new("contract", contract_name, contract_bytes.clone())
+                    .with_mime(contract_mime),
             ],
             None,
             None,
@@ -420,12 +421,8 @@ async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
     let insert_result = client
         .execute_with_files(
             &insert_sql,
-            vec![(
-                "attachment",
-                initial_file_name,
-                initial_file_bytes.clone(),
-                Some(initial_file_mime),
-            )],
+            vec![FileUpload::new("attachment", initial_file_name, initial_file_bytes.clone())
+                .with_mime(initial_file_mime)],
             None,
             None,
         )
@@ -457,12 +454,8 @@ async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
     let update_result = client
         .execute_with_files(
             &update_sql,
-            vec![(
-                "attachment",
-                updated_file_name,
-                updated_file_bytes.clone(),
-                Some(updated_file_mime),
-            )],
+            vec![FileUpload::new("attachment", updated_file_name, updated_file_bytes.clone())
+                .with_mime(updated_file_mime)],
             None,
             None,
         )
