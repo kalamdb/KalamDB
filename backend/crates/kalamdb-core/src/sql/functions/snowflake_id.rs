@@ -9,7 +9,6 @@
 //! This ensures time-ordered, unique IDs suitable for PRIMARY KEY columns.
 
 use std::{
-    any::Any,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,

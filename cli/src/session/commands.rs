@@ -193,14 +193,22 @@ impl CLISession {
                 user_id,
                 output,
             } => {
-                self.cmd_export_table(&table, user_id.as_deref(), output.as_deref()).await?;
+                let user_id = user_id
+                    .as_deref()
+                    .map(crate::workflow::project::identifiers::parse_user_id)
+                    .transpose()?;
+                self.cmd_export_table(&table, user_id.as_ref(), output.as_deref()).await?;
             },
             Command::ImportTable {
                 table,
                 file,
                 user_id,
             } => {
-                self.cmd_import_table(&table, &file, user_id.as_deref()).await?;
+                let user_id = user_id
+                    .as_deref()
+                    .map(crate::workflow::project::identifiers::parse_user_id)
+                    .transpose()?;
+                self.cmd_import_table(&table, &file, user_id.as_ref()).await?;
             },
         }
         Ok(())

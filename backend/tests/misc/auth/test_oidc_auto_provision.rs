@@ -66,6 +66,7 @@ struct DexTokenResponse {
 struct JwtPayloadView {
     sub: String,
     #[serde(default)]
+    #[allow(dead_code)]
     email: Option<String>,
 }
 

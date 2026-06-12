@@ -7,6 +7,8 @@ use kalam_client::{
 };
 use url::Url;
 
+use kalamdb_commons::NamespaceId;
+
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
@@ -42,29 +44,35 @@ pub(crate) fn build_workflow_client(
 
 pub(crate) async fn ensure_namespace_exists(
     client: &KalamLinkClient,
-    namespace: &str,
+    namespace: &NamespaceId,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    output.status(format!("ensuring namespace {namespace}"));
-    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {namespace}");
+    output.status(format!("ensuring namespace {}", namespace.as_str()));
+    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace.as_str());
     execute_single_statement(client, &sql, None, "namespace bootstrap").await?;
-    output.status(format!("ensured namespace {namespace}"));
+    output.status(format!("ensured namespace {}", namespace.as_str()));
     Ok(())
 }
 
 pub(crate) async fn drop_namespace_if_exists(
     client: &KalamLinkClient,
-    namespace: &str,
+    namespace: &NamespaceId,
 ) -> Result<()> {
-    let sql = format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE");
+    let sql = format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace.as_str()
+    );
     execute_single_statement(client, &sql, None, "namespace reset").await
 }
 
 pub(crate) async fn reset_namespace_migration_state(
     client: &KalamLinkClient,
-    namespace: &str,
+    namespace: &NamespaceId,
 ) -> Result<()> {
-    let sql = format!("DELETE FROM system.migrations WHERE namespace = {}", sql_string(namespace));
+    let sql = format!(
+        "DELETE FROM system.migrations WHERE namespace = {}",
+        sql_string(namespace.as_str())
+    );
     execute_single_statement(client, &sql, None, "migration state reset").await
 }
 
@@ -274,7 +282,7 @@ mod tests {
                     "dev".into(),
                     ConnectionEnv {
                         url: "http://localhost:2900".into(),
-                        namespace: "demo".into(),
+                        namespace: kalamdb_commons::NamespaceId::new("demo"),
                     },
                 )]),
                 schema: SchemaSection {
@@ -303,7 +311,7 @@ mod tests {
         let environment = ResolvedEnvironment {
             name: "dev".into(),
             url: "http://localhost:2900".into(),
-            namespace: "demo".into(),
+            namespace: kalamdb_commons::NamespaceId::new("demo"),
             env_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             url_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             namespace_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,

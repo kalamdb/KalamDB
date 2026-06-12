@@ -4,10 +4,12 @@ use std::{
     env, fs,
     io::IsTerminal,
     path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
 use reqwest::StatusCode;
+use serde_json::json;
 use url::Url;
 
 use crate::{
@@ -20,12 +22,28 @@ use crate::{
         release_base_url, verify_checksum,
     },
     terminal_ui,
-    workflow::{dev::logs::ServiceLogSource, project::config::KalamProjectConfig},
+    workflow::{
+        dev::logs::ServiceLogSource,
+        project::{
+            config::KalamProjectConfig,
+            templates::{find_template_file, render_template, resolve_scaffold_template},
+        },
+    },
 };
 
 pub const DEFAULT_DEV_SERVER_URL: &str = "http://localhost:2900";
 const SERVER_ARTIFACT_PREFIX: &str = "kalamdb-server";
 const SERVER_RELEASE_BASE_URL_ENV: &str = "KALAMDB_SERVER_RELEASE_BASE_URL";
+const SCAFFOLD_SERVER_CONFIG_PATH: &str = "kalam/server/server.toml";
+
+fn scaffold_template_file(project_path: &str) -> Result<&'static str> {
+    let template = resolve_scaffold_template()?;
+    find_template_file(template, project_path).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "missing scaffold template file '{project_path}'"
+        ))
+    })
+}
 
 pub fn parse_server_port(server_url: &str) -> Result<u16> {
     let url = Url::parse(server_url).map_err(|e| {
@@ -88,29 +106,15 @@ pub fn write_local_server_config(
     }
     let data_path = config.relative_local_server_data_path();
     let logs_path = config.relative_local_server_logs_path();
-    let contents = format!(
-        r#"# Local KalamDB server config (managed by kalam dev)
-[server]
-host = "127.0.0.1"
-port = {port}
-public_origin = "http://localhost:{port}"
-
-[storage]
-data_path = "{data_path}"
-
-[limits]
-
-[logging]
-logs_path = "{logs_path}"
-log_to_console = true
-
-[performance]
-
-[auth]
-root_password = "mypass"
-jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
-"#
-    );
+    let template = scaffold_template_file(SCAFFOLD_SERVER_CONFIG_PATH)?;
+    let contents = render_template(
+        template,
+        &json!({
+            "port": port,
+            "data_path": data_path,
+            "logs_path": logs_path,
+        }),
+    )?;
     std::fs::write(&config_path, contents)?;
     Ok(config_path)
 }
@@ -197,7 +201,18 @@ pub async fn ensure_local_server_binary(
     server_source: &ServiceLogSource,
 ) -> Result<PathBuf> {
     match resolve_kalamdb_server_bin() {
-        Ok(path) => Ok(path),
+        Ok(path) => {
+            if let Some(installed_version) = managed_server_version_if_stale(&path)? {
+                return refresh_managed_server_binary(
+                    use_color,
+                    output,
+                    server_source,
+                    &installed_version,
+                )
+                .await;
+            }
+            Ok(path)
+        },
         Err(error) => {
             output.service_log(server_source, format!("precheck: {error}"));
             if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -228,6 +243,103 @@ pub async fn ensure_local_server_binary(
             download_and_install_managed_server(output, server_source).await
         },
     }
+}
+
+async fn refresh_managed_server_binary(
+    use_color: bool,
+    output: &WorkflowOutput,
+    server_source: &ServiceLogSource,
+    installed_version: &str,
+) -> Result<PathBuf> {
+    let target_version = env!("CARGO_PKG_VERSION");
+    output.service_log(
+        server_source,
+        format!(
+            "precheck: managed kalamdb-server is {installed_version}, updating to {target_version}"
+        ),
+    );
+
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        output.service_log(server_source, "precheck: downloading kalamdb-server");
+        return download_and_install_managed_server(output, server_source).await;
+    }
+
+    let install_dir = managed_server_install_dir();
+    let confirmed = terminal_ui::prompt_confirm(
+        &format!(
+            "Update managed KalamDB server from {installed_version} to {target_version} in {}",
+            install_dir.display()
+        ),
+        true,
+        use_color,
+    )
+    .map_err(|prompt_error| {
+        CLIError::FileError(format!("failed to read update confirmation: {prompt_error}"))
+    })?;
+
+    if !confirmed {
+        return Err(CLIError::ConfigurationError(format!(
+            "managed kalamdb-server is {installed_version}, but CLI expects {target_version}; update declined"
+        )));
+    }
+
+    output.service_log(server_source, "precheck: downloading kalamdb-server");
+    download_and_install_managed_server(output, server_source).await
+}
+
+fn managed_server_version_if_stale(path: &Path) -> Result<Option<String>> {
+    if !is_managed_server_binary(path) {
+        return Ok(None);
+    }
+
+    let expected_version = env!("CARGO_PKG_VERSION");
+    let installed_version = read_server_binary_version(path)?;
+    if installed_version.as_deref() == Some(expected_version) {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        installed_version.unwrap_or_else(|| "unknown".to_string()),
+    ))
+}
+
+fn is_managed_server_binary(path: &Path) -> bool {
+    let managed_path = managed_server_binary_path();
+    if path == managed_path {
+        return true;
+    }
+
+    match (path.canonicalize(), managed_path.canonicalize()) {
+        (Ok(path), Ok(managed_path)) => path == managed_path,
+        _ => false,
+    }
+}
+
+fn read_server_binary_version(path: &Path) -> Result<Option<String>> {
+    let output = Command::new(path)
+        .arg("--version")
+        .output()
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!(
+                "failed to read version from kalamdb-server '{}': {error}",
+                path.display()
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(parse_server_version_output(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_server_version_output(output: &str) -> Option<String> {
+    let rest = output.trim().strip_prefix("KalamDB Server v")?;
+    let version = rest.split(" |").next()?.trim();
+    if version.is_empty() {
+        return None;
+    }
+    Some(version.to_string())
 }
 
 pub fn build_local_server_command(
@@ -457,6 +569,8 @@ output = "src/generated/kalam.ts"
         assert!(contents.contains("[limits]"));
         assert!(contents.contains("[logging]"));
         assert!(contents.contains("[performance]"));
+        assert!(contents.contains("[rate_limit]"));
+        assert!(contents.contains("max_queries_per_sec = 100000"));
         assert!(contents.contains("data_path = \"kalam/server/data\""));
         assert!(contents.contains("logs_path = \"kalam/server/logs\""));
     }
@@ -538,6 +652,38 @@ output = "src/generated/kalam.ts"
             Some(value) => std::env::set_var("PATH", value),
             None => std::env::remove_var("PATH"),
         }
+        match original_server_bin {
+            Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
+            None => std::env::remove_var("KALAMDB_SERVER_BIN"),
+        }
+    }
+
+    #[test]
+    fn parse_server_version_output_reads_release_version() {
+        assert_eq!(
+            parse_server_version_output(
+                "KalamDB Server v0.5.2-rc.1 | Build: 2026-06-06 10:26:45 UTC\n"
+            ),
+            Some("0.5.2-rc.1".to_string())
+        );
+    }
+
+    #[test]
+    fn managed_server_version_if_stale_ignores_explicit_override() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let custom_bin = temp.path().join("custom-kalamdb-server");
+        std::fs::write(
+            &custom_bin,
+            "#!/bin/sh\necho 'KalamDB Server v0.1.0 | Build: old'\n",
+        )
+        .unwrap();
+
+        let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
+        std::env::set_var("KALAMDB_SERVER_BIN", &custom_bin);
+
+        let stale = managed_server_version_if_stale(&custom_bin).expect("check custom binary");
+        assert!(stale.is_none());
+
         match original_server_bin {
             Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
             None => std::env::remove_var("KALAMDB_SERVER_BIN"),

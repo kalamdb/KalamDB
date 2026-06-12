@@ -12,7 +12,6 @@
 //! - PK Index: Uses SharedTableIndexedStore for efficient O(1) lookups by PK value
 
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     sync::Arc,
 };

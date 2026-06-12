@@ -294,7 +294,7 @@ mod tests {
                 "dev".into(),
                 ConnectionEnv {
                     url: "http://localhost:2900".into(),
-                    namespace: "demo".into(),
+                    namespace: kalamdb_commons::NamespaceId::new("demo"),
                 },
             )]),
             schema: SchemaSection {

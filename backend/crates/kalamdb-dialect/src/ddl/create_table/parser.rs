@@ -17,9 +17,9 @@ use super::types::CreateTableStatement;
 use crate::{
     compatibility::map_sql_type_to_kalam,
     parser::utils::{format_span, parse_sql_statements},
+    validation::validate_column_name,
 };
 
-static RE_ALPHANUMERIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]+$").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
 static CREATE_TYPED_PREFIX_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
@@ -78,31 +78,31 @@ impl CreateTableStatement {
                         .to_string());
                 };
 
-                // Validate names
-                if !RE_ALPHANUMERIC.is_match(namespace_id.as_str()) {
-                    let span = name.0.get(0).and_then(|part| match part {
+                // Validate names using shared commons rules.
+                if let Err(error) = NamespaceId::try_parse_reference(namespace_id.as_str()) {
+                    let span = name.0.first().and_then(|part| match part {
                         ObjectNamePart::Identifier(ident) => Some(ident.span),
                         _ => None,
                     });
                     let location = span.map(format_span);
                     return Err(format!(
-                        "Invalid namespace name '{}'. Only alphanumeric characters and \
-                         underscores are allowed{}.",
+                        "Invalid namespace name '{}': {}{}",
                         namespace_id,
-                        location.as_deref().map(|s| format!(" ({})", s)).unwrap_or_default()
+                        error,
+                        location.as_deref().map(|s| format!(" ({s})")).unwrap_or_default()
                     ));
                 }
-                if !RE_ALPHANUMERIC.is_match(table_name.as_str()) {
+                if let Err(error) = TableName::try_new(table_name.as_str()) {
                     let span = name.0.last().and_then(|part| match part {
                         ObjectNamePart::Identifier(ident) => Some(ident.span),
                         _ => None,
                     });
                     let location = span.map(format_span);
                     return Err(format!(
-                        "Invalid table name '{}'. Only alphanumeric characters and underscores \
-                         are allowed{}.",
+                        "Invalid table name '{}': {}{}",
                         table_name,
-                        location.as_deref().map(|s| format!(" ({})", s)).unwrap_or_default()
+                        error,
+                        location.as_deref().map(|s| format!(" ({s})")).unwrap_or_default()
                     ));
                 }
 
@@ -342,12 +342,8 @@ impl CreateTableStatement {
                 let mut seen_column_names: HashSet<String> = HashSet::new();
                 for col in columns {
                     let col_name = col.name.value;
-                    if !RE_ALPHANUMERIC.is_match(&col_name) {
-                        return Err(format!(
-                            "Invalid column name '{}'. Only alphanumeric characters and \
-                             underscores are allowed.",
-                            col_name
-                        ));
+                    if let Err(error) = validate_column_name(&col_name) {
+                        return Err(format!("Invalid column name '{}': {}", col_name, error));
                     }
 
                     // Column names are case-insensitive (folded to lowercase), so

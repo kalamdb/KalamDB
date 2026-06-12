@@ -71,8 +71,15 @@ fn test_project_workflow_init_scaffolds_project() {
     let kalam_toml = fs::read_to_string(project_dir.join("kalam.toml")).expect("read kalam.toml");
     assert!(kalam_toml.contains("name = \"demo-app\""));
     assert!(kalam_toml.contains("mode = \"sql\""));
-    assert!(kalam_toml.contains("typescript"));
-    assert!(kalam_toml.contains("dart"));
+    assert!(
+        kalam_toml.contains("languages = [")
+            && kalam_toml.contains("\"typescript\"")
+            && kalam_toml.contains("\"dart\""),
+        "expected typescript and dart languages in kalam.toml\n{kalam_toml}"
+    );
+    assert!(kalam_toml.contains("[schema.targets.typescript]"));
+    assert!(kalam_toml.contains("[schema.targets.dart]"));
+    assert!(!kalam_toml.contains("&quot;"));
     assert!(!kalam_toml.contains("path = \".kalam/logs/kalam.log\""));
     assert!(!kalam_toml.contains("dir = \"kalam/migrations\""));
 
@@ -109,8 +116,10 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
 
     let kalam_toml =
         fs::read_to_string(project_dir.join("kalam.toml")).expect("read generated kalam.toml");
-    assert!(kalam_toml.contains("typescript"));
-    assert!(!kalam_toml.contains("dart"));
+    assert!(kalam_toml.contains("languages = [\"typescript\"]"));
+    assert!(kalam_toml.contains("[schema.targets.typescript]"));
+    assert!(!kalam_toml.contains("[schema.targets.dart]"));
+    assert!(!kalam_toml.contains("&quot;"));
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
     assert!(
         !project_dir.join("lib/generated").exists(),
@@ -123,6 +132,13 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
     assert!(gitignore.contains("kalam/server/"));
     assert!(gitignore.contains("kalam/.schema-baseline.sql"));
     assert!(gitignore.contains("node_modules/"));
+    assert!(!gitignore.contains(".dart_tool/"));
+
+    let server_toml = fs::read_to_string(project_dir.join("kalam/server/server.toml"))
+        .expect("read generated server.toml");
+    assert!(server_toml.contains("[rate_limit]"));
+    assert!(server_toml.contains("max_queries_per_sec = 100000"));
+    assert!(server_toml.contains("port = 2900"));
 
     let package_json =
         fs::read_to_string(project_dir.join("package.json")).expect("read generated package.json");

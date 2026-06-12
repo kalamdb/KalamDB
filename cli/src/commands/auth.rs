@@ -1,6 +1,9 @@
 use std::{io::IsTerminal, time::Duration};
 
-use kalam_cli::{terminal_ui, CLIConfiguration, CLIError, FileCredentialStore, Result};
+use kalam_cli::{
+    terminal_ui, workflow::project::identifiers::preferred_user_label, CLIConfiguration, CLIError,
+    FileCredentialStore, Result,
+};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, HttpVersion, KalamLinkClient, LoginResponse,
@@ -103,14 +106,6 @@ fn password_from_cli_or_prompt(cli: &Cli) -> Result<String> {
     }
 
     Ok(String::new())
-}
-
-fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
-    name.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| email.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned))
-        .unwrap_or_else(|| user_id.to_string())
 }
 
 pub(crate) async fn resolve_auth_context(
@@ -336,7 +331,7 @@ pub async fn handle_login(
     println!(
         "Logged in as {}",
         preferred_user_label(
-            login_response.user.id.as_str(),
+            &login_response.user.id,
             login_response.user.name.as_deref(),
             login_response.user.email.as_deref(),
         )

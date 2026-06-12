@@ -12,6 +12,8 @@ use kalam_client::{
 };
 use url::Url;
 
+use kalam_cli::workflow::project::identifiers::preferred_user_label;
+
 use crate::args::Cli;
 use crate::terminal_input::{prompt_line, prompt_password};
 
@@ -23,14 +25,6 @@ enum ServerUrlSource {
     HostPort,
     StoredCredentials,
     DefaultLocalFallback,
-}
-
-fn preferred_user_label(user_id: &str, name: Option<&str>, email: Option<&str>) -> String {
-    name.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| email.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned))
-        .unwrap_or_else(|| user_id.to_string())
 }
 
 fn credentials_from_login_response(
@@ -532,8 +526,6 @@ pub async fn create_session(
                 .await
                 {
                     LoginResult::Success(login_response) => {
-                        let authenticated_user = login_response.user.id.to_string();
-
                         if save_credentials {
                             let new_creds = credentials_from_login_response(
                                 instance.to_string(),
@@ -546,7 +538,7 @@ pub async fn create_session(
                         Ok((
                             AuthProvider::jwt_token(login_response.access_token),
                             Some(preferred_user_label(
-                                authenticated_user.as_str(),
+                                &login_response.user.id,
                                 login_response.user.name.as_deref(),
                                 login_response.user.email.as_deref(),
                             )),
@@ -640,8 +632,6 @@ pub async fn create_session(
         // Try to login with provided credentials
         match try_login(server_url, &username, &password, verbose, show_progress).await {
             LoginResult::Success(login_response) => {
-                let authenticated_user = login_response.user.id.to_string();
-
                 // Ask if user wants to save credentials
                 let save_choice = prompt_line(&format!(
                     "\n{}",
@@ -669,7 +659,7 @@ pub async fn create_session(
                 Ok((
                     AuthProvider::jwt_token(login_response.access_token),
                     Some(preferred_user_label(
-                        authenticated_user.as_str(),
+                        &login_response.user.id,
                         login_response.user.name.as_deref(),
                         login_response.user.email.as_deref(),
                     )),
@@ -861,11 +851,10 @@ pub async fn create_session(
                         );
                     }
 
-                    let authenticated_user = login_response.user.id.to_string();
                     (
                         AuthProvider::jwt_token(login_response.access_token),
                         Some(preferred_user_label(
-                            authenticated_user.as_str(),
+                            &login_response.user.id,
                             login_response.user.name.as_deref(),
                             login_response.user.email.as_deref(),
                         )),

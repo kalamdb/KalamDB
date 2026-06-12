@@ -314,7 +314,8 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let base_session = self.app_context.base_session_context();
         let mut exec_ctx = ExecutionContext::from_session(session, base_session);
         if let Some(namespace_id) = req.namespace_id.as_deref() {
-            let namespace_id = NamespaceId::try_new(namespace_id).map_err(|e| e.to_string());
+            let namespace_id =
+                NamespaceId::try_parse_reference(namespace_id).map_err(|e| e.to_string());
             let namespace_id = match namespace_id {
                 Ok(ns) => ns,
                 Err(e) => {

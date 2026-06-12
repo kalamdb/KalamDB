@@ -6,20 +6,23 @@
 use std::{process::Stdio, time::Duration};
 
 use chrono::{SecondsFormat, Utc};
-use kalam_cli::{CLIConfiguration, CLIError, CLISession, FileCredentialStore, Result};
+use kalam_cli::{
+    workflow::project::identifiers::{parse_namespace_id, parse_table_ref},
+    CLIConfiguration, CLIError, CLISession, FileCredentialStore, Result,
+};
+use kalamdb_commons::{NamespaceId, TableId};
 use tokio::time::sleep;
 
 use crate::{args::Cli, connect::create_session};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TableSelector {
-    namespace_id: String,
-    table_name: String,
+    table_id: TableId,
 }
 
 #[derive(Debug, Clone)]
 struct WatchSchemaConfig {
-    namespaces: Vec<String>,
+    namespaces: Vec<NamespaceId>,
     tables: Vec<TableSelector>,
     run_command: String,
     run_on_start: bool,
@@ -55,8 +58,14 @@ impl WatchSchemaConfig {
             .map(|value| parse_table_selector(value))
             .collect::<Result<Vec<_>>>()?;
 
+        let namespaces = cli
+            .watch_namespace
+            .iter()
+            .map(|value| parse_namespace_id(value))
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
-            namespaces: cli.watch_namespace.clone(),
+            namespaces,
             tables,
             run_command,
             run_on_start: cli.watch_run_on_start,
@@ -105,17 +114,23 @@ fn describe_scope(config: &WatchSchemaConfig) -> String {
     let mut parts = Vec::new();
 
     if !config.namespaces.is_empty() {
-        parts.push(format!(" for namespaces {}", config.namespaces.join(", ")));
+        let namespaces = config
+            .namespaces
+            .iter()
+            .map(NamespaceId::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!(" for namespaces {namespaces}"));
     }
 
     if !config.tables.is_empty() {
         let tables = config
             .tables
             .iter()
-            .map(|table| format!("{}.{}", table.namespace_id, table.table_name))
+            .map(|table| table.table_id.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        parts.push(format!(" for tables {}", tables));
+        parts.push(format!(" for tables {tables}"));
     }
 
     if parts.is_empty() {
@@ -168,7 +183,7 @@ async fn run_shell_command(command: &str) -> Result<()> {
 }
 
 fn build_schema_change_query(
-    namespaces: &[String],
+    namespaces: &[NamespaceId],
     tables: &[TableSelector],
     last_seen: &str,
 ) -> String {
@@ -179,18 +194,23 @@ fn build_schema_change_query(
     )
 }
 
-fn build_scope_predicate(namespaces: &[String], tables: &[TableSelector]) -> String {
+fn build_scope_predicate(namespaces: &[NamespaceId], tables: &[TableSelector]) -> String {
     let namespace_predicates = namespaces
         .iter()
-        .map(|namespace| format!("namespace_id = '{}'", escape_sql_literal(namespace)))
+        .map(|namespace| {
+            format!(
+                "namespace_id = '{}'",
+                escape_sql_literal(namespace.as_str())
+            )
+        })
         .collect::<Vec<_>>();
     let table_predicates = tables
         .iter()
         .map(|table| {
             format!(
                 "(namespace_id = '{}' AND table_name = '{}')",
-                escape_sql_literal(&table.namespace_id),
-                escape_sql_literal(&table.table_name)
+                escape_sql_literal(table.table_id.namespace_id().as_str()),
+                escape_sql_literal(table.table_id.table_name().as_str())
             )
         })
         .collect::<Vec<_>>();
@@ -222,21 +242,13 @@ fn build_scope_predicate(namespaces: &[String], tables: &[TableSelector]) -> Str
 }
 
 fn parse_table_selector(value: &str) -> Result<TableSelector> {
-    let mut parts = value.split('.');
-    let namespace_id = parts.next().unwrap_or_default().trim();
-    let table_name = parts.next().unwrap_or_default().trim();
-    let extra = parts.next();
-
-    if namespace_id.is_empty() || table_name.is_empty() || extra.is_some() {
-        return Err(CLIError::ConfigurationError(format!(
-            "--table must be namespace.table, got '{value}'"
-        )));
-    }
-
-    Ok(TableSelector {
-        namespace_id: namespace_id.to_string(),
-        table_name: table_name.to_string(),
-    })
+    parse_table_ref(value)
+        .map(|table_id| TableSelector { table_id })
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!(
+                "--table must be namespace.table, got '{value}': {error}"
+            ))
+        })
 }
 
 fn extract_changed_count(response: &kalam_client::QueryResponse) -> Result<i64> {
@@ -272,8 +284,11 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_filters_one_namespace() {
-        let query =
-            build_schema_change_query(&["chat".to_string()], &[], "2026-05-05T11:05:27.741Z");
+        let query = build_schema_change_query(
+            &[NamespaceId::new("chat")],
+            &[],
+            "2026-05-05T11:05:27.741Z",
+        );
 
         assert_eq!(
             query,
@@ -283,7 +298,7 @@ mod tests {
 
     #[test]
     fn build_schema_change_query_or_filters_multiple_namespaces() {
-        let namespaces = vec!["chat".to_string(), "billing".to_string()];
+        let namespaces = vec![NamespaceId::new("chat"), NamespaceId::new("billing")];
         let query = build_schema_change_query(&namespaces, &[], "2026-05-05T11:05:27.741Z");
 
         assert_eq!(
@@ -293,11 +308,8 @@ mod tests {
     }
 
     #[test]
-    fn build_schema_change_query_escapes_namespace_literals() {
-        let query =
-            build_schema_change_query(&["team's".to_string()], &[], "2026-05-05T11:05:27.741Z");
-
-        assert!(query.contains("namespace_id = 'team''s'"));
+    fn escape_sql_literal_doubles_single_quotes() {
+        assert_eq!(escape_sql_literal("team's"), "team''s");
     }
 
     #[test]
@@ -305,8 +317,7 @@ mod tests {
         let query = build_schema_change_query(
             &[],
             &[TableSelector {
-                namespace_id: "chat".into(),
-                table_name: "messages".into(),
+                table_id: kalamdb_commons::TableId::from_strings("chat", "messages"),
             }],
             "2026-05-05T11:05:27.741Z",
         );

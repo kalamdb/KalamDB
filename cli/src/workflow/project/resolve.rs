@@ -3,11 +3,15 @@
 use std::{env, fs, path::Path};
 
 use kalam_client::CredentialStore;
+use kalamdb_commons::NamespaceId;
 
 use crate::{
     credentials::FileCredentialStore,
     error::{CLIError, Result},
-    workflow::project::config::{ConnectionEnv, KalamProjectConfig},
+    workflow::project::{
+        config::{ConnectionEnv, KalamProjectConfig},
+        identifiers::parse_namespace_id,
+    },
 };
 
 pub const ENV_VAR_KALAM_ENV: &str = "KALAM_ENV";
@@ -28,7 +32,7 @@ pub enum ResolutionSource {
 pub struct ResolvedEnvironment {
     pub name: String,
     pub url: String,
-    pub namespace: String,
+    pub namespace: NamespaceId,
     pub env_source: ResolutionSource,
     pub url_source: ResolutionSource,
     pub namespace_source: ResolutionSource,
@@ -101,16 +105,21 @@ fn resolve_url(
 fn resolve_namespace(
     connection: &ConnectionEnv,
     cli_namespace: Option<&str>,
-) -> Result<(String, ResolutionSource)> {
-    if let Some(namespace) = cli_namespace.map(str::trim).filter(|v| !v.is_empty()) {
-        return Ok((namespace.to_string(), ResolutionSource::CliFlag));
+) -> Result<(NamespaceId, ResolutionSource)> {
+    if let Some(namespace) = cli_namespace.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok((parse_namespace_id(namespace)?, ResolutionSource::CliFlag));
     }
+
     if let Ok(namespace) = env::var(ENV_VAR_KALAM_NAMESPACE) {
         let trimmed = namespace.trim();
         if !trimmed.is_empty() {
-            return Ok((trimmed.to_string(), ResolutionSource::EnvironmentVariable));
+            return Ok((
+                parse_namespace_id(trimmed)?,
+                ResolutionSource::EnvironmentVariable,
+            ));
         }
     }
+
     Ok((connection.namespace.clone(), ResolutionSource::ProjectConfig))
 }
 
@@ -186,6 +195,8 @@ mod tests {
     use std::{collections::HashMap, fs};
 
     use super::*;
+    use kalamdb_commons::NamespaceId;
+
     use crate::workflow::project::config::{
         ConnectionEnv, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
     };
@@ -203,14 +214,14 @@ mod tests {
                     "dev".into(),
                     ConnectionEnv {
                         url: "http://localhost:2900".into(),
-                        namespace: "app".into(),
+                        namespace: NamespaceId::new("app"),
                     },
                 ),
                 (
                     "prod".into(),
                     ConnectionEnv {
                         url: "https://db.example.com".into(),
-                        namespace: "app".into(),
+                        namespace: NamespaceId::new("app"),
                     },
                 ),
             ]),
@@ -247,7 +258,7 @@ mod tests {
 
         assert_eq!(resolved.name, "prod");
         assert_eq!(resolved.url, "https://override.example.com");
-        assert_eq!(resolved.namespace, "other");
+        assert_eq!(resolved.namespace, NamespaceId::new("other"));
         assert_eq!(resolved.env_source, ResolutionSource::CliFlag);
     }
 

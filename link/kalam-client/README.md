@@ -2,8 +2,6 @@
 
 Official Rust SDK for [KalamDB](https://kalamdb.org) — SQL, materialized live rows, and strong tenant isolation in one crate.
 
-> Status: **Beta** — the API surface is still evolving.
-
 KalamDB is built for apps where every user or tenant owns a private data space. The same SQL can run for every signed-in customer, while USER tables ensure each query only touches that caller's data. On the server and in native SDKs, the default realtime API is `live()`: you receive the current materialized row set, not a stream of low-level diff frames that your UI has to reconcile.
 
 → **[kalamdb.org](https://kalamdb.org)** · [Docs](https://kalamdb.org/docs/sdk/rust) · [GitHub](https://github.com/kalamdb/KalamDB)

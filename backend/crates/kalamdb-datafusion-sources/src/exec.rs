@@ -6,7 +6,6 @@
 //! (MVCC merge, one-shot views, vector TVFs, overlay).
 
 use std::{
-    any::Any,
     cmp::Ordering,
     collections::{BTreeMap, HashMap},
     fmt,

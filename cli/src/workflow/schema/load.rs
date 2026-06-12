@@ -4,10 +4,15 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use chrono::Utc;
 
+use kalamdb_commons::NamespaceId;
+
 use crate::{
     error::{CLIError, Result},
     workflow::{
-        project::config::{KalamProjectConfig, SchemaMode},
+        project::{
+            config::{KalamProjectConfig, SchemaMode},
+            identifiers::{parse_table_name, parse_table_ref},
+        },
         schema::model::{ColumnDefinition, SchemaOrigin, SchemaSnapshot, TableDefinition},
     },
 };
@@ -63,7 +68,7 @@ pub fn pull_remote_schema(
     _project_root: &Path,
     _config: &KalamProjectConfig,
     _url: &str,
-    _namespace: &str,
+    _namespace: &NamespaceId,
 ) -> Result<SchemaSnapshot> {
     Err(CLIError::ConfigurationError(
         "schema pull requires a connected KalamDB server; start the server and authenticate, \
@@ -125,12 +130,22 @@ fn parse_table_name_and_body(rest: &str) -> Result<(String, String)> {
         .ok_or_else(|| CLIError::ParseError("expected '(' after table name".into()))?;
     let name_part = rest[..open_paren].trim();
     let name = name_part.trim_matches('"').trim_matches('`').trim_matches('\'').to_string();
+    validate_parsed_table_name(&name)?;
 
     let close_paren = rest
         .rfind(')')
         .ok_or_else(|| CLIError::ParseError("expected ')' closing column list".into()))?;
     let body = rest[open_paren + 1..close_paren].to_string();
     Ok((name, body))
+}
+
+fn validate_parsed_table_name(name: &str) -> Result<()> {
+    if name.contains('.') {
+        parse_table_ref(name)?;
+    } else {
+        parse_table_name(name)?;
+    }
+    Ok(())
 }
 
 fn parse_columns(body: &str) -> Result<Vec<ColumnDefinition>> {

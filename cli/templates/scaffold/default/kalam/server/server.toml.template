@@ -1,0 +1,30 @@
+# Local KalamDB server config (managed by kalam dev)
+[server]
+host = "127.0.0.1"
+port = {{port}}
+public_origin = "http://localhost:{{port}}"
+
+[storage]
+data_path = "{{data_path}}"
+
+[limits]
+
+[logging]
+logs_path = "{{logs_path}}"
+log_to_console = true
+
+[performance]
+
+[auth]
+root_password = "mypass"
+jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
+
+[rate_limit]
+# Relaxed limits for local development and testing
+max_queries_per_sec = 100000
+max_messages_per_sec = 10000
+max_subscriptions_per_user = 500000
+max_auth_requests_per_ip_per_sec = 200000
+max_connections_per_ip = 200000
+max_requests_per_ip_per_sec = 200000
+enable_connection_protection = false

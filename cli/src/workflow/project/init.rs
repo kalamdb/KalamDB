@@ -7,6 +7,8 @@ use std::{
     process::Command,
 };
 
+use serde_json::json;
+
 use url::Url;
 
 use crate::{
@@ -21,11 +23,15 @@ use crate::{
                 ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
                 ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
             },
+            identifiers::{normalize_namespace_name, parse_namespace_id},
             prompts::{
                 interactive_available, print_workflow_banner, prompt_multi_select, prompt_select,
                 prompt_text, prompt_text_with_default,
             },
-            templates::{self, EmbeddedTemplate, DEFAULT_TYPESCRIPT_TEMPLATE},
+            templates::{
+                self, find_template_file, render_template, render_template_pairs, EmbeddedTemplate,
+                DEFAULT_TYPESCRIPT_TEMPLATE, DEFAULT_SCAFFOLD_TEMPLATE,
+            },
         },
     },
 };
@@ -110,8 +116,16 @@ where
     let server_mode = resolve_server_mode(&options, output.use_color)?;
     let server_url = resolve_server_url(&options, server_mode, output.use_color)?;
 
-    let config = build_config(&name, schema_mode, &languages, server_mode, &server_url);
+    let config = build_config(&name, schema_mode, &languages, server_mode, &server_url)?;
     config.validate()?;
+    if let Some(connection) = config.connection.get("dev") {
+        if connection.namespace.as_str() != name {
+            output.detail(format!(
+                "using namespace '{}' for project name '{name}'",
+                connection.namespace.as_str()
+            ));
+        }
+    }
 
     write_project_scaffold(
         &options.cwd,
@@ -453,7 +467,7 @@ fn build_config(
     languages: &[String],
     server_mode: ServerMode,
     server_url: &str,
-) -> KalamProjectConfig {
+) -> Result<KalamProjectConfig> {
     let mut targets = HashMap::new();
     for language in languages {
         let output = match language.as_str() {
@@ -469,7 +483,7 @@ fn build_config(
         );
     }
 
-    KalamProjectConfig {
+    Ok(KalamProjectConfig {
         project: ProjectSection {
             name: name.to_string(),
             default_env: "dev".into(),
@@ -479,7 +493,7 @@ fn build_config(
             "dev".into(),
             ConnectionEnv {
                 url: server_url.to_string(),
-                namespace: name.to_string(),
+                namespace: parse_namespace_id(&normalize_namespace_name(name))?,
             },
         )]),
         schema: SchemaSection {
@@ -498,7 +512,7 @@ fn build_config(
             ..DevSection::default()
         },
         logging: LoggingSection::default(),
-    }
+    })
 }
 
 fn write_project_scaffold(
@@ -512,7 +526,7 @@ fn write_project_scaffold(
 ) -> Result<()> {
     fs::create_dir_all(root)?;
 
-    config.save_to_path(&root.join(KALAM_TOML))?;
+    write_kalam_toml_from_template(root, config, server_mode, server_url)?;
     output.detail(format!("created {}", KALAM_TOML));
 
     write_default_gitignore(root, &config.schema.languages, output)?;
@@ -583,19 +597,18 @@ fn write_project_scaffold(
 
     let default_profile =
         crate::workflow::project::resolve::credential_instance_for_env(&config.project.default_env);
-    let env_template = format!(
-        "# KalamDB CLI profile used by kalam dev/deploy\n# kalam dev fills this automatically for managed local servers; use kalam login for remote servers.\nKALAM_PROFILE={default_profile}\n"
-    );
+    let env_template = scaffold_template_file(".env.example")?;
+    let env_contents = render_template(env_template, &json!({ "default_profile": default_profile }))?;
 
     let env_file = root.join(".env");
     if !env_file.exists() {
-        fs::write(&env_file, &env_template)?;
+        fs::write(&env_file, &env_contents)?;
         output.detail("created .env");
     }
 
     let env_example = root.join(".env.example");
     if !env_example.exists() {
-        fs::write(&env_example, env_template)?;
+        fs::write(&env_example, env_contents)?;
         output.detail("created .env.example");
     }
 
@@ -621,7 +634,7 @@ fn apply_embedded_template(
             fs::create_dir_all(parent)?;
         }
 
-        let rendered = render_template(file.content, replacements);
+        let rendered = render_template_pairs(file.content, replacements)?;
         fs::write(&destination_path, rendered)?;
         output.detail(format!(
             "created {}",
@@ -641,31 +654,69 @@ fn write_default_gitignore(
         return Ok(());
     }
 
-    let mut lines = vec![
-        "# KalamDB project state".to_string(),
-        ".env".to_string(),
-        "kalam/cli/logs/".to_string(),
-        "kalam/server/".to_string(),
-        "kalam/.schema-baseline.sql".to_string(),
-    ];
-
-    if languages.iter().any(|language| language == "typescript") {
-        lines.push(String::new());
-        lines.push("# TypeScript / Node".to_string());
-        lines.push("node_modules/".to_string());
-        lines.push("dist/".to_string());
-    }
-
-    if languages.iter().any(|language| language == "dart") {
-        lines.push(String::new());
-        lines.push("# Dart".to_string());
-        lines.push(".dart_tool/".to_string());
-        lines.push("build/".to_string());
-    }
-
-    fs::write(&gitignore_path, format!("{}\n", lines.join("\n")))?;
+    let template = scaffold_template_file(".gitignore")?;
+    let contents = render_template(
+        template,
+        &json!({
+            "typescript": languages.iter().any(|language| language == "typescript"),
+            "dart": languages.iter().any(|language| language == "dart"),
+        }),
+    )?;
+    fs::write(&gitignore_path, contents)?;
     output.detail("created .gitignore");
     Ok(())
+}
+
+fn scaffold_template_file(project_path: &str) -> Result<&'static str> {
+    let template = templates::resolve_scaffold_template()?;
+    find_template_file(template, project_path).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "missing scaffold template file '{project_path}' in '{DEFAULT_SCAFFOLD_TEMPLATE}'"
+        ))
+    })
+}
+
+fn write_kalam_toml_from_template(
+    root: &Path,
+    config: &KalamProjectConfig,
+    server_mode: ServerMode,
+    server_url: &str,
+) -> Result<()> {
+    let template = scaffold_template_file("kalam.toml")?;
+    let languages_array = format_languages_array(&config.schema.languages);
+    let schema_mode = schema_mode_label(config.schema.mode);
+    let schema_path = config.schema.path.as_deref().unwrap_or("schema.sql");
+    let namespace = config
+        .connection
+        .get("dev")
+        .map(|connection| connection.namespace.as_str())
+        .unwrap_or("");
+    let contents = render_template(
+        template,
+        &json!({
+            "project_name": config.project.name,
+            "namespace": namespace,
+            "server_url": server_url,
+            "schema_mode": schema_mode,
+            "schema_path": schema_path,
+            "languages_array": languages_array,
+            "typescript": config.schema.languages.iter().any(|language| language == "typescript"),
+            "dart": config.schema.languages.iter().any(|language| language == "dart"),
+            "auto_start_db": matches!(server_mode, ServerMode::Local),
+        }),
+    )?;
+    let config_path = root.join(KALAM_TOML);
+    fs::write(&config_path, contents)?;
+    KalamProjectConfig::load_from_path(&config_path)?;
+    Ok(())
+}
+
+fn format_languages_array(languages: &[String]) -> String {
+    let quoted: Vec<String> = languages
+        .iter()
+        .map(|language| format!("\"{language}\""))
+        .collect();
+    format!("[{}]", quoted.join(", "))
 }
 
 pub fn detect_package_manager(root: &Path) -> Option<&'static str> {
@@ -684,14 +735,6 @@ pub fn detect_package_manager(root: &Path) -> Option<&'static str> {
     } else {
         None
     }
-}
-
-fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut rendered = template.to_string();
-    for (key, value) in replacements {
-        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
-    }
-    rendered
 }
 
 fn package_manager_from_package_json(root: &Path) -> Option<&'static str> {
@@ -833,6 +876,33 @@ mod tests {
     }
 
     #[test]
+    fn init_normalizes_namespace_for_hyphenated_project_name() {
+        let temp = TempDir::new().unwrap();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        run_init(
+            InitOptions {
+                name: Some("dev-test1".into()),
+                schema_mode: Some(SchemaMode::Sql),
+                languages: Some(vec!["typescript".into()]),
+                template: None,
+                server_mode: Some(ServerMode::Local),
+                server_url: None,
+                yes: true,
+                cwd: temp.path().to_path_buf(),
+            },
+            &output,
+        )
+        .unwrap();
+
+        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+        assert_eq!(config.project.name, "dev-test1");
+        assert_eq!(
+            config.connection.get("dev").expect("dev env").namespace,
+            kalamdb_commons::NamespaceId::new("dev_test1")
+        );
+    }
+
+    #[test]
     fn remote_server_mode_disables_auto_start_db() {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
@@ -916,7 +986,8 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "schema.sql")
             .expect("schema.sql template");
-        let rendered_schema = render_template(schema.content, &[("project_name", "demo-app")]);
+        let rendered_schema =
+            render_template_pairs(schema.content, &[("project_name", "demo-app")]).unwrap();
         assert!(rendered_schema.contains("demo-app"));
         assert!(rendered_schema.contains("CREATE TABLE users"));
 
@@ -925,7 +996,8 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "package.json")
             .expect("package.json template");
-        let rendered_package = render_template(package_json.content, &[("project_name", "demo-app")]);
+        let rendered_package =
+            render_template_pairs(package_json.content, &[("project_name", "demo-app")]).unwrap();
         assert!(rendered_package.contains(r#""name": "demo-app""#));
 
         let starter = template
@@ -933,8 +1005,11 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "src/index.ts")
             .expect("src/index.ts template");
-        let rendered_starter =
-            render_template(starter.content, &[("server_url", "http://localhost:2900")]);
+        let rendered_starter = render_template_pairs(
+            starter.content,
+            &[("server_url", "http://localhost:2900")],
+        )
+        .unwrap();
         assert!(rendered_starter.contains("http://localhost:2900"));
         assert!(rendered_starter.contains("liveTable"));
         assert!(rendered_starter.contains("createClient"));

@@ -156,7 +156,7 @@ pub async fn apply_pending_migrations(
         let result = execute_sql_batch(
             &client,
             &up_section,
-            Some(&environment.namespace),
+            Some(environment.namespace.as_str()),
             output,
             &filename,
         )
@@ -203,11 +203,11 @@ struct ServerMigrationRecord {
 
 pub(crate) async fn load_server_migration_state(
     client: &KalamLinkClient,
-    namespace: &str,
+    namespace: &kalamdb_commons::NamespaceId,
 ) -> Result<MigrationState> {
     let sql = format!(
         "SELECT migration_id, namespace, name, checksum, status, started_at, finished_at, error_message, source, kalam_version FROM system.migrations WHERE namespace = {}",
-        sql_string(namespace)
+        sql_string(namespace.as_str())
     );
     let response = client.execute_query(&sql, None, None, None).await.map_err(CLIError::from)?;
     if !response.success() {
@@ -240,7 +240,7 @@ pub(crate) async fn save_server_migration_record(
     let sql = if record_exists {
         format!(
             "UPDATE system.migrations SET namespace = {}, name = {}, checksum = {}, status = {}, started_at = {}, finished_at = {}, error_message = {}, source = {}, kalam_version = {} WHERE migration_key = {}",
-            sql_string(&record.namespace),
+            sql_string(record.namespace.as_str()),
             sql_string(&record.name),
             sql_string(&record.checksum),
             sql_string(&record.status.to_string()),
@@ -256,7 +256,7 @@ pub(crate) async fn save_server_migration_record(
             "INSERT INTO system.migrations (migration_key, migration_id, namespace, name, checksum, status, started_at, finished_at, error_message, source, kalam_version) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             sql_string(&migration_key),
             sql_string(&record.migration_id),
-            sql_string(&record.namespace),
+            sql_string(record.namespace.as_str()),
             sql_string(&record.name),
             sql_string(&record.checksum),
             sql_string(&record.status.to_string()),
@@ -279,7 +279,7 @@ pub(crate) async fn save_server_migration_record(
 }
 
 fn server_migration_key(record: &MigrationRecord) -> String {
-    format!("{}:{}", record.namespace, record.migration_id)
+    format!("{}:{}", record.namespace.as_str(), record.migration_id)
 }
 
 fn sql_timestamp(value: Option<&str>) -> Result<String> {
@@ -371,7 +371,7 @@ impl From<ServerMigrationRecord> for MigrationRecord {
     fn from(record: ServerMigrationRecord) -> Self {
         Self {
             migration_id: record.migration_id,
-            namespace: record.namespace,
+            namespace: kalamdb_commons::NamespaceId::new(record.namespace),
             name: record.name,
             checksum: record.checksum,
             status: record.status,
@@ -740,7 +740,7 @@ mod tests {
             applied: Vec::new(),
             records: vec![MigrationRecord {
                 migration_id: "0002_auto_missing.sql".into(),
-                namespace: "test1".into(),
+                namespace: kalamdb_commons::NamespaceId::new("test1"),
                 name: "auto_missing".into(),
                 checksum: "abc".into(),
                 status: MigrationStatus::Failed,

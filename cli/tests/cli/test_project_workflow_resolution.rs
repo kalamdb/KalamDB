@@ -31,7 +31,7 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
 
     let kalam_toml = fs::read_to_string(project_dir.join("kalam.toml")).expect("read kalam.toml");
     let augmented = format!(
-        "{kalam_toml}\n[connection.prod]\nurl = \"https://config.example.com\"\nnamespace = \"config-ns\"\n"
+        "{kalam_toml}\n[connection.prod]\nurl = \"https://config.example.com\"\nnamespace = \"config_ns\"\n"
     );
     fs::write(project_dir.join("kalam.toml"), augmented).expect("write prod connection");
 
@@ -50,7 +50,7 @@ fn test_project_workflow_environment_precedence_cli_over_env_and_config() {
         .current_dir(&project_dir)
         .env("KALAM_ENV", "prod")
         .env("KALAM_URL", &env_url)
-        .env("KALAM_NAMESPACE", "env-ns")
+        .env("KALAM_NAMESPACE", "env_ns")
         .args([
             "status",
             "--env",
@@ -58,7 +58,7 @@ fn test_project_workflow_environment_precedence_cli_over_env_and_config() {
             "--url",
             &cli_url,
             "--namespace",
-            "cli-ns",
+            "cli_ns",
         ]);
 
     let output = status_cmd.output().expect("status");
@@ -70,7 +70,7 @@ fn test_project_workflow_environment_precedence_cli_over_env_and_config() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(&cli_url), "CLI url flag should win\n{stderr}");
-    assert!(stderr.contains("cli-ns"), "CLI namespace flag should win\n{stderr}");
+    assert!(stderr.contains("cli_ns"), "CLI namespace flag should win\n{stderr}");
     assert!(stderr.contains("cli flag"), "expected cli resolution source\n{stderr}");
 }
 
@@ -84,7 +84,7 @@ fn test_project_workflow_environment_precedence_env_over_config() {
     status_cmd
         .current_dir(&project_dir)
         .env("KALAM_URL", &env_url)
-        .env("KALAM_NAMESPACE", "env-ns")
+        .env("KALAM_NAMESPACE", "env_ns")
         .args(["status", "--env", "prod"]);
 
     let output = status_cmd.output().expect("status");
@@ -95,5 +95,5 @@ fn test_project_workflow_environment_precedence_env_over_config() {
         stderr.contains(&env_url),
         "env var should override kalam.toml\n{stderr}"
     );
-    assert!(stderr.contains("env-ns"), "env namespace should override config\n{stderr}");
+    assert!(stderr.contains("env_ns"), "env namespace should override config\n{stderr}");
 }

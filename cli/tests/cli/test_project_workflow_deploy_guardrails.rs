@@ -30,7 +30,7 @@ fn test_project_workflow_deploy_is_not_supported_on_prod() {
         "--url",
         "https://db.example.com",
         "--namespace",
-        "prod-app",
+        "prod_app",
     ]);
     assert!(link_cmd.output().expect("link").status.success());
 

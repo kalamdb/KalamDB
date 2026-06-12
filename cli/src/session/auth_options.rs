@@ -1,3 +1,4 @@
+use kalamdb_commons::UserId;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CLIError, Result};
@@ -94,7 +95,7 @@ pub struct CurrentUserResponse {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CurrentUser {
-    pub id: String,
+    pub id: UserId,
     pub role: String,
     pub name: Option<String>,
     pub email: Option<String>,
@@ -105,7 +106,7 @@ pub struct CurrentUser {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalLoginSession {
     pub access_token: String,
-    pub user_id: String,
+    pub user_id: UserId,
     pub user_name: Option<String>,
     pub user_email: Option<String>,
     pub expires_at: String,
