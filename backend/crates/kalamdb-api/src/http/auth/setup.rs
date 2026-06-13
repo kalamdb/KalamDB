@@ -9,7 +9,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::{
     errors::error::AuthError,
     extract_client_ip_secure,
-    security::password::{hash_password, validate_password},
+    security::password::{hash_password, validate_password_with_auth_settings},
     UserRepository,
 };
 use kalamdb_commons::{
@@ -105,11 +105,11 @@ pub async fn server_setup_handler(
     }
 
     // Validate passwords
-    if let Err(e) = validate_password(&body.password) {
+    if let Err(e) = validate_password_with_auth_settings(&body.password, config.get_ref()) {
         return HttpResponse::BadRequest()
             .json(AuthErrorResponse::new("weak_password", format!("DBA user password: {}", e)));
     }
-    if let Err(e) = validate_password(&body.root_password) {
+    if let Err(e) = validate_password_with_auth_settings(&body.root_password, config.get_ref()) {
         return HttpResponse::BadRequest()
             .json(AuthErrorResponse::new("weak_password", format!("Root password: {}", e)));
     }
@@ -139,7 +139,7 @@ pub async fn server_setup_handler(
     }
 
     // Hash passwords
-    let root_password_hash = match hash_password(&body.root_password, None).await {
+    let root_password_hash = match hash_password(&body.root_password, Some(config.local.bcrypt_cost)).await {
         Ok(hash) => hash,
         Err(e) => {
             log::error!("Failed to hash root password: {}", e);
@@ -148,7 +148,7 @@ pub async fn server_setup_handler(
         },
     };
 
-    let dba_password_hash = match hash_password(&body.password, None).await {
+    let dba_password_hash = match hash_password(&body.password, Some(config.local.bcrypt_cost)).await {
         Ok(hash) => hash,
         Err(e) => {
             log::error!("Failed to hash DBA password: {}", e);

@@ -19,7 +19,7 @@ export function NumberDisplay({ value, dataType }: NumberDisplayProps) {
     // Preserve the exact textual representation for 64-bit integers.
     formatted = String(value);
   } else {
-    formatted = Number(value).toLocaleString();
+    formatted = String(value);
   }
 
   return (

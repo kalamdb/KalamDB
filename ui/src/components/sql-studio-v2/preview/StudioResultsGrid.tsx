@@ -278,10 +278,14 @@ export function StudioResultsGrid({
   const schema = isLiveMode
     ? rawSchema.filter((f) => !f.name.startsWith("_live_"))
     : rawSchema;
-  const sourceRows =
+  const resultRows =
     result?.status === "success"
-      ? result.rows.slice(0, MAX_RENDERED_ROWS)
+      ? result.rows
       : [];
+  const sourceRows =
+    isLiveMode
+      ? resultRows
+      : resultRows.slice(0, MAX_RENDERED_ROWS);
   const parsedTableContext = useMemo(() => extractTableContext(activeSql), [activeSql]);
   const cellNamespace = parsedTableContext?.namespace ?? selectedTable?.namespace;
   const cellTableName = parsedTableContext?.tableName ?? selectedTable?.name;
@@ -360,9 +364,13 @@ export function StudioResultsGrid({
     return indices;
   }, [sourceRows, sortState, edits, getCellEditedValue, isLiveMode, schema]);
 
-  const pageCount = Math.max(1, Math.ceil(sortedRowIndices.length / pageSize));
+  const displayRowIndices = useMemo(
+    () => isLiveMode ? sortedRowIndices.slice(0, MAX_RENDERED_ROWS) : sortedRowIndices,
+    [isLiveMode, sortedRowIndices],
+  );
+  const pageCount = Math.max(1, Math.ceil(displayRowIndices.length / pageSize));
   const currentPageStart = pageIndex * pageSize;
-  const currentPageRows = sortedRowIndices.slice(currentPageStart, currentPageStart + pageSize);
+  const currentPageRows = displayRowIndices.slice(currentPageStart, currentPageStart + pageSize);
   const columnNames = useMemo(() => schema.map((field) => field.name), [schema]);
   const selectedCellKey = selectedCell ? `${selectedCell.rowIndex}:${selectedCell.columnName}` : null;
 
@@ -1038,7 +1046,13 @@ export function StudioResultsGrid({
                         const cellKey = `${rowIndex}:${field.name}`;
 
                         return (
-                          <td key={`${rowIndex}-${field.name}`} className="border-r border-border bg-background px-0 py-0 align-middle">
+                          <td
+                            key={`${rowIndex}-${field.name}`}
+                            className={cn(
+                              "border-r border-border bg-background px-0 py-0 align-middle",
+                              selectedCellKey === cellKey && "ring-2 ring-inset ring-sky-500/80 bg-sky-500/10",
+                            )}
+                          >
                             <div
                               data-row-index={rowIndex}
                               data-column-name={field.name}
@@ -1078,7 +1092,6 @@ export function StudioResultsGrid({
                                 "h-7 truncate overflow-hidden whitespace-nowrap px-2 py-1 text-[11px] leading-4 outline-none transition-colors duration-500 [&_span]:inline-block [&_span]:max-w-full [&_span]:truncate [&_span]:align-middle [&_span]:text-[11px] [&_button]:max-w-full [&_button]:truncate [&_button]:text-[11px]",
                                 value === null && "italic text-muted-foreground",
                                 cellEdited && "bg-amber-500/20",
-                                selectedCellKey === cellKey && "ring-2 ring-inset ring-sky-500/80 bg-sky-500/10",
                                 // Highlight changed cells during live updates
                                 isLiveUpdate && liveChangedCols?.has(field.name) && "bg-amber-400/25 ring-1 ring-amber-400/40",
                               )}

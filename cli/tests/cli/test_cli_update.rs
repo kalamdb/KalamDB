@@ -90,8 +90,7 @@ fn current_platform() -> String {
 
 fn build_release_archive(version: &str, platform: &str) -> Vec<u8> {
     let script = format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", UPDATED_FIXTURE_OUTPUT);
-    let binary_name = "kalam";
-    let entry_path = format!("kalamcli-{}-{}/{}", version, platform, binary_name);
+    let entry_path = format!("kalamcli-{}-{}", version, platform);
 
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     {

@@ -623,14 +623,14 @@ impl VirtualView for SettingsView {
                 categories,
                 [
                     (
-                        "auth.bcrypt_cost",
-                        config.auth.bcrypt_cost,
+                        "auth.local.bcrypt_cost",
+                        config.auth.local.bcrypt_cost,
                         "Bcrypt cost factor for password hashing",
                         "auth"
                     ),
                     (
-                        "auth.min_password_length",
-                        config.auth.min_password_length,
+                        "auth.local.min_password_length",
+                        config.auth.local.min_password_length,
                         "Minimum password length",
                         "auth"
                     ),

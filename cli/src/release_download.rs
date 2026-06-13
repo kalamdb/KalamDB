@@ -2,6 +2,7 @@ use std::{
     env,
     fs::{self, File},
     io::{self, Cursor, Read},
+    net::IpAddr,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -9,8 +10,11 @@ use std::{
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
+use url::Url;
 
-use crate::{terminal_ui, update_check, CLIError, Result};
+use crate::{release_version::ReleaseVersion, terminal_ui, CLIError, Result};
+
+pub const GITHUB_REPO: &str = "kalamdb/KalamDB";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveKind {
@@ -18,19 +22,22 @@ pub enum ArchiveKind {
     Zip,
 }
 
-pub fn release_base_url(version: &str, override_env_var: &str) -> String {
+pub fn release_base_url(version: &str, override_env_var: &str) -> Result<String> {
+    let version = ReleaseVersion::parse(version)?;
+
     if let Some(override_url) = env::var_os(override_env_var) {
         let override_url = override_url.to_string_lossy().trim().trim_end_matches('/').to_string();
         if !override_url.is_empty() {
-            return override_url;
+            validate_release_base_url_override(&override_url, override_env_var)?;
+            return Ok(override_url);
         }
     }
 
-    format!(
+    Ok(format!(
         "https://github.com/{}/releases/download/v{}",
-        update_check::GITHUB_REPO,
-        version
-    )
+        GITHUB_REPO,
+        version.as_str()
+    ))
 }
 
 pub fn detect_platform() -> Result<String> {
@@ -155,7 +162,7 @@ pub fn checksum_for_archive(checksums: &str, archive_name: &str) -> Option<Strin
     checksums
         .lines()
         .find_map(|line| parse_checksum_line(line, archive_name))
-        .map(str::to_string)
+        .map(str::to_ascii_lowercase)
 }
 
 pub fn sha256_file(path: &Path) -> Result<String> {
@@ -223,9 +230,13 @@ pub fn find_first_file_matching(root: &Path, predicate: impl Fn(&Path) -> bool) 
         let entries = fs::read_dir(&path).ok()?;
         for entry in entries.flatten() {
             let entry_path = entry.path();
-            if entry_path.is_dir() {
+            let metadata = fs::symlink_metadata(&entry_path).ok()?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
                 stack.push(entry_path);
-            } else if predicate(&entry_path) {
+            } else if metadata.is_file() && predicate(&entry_path) {
                 return Some(entry_path);
             }
         }
@@ -314,11 +325,42 @@ fn parse_checksum_line<'a>(line: &'a str, archive_name: &str) -> Option<&'a str>
     let mut parts = line.split_whitespace();
     let hash = parts.next()?;
     let name = parts.next()?.trim_start_matches('*');
-    if name == archive_name {
+    if parts.next().is_some() {
+        return None;
+    }
+    if name == archive_name && is_sha256_hex(hash) {
         Some(hash)
     } else {
         None
     }
+}
+
+fn is_sha256_hex(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_release_base_url_override(url: &str, env_var: &str) -> Result<()> {
+    let parsed = Url::parse(url).map_err(|error| {
+        CLIError::ConfigurationError(format!("invalid {env_var} release base URL: {error}"))
+    })?;
+
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(CLIError::ConfigurationError(format!("{env_var} must use http or https")));
+    }
+
+    let Some(host) = parsed.host_str() else {
+        return Err(CLIError::ConfigurationError(format!("{env_var} must include a host")));
+    };
+
+    if host.eq_ignore_ascii_case("localhost")
+        || host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+    {
+        return Ok(());
+    }
+
+    Err(CLIError::ConfigurationError(format!(
+        "{env_var} may only override releases with a localhost URL"
+    )))
 }
 
 #[cfg(test)]
@@ -327,27 +369,29 @@ mod tests {
 
     #[test]
     fn checksum_line_parser_accepts_standard_and_binary_lines() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assert_eq!(
             parse_checksum_line(
-                "abc123  kalamcli-1.0.0-macos-aarch64.tar.gz",
+                &format!("{hash}  kalamcli-1.0.0-macos-aarch64.tar.gz"),
                 "kalamcli-1.0.0-macos-aarch64.tar.gz"
             ),
-            Some("abc123")
+            Some(hash)
         );
         assert_eq!(
             parse_checksum_line(
-                "abc123 *kalamcli-1.0.0-windows-x86_64.zip",
+                &format!("{hash} *kalamcli-1.0.0-windows-x86_64.zip"),
                 "kalamcli-1.0.0-windows-x86_64.zip"
             ),
-            Some("abc123")
+            Some(hash)
         );
     }
 
     #[test]
     fn checksum_line_parser_ignores_other_archives() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assert_eq!(
             parse_checksum_line(
-                "abc123  kalamcli-1.0.0-linux-x86_64.tar.gz",
+                &format!("{hash}  kalamcli-1.0.0-linux-x86_64.tar.gz"),
                 "kalamcli-1.0.0-macos-aarch64.tar.gz"
             ),
             None
@@ -355,9 +399,67 @@ mod tests {
     }
 
     #[test]
+    fn checksum_line_parser_rejects_invalid_sha256_hashes() {
+        assert_eq!(
+            parse_checksum_line(
+                "not-a-sha  kalamcli-1.0.0-linux-x86_64.tar.gz",
+                "kalamcli-1.0.0-linux-x86_64.tar.gz"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_checksum_line(
+                "abc123  kalamcli-1.0.0-linux-x86_64.tar.gz",
+                "kalamcli-1.0.0-linux-x86_64.tar.gz"
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_first_file_matching_does_not_follow_symlinked_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        std::fs::write(outside.path().join("kalam"), b"outside").unwrap();
+        symlink(outside.path(), root.path().join("linked")).unwrap();
+
+        let found = find_first_file_matching(root.path(), |path| {
+            path.file_name().and_then(|name| name.to_str()) == Some("kalam")
+        });
+
+        assert_eq!(found, None);
+    }
+
+    #[test]
     fn archive_extension_matches_platform() {
         assert_eq!(archive_extension(archive_kind_for_platform("macos-aarch64")), "tar.gz");
         assert_eq!(archive_extension(archive_kind_for_platform("windows-x86_64")), "zip");
+    }
+
+    #[test]
+    fn release_base_url_override_allows_loopback_only() {
+        let env_var = "KALAM_TEST_RELEASE_BASE_URL_LOOPBACK";
+        std::env::set_var(env_var, "http://127.0.0.1:4010/releases/download/v0.5.2/");
+
+        assert_eq!(
+            release_base_url("0.5.2", env_var).unwrap(),
+            "http://127.0.0.1:4010/releases/download/v0.5.2"
+        );
+
+        std::env::remove_var(env_var);
+    }
+
+    #[test]
+    fn release_base_url_override_rejects_remote_hosts() {
+        let env_var = "KALAM_TEST_RELEASE_BASE_URL_REMOTE";
+        std::env::set_var(env_var, "https://example.com/releases/download/v0.5.2");
+
+        assert!(release_base_url("0.5.2", env_var).is_err());
+
+        std::env::remove_var(env_var);
     }
 
     #[test]

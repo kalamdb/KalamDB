@@ -234,7 +234,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      pre_release: ${{ steps.version.outputs.pre_release }}
 
     steps:
       - name: Checkout
@@ -1692,12 +1691,55 @@ jobs:
           # Keep asset names unprefixed (no ./) so update clients can match by exact filename.
           sha256sum "${release_assets[@]}" > SHA256SUMS
 
+      - name: Stamp CLI build_date into versions.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.read_version.outputs.version }}"
+          CLI_TAR="dist/${VERSION}/kalamcli-${VERSION}-linux-x86_64.tar.gz"
+          if [[ ! -f "$CLI_TAR" ]]; then
+            echo "Skipping versions.json build_date stamp; missing ${CLI_TAR}" >&2
+            exit 0
+          fi
+
+          EXTRACT_DIR="$(mktemp -d)"
+          tar -xzf "$CLI_TAR" -C "$EXTRACT_DIR"
+          CLI_BIN="$(find "$EXTRACT_DIR" -type f -name kalam | head -1)"
+          if [[ -z "$CLI_BIN" ]]; then
+            echo "Skipping versions.json build_date stamp; kalam binary not found in ${CLI_TAR}" >&2
+            rm -rf "$EXTRACT_DIR"
+            exit 0
+          fi
+
+          BUILD_DATE="$( "$CLI_BIN" --version | sed -n 's/^Built: //p' | head -1 )"
+          rm -rf "$EXTRACT_DIR"
+          if [[ -z "$BUILD_DATE" ]]; then
+            echo "Skipping versions.json build_date stamp; kalam --version did not report Built:" >&2
+            exit 0
+          fi
+
+          python3 - "$BUILD_DATE" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          build_date = sys.argv[1]
+          path = Path("versions.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          data.setdefault("packages", {}).setdefault("core_components", {}).setdefault("cli", {})[
+              "build_date"
+          ] = build_date
+          path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          echo "Stamped packages.core_components.cli.build_date=${BUILD_DATE} into versions.json"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
           target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-          prerelease: ${{ needs.read_version.outputs.pre_release == 'true' }}
+          prerelease: ${{ github.event.inputs.pre_release == 'true' }}
           generate_release_notes: true
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz

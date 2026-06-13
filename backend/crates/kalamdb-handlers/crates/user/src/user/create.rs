@@ -94,7 +94,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     )
                 })?;
                 let enforce_complexity = self.enforce_complexity
-                    || self.app_context.config().auth.enforce_password_complexity;
+                    || self.app_context.config().auth.local.enforce_password_complexity;
 
                 if enforce_complexity {
                     let policy = PasswordPolicy::default().with_enforced_complexity(true);
@@ -104,7 +104,7 @@ impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
                     validate_password_characters(&raw)
                         .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
                 }
-                let bcrypt_cost = self.app_context.config().auth.bcrypt_cost;
+                let bcrypt_cost = self.app_context.config().auth.local.bcrypt_cost;
                 let hash = hash_password(&raw, Some(bcrypt_cost)).await.map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Password hash error: {}", e))
                 })?;

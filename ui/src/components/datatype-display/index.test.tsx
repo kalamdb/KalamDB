@@ -25,6 +25,17 @@ vi.mock("@kalamdb/client", () => {
 });
 
 describe("CellDisplay", () => {
+  it("renders integer values without thousands separators", () => {
+    render(
+      <CellDisplay
+        value={776079}
+        dataType="INT"
+      />,
+    );
+
+    expect(screen.getByText("776079")).toBeTruthy();
+  });
+
   it("renders bigint-like strings without losing precision", () => {
     render(
       <CellDisplay

@@ -119,8 +119,8 @@ pub fn update_schema_baseline(
         "schema",
         format!(
             "updated schema baseline {} from {}",
-            display_project_relative_path(project_root, &baseline),
-            display_project_relative_path(project_root, &source)
+            display_project_path(project_root, &baseline),
+            display_project_path(project_root, &source)
         ),
     );
     Ok(())
@@ -187,10 +187,6 @@ fn schema_file_stamp(path: &Path) -> SchemaFileStamp {
         modified: metadata.as_ref().and_then(|m| m.modified().ok()),
         len: metadata.map(|m| m.len()),
     }
-}
-
-fn display_project_relative_path(project_root: &Path, path: &Path) -> String {
-    display_project_path(project_root, path)
 }
 
 #[cfg(test)]
@@ -345,10 +341,10 @@ INSERT INTO users VALUES ('hello;world');
     }
 
     #[test]
-    fn display_project_relative_path_prefers_project_relative_output() {
+    fn display_project_path_prefers_project_relative_output() {
         let root = Path::new("/tmp/demo");
         let path = root.join("kalam/.schema-baseline.sql");
 
-        assert_eq!(super::display_project_relative_path(root, &path), "kalam/.schema-baseline.sql");
+        assert_eq!(display_project_path(root, &path), "kalam/.schema-baseline.sql");
     }
 }

@@ -17,7 +17,7 @@ use crate::{
             logs::ServiceLogRegistry,
             precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
             processes::ProcessSupervisor,
-            server::{build_local_server_command, wait_for_server_ready},
+            server::{prepare_local_server_launch, wait_for_server_ready},
             watch::{
                 run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
                 update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
@@ -98,7 +98,7 @@ impl DevSchemaLoop {
             return Ok(DevLoopAction::Continue);
         }
 
-        let watched_path = display_project_relative_path(&ctx.project_root, &path);
+        let watched_path = display_project_path(&ctx.project_root, &path);
         let message = format!("Schema changed in {watched_path}; applying...");
         output.status(&message);
         let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await;
@@ -198,6 +198,31 @@ impl DevSchemaLoop {
 
 pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) -> Result<()> {
     let output = ctx.output().with_display_mode(options.display_mode);
+    let mut supervisor = ProcessSupervisor::new();
+    let mut local_server_managed = false;
+
+    let result =
+        run_dev_session_inner(ctx, options, &output, &mut supervisor, &mut local_server_managed).await;
+
+    if local_server_managed {
+        if let Some(pid) = supervisor.managed_pid("server") {
+            output.status(format!("stopping local KalamDB server (pid {pid})"));
+        } else {
+            output.status("stopping local KalamDB server");
+        }
+        supervisor.shutdown_process("server").await;
+    }
+    supervisor.shutdown().await;
+    result
+}
+
+async fn run_dev_session_inner(
+    ctx: &WorkflowContext,
+    options: DevSessionOptions,
+    output: &WorkflowOutput,
+    supervisor: &mut ProcessSupervisor,
+    local_server_managed: &mut bool,
+) -> Result<()> {
     let mut registry = ServiceLogRegistry::new();
     registry.register("server");
 
@@ -213,10 +238,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
         ProgressTaskStatus::Succeeded,
         project_ready_message(&ctx.config.project.name, &ctx.project_root),
     );
-    let precheck = run_dev_prechecks(ctx, &output, &server_source).await?;
-
-    let mut supervisor = ProcessSupervisor::new();
-    let mut local_server_spawned = false;
+    let precheck = run_dev_prechecks(ctx, output, &server_source).await?;
 
     if ctx.config.dev.auto_start_db {
         if precheck.local_server_reused {
@@ -227,7 +249,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
             );
         } else {
-            let command = build_local_server_command(
+            let launch = prepare_local_server_launch(
                 &ctx.project_root,
                 &ctx.config,
                 &precheck.environment.url,
@@ -238,11 +260,23 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 ProgressTaskStatus::Running,
                 "Starting local KalamDB server...",
             );
-            if let Err(error) = supervisor.spawn_one("server", &command, &registry, &output).await {
+            let config_arg = launch.config_path.display().to_string();
+            if let Err(error) = supervisor
+                .spawn_program_one(
+                    "server",
+                    &launch.program,
+                    &[config_arg],
+                    &launch.working_dir,
+                    &registry,
+                    output,
+                )
+                .await
+            {
                 output.status(format!("failed to start local KalamDB server: {error}"));
                 return Err(error);
             }
-            wait_for_server_ready(&precheck.environment.url, &output)
+            *local_server_managed = true;
+            wait_for_server_ready(&precheck.environment.url, output, supervisor)
                 .await
                 .map_err(|error| {
                     output.status(format!("local KalamDB server did not become ready: {error}"));
@@ -251,7 +285,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
             ensure_local_dev_authentication_ready(
                 ctx,
                 &precheck.environment,
-                &output,
+                output,
                 &server_source,
             )
             .await?;
@@ -260,18 +294,16 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 ProgressTaskStatus::Succeeded,
                 local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
             );
-            local_server_spawned = true;
         }
     }
 
     let mut schema_loop = DevSchemaLoop::new(options.force);
-    if schema_loop.bootstrap(ctx, &output).await? == DevLoopAction::Stop {
-        supervisor.shutdown().await;
+    if schema_loop.bootstrap(ctx, output).await? == DevLoopAction::Stop {
         return Ok(());
     }
 
     if !ctx.config.dev.processes.is_empty() {
-        supervisor.spawn_all(&ctx.config.dev.processes, &registry, &output).await?;
+        supervisor.spawn_all(&ctx.config.dev.processes, &registry, output).await?;
     }
 
     let watch_enabled = precheck.watch_enabled;
@@ -297,7 +329,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 break;
             }
             _ = watch_interval.tick(), if watch_enabled => {
-                if schema_loop.handle_watch_tick(ctx, &output).await? == DevLoopAction::Stop {
+                if schema_loop.handle_watch_tick(ctx, output).await? == DevLoopAction::Stop {
                     output.status("shutting down (schema prompt cancelled)");
                     break;
                 }
@@ -309,7 +341,7 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
                 }
                 let managed_count = supervisor.count();
                 if managed_count == 0
-                    && (local_server_spawned || !ctx.config.dev.processes.is_empty())
+                    && (*local_server_managed || !ctx.config.dev.processes.is_empty())
                 {
                     output.status("all dev processes exited");
                     break;
@@ -322,7 +354,6 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
         }
     }
 
-    supervisor.shutdown().await;
     Ok(())
 }
 
@@ -520,10 +551,6 @@ fn local_server_ready_message(server_url: &str, log_path: Option<&std::path::Pat
     }
 }
 
-fn display_project_relative_path(project_root: &std::path::Path, path: &std::path::Path) -> String {
-    display_project_path(project_root, path)
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -549,9 +576,9 @@ mod tests {
     }
 
     #[test]
-    fn display_project_relative_path_prefers_project_relative_output() {
+    fn display_project_path_prefers_project_relative_output() {
         let root = std::path::Path::new("/tmp/demo");
         let path = root.join("schema.sql");
-        assert_eq!(display_project_relative_path(root, &path), "schema.sql");
+        assert_eq!(display_project_path(root, &path), "schema.sql");
     }
 }

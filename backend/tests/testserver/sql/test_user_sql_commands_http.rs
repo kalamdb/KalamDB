@@ -12,7 +12,7 @@ use kalam_client::models::ResponseStatus;
 async fn test_user_sql_commands_over_http() {
     super::test_support::http_server::with_http_test_server_config(
         |cfg| {
-            cfg.auth.enforce_password_complexity = true;
+            cfg.auth.local.enforce_password_complexity = true;
         },
         |server| {
             Box::pin(async move {

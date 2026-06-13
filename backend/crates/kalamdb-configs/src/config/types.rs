@@ -937,22 +937,6 @@ pub struct AuthSettings {
     #[serde(default = "default_auth_cookie_secure")]
     pub cookie_secure: bool,
 
-    /// Minimum password length (default: 8)
-    #[serde(default = "default_auth_min_password_length")]
-    pub min_password_length: usize,
-
-    /// Maximum password length (default: 1024)
-    #[serde(default = "default_auth_max_password_length")]
-    pub max_password_length: usize,
-
-    /// Bcrypt cost factor (default: 12, range: 4-31)
-    #[serde(default = "default_auth_bcrypt_cost")]
-    pub bcrypt_cost: u32,
-
-    /// Enforce password complexity policy (uppercase, lowercase, digit, special)
-    #[serde(default = "default_auth_enforce_password_complexity")]
-    pub enforce_password_complexity: bool,
-
     /// Allow initial setup from non-localhost clients (default: false)
     #[serde(default = "default_auth_allow_remote_setup")]
     pub allow_remote_setup: bool,
@@ -978,6 +962,22 @@ pub struct AuthLocalSettings {
     /// Enable direct local username/password login.
     #[serde(default = "default_auth_local_enabled")]
     pub enabled: bool,
+
+    /// Bcrypt cost factor (default: 12, range: 4-31)
+    #[serde(default = "default_auth_bcrypt_cost")]
+    pub bcrypt_cost: u32,
+
+    /// Minimum password length (default: 8)
+    #[serde(default = "default_auth_min_password_length")]
+    pub min_password_length: usize,
+
+    /// Maximum password length (default: 1024)
+    #[serde(default = "default_auth_max_password_length")]
+    pub max_password_length: usize,
+
+    /// Enforce password complexity policy (uppercase, lowercase, digit, special)
+    #[serde(default = "default_auth_enforce_password_complexity")]
+    pub enforce_password_complexity: bool,
 }
 
 /// Single OpenID Connect provider configuration.
@@ -1050,6 +1050,10 @@ impl Default for AuthLocalSettings {
     fn default() -> Self {
         Self {
             enabled: default_auth_local_enabled(),
+            bcrypt_cost: default_auth_bcrypt_cost(),
+            min_password_length: default_auth_min_password_length(),
+            max_password_length: default_auth_max_password_length(),
+            enforce_password_complexity: default_auth_enforce_password_complexity(),
         }
     }
 }
@@ -1080,10 +1084,6 @@ impl Default for AuthSettings {
             jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
             jwt_expiry_hours: default_auth_jwt_expiry_hours(),
             cookie_secure: default_auth_cookie_secure(),
-            min_password_length: default_auth_min_password_length(),
-            max_password_length: default_auth_max_password_length(),
-            bcrypt_cost: default_auth_bcrypt_cost(),
-            enforce_password_complexity: default_auth_enforce_password_complexity(),
             allow_remote_setup: default_auth_allow_remote_setup(),
             pg_auth_token: None,
             local: AuthLocalSettings::default(),

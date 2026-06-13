@@ -4,7 +4,6 @@ use std::{
     env, fs,
     io::IsTerminal,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
@@ -16,7 +15,7 @@ use crate::{
     error::{CLIError, Result},
     history::get_kalam_config_dir,
     output::WorkflowOutput,
-    process_util::build_cd_and_run_command,
+    process::{resolve_program_on_path, run_program, shell_working_directory},
     release_download::{
         archive_kind_for_platform, archive_name, copy_file_with_executable_bit, create_temp_dir,
         detect_platform, download_bytes, download_text, extract_archive, find_first_file_matching,
@@ -24,7 +23,10 @@ use crate::{
     },
     terminal_ui,
     workflow::{
-        dev::logs::ServiceLogSource,
+        dev::{
+            logs::ServiceLogSource,
+            processes::ProcessSupervisor,
+        },
         project::{
             config::KalamProjectConfig,
             guidance::{
@@ -152,7 +154,7 @@ fn resolve_kalamdb_server_bin_from(current_exe: Option<PathBuf>) -> Result<PathB
         return Ok(managed_path);
     }
 
-    if let Some(path) = find_on_path("kalamdb-server") {
+    if let Some(path) = resolve_program_on_path("kalamdb-server") {
         return Ok(path);
     }
 
@@ -173,24 +175,6 @@ fn server_binary_name() -> &'static str {
     } else {
         "kalamdb-server"
     }
-}
-
-fn find_on_path(binary: &str) -> Option<PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        let candidate = dir.join(binary);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let exe_candidate = dir.join(format!("{binary}.exe"));
-            if exe_candidate.is_file() {
-                return Some(exe_candidate);
-            }
-        }
-    }
-    None
 }
 
 pub async fn ensure_local_server_binary(
@@ -309,7 +293,7 @@ fn is_managed_server_binary(path: &Path) -> bool {
 }
 
 fn read_server_binary_version(path: &Path) -> Result<Option<String>> {
-    let output = Command::new(path).arg("--version").output().map_err(|error| {
+    let output = run_program(path, &["--version"], None).map_err(|error| {
         CLIError::ConfigurationError(format!(
             "failed to read version from kalamdb-server '{}': {error}",
             path.display()
@@ -332,23 +316,28 @@ fn parse_server_version_output(output: &str) -> Option<String> {
     Some(version.to_string())
 }
 
-pub fn build_local_server_command(
+pub struct LocalServerLaunch {
+    pub program: PathBuf,
+    pub config_path: PathBuf,
+    pub working_dir: PathBuf,
+}
+
+pub fn prepare_local_server_launch(
     project_root: &Path,
     config: &KalamProjectConfig,
     server_url: &str,
-) -> Result<String> {
+) -> Result<LocalServerLaunch> {
     let port = parse_server_port(server_url)?;
     let config_path = local_server_config_path(project_root, config);
     if !config_path.is_file() {
         write_local_server_config(project_root, config, port)?;
     }
 
-    let server_bin = resolve_kalamdb_server_bin()?;
-    Ok(build_cd_and_run_command(
-        project_root,
-        &server_bin,
-        &[config_path.display().to_string()],
-    ))
+    Ok(LocalServerLaunch {
+        program: resolve_kalamdb_server_bin()?,
+        config_path: shell_working_directory(&config_path),
+        working_dir: shell_working_directory(project_root),
+    })
 }
 
 async fn download_and_install_managed_server(
@@ -367,7 +356,7 @@ async fn download_and_install_managed_server(
     let platform = detect_platform()?;
     let archive_kind = archive_kind_for_platform(&platform);
     let archive_name = archive_name(SERVER_ARTIFACT_PREFIX, version, &platform, archive_kind);
-    let base_url = release_base_url(version, SERVER_RELEASE_BASE_URL_ENV);
+    let base_url = release_base_url(version, SERVER_RELEASE_BASE_URL_ENV)?;
     let archive_url = format!("{base_url}/{archive_name}");
     let checksums_url = format!("{base_url}/SHA256SUMS");
 
@@ -450,25 +439,48 @@ fn is_server_binary_candidate(path: &Path) -> bool {
         || file_name.starts_with("kalamdb-server-")
 }
 
-pub async fn wait_for_server_ready(server_url: &str, output: &WorkflowOutput) -> Result<()> {
+pub const SERVER_READY_TIMEOUT_SECS: u64 = 60;
+const SERVER_READY_PROGRESS_INTERVAL_SECS: u64 = 10;
+
+pub async fn wait_for_server_ready(
+    server_url: &str,
+    output: &WorkflowOutput,
+    supervisor: &mut ProcessSupervisor,
+) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|e| CLIError::ConfigurationError(format!("failed to build http client: {e}")))?;
 
-    for attempt in 1..=60 {
+    output.detail(format!(
+        "waiting for local KalamDB server (timeout {SERVER_READY_TIMEOUT_SECS}s)..."
+    ));
+
+    for attempt in 1..=SERVER_READY_TIMEOUT_SECS {
         if check_server_health(&client, server_url).await {
             output.detail(format!("local KalamDB server ready ({attempt}s)"));
             return Ok(());
         }
-        if attempt == 1 {
-            output.detail("waiting for local KalamDB server...");
+
+        for (name, code) in supervisor.reap_finished().await {
+            if name == "server" {
+                return Err(CLIError::ConfigurationError(format!(
+                    "local KalamDB server exited with code {code} before becoming ready"
+                )));
+            }
         }
+
+        if attempt > 1 && attempt % SERVER_READY_PROGRESS_INTERVAL_SECS == 0 {
+            output.detail(format!(
+                "still waiting for local KalamDB server ({attempt}/{SERVER_READY_TIMEOUT_SECS}s)..."
+            ));
+        }
+
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     Err(CLIError::ConfigurationError(format!(
-        "timed out waiting for local KalamDB server at {server_url}"
+        "timed out after {SERVER_READY_TIMEOUT_SECS}s waiting for local KalamDB server at {server_url}"
     )))
 }
 
@@ -559,7 +571,7 @@ output = "src/generated/kalam.ts"
     }
 
     #[test]
-    fn build_local_server_command_preserves_existing_server_config() {
+    fn prepare_local_server_launch_preserves_existing_server_config() {
         let temp = tempfile::TempDir::new().unwrap();
         let config = test_project_config();
         let config_path = local_server_config_path(temp.path(), &config);
@@ -580,7 +592,7 @@ output = "src/generated/kalam.ts"
         std::env::remove_var("PATH");
         std::env::set_var("KALAMDB_SERVER_BIN", &fake_bin);
 
-        let _ = build_local_server_command(temp.path(), &config, "http://localhost:2900").unwrap();
+        let _ = prepare_local_server_launch(temp.path(), &config, "http://localhost:2900").unwrap();
         let contents = std::fs::read_to_string(&config_path).unwrap();
         assert_eq!(contents, "# manual config\n[server]\nport = 2900\n");
 

@@ -9,8 +9,9 @@ use crate::{
     workflow::{
         display_project_path,
         project::{
-            guidance::{init_repository_templates_unavailable, init_scaffold_io_error},
+            guidance::init_repository_templates_unavailable,
             prompts::prompt_select,
+            scaffold,
             templates::{render_template_pairs, EmbeddedTemplate},
             ts::{
                 guidance::init_no_templates,
@@ -166,7 +167,7 @@ pub fn apply_scaffold(
             continue;
         }
         if let Some(parent) = destination_path.parent() {
-            io_with_guidance(
+            scaffold::io_with_guidance(
                 "create template parent directory",
                 parent,
                 fs::create_dir_all(parent),
@@ -174,7 +175,7 @@ pub fn apply_scaffold(
         }
 
         let rendered = render_template_pairs(file.content, &replacements)?;
-        io_with_guidance(
+        scaffold::io_with_guidance(
             "write template file",
             &destination_path,
             fs::write(&destination_path, rendered),
@@ -182,10 +183,6 @@ pub fn apply_scaffold(
         output.detail(format!("created {}", display_project_path(root, &destination_path)));
     }
     Ok(())
-}
-
-fn io_with_guidance<T>(operation: &str, path: &Path, result: std::io::Result<T>) -> Result<T> {
-    result.map_err(|error| CLIError::FileError(init_scaffold_io_error(operation, path, &error)))
 }
 
 #[cfg(test)]

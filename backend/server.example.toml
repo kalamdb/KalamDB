@@ -435,31 +435,13 @@ heartbeat_interval_secs = 5
 # Prefer KALAMDB_ROOT_PASSWORD in production.
 # root_password = "change-me"
 
-# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
-# Higher values = more secure but slower
-# Changing this only affects NEW passwords
-bcrypt_cost = 12
-
-# Minimum password length (default: 8)
-min_password_length = 8
-
-# Maximum accepted password length for local validation.
-# Bcrypt still only uses the first 72 bytes of the password material.
-max_password_length = 72
-
-# JWT expiry in hours (default: 24)
-jwt_expiry_hours = 24
-
-# Whether auth cookies require HTTPS (default: true)
-cookie_secure = true
-
-# Enforce uppercase/lowercase/digit/special password complexity (default: false)
-enforce_password_complexity = false
-
-# JWT configuration (for JWT Bearer token authentication)
+# JWT configuration (session tokens for local login, OIDC exchange, and API bearer auth)
 # Secret key for JWT signature validation (minimum 32 characters recommended)
 # IMPORTANT: Change this in production! Use a strong, random secret.
 jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
+
+# JWT expiry in hours (default: 24)
+jwt_expiry_hours = 24
 
 # Allow initial server setup from non-localhost clients (default: false)
 # Useful for Docker or remote hosts in trusted networks.
@@ -473,9 +455,27 @@ jwt_trusted_issuers = ""
 # Optional pre-shared token required by pg_kalam gRPC connections.
 # pg_auth_token = "change-me"
 
+# Local HTTP development only. Keep true in production behind HTTPS.
+cookie_secure = false
+
 # Local username/password login (default: true).
 [auth.local]
 enabled = true
+
+# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+# Higher values = more secure but slower
+# Changing this only affects NEW passwords
+bcrypt_cost = 12
+
+# Minimum password length (default: 8)
+min_password_length = 8
+
+# Maximum accepted password length for local validation.
+# Bcrypt still only uses the first 72 bytes of the password material.
+max_password_length = 72
+
+# Enforce uppercase/lowercase/digit/special password complexity (default: false)
+enforce_password_complexity = false
 
 # Single external OpenID Connect provider.
 # Use this for Dex, Keycloak, Okta, Auth0, Entra ID, Google, Firebase, or any

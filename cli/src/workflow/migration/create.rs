@@ -72,8 +72,8 @@ pub fn update_draft_migration(
         "schema",
         format!(
             "diffing {} against {}",
-            display_project_relative_path(project_root, &schema_source),
-            display_project_relative_path(project_root, &baseline)
+            display_project_path(project_root, &schema_source),
+            display_project_path(project_root, &baseline)
         ),
     );
 
@@ -98,7 +98,7 @@ pub fn update_draft_migration(
             "schema",
             format!(
                 "no schema changes detected in {}",
-                display_project_relative_path(project_root, &schema_source)
+                display_project_path(project_root, &schema_source)
             ),
         );
         return Ok(None);
@@ -119,19 +119,19 @@ pub fn update_draft_migration(
         ))
     })?;
     let action = if existed { "updated" } else { "created" };
-    let draft_display = display_project_relative_path(project_root, &draft_path);
+    let draft_display = display_project_path(project_root, &draft_path);
     output.progress_detail(
         "schema",
         format!(
             "{action} draft migration {} from {}",
             draft_display,
-            display_project_relative_path(project_root, &schema_source)
+            display_project_path(project_root, &schema_source)
         ),
     );
     output.status(format!(
         "{action} draft migration {} from {}",
         draft_display,
-        display_project_relative_path(project_root, &schema_source)
+        display_project_path(project_root, &schema_source)
     ));
     Ok(Some(DRAFT_MIGRATION_FILE.to_string()))
 }
@@ -234,10 +234,6 @@ fn extract_between_markers(sql: &str, start_marker: &str, end_marker: &str) -> O
     let rest = &sql[start..];
     let end = find_marker_line_start(rest, end_marker).unwrap_or(rest.len());
     Some(rest[..end].trim().to_string())
-}
-
-fn display_project_relative_path(project_root: &Path, path: &Path) -> String {
-    display_project_path(project_root, path)
 }
 
 fn find_marker_line_end(sql: &str, marker: &str) -> Option<usize> {

@@ -1,11 +1,14 @@
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
 
-use crate::{release_download, CLIError, Result, CLI_BUILD_DATE, CLI_VERSION};
+use crate::{
+    release_download, release_version::ReleaseVersion, CLIError, Result, CLI_BUILD_DATE,
+    CLI_VERSION,
+};
 
-pub const GITHUB_REPO: &str = "kalamdb/KalamDB";
+pub const GITHUB_REPO: &str = release_download::GITHUB_REPO;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateAvailability {
@@ -23,6 +26,64 @@ struct GitHubRelease {
 #[derive(Debug, Deserialize)]
 struct GitHubTag {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionsManifest {
+    packages: VersionsPackages,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionsPackages {
+    core_components: CoreComponents,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoreComponents {
+    cli: CliComponentManifest,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliComponentManifest {
+    #[serde(default)]
+    build_date: Option<String>,
+}
+
+pub fn parse_cli_build_date_from_manifest(manifest: &str) -> Option<String> {
+    serde_json::from_str::<VersionsManifest>(manifest)
+        .ok()
+        .and_then(|manifest| manifest.packages.core_components.cli.build_date)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub async fn fetch_release_cli_build_date(
+    client: &reqwest::Client,
+    version: &str,
+    release_base_url_env: &str,
+) -> Result<Option<String>> {
+    let base_url = release_download::release_base_url(version, release_base_url_env)?;
+    let url = format!("{base_url}/versions.json");
+    let response = client.get(url).send().await.map_err(|error| {
+        CLIError::ConfigurationError(format!("Failed to reach release manifest: {error}"))
+    })?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    let manifest = response
+        .error_for_status()
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!("Release manifest lookup failed: {error}"))
+        })?
+        .text()
+        .await
+        .map_err(|error| {
+            CLIError::ConfigurationError(format!("Failed to read release manifest: {error}"))
+        })?;
+
+    Ok(parse_cli_build_date_from_manifest(&manifest))
 }
 
 pub async fn check_for_update(timeout: Duration) -> Result<Option<UpdateAvailability>> {
@@ -70,7 +131,7 @@ pub async fn resolve_release_version(
             .into_iter()
             .find(|release| release.prerelease)
             .ok_or_else(|| CLIError::ConfigurationError("No prerelease was found".to_string()))?;
-        return Ok(normalize_version_tag(&release.tag_name));
+        return Ok(ReleaseVersion::parse(&release.tag_name)?.to_string());
     }
 
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
@@ -92,7 +153,7 @@ pub async fn resolve_release_version(
         .map_err(|error| {
             CLIError::ConfigurationError(format!("Failed to parse GitHub response: {}", error))
         })?;
-    Ok(normalize_version_tag(&release.tag_name))
+    Ok(ReleaseVersion::parse(&release.tag_name)?.to_string())
 }
 
 async fn resolve_latest_tag(client: &reqwest::Client) -> Result<String> {
@@ -115,12 +176,13 @@ async fn resolve_latest_tag(client: &reqwest::Client) -> Result<String> {
         })?;
     tags.into_iter()
         .next()
-        .map(|tag| normalize_version_tag(&tag.name))
+        .map(|tag| ReleaseVersion::parse(&tag.name).map(|version| version.to_string()))
+        .transpose()?
         .ok_or_else(|| CLIError::ConfigurationError("No GitHub tags were found".to_string()))
 }
 
 pub fn normalize_version_tag(version: &str) -> String {
-    version.trim().trim_start_matches('v').to_string()
+    ReleaseVersion::normalize_lossy(version)
 }
 
 pub fn version_is_newer(candidate: &str, current: &str) -> bool {
@@ -153,21 +215,6 @@ pub fn build_timestamp_is_newer(candidate: &str, current: &str) -> bool {
         (Ok(candidate), Ok(current)) => candidate > current,
         _ => false,
     }
-}
-
-pub fn local_binary_matches_release_checksum(
-    local_exe: &Path,
-    checksums: &str,
-    archive_name: &str,
-) -> Result<bool> {
-    let local_hash = release_download::sha256_file(local_exe)?;
-    let remote_hash =
-        release_download::checksum_for_archive(checksums, archive_name).ok_or_else(|| {
-            CLIError::ConfigurationError(format!(
-                "SHA256SUMS does not include an entry for {archive_name}"
-            ))
-        })?;
-    Ok(local_hash == remote_hash)
 }
 
 pub fn update_needed_for_release(latest_version: &str, remote_build_date: Option<&str>) -> bool {
@@ -294,6 +341,38 @@ mod tests {
     fn parse_built_line_reads_version_output() {
         let output = "kalam 0.5.2-rc.2\nCommit: abc (main)\nBuilt: 2026-06-11 18:50:49 UTC\n";
         assert_eq!(parse_built_line(output), Some("2026-06-11 18:50:49 UTC".to_string()));
+    }
+
+    #[test]
+    fn parse_cli_build_date_from_manifest_reads_cli_component() {
+        let manifest = r#"{
+            "packages": {
+                "core_components": {
+                    "cli": {
+                        "version": "0.5.2-rc.2",
+                        "build_date": "2026-06-12 10:00:00 UTC"
+                    }
+                }
+            }
+        }"#;
+        assert_eq!(
+            parse_cli_build_date_from_manifest(manifest),
+            Some("2026-06-12 10:00:00 UTC".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_cli_build_date_from_manifest_returns_none_when_missing() {
+        let manifest = r#"{
+            "packages": {
+                "core_components": {
+                    "cli": {
+                        "version": "0.5.2-rc.2"
+                    }
+                }
+            }
+        }"#;
+        assert_eq!(parse_cli_build_date_from_manifest(manifest), None);
     }
 
     #[test]

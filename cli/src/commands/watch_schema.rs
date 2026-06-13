@@ -3,11 +3,11 @@
 //! File-based schema watch during local development lives in
 //! `workflow::dev::watch` and is orchestrated by `kalam dev`.
 
-use std::{process::Stdio, time::Duration};
+use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use kalam_cli::{
-    process_util,
+    process::run_shell_script_inherited,
     workflow::project::identifiers::{parse_namespace_id, parse_table_ref},
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, Result,
 };
@@ -140,22 +140,18 @@ fn describe_scope(config: &WatchSchemaConfig) -> String {
 async fn run_shell_command(command: &str) -> Result<()> {
     let command = command.to_string();
     let spawned_command = command.clone();
-    let status = tokio::task::spawn_blocking(move || {
-        let mut child = process_util::shell_command(&spawned_command);
-        child
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .map_err(|error| {
-                CLIError::FileError(format!(
-                    "Failed to start watch command '{}': {}",
-                    spawned_command, error
-                ))
-            })
+    let status = tokio::task::spawn_blocking({
+        let spawned_command = spawned_command.clone();
+        move || run_shell_script_inherited(&spawned_command)
     })
     .await
-    .map_err(|error| CLIError::FileError(format!("Watch command task failed: {error}")))??;
+    .map_err(|error| CLIError::FileError(format!("Watch command task failed: {error}")))?
+    .map_err(|error| {
+        CLIError::FileError(format!(
+            "Failed to start watch command '{}': {}",
+            spawned_command, error
+        ))
+    })?;
 
     if status.success() {
         return Ok(());

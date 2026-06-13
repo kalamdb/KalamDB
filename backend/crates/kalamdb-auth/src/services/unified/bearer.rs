@@ -267,6 +267,10 @@ async fn try_accept_external_oidc_invite(
         return Ok(None);
     };
 
+    if claims.email_verified != Some(true) {
+        return Ok(None);
+    }
+
     let now = chrono::Utc::now().timestamp_millis();
     let Some(invite) = repo.get_active_oidc_invite_by_email(email, now).await? else {
         return Ok(None);
@@ -561,6 +565,7 @@ mod tests {
             iat: 1_700_000_000,
             name: None,
             email: Some("user@example.com".to_string()),
+            email_verified: None,
             role,
             auth_type: Some(AuthType::Oidc),
             token_type: None,
@@ -575,6 +580,7 @@ mod tests {
             iat: 1_700_000_000,
             name: None,
             email: Some("user@example.com".to_string()),
+            email_verified: None,
             role: Some(role),
             auth_type: Some(auth_type),
             token_type: Some(jwt_auth::TokenType::Access),
@@ -685,7 +691,8 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(100)]
     async fn external_oauth_user_accepts_active_email_invite_when_auto_provision_is_disabled() {
-        let claims = external_claims(None);
+        let mut claims = external_claims(None);
+        claims.email_verified = Some(true);
         let invite_id = UserId::new("invite_alice");
         let mut invite = test_user(invite_id.clone(), Role::Dba, AuthType::OidcInvite);
         invite.email = Some("USER@example.com".to_string());
@@ -723,8 +730,31 @@ mod tests {
 
     #[tokio::test]
     #[ntest::timeout(100)]
-    async fn external_oauth_user_accepts_active_invite_when_same_subject_was_deleted() {
+    async fn external_oauth_user_rejects_email_invite_without_verified_email() {
         let claims = external_claims(None);
+        let invite_id = UserId::new("invite_unverified_email");
+        let mut invite = test_user(invite_id, Role::Dba, AuthType::OidcInvite);
+        invite.email = Some("USER@example.com".to_string());
+        invite.auth_data = None;
+        invite.invite_expires_at = Some(chrono::Utc::now().timestamp_millis() + 60_000);
+
+        let repo = Arc::new(CountingRepo::with_user(invite));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let config = JwtConfig::for_tests(false, Role::User);
+
+        let error =
+            resolve_external_authenticated_user(&repo_dyn, &config, &claims, &connection_info())
+                .await
+                .expect_err("email invites must require a verified OIDC email claim");
+
+        assert!(matches!(error, AuthError::InvalidCredentials(_)));
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn external_oauth_user_accepts_active_invite_when_same_subject_was_deleted() {
+        let mut claims = external_claims(None);
+        claims.email_verified = Some(true);
         let user_id = UserId::new(claims.sub.clone());
         let mut deleted_user = test_user(user_id.clone(), Role::User, AuthType::Oidc);
         deleted_user.email = Some("user@example.com".to_string());
