@@ -16,17 +16,24 @@ $searchRoots = @(
   Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\2022"
 )
 
-$crtDirs = foreach ($root in $searchRoots) {
+$crtDirs = @()
+foreach ($root in $searchRoots) {
   if (-not (Test-Path $root)) {
     continue
   }
 
-  Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    Get-ChildItem -Path (Join-Path $_.FullName "VC\Redist\MSVC\*\x64\Microsoft.VC*CRT") -Directory -ErrorAction SilentlyContinue
+  $editionDirs = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue
+  foreach ($editionDir in $editionDirs) {
+    $matches = Get-ChildItem -Path (Join-Path $editionDir.FullName "VC\Redist\MSVC\*\x64\Microsoft.VC*CRT") -Directory -ErrorAction SilentlyContinue
+    if ($matches) {
+      $crtDirs += $matches
+    }
   }
-} | Sort-Object FullName -Descending
+}
 
-if (-not $crtDirs -or $crtDirs.Count -eq 0) {
+$crtDirs = @($crtDirs | Sort-Object FullName -Descending)
+
+if ($crtDirs.Count -eq 0) {
   throw "Could not locate Microsoft VC++ CRT redistributable directory on this runner"
 }
 
