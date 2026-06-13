@@ -103,17 +103,17 @@ else
 fi
 echo ""
 
-# Step 4: Test Windows build (cross-compile)
+# Step 4: Test Windows build (native MSVC on Windows only)
 print_step "Step 4/5: Testing Windows x86_64 build..."
-if ! command -v cross &> /dev/null; then
-    print_step "Installing cross..."
-    cargo install cross --locked
-fi
-rustup target add x86_64-pc-windows-gnu
-cross build --profile docker --target x86_64-pc-windows-gnu -p kalam-cli --bin kalam
-# Server requires native MSVC on Windows (usearch/numkong + RocksDB); cross MinGW is unsupported.
-echo "Skipping kalamdb-server Windows cross build — use native MSVC on Windows instead."
-print_success "Windows build successful"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    cargo build --profile release-dist -p kalam-cli --bin kalam
+    print_success "Windows CLI build successful"
+    ;;
+  *)
+    print_step "Skipping Windows build (requires native Windows/MSVC runner)"
+    ;;
+esac
 echo ""
 
 # Step 5: Test Docker build (optional)

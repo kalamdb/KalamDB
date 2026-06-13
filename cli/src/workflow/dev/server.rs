@@ -31,7 +31,7 @@ use crate::{
             config::KalamProjectConfig,
             guidance::{
                 dev_kalamdb_server_bin_missing, dev_kalamdb_server_non_interactive_download,
-                dev_kalamdb_server_not_found,
+                dev_kalamdb_server_not_found, dev_local_kalamdb_server_start_failed,
             },
             templates::{find_template_file, render_template, resolve_scaffold_template},
         },
@@ -132,6 +132,25 @@ pub fn managed_server_binary_path() -> PathBuf {
     managed_server_install_dir().join(server_binary_name())
 }
 
+#[cfg(windows)]
+const MANAGED_SERVER_RUNTIME_DLLS: &[&str] = &[
+    "msvcp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+];
+
+#[cfg(windows)]
+fn managed_server_runtime_is_complete(install_dir: &Path) -> bool {
+    MANAGED_SERVER_RUNTIME_DLLS
+        .iter()
+        .all(|name| install_dir.join(name).is_file())
+}
+
+#[cfg(not(windows))]
+fn managed_server_runtime_is_complete(_install_dir: &Path) -> bool {
+    true
+}
+
 pub fn resolve_kalamdb_server_bin() -> Result<PathBuf> {
     resolve_kalamdb_server_bin_from(std::env::current_exe().ok())
 }
@@ -184,6 +203,14 @@ pub async fn ensure_local_server_binary(
 ) -> Result<PathBuf> {
     match resolve_kalamdb_server_bin() {
         Ok(path) => {
+            if is_managed_server_binary(&path)
+                && !managed_server_runtime_is_complete(&managed_server_install_dir())
+            {
+                output.status(
+                    "precheck: managed kalamdb-server is missing Windows runtime DLLs; redownloading",
+                );
+                return download_and_install_managed_server(output, server_source).await;
+            }
             if let Some(installed_version) = managed_server_version_if_stale(&path)? {
                 return refresh_managed_server_binary(
                     use_color,
@@ -444,6 +471,7 @@ const SERVER_READY_PROGRESS_INTERVAL_SECS: u64 = 10;
 
 pub async fn wait_for_server_ready(
     server_url: &str,
+    server_program: &Path,
     output: &WorkflowOutput,
     supervisor: &mut ProcessSupervisor,
 ) -> Result<()> {
@@ -464,9 +492,12 @@ pub async fn wait_for_server_ready(
 
         for (name, code) in supervisor.reap_finished().await {
             if name == "server" {
-                return Err(CLIError::ConfigurationError(format!(
-                    "local KalamDB server exited with code {code} before becoming ready"
-                )));
+                return Err(CLIError::ConfigurationError(
+                    dev_local_kalamdb_server_start_failed(
+                        server_program,
+                        &format!("server exited with code {code} before becoming ready"),
+                    ),
+                ));
             }
         }
 
@@ -479,8 +510,9 @@ pub async fn wait_for_server_ready(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    Err(CLIError::ConfigurationError(format!(
-        "timed out after {SERVER_READY_TIMEOUT_SECS}s waiting for local KalamDB server at {server_url}"
+    Err(CLIError::ConfigurationError(dev_local_kalamdb_server_start_failed(
+        server_program,
+        &format!("timed out after {SERVER_READY_TIMEOUT_SECS}s waiting for {server_url}"),
     )))
 }
 
@@ -661,6 +693,22 @@ output = "src/generated/kalam.ts"
             ),
             Some("0.5.2-rc.1".to_string())
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn managed_server_runtime_is_complete_requires_runtime_dlls() {
+        let temp = tempfile::TempDir::new().unwrap();
+        assert!(!managed_server_runtime_is_complete(temp.path()));
+        for (index, name) in MANAGED_SERVER_RUNTIME_DLLS.iter().enumerate() {
+            std::fs::write(temp.path().join(name), b"x").unwrap();
+            let complete = managed_server_runtime_is_complete(temp.path());
+            if index + 1 == MANAGED_SERVER_RUNTIME_DLLS.len() {
+                assert!(complete);
+            } else {
+                assert!(!complete);
+            }
+        }
     }
 
     #[test]

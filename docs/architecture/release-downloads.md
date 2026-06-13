@@ -42,6 +42,18 @@ kalamcli-<version>-<platform>
 kalamcli-<version>-<platform>.exe
 ```
 
+Windows `.zip` archives also include the Microsoft VC++ runtime DLLs required to run the
+MSVC-built server and CLI binaries on machines without the Visual C++ Redistributable
+installed. At minimum the archive contains:
+
+```text
+msvcp140.dll
+vcruntime140.dll
+vcruntime140_1.dll
+```
+
+Keep the `.exe` and bundled `.dll` files in the same directory when extracting manually.
+
 The installer and self-updater install that payload as `kalam` at the final install path. They do
 not install arbitrary executable files found in the archive.
 
@@ -150,10 +162,12 @@ the pre-install flow.
 
 Replacement is local and atomic where the platform supports atomic rename:
 
-1. Copy the verified extracted binary to `<current_exe>.kalam-update-tmp`.
+1. Copy the verified extracted binary to a staging path beside the install target (Unix) or in the update temp directory (Windows).
 2. Mark it executable on Unix.
-3. Rename the temp file over the current executable.
-4. Remove temporary extraction files.
+3. Replace the current executable:
+   - Unix: rename the staging file over the current executable.
+   - Windows: spawn a detached PowerShell helper that waits for the running PID to exit, then moves the staged binary over the install path with retries (the running `.exe` is locked).
+4. Remove temporary extraction files after installation completes (the Windows helper removes its temp directory after the move).
 
 ## `install.sh` flow
 

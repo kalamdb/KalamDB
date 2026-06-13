@@ -204,6 +204,40 @@ pub fn dev_kalamdb_server_non_interactive_download(detail: &str) -> String {
     )
 }
 
+pub const VC_REDIST_X64_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+
+fn local_server_start_base_hints(server_program: &Path) -> Vec<String> {
+    vec![
+        format!("Try running the server manually: {}", server_program.display()),
+        "Check the server log output above for startup errors".to_string(),
+    ]
+}
+
+pub fn dev_local_kalamdb_server_start_failed(server_program: &Path, detail: &str) -> String {
+    let hints = local_server_start_base_hints(server_program);
+
+    #[cfg(windows)]
+    let hints = {
+        let mut hints = hints;
+        hints.extend([
+            format!(
+                "Install the Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64): {VC_REDIST_X64_URL}"
+            ),
+            "If you downloaded kalamdb-server from GitHub, extract the full zip so msvcp140.dll, vcruntime140.dll, and vcruntime140_1.dll sit next to the .exe".to_string(),
+            "If you use the managed install under %USERPROFILE%\\.kalam\\bin, delete that folder and rerun `kalam dev` to redownload the full archive".to_string(),
+        ]);
+        hints
+    };
+
+    format!(
+        "local KalamDB server could not start ({detail}).\n\n\
+         Server binary:\n  {}\n\n\
+         How to fix:\n{}",
+        server_program.display(),
+        bullet_list(&hints)
+    )
+}
+
 pub fn dev_process_spawn_failed(name: &str, shell: &str, command: &str, error: &str) -> String {
     let mut hints = vec![
         format!("Verify the command in kalam.toml under [dev.processes.{name}]"),
@@ -284,5 +318,28 @@ mod tests {
         let message = dev_process_spawn_failed("web", "sh", "npm run dev", "program not found");
         assert!(message.contains("dev process 'web'"));
         assert!(message.contains("missing from PATH"));
+    }
+
+    #[test]
+    fn dev_local_kalamdb_server_start_failed_includes_server_path() {
+        let message = dev_local_kalamdb_server_start_failed(
+            Path::new("/tmp/kalamdb-server"),
+            "timed out after 60s",
+        );
+        assert!(message.contains("/tmp/kalamdb-server"));
+        assert!(message.contains("How to fix:"));
+        assert!(message.contains("timed out after 60s"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn dev_local_kalamdb_server_start_failed_includes_vc_redist_link() {
+        let message = dev_local_kalamdb_server_start_failed(
+            Path::new(r"C:\Users\me\.kalam\bin\kalamdb-server.exe"),
+            "exited with code 1 before becoming ready",
+        );
+        assert!(message.contains(VC_REDIST_X64_URL));
+        assert!(message.contains("msvcp140.dll"));
+        assert!(message.contains("vcruntime140.dll"));
     }
 }

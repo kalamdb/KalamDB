@@ -208,10 +208,9 @@ function detectPlatform() {
 }
 
 async function createFixtureArchive(releaseDir, archivePath, version, platform, kalamBinary) {
-  const stagingRoot = path.join(releaseDir, `kalamcli-${version}-${platform}`);
-  const binaryPath = path.join(stagingRoot, 'kalam');
-  mkdirSync(stagingRoot, { recursive: true });
+  const entryName = `kalamcli-${version}-${platform}`;
+  const binaryPath = path.join(releaseDir, entryName);
   copyFileSync(kalamBinary, binaryPath);
   chmodSync(binaryPath, 0o755);
-  await tar.c({ cwd: releaseDir, file: archivePath, gzip: true }, [path.basename(stagingRoot)]);
+  await tar.c({ cwd: releaseDir, file: archivePath, gzip: true }, [entryName]);
 }
