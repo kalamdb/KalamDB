@@ -360,6 +360,22 @@ auth_timeout_secs = 10
 heartbeat_interval_secs = 15
 
 [auth]
+# JWT configuration (session tokens for local login, OIDC exchange, and API bearer auth)
+# Secret key for JWT signature validation (minimum 32 characters recommended)
+# IMPORTANT: Change this in production! Use a strong, random secret.
+jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
+
+# Trusted JWT issuers for internal KalamDB tokens and the configured OIDC provider.
+# Local Dex/testcontainer-compatible development issuer:
+#   docker/test Dex: http://127.0.0.1:5556
+jwt_trusted_issuers = "kalamdb,http://127.0.0.1:5556"
+
+# Local HTTP development only. Keep true in production behind HTTPS.
+cookie_secure = false
+
+[auth.local]
+enabled = true
+
 # Bcrypt cost factor for password hashing (default: 12, range: 4-31)
 # Higher values = more secure but slower
 # Changing this only affects NEW passwords
@@ -376,19 +392,6 @@ max_password_length = 72
 # Enforce uppercase/lowercase/digit/special password complexity (default: false)
 # Keep this false unless you specifically want strict password composition rules.
 enforce_password_complexity = false
-
-# JWT configuration (for JWT Bearer token authentication)
-# Secret key for JWT signature validation (minimum 32 characters recommended)
-# IMPORTANT: Change this in production! Use a strong, random secret.
-jwt_secret = "kalamdb-local-dev-2026-02-23-strong-jwt-secret-32plus"
-
-# Trusted JWT issuers for internal KalamDB tokens and the configured OIDC provider.
-# Local Dex/testcontainer-compatible development issuer:
-#   docker/test Dex: http://127.0.0.1:5556
-jwt_trusted_issuers = "kalamdb,http://127.0.0.1:5556"
-
-[auth.local]
-enabled = true
 
 [auth.oidc]
 enabled = true

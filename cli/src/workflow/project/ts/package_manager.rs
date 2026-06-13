@@ -4,13 +4,13 @@
 //! yarn, bun). Interactive setup prompts when more than one is available; the
 //! choice is stored in `kalam.toml` as `[project].package_manager`.
 
-use std::{env, path::Path, process::Command};
+use std::{env, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{CLIError, Result},
-    process_util::resolve_program_on_path,
+    process::{resolve_program_on_path, run_path_tool},
     terminal_ui::SelectOption,
     workflow::project::{
         guidance::init_stage_context,
@@ -225,25 +225,18 @@ pub fn resolve_package_manager_for_init(
 }
 
 pub fn execute_package_install(root: &Path, manager: PackageManager) -> Result<()> {
-    let program = resolve_program_on_path(manager.program())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| manager.program().to_string());
-
-    let output = Command::new(&program)
-        .current_dir(root)
-        .args(manager.install_args())
-        .output()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                package_manager_missing_error(Some(manager))
-            } else {
-                CLIError::ConfigurationError(init_package_install_spawn_failed(
-                    manager,
-                    root,
-                    &error.to_string(),
-                ))
-            }
-        })?;
+    let args: Vec<&str> = manager.install_args().iter().copied().collect();
+    let output = run_path_tool(manager.as_str(), &args, root).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            package_manager_missing_error(Some(manager))
+        } else {
+            CLIError::ConfigurationError(init_package_install_spawn_failed(
+                manager,
+                root,
+                &error.to_string(),
+            ))
+        }
+    })?;
 
     if output.status.success() {
         return Ok(());
@@ -322,6 +315,9 @@ mod tests {
         #[cfg(windows)]
         {
             fs::write(bin_dir.join(format!("{name}.cmd")), "@echo off\r\nexit /b 0\r\n").unwrap();
+            // Node.js also ships an extensionless shim; keep it present so resolution
+            // and install behavior match real Windows setups.
+            fs::write(bin_dir.join(name), "#!/usr/bin/env node\nexit 0\n").unwrap();
         }
         #[cfg(not(windows))]
         {

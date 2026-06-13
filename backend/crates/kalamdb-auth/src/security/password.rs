@@ -123,6 +123,24 @@ impl PasswordPolicy {
     }
 }
 
+pub fn password_policy_from_auth_settings(
+    settings: &kalamdb_configs::AuthSettings,
+) -> PasswordPolicy {
+    PasswordPolicy {
+        min_length: settings.local.min_password_length,
+        max_length: settings.local.max_password_length,
+        enforce_complexity: settings.local.enforce_password_complexity,
+        skip_common_check: false,
+    }
+}
+
+pub fn validate_password_with_auth_settings(
+    password: &str,
+    settings: &kalamdb_configs::AuthSettings,
+) -> AuthResult<()> {
+    validate_password_with_policy(password, &password_policy_from_auth_settings(settings))
+}
+
 /// Reject characters that are hard to see, easy to smuggle through transport layers,
 /// or can be interpreted inconsistently across boundaries.
 pub fn validate_password_characters(password: &str) -> AuthResult<()> {
@@ -316,5 +334,17 @@ mod tests {
         assert!(validate_password_with_policy("NOLOWER1!", &policy).is_err());
         assert!(validate_password_with_policy("NoDigits!", &policy).is_err());
         assert!(validate_password_with_policy("NoSpecial1", &policy).is_err());
+    }
+
+    #[test]
+    fn test_password_policy_from_auth_settings() {
+        let mut settings = kalamdb_configs::AuthSettings::default();
+        settings.local.min_password_length = 12;
+        settings.local.max_password_length = 20;
+        settings.local.enforce_password_complexity = true;
+
+        assert!(validate_password_with_auth_settings("ValidPass12!", &settings).is_ok());
+        assert!(validate_password_with_auth_settings("short1!", &settings).is_err());
+        assert!(validate_password_with_auth_settings("NoDigitsHere!", &settings).is_err());
     }
 }

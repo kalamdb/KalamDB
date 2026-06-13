@@ -6,6 +6,7 @@ pub mod dev;
 pub mod migration;
 pub mod project;
 pub mod schema;
+pub(crate) mod auth;
 pub(crate) mod sql;
 
 use std::path::{Path, PathBuf};

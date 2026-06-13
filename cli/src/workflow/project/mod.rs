@@ -5,6 +5,7 @@ pub mod init;
 pub mod link;
 pub mod prompts;
 pub mod resolve;
+pub mod scaffold;
 pub mod status;
 pub mod templates;
 pub mod ts;

@@ -697,7 +697,7 @@ async fn check_bcrypt_cost(client: &KalamClient) -> CheckResult {
                     CheckResult::warn(
                         "bcrypt cost",
                         format!(
-                            "User creation took {}ms — set bcrypt_cost = 4 in server.toml for benchmarks",
+                            "User creation took {}ms — set auth.local.bcrypt_cost = 4 in server.toml for benchmarks",
                             ms
                         ),
                     )
@@ -705,7 +705,7 @@ async fn check_bcrypt_cost(client: &KalamClient) -> CheckResult {
                     CheckResult::fail(
                         "bcrypt cost",
                         format!(
-                            "User creation took {}ms — bcrypt_cost is too high, set to 4 in server.toml",
+                            "User creation took {}ms — auth.local.bcrypt_cost is too high, set to 4 in server.toml",
                             ms
                         ),
                     )

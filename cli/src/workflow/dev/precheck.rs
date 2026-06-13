@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -20,17 +20,16 @@ use crate::{
     workflow::{
         dev::{
             logs::ServiceLogSource,
-            server::{
-                ensure_local_server_binary, local_server_root_password, server_already_ready,
-            },
+            server::{ensure_local_server_binary, server_already_ready},
             watch::schema_watch_path,
         },
         display_project_path,
         project::config::SchemaMode,
-        project::resolve::{
-            credential_instance_for_env, resolve_kalam_profile, ResolvedEnvironment,
+        project::{
+            guidance::dev_auth_guidance_message,
+            resolve::{credential_instance_for_env, resolve_kalam_profile, ResolvedEnvironment},
         },
-        sql::{is_loopback_server_url, resolve_workflow_auth_provider},
+        auth::{resolve_local_dev_root_password, resolve_workflow_auth_provider},
         WorkflowContext,
     },
     FileCredentialStore,
@@ -230,7 +229,7 @@ pub async fn ensure_authentication_ready(
 ) -> Result<()> {
     let profile = resolve_kalam_profile(&ctx.project_root)?;
     if let Err(detail) = verify_workflow_auth(ctx, environment).await {
-        return Err(CLIError::ConfigurationError(auth_guidance_message(
+        return Err(CLIError::ConfigurationError(dev_auth_guidance_message(
             &ctx.project_root,
             profile.as_deref(),
             &detail,
@@ -263,12 +262,12 @@ pub async fn ensure_local_dev_authentication_ready(
     }
 
     let profile = local_dev_auth_profile(ctx, environment)?;
-    let password = local_dev_root_password(ctx, environment)?;
+    let password = resolve_local_dev_root_password(ctx, &environment.url)?;
     output.status(format!(
         "precheck: logging into local KalamDB server as root for profile '{profile}'"
     ));
     let login = login_local_root(&environment.url, &password).await.map_err(|detail| {
-        CLIError::ConfigurationError(auth_guidance_message(
+        CLIError::ConfigurationError(dev_auth_guidance_message(
             &ctx.project_root,
             Some(&profile),
             &detail,
@@ -278,7 +277,7 @@ pub async fn ensure_local_dev_authentication_ready(
     output.status(format!("precheck: saved local dev credentials for profile '{profile}'"));
 
     verify_jwt_auth(&environment.url, &login.access_token).await.map_err(|detail| {
-        CLIError::ConfigurationError(auth_guidance_message(
+        CLIError::ConfigurationError(dev_auth_guidance_message(
             &ctx.project_root,
             Some(&profile),
             &detail,
@@ -311,25 +310,6 @@ fn local_dev_auth_profile(
 ) -> Result<String> {
     Ok(resolve_kalam_profile(&ctx.project_root)?
         .unwrap_or_else(|| credential_instance_for_env(&environment.name)))
-}
-
-fn local_dev_root_password(
-    ctx: &WorkflowContext,
-    environment: &ResolvedEnvironment,
-) -> Result<String> {
-    if let Some(password) = local_server_root_password(&ctx.project_root, &ctx.config)? {
-        return Ok(password);
-    }
-
-    if is_loopback_server_url(&environment.url) {
-        return Ok("mypass".to_string());
-    }
-
-    Err(CLIError::ConfigurationError(auth_guidance_message(
-        &ctx.project_root,
-        resolve_kalam_profile(&ctx.project_root)?.as_deref(),
-        "local dev root password was not found",
-    )))
 }
 
 async fn login_local_root(
@@ -418,16 +398,6 @@ async fn verify_basic_auth(
         .map_err(|error| format!("login failed: {error}"))
 }
 
-fn auth_guidance_message(project_root: &Path, profile: Option<&str>, detail: &str) -> String {
-    let env_path = project_root.join(".env");
-    let profile_name = profile.unwrap_or("<profile>");
-
-    format!(
-        "authentication failed: {detail}. Edit {} and set `KALAM_PROFILE={profile_name}` to a CLI-saved profile, or run `kalam login --instance {profile_name}` and then update `.env` to use that profile",
-        display_project_path(project_root, &env_path)
-    )
-}
-
 fn migrations_ready_message(
     project_root: &std::path::Path,
     migrations_dir: &std::path::Path,
@@ -461,8 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn auth_guidance_message_points_to_env_and_login() {
-        let message = auth_guidance_message(
+    fn dev_auth_guidance_message_points_to_env_and_login() {
+        let message = dev_auth_guidance_message(
             std::path::Path::new("/tmp/app"),
             Some("prod-admin"),
             "unauthorized",

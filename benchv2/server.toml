@@ -117,15 +117,14 @@ auth_timeout_secs = 15
 heartbeat_interval_secs = 30
 
 [auth]
-bcrypt_cost = 4
-min_password_length = 8
-max_password_length = 72
-disable_common_password_check = false
 jwt_secret = "kalamdb-bench-local-2026-04-03-jwt-secret-32-plus"
 jwt_trusted_issuers = ""
 
 [auth.local]
 enabled = true
+bcrypt_cost = 4
+min_password_length = 8
+max_password_length = 72
 
 [auth.oidc]
 enabled = false

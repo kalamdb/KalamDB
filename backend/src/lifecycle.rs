@@ -202,7 +202,7 @@ pub async fn prepare_components(
     kalamdb_handlers::register_all_handlers(
         &handler_registry,
         app_context.clone(),
-        config.auth.enforce_password_complexity,
+        config.auth.local.enforce_password_complexity,
     );
 
     let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), handler_registry));

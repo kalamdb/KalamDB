@@ -1,12 +1,6 @@
 //! Shared workflow SQL execution helpers.
 
-use std::{fs, path::Path};
-
-use kalam_client::{
-    credentials::CredentialStore, AuthProvider, HttpVersion, KalamLinkClient, QueryResponse,
-};
-use url::Url;
-
+use kalam_client::{HttpVersion, KalamLinkClient, QueryResponse};
 use kalamdb_commons::NamespaceId;
 
 use crate::{
@@ -14,11 +8,10 @@ use crate::{
     output::WorkflowOutput,
     sql_batch,
     workflow::{
-        dev::server::local_server_root_password,
-        project::resolve::{resolve_kalam_profile, ResolvedEnvironment},
+        auth::resolve_workflow_auth_provider,
+        project::resolve::ResolvedEnvironment,
         WorkflowContext,
     },
-    FileCredentialStore,
 };
 
 pub(crate) fn build_workflow_client(
@@ -60,20 +53,6 @@ pub(crate) async fn drop_namespace_if_exists(
 ) -> Result<()> {
     let sql = format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace.as_str());
     execute_single_statement(client, &sql, None, "namespace reset").await
-}
-
-pub(crate) async fn execute_sql_file(
-    client: &KalamLinkClient,
-    path: &Path,
-    namespace: Option<&str>,
-    output: &WorkflowOutput,
-    action: &str,
-) -> Result<usize> {
-    let sql = fs::read_to_string(path).map_err(|error| {
-        CLIError::FileError(format!("failed to read SQL file '{}': {error}", path.display()))
-    })?;
-    output.status(format!("{action} {}", path.display()));
-    execute_sql_batch(client, &sql, namespace, output, &path.display().to_string()).await
 }
 
 pub(crate) async fn execute_sql_batch(
@@ -142,76 +121,6 @@ fn summarize_sql(statement: &str) -> String {
     }
 }
 
-pub(crate) fn resolve_workflow_auth_provider(
-    ctx: &WorkflowContext,
-    environment: &ResolvedEnvironment,
-) -> Result<AuthProvider> {
-    if let Some(token) = load_project_profile_token(ctx)? {
-        return Ok(AuthProvider::jwt_token(token));
-    }
-
-    if ctx.config.dev.auto_start_db {
-        if let Some(password) = local_server_root_password(&ctx.project_root, &ctx.config)? {
-            return Ok(AuthProvider::system_user_auth(password));
-        }
-    }
-
-    if ctx.config.dev.auto_start_db && is_loopback_server_url(&environment.url) {
-        return Ok(AuthProvider::system_user_auth("mypass".to_string()));
-    }
-
-    if let Some(token) = ctx.cli_config.auth.as_ref().and_then(|auth| auth.jwt_token.clone()) {
-        return Ok(AuthProvider::jwt_token(token));
-    }
-
-    let store = FileCredentialStore::new().map_err(|error| {
-        CLIError::ConfigurationError(format!("failed to open credentials store: {error}"))
-    })?;
-    if let Some(credentials) =
-        store.get_workflow_env_credentials(&environment.name).map_err(|error| {
-            CLIError::ConfigurationError(format!("failed to load workflow credentials: {error}"))
-        })?
-    {
-        return Ok(AuthProvider::jwt_token(credentials.jwt_token));
-    }
-
-    Ok(AuthProvider::none())
-}
-
-fn load_project_profile_token(ctx: &WorkflowContext) -> Result<Option<String>> {
-    let Some(profile) = resolve_kalam_profile(&ctx.project_root)? else {
-        return Ok(None);
-    };
-
-    let store = FileCredentialStore::new().map_err(|error| {
-        CLIError::ConfigurationError(format!("failed to open credentials store: {error}"))
-    })?;
-    let credentials = store.get_credentials(&profile).map_err(|error| {
-        CLIError::ConfigurationError(format!(
-            "failed to load credentials for profile '{profile}': {error}"
-        ))
-    })?;
-
-    let credentials = credentials.ok_or_else(|| {
-        CLIError::ConfigurationError(format!(
-            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam login --instance {profile}`"
-        ))
-    })?;
-
-    Ok(Some(credentials.jwt_token))
-}
-
-pub(crate) fn is_loopback_server_url(server_url: &str) -> bool {
-    Url::parse(server_url)
-        .ok()
-        .and_then(|url| {
-            url.host_str().map(|host| {
-                host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
-            })
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, fs};
@@ -219,12 +128,16 @@ mod tests {
     use super::*;
     use crate::{
         config::CLIConfiguration,
-        workflow::project::config::{
+        FileCredentialStore,
+        workflow::{
+            auth::resolve_workflow_auth_provider,
+            project::config::{
             ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
             ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+            },
         },
     };
-    use kalam_client::credentials::{CredentialStore, Credentials};
+    use kalam_client::{credentials::{CredentialStore, Credentials}, AuthProvider};
     use tempfile::TempDir;
 
     #[test]

@@ -1,7 +1,6 @@
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    process::Command,
     time::Duration,
 };
 
@@ -15,6 +14,7 @@ use url::Url;
 
 use crate::{
     error::{CLIError, Result},
+    process::spawn_detached,
     session::auth_options::{
         exchange_oidc_authorization_code, ExternalLoginSession, OidcLoginOptions,
     },
@@ -301,7 +301,7 @@ fn try_open_browser(url: &str) {
     } else {
         ("xdg-open", vec![url])
     };
-    let _ = Command::new(command.0).args(command.1).spawn();
+    let _ = spawn_detached(command.0, &command.1);
 }
 
 #[cfg(test)]

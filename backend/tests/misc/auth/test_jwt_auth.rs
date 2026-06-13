@@ -57,6 +57,7 @@ fn create_test_jwt_token(
         iat: now,
         name: None,
         email: Some(format!("{}@example.com", username)),
+        email_verified: None,
         role: Some(Role::User),
         token_type: None,
         auth_type: None,

@@ -166,13 +166,18 @@ fn selected_scopes(
     settings: &kalamdb_configs::AuthOidcSettings,
     requested_scopes: &[String],
 ) -> Vec<Scope> {
-    let scopes: Vec<Scope> = if requested_scopes.is_empty() {
-        settings.scopes.iter().map(|scope| Scope::new(scope.clone())).collect()
-    } else {
-        requested_scopes.iter().map(|scope| Scope::new(scope.clone())).collect()
-    };
-
-    scopes.into_iter().filter(|scope| scope.as_str() != "openid").collect()
+    settings
+        .scopes
+        .iter()
+        .filter(|scope| scope.as_str() != "openid")
+        .filter(|scope| {
+            requested_scopes.is_empty()
+                || requested_scopes
+                    .iter()
+                    .any(|requested_scope| requested_scope == *scope)
+        })
+        .map(|scope| Scope::new(scope.clone()))
+        .collect()
 }
 
 async fn poll_provider_device_flow(
@@ -306,6 +311,35 @@ mod tests {
         };
 
         let scopes = selected_scopes(&config, &[]);
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0].as_str(), "email");
+    }
+
+    #[test]
+    fn selected_scopes_rejects_requested_scope_expansion() {
+        let config = kalamdb_configs::AuthOidcSettings {
+            enabled: true,
+            display_name: "OIDC".to_string(),
+            issuer: Some("https://idp.example.com".to_string()),
+            client_id: Some("client".to_string()),
+            client_secret: None,
+            scopes: vec!["openid".to_string(), "email".to_string()],
+            device_authorization_endpoint: None,
+            broker_device_flow_enabled: false,
+            auto_provision: false,
+            default_role: "user".to_string(),
+            audience: None,
+        };
+
+        let scopes = selected_scopes(
+            &config,
+            &[
+                "openid".to_string(),
+                "email".to_string(),
+                "offline_access".to_string(),
+            ],
+        );
+
         assert_eq!(scopes.len(), 1);
         assert_eq!(scopes[0].as_str(), "email");
     }

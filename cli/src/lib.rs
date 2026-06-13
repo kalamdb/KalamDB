@@ -19,7 +19,7 @@ pub mod history;
 pub mod history_menu;
 pub mod output;
 pub mod parser;
-pub mod process_util;
+pub mod process;
 pub mod release_download;
 pub mod release_target;
 pub mod release_version;

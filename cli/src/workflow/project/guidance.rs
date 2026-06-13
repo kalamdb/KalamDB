@@ -239,6 +239,22 @@ pub fn dev_process_spawn_failed(name: &str, shell: &str, command: &str, error: &
     )
 }
 
+pub fn dev_auth_guidance_message(
+    project_root: &Path,
+    profile: Option<&str>,
+    detail: &str,
+) -> String {
+    use crate::workflow::display_project_path;
+
+    let env_path = project_root.join(".env");
+    let profile_name = profile.unwrap_or("<profile>");
+
+    format!(
+        "authentication failed: {detail}. Edit {} and set `KALAM_PROFILE={profile_name}` to a CLI-saved profile, or run `kalam login --instance {profile_name}` and then update `.env` to use that profile",
+        display_project_path(project_root, &env_path)
+    )
+}
+
 pub fn dev_empty_process_command(name: &str) -> String {
     format!(
         "dev.processes.{name} is empty in kalam.toml.\n\n\

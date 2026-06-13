@@ -1,0 +1,43 @@
+    Checking datafusion-catalog v54.0.0
+    Checking datafusion-pruning v54.0.0
+    Checking datafusion-datasource-json v54.0.0
+    Checking datafusion-datasource-csv v54.0.0
+    Checking datafusion-datasource-arrow v54.0.0
+    Checking librocksdb-sys v0.17.3+10.4.2
+    Checking rocksdb v0.24.0
+    Checking datafusion-datasource-parquet v54.0.0
+    Checking datafusion-physical-optimizer v54.0.0
+    Checking datafusion-functions-table v54.0.0
+    Checking datafusion-catalog-listing v54.0.0
+    Checking datafusion v54.0.0
+    Checking kalamdb-datafusion-sources v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-datafusion-sources)
+    Checking kalamdb-session-datafusion v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-session-datafusion)
+    Checking kalamdb-store v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-store)
+    Checking kalamdb-plan-cache v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-plan-cache)
+    Checking datafusion-functions-json v0.54.1
+    Checking kalamdb-transactions v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-transactions)
+    Checking kalamdb-system v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-system)
+    Checking kalamdb-filestore v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-filestore)
+    Checking kalamdb-auth v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-auth)
+    Checking kalamdb-dialect v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-dialect)
+    Checking kalamdb-vector v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-vector)
+    Checking kalamdb-pg v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-pg)
+    Checking kalamdb-raft v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-raft)
+    Checking kalamdb-tables v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-tables)
+    Checking kalamdb-views v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-views)
+    Checking kalamdb-publisher v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-publisher)
+    Checking kalamdb-flush v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-flush)
+    Checking kalamdb-live v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-live)
+    Checking kalamdb-core v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-core)
+    Checking kalamdb-handlers-support v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers/crates/support)
+    Checking kalamdb-transfer v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-transfer)
+    Checking kalamdb-dba v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-dba)
+    Checking kalamdb-handlers-user v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers/crates/user)
+    Checking kalamdb-handlers-stream v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers/crates/stream)
+    Checking kalamdb-jobs v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-jobs)
+    Checking kalamdb-handlers-ddl v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers/crates/ddl)
+    Checking kalamdb-handlers-admin v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers/crates/admin)
+    Checking kalamdb-api v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-api)
+    Checking kalamdb-handlers v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend/crates/kalamdb-handlers)
+    Checking kalamdb-server v0.5.2-rc.2 (/Users/jamal/git/KalamDB/backend)
+    Finished `dev` profile [unoptimized] target(s) in 3m 22s

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    authenticate, create_and_sign_refresh_token_with_auth_type,
-    create_and_sign_token_with_auth_type, create_auth_cookie, create_refresh_cookie,
-    extract_client_ip_secure, AuthRequest, CookieConfig, UserRepository,
+    auth_cookie_config, authenticate, create_auth_cookie, create_refresh_cookie,
+    extract_client_ip_secure, issue_auth_tokens, AuthRequest, UserRepository,
 };
 use kalamdb_commons::{AuthType as KalamAuthType, Role};
 use kalamdb_configs::{AuthOidcSettings, AuthSettings};
@@ -57,7 +55,7 @@ pub async fn oidc_code_exchange_handler(
         },
     };
 
-    complete_oidc_login(req, app_context, user_repo, config, id_token, connection_info).await
+    complete_oidc_login(app_context, user_repo, config, id_token, connection_info).await
 }
 
 pub async fn oidc_token_exchange_handler(
@@ -76,8 +74,7 @@ pub async fn oidc_token_exchange_handler(
         ));
     }
 
-    complete_oidc_login(req, app_context, user_repo, config, body.token.clone(), connection_info)
-        .await
+    complete_oidc_login(app_context, user_repo, config, body.token.clone(), connection_info).await
 }
 
 async fn exchange_authorization_code(
@@ -126,7 +123,6 @@ async fn exchange_authorization_code(
 }
 
 async fn complete_oidc_login(
-    req: HttpRequest,
     app_context: web::Data<Arc<AppContext>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     config: web::Data<AuthSettings>,
@@ -146,53 +142,30 @@ async fn complete_oidc_login(
 
     let user = auth_result.user;
     let admin_ui_access = matches!(user.role, Role::Dba | Role::System);
-    let (access_token, _) = match create_and_sign_token_with_auth_type(
+    let issued_tokens = match issue_auth_tokens(
         &user.user_id,
         &user.role,
         user.email.as_deref(),
-        Some(config.jwt_expiry_hours),
-        &config.jwt_secret,
         KalamAuthType::Oidc,
+        config.get_ref(),
     ) {
-        Ok(token) => token,
+        Ok(tokens) => tokens,
         Err(error) => {
-            log::error!("Error generating JWT after OIDC login: {}", error);
+            log::error!("Error generating tokens after OIDC login: {}", error);
             return HttpResponse::InternalServerError()
                 .json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
         },
     };
 
-    let refresh_expiry_hours = config.jwt_expiry_hours * 7;
-    let (refresh_token, _) = match create_and_sign_refresh_token_with_auth_type(
-        &user.user_id,
-        &user.role,
-        user.email.as_deref(),
-        Some(refresh_expiry_hours),
-        &config.jwt_secret,
-        KalamAuthType::Oidc,
-    ) {
-        Ok(token) => token,
-        Err(error) => {
-            log::error!("Error generating refresh token after OIDC login: {}", error);
-            return HttpResponse::InternalServerError()
-                .json(AuthErrorResponse::new("internal_error", "Failed to generate token"));
-        },
-    };
-
-    let cookie_config = CookieConfig {
-        secure: config.cookie_secure && req.connection_info().scheme() == "https",
-        ..Default::default()
-    };
+    let cookie_config = auth_cookie_config(config.get_ref());
     let auth_cookie =
-        create_auth_cookie(&access_token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
+        create_auth_cookie(&issued_tokens.access_token, issued_tokens.access_expires_in, &cookie_config);
     let refresh_cookie = create_refresh_cookie(
-        &refresh_token,
-        Duration::hours(refresh_expiry_hours),
+        &issued_tokens.refresh_token,
+        issued_tokens.refresh_expires_in,
         &cookie_config,
     );
 
-    let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
-    let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
     let created_at = chrono::DateTime::from_timestamp_millis(user.created_at)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
@@ -217,9 +190,9 @@ async fn complete_oidc_login(
                 updated_at,
             },
             admin_ui_access,
-            expires_at: expires_at.to_rfc3339(),
-            access_token,
-            refresh_token,
-            refresh_expires_at: refresh_expires_at.to_rfc3339(),
+            expires_at: issued_tokens.expires_at.to_rfc3339(),
+            access_token: issued_tokens.access_token,
+            refresh_token: issued_tokens.refresh_token,
+            refresh_expires_at: issued_tokens.refresh_expires_at.to_rfc3339(),
         })
 }

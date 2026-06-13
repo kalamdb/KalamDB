@@ -5,13 +5,11 @@
 use std::sync::Arc;
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use chrono::{Duration, Utc};
 use kalamdb_auth::{
-    create_and_sign_refresh_token_with_auth_type, create_and_sign_token_with_auth_type,
-    create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
-    extract_refresh_or_bearer_token,
+    auth_cookie_config, create_auth_cookie, create_refresh_cookie, extract_client_ip_secure,
+    extract_refresh_or_bearer_token, issue_auth_tokens,
     providers::jwt_auth::{validate_jwt_token, TokenType},
-    resolve_refresh_token_user, CookieConfig, UserRepository,
+    resolve_refresh_token_user, UserRepository,
 };
 use kalamdb_commons::Role;
 use kalamdb_configs::AuthSettings;
@@ -67,58 +65,33 @@ pub async fn refresh_handler(
             Err(err) => return map_auth_error_to_response(err),
         };
 
-    // Generate new access token
-    let (new_token, _new_claims) = match create_and_sign_token_with_auth_type(
+    let issued_tokens = match issue_auth_tokens(
         &user.user_id,
         &user.role,
         user.email.as_deref(),
-        Some(config.jwt_expiry_hours),
-        &config.jwt_secret,
         user.auth_type,
+        config.get_ref(),
     ) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("Error generating JWT: {}", e);
+        Ok(tokens) => tokens,
+        Err(error) => {
+            log::error!("Error refreshing tokens: {}", error);
             return HttpResponse::InternalServerError()
                 .json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
         },
     };
 
-    // Generate new refresh token (7 days by default, or 7x access token expiry)
-    // SECURITY: Uses create_and_sign_refresh_token to set token_type="refresh",
-    // preventing refresh tokens from being used as access tokens.
-    let refresh_expiry_hours = config.jwt_expiry_hours * 7;
-    let (new_refresh_token, _refresh_claims) = match create_and_sign_refresh_token_with_auth_type(
-        &user.user_id,
-        &user.role,
-        user.email.as_deref(),
-        Some(refresh_expiry_hours),
-        &config.jwt_secret,
-        user.auth_type,
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("Error generating refresh token: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(AuthErrorResponse::new("internal_error", "Failed to refresh token"));
-        },
-    };
-
-    // Create new cookie
-    let cookie_config = CookieConfig {
-        secure: config.cookie_secure && req.connection_info().scheme() == "https",
-        ..Default::default()
-    };
-    let auth_cookie =
-        create_auth_cookie(&new_token, Duration::hours(config.jwt_expiry_hours), &cookie_config);
+    let cookie_config = auth_cookie_config(config.get_ref());
+    let auth_cookie = create_auth_cookie(
+        &issued_tokens.access_token,
+        issued_tokens.access_expires_in,
+        &cookie_config,
+    );
     let refresh_cookie = create_refresh_cookie(
-        &new_refresh_token,
-        Duration::hours(refresh_expiry_hours),
+        &issued_tokens.refresh_token,
+        issued_tokens.refresh_expires_in,
         &cookie_config,
     );
 
-    let expires_at = Utc::now() + Duration::hours(config.jwt_expiry_hours);
-    let refresh_expires_at = Utc::now() + Duration::hours(refresh_expiry_hours);
     let admin_ui_access = matches!(user.role, Role::Dba | Role::System);
 
     // Convert timestamps properly
@@ -142,10 +115,10 @@ pub async fn refresh_handler(
                 updated_at,
             },
             admin_ui_access,
-            expires_at: expires_at.to_rfc3339(),
-            access_token: new_token,
-            refresh_token: new_refresh_token,
-            refresh_expires_at: refresh_expires_at.to_rfc3339(),
+            expires_at: issued_tokens.expires_at.to_rfc3339(),
+            access_token: issued_tokens.access_token,
+            refresh_token: issued_tokens.refresh_token,
+            refresh_expires_at: issued_tokens.refresh_expires_at.to_rfc3339(),
         })
 }
 
@@ -164,6 +137,7 @@ mod tests {
             iat: now,
             name: None,
             email: None,
+            email_verified: None,
             role: None,
             auth_type: None,
             token_type: Some(TokenType::Refresh),

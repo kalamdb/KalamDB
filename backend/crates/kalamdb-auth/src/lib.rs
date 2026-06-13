@@ -48,8 +48,11 @@ pub use providers::jwt_auth::{
 pub use repository::user_repo::{CachedUsersRepo, CoreUsersRepo, UserRepository};
 pub use services::{
     login_tracker::{LoginTracker, LoginTrackingConfig},
+    session_tokens::{issue_auth_tokens, IssuedAuthTokens},
     unified::{
         authenticate, extract_user_id_for_audit, resolve_refresh_token_user, AuthRequest,
         AuthenticationResult,
     },
 };
+#[cfg(feature = "http")]
+pub use services::session_tokens::auth_cookie_config;
