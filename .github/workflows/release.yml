@@ -553,7 +553,7 @@ jobs:
 
   build_cli_windows_x86_64:
     name: Build CLI Windows x86_64
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: [resolve_platforms, read_version, cli_build_wave]
     if: ${{ github.event.inputs.platform_windows_x86_64 == 'true' }}
 
@@ -561,61 +561,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Rust
+      - name: Enable Windows long paths
+        shell: bash
+        run: git config --global core.longpaths true
+
+      - name: Setup Rust (MSVC)
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: x86_64-pc-windows-gnu
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cli-windows-x86_64
+          shared-key: cli-windows-x86_64-msvc
           cache-on-failure: true
 
-      - name: Install system deps
+      - name: Configure Windows build parallelism
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zip mingw-w64
+          $jobs = if ($env:NUMBER_OF_PROCESSORS) { $env:NUMBER_OF_PROCESSORS } else { "4" }
+          "CARGO_BUILD_JOBS=$jobs" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using $jobs parallel compile jobs"
 
-      - name: Install cross
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install cross --locked
-
-      - name: Build CLI windows-x86_64
-        shell: bash
+      - name: Build CLI windows-x86_64 (MSVC, release-dist profile)
+        shell: pwsh
         env:
-          CROSS_CONTAINER_ENGINE_NO_BUILDKIT: "0"
+          CARGO_PROFILE_RELEASE_DIST_LTO: thin
+          CARGO_PROFILE_RELEASE_DIST_CODEGEN_UNITS: "16"
         run: |
-          set -euo pipefail
-          cross build \
-            -p kalam-cli \
-            --profile release-dist \
-            --target x86_64-pc-windows-gnu \
+          $ErrorActionPreference = "Stop"
+          cargo build `
+            -p kalam-cli `
+            --profile release-dist `
             --bin kalam
 
       - name: Package CLI artifact
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          VERSION="${{ needs.read_version.outputs.version }}"
-          mkdir -p dist/$VERSION
-          CLI_OUT="kalamcli-${VERSION}-windows-x86_64.exe"
-          cp "target/x86_64-pc-windows-gnu/release-dist/kalam.exe" "dist/$VERSION/$CLI_OUT"
-          CROSS_IMAGE="ghcr.io/cross-rs/x86_64-pc-windows-gnu:latest"
-          docker run --rm -v "$PWD":/work "$CROSS_IMAGE" bash -lc '\
-            set -euo pipefail; \
-            DLL_DIR=/usr/x86_64-w64-mingw32/bin; \
-            for dll in libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll; do \
-              if [[ ! -f "${DLL_DIR}/${dll}" ]]; then \
-                echo "WARNING: Missing ${dll} in ${DLL_DIR}" >&2; \
-                continue; \
-              fi; \
-              cp "${DLL_DIR}/${dll}" "/work/dist/'"$VERSION"'/"; \
-            done' || echo "WARNING: Failed to copy Windows runtime DLLs from cross image"
-          (cd "dist/$VERSION" && zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT" *.dll 2>/dev/null || zip -q "${CLI_OUT%.exe}.zip" "$CLI_OUT")
+          $ErrorActionPreference = "Stop"
+          $version = "${{ needs.read_version.outputs.version }}"
+          $distDir = "dist/$version"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+
+          $cliOut = "kalamcli-$version-windows-x86_64.exe"
+          Copy-Item "target/release-dist/kalam.exe" "$distDir/$cliOut"
+          & "$env:GITHUB_WORKSPACE/.github/scripts/copy-vc-redist.ps1" -DestinationDir $distDir
+
+          $zipPath = "$distDir/$($cliOut -replace '\.exe$','').zip"
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          $artifactPaths = @(Join-Path $distDir $cliOut) + @(Get-ChildItem $distDir -Filter "*.dll" | ForEach-Object FullName)
+          Compress-Archive -Path $artifactPaths -DestinationPath $zipPath
+          Get-ChildItem $distDir -File | Where-Object { $_.Extension -ne ".zip" } | Remove-Item -Force
+          & "$env:GITHUB_WORKSPACE/.github/scripts/verify-windows-release-zip.ps1" -ZipPath $zipPath
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v6
@@ -978,11 +975,14 @@ jobs:
 
           $srvOut = "kalamdb-server-$version-windows-x86_64.exe"
           Copy-Item "target/release-dist/kalamdb-server.exe" "$distDir/$srvOut"
+          & "$env:GITHUB_WORKSPACE/.github/scripts/copy-vc-redist.ps1" -DestinationDir $distDir
 
           $zipPath = "$distDir/$($srvOut -replace '\.exe$','').zip"
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-          Compress-Archive -Path "$distDir/$srvOut" -DestinationPath $zipPath
-          Remove-Item "$distDir/$srvOut" -Force
+          $artifactPaths = @(Join-Path $distDir $srvOut) + @(Get-ChildItem $distDir -Filter "*.dll" | ForEach-Object FullName)
+          Compress-Archive -Path $artifactPaths -DestinationPath $zipPath
+          Get-ChildItem $distDir -File | Where-Object { $_.Extension -ne ".zip" } | Remove-Item -Force
+          & "$env:GITHUB_WORKSPACE/.github/scripts/verify-windows-release-zip.ps1" -ZipPath $zipPath
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6

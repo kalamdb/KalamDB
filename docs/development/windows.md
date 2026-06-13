@@ -301,6 +301,19 @@ cargo clean
 cargo build
 ```
 
+### Issue: "MSVCP140.dll was not found" or "VCRUNTIME140.dll was not found" when running a release binary
+
+**Cause:** The Windows release was built with MSVC and depends on the Microsoft C++ runtime.
+
+**Solution:**
+
+1. For GitHub release zips that bundle runtime DLLs, extract the full zip and keep
+   `msvcp140.dll`, `vcruntime140.dll`, and `vcruntime140_1.dll` next to
+   `kalamdb-server-<version>-windows-x86_64.exe` or `kalamcli-<version>-windows-x86_64.exe`.
+2. If you use `kalam dev` with a managed server install, delete `%USERPROFILE%\.kalam\bin`
+   and rerun `kalam dev` so it can redownload the full archive.
+3. Otherwise install the [Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+
 ### Issue: Slow Compilation Times
 
 **First Build:** 15-30 minutes is normal on Windows (compiling large C++ libraries)

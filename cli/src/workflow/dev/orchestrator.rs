@@ -5,7 +5,7 @@ use std::{fs, time::SystemTime};
 use tokio::time::{self, Duration};
 
 use crate::{
-    error::Result,
+    error::{CLIError, Result},
     output::{WorkflowDisplayMode, WorkflowOutput},
     terminal_ui::ProgressTaskStatus,
     workflow::{
@@ -28,7 +28,10 @@ use crate::{
             apply::{apply_pending_migrations, ApplyMigrationOptions},
             create::update_draft_migration,
         },
-        project::config::SchemaMode,
+        project::{
+            config::SchemaMode,
+            guidance::dev_local_kalamdb_server_start_failed,
+        },
         schema::{generate_schema_artifacts, GenerateOptions},
         sql::{build_workflow_client, drop_namespace_if_exists},
         WorkflowContext,
@@ -272,14 +275,23 @@ async fn run_dev_session_inner(
                 )
                 .await
             {
-                output.status(format!("failed to start local KalamDB server: {error}"));
-                return Err(error);
+                let message = dev_local_kalamdb_server_start_failed(
+                    &launch.program,
+                    &error.to_string(),
+                );
+                output.status(&message);
+                return Err(CLIError::ConfigurationError(message));
             }
             *local_server_managed = true;
-            wait_for_server_ready(&precheck.environment.url, output, supervisor)
+            wait_for_server_ready(
+                &precheck.environment.url,
+                &launch.program,
+                output,
+                supervisor,
+            )
                 .await
                 .map_err(|error| {
-                    output.status(format!("local KalamDB server did not become ready: {error}"));
+                    output.status(error.to_string());
                     error
                 })?;
             ensure_local_dev_authentication_ready(

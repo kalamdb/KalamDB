@@ -23,6 +23,7 @@ pub mod process;
 pub mod release_download;
 pub mod release_target;
 pub mod release_version;
+pub mod self_update;
 pub mod session;
 pub mod sql_batch;
 pub mod terminal_input;

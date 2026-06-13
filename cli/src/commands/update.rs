@@ -1,12 +1,13 @@
-use std::{env, fs, path::Path, time::Duration};
+use std::{env, fs, time::Duration};
 
 use kalam_cli::{
     release_download::{
-        copy_file_with_executable_bit, create_temp_dir, detect_platform, download_bytes,
-        download_text, extract_archive, verify_checksum,
+        create_temp_dir, detect_platform, download_bytes, download_text, extract_archive,
+        verify_checksum,
     },
     release_target::{ReleaseTarget, CLI_ARTIFACT_PREFIX},
     release_version::ReleaseVersion,
+    self_update::{replace_installed_binary, ReplaceMode},
     update_check, CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
 };
 
@@ -98,21 +99,21 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
 
     eprintln!("Extracting binary");
     let temp_dir = create_temp_dir("kalam-update")?;
-    let cleanup_dir = temp_dir.clone();
-    let install_result = async {
+    let binary_path = {
         extract_archive(&archive_bytes, target.archive_kind(), &temp_dir)?;
-        let binary_path = target.find_binary(&temp_dir).ok_or_else(|| {
+        target.find_binary(&temp_dir).ok_or_else(|| {
             CLIError::ConfigurationError(format!(
                 "Could not find '{}' binary in archive",
                 target.binary_name()
             ))
-        })?;
-        replace_current_binary(&current_exe, &binary_path)?;
-        Ok::<(), CLIError>(())
+        })?
+    };
+
+    let replace_mode = replace_installed_binary(&current_exe, &binary_path, &temp_dir)?;
+
+    if replace_mode == ReplaceMode::Completed {
+        let _ = fs::remove_dir_all(&temp_dir);
     }
-    .await;
-    let _ = fs::remove_dir_all(cleanup_dir);
-    install_result?;
 
     if let Some(remote_build_date) = remote_build_date {
         println!(
@@ -124,6 +125,12 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
     } else {
         println!("Installed kalam {} to {}", target.version(), current_exe.display());
     }
+
+    if replace_mode == ReplaceMode::ScheduledExit {
+        eprintln!("Finishing update after exit (Windows file lock)");
+        std::process::exit(0);
+    }
+
     Ok(true)
 }
 
@@ -173,23 +180,6 @@ async fn resolve_version(client: &reqwest::Client, args: &UpdateArgs) -> Result<
 
     let version = update_check::resolve_release_version(client, args.pre_release).await?;
     ReleaseVersion::parse(&version)
-}
-
-fn replace_current_binary(current_exe: &Path, new_binary: &Path) -> Result<()> {
-    let temp_path = current_exe.with_extension("kalam-update-tmp");
-    copy_file_with_executable_bit(new_binary, &temp_path)?;
-
-    let replace_result = fs::rename(&temp_path, current_exe);
-    if let Err(error) = replace_result {
-        let _ = fs::remove_file(&temp_path);
-        return Err(CLIError::FileError(format!(
-            "Failed to replace {}: {}",
-            current_exe.display(),
-            error
-        )));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
