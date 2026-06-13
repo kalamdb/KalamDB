@@ -367,7 +367,7 @@ async fn download_and_install_managed_server(
     let platform = detect_platform()?;
     let archive_kind = archive_kind_for_platform(&platform);
     let archive_name = archive_name(SERVER_ARTIFACT_PREFIX, version, &platform, archive_kind);
-    let base_url = release_base_url(version, SERVER_RELEASE_BASE_URL_ENV);
+    let base_url = release_base_url(version, SERVER_RELEASE_BASE_URL_ENV)?;
     let archive_url = format!("{base_url}/{archive_name}");
     let checksums_url = format!("{base_url}/SHA256SUMS");
 

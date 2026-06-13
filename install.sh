@@ -108,6 +108,76 @@ extract_tag_name() {
     sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' | head -1
 }
 
+validate_version() {
+    local value="${1#v}"
+    local core major minor patch
+
+    if [[ ! "$value" =~ ^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$ ]]; then
+        fatal "Invalid release version: $1"
+    fi
+
+    core="${value%%-*}"
+    IFS=. read -r major minor patch <<< "$core"
+    for part in "$major" "$minor" "$patch"; do
+        if [[ "$part" =~ ^0[0-9]+$ ]]; then
+            fatal "Invalid release version '${1}': numeric parts must not contain leading zeroes"
+        fi
+    done
+
+    VERSION="$value"
+}
+
+is_sha256_hex() {
+    [[ "$1" =~ ^[0-9a-fA-F]{64}$ ]]
+}
+
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        fatal "Missing required command: sha256sum or shasum"
+    fi
+}
+
+checksum_for_archive() {
+    local checksums_file="$1"
+    local archive="$2"
+    awk -v archive="$archive" '
+        $2 == archive || $2 == "*" archive {
+            print $1
+            exit
+        }
+    ' "$checksums_file"
+}
+
+validate_archive_entries() {
+    local archive_path="$1"
+    local ext="$2"
+    local entry
+
+    if [[ "$ext" == "zip" ]]; then
+        while IFS= read -r entry; do
+            validate_archive_entry "$entry"
+        done < <(unzip -Z -1 "$archive_path")
+    else
+        while IFS= read -r entry; do
+            validate_archive_entry "$entry"
+        done < <(tar -tzf "$archive_path")
+    fi
+}
+
+validate_archive_entry() {
+    local entry="$1"
+    case "$entry" in
+        ""|/*|../*|*/../*|*/..|..)
+            fatal "Archive contains unsafe path: $entry"
+            ;;
+    esac
+}
+
 # ── Detect platform ────────────────────────────────────────────────────────
 detect_platform() {
     local os arch
@@ -135,21 +205,33 @@ detect_platform() {
 check_deps() {
     local missing=()
 
-    for cmd in curl tar; do
+    for cmd in awk curl find head sed tr; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
     done
 
+    if [[ "${PLATFORM:-}" == windows-* ]]; then
+        if ! command -v unzip &>/dev/null; then
+            missing+=("unzip")
+        fi
+    elif ! command -v tar &>/dev/null; then
+        missing+=("tar")
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         fatal "Missing required commands: ${missing[*]}"
+    fi
+
+    if ! command -v sha256sum &>/dev/null && ! command -v shasum &>/dev/null; then
+        fatal "Missing required command: sha256sum or shasum"
     fi
 }
 
 # ── Resolve latest version from GitHub ──────────────────────────────────────
 resolve_version() {
     if [[ -n "$VERSION" ]]; then
-        VERSION="${VERSION#v}"
+        validate_version "$VERSION"
         info "Using requested version: $VERSION"
         return
     fi
@@ -205,8 +287,8 @@ resolve_version() {
         fatal "Could not determine latest version. Set KALAM_VERSION explicitly (e.g. KALAM_VERSION=0.3.0-alpha2)."
     fi
 
-    # Strip leading 'v' (artifact names don't include it)
-    VERSION="${tag_name#v}"
+    # Strip leading 'v' (artifact names don't include it) and reject path/control characters.
+    validate_version "$tag_name"
 
     ok "Latest version: $VERSION"
 }
@@ -225,8 +307,9 @@ download_and_install() {
     local checksums_url="${base_url}/SHA256SUMS"
 
     local tmpdir=""
+    local install_tmp=""
     tmpdir="$(mktemp -d)" || fatal "Could not create temporary directory"
-    trap 'rm -rf "$tmpdir"' EXIT
+    trap 'rm -rf "$tmpdir"; if [[ -n "${install_tmp:-}" ]]; then rm -f "$install_tmp"; fi' EXIT
 
     # Download the archive
     info "Downloading ${BOLD}${archive}${NC}…"
@@ -234,32 +317,30 @@ download_and_install() {
         fatal "Download failed. Check that version '${VERSION}' exists at:\n  https://github.com/${GITHUB_REPO}/releases"
     }
 
-    # Verify checksum if SHA256SUMS is available
+    # Verify checksum before extracting. SHA256SUMS is mandatory for every release asset.
     info "Verifying checksum…"
-    if curl -fsSL -o "${tmpdir}/SHA256SUMS" "$checksums_url" 2>/dev/null; then
-        local expected_hash actual_hash
-        expected_hash="$(grep "${archive}" "${tmpdir}/SHA256SUMS" | awk '{print $1}')"
+    curl -fsSL -o "${tmpdir}/SHA256SUMS" "$checksums_url" 2>/dev/null || {
+        fatal "SHA256SUMS is required but was not available for ${VERSION}"
+    }
 
-        if [[ -n "$expected_hash" ]]; then
-            if command -v sha256sum &>/dev/null; then
-                actual_hash="$(sha256sum "${tmpdir}/${archive}" | awk '{print $1}')"
-            elif command -v shasum &>/dev/null; then
-                actual_hash="$(shasum -a 256 "${tmpdir}/${archive}" | awk '{print $1}')"
-            else
-                warn "No sha256sum or shasum found — skipping checksum verification"
-                actual_hash="$expected_hash"
-            fi
+    local expected_hash actual_hash
+    expected_hash="$(checksum_for_archive "${tmpdir}/SHA256SUMS" "$archive")"
 
-            if [[ "$actual_hash" != "$expected_hash" ]]; then
-                fatal "Checksum mismatch!\n  Expected: ${expected_hash}\n  Got:      ${actual_hash}"
-            fi
-            ok "Checksum verified"
-        else
-            warn "Checksum entry for ${archive} not found in SHA256SUMS — skipping verification"
-        fi
-    else
-        warn "SHA256SUMS not available — skipping checksum verification"
+    if [[ -z "$expected_hash" ]]; then
+        fatal "Checksum entry for ${archive} not found in SHA256SUMS"
     fi
+    is_sha256_hex "$expected_hash" || fatal "Invalid SHA256SUMS entry for ${archive}"
+
+    actual_hash="$(sha256_file "${tmpdir}/${archive}")"
+    expected_hash="$(printf '%s' "$expected_hash" | tr '[:upper:]' '[:lower:]')"
+    actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$actual_hash" != "$expected_hash" ]]; then
+        fatal "Checksum mismatch!\n  Expected: ${expected_hash}\n  Got:      ${actual_hash}"
+    fi
+    ok "Checksum verified"
+
+    validate_archive_entries "${tmpdir}/${archive}" "$ext"
 
     # Extract
     info "Extracting…"
@@ -270,26 +351,29 @@ download_and_install() {
         tar -xzf "${tmpdir}/${archive}" -C "${tmpdir}" || fatal "Failed to extract archive"
     fi
 
-    # Find the binary — could be named 'kalam', 'kalamcli', with or without version suffix
-    local binary_path
-    binary_path="$(find "${tmpdir}" -type f \( -name "${BINARY_NAME}" -o -name "${ARTIFACT_PREFIX}" \) | head -1)"
-
-    if [[ -z "$binary_path" ]]; then
-        # Fallback: any executable file that isn't an archive or metadata
-        binary_path="$(find "${tmpdir}" -type f ! -name '*.tar.gz' ! -name '*.zip' ! -name 'SHA256SUMS' ! -name '*.txt' ! -name '*.md' | head -1)"
+    # Find the exact release binary name generated by the release workflow.
+    local expected_binary="${ARTIFACT_PREFIX}-${VERSION}-${PLATFORM}"
+    if [[ "$PLATFORM" == windows-* ]]; then
+        expected_binary="${expected_binary}.exe"
     fi
 
+    local binary_path
+    binary_path="$(find "${tmpdir}" -type f -name "$expected_binary" | head -1)"
+
     if [[ -z "$binary_path" ]]; then
-        fatal "Could not find ${BINARY_NAME} binary in the archive"
+        fatal "Could not find ${expected_binary} binary in the archive"
     fi
 
     # Install as 'kalam' regardless of archive naming
     mkdir -p "$INSTALL_DIR"
-    cp "$binary_path" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    install_tmp="${INSTALL_DIR}/.${BINARY_NAME}.tmp.$$"
+    cp "$binary_path" "$install_tmp"
+    chmod 0755 "$install_tmp"
+    mv "$install_tmp" "${INSTALL_DIR}/${BINARY_NAME}"
 
     # Explicit cleanup and disarm the trap so 'set -u' doesn't complain after return
     rm -rf "$tmpdir"
+    install_tmp=""
     trap - EXIT
 
     ok "Installed ${BOLD}${BINARY_NAME}${NC} to ${INSTALL_DIR}/${BINARY_NAME}"
@@ -355,8 +439,8 @@ main() {
     printf "\n${BOLD}  KalamDB CLI Installer${NC}\n\n"
 
     parse_args "$@"
-    check_deps
     detect_platform
+    check_deps
     info "Detected platform: ${BOLD}${PLATFORM}${NC}"
 
     resolve_version

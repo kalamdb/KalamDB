@@ -274,7 +274,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CliCommand {
-    /// Update this kalam binary from signed release assets and checksums
+    /// Update this kalam binary from verified release assets and checksums
     Update(UpdateArgs),
 
     /// Print version information

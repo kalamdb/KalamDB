@@ -34,6 +34,7 @@ System architecture and design decisions.
 
 - **[decisions/](architecture/decisions/)** – Architecture Decision Records (ADRs)
 - **[manifest.md](architecture/manifest.md)** – Manifest file format
+- **[release-downloads.md](architecture/release-downloads.md)** – CLI update, installer, and managed local server release download flow
 - **[conversion-architecture.md](architecture/conversion-architecture.md)** – Data type conversion
 - **[pg-extension-grpc-connectivity.md](architecture/pg-extension-grpc-connectivity.md)** – PostgreSQL extension gRPC transport, session lifecycle, liveness, and improvement path
 - **[vector-search-architecture.md](architecture/vector-search-architecture.md)** – Vector index hot staging, cold snapshots, and query path

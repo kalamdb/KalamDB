@@ -21,6 +21,8 @@ pub mod output;
 pub mod parser;
 pub mod process_util;
 pub mod release_download;
+pub mod release_target;
+pub mod release_version;
 pub mod session;
 pub mod sql_batch;
 pub mod terminal_input;
