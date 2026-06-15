@@ -26,8 +26,7 @@ use crate::{
                 init_config_validation_failed, init_empty_project_name, init_invalid_server_url,
                 init_missing_language_targets, init_missing_scaffold_template,
                 init_project_already_exists, init_remote_schema_unavailable,
-                init_requires_non_interactive_flags, init_stage_context,
-                init_unsupported_language,
+                init_requires_non_interactive_flags, init_stage_context, init_unsupported_language,
             },
             identifiers::{normalize_namespace_name, parse_namespace_id},
             prompts::{
@@ -374,6 +373,9 @@ fn build_config(
         },
         dev: DevSection {
             auto_start_db: matches!(server_mode, ServerMode::Local),
+            processes: package_manager
+                .map(|manager| HashMap::from([("app".into(), manager.dev_run_command().into())]))
+                .unwrap_or_default(),
             ..DevSection::default()
         },
         logging: LoggingSection::default(),
@@ -437,7 +439,11 @@ fn write_project_scaffold(
     )?;
     let gitkeep = migrations_dir.join(".gitkeep");
     if !gitkeep.exists() {
-        scaffold::io_with_guidance("write migrations placeholder", &gitkeep, fs::write(&gitkeep, ""))?;
+        scaffold::io_with_guidance(
+            "write migrations placeholder",
+            &gitkeep,
+            fs::write(&gitkeep, ""),
+        )?;
     }
     output.detail(format!("created {}/", display_project_path(root, &migrations_dir)));
 
@@ -511,7 +517,11 @@ fn write_default_gitignore(
             "dart": languages.iter().any(|language| language == "dart"),
         }),
     )?;
-    scaffold::io_with_guidance("write .gitignore", &gitignore_path, fs::write(&gitignore_path, contents))?;
+    scaffold::io_with_guidance(
+        "write .gitignore",
+        &gitignore_path,
+        fs::write(&gitignore_path, contents),
+    )?;
     output.detail("created .gitignore");
     Ok(())
 }
@@ -541,6 +551,7 @@ fn write_kalam_toml_from_template(
         .get("dev")
         .map(|connection| connection.namespace.as_str())
         .unwrap_or("");
+    let dev_process_command = config.dev.processes.get("app").cloned().unwrap_or_default();
     let contents = render_template(
         template,
         &json!({
@@ -554,10 +565,15 @@ fn write_kalam_toml_from_template(
             "dart": config.schema.languages.iter().any(|language| language == "dart"),
             "auto_start_db": matches!(server_mode, ServerMode::Local),
             "package_manager": config.project.package_manager.as_deref().unwrap_or(""),
+            "dev_process_command": dev_process_command,
         }),
     )?;
     let config_path = root.join(KALAM_TOML);
-    scaffold::io_with_guidance("write kalam.toml", &config_path, fs::write(&config_path, contents))?;
+    scaffold::io_with_guidance(
+        "write kalam.toml",
+        &config_path,
+        fs::write(&config_path, contents),
+    )?;
     KalamProjectConfig::load_from_path(&config_path)?;
     Ok(())
 }
@@ -600,6 +616,9 @@ mod tests {
         assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
         assert!(temp.path().join("src/generated").is_dir());
         assert!(temp.path().join("kalam/server/server.toml").is_file());
+        let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
+        assert!(kalam_toml.contains("[dev.processes]"));
+        assert!(kalam_toml.contains("run dev"));
     }
 
     #[test]
@@ -662,6 +681,8 @@ mod tests {
 
         let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
         assert!(!kalam_toml.contains("package_manager"));
+        assert!(kalam_toml.contains("# [dev.processes]"));
+        assert!(!kalam_toml.contains("\n[dev.processes]\n"));
 
         let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
         assert!(config.project.package_manager.is_none());

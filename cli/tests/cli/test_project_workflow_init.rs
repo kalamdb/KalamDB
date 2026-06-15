@@ -79,6 +79,9 @@ fn test_project_workflow_init_scaffolds_project() {
     );
     assert!(kalam_toml.contains("[schema.targets.typescript]"));
     assert!(kalam_toml.contains("[schema.targets.dart]"));
+    assert!(kalam_toml.contains("[dev.processes]"));
+    assert!(kalam_toml.contains("run dev"));
+    assert!(kalam_toml.contains("kalam dev"));
     assert!(!kalam_toml.contains("&quot;"));
     assert!(!kalam_toml.contains("path = \".kalam/logs/kalam.log\""));
     assert!(!kalam_toml.contains("dir = \"kalam/migrations\""));
@@ -118,6 +121,8 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
         fs::read_to_string(project_dir.join("kalam.toml")).expect("read generated kalam.toml");
     assert!(kalam_toml.contains("languages = [\"typescript\"]"));
     assert!(kalam_toml.contains("[schema.targets.typescript]"));
+    assert!(kalam_toml.contains("[dev.processes]"));
+    assert!(kalam_toml.contains("run dev"));
     assert!(!kalam_toml.contains("[schema.targets.dart]"));
     assert!(!kalam_toml.contains("&quot;"));
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");

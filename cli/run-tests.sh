@@ -543,6 +543,7 @@ if [ -n "$TEST_JOBS" ]; then
 fi
 echo "Mode:            $FEATURE_MODE"
 echo "Supplementary:   $SUPPLEMENTARY_MODE"
+echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
 echo "================================================"
 echo ""
 
@@ -924,6 +925,76 @@ supplementary_try_login() {
     [[ "$status" == "200" ]]
 }
 
+main_run_needs_running_server_auth() {
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        return 1
+    fi
+
+    if [ -n "$TEST_FILTER" ] || [ -n "$TEST_LIST_FILE" ] || [ -n "$TEST_TARGET" ]; then
+        return 1
+    fi
+
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+        return 1
+    fi
+
+    return 0
+}
+
+validate_running_server_credentials_if_needed() {
+    if ! main_run_needs_running_server_auth; then
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Warning: curl is not available; skipping running-server credential preflight." >&2
+        return 0
+    fi
+
+    local auth_tmp_dir
+    local status_body
+    local admin_login_body
+    local root_login_body
+
+    auth_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-main-auth.XXXXXX")"
+    status_body="$auth_tmp_dir/status.json"
+    admin_login_body="$auth_tmp_dir/admin-login.json"
+    root_login_body="$auth_tmp_dir/root-login.json"
+
+    if curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
+        if grep -Eq '"needs_setup"[[:space:]]*:[[:space:]]*true' "$status_body"; then
+            rm -rf "$auth_tmp_dir"
+            return 0
+        fi
+    fi
+
+    if supplementary_try_login "$KALAMDB_ADMIN_USER" "$KALAMDB_ADMIN_PASSWORD" "$admin_login_body"; then
+        rm -rf "$auth_tmp_dir"
+        return 0
+    fi
+
+    if supplementary_try_login root "$TEST_ROOT_PASSWORD" "$root_login_body"; then
+        rm -rf "$auth_tmp_dir"
+        return 0
+    fi
+
+    echo "Error: running-server test credentials are invalid for $KALAMDB_SERVER_URL." >&2
+    echo "Tried admin user '$KALAMDB_ADMIN_USER' and root with the configured test password." >&2
+    echo "Fix cli/.env, pass --password, or rerun with --server-type fresh for an isolated test server." >&2
+    if [ -s "$admin_login_body" ]; then
+        echo "" >&2
+        echo "Admin login response:" >&2
+        cat "$admin_login_body" >&2
+    fi
+    if [ -s "$root_login_body" ]; then
+        echo "" >&2
+        echo "Root login response:" >&2
+        cat "$root_login_body" >&2
+    fi
+    rm -rf "$auth_tmp_dir"
+    exit 1
+}
+
 setup_supplementary_auth_if_needed() {
     local auth_tmp_dir
     local status_body
@@ -1184,6 +1255,27 @@ run_single_test() {
     fi
 }
 
+schema_diff_tests_covered_by_main_run() {
+    if [ -n "$TEST_FILTER" ] || [ -n "$TEST_LIST_FILE" ] || [ -n "$TEST_TARGET" ]; then
+        return 1
+    fi
+
+    if [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    package_filters_include "kalam-schema-diff"
+}
+
+run_schema_diff_companion_tests_if_needed() {
+    if schema_diff_tests_covered_by_main_run; then
+        return 0
+    fi
+
+    step "Running Kalam schema diff tests"
+    cargo nextest run -p kalam-schema-diff --all-targets
+}
+
 run_test_list() {
     local test_file="$1"
     local input_path="$test_file"
@@ -1233,10 +1325,12 @@ cd "$REPO_ROOT"
 
 step "Verifying CLI test layout"
 verify_cli_test_layout
+validate_running_server_credentials_if_needed
 
 prebuild_cli_oidc_server_binary_if_needed
 ensure_dex_for_oidc_tests
 ensure_minio_for_storage_tests
+run_schema_diff_companion_tests_if_needed
 
 if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"

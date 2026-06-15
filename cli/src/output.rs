@@ -210,6 +210,8 @@ impl WorkflowOutput {
                 if let Some(progress_tasks) = &self.progress_tasks {
                     progress_tasks.push_task_detail("server", message, 8);
                 }
+            } else if process_output {
+                self.emit_service_line(&formatted, &formatted);
             }
         } else {
             self.emit_service_line(&formatted, &formatted);
@@ -279,6 +281,7 @@ impl WorkflowOutput {
     }
 
     pub fn run_terminal_modal<F: FnOnce() -> Result<R>, R>(&self, f: F) -> Result<R> {
+        terminal_ui::alert_action_required();
         let result = self.suspend_progress(|| {
             let _pause = self.pause_terminal_output();
             terminal_ui::clear_terminal().map_err(clear_terminal_error)?;
@@ -453,6 +456,18 @@ mod tests {
         let lines = output.progress_lines();
         assert_eq!(lines[0], "⠋ Applying schema");
         assert_eq!(lines[1], "    sealed draft migration 0001_auto.sql");
+    }
+
+    #[test]
+    fn custom_process_log_streams_prefixed_lines_in_progress_mode() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled())
+            .with_display_mode(WorkflowDisplayMode::Progress);
+        let source = ServiceLogSource::new("app", ServiceColor::Magenta);
+
+        output.process_log(&source, "ready on http://localhost:5173");
+
+        let lines = output.buffered_terminal_lines();
+        assert!(lines.iter().any(|line| line.contains("[app]") && line.contains("ready on")));
     }
 
     #[test]

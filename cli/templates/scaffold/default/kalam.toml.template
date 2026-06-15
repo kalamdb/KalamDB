@@ -33,6 +33,17 @@ apply_schema = true
 generate_types = true
 watch = true
 
+# Commands under [dev.processes] start automatically with `kalam dev` alongside the
+# KalamDB server and schema pipeline. Logs are prefixed with the process name (for example
+# `[app]`) so they stay distinct from `[cli]` workflow output and `[server]` database logs.
+{{#if dev_process_command}}
+[dev.processes]
+app = "{{dev_process_command}}"
+{{else}}
+# [dev.processes]
+# app = "npm run dev"
+{{/if}}
+
 [logging]
 file = true
 capture_process_output = true

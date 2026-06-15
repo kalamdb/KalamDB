@@ -4,6 +4,10 @@
 //! producing deterministic migration statements.
 
 mod diff;
+mod emitter;
+mod model;
+mod parser;
+mod sql;
 
 pub use diff::{
     diff_schema_files, diff_schema_files_with_options, diff_schema_sql,
