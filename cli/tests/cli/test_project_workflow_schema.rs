@@ -254,9 +254,37 @@ fn test_project_workflow_schema_gen_from_sql() {
 #[test]
 fn test_project_workflow_migration_create_and_status() {
     let temp = TempDir::new().expect("temp dir");
-    let project_dir = scaffold_sql_project(&temp);
+    let project_dir = temp.path().join("schema-status-app");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let isolated_home = temp.path().join("home");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    store_test_kalam_dev_credentials(&credentials_path);
+    let (server_url, _requests, _server_handle) = start_recording_sql_server();
 
-    let mut create_cmd = create_cli_command();
+    let mut init_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
+    init_cmd.current_dir(&project_dir).args([
+        "init",
+        "--yes",
+        "--name",
+        "schema-status-app",
+        "--schema-mode",
+        "sql",
+        "--server-mode",
+        "remote",
+        "--server-url",
+        &server_url,
+        "--languages",
+        "typescript",
+    ]);
+    let init_output = init_cmd.output().expect("init project");
+    assert!(
+        init_output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init_output.stderr)
+    );
+
+    let mut create_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     create_cmd
         .current_dir(&project_dir)
         .args(["migration", "create", "add_profile"]);
@@ -285,7 +313,7 @@ fn test_project_workflow_migration_create_and_status() {
     );
     assert!(migration_sql.contains("CREATE TABLE users"));
 
-    let mut status_cmd = create_cli_command();
+    let mut status_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     status_cmd.current_dir(&project_dir).args(["migration", "status"]);
     let status_output = status_cmd.output().expect("migration status");
     assert!(

@@ -19,7 +19,6 @@ anyhow = { workspace = true }
 [features]
 default = ["native"]
 native = ["kalam-client/native-sdk", "kalam-client/file-uploads", "tokio"]
-wasm = ["kalam-client/wasm"]
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

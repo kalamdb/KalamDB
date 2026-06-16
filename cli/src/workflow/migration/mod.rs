@@ -255,4 +255,59 @@ mod tests {
 
         assert_eq!(names, vec!["0001_init.sql"]);
     }
+
+    #[test]
+    fn migration_state_hashes_sql_and_tracks_status_transitions() {
+        let namespace = NamespaceId::new("dev");
+        let sql = "CREATE TABLE users (id BIGINT PRIMARY KEY);";
+        let mut state = MigrationState::default();
+
+        state.upsert_applying("0001_init.sql", &namespace, sql, "0001_init.sql");
+
+        let applying = state.record("0001_init.sql").expect("migration record");
+        assert_eq!(applying.namespace, namespace);
+        assert_eq!(applying.name, "init");
+        assert_eq!(applying.checksum, checksum_sql(sql));
+        assert_eq!(applying.status, MigrationStatus::Applying);
+        assert_eq!(applying.sql.as_deref(), Some(sql));
+        assert_eq!(applying.source.as_deref(), Some("0001_init.sql"));
+        assert!(applying.started_at.is_some());
+        assert!(applying.finished_at.is_none());
+        assert!(!state.is_applied("0001_init.sql"));
+
+        state.mark_applied("0001_init.sql");
+
+        let applied = state.record("0001_init.sql").expect("migration record");
+        assert_eq!(applied.status, MigrationStatus::Applied);
+        assert!(applied.finished_at.is_some());
+        assert!(applied.error_message.is_none());
+        assert!(state.is_applied("0001_init.sql"));
+        state
+            .validate_applied_checksum("0001_init.sql", &checksum_sql(sql))
+            .expect("matching checksum");
+
+        let changed_checksum =
+            checksum_sql("CREATE TABLE users (id BIGINT PRIMARY KEY, email TEXT);");
+        let err = state
+            .validate_applied_checksum("0001_init.sql", &changed_checksum)
+            .expect_err("modified applied migration should fail validation");
+        assert!(
+            err.to_string().contains("migration file was modified after being applied"),
+            "{err}"
+        );
+
+        state.upsert_applying(
+            "0002_add_email.sql",
+            &namespace,
+            "ALTER TABLE users ADD COLUMN email TEXT;",
+            "0002_add_email.sql",
+        );
+        state.mark_failed("0002_add_email.sql", "test failure");
+
+        let failed = state.record("0002_add_email.sql").expect("failed record");
+        assert_eq!(failed.status, MigrationStatus::Failed);
+        assert_eq!(failed.error_message.as_deref(), Some("test failure"));
+        assert!(failed.finished_at.is_some());
+        assert!(!state.is_applied("0002_add_email.sql"));
+    }
 }

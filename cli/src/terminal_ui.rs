@@ -141,6 +141,17 @@ pub fn prompt_label_with_default(label: &str, default: &str, color: bool) -> Str
     prompt_label(&text, color)
 }
 
+/// Ring the terminal bell so the user notices input is required in another tab.
+pub fn alert_action_required() {
+    let _ = alert_action_required_inner();
+}
+
+fn alert_action_required_inner() -> io::Result<()> {
+    let mut stderr = io::stderr();
+    stderr.write_all(b"\x07")?;
+    stderr.flush()
+}
+
 pub fn prompt_confirm(prompt: &str, default: bool, color: bool) -> io::Result<bool> {
     let suffix = if default { "[Y/n]" } else { "[y/N]" };
     let response =
@@ -774,5 +785,10 @@ mod tests {
 
         let lines = tasks.rendered_lines();
         assert_eq!(lines, vec!["✓ Environment ready", "✓ Schema source found"]);
+    }
+
+    #[test]
+    fn alert_action_required_does_not_panic() {
+        alert_action_required();
     }
 }

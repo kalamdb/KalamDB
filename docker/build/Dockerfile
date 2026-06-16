@@ -65,6 +65,7 @@ COPY backend/Cargo.toml ./backend/
 COPY cli/Cargo.toml ./cli/
 COPY link/link-common/Cargo.toml ./link/link-common/
 COPY link/sdks/rust/Cargo.toml ./link/sdks/rust/
+COPY link/kalam-link-wasm/Cargo.toml ./link/kalam-link-wasm/
 COPY link/kalam-consumer-wasm/Cargo.toml ./link/kalam-consumer-wasm/
 COPY link/kalam-link-dart/Cargo.toml ./link/kalam-link-dart/
 COPY pg/crates/kalam-pg-common/Cargo.toml ./pg/crates/kalam-pg-common/
@@ -162,6 +163,8 @@ RUN mkdir -p link/link-common/src && \
     echo "pub fn lib() {}" > link/link-common/src/lib.rs && \
     mkdir -p link/sdks/rust/src && \
     echo "pub fn lib() {}" > link/sdks/rust/src/lib.rs && \
+    mkdir -p link/kalam-link-wasm/src && \
+    echo "pub fn lib() {}" > link/kalam-link-wasm/src/lib.rs && \
     mkdir -p link/kalam-consumer-wasm/src && \
     echo "pub fn lib() {}" > link/kalam-consumer-wasm/src/lib.rs && \
     mkdir -p link/kalam-link-dart/src && \
@@ -197,7 +200,7 @@ RUN SKIP_UI_BUILD=1 cargo build --profile docker --features mimalloc --bin kalam
 FROM deps AS builder
 
 # Remove dummy source files
-RUN rm -rf backend/src backend/crates cli/src link/link-common/src link/sdks/rust/src link/kalam-consumer-wasm/src link/kalam-link-dart/src pg/crates
+RUN rm -rf backend/src backend/crates cli/src link/link-common/src link/sdks/rust/src link/kalam-link-wasm/src link/kalam-consumer-wasm/src link/kalam-link-dart/src pg/crates
 
 # Copy actual source code
 COPY backend/src ./backend/src
@@ -208,6 +211,7 @@ COPY cli/src ./cli/src
 COPY cli/build.rs ./cli/
 COPY link/link-common/src ./link/link-common/src
 COPY link/sdks/rust/src ./link/sdks/rust/src
+COPY link/kalam-link-wasm/src ./link/kalam-link-wasm/src
 COPY link/kalam-consumer-wasm/src ./link/kalam-consumer-wasm/src
 COPY link/kalam-link-dart/src ./link/kalam-link-dart/src
 COPY pg/crates ./pg/crates

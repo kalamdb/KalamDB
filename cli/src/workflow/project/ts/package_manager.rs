@@ -77,6 +77,16 @@ impl PackageManager {
         }
     }
 
+    /// Dev script command for `[dev.processes]` in `kalam.toml` (matches `package.json` `"dev"`).
+    pub fn dev_run_command(self) -> &'static str {
+        match self {
+            Self::Npm => "npm run dev",
+            Self::Pnpm => "pnpm dev",
+            Self::Yarn => "yarn dev",
+            Self::Bun => "bun run dev",
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "npm" => Ok(Self::Npm),
@@ -355,6 +365,14 @@ mod tests {
         assert_eq!(PackageManager::Pnpm.install_args(), &["install"]);
         assert_eq!(PackageManager::Bun.install_description(), "installing bun dependencies");
         assert_eq!(PackageManager::Yarn.installed_success_message(), "installed yarn dependencies");
+    }
+
+    #[test]
+    fn package_manager_dev_run_command_matches_package_json_dev_script() {
+        assert_eq!(PackageManager::Npm.dev_run_command(), "npm run dev");
+        assert_eq!(PackageManager::Pnpm.dev_run_command(), "pnpm dev");
+        assert_eq!(PackageManager::Yarn.dev_run_command(), "yarn dev");
+        assert_eq!(PackageManager::Bun.dev_run_command(), "bun run dev");
     }
 
     #[test]

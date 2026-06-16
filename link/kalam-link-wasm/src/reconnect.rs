@@ -12,12 +12,12 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    auth::{resolve_auth_provider, WasmAuthProvider},
+    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{create_promise, send_ws_message, ws_url_from_http_opts},
     state::SubscriptionState,
     wasm_debug_log,
 };
-use crate::models::{
+use link_common::models::{
     ClientMessage, ConnectionOptions, ProtocolOptions, SerializationType, ServerMessage,
     SubscriptionRequest,
 };

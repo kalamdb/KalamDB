@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use crate::models::FileRef;
+use link_common::models::FileRef;
 
 fn parse_file_ref(file_ref_json: &str) -> Result<FileRef, JsValue> {
     FileRef::from_json(file_ref_json).ok_or_else(|| JsValue::from_str("invalid FileRef JSON"))

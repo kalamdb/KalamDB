@@ -122,14 +122,19 @@ mod tests {
             true,
             false,
             true,
+            Some("npm run dev"),
         );
         assert!(typescript_only.contains("[schema.targets.typescript]"));
         assert!(!typescript_only.contains("[schema.targets.dart]"));
         assert!(!typescript_only.contains("&quot;"));
+        assert!(typescript_only.contains("[dev.processes]"));
+        assert!(typescript_only.contains("app = \"npm run dev\""));
+        assert!(typescript_only.contains("kalam dev"));
         let parsed =
             KalamProjectConfig::parse(&typescript_only).expect("parse typescript kalam.toml");
         assert!(parsed.schema.targets.contains_key("typescript"));
         assert!(!parsed.schema.targets.contains_key("dart"));
+        assert_eq!(parsed.dev.processes.get("app").map(String::as_str), Some("npm run dev"));
 
         let dart_only = render_scaffold_kalam_toml(
             kalam_toml,
@@ -138,12 +143,17 @@ mod tests {
             false,
             true,
             true,
+            None,
         );
         assert!(!dart_only.contains("[schema.targets.typescript]"));
         assert!(dart_only.contains("[schema.targets.dart]"));
+        assert!(dart_only.contains("# [dev.processes]"));
+        assert!(dart_only.contains("# app = \"npm run dev\""));
+        assert!(!dart_only.contains("\n[dev.processes]\n"));
         let parsed = KalamProjectConfig::parse(&dart_only).expect("parse dart kalam.toml");
         assert!(!parsed.schema.targets.contains_key("typescript"));
         assert!(parsed.schema.targets.contains_key("dart"));
+        assert!(parsed.dev.processes.is_empty());
 
         let both = render_scaffold_kalam_toml(
             kalam_toml,
@@ -152,12 +162,15 @@ mod tests {
             true,
             true,
             true,
+            Some("pnpm dev"),
         );
         assert!(both.contains("[schema.targets.typescript]"));
         assert!(both.contains("[schema.targets.dart]"));
+        assert!(both.contains("app = \"pnpm dev\""));
         let parsed = KalamProjectConfig::parse(&both).expect("parse dual-language kalam.toml");
         assert!(parsed.schema.targets.contains_key("typescript"));
         assert!(parsed.schema.targets.contains_key("dart"));
+        assert_eq!(parsed.dev.processes.get("app").map(String::as_str), Some("pnpm dev"));
     }
 
     #[test]
@@ -220,6 +233,7 @@ mod tests {
         typescript: bool,
         dart: bool,
         auto_start_db: bool,
+        dev_process_command: Option<&str>,
     ) -> String {
         use crate::workflow::project::identifiers::normalize_namespace_name;
 
@@ -248,6 +262,7 @@ mod tests {
                 "typescript": typescript,
                 "dart": dart,
                 "auto_start_db": auto_start_db,
+                "dev_process_command": dev_process_command.unwrap_or(""),
             }),
         )
         .unwrap()

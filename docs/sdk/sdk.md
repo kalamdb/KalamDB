@@ -45,7 +45,8 @@ export * from './schema.generated';
 
 This repo contains two related pieces:
 
-- The Rust client crate: `link/kalam-client/` (package name: `kalam-client`)
+- The Rust client crate: `link/sdks/rust/` (package name: `kalam-client`, native only)
+- The browser WASM entry crate: `link/kalam-link-wasm/` (built by `@kalamdb/client`)
 - The npm-publishable TypeScript SDK package: `link/sdks/typescript/client/`
 
 ### Prerequisites
@@ -60,7 +61,15 @@ Install wasm-pack:
 cargo install wasm-pack
 ```
 
-### Compile the Rust client (`kalam-client`)
+### Compile the browser WASM module (`kalam-link-wasm`)
+
+From the repo root:
+
+```bash
+wasm-pack build kalam-link-wasm --target web --out-dir link/sdks/typescript/client/wasm --out-name kalam_client --profile release-dist
+```
+
+### Compile the native Rust client (`kalam-client`)
 
 From the repo root:
 

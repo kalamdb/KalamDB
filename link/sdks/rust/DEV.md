@@ -17,8 +17,8 @@ Application (Rust service, CLI, worker)
 
 The same `link-common` core also powers:
 
-- `@kalamdb/client` (WASM via `kalam-client` with feature `wasm`)
-- `@kalamdb/consumer` (separate WASM entry crate)
+- `@kalamdb/client` (WASM via `kalam-link-wasm`)
+- `@kalamdb/consumer` (separate WASM entry crate `kalam-consumer-wasm`)
 - `kalam_link` (Dart via `kalam-link-dart`)
 - `kalamdb` (Python via PyO3 in `link/sdks/python`)
 
@@ -115,7 +115,6 @@ Additional integration coverage lives in `link/sdks/rust/tests/` with `cargo tes
 | `healthcheck` | Cached health endpoint helper |
 | `setup` | Bootstrap/setup helpers |
 | `cluster` | Cluster health inspection |
-| `wasm` | WASM bindings for JavaScript SDK builds |
 
 Recommended app dependency:
 

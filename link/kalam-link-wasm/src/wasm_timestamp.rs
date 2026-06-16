@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 /// WASM wrapper for TimestampFormatter
 #[wasm_bindgen]
 pub struct WasmTimestampFormatter {
-    inner: crate::timestamp::TimestampFormatter,
+    inner: link_common::timestamp::TimestampFormatter,
 }
 
 impl Default for WasmTimestampFormatter {
@@ -18,8 +18,8 @@ impl WasmTimestampFormatter {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            inner: crate::timestamp::TimestampFormatter::new(
-                crate::timestamp::TimestampFormat::Iso8601,
+            inner: link_common::timestamp::TimestampFormatter::new(
+                link_common::timestamp::TimestampFormat::Iso8601,
             ),
         }
     }
@@ -32,19 +32,19 @@ impl WasmTimestampFormatter {
     #[wasm_bindgen(js_name = withFormat)]
     pub fn with_format(format: &str) -> Result<WasmTimestampFormatter, JsValue> {
         let fmt = match format {
-            "iso8601" => crate::timestamp::TimestampFormat::Iso8601,
-            "iso8601-date" => crate::timestamp::TimestampFormat::Iso8601Date,
-            "iso8601-datetime" => crate::timestamp::TimestampFormat::Iso8601DateTime,
-            "unix-ms" => crate::timestamp::TimestampFormat::UnixMs,
-            "unix-sec" => crate::timestamp::TimestampFormat::UnixSec,
-            "relative" => crate::timestamp::TimestampFormat::Relative,
-            "rfc2822" => crate::timestamp::TimestampFormat::Rfc2822,
-            "rfc3339" => crate::timestamp::TimestampFormat::Rfc3339,
+            "iso8601" => link_common::timestamp::TimestampFormat::Iso8601,
+            "iso8601-date" => link_common::timestamp::TimestampFormat::Iso8601Date,
+            "iso8601-datetime" => link_common::timestamp::TimestampFormat::Iso8601DateTime,
+            "unix-ms" => link_common::timestamp::TimestampFormat::UnixMs,
+            "unix-sec" => link_common::timestamp::TimestampFormat::UnixSec,
+            "relative" => link_common::timestamp::TimestampFormat::Relative,
+            "rfc2822" => link_common::timestamp::TimestampFormat::Rfc2822,
+            "rfc3339" => link_common::timestamp::TimestampFormat::Rfc3339,
             _ => return Err(JsValue::from_str(&format!("Unknown format: {}", format))),
         };
 
         Ok(Self {
-            inner: crate::timestamp::TimestampFormatter::new(fmt),
+            inner: link_common::timestamp::TimestampFormatter::new(fmt),
         })
     }
 
@@ -97,7 +97,7 @@ impl WasmTimestampFormatter {
 /// ```
 #[wasm_bindgen(js_name = parseIso8601)]
 pub fn parse_iso8601(iso_string: &str) -> Result<f64, JsValue> {
-    crate::timestamp::parse_iso8601(iso_string)
+    link_common::timestamp::parse_iso8601(iso_string)
         .map(|ms| ms as f64)
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
@@ -114,5 +114,5 @@ pub fn parse_iso8601(iso_string: &str) -> Result<f64, JsValue> {
 /// ```
 #[wasm_bindgen(js_name = timestampNow)]
 pub fn timestamp_now() -> f64 {
-    crate::timestamp::now() as f64
+    link_common::timestamp::now() as f64
 }

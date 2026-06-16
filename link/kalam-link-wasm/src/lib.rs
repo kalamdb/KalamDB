@@ -1,19 +1,25 @@
+//! Browser WASM bindings for `@kalamdb/client`.
+//!
+//! Protocol types, subscription materialization, compression, and auth models
+//! live in [`link_common`]. This crate owns only the browser transport layer
+//! (`wasm-bindgen`, `fetch`, and `WebSocket`).
+
 use wasm_bindgen::prelude::*;
 
-mod auth;
+mod wasm_auth;
 mod client;
 mod file_ref;
 mod helpers;
 mod reconnect;
 mod state;
-mod timestamp;
+mod wasm_timestamp;
 mod validation;
 
 pub use client::KalamClient;
 pub use file_ref::{
     file_ref_download_url, file_ref_relative_path, file_ref_relative_url, file_ref_stored_name,
 };
-pub use timestamp::{parse_iso8601, timestamp_now, WasmTimestampFormatter};
+pub use wasm_timestamp::{parse_iso8601, timestamp_now, WasmTimestampFormatter};
 
 #[wasm_bindgen]
 extern "C" {
@@ -24,19 +30,16 @@ extern "C" {
 macro_rules! wasm_debug_log {
     (&format!($fmt:literal $(, $args:expr)* $(,)?)) => {{
         #[cfg(all(target_arch = "wasm32", debug_assertions))]
-        $crate::wasm::log(&format!($fmt $(, $args)*));
+        $crate::log(&format!($fmt $(, $args)*));
     }};
     ($message:expr $(,)?) => {{
         #[cfg(all(target_arch = "wasm32", debug_assertions))]
-        $crate::wasm::log($message);
+        $crate::log($message);
     }};
 }
 
 pub(crate) use wasm_debug_log;
 
-// Log helper for debugging connection state changes.
-// Keep these logs out of release wasm builds so the format strings and
-// console calls do not inflate the shipped bundle.
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) fn console_log(message: &str) {
@@ -46,3 +49,5 @@ pub(crate) fn console_log(message: &str) {
     #[cfg(any(not(target_arch = "wasm32"), not(debug_assertions)))]
     let _ = message;
 }
+
+pub use link_common::*;

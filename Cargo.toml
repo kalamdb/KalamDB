@@ -47,6 +47,7 @@ members = [
     "backend",
     "link/link-common",
     "link/sdks/rust",
+    "link/kalam-link-wasm",
     "link/kalam-consumer-wasm",
     "link/kalam-link-dart",
     "cli",

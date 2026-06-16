@@ -133,3 +133,5 @@ link/sdks/typescript/client/.npmrc
 cli/kalam.toml
 /link/sdks/rust/sdks/typescript/client/.wasm-cargo-home
 /link/sdks/rust/sdks/typescript/client/.wasm-target
+/link/kalam-link-wasm/sdks/typescript/client/.wasm-cargo-home
+/link/kalam-link-wasm/sdks/typescript/client/.wasm-target

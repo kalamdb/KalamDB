@@ -227,14 +227,12 @@ build_web() {
 
   (
     cd "$LINK_WORKSPACE_DIR"
-    RUSTC_WRAPPER="" wasm-pack build kalam-client \
+    RUSTC_WRAPPER="" wasm-pack build kalam-link-wasm \
       --target web \
       --out-dir "$web_out_dir" \
       --out-name kalam_link_dart \
       --no-opt \
-      --profile release-dist \
-      --features wasm \
-      --no-default-features
+      --profile release-dist
   ) || {
     fail "Web WASM build failed"
     return 1

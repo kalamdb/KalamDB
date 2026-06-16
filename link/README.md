@@ -5,7 +5,8 @@ Shared Rust transport crates and SDK packages for KalamDB clients.
 This directory contains:
 
 - the shared Rust implementation crate `link-common`
-- the app-facing Rust/WASM entry crate `kalam-client`
+- the published native Rust SDK crate `kalam-client` (`link/sdks/rust`)
+- the browser WebAssembly wrapper crate `kalam-link-wasm` (`@kalamdb/client`)
 - the consumer-only WebAssembly wrapper crate `kalam-consumer-wasm`
 - the publishable TypeScript CLI wrapper package in [sdks/typescript/cli](sdks/typescript/cli/README.md) as `@kalamdb/cli`
 - the publishable TypeScript app-facing package in [sdks/typescript/client](sdks/typescript/client/README.md) as `@kalamdb/client`
@@ -47,9 +48,11 @@ Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM 
 ```text
 link/
 |-- link-common/          # shared Rust implementation
-|-- kalam-client/         # app-facing Rust/WASM entry crate
+|-- kalam-link-wasm/      # wasm-pack entry for @kalamdb/client
 |-- kalam-consumer-wasm/  # wasm-bindgen wrapper for @kalamdb/consumer
+|-- kalam-link-dart/      # FRB bridge for kalam_link (Flutter)
 `-- sdks/
+    |-- rust/             # kalam-client (native Rust SDK, crates.io)
     |-- typescript/
     |   |-- cli/          # npm package: @kalamdb/cli
     |   |-- client/       # npm package: @kalamdb/client
@@ -66,7 +69,7 @@ Package-specific build, test, and publish instructions live with each SDK:
 - TypeScript / JavaScript CLI wrapper: [sdks/typescript/cli/README.md](sdks/typescript/cli/README.md)
 - Dart / Flutter: [sdks/dart/README.md](sdks/dart/README.md)
 
-If you change the shared Rust implementation in `link-common` or the `kalam-client` WASM entry crate, validate the affected SDK package afterward.
+If you change the shared Rust implementation in `link-common` or the `kalam-link-wasm` entry crate, validate the affected SDK package afterward.
 
 ## License
 

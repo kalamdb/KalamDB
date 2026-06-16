@@ -1,0 +1,59 @@
+[package]
+name = "kalam-link-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser WebAssembly bindings for @kalamdb/client"
+keywords = ["kalamdb", "database", "client", "websocket", "wasm"]
+categories = ["database", "web-programming::websocket", "wasm"]
+readme = "README.md"
+
+[dependencies]
+link-common = { workspace = true, default-features = false, features = ["client-core"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmp-serde = { workspace = true }
+miniz_oxide = { workspace = true }
+log = { workspace = true }
+base64 = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+	"console",
+	"WebSocket",
+	"BinaryType",
+	"MessageEvent",
+	"CloseEvent",
+	"ErrorEvent",
+	"Event",
+	"EventTarget",
+	"Blob",
+	"FileReader",
+	"Window",
+	"Request",
+	"RequestInit",
+	"RequestMode",
+	"Response",
+	"Headers",
+	"FormData",
+	"BlobPropertyBag",
+] }
+
+[dev-dependencies]
+js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-test = "0.3.50"
+
+[[test]]
+name = "wasm_integration"
+path = "tests/wasm_integration.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

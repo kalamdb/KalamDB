@@ -26,13 +26,13 @@ pub use kalamdb_commons::{FieldFlag, FieldFlags, KalamDataType, SchemaField, Use
 pub use utils::parse_i64;
 
 // ── Auth models ──────────────────────────────────────────────────────────────
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use crate::auth::models::{
     LoginRequest, LoginResponse, LoginUserInfo, ServerSetupRequest, ServerSetupResponse,
     SetupStatusResponse, SetupUserInfo, WsAuthCredentials,
 };
 // ── Connection models ────────────────────────────────────────────────────────
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use crate::connection::models::{
     ClientMessage, ClusterHealthResponse, ClusterNodeHealth, CompressionType, ConnectionOptions,
     HealthCheckResponse, HttpVersion, ProtocolOptions, SerializationType, ServerMessage,
@@ -41,13 +41,13 @@ pub use crate::connection::models::{
 #[cfg(feature = "consumer")]
 pub use crate::consumer::models::{AckResponse, ConsumeMessage, ConsumeRequest, ConsumeResponse};
 // ── Query models ─────────────────────────────────────────────────────────────
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use crate::query::models::{
     ErrorDetail, QueryRequest, QueryResponse, QueryResult, ResponseStatus,
     SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus, UploadProgress,
 };
 // ── Subscription models ──────────────────────────────────────────────────────
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use crate::subscription::models::{
     BatchControl, BatchStatus, ChangeEvent, ChangeTypeRaw, SubscriptionConfig, SubscriptionInfo,
     SubscriptionOptions, SubscriptionRequest,

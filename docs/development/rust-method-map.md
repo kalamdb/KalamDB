@@ -62,7 +62,8 @@ Generated from repo-wide Rust function discovery using ripgrep.
 - `backend/crates/kalamdb-tables/src/utils`: 201
 - `cli/tests/common`: 187
 - `link/link-common/src`: 178
-- `link/kalam-client/tests`: 164
+- `link/kalam-link-wasm/tests`: WASM browser integration tests
+- `link/sdks/rust/tests`: native SDK integration tests
 - `backend/tests/common/testserver`: 161
 - `backend/crates/kalamdb-commons/src/models/schemas`: 160
 - `backend/crates/kalamdb-views/src`: 156
