@@ -3,7 +3,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use kalam_client::*;
+use kalam_link_wasm::*;
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::{closure::Closure, JsCast};

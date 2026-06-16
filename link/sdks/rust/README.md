@@ -18,7 +18,9 @@ KalamDB is built for apps where every user or tenant owns a private data space. 
 Runtime targets:
 
 - Tokio-based async Rust (`native-sdk`, enabled by default)
-- WebAssembly builds for JavaScript bindings (`wasm`, used by `@kalamdb/client`)
+
+Browser WebAssembly builds for `@kalamdb/client` live in the separate
+`kalam-link-wasm` crate (not part of this published SDK).
 
 ## Installation
 
@@ -51,7 +53,6 @@ kalam-client = { version = "0.5", features = ["native-sdk", "file-uploads"] }
 | `healthcheck` | Cached `/v1/api/healthcheck` helper |
 | `setup` | First-run server setup helpers |
 | `cluster` | Cluster health inspection |
-| `wasm` | WASM bindings (used by the TypeScript SDK, not typical for Rust apps) |
 
 Topic workers ship in the same crate behind `consumer` so app-only installs stay lean, matching how `@kalamdb/consumer` extends `@kalamdb/client` in TypeScript.
 

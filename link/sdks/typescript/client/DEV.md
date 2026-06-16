@@ -11,9 +11,8 @@ The TypeScript SDK is a thin JavaScript wrapper over a shared Rust client compil
 Application (TypeScript / JavaScript)
   └─ @kalamdb/client (this package)        ← high-level API, auth, reconnect logic
       └─ dist/wasm/                       ← bundled WASM + JS bindings (auto-generated)
-      └─ link/kalam-client/           ← wasm-pack entry crate
-        └─ link/link-common/src/    ← shared Rust transport, auth, and query logic
-          └─ wasm/                ← WASM entry points (wasm-bindgen)
+      └─ link/kalam-link-wasm/           ← wasm-pack entry crate (browser transport)
+        └─ link/link-common/src/         ← shared protocol, models, subscription logic
 ```
 
 `createClient(...)` auto-loads the bundled WASM bytes and applies runtime shims for both
@@ -173,9 +172,9 @@ npm publish --dry-run
 
 | Path | Purpose |
 |------|---------|
-| `link/kalam-client/` | Rust entry crate compiled by `wasm-pack` |
+| `link/kalam-link-wasm/` | Rust entry crate compiled by `wasm-pack` |
 | `link/link-common/src/` | Shared Rust client implementation (HTTP, WebSocket, auth, reconnect) |
-| `link/link-common/src/wasm/` | WASM entry points (`#[wasm_bindgen]` annotations) |
+| `link/link-common/src/wasm/` | *(removed — browser bindings live in `link/kalam-link-wasm/src/`)* |
 | `link/sdks/typescript/client/src/` | TypeScript API layer (`client.ts`, `auth.ts`, etc.) |
 | `link/sdks/typescript/client/dist/` | Compiled output (gitignored) |
 | `link/sdks/typescript/client/wasm/` | wasm-pack output |

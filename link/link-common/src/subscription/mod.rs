@@ -18,8 +18,8 @@ pub use models::{SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, Subs
 mod live_rows_subscription;
 #[cfg(feature = "tokio-runtime")]
 mod manager;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm", test))]
-pub(crate) use checkpoint::filter_replayed_event;
+#[cfg(any(feature = "client-core", test))]
+pub use checkpoint::filter_replayed_event;
 #[cfg(feature = "tokio-runtime")]
 pub(crate) use checkpoint::{
     batch_envelope, buffer_event, event_progress, final_resume_seq, subscription_start_ready,

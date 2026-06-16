@@ -26,29 +26,6 @@ base64 = { workspace = true }
 futures-util = { workspace = true, default-features = false, optional = true }
 log = { workspace = true, optional = true }
 miniz_oxide = { workspace = true, optional = true }
-wasm-bindgen = { workspace = true, optional = true }
-wasm-bindgen-futures = { workspace = true, optional = true }
-js-sys = { workspace = true, optional = true }
-web-sys = { workspace = true, features = [
-	"console",
-	"WebSocket",
-	"BinaryType",
-	"MessageEvent",
-	"CloseEvent",
-	"ErrorEvent",
-	"Event",
-	"EventTarget",
-	"Blob",
-	"FileReader",
-	"Window",
-	"Request",
-	"RequestInit",
-	"RequestMode",
-	"Response",
-	"Headers",
-	"FormData",
-	"BlobPropertyBag",
-], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aws-lc-rs = { workspace = true, optional = true }
@@ -74,11 +51,7 @@ cluster = []
 consumer = ["commons-sdk"]
 file-uploads = ["bytes", "http-body", "http-body-util", "reqwest/multipart", "reqwest/stream"]
 http2 = ["reqwest/http2"]
-wasm = ["client-core", "wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 e2e-tests = []
 
 [lib]
 crate-type = ["rlib"]
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false

@@ -1,4 +1,4 @@
-use crate::{
+use link_common::{
     models::{ChangeEvent, ServerMessage, SubscriptionOptions},
     seq_tracking,
     subscription::{LiveRowsConfig, LiveRowsMaterializer},
@@ -49,7 +49,7 @@ pub(crate) struct SubscriptionState {
 pub(crate) enum WasmLiveRowsEvent {
     Rows {
         subscription_id: String,
-        rows: Vec<crate::models::RowData>,
+        rows: Vec<link_common::models::RowData>,
         last_seq_id: Option<SeqId>,
     },
     Error {
@@ -104,7 +104,7 @@ pub(crate) fn filter_subscription_event(
     event: &ServerMessage,
 ) -> Option<ChangeEvent> {
     let change_event = ChangeEvent::from_server_message(event.clone())?;
-    crate::subscription::filter_replayed_event(change_event, options.from)
+    link_common::subscription::filter_replayed_event(change_event, options.from)
 }
 
 #[inline]
@@ -119,7 +119,7 @@ pub(crate) fn callback_payload(
         SubscriptionCallbackMode::LiveRows { materializer } => {
             let update = materializer.apply(event.clone())?;
             let wasm_event = match update {
-                crate::subscription::LiveRowsEvent::Rows {
+                link_common::subscription::LiveRowsEvent::Rows {
                     subscription_id,
                     rows,
                     last_seq_id,
@@ -128,7 +128,7 @@ pub(crate) fn callback_payload(
                     rows,
                     last_seq_id,
                 },
-                crate::subscription::LiveRowsEvent::Error {
+                link_common::subscription::LiveRowsEvent::Error {
                     subscription_id,
                     code,
                     message,

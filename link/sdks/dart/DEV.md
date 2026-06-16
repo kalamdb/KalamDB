@@ -13,7 +13,7 @@ Flutter App
   └─ kalam_link (Dart package)         ← this package
       └─ Generated FRB bindings          ← lib/src/generated/ (auto-generated, do not edit)
           └─ kalam-link-dart (Rust)      ← link/kalam-link-dart/  (bridge crate)
-              └─ kalam-client            ← link/kalam-client/  (Rust/WASM entry crate)
+              └─ kalam-client            ← link/sdks/rust/  (native Rust SDK)
                   └─ link-common         ← link/link-common/src/  (shared client implementation)
 ```
 
@@ -176,7 +176,8 @@ Before a new release:
 
 | Path | Purpose |
 |------|---------|
-| `link/kalam-client/` | Rust/WASM entry crate used by the Dart bridge |
+| `link/sdks/rust/` | Published native Rust SDK (`kalam-client`) |
+| `link/kalam-link-wasm/` | Browser WASM entry used for Flutter `web/pkg/` artefacts |
 | `link/link-common/src/` | Shared Rust client implementation (HTTP, WebSocket, auth) |
 | `link/kalam-link-dart/` | FRB bridge crate — wraps the shared client with `#[frb]` annotations |
 | `link/sdks/dart/lib/src/generated/` | Auto-generated Dart bindings (do not edit manually) |

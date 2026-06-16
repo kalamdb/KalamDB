@@ -1,37 +1,34 @@
-//! Shared Rust implementation used by `kalam-client`, `kalam-consumer-wasm`,
-//! and `kalam-link-dart`.
+//! Shared Rust implementation used by `kalam-client`, `kalam-link-wasm`,
+//! `kalam-consumer-wasm`, and `kalam-link-dart`.
 
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod auth;
 #[cfg(feature = "tokio-runtime")]
 pub mod client;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod compression;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub(crate) mod connection;
 #[cfg(feature = "consumer")]
 pub mod consumer;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod credentials;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod error;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod event_handlers;
 #[path = "models/mod.rs"]
 pub mod models;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod query;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod seq_tracking;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod subscription;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod timeouts;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub mod timestamp;
-#[cfg(feature = "wasm")]
-#[path = "wasm/mod.rs"]
-pub mod wasm;
 
 #[cfg(feature = "tokio-runtime")]
 pub use auth::{ArcDynAuthProvider, AuthProvider, DynamicAuthProvider, ResolvedAuth};
@@ -46,15 +43,15 @@ pub use consumer::{
 };
 #[cfg(all(feature = "tokio-runtime", feature = "consumer"))]
 pub use consumer::{ConsumerBuilder, TopicConsumer};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use error::{KalamLinkError, Result};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, MessageDirection};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use kalamdb_commons::ids::SeqId;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use kalamdb_commons::Role;
 pub use kalamdb_commons::TableId;
 pub use kalamdb_commons::UserId;
@@ -64,7 +61,7 @@ pub use models::{
 };
 #[cfg(feature = "consumer")]
 pub use models::{AckResponse, ConsumeMessage, ConsumeRequest, ConsumeResponse};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use models::{
     ChangeEvent, ClusterHealthResponse, ClusterNodeHealth, ConnectionOptions, ErrorDetail,
     HealthCheckResponse, HttpVersion, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest,
@@ -72,7 +69,7 @@ pub use models::{
     SetupUserInfo, SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
     SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
 };
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use query::models::QueryParam;
 #[cfg(feature = "tokio-runtime")]
 pub use query::AuthRefreshCallback;
@@ -84,11 +81,11 @@ pub use query::UploadProgressCallback;
 pub use subscription::LiveRowsSubscription;
 #[cfg(feature = "tokio-runtime")]
 pub use subscription::SubscriptionManager;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use subscription::{LiveRowsConfig, LiveRowsEvent, LiveRowsMaterializer};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use timeouts::{KalamLinkTimeouts, KalamLinkTimeoutsBuilder};
-#[cfg(any(feature = "tokio-runtime", feature = "wasm"))]
+#[cfg(feature = "client-core")]
 pub use timestamp::{now, parse_iso8601, TimestampFormat, TimestampFormatter};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

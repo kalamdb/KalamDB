@@ -9,7 +9,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, MessageEvent, Request, RequestInit, RequestMode, Response};
 
 use super::wasm_debug_log;
-use crate::{compression, models::SerializationType};
+use link_common::{compression, models::SerializationType};
 
 #[inline]
 pub(crate) fn ws_url_from_http_opts(
@@ -227,7 +227,7 @@ pub(crate) fn decode_ws_binary_payload(e: &MessageEvent) -> Option<Vec<u8>> {
 /// JSON messages are sent as text frames; MessagePack messages as binary frames.
 pub(crate) fn send_ws_message(
     ws: &web_sys::WebSocket,
-    msg: &crate::models::ClientMessage,
+    msg: &link_common::models::ClientMessage,
     serialization: SerializationType,
 ) -> Result<(), JsValue> {
     match serialization {

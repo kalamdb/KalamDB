@@ -30,7 +30,6 @@ native-bench = ["native-sdk", "healthcheck", "setup", "consumer"]
 native-cli = ["native-sdk", "healthcheck", "setup", "cluster", "consumer", "file-uploads"]
 native-full = ["native-cli"]
 http2 = ["link-common/http2"]
-wasm = ["link-common/wasm"]
 e2e-tests = ["native-cli", "link-common/e2e-tests"]
 
 [[test]]
@@ -51,11 +50,6 @@ required-features = ["e2e-tests"]
 [[test]]
 name = "test_websocket_integration"
 path = "tests/test_websocket_integration.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "wasm_integration"
-path = "tests/wasm_integration.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
@@ -113,7 +107,4 @@ reqwest = { workspace = true }
 serde_json = { workspace = true }
 
 [lib]
-crate-type = ["cdylib", "rlib"]
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+crate-type = ["rlib"]

@@ -13,7 +13,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    auth::{resolve_auth_provider, WasmAuthProvider},
+    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{
         create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
         serialize_json_to_js_value, subscription_hash,
@@ -28,7 +28,7 @@ use super::{
     },
     wasm_debug_log,
 };
-use crate::{
+use link_common::{
     models::{
         ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
         SubscriptionOptions, SubscriptionRequest,
@@ -600,7 +600,7 @@ fn dispatch_subscription_server_message(
 
 fn emit_runtime_ws_error(
     on_error_cb: &Rc<RefCell<Option<js_sys::Function>>>,
-    error: &crate::event_handlers::ConnectionError,
+    error: &link_common::event_handlers::ConnectionError,
 ) {
     if let Some(cb) = on_error_cb.borrow().as_ref() {
         let err_obj = js_sys::Object::new();
@@ -666,7 +666,7 @@ fn build_runtime_connection_error(
     recoverable: bool,
     url: &str,
     auth_user: Option<&str>,
-) -> crate::event_handlers::ConnectionError {
+) -> link_common::event_handlers::ConnectionError {
     let auth_fragment = auth_user.map(|user| format!(" for user \"{}\"", user)).unwrap_or_default();
     let message = if context.is_empty() {
         format!(
@@ -687,7 +687,7 @@ fn build_runtime_connection_error(
         )
     };
 
-    let mut error = crate::event_handlers::ConnectionError::new(message, recoverable).with_url(url);
+    let mut error = link_common::event_handlers::ConnectionError::new(message, recoverable).with_url(url);
     if let Some(user) = auth_user {
         error = error.with_auth_user(user);
     }
@@ -2174,7 +2174,7 @@ impl KalamClient {
             qualified_sql,
             parsed_options.subscription_options.unwrap_or_default(),
             callback,
-            SubscriptionCallbackMode::live_rows(crate::subscription::LiveRowsConfig {
+            SubscriptionCallbackMode::live_rows(link_common::subscription::LiveRowsConfig {
                 limit: parsed_options.limit,
                 key_columns: parsed_options.key_columns,
             }),
@@ -2318,7 +2318,7 @@ impl KalamClient {
         )
         .await?;
 
-        let login_response: crate::models::LoginResponse = serde_json::from_str(&json_str)
+        let login_response: link_common::models::LoginResponse = serde_json::from_str(&json_str)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse refresh response: {}", e)))?;
 
         // Update to new JWT
@@ -2357,7 +2357,7 @@ impl KalamClient {
             Ok(result_str) => {
                 // Case (a): HTTP 200 with TOKEN_EXPIRED in the JSON body.
                 if let Ok(query_resp) =
-                    serde_json::from_str::<crate::query::models::QueryResponse>(&result_str)
+                    serde_json::from_str::<link_common::query::models::QueryResponse>(&result_str)
                 {
                     if query_resp.is_token_expired() {
                         wasm_debug_log!(
@@ -2374,7 +2374,7 @@ impl KalamClient {
                 // Case (b): HTTP 401 — wasm_fetch returned the JSON body as an Err string.
                 if let Some(err_str) = err.as_string() {
                     if let Ok(query_resp) =
-                        serde_json::from_str::<crate::query::models::QueryResponse>(&err_str)
+                        serde_json::from_str::<link_common::query::models::QueryResponse>(&err_str)
                     {
                         if query_resp.is_token_expired() {
                             wasm_debug_log!(
@@ -2420,7 +2420,7 @@ impl KalamClient {
 
         // Deserialize, populate named_rows (schema → map), re-serialize.
         // This moves the transformation into Rust so every SDK gets it for free.
-        match serde_json::from_str::<crate::query::models::QueryResponse>(&raw) {
+        match serde_json::from_str::<link_common::query::models::QueryResponse>(&raw) {
             Ok(mut query_resp) => {
                 for result in &mut query_resp.results {
                     result.populate_named_rows();
@@ -2481,7 +2481,7 @@ impl KalamClient {
         &self,
         user: &str,
         password: &str,
-    ) -> Result<crate::models::LoginResponse, JsValue> {
+    ) -> Result<link_common::models::LoginResponse, JsValue> {
         let body = serde_json::json!({
             "user": user,
             "password": password,

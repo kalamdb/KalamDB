@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 #[cfg(any(feature = "tokio-runtime", test))]
 use crate::models::BatchStatus;
-#[cfg(any(feature = "tokio-runtime", feature = "wasm", test))]
+#[cfg(any(feature = "client-core", test))]
 use crate::{models::ChangeEvent, seq_tracking, SeqId};
 
 #[cfg(any(feature = "tokio-runtime", test))]
@@ -78,8 +78,8 @@ pub(crate) fn final_resume_seq(
     }
 }
 
-#[cfg(any(feature = "tokio-runtime", feature = "wasm", test))]
-pub(crate) fn filter_replayed_event(
+#[cfg(any(feature = "client-core", test))]
+pub fn filter_replayed_event(
     event: ChangeEvent,
     resume_from: Option<SeqId>,
 ) -> Option<ChangeEvent> {
