@@ -162,9 +162,9 @@ impl DataFusionSessionFactory {
         ctx.register_udf(ScalarUDF::from(CurrentRoleFunction::new()));
 
         // Register PostgreSQL-compatible JSON functions and operators (->, ->>, ?).
-        // This replaces the former custom json_extract_scalar UDF and the PG-side
-        // SQL rewrite layer with the community-maintained datafusion-functions-json
-        // crate which handles operator planning natively inside DataFusion.
+        // User-facing SQL still uses PostgreSQL operator syntax, but the DuckDB dialect
+        // required for lambda array functions parses bare `->` as lambda syntax. The
+        // dialect rewrite layer converts operators to these UDFs before planning.
         datafusion_functions_json::register_all(ctx).expect("failed to register JSON functions");
 
         // Ensure DataFusion 54 nested/lambda array functions and planners are registered
