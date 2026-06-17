@@ -63,6 +63,53 @@ async fn test_json_arrow_operator_without_sql_rewrite() {
 }
 
 #[tokio::test]
+async fn test_json_operators_through_rewrite_layer() {
+    use kalamdb_sql::rewrite_context_functions_for_datafusion;
+
+    let session = exec_ctx().create_session_with_user();
+    let queries = [
+        (
+            "SELECT doc->'profile' AS profile FROM (SELECT '{\"profile\":{\"city\":\"london\"}}' AS doc) docs",
+            "london",
+        ),
+        (
+            "SELECT doc->'user'->'address'->>'zip' AS zip FROM (SELECT '{\"user\":{\"address\":{\"zip\":\"90210\"}}}' AS doc) docs",
+            "90210",
+        ),
+        (
+            "SELECT doc->>'customer_id' AS customer_id FROM (SELECT '{\"customer_id\":\"cust_123\"}' AS doc) docs WHERE doc ? 'customer_id'",
+            "cust_123",
+        ),
+        (
+            "SELECT doc->>'priority' AS p FROM (SELECT '{\"status\":\"active\",\"priority\":\"1\"}' AS doc) docs WHERE doc->>'status' = 'active'",
+            "1",
+        ),
+        (
+            "SELECT doc->'items'->0 AS first_item FROM (SELECT '{\"items\":[{\"id\":1}]}' AS doc) docs",
+            "id",
+        ),
+    ];
+
+    for (sql, expected) in queries {
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        let result = session.sql(rewritten.as_ref()).await;
+        assert!(result.is_ok(), "rewritten JSON query failed for {sql:?}: {:?}", result.err());
+
+        let batches = result.unwrap().collect().await.unwrap();
+        let value = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("result column")
+            .value(0);
+        assert!(
+            value.contains(expected),
+            "expected {expected} in result for {sql:?}, got {value}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_numeric_string_comparison_uses_numeric_coercion() {
     let session = exec_ctx().create_session_with_user();
 
