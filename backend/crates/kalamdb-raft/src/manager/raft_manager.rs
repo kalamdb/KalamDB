@@ -39,6 +39,11 @@ use crate::{
 const RPC_CLUSTER_ID_HEADER: &str = "x-kalamdb-cluster-id";
 const RPC_NODE_ID_HEADER: &str = "x-kalamdb-node-id";
 
+type MetaGroup = Arc<RaftGroup<MetaStateMachine>>;
+type UserDataGroup = Arc<RaftGroup<UserDataStateMachine>>;
+type SharedDataGroup = Arc<RaftGroup<SharedDataStateMachine>>;
+type PersistentGroupSet = (MetaGroup, Vec<UserDataGroup>, Vec<SharedDataGroup>);
+
 /// Information about a snapshot operation result
 #[derive(Debug, Clone)]
 pub struct SnapshotInfo {
@@ -261,47 +266,100 @@ impl RaftManager {
             ))
         })?;
 
-        // Create unified meta group with persistent storage
-        let meta = Arc::new(RaftGroup::new_persistent_with_channel_pool(
-            GroupId::Meta,
-            MetaStateMachine::new(),
-            backend.clone(),
-            snapshots_dir.clone(),
-            Arc::clone(&channel_pool),
-        )?);
+        // Recover persisted Raft state for every group in parallel. Each group reads its
+        // own partition keys independently, so startup scales with shard count on restart.
+        let recovery_start = std::time::Instant::now();
+        fn join_recovery<T>(
+            join_result: std::thread::Result<Result<T, RaftError>>,
+            label: &str,
+        ) -> Result<T, RaftError> {
+            join_result.map_err(|e| {
+                RaftError::Internal(format!("{label} recovery thread panicked: {e:?}"))
+            })?
+        }
 
-        // Create user data shards with persistent storage
-        let user_data_shards: Vec<_> = (0..user_shards_count)
-            .map(|shard_id| {
-                RaftGroup::new_persistent_with_channel_pool(
-                    GroupId::DataUserShard(shard_id),
-                    UserDataStateMachine::new(shard_id),
-                    backend.clone(),
-                    snapshots_dir.clone(),
-                    Arc::clone(&channel_pool),
-                )
-                .map(Arc::new)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let (meta, user_data_shards, shared_data_shards) =
+            std::thread::scope(|scope| -> Result<PersistentGroupSet, RaftError> {
+                let meta_handle = scope.spawn({
+                    let backend = backend.clone();
+                    let snapshots_dir = snapshots_dir.clone();
+                    let channel_pool = Arc::clone(&channel_pool);
+                    move || {
+                        RaftGroup::new_persistent_with_channel_pool(
+                            GroupId::Meta,
+                            MetaStateMachine::new(),
+                            backend,
+                            snapshots_dir,
+                            channel_pool,
+                        )
+                    }
+                });
 
-        // Create shared data shards with persistent storage
-        let shared_data_shards: Vec<_> = (0..shared_shards_count)
-            .map(|shard_id| {
-                RaftGroup::new_persistent_with_channel_pool(
-                    GroupId::DataSharedShard(shard_id),
-                    SharedDataStateMachine::new(shard_id),
-                    backend.clone(),
-                    snapshots_dir.clone(),
-                    Arc::clone(&channel_pool),
-                )
-                .map(Arc::new)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                let user_handles: Vec<_> = (0..user_shards_count)
+                    .map(|shard_id| {
+                        scope.spawn({
+                            let backend = backend.clone();
+                            let snapshots_dir = snapshots_dir.clone();
+                            let channel_pool = Arc::clone(&channel_pool);
+                            move || {
+                                RaftGroup::new_persistent_with_channel_pool(
+                                    GroupId::DataUserShard(shard_id),
+                                    UserDataStateMachine::new(shard_id),
+                                    backend,
+                                    snapshots_dir,
+                                    channel_pool,
+                                )
+                                .map(Arc::new)
+                            }
+                        })
+                    })
+                    .collect();
+
+                let shared_handles: Vec<_> = (0..shared_shards_count)
+                    .map(|shard_id| {
+                        scope.spawn({
+                            let backend = backend.clone();
+                            let snapshots_dir = snapshots_dir.clone();
+                            let channel_pool = Arc::clone(&channel_pool);
+                            move || {
+                                RaftGroup::new_persistent_with_channel_pool(
+                                    GroupId::DataSharedShard(shard_id),
+                                    SharedDataStateMachine::new(shard_id),
+                                    backend,
+                                    snapshots_dir,
+                                    channel_pool,
+                                )
+                                .map(Arc::new)
+                            }
+                        })
+                    })
+                    .collect();
+
+                let meta = Arc::new(join_recovery(meta_handle.join(), "meta")?);
+                let user_data_shards: Vec<UserDataGroup> = user_handles
+                    .into_iter()
+                    .enumerate()
+                    .map(|(shard_id, handle)| {
+                        join_recovery(handle.join(), &format!("user shard {shard_id}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let shared_data_shards: Vec<SharedDataGroup> = shared_handles
+                    .into_iter()
+                    .enumerate()
+                    .map(|(shard_id, handle)| {
+                        join_recovery(handle.join(), &format!("shared shard {shard_id}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok((meta, user_data_shards, shared_data_shards))
+            })?;
 
         log::debug!(
-            "Created RaftManager with persistent storage: {} user shards, {} shared shards",
+            "Created RaftManager with persistent storage: {} user shards, {} shared shards \
+             (recovery {:.2}ms)",
             user_shards_count,
-            shared_shards_count
+            shared_shards_count,
+            recovery_start.elapsed().as_secs_f64() * 1000.0
         );
 
         Ok(Self {
@@ -472,12 +530,6 @@ impl RaftManager {
             .map(|m| m.membership_config.voter_ids().collect())
             .unwrap_or_default();
 
-        // Create self node with auto-detected system metadata (hostname, version, memory, os, arch)
-        let self_node = KalamNode::with_auto_metadata(
-            self.config.rpc_addr.clone(),
-            self.config.api_addr.clone(),
-        );
-
         if already_initialized {
             let meta_last_applied = self.meta.get_last_applied().map(|id| id.index).unwrap_or(0);
             log::debug!(
@@ -487,6 +539,12 @@ impl RaftManager {
                 meta_last_applied,
             );
         } else {
+            // Create self node with auto-detected system metadata (hostname, version, memory, os, arch)
+            let self_node = KalamNode::with_auto_metadata(
+                self.config.rpc_addr.clone(),
+                self.config.api_addr.clone(),
+            );
+
             // Initialize unified meta group
             log::debug!("Initializing unified meta group...");
             self.meta.initialize(self.node_id, self_node.clone()).await?;

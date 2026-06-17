@@ -191,6 +191,8 @@ pub async fn prepare_components(
     app_context: Arc<kalamdb_core::app_context::AppContext>,
     use_root_password_env: bool,
 ) -> Result<ApplicationComponents> {
+    let prepare_start = std::time::Instant::now();
+
     let live_query_manager = app_context.live_query_manager();
     let session_factory = app_context.session_factory();
     let users_provider = app_context.system_tables().users();
@@ -209,10 +211,26 @@ pub async fn prepare_components(
 
     app_context.set_sql_executor(sql_executor.clone());
 
+    let tables_start = std::time::Instant::now();
     sql_executor.load_existing_tables().await?;
-    initialize_dba_namespace(app_context.clone())?;
+    info!(
+        "Startup: schema/table load completed in {:.2}ms",
+        tables_start.elapsed().as_secs_f64() * 1000.0
+    );
 
+    let dba_start = std::time::Instant::now();
+    initialize_dba_namespace(app_context.clone())?;
+    debug!(
+        "Startup: DBA namespace initialized in {:.2}ms",
+        dba_start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let raft_restore_start = std::time::Instant::now();
     app_context.restore_raft_state_machines().await;
+    info!(
+        "Startup: Raft state-machine restore completed in {:.2}ms",
+        raft_restore_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Initialize job system (executors, manager, waker) — extracted to kalamdb-jobs crate
     kalamdb_jobs::init_job_manager(&app_context);
@@ -236,6 +254,12 @@ pub async fn prepare_components(
         use_root_password_env,
     )
     .await?;
+
+    info!(
+        "Startup: prepare_components completed in {:.2}ms",
+        prepare_start.elapsed().as_secs_f64() * 1000.0
+    );
+
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -284,8 +308,8 @@ pub async fn bootstrap(
         config.storage.storage_dir().to_string_lossy().into_owned(),
         config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
     );
-    debug!(
-        "AppContext initialized with all stores, managers, registries, and providers ({:.2}ms)",
+    info!(
+        "Startup: AppContext initialized in {:.2}ms",
         phase_start.elapsed().as_secs_f64() * 1000.0
     );
 

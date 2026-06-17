@@ -1494,6 +1494,7 @@ mod tests {
             storages_provider,
             base_directory,
             RemoteStorageTimeouts::default(),
+            Default::default(),
         ))
     }
 

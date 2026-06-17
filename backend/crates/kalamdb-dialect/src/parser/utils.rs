@@ -3,17 +3,11 @@
 //! This module provides shared parsing helpers to avoid code duplication across
 //! custom parsers (CREATE STORAGE, STORAGE FLUSH, KILL JOB, etc.).
 
-use core::ops::ControlFlow;
-
 use kalamdb_commons::TableId;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::{
-    ast::{
-        BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
-        FunctionArguments, Ident, ObjectName, ObjectNamePart, Statement, TableFactor, TableObject,
-        VisitMut, VisitorMut,
-    },
+    ast::{Expr, ObjectName, ObjectNamePart, Statement, TableFactor, TableObject},
     dialect::Dialect,
     parser::{Parser, ParserError, ParserOptions},
     tokenizer::{Span, Token},
@@ -62,6 +56,9 @@ pub fn normalize_context_keyword_calls_for_sqlparser(sql: &str) -> std::borrow::
 /// `CURRENT_ROLE()` while execution resolves to the registered `KDB_*` functions.
 /// `CURRENT_USER_ID()` is an alias for `CURRENT_USER()` (both return the user id).
 ///
+/// JSON operators (`->`, `->>`, `?`) are not rewritten here. DataFusion 54 with the
+/// DuckDB SQL dialect and `datafusion-functions-json` plans them natively.
+///
 /// Returns `Cow::Borrowed` when no rewriting was needed, avoiding allocation.
 pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
@@ -80,90 +77,11 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     // Earlier steps (s1–s3) may have produced Owned results, but if s4/s5
     // found no further matches they return Borrowed (pointing into an owned
     // intermediate). Compare the string content to detect any change.
-    let result: &str = &s5;
-    if needs_json_operator_rewrite(result) {
-        Cow::Owned(rewrite_json_operators_for_datafusion(result))
-    } else if result == sql {
+    if s5 == sql {
         Cow::Borrowed(sql)
     } else {
         Cow::Owned(s5.into_owned())
     }
-}
-
-/// Quick check for JSON operator tokens that would need rewriting.
-/// Avoids the full SQL re-parse when none are present.
-#[inline]
-fn needs_json_operator_rewrite(sql: &str) -> bool {
-    // Look for -> or ->> or standalone ? that might be a JSON contains operator.
-    // This is a cheap scan that avoids false negatives; false positives (e.g. `?` in
-    // a string literal or `->` in a comment) just cause an unnecessary but correct
-    // re-parse.
-    sql.contains("->") || sql.contains('?')
-}
-
-fn rewrite_json_operators_for_datafusion(sql: &str) -> String {
-    let dialect = KalamDbDialect::default();
-    let mut statements = match parse_sql_statements(sql, &dialect) {
-        Ok(statements) => statements,
-        Err(_) => return sql.to_string(),
-    };
-
-    let mut visitor = JsonOperatorRewriter;
-    let _ = statements.visit(&mut visitor);
-
-    statements_to_sql(&statements)
-}
-
-fn statements_to_sql(statements: &[Statement]) -> String {
-    statements.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
-}
-
-struct JsonOperatorRewriter;
-
-impl VisitorMut for JsonOperatorRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        if let Some(rewritten) = rewrite_json_expr(expr) {
-            *expr = rewritten;
-        }
-        ControlFlow::Continue(())
-    }
-}
-
-fn rewrite_json_expr(expr: &Expr) -> Option<Expr> {
-    let Expr::BinaryOp { left, op, right } = expr else {
-        return None;
-    };
-
-    let function_name = match op {
-        BinaryOperator::Arrow => "json_get_json",
-        BinaryOperator::LongArrow => "json_as_text",
-        BinaryOperator::Question => "json_contains",
-        _ => return None,
-    };
-
-    Some(make_function_call(function_name, vec![(**left).clone(), (**right).clone()]))
-}
-
-fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
-    Expr::Function(Function {
-        name: ObjectName::from(vec![Ident::new(name)]),
-        uses_odbc_syntax: false,
-        parameters: FunctionArguments::None,
-        args: FunctionArguments::List(FunctionArgumentList {
-            duplicate_treatment: None,
-            args: args
-                .into_iter()
-                .map(|arg| FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)))
-                .collect(),
-            clauses: vec![],
-        }),
-        filter: None,
-        null_treatment: None,
-        over: None,
-        within_group: vec![],
-    })
 }
 
 /// Parse SQL into statements using KalamDB defaults (options + recursion limit)
@@ -798,47 +716,10 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_json_arrow_operator_for_datafusion() {
-        let rewritten =
-            rewrite_context_functions_for_datafusion("SELECT doc->'profile' AS profile FROM docs");
-        assert_eq!(rewritten, "SELECT json_get_json(doc, 'profile') AS profile FROM docs");
-    }
-
-    #[test]
-    fn test_rewrite_json_long_arrow_operator_for_datafusion() {
-        let rewritten =
-            rewrite_context_functions_for_datafusion("SELECT doc->>'name' AS name FROM docs");
-        assert_eq!(rewritten, "SELECT json_as_text(doc, 'name') AS name FROM docs");
-    }
-
-    #[test]
-    fn test_rewrite_json_question_operator_for_datafusion() {
-        let rewritten =
-            rewrite_context_functions_for_datafusion("SELECT doc ? 'customer_id' FROM docs");
-        assert_eq!(rewritten, "SELECT json_contains(doc, 'customer_id') FROM docs");
-    }
-
-    #[test]
-    fn test_rewrite_nested_json_operators_for_datafusion() {
-        let rewritten = rewrite_context_functions_for_datafusion(
-            "SELECT doc->'user'->'address'->>'zip' AS zip FROM docs",
-        );
-        assert_eq!(
-            rewritten,
-            "SELECT json_as_text(json_get_json(json_get_json(doc, 'user'), 'address'), 'zip') AS \
-             zip FROM docs"
-        );
-    }
-
-    #[test]
-    fn test_rewrite_json_operator_in_where_clause_for_datafusion() {
-        let rewritten = rewrite_context_functions_for_datafusion(
-            "SELECT doc->>'priority' AS p FROM docs WHERE doc->>'status' = 'active'",
-        );
-        assert_eq!(
-            rewritten,
-            "SELECT json_as_text(doc, 'priority') AS p FROM docs WHERE json_as_text(doc, \
-             'status') = 'active'"
-        );
+    fn test_json_operators_pass_through_without_rewrite() {
+        let sql = "SELECT doc->'profile' AS profile, doc->>'name' AS name FROM docs WHERE doc \
+                   ? 'customer_id'";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert_eq!(rewritten, sql);
     }
 }

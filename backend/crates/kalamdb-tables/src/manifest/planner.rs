@@ -7,8 +7,10 @@ use std::sync::Arc;
 
 use datafusion::arrow::{compute::cast, datatypes::SchemaRef, record_batch::RecordBatch};
 use futures_util::{future::join_all, TryStreamExt};
-use kalamdb_commons::{ids::SeqId, models::UserId, schemas::TableType, TableId};
-use kalamdb_filestore::StorageCached;
+use kalamdb_commons::{
+    constants::SystemColumnNames, ids::SeqId, models::UserId, schemas::TableType, TableId,
+};
+use kalamdb_filestore::{ParquetReadOptions, StorageCached};
 use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait};
 
 use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
@@ -180,6 +182,7 @@ impl ManifestAccessPlanner {
 
         // Clone column names for use inside async closures
         let col_names: Option<Vec<String>> = columns.map(|c| c.to_vec());
+        let seq_range_for_read = seq_range.map(|(min, max)| (min.as_i64(), max.as_i64()));
 
         // Open all file streams concurrently — only metadata footers are read here.
         // Actual column data is fetched on demand as each stream is polled.
@@ -190,13 +193,24 @@ impl ManifestAccessPlanner {
                 let file = parquet_file.clone();
                 let cols = col_names.clone();
                 async move {
-                    let col_refs: Vec<&str> = cols
-                        .as_ref()
-                        .map(|c| c.iter().map(|s| s.as_str()).collect())
-                        .unwrap_or_default();
-                    sc.read_parquet_file_stream(table_type, table_id, user_id, &file, &col_refs)
-                        .await
-                        .into_kalamdb_error("Failed to open Parquet stream")
+                    let mut read_options = ParquetReadOptions::new();
+                    if let Some(cols) = cols {
+                        read_options = read_options.with_columns(cols);
+                    }
+                    if let Some((min_seq, max_seq)) = seq_range_for_read {
+                        read_options =
+                            read_options.with_seq_range(SystemColumnNames::SEQ, min_seq, max_seq);
+                    }
+
+                    sc.read_parquet_file_stream_with_options(
+                        table_type,
+                        table_id,
+                        user_id,
+                        &file,
+                        &read_options,
+                    )
+                    .await
+                    .into_kalamdb_error("Failed to open Parquet stream")
                 }
             })
             .collect();
@@ -541,6 +555,7 @@ mod tests {
         Arc::new(kalamdb_filestore::StorageRegistry::new(
             storages_provider,
             base_directory,
+            Default::default(),
             Default::default(),
         ))
     }

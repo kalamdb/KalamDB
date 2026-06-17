@@ -26,6 +26,12 @@ use datafusion::parquet::arrow::{
 };
 use futures_util::TryStreamExt;
 use object_store::{path::Path as ObjectPath, ObjectStore};
+use parquet::{
+    basic::Type as ParquetPhysicalType,
+    bloom_filter::Sbbf,
+    file::{metadata::ParquetMetaData, statistics::Statistics},
+    schema::types::SchemaDescriptor,
+};
 
 use crate::error::{FilestoreError, Result};
 
@@ -38,6 +44,69 @@ use crate::error::{FilestoreError, Result};
 /// peak memory proportional to a single row group rather than the whole file.
 pub type RecordBatchFileStream =
     Pin<Box<dyn futures_util::Stream<Item = Result<RecordBatch>> + Send>>;
+
+/// Optional pruning and projection controls for ObjectStore-backed Parquet reads.
+#[derive(Debug, Clone, Default)]
+pub struct ParquetReadOptions {
+    columns: Vec<String>,
+    row_groups: Option<Vec<usize>>,
+    seq_range: Option<SeqRangePruning>,
+    pk_bloom: Option<PkBloomPruning>,
+}
+
+impl ParquetReadOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_columns<I, S>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.columns = columns.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_row_groups(mut self, row_groups: Vec<usize>) -> Self {
+        self.row_groups = Some(row_groups);
+        self
+    }
+
+    pub fn with_seq_range(mut self, column: impl Into<String>, min: i64, max: i64) -> Self {
+        self.seq_range = Some(SeqRangePruning {
+            column: column.into(),
+            min,
+            max,
+        });
+        self
+    }
+
+    pub fn with_pk_bloom_values<I, S>(mut self, column: impl Into<String>, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.pk_bloom = Some(PkBloomPruning {
+            column: column.into(),
+            values: values.into_iter().map(Into::into).collect(),
+        });
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SeqRangePruning {
+    column: String,
+    min: i64,
+    max: i64,
+}
+
+#[derive(Debug, Clone)]
+struct PkBloomPruning {
+    column: String,
+    values: Vec<String>,
+}
 
 /// Open an async streaming reader over a Parquet file via ObjectStore.
 ///
@@ -53,14 +122,51 @@ pub async fn parse_parquet_stream(
     path: &ObjectPath,
     columns: &[&str],
 ) -> Result<RecordBatchFileStream> {
+    let options = ParquetReadOptions::new().with_columns(columns.iter().copied());
+    parse_parquet_stream_with_options(store, path, &options).await
+}
+
+/// Open an async streaming reader with projection and row-group pruning options.
+pub async fn parse_parquet_stream_with_options(
+    store: Arc<dyn ObjectStore>,
+    path: &ObjectPath,
+    options: &ParquetReadOptions,
+) -> Result<RecordBatchFileStream> {
     let reader = ParquetObjectReader::new(store, path.clone());
-    let builder = ParquetRecordBatchStreamBuilder::new(reader)
+    let mut builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 
-    let builder = if !columns.is_empty() {
+    let row_groups_before_pruning = builder.metadata().num_row_groups();
+    let mut selected_row_groups = initial_row_groups(row_groups_before_pruning, &options.row_groups);
+    let mut row_group_pruning_applied = options.row_groups.is_some();
+
+    if let Some(seq_range) = &options.seq_range {
+        selected_row_groups = prune_row_groups_by_seq_range(
+            builder.metadata(),
+            builder.parquet_schema(),
+            &selected_row_groups,
+            seq_range,
+        );
+        row_group_pruning_applied = true;
+    }
+
+    if let Some(pk_bloom) = &options.pk_bloom {
+        selected_row_groups =
+            prune_row_groups_by_pk_bloom(&mut builder, &selected_row_groups, pk_bloom).await?;
+        row_group_pruning_applied = true;
+    }
+
+    let builder = if row_group_pruning_applied {
+        builder.with_row_groups(selected_row_groups.clone())
+    } else {
+        builder
+    };
+
+    let builder = if !options.columns.is_empty() {
         let parquet_schema = builder.parquet_schema();
-        let indices = resolve_column_indices(parquet_schema, columns);
+        let column_refs: Vec<&str> = options.columns.iter().map(String::as_str).collect();
+        let indices = resolve_column_indices(parquet_schema, &column_refs);
         if indices.is_empty() {
             builder
         } else {
@@ -73,8 +179,13 @@ pub async fn parse_parquet_stream(
 
     tracing::trace!(
         path = %path,
-        row_groups = builder.metadata().num_row_groups(),
-        projected_cols = columns.len(),
+        row_groups = row_groups_before_pruning,
+        selected_row_groups = if row_group_pruning_applied {
+            selected_row_groups.len()
+        } else {
+            row_groups_before_pruning
+        },
+        projected_cols = options.columns.len(),
         "Opened ObjectStore Parquet stream"
     );
     let stream = builder.build().map_err(|e| FilestoreError::Parquet(e.to_string()))?;
@@ -92,6 +203,128 @@ fn resolve_column_indices(
         .iter()
         .filter_map(|name| parquet_schema.columns().iter().position(|c| c.name() == *name))
         .collect()
+}
+
+fn initial_row_groups(total_row_groups: usize, requested: &Option<Vec<usize>>) -> Vec<usize> {
+    match requested {
+        Some(row_groups) => row_groups
+            .iter()
+            .copied()
+            .filter(|idx| *idx < total_row_groups)
+            .collect(),
+        None => (0..total_row_groups).collect(),
+    }
+}
+
+fn prune_row_groups_by_seq_range(
+    metadata: &ParquetMetaData,
+    parquet_schema: &SchemaDescriptor,
+    row_groups: &[usize],
+    range: &SeqRangePruning,
+) -> Vec<usize> {
+    let Some(column_idx) = parquet_schema
+        .columns()
+        .iter()
+        .position(|column| column.name() == range.column)
+    else {
+        return row_groups.to_vec();
+    };
+
+    row_groups
+        .iter()
+        .copied()
+        .filter(|row_group_idx| {
+            let Some(stats) = metadata.row_group(*row_group_idx).column(column_idx).statistics()
+            else {
+                return true;
+            };
+            seq_stats_overlap(stats, range)
+        })
+        .collect()
+}
+
+fn seq_stats_overlap(stats: &Statistics, range: &SeqRangePruning) -> bool {
+    match stats {
+        Statistics::Int64(values) => values
+            .min_opt()
+            .zip(values.max_opt())
+            .map(|(min, max)| *max >= range.min && *min <= range.max)
+            .unwrap_or(true),
+        Statistics::Int32(values) => values
+            .min_opt()
+            .zip(values.max_opt())
+            .map(|(min, max)| i64::from(*max) >= range.min && i64::from(*min) <= range.max)
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+async fn prune_row_groups_by_pk_bloom(
+    builder: &mut ParquetRecordBatchStreamBuilder<ParquetObjectReader>,
+    row_groups: &[usize],
+    pruning: &PkBloomPruning,
+) -> Result<Vec<usize>> {
+    if pruning.values.is_empty() {
+        return Ok(row_groups.to_vec());
+    }
+
+    let Some(column_idx) = builder
+        .parquet_schema()
+        .columns()
+        .iter()
+        .position(|column| column.name() == pruning.column)
+    else {
+        return Ok(row_groups.to_vec());
+    };
+    let physical_type = builder.parquet_schema().column(column_idx).physical_type();
+
+    let mut selected = Vec::with_capacity(row_groups.len());
+    for row_group_idx in row_groups {
+        let bloom_filter = match builder
+            .get_row_group_column_bloom_filter(*row_group_idx, column_idx)
+            .await
+        {
+            Ok(Some(filter)) => filter,
+            Ok(None) => {
+                selected.push(*row_group_idx);
+                continue;
+            },
+            Err(error) => {
+                tracing::debug!(
+                    row_group = *row_group_idx,
+                    column = %pruning.column,
+                    error = %error,
+                    "Ignoring Parquet bloom filter read error"
+                );
+                selected.push(*row_group_idx);
+                continue;
+            },
+        };
+
+        if pruning
+            .values
+            .iter()
+            .any(|value| bloom_may_contain(&bloom_filter, physical_type, value))
+        {
+            selected.push(*row_group_idx);
+        }
+    }
+
+    Ok(selected)
+}
+
+fn bloom_may_contain(filter: &Sbbf, physical_type: ParquetPhysicalType, value: &str) -> bool {
+    match physical_type {
+        ParquetPhysicalType::INT32 => value.parse::<i32>().map_or(true, |v| filter.check(&v)),
+        ParquetPhysicalType::INT64 => value.parse::<i64>().map_or(true, |v| filter.check(&v)),
+        ParquetPhysicalType::BYTE_ARRAY | ParquetPhysicalType::FIXED_LEN_BYTE_ARRAY => {
+            filter.check(value)
+        },
+        ParquetPhysicalType::BOOLEAN => value.parse::<bool>().map_or(true, |v| filter.check(&v)),
+        ParquetPhysicalType::FLOAT => value.parse::<f32>().map_or(true, |v| filter.check(&v)),
+        ParquetPhysicalType::DOUBLE => value.parse::<f64>().map_or(true, |v| filter.check(&v)),
+        ParquetPhysicalType::INT96 => true,
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +391,15 @@ mod tests {
         file_path: &str,
         batches: Vec<RecordBatch>,
     ) -> (Arc<dyn ObjectStore>, ObjectPath) {
+        write_test_parquet_with_bloom(temp_dir, file_path, batches, None)
+    }
+
+    fn write_test_parquet_with_bloom(
+        temp_dir: &std::path::Path,
+        file_path: &str,
+        batches: Vec<RecordBatch>,
+        bloom_filter_columns: Option<Vec<String>>,
+    ) -> (Arc<dyn ObjectStore>, ObjectPath) {
         let storage = create_test_storage(temp_dir);
         let storage_cached = StorageCached::with_default_timeouts(storage);
         let table_id = TableId::from_strings("test", "data");
@@ -171,7 +413,7 @@ mod tests {
                 file_path,
                 schema_ref,
                 batches,
-                None,
+                bloom_filter_columns,
             )
             .unwrap();
 
@@ -386,6 +628,89 @@ mod tests {
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 10_000);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_with_row_group_selection() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_stream_row_groups");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let batch = create_simple_batch(150_000);
+        let (store, path) = write_test_parquet(&temp_dir, "row_groups.parquet", vec![batch]);
+
+        let options = ParquetReadOptions::new().with_row_groups(vec![1]);
+        let stream = parse_parquet_stream_with_options(store, &path, &options).await.unwrap();
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 18_928);
+        let first_id = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0);
+        assert_eq!(first_id, 131_072);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_prunes_row_groups_by_seq_stats() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_stream_seq_pruning");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let batch = create_simple_batch(150_000);
+        let (store, path) = write_test_parquet(&temp_dir, "seq_pruned.parquet", vec![batch]);
+
+        let options = ParquetReadOptions::new().with_seq_range("_seq", 132_000_000, 132_010_000);
+        let stream = parse_parquet_stream_with_options(store, &path, &options).await.unwrap();
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 18_928);
+        let first_seq = batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0);
+        assert_eq!(first_seq, 131_072_000);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_prunes_row_groups_by_pk_bloom() {
+        let temp_dir = env::temp_dir().join("kalamdb_test_stream_bloom_pruning");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let batch = create_simple_batch(150_000);
+        let (store, path) = write_test_parquet_with_bloom(
+            &temp_dir,
+            "bloom_pruned.parquet",
+            vec![batch],
+            Some(vec!["id".to_string()]),
+        );
+
+        let options = ParquetReadOptions::new().with_pk_bloom_values("id", vec!["132000"]);
+        let stream = parse_parquet_stream_with_options(store, &path, &options).await.unwrap();
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 18_928);
+        let first_id = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0);
+        assert_eq!(first_id, 131_072);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

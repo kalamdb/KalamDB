@@ -21,4 +21,4 @@ mod existence_checker;
 pub mod helpers;
 
 pub use existence_checker::{PkCheckResult, PkExistenceChecker};
-pub use helpers::parse_pk_value;
+pub use helpers::{first_existing_pk_in_parquet_file, parse_pk_value, pk_exists_in_parquet_file};

@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -15,7 +14,7 @@ use futures_util::TryStreamExt;
 use kalamdb_commons::{
     arrow_utils::array_value_to_string,
     constants::SystemColumnNames,
-    models::rows::StoredScalarValue,
+    models::rows::{choose_max_stored_scalar, choose_min_stored_scalar},
     schemas::{TableCompression, TableType},
     TableId, UserId,
 };
@@ -626,13 +625,14 @@ async fn write_compacted_winners(
     let writer_schema = schema_context.schema.clone();
     let writer_bloom_columns = Some(schema_context.bloom_filter_columns.clone());
     let writer_compression = schema_context.compression;
+    let writer_options = storage_cached.parquet_writer_options(writer_compression);
     let writer_handle = tokio::task::spawn_blocking(move || {
-        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet_with_compression(
+        kalamdb_filestore::parquet::writer::serialize_record_batch_receiver_to_parquet_with_options(
             writer_schema,
             receiver,
             writer_bloom_columns,
             expected_output_rows,
-            writer_compression,
+            writer_options,
         )
     });
 
@@ -900,109 +900,14 @@ fn merge_column_stats(
 }
 
 fn merge_column_stat(existing: &mut ColumnStats, next: &ColumnStats) {
-    existing.min = choose_min_scalar(existing.min.take(), next.min.clone());
-    existing.max = choose_max_scalar(existing.max.take(), next.max.clone());
+    existing.min = choose_min_stored_scalar(existing.min.take(), next.min.clone());
+    existing.max = choose_max_stored_scalar(existing.max.take(), next.max.clone());
     existing.null_count = match (existing.null_count, next.null_count) {
         (Some(left), Some(right)) => Some(left.saturating_add(right)),
         (Some(left), None) => Some(left),
         (None, Some(right)) => Some(right),
         (None, None) => None,
     };
-}
-
-fn choose_min_scalar(
-    current: Option<StoredScalarValue>,
-    next: Option<StoredScalarValue>,
-) -> Option<StoredScalarValue> {
-    choose_scalar(current, next, Ordering::Less)
-}
-
-fn choose_max_scalar(
-    current: Option<StoredScalarValue>,
-    next: Option<StoredScalarValue>,
-) -> Option<StoredScalarValue> {
-    choose_scalar(current, next, Ordering::Greater)
-}
-
-fn choose_scalar(
-    current: Option<StoredScalarValue>,
-    next: Option<StoredScalarValue>,
-    preferred_ordering: Ordering,
-) -> Option<StoredScalarValue> {
-    match (current, next) {
-        (None, value) | (value, None) => value,
-        (Some(left), Some(right)) => match stored_scalar_cmp(&left, &right) {
-            Some(ordering) if ordering == preferred_ordering => Some(left),
-            Some(Ordering::Equal) => Some(left),
-            Some(_) => Some(right),
-            None => Some(left),
-        },
-    }
-}
-
-fn stored_scalar_cmp(left: &StoredScalarValue, right: &StoredScalarValue) -> Option<Ordering> {
-    match (left, right) {
-        (StoredScalarValue::Int8(Some(left)), StoredScalarValue::Int8(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::Int16(Some(left)), StoredScalarValue::Int16(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::Int32(Some(left)), StoredScalarValue::Int32(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::Int64(Some(left)), StoredScalarValue::Int64(Some(right))) => {
-            Some(left.parse::<i64>().ok()?.cmp(&right.parse::<i64>().ok()?))
-        },
-        (StoredScalarValue::UInt8(Some(left)), StoredScalarValue::UInt8(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::UInt16(Some(left)), StoredScalarValue::UInt16(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::UInt32(Some(left)), StoredScalarValue::UInt32(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::UInt64(Some(left)), StoredScalarValue::UInt64(Some(right))) => {
-            Some(left.parse::<u64>().ok()?.cmp(&right.parse::<u64>().ok()?))
-        },
-        (StoredScalarValue::Utf8(Some(left)), StoredScalarValue::Utf8(Some(right)))
-        | (StoredScalarValue::LargeUtf8(Some(left)), StoredScalarValue::LargeUtf8(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (StoredScalarValue::Date32(Some(left)), StoredScalarValue::Date32(Some(right))) => {
-            Some(left.cmp(right))
-        },
-        (
-            StoredScalarValue::Time64Microsecond(Some(left)),
-            StoredScalarValue::Time64Microsecond(Some(right)),
-        ) => Some(left.cmp(right)),
-        (
-            StoredScalarValue::TimestampMillisecond {
-                value: Some(left), ..
-            },
-            StoredScalarValue::TimestampMillisecond {
-                value: Some(right), ..
-            },
-        )
-        | (
-            StoredScalarValue::TimestampMicrosecond {
-                value: Some(left), ..
-            },
-            StoredScalarValue::TimestampMicrosecond {
-                value: Some(right), ..
-            },
-        )
-        | (
-            StoredScalarValue::TimestampNanosecond {
-                value: Some(left), ..
-            },
-            StoredScalarValue::TimestampNanosecond {
-                value: Some(right), ..
-            },
-        ) => Some(left.cmp(right)),
-        _ => None,
-    }
 }
 
 fn is_missing_parquet_file_error_msg(message: &str) -> bool {

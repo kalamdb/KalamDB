@@ -293,6 +293,28 @@ pub struct StorageSettings {
     /// Remote storage timeout settings (S3, GCS, Azure)
     #[serde(default)]
     pub remote_timeouts: RemoteStorageTimeouts,
+    /// Parquet cold-segment write tuning (flush and compaction).
+    #[serde(default)]
+    pub parquet: ParquetWriteSettings,
+}
+
+/// Parquet writer settings for cold segment files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParquetWriteSettings {
+    /// Enable content-defined chunking (CDC) for Parquet page boundaries.
+    ///
+    /// Improves deduplication and stable boundaries when segments are rewritten
+    /// during compaction. Disables parallel column encoding in the Parquet writer.
+    #[serde(default)]
+    pub content_defined_chunking: bool,
+}
+
+impl Default for ParquetWriteSettings {
+    fn default() -> Self {
+        Self {
+            content_defined_chunking: false,
+        }
+    }
 }
 
 impl StorageSettings {
@@ -1210,6 +1232,7 @@ impl Default for ServerConfig {
                 user_tables_template: default_user_tables_template(),
                 rocksdb: RocksDbSettings::default(),
                 remote_timeouts: RemoteStorageTimeouts::default(),
+                parquet: ParquetWriteSettings::default(),
             },
             limits: LimitsSettings {
                 max_message_size: 1048576,

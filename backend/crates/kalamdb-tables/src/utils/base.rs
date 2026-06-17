@@ -65,16 +65,12 @@
 //! `stream_table_provider.rs` so the hot-store scan runs at execute time.
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    future::Future,
-    sync::Arc,
-};
+use std::{collections::HashSet, future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
     arrow::{
-        array::{Array, BooleanArray, Float32Array, Int64Array, UInt64Array},
+        array::{Array, Float32Array},
         datatypes::SchemaRef,
         record_batch::RecordBatch,
     },
@@ -91,7 +87,10 @@ use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::coerce_rows,
     ids::SeqId,
-    models::{rows::Row, NamespaceId, TableName, UserId},
+    models::{
+        datatypes::KalamDataType, rows::Row, schemas::TableDefinition, NamespaceId, TableName,
+        UserId,
+    },
     schemas::TableType,
     serialization::row_codec::RowMetadata,
     NotLeaderError, StorageKey, TableId,
@@ -122,12 +121,7 @@ pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, inject_system_columns,
     resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
 };
-use crate::{
-    error::{KalamDbError, TableError},
-    error_extensions::KalamDbResultExt,
-    manifest::ManifestAccessPlanner,
-    utils::unified_dml,
-};
+use crate::{error::KalamDbError, manifest::ManifestAccessPlanner, utils::unified_dml};
 
 #[async_trait]
 pub trait DeferredMvccScanProvider<K: StorageKey, V>:
@@ -682,10 +676,16 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         Ok(pushdown_results_for_filters(filters, |filter| self.filter_capability(filter)))
     }
 
-    /// Default implementation for statistics
-    fn base_statistics(&self) -> Option<Statistics> {
-        // TODO: Implement row count estimation from Manifest + RocksDB stats
-        None
+    /// Manifest-backed table statistics for the DataFusion optimizer.
+    ///
+    /// DataFusion's mainline planner does not consume [`TableProvider::statistics`] yet,
+    /// but KalamDB exposes cold-segment estimates here for future optimizer rules and
+    /// downstream tooling.
+    fn statistics(&self) -> Option<Statistics> {
+        crate::utils::table_statistics::compute_manifest_table_statistics(
+            self.core(),
+            self.provider_table_type(),
+        )
     }
 
     /// Default implementation for scan
@@ -1339,8 +1339,8 @@ pub async fn pk_exists_in_cold(
     // 3. Scan pruned Parquet files and check for PK using StorageCached.
     // Manifest paths are just filenames (e.g., "batch-0.parquet"), so prepend storage_path
     for file_name in files_to_scan {
-        if pk_exists_in_parquet_via_storage_cache(
-            &storage_cached,
+        if crate::utils::pk::pk_exists_in_parquet_file(
+            storage_cached.as_ref(),
             table_type,
             table_id,
             user_id,
@@ -1564,8 +1564,8 @@ pub async fn pk_exists_batch_in_cold(
 
     // 4. Scan Parquet files and check for PKs (batch version).
     for file_name in files_to_scan {
-        if let Some(found_pk) = pk_exists_batch_in_parquet_via_storage_cache(
-            &storage_cached,
+        if let Some(found_pk) = crate::utils::pk::first_existing_pk_in_parquet_file(
+            storage_cached.as_ref(),
             table_type,
             table_id,
             user_id,
@@ -1588,218 +1588,6 @@ pub async fn pk_exists_batch_in_cold(
     }
 
     Ok(None)
-}
-
-/// Batch check if any PK values exist in a single Parquet file via streaming (async).
-///
-/// Uses column-projected streaming — only reads pk/_seq/_deleted column chunks,
-/// never loads the entire file into memory.
-/// Returns the first matching PK found (with non-deleted latest version).
-async fn pk_exists_batch_in_parquet_via_storage_cache(
-    storage_cached: &kalamdb_filestore::StorageCached,
-    table_type: TableType,
-    table_id: &TableId,
-    user_id: Option<&UserId>,
-    parquet_filename: &str,
-    pk_column: &str,
-    pk_values: &std::collections::HashSet<&str>,
-) -> Result<Option<String>, KalamDbError> {
-    use futures_util::TryStreamExt;
-
-    let columns_to_read: Vec<&str> = vec![
-        pk_column,
-        SystemColumnNames::SEQ,
-        SystemColumnNames::DELETED,
-    ];
-    let mut stream = match storage_cached
-        .read_parquet_file_stream(table_type, table_id, user_id, parquet_filename, &columns_to_read)
-        .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            let err_msg = err.to_string().to_ascii_lowercase();
-            if err_msg.contains("not found") && err_msg.contains("object at location") {
-                log::warn!(
-                    "[pk_exists_batch_in_parquet] skipping missing parquet file '{}' for {}: {}",
-                    parquet_filename,
-                    table_id,
-                    err
-                );
-                return Ok(None);
-            }
-            return Err(TableError::Other(format!("Failed to open Parquet stream: {}", err)));
-        },
-    };
-
-    // Track latest version per PK value: pk_value -> (max_seq, is_deleted)
-    let mut versions: HashMap<String, (i64, bool)> = HashMap::new();
-
-    while let Some(batch) =
-        stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
-    {
-        let pk_idx = batch.schema().index_of(pk_column).ok();
-        let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
-        let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
-
-        let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-            continue;
-        };
-
-        let pk_col = batch.column(pk_i);
-        let seq_col = batch.column(seq_i);
-        let deleted_col = deleted_idx.map(|i| batch.column(i));
-
-        for row_idx in 0..batch.num_rows() {
-            let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
-            let Some(row_pk_str) = row_pk else { continue };
-
-            if !pk_values.contains(row_pk_str.as_str()) {
-                continue;
-            }
-
-            let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
-                arr.value(row_idx)
-            } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
-                arr.value(row_idx) as i64
-            } else {
-                continue;
-            };
-
-            let deleted = if let Some(del_col) = &deleted_col {
-                if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
-                    arr.value(row_idx)
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            versions
-                .entry(row_pk_str)
-                .and_modify(|(max_seq, del)| {
-                    if seq > *max_seq {
-                        *max_seq = seq;
-                        *del = deleted;
-                    }
-                })
-                .or_insert((seq, deleted));
-        }
-    }
-
-    // Return first non-deleted PK found
-    for (pk, (_, is_deleted)) in versions {
-        if !is_deleted && pk_values.contains(pk.as_str()) {
-            return Ok(Some(pk));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Check if a PK value exists in a single Parquet file via streaming (async, with MVCC version
-/// resolution).
-///
-/// Uses column-projected streaming — only reads pk/_seq/_deleted column chunks,
-/// never loads the entire file into memory.
-async fn pk_exists_in_parquet_via_storage_cache(
-    storage_cached: &kalamdb_filestore::StorageCached,
-    table_type: TableType,
-    table_id: &TableId,
-    user_id: Option<&UserId>,
-    parquet_filename: &str,
-    pk_column: &str,
-    pk_value: &str,
-) -> Result<bool, KalamDbError> {
-    use futures_util::TryStreamExt;
-
-    let columns_to_read: Vec<&str> = vec![
-        pk_column,
-        SystemColumnNames::SEQ,
-        SystemColumnNames::DELETED,
-    ];
-    let mut stream = match storage_cached
-        .read_parquet_file_stream(table_type, table_id, user_id, parquet_filename, &columns_to_read)
-        .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            let err_msg = err.to_string().to_ascii_lowercase();
-            if err_msg.contains("not found") && err_msg.contains("object at location") {
-                log::warn!(
-                    "[pk_exists_in_parquet] skipping missing parquet file '{}' for {}: {}",
-                    parquet_filename,
-                    table_id,
-                    err
-                );
-                return Ok(false);
-            }
-            return Err(TableError::Other(format!("Failed to open Parquet stream: {}", err)));
-        },
-    };
-
-    // Track latest version: (max_seq, is_deleted)
-    let mut latest: Option<(i64, bool)> = None;
-
-    while let Some(batch) =
-        stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
-    {
-        let pk_idx = batch.schema().index_of(pk_column).ok();
-        let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
-        let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
-
-        let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-            continue;
-        };
-
-        let pk_col = batch.column(pk_i);
-        let seq_col = batch.column(seq_i);
-        let deleted_col = deleted_idx.map(|i| batch.column(i));
-
-        for row_idx in 0..batch.num_rows() {
-            let row_pk = extract_pk_as_string(pk_col.as_ref(), row_idx);
-            let Some(row_pk_str) = row_pk else { continue };
-
-            if row_pk_str != pk_value {
-                continue;
-            }
-
-            let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
-                arr.value(row_idx)
-            } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
-                arr.value(row_idx) as i64
-            } else {
-                continue;
-            };
-
-            let deleted = if let Some(del_col) = &deleted_col {
-                if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
-                    arr.value(row_idx)
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-            match &mut latest {
-                Some((max_seq, del)) => {
-                    if seq > *max_seq {
-                        *max_seq = seq;
-                        *del = deleted;
-                    }
-                },
-                None => latest = Some((seq, deleted)),
-            }
-        }
-    }
-
-    Ok(latest.map(|(_, is_deleted)| !is_deleted).unwrap_or(false))
-}
-
-/// Extract PK value as string from an Arrow array at given index (delegates to shared utility).
-fn extract_pk_as_string(col: &dyn Array, idx: usize) -> Option<String> {
-    crate::utils::pk_utils::extract_pk_as_string(col, idx)
 }
 
 fn strip_list_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
@@ -2041,6 +1829,23 @@ pub fn apply_limit<T>(result: &mut Vec<T>, limit: Option<usize>) {
 /// Default is 100,000 if no limit is provided.
 pub fn calculate_scan_limit(limit: Option<usize>) -> usize {
     limit.map(|l| std::cmp::max(l * 2, 1000)).unwrap_or(100_000)
+}
+
+/// Return embedding columns that need vector hot-staging support.
+///
+/// Shared between user and shared table providers so provider constructors
+/// don't each repeat the schema walk and dimension filtering.
+pub fn embedding_columns(table_def: &TableDefinition) -> Vec<(String, u32)> {
+    table_def
+        .columns
+        .iter()
+        .filter_map(|column| match &column.data_type {
+            KalamDataType::Embedding(dim) if *dim > 0 => {
+                Some((column.column_name.clone(), *dim as u32))
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 /// Extract an embedding vector from a ScalarValue, validating dimensions.

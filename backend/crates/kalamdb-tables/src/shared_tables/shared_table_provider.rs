@@ -29,7 +29,7 @@ use datafusion::{
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::SharedTableRowId,
-    models::{datatypes::KalamDataType, rows::Row, OperationKind, UserId},
+    models::{rows::Row, OperationKind, UserId},
     websocket::ChangeNotification,
     NotLeaderError, TableType,
 };
@@ -93,30 +93,13 @@ impl SharedTableProvider {
     /// * `store` - SharedTableIndexedStore for this table
     pub fn new(core: Arc<TableProviderCore>, store: Arc<SharedTableIndexedStore>) -> Self {
         let pk_index = SharedTablePkIndex::new(core.table_id(), core.primary_key_field_name());
-        let vector_columns: Vec<(String, u32)> = core
-            .table_def()
-            .columns
-            .iter()
-            .filter_map(|column| match &column.data_type {
-                KalamDataType::Embedding(dim) if *dim > 0 => {
-                    Some((column.column_name.clone(), *dim as u32))
-                },
-                _ => None,
-            })
-            .collect();
-        let backend = store.backend().clone();
-        let mut vector_stores: HashMap<String, Arc<SharedVectorHotStore>> =
-            HashMap::with_capacity(vector_columns.len());
-        for (column_name, _) in &vector_columns {
-            vector_stores.insert(
-                column_name.clone(),
-                Arc::new(new_indexed_shared_vector_hot_store(
-                    backend.clone(),
-                    core.table_id(),
-                    column_name,
-                )),
-            );
-        }
+        let vector_columns = base::embedding_columns(core.table_def());
+        let vector_stores = crate::utils::vector_staging::build_vector_store_map(
+            store.backend().clone(),
+            core.table_id(),
+            &vector_columns,
+            new_indexed_shared_vector_hot_store,
+        );
 
         Self {
             core,
@@ -2344,10 +2327,6 @@ impl TableProvider for SharedTableProvider {
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.base_supports_filters_pushdown(filters)
-    }
-
-    fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {
-        self.base_statistics()
     }
 }
 

@@ -34,7 +34,7 @@ pub use files::{FileStorageService, StagedFile, StagingManager};
 pub use health::{ConnectivityTestResult, HealthStatus, StorageHealthResult, StorageHealthService};
 pub use manifest::json::{manifest_exists, read_manifest_json, write_manifest_json};
 pub use parquet::{
-    reader::{parse_parquet_stream, RecordBatchFileStream},
-    writer::ParquetWriteResult,
+    reader::{parse_parquet_stream, ParquetReadOptions, RecordBatchFileStream},
+    writer::{ParquetWriteResult, ParquetWriterOptions},
 };
 pub use registry::{StorageCached, StorageRegistry};

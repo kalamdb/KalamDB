@@ -12,6 +12,7 @@ pub mod ddl_parent;
 pub mod dialect;
 pub mod execute_as;
 pub mod parser;
+pub mod query_features;
 pub mod validation;
 
 pub use batch_execution::{
@@ -41,6 +42,9 @@ pub use parser::{
     normalize_context_keyword_calls_for_sqlparser, object_name_to_string, parse_single_statement,
     query_parser::{QueryParseError, QueryParser, SubscriptionQueryAnalysis},
     rewrite_context_functions_for_datafusion, SqlParser,
+};
+pub use query_features::{
+    supports_general_query_feature, supports_subscription_query_feature, GeneralQueryFeature,
 };
 pub use validation::{
     validate_column_name, validate_namespace_name, validate_table_name, ValidationError,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use datafusion::{
     arrow::{
@@ -9,11 +9,48 @@ use datafusion::{
         datatypes::DataType,
     },
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility},
     scalar::ScalarValue,
 };
 use kalamdb_commons::arrow_utils::{arrow_float32, ArrowDataType};
 
+static NATIVE_COSINE_DISTANCE: OnceLock<Arc<ScalarUDF>> = OnceLock::new();
+
+fn native_cosine_distance_udf() -> Arc<ScalarUDF> {
+    NATIVE_COSINE_DISTANCE
+        .get_or_init(|| datafusion::functions_nested::cosine_distance::cosine_distance_udf())
+        .clone()
+}
+
+fn uses_json_query_vector_types(arg_types: &[DataType]) -> bool {
+    matches!(
+        arg_types.get(1),
+        Some(DataType::Utf8 | DataType::LargeUtf8)
+    )
+}
+
+fn uses_json_query_vector(args: &[ColumnarValue]) -> bool {
+    matches!(
+        args.get(1),
+        Some(ColumnarValue::Scalar(ScalarValue::Utf8(_) | ScalarValue::LargeUtf8(_)))
+    )
+}
+
+fn json_query_vector_return_type(_arg_types: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
+    Ok(arrow_float32())
+}
+
+fn json_query_vector_coerce_types(arg_types: &[ArrowDataType]) -> DataFusionResult<Vec<ArrowDataType>> {
+    if arg_types.len() != 2 {
+        return Err(DataFusionError::Plan(
+            "COSINE_DISTANCE() expects exactly 2 arguments".to_string(),
+        ));
+    }
+    Ok(arg_types.to_vec())
+}
+
+/// Dispatches `cosine_distance` to DataFusion 54 for array/array inputs and to the
+/// Kalam JSON-literal path when the query vector is a UTF-8 JSON string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct CosineDistanceFunction;
 
@@ -30,71 +67,91 @@ impl ScalarUDFImpl for CosineDistanceFunction {
 
     fn signature(&self) -> &Signature {
         static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::any(2, Volatility::Immutable))
+        SIGNATURE.get_or_init(|| Signature::user_defined(Volatility::Immutable))
     }
 
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_float32())
+    fn return_type(&self, arg_types: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
+        if uses_json_query_vector_types(arg_types) {
+            json_query_vector_return_type(arg_types)
+        } else {
+            native_cosine_distance_udf().return_type(arg_types)
+        }
+    }
+
+    fn coerce_types(&self, arg_types: &[ArrowDataType]) -> DataFusionResult<Vec<ArrowDataType>> {
+        if uses_json_query_vector_types(arg_types) {
+            json_query_vector_coerce_types(arg_types)
+        } else {
+            native_cosine_distance_udf().inner().coerce_types(arg_types)
+        }
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if args.args.len() != 2 {
-            return Err(DataFusionError::Plan(
-                "COSINE_DISTANCE() expects exactly 2 arguments".to_string(),
-            ));
-        }
-
-        let query_vector = parse_query_vector_arg(&args.args[1])?;
-        if query_vector.is_empty() {
-            return Err(DataFusionError::Plan(
-                "COSINE_DISTANCE() query vector cannot be empty".to_string(),
-            ));
-        }
-
-        match &args.args[0] {
-            ColumnarValue::Array(array) => {
-                let mut out: Vec<Option<f32>> = Vec::with_capacity(array.len());
-                for idx in 0..array.len() {
-                    let maybe_vector = parse_vector_at_index(array.as_ref(), idx)?;
-                    let distance = if let Some(vector) = maybe_vector {
-                        if vector.len() != query_vector.len() {
-                            return Err(DataFusionError::Execution(format!(
-                                "COSINE_DISTANCE() dimension mismatch: row has {}, query has {}",
-                                vector.len(),
-                                query_vector.len()
-                            )));
-                        }
-                        Some(cosine_distance(&vector, &query_vector))
-                    } else {
-                        None
-                    };
-                    out.push(distance);
-                }
-
-                Ok(ColumnarValue::Array(Arc::new(Float32Array::from(out)) as ArrayRef))
-            },
-            ColumnarValue::Scalar(value) => {
-                let maybe_vector = parse_vector_from_scalar(value)?;
-                let scalar_out = if let Some(vector) = maybe_vector {
-                    if vector.len() != query_vector.len() {
-                        return Err(DataFusionError::Execution(format!(
-                            "COSINE_DISTANCE() dimension mismatch: value has {}, query has {}",
-                            vector.len(),
-                            query_vector.len()
-                        )));
-                    }
-                    ScalarValue::Float32(Some(cosine_distance(&vector, &query_vector)))
-                } else {
-                    ScalarValue::Float32(None)
-                };
-
-                Ok(ColumnarValue::Scalar(scalar_out))
-            },
+        if uses_json_query_vector(&args.args) {
+            invoke_json_query_cosine_distance(&args.args)
+        } else {
+            native_cosine_distance_udf().invoke_with_args(args)
         }
     }
 }
 
-fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
+fn invoke_json_query_cosine_distance(args: &[ColumnarValue]) -> DataFusionResult<ColumnarValue> {
+    if args.len() != 2 {
+        return Err(DataFusionError::Plan(
+            "COSINE_DISTANCE() expects exactly 2 arguments".to_string(),
+        ));
+    }
+
+    let query_vector = parse_query_vector_arg(&args[1])?;
+    if query_vector.is_empty() {
+        return Err(DataFusionError::Plan(
+            "COSINE_DISTANCE() query vector cannot be empty".to_string(),
+        ));
+    }
+
+    match &args[0] {
+        ColumnarValue::Array(array) => {
+            let mut out: Vec<Option<f32>> = Vec::with_capacity(array.len());
+            for idx in 0..array.len() {
+                let maybe_vector = parse_vector_at_index(array.as_ref(), idx)?;
+                let distance = if let Some(vector) = maybe_vector {
+                    if vector.len() != query_vector.len() {
+                        return Err(DataFusionError::Execution(format!(
+                            "COSINE_DISTANCE() dimension mismatch: row has {}, query has {}",
+                            vector.len(),
+                            query_vector.len()
+                        )));
+                    }
+                    Some(json_cosine_distance(&vector, &query_vector))
+                } else {
+                    None
+                };
+                out.push(distance);
+            }
+
+            Ok(ColumnarValue::Array(Arc::new(Float32Array::from(out)) as ArrayRef))
+        },
+        ColumnarValue::Scalar(value) => {
+            let maybe_vector = parse_vector_from_scalar(value)?;
+            let scalar_out = if let Some(vector) = maybe_vector {
+                if vector.len() != query_vector.len() {
+                    return Err(DataFusionError::Execution(format!(
+                        "COSINE_DISTANCE() dimension mismatch: value has {}, query has {}",
+                        vector.len(),
+                        query_vector.len()
+                    )));
+                }
+                ScalarValue::Float32(Some(json_cosine_distance(&vector, &query_vector)))
+            } else {
+                ScalarValue::Float32(None)
+            };
+
+            Ok(ColumnarValue::Scalar(scalar_out))
+        },
+    }
+}
+
+fn json_cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     let mut dot = 0.0_f32;
     let mut norm_a = 0.0_f32;
     let mut norm_b = 0.0_f32;
@@ -316,9 +373,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cosine_distance_math() {
-        let same = cosine_distance(&[1.0, 0.0], &[1.0, 0.0]);
-        let orthogonal = cosine_distance(&[1.0, 0.0], &[0.0, 1.0]);
+    fn test_json_cosine_distance_math() {
+        let same = json_cosine_distance(&[1.0, 0.0], &[1.0, 0.0]);
+        let orthogonal = json_cosine_distance(&[1.0, 0.0], &[0.0, 1.0]);
         assert!((same - 0.0).abs() < 1e-6);
         assert!((orthogonal - 1.0).abs() < 1e-6);
     }
@@ -329,6 +386,30 @@ mod tests {
             .expect("json parse should succeed")
             .expect("vector should exist");
         assert_eq!(parsed, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn test_json_query_vector_coerce_types_preserves_json_query_vector() {
+        let func = CosineDistanceFunction::new();
+        let row_vector = DataType::FixedSizeList(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            3,
+        );
+        let arg_types = vec![row_vector.clone(), DataType::Utf8];
+
+        let coerced = func.coerce_types(&arg_types).expect("coercion should pass");
+
+        assert_eq!(coerced, arg_types);
+    }
+
+    #[test]
+    fn test_cosine_distance_dispatcher_uses_native_for_array_query_vector() {
+        let func = CosineDistanceFunction::new();
+        let list_field = Arc::new(Field::new("item", DataType::Float64, true));
+        let arg_types = vec![DataType::List(list_field.clone()), DataType::List(list_field)];
+
+        assert!(!uses_json_query_vector_types(&arg_types));
+        assert!(func.coerce_types(&arg_types).is_ok());
     }
 
     #[test]
