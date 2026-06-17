@@ -590,8 +590,23 @@ mod tests {
     use std::{env, fs};
     use tempfile::TempDir;
 
+    fn with_skip_package_install<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let original_skip = env::var_os(SKIP_PACKAGE_INSTALL_ENV);
+        env::set_var(SKIP_PACKAGE_INSTALL_ENV, "1");
+        let result = f();
+        match original_skip {
+            Some(value) => env::set_var(SKIP_PACKAGE_INSTALL_ENV, value),
+            None => env::remove_var(SKIP_PACKAGE_INSTALL_ENV),
+        }
+        result
+    }
+
     #[test]
     fn init_scaffolds_project_files() {
+        with_skip_package_install(|| {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         run_init(
@@ -618,11 +633,20 @@ mod tests {
         assert!(temp.path().join("kalam/server/server.toml").is_file());
         let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
         assert!(kalam_toml.contains("[dev.processes]"));
-        assert!(kalam_toml.contains("run dev"));
+        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+        assert!(
+            config
+                .dev
+                .processes
+                .get("app")
+                .is_some_and(|command| command.contains("dev"))
+        );
+        });
     }
 
     #[test]
     fn init_creates_project_env_file_and_ignores_it() {
+        with_skip_package_install(|| {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         run_init(
@@ -649,14 +673,14 @@ mod tests {
 
         let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
         assert!(gitignore.lines().any(|line| line.trim() == ".env"));
+        });
     }
 
     #[test]
     fn init_dart_project_omits_package_manager_from_kalam_toml() {
+        with_skip_package_install(|| {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        let original_skip = env::var_os(SKIP_PACKAGE_INSTALL_ENV);
-        env::set_var(SKIP_PACKAGE_INSTALL_ENV, "1");
 
         run_init(
             InitOptions {
@@ -674,11 +698,6 @@ mod tests {
         )
         .unwrap();
 
-        match original_skip {
-            Some(value) => env::set_var(SKIP_PACKAGE_INSTALL_ENV, value),
-            None => env::remove_var(SKIP_PACKAGE_INSTALL_ENV),
-        }
-
         let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
         assert!(!kalam_toml.contains("package_manager"));
         assert!(kalam_toml.contains("# [dev.processes]"));
@@ -686,6 +705,7 @@ mod tests {
 
         let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
         assert!(config.project.package_manager.is_none());
+        });
     }
 
     #[test]
@@ -719,6 +739,7 @@ mod tests {
 
     #[test]
     fn init_normalizes_namespace_for_hyphenated_project_name() {
+        with_skip_package_install(|| {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         run_init(
@@ -746,10 +767,12 @@ mod tests {
 
         let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
         assert!(env_contents.contains("KALAM_NAMESPACE=dev_test1"));
+        });
     }
 
     #[test]
     fn remote_server_mode_disables_auto_start_db() {
+        with_skip_package_install(|| {
         let temp = TempDir::new().unwrap();
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         run_init(
@@ -771,5 +794,6 @@ mod tests {
         let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
         assert!(!config.dev.auto_start_db);
         assert!(!temp.path().join("kalam/server/server.toml").exists());
+        });
     }
 }
