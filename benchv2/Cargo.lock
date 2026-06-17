@@ -151,9 +151,9 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cc"
-version = "1.2.63"
+version = "1.2.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556e016178bb5662a08681bbe0f00f8e17631781a4dfc8c45e466e4b185ec27f"
+checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -192,9 +192,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-client"
-version = "0.5.2-rc.2"
+version = "0.5.3-rc.1"
 dependencies = [
  "link-common",
 ]
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-commons"
-version = "0.5.2-rc.2"
+version = "0.5.3-rc.1"
 dependencies = [
  "dashmap",
  "hex",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-observability"
-version = "0.5.2-rc.2"
+version = "0.5.3-rc.1"
 dependencies = [
  "cc",
  "chrono",
@@ -1010,7 +1010,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "link-common"
-version = "0.5.2-rc.2"
+version = "0.5.3-rc.1"
 dependencies = [
  "aws-lc-rs",
  "base64",
@@ -1047,9 +1047,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.30"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lru-slab"

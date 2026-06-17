@@ -1,4 +1,4 @@
-//! Shared [`ExecutionPlan`] scaffolding built on the DataFusion 53.x surface.
+//! Shared [`ExecutionPlan`] scaffolding built on the DataFusion 54.x surface.
 //!
 //! This module intentionally stays thin: it provides helpers that consumers
 //! embed inside their own `ExecutionPlan` implementations, instead of forcing a

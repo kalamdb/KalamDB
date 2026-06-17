@@ -13,13 +13,34 @@ use kalamdb_commons::{constants::SystemColumnNames, schemas::TableCompression};
 use parquet::{
     arrow::ArrowWriter,
     basic::{Compression, ZstdLevel},
-    file::properties::WriterProperties,
+    file::properties::{CdcOptions, WriterProperties},
 };
 
 use crate::error::{FilestoreError, Result};
 
 const MIN_ROWS_FOR_BLOOM_FILTERS: u64 = 1024;
 const PARQUET_INITIAL_BUFFER_BYTES: usize = 1024 * 1024;
+
+/// Parquet writer tuning for a single write.
+#[derive(Debug, Clone, Copy)]
+pub struct ParquetWriterOptions {
+    pub compression: TableCompression,
+    pub content_defined_chunking: bool,
+}
+
+impl ParquetWriterOptions {
+    pub fn new(compression: TableCompression) -> Self {
+        Self {
+            compression,
+            content_defined_chunking: false,
+        }
+    }
+
+    pub fn with_content_defined_chunking(mut self, enabled: bool) -> Self {
+        self.content_defined_chunking = enabled;
+        self
+    }
+}
 
 /// Result of a Parquet write operation.
 #[derive(Debug, Clone)]
@@ -32,17 +53,18 @@ pub(crate) fn serialize_to_parquet_with_compression(
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
     bloom_filter_columns: Option<Vec<String>>,
-    compression: TableCompression,
+    options: ParquetWriterOptions,
 ) -> Result<Bytes> {
     let _span_guard = kalamdb_observability::kdb_debug_span_entered!(
         "parquet.serialize",
         row_count = batches.iter().map(|batch| batch.num_rows() as u64).sum::<u64>(),
-        bloom_filter_count = bloom_filter_columns.as_ref().map_or(0, Vec::len)
+        bloom_filter_count = bloom_filter_columns.as_ref().map_or(0, Vec::len),
+        content_defined_chunking = options.content_defined_chunking
     );
 
     let batches = sort_batches_by_seq(batches)?;
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
-    let props = writer_properties(total_rows, bloom_filter_columns, compression);
+    let props = writer_properties(total_rows, bloom_filter_columns, options);
 
     // Write to in-memory buffer
     let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
@@ -71,23 +93,39 @@ pub fn serialize_record_batch_receiver_to_parquet(
     bloom_filter_columns: Option<Vec<String>>,
     estimated_rows: u64,
 ) -> Result<Bytes> {
-    serialize_record_batch_receiver_to_parquet_with_compression(
+    serialize_record_batch_receiver_to_parquet_with_options(
         schema,
         receiver,
         bloom_filter_columns,
         estimated_rows,
-        TableCompression::default(),
+        ParquetWriterOptions::new(TableCompression::default()),
     )
 }
 
 pub fn serialize_record_batch_receiver_to_parquet_with_compression(
     schema: SchemaRef,
-    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
     bloom_filter_columns: Option<Vec<String>>,
     estimated_rows: u64,
     compression: TableCompression,
 ) -> Result<Bytes> {
-    let props = writer_properties(estimated_rows, bloom_filter_columns, compression);
+    serialize_record_batch_receiver_to_parquet_with_options(
+        schema,
+        receiver,
+        bloom_filter_columns,
+        estimated_rows,
+        ParquetWriterOptions::new(compression),
+    )
+}
+
+pub fn serialize_record_batch_receiver_to_parquet_with_options(
+    schema: SchemaRef,
+    mut receiver: tokio::sync::mpsc::Receiver<Result<RecordBatch>>,
+    bloom_filter_columns: Option<Vec<String>>,
+    estimated_rows: u64,
+    options: ParquetWriterOptions,
+) -> Result<Bytes> {
+    let props = writer_properties(estimated_rows, bloom_filter_columns, options);
     let mut buffer = Vec::with_capacity(PARQUET_INITIAL_BUFFER_BYTES);
     let mut rows_written = 0u64;
 
@@ -107,6 +145,7 @@ pub fn serialize_record_batch_receiver_to_parquet_with_compression(
     kalamdb_observability::kdb_debug!(
         row_count = rows_written,
         size_bytes = buffer.len(),
+        content_defined_chunking = options.content_defined_chunking,
         "Streaming Parquet serialization completed"
     );
     Ok(Bytes::from(buffer))
@@ -115,7 +154,7 @@ pub fn serialize_record_batch_receiver_to_parquet_with_compression(
 fn writer_properties(
     row_count: u64,
     bloom_filter_columns: Option<Vec<String>>,
-    compression: TableCompression,
+    options: ParquetWriterOptions,
 ) -> WriterProperties {
     let bloom_ndv_estimate = row_count.max(1);
     let bloom_filter_columns = if row_count < MIN_ROWS_FOR_BLOOM_FILTERS {
@@ -125,8 +164,13 @@ fn writer_properties(
     };
 
     let mut props_builder = WriterProperties::builder()
-        .set_compression(parquet_compression(compression))
+        .set_compression(parquet_compression(options.compression))
         .set_max_row_group_row_count(Some(128 * 1024));
+
+    if options.content_defined_chunking {
+        props_builder =
+            props_builder.set_content_defined_chunking(Some(CdcOptions::default()));
+    }
 
     if let Some(cols) = bloom_filter_columns {
         for col in cols {
@@ -227,7 +271,10 @@ mod tests {
 
     use arrow::array::StringArray;
     use kalamdb_commons::arrow_utils::{field_utf8, schema};
-    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use parquet::{
+        arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
+        file::reader::{FileReader, SerializedFileReader},
+    };
 
     use super::*;
 
@@ -244,9 +291,13 @@ mod tests {
     #[test]
     fn test_serialize_to_parquet() {
         let (schema, batches) = make_test_batch();
-        let bytes =
-            serialize_to_parquet_with_compression(schema, batches, None, TableCompression::Snappy)
-                .unwrap();
+        let bytes = serialize_to_parquet_with_compression(
+            schema,
+            batches,
+            None,
+            ParquetWriterOptions::new(TableCompression::Snappy),
+        )
+        .unwrap();
         assert!(!bytes.is_empty());
         // Parquet magic number at start
         assert_eq!(&bytes[0..4], b"PAR1");
@@ -260,9 +311,13 @@ mod tests {
             (TableCompression::Zstd, Compression::ZSTD(zstd_level())),
         ] {
             let (schema, batches) = make_test_batch();
-            let bytes =
-                serialize_to_parquet_with_compression(schema, batches, None, table_compression)
-                    .unwrap();
+            let bytes = serialize_to_parquet_with_compression(
+                schema,
+                batches,
+                None,
+                ParquetWriterOptions::new(table_compression),
+            )
+            .unwrap();
             let temp_file = tempfile::NamedTempFile::new().unwrap();
             fs::write(temp_file.path(), bytes).unwrap();
 
@@ -271,5 +326,25 @@ mod tests {
             let column = reader.metadata().row_group(0).column(0);
             assert_eq!(column.compression(), expected);
         }
+    }
+
+    #[test]
+    fn content_defined_chunking_roundtrips() {
+        let (schema, batches) = make_test_batch();
+        let bytes = serialize_to_parquet_with_compression(
+            schema.clone(),
+            batches,
+            None,
+            ParquetWriterOptions::new(TableCompression::Snappy).with_content_defined_chunking(true),
+        )
+        .unwrap();
+
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .unwrap()
+            .build()
+            .unwrap();
+        let read_batches: Vec<RecordBatch> = reader.map(|batch| batch.unwrap()).collect();
+        assert_eq!(read_batches.len(), 1);
+        assert_eq!(read_batches[0].num_rows(), 3);
     }
 }

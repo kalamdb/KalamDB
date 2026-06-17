@@ -132,21 +132,58 @@ impl SchemaRegistry {
         self.app_context.get().expect("AppContext not set on SchemaRegistry")
     }
 
+    fn system_schema_reconcile_marker(
+        expected_defs: &[Arc<TableDefinition>],
+    ) -> Result<Vec<u8>, KalamDbError> {
+        let defs: Vec<&TableDefinition> = expected_defs.iter().map(Arc::as_ref).collect();
+        let mut marker = b"system-schema-reconcile-marker:v1\0".to_vec();
+        let serialized = serde_json::to_vec(&defs).map_err(|e| {
+            KalamDbError::SerializationError(format!(
+                "failed to serialize expected system schemas: {e}"
+            ))
+        })?;
+        marker.extend(serialized);
+        Ok(marker)
+    }
+
     /// Initialize registry by loading all existing tables from storage
     ///
     /// This should be called once at system startup.
     pub fn initialize_tables(&self) -> Result<(), KalamDbError> {
-        self.reconcile_system_table_definitions()?;
+        let reconcile_start = std::time::Instant::now();
+        let reconcile_stats = self.reconcile_system_table_definitions()?;
+        let reconcile_ms = reconcile_start.elapsed().as_secs_f64() * 1000.0;
+        let system_schema_unchanged =
+            reconcile_stats.created == 0 && reconcile_stats.upgraded == 0;
+
+        let warm_start = std::time::Instant::now();
+        self.warm_system_table_providers(system_schema_unchanged)?;
+        let warm_ms = warm_start.elapsed().as_secs_f64() * 1000.0;
 
         // Scan all table definitions
+        let scan_start = std::time::Instant::now();
         let all_defs = self.scan_all_table_definitions()?;
+        let scan_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
 
         if all_defs.is_empty() {
-            log::debug!("SchemaRegistry initialized: no existing tables found");
+            log::debug!(
+                "SchemaRegistry initialized: no user/shared tables to load (reconcile={:.2}ms, \
+                 warm={:.2}ms, scan={:.2}ms)",
+                reconcile_ms,
+                warm_ms,
+                scan_ms
+            );
             return Ok(());
         }
 
-        log::debug!("SchemaRegistry initialized: loading {} existing tables...", all_defs.len());
+        log::debug!(
+            "SchemaRegistry initialized: loading {} persisted tables (reconcile={:.2}ms, \
+             warm={:.2}ms, scan={:.2}ms)...",
+            all_defs.len(),
+            reconcile_ms,
+            warm_ms,
+            scan_ms
+        );
 
         let mut loaded_count = 0;
         let mut skipped_count = 0;
@@ -155,6 +192,12 @@ impl SchemaRegistry {
         for def in all_defs {
             let table_id =
                 TableId::from_strings(def.namespace_id.as_str(), def.table_name.as_str());
+
+            // System tables are wired through SystemTablesRegistry; warming above is enough.
+            if def.namespace_id.is_system_namespace() {
+                skipped_count += 1;
+                continue;
+            }
 
             // Skip tables that already have a cached provider — re-creating them would
             // destroy in-memory state (e.g., MemoryStreamLogStore data for stream tables).
@@ -174,7 +217,7 @@ impl SchemaRegistry {
         }
 
         log::debug!(
-            "SchemaRegistry initialized. Loaded: {}, Skipped (cached): {}, Failed: {}",
+            "SchemaRegistry initialized. Loaded: {}, Skipped: {}, Failed: {}",
             loaded_count,
             skipped_count,
             failed_count
@@ -182,10 +225,65 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    pub fn reconcile_system_table_definitions(&self) -> Result<(), KalamDbError> {
+    /// Bind persisted system table providers into the schema cache without reloading user tables.
+    fn warm_system_table_providers(&self, use_expected_defs: bool) -> Result<(), KalamDbError> {
         let system_tables = self.app_context().system_tables();
         let tables_provider = system_tables.tables();
         let expected_defs = system_tables.expected_system_table_definitions();
+
+        for expected in expected_defs {
+            let expected = expected.as_ref();
+            let table_id =
+                TableId::from_strings(expected.namespace_id.as_str(), expected.table_name.as_str());
+
+            if self.table_cache.contains_key(&table_id) {
+                continue;
+            }
+
+            let table_def = if use_expected_defs {
+                expected.clone()
+            } else {
+                match tables_provider
+                    .get_table_by_id(&table_id)
+                    .into_kalamdb_error("Failed to load persisted system schema definition")?
+                {
+                    Some(def) => def,
+                    None => expected.clone(),
+                }
+            };
+
+            self.put(table_def)?;
+        }
+
+        Ok(())
+    }
+
+    fn reconcile_system_table_definitions(&self) -> Result<SystemSchemaReconcileStats, KalamDbError> {
+        let system_tables = self.app_context().system_tables();
+        let tables_provider = system_tables.tables();
+        let expected_defs = system_tables.expected_system_table_definitions();
+        let expected_marker = Self::system_schema_reconcile_marker(&expected_defs)?;
+
+        tables_provider
+            .cleanup_legacy_reconcile_marker()
+            .into_kalamdb_error("Failed to clean up legacy system schema reconcile marker")?;
+
+        if let Some(persisted_marker) = tables_provider
+            .read_schema_reconcile_marker()
+            .into_kalamdb_error("Failed to read system schema reconcile marker")?
+        {
+            if persisted_marker == expected_marker {
+                log::debug!(
+                    "[SchemaRegistry] System schema reconciliation: fast-path (unchanged={})",
+                    expected_defs.len()
+                );
+                return Ok(SystemSchemaReconcileStats {
+                    unchanged: expected_defs.len(),
+                    ..SystemSchemaReconcileStats::default()
+                });
+            }
+        }
+
         let mut stats = SystemSchemaReconcileStats::default();
 
         for expected in expected_defs {
@@ -248,7 +346,11 @@ impl SchemaRegistry {
             );
         }
 
-        Ok(())
+        tables_provider
+            .write_schema_reconcile_marker(&expected_marker)
+            .into_kalamdb_error("Failed to persist system schema reconcile marker")?;
+
+        Ok(stats)
     }
 
     fn schema_semantically_equal(current: &TableDefinition, expected: &TableDefinition) -> bool {

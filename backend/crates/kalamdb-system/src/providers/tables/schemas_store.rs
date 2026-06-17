@@ -32,6 +32,7 @@ use crate::SystemTable;
 pub struct SchemasStore {
     backend: Arc<dyn StorageBackend>,
     partition: Partition,
+    metadata_partition: Partition,
 }
 
 impl SchemasStore {
@@ -41,6 +42,7 @@ impl SchemasStore {
             partition: Partition::new(
                 SystemTable::Schemas.column_family_name().expect("Schemas is a table"),
             ),
+            metadata_partition: Partition::new("system_schema_metadata"),
         }
     }
 }
@@ -269,6 +271,46 @@ impl SchemasStore {
             })
             .collect())
     }
+
+    const SCHEMA_RECONCILE_MARKER_KEY: &[u8] = b"system_schema_reconcile_marker:v1";
+    const LEGACY_SCHEMA_RECONCILE_GENERATION_KEY: &[u8] = b"__schema_reconcile_generation__";
+
+    /// Read the persisted system-schema reconcile marker, if present.
+    pub fn read_schema_reconcile_marker(
+        &self,
+    ) -> Result<Option<Vec<u8>>, kalamdb_store::StorageError> {
+        self.backend
+            .get(&self.metadata_partition, Self::SCHEMA_RECONCILE_MARKER_KEY)
+    }
+
+    /// Persist the system-schema reconcile marker after a successful pass.
+    pub fn write_schema_reconcile_marker(
+        &self,
+        marker: &[u8],
+    ) -> Result<(), kalamdb_store::StorageError> {
+        self.cleanup_legacy_reconcile_marker()?;
+        self.backend.put(
+            &self.metadata_partition,
+            Self::SCHEMA_RECONCILE_MARKER_KEY,
+            marker,
+        )
+    }
+
+    /// Remove the old raw marker accidentally written into `system.schemas`.
+    ///
+    /// `system.schemas` is typed by `TableVersionId`; raw metadata keys cause scan warnings.
+    pub fn cleanup_legacy_reconcile_marker(&self) -> Result<(), kalamdb_store::StorageError> {
+        if self
+            .backend
+            .get(&self.partition, Self::LEGACY_SCHEMA_RECONCILE_GENERATION_KEY)?
+            .is_some()
+        {
+            self.backend
+                .delete(&self.partition, Self::LEGACY_SCHEMA_RECONCILE_GENERATION_KEY)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -345,6 +387,38 @@ mod tests {
                 .expect("Schemas is a table, not a view")
                 .into()
         );
+    }
+
+    #[test]
+    fn test_reconcile_marker_uses_metadata_partition_and_cleans_legacy_key() {
+        let store = create_test_store();
+
+        store
+            .backend
+            .put(
+                &store.partition,
+                SchemasStore::LEGACY_SCHEMA_RECONCILE_GENERATION_KEY,
+                &[1, 0, 0, 0],
+            )
+            .unwrap();
+
+        store.write_schema_reconcile_marker(b"marker-v1").unwrap();
+
+        assert_eq!(
+            store.read_schema_reconcile_marker().unwrap(),
+            Some(b"marker-v1".to_vec())
+        );
+        assert!(store
+            .backend
+            .get(&store.partition, SchemasStore::LEGACY_SCHEMA_RECONCILE_GENERATION_KEY)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .backend
+            .get(&store.partition, SchemasStore::SCHEMA_RECONCILE_MARKER_KEY)
+            .unwrap()
+            .is_none());
+        assert!(store.scan_all_latest().unwrap().is_empty());
     }
 
     #[test]

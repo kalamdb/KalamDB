@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use kalamdb_commons::models::StorageId;
-use kalamdb_configs::config::types::RemoteStorageTimeouts;
+use kalamdb_configs::config::types::{ParquetWriteSettings, RemoteStorageTimeouts};
 use kalamdb_system::{Storage, StoragesTableProvider};
 
 use crate::{
@@ -31,6 +31,8 @@ pub struct StorageRegistry {
     _default_storage_path: String,
     /// Remote storage timeout configuration
     timeouts: RemoteStorageTimeouts,
+    /// Server-wide Parquet write settings applied to all cold segment writes.
+    parquet_write: ParquetWriteSettings,
     /// In-memory cache for StorageCached objects keyed by StorageId
     /// Avoids repeated RocksDB lookups and ensures one ObjectStore per storage
     /// (not one per table - 100 tables using same storage = 1 ObjectStore)
@@ -43,6 +45,7 @@ impl StorageRegistry {
         storages_provider: Arc<StoragesTableProvider>,
         default_storage_path: String,
         timeouts: RemoteStorageTimeouts,
+        parquet_write: ParquetWriteSettings,
     ) -> Self {
         use std::path::{Path, PathBuf};
         // Normalize default path: if relative, resolve against current working directory
@@ -59,6 +62,7 @@ impl StorageRegistry {
             storages_provider,
             _default_storage_path: normalized,
             timeouts,
+            parquet_write,
             cache: DashMap::new(),
         }
     }
@@ -88,7 +92,11 @@ impl StorageRegistry {
             .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {
-            let cached = Arc::new(StorageCached::new(s, self.timeouts.clone()));
+            let cached = Arc::new(StorageCached::new(
+                s,
+                self.timeouts.clone(),
+                self.parquet_write.clone(),
+            ));
             self.cache.insert(storage_id.clone(), Arc::clone(&cached));
             Ok(Some(cached))
         } else {
@@ -407,6 +415,7 @@ mod tests {
             storages_provider,
             "/tmp/kalamdb-storage-registry-tests".to_string(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            ParquetWriteSettings::default(),
         )
     }
 }

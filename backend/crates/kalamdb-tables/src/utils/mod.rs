@@ -15,6 +15,7 @@ pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
 pub mod pk_utils; // Shared PK extraction utilities
 pub mod row_utils;
+pub mod table_statistics;
 pub mod unified_dml; // Phase 13.6: Moved from tables/
 pub mod vector_staging;
 pub mod version_resolution; // Phase 13.6: Moved from tables/

@@ -260,17 +260,16 @@ impl PkExistenceChecker {
 
         // 3. Scan pruned Parquet files for the PK.
         for file_name in files_to_scan {
-            if self
-                .pk_exists_in_parquet_async(
-                    &storage_cached,
-                    table_type,
-                    table_id,
-                    user_id,
-                    &file_name,
-                    pk_column,
-                    pk_value,
-                )
-                .await?
+            if crate::utils::pk::pk_exists_in_parquet_file(
+                storage_cached.as_ref(),
+                table_type,
+                table_id,
+                user_id,
+                &file_name,
+                pk_column,
+                pk_value,
+            )
+            .await?
             {
                 log::trace!(
                     "[PkExistenceChecker] Found PK {} in {} for {}.{} {}",
@@ -325,130 +324,6 @@ impl PkExistenceChecker {
                 );
                 Ok(None)
             },
-        }
-    }
-
-    /// Extract PK value as string from an Arrow array (now uses shared utility)
-    fn extract_pk_as_string(
-        col: &dyn datafusion::arrow::array::Array,
-        idx: usize,
-    ) -> Option<String> {
-        crate::utils::pk_utils::extract_pk_as_string(col, idx)
-    }
-
-    /// Async check if a PK exists in a specific Parquet file via streaming.
-    ///
-    /// Uses column-projected streaming — only reads pk/_seq/_deleted column chunks,
-    /// never loads the entire file into memory.
-    async fn pk_exists_in_parquet_async(
-        &self,
-        storage_cached: &kalamdb_filestore::StorageCached,
-        table_type: TableType,
-        table_id: &TableId,
-        user_id: Option<&UserId>,
-        parquet_filename: &str,
-        pk_column: &str,
-        pk_value: &str,
-    ) -> Result<bool, KalamDbError> {
-        use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
-        use futures_util::TryStreamExt;
-        use kalamdb_commons::constants::SystemColumnNames;
-
-        let columns_to_read: Vec<&str> = vec![
-            pk_column,
-            SystemColumnNames::SEQ,
-            SystemColumnNames::DELETED,
-        ];
-        let mut stream = match storage_cached
-            .read_parquet_file_stream(
-                table_type,
-                table_id,
-                user_id,
-                parquet_filename,
-                &columns_to_read,
-            )
-            .await
-        {
-            Ok(stream) => stream,
-            Err(err) => {
-                let err_msg = err.to_string().to_ascii_lowercase();
-                if err_msg.contains("not found") && err_msg.contains("object at location") {
-                    log::warn!(
-                        "[pk_exists_in_parquet_async] skipping missing parquet file '{}' for {}: {}",
-                        parquet_filename,
-                        table_id,
-                        err
-                    );
-                    return Ok(false);
-                }
-                return Err(KalamDbError::Other(format!("Failed to open Parquet stream: {}", err)));
-            },
-        };
-
-        // Track latest version: (max_seq, is_deleted)
-        let mut latest: Option<(i64, bool)> = None;
-
-        while let Some(batch) =
-            stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
-        {
-            let pk_idx = batch.schema().index_of(pk_column).ok();
-            let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
-            let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
-
-            let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
-                continue;
-            };
-
-            let pk_col = batch.column(pk_i);
-            let seq_col = batch.column(seq_i);
-            let deleted_col = deleted_idx.map(|i| batch.column(i));
-
-            for row_idx in 0..batch.num_rows() {
-                let row_pk = Self::extract_pk_as_string(pk_col.as_ref(), row_idx);
-                let Some(row_pk_str) = row_pk else { continue };
-
-                if row_pk_str != pk_value {
-                    continue;
-                }
-
-                let seq = if let Some(arr) = seq_col.as_any().downcast_ref::<Int64Array>() {
-                    arr.value(row_idx)
-                } else if let Some(arr) = seq_col.as_any().downcast_ref::<UInt64Array>() {
-                    arr.value(row_idx) as i64
-                } else {
-                    continue;
-                };
-
-                let deleted = if let Some(del_col) = &deleted_col {
-                    if let Some(arr) = del_col.as_any().downcast_ref::<BooleanArray>() {
-                        if arr.is_null(row_idx) {
-                            false
-                        } else {
-                            arr.value(row_idx)
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                match &mut latest {
-                    Some((max_seq, del)) => {
-                        if seq > *max_seq {
-                            *max_seq = seq;
-                            *del = deleted;
-                        }
-                    },
-                    None => latest = Some((seq, deleted)),
-                }
-            }
-        }
-
-        if let Some((_, is_deleted)) = latest {
-            Ok(!is_deleted)
-        } else {
-            Ok(false)
         }
     }
 }
@@ -619,7 +494,12 @@ mod tests {
             })
             .expect("seed local storage");
 
-        Arc::new(StorageRegistry::new(storages_provider, base_directory, Default::default()))
+        Arc::new(StorageRegistry::new(
+            storages_provider,
+            base_directory,
+            Default::default(),
+            Default::default(),
+        ))
     }
 
     fn numeric_stats(min: i64, max: i64) -> kalamdb_system::ColumnStats {

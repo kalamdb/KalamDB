@@ -152,6 +152,21 @@ impl SchemasTableProvider {
         self.list_tables()
     }
 
+    /// Read the persisted system-schema reconcile marker, if present.
+    pub fn read_schema_reconcile_marker(&self) -> Result<Option<Vec<u8>>, SystemError> {
+        Ok(self.store.read_schema_reconcile_marker()?)
+    }
+
+    /// Persist the system-schema reconcile marker after a successful pass.
+    pub fn write_schema_reconcile_marker(&self, marker: &[u8]) -> Result<(), SystemError> {
+        Ok(self.store.write_schema_reconcile_marker(marker)?)
+    }
+
+    /// Remove legacy raw marker keys from the typed schema partition.
+    pub fn cleanup_legacy_reconcile_marker(&self) -> Result<(), SystemError> {
+        Ok(self.store.cleanup_legacy_reconcile_marker()?)
+    }
+
     /// Scan all tables and return as RecordBatch (all schema versions)
     ///
     /// Returns all schema versions for schema history queries.

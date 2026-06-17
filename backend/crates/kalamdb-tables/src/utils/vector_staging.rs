@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures_util::future::try_join_all;
 use kalamdb_commons::{models::rows::Row, StorageKey, TableId};
-use kalamdb_store::IndexedEntityStore;
+use kalamdb_store::{IndexedEntityStore, StorageBackend};
 use kalamdb_system::VectorMetric;
 use kalamdb_vector::{VectorHotOp, VectorHotOpType};
 
@@ -61,6 +61,26 @@ where
     }
 
     Ok(ops_by_column)
+}
+
+pub(crate) fn build_vector_store_map<K, F>(
+    backend: Arc<dyn StorageBackend>,
+    table_id: &TableId,
+    vector_columns: &[(String, u32)],
+    mut new_store: F,
+) -> HashMap<String, Arc<IndexedEntityStore<K, VectorHotOp>>>
+where
+    K: StorageKey,
+    F: FnMut(Arc<dyn StorageBackend>, &TableId, &str) -> IndexedEntityStore<K, VectorHotOp>,
+{
+    let mut vector_stores = HashMap::with_capacity(vector_columns.len());
+    for (column_name, _) in vector_columns {
+        vector_stores.insert(
+            column_name.clone(),
+            Arc::new(new_store(Arc::clone(&backend), table_id, column_name)),
+        );
+    }
+    vector_stores
 }
 
 pub(crate) fn build_vector_delete_ops<K, FKey>(

@@ -297,6 +297,7 @@ impl AppContext {
                 system_tables.storages(),
                 storage_base_path,
                 config.storage.remote_timeouts.clone(),
+                config.storage.parquet.clone(),
             ));
 
             // Create schema cache (Phase 10 unified cache)
@@ -540,9 +541,12 @@ impl AppContext {
 
             // ── Restore topic cache from persisted topics ───────────────────────
             // On restart the TopicPublisherService starts with empty caches.
-            // Load all persisted topics so CDC routes and offset counters are
-            // available immediately for the notification worker.
+            // Load persisted topics so CDC routes and offset counters are available
+            // immediately for the notification worker.
             match app_ctx.system_tables().topics().list_topics() {
+                Ok(topics) if topics.is_empty() => {
+                    log::debug!("No persisted topics to restore on startup");
+                },
                 Ok(topics) => {
                     let count = topics.len();
                     topic_publisher.refresh_topics_cache(topics);
@@ -815,6 +819,7 @@ impl AppContext {
             system_tables.storages(),
             "/tmp/kalamdb-test".to_string(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
         ));
 
         // Create minimal schema registry

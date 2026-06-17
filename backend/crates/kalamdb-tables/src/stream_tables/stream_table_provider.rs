@@ -722,10 +722,6 @@ impl TableProvider for StreamTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         Err(DataFusionError::Plan("UPDATE not supported for STREAM tables".to_string()))
     }
-
-    fn statistics(&self) -> Option<datafusion::physical_plan::Statistics> {
-        self.base_statistics()
-    }
 }
 
 // KalamTableProvider: extends TableProvider with KalamDB-specific DML

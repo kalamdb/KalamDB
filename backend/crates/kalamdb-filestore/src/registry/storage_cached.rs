@@ -38,6 +38,7 @@ pub struct StorageCached {
     /// Storage configuration from `system.storages`.
     pub storage: Arc<Storage>,
     timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts,
+    parquet_write: kalamdb_configs::config::types::ParquetWriteSettings,
     object_store: Arc<RwLock<Option<Arc<dyn ObjectStore>>>>,
 }
 
@@ -45,16 +46,27 @@ impl StorageCached {
     pub fn new(
         storage: Storage,
         timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts,
+        parquet_write: kalamdb_configs::config::types::ParquetWriteSettings,
     ) -> Self {
         Self {
             storage: Arc::new(storage),
             timeouts,
+            parquet_write,
             object_store: Arc::new(RwLock::new(None)),
         }
     }
 
     pub fn with_default_timeouts(storage: Storage) -> Self {
-        Self::new(storage, kalamdb_configs::config::types::RemoteStorageTimeouts::default())
+        Self::new(
+            storage,
+            kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
+        )
+    }
+
+    pub fn parquet_writer_options(&self, compression: TableCompression) -> crate::parquet::writer::ParquetWriterOptions {
+        crate::parquet::writer::ParquetWriterOptions::new(compression)
+            .with_content_defined_chunking(self.parquet_write.content_defined_chunking)
     }
 
     // ── Path Resolution ──────────────────────────────────────────────
@@ -409,6 +421,27 @@ impl StorageCached {
         Ok(stream)
     }
 
+    pub async fn read_parquet_file_stream_with_options(
+        &self,
+        table_type: TableType,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        file: &str,
+        options: &crate::parquet::reader::ParquetReadOptions,
+    ) -> Result<crate::parquet::reader::RecordBatchFileStream> {
+        let store = self.object_store_internal()?;
+        let pr = self.get_file_path(table_type, table_id, user_id, file);
+        let object_path = self.to_object_path(&pr.relative_path)?;
+        let stream = crate::parquet::reader::parse_parquet_stream_with_options(
+            store,
+            &object_path,
+            options,
+        )
+        .await?;
+        kalamdb_observability::record_parquet_file_read();
+        Ok(stream)
+    }
+
     /// Write `RecordBatch`es as Parquet with bloom filters.
     pub async fn write_parquet(
         &self,
@@ -450,7 +483,7 @@ impl StorageCached {
             schema,
             batches,
             bloom_filter_columns,
-            compression,
+            self.parquet_writer_options(compression),
         )?;
         let size_bytes = parquet_bytes.len() as u64;
         self.put(table_type, table_id, user_id, filename, parquet_bytes).await?;
@@ -725,6 +758,7 @@ mod tests {
         let cached = StorageCached::new(
             create_test_storage(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
         );
         let table_id = make_table_id("chat", "messages");
         let user_id = UserId::from("alice");
@@ -739,6 +773,7 @@ mod tests {
         let cached = StorageCached::new(
             create_test_storage(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
         );
         let table_id = make_table_id("myns", "mytable");
 
@@ -753,6 +788,7 @@ mod tests {
         let cached = StorageCached::new(
             create_test_storage(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
         );
         let table_id = make_table_id("myns", "mytable");
 

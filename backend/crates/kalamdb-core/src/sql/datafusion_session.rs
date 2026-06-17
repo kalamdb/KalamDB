@@ -82,7 +82,10 @@ impl DataFusionSessionFactory {
             settings.batch_size
         );
 
+        // DuckDB dialect enables SQL lambda parsing (`x -> expr`) required by DataFusion 54
+        // higher-order array functions such as array_transform and array_filter.
         let config = SessionConfig::new()
+            .set_str("datafusion.sql_parser.dialect", "duckdb")
             .with_information_schema(true)
             .with_parquet_bloom_filter_pruning(true)
             .with_parquet_page_index_pruning(true)
@@ -164,7 +167,14 @@ impl DataFusionSessionFactory {
         // crate which handles operator planning natively inside DataFusion.
         datafusion_functions_json::register_all(ctx).expect("failed to register JSON functions");
 
+        // Ensure DataFusion 54 nested/lambda array functions and planners are registered
+        // for SQL like `array_transform(arr, x -> x * 2)`.
+        datafusion::functions_nested::register_all(ctx)
+            .expect("failed to register nested expression functions");
+
         // Register COSINE_DISTANCE(vector, query_vector) for ORDER BY similarity search syntax.
+        // The dispatcher routes JSON query literals internally and delegates array/array
+        // inputs to DataFusion 54's native cosine_distance implementation.
         ctx.register_udf(ScalarUDF::from(CosineDistanceFunction::new()));
 
         // Register vector search table function (TABLE(vector_search(...))).
@@ -281,5 +291,35 @@ mod tests {
         // Should auto-detect CPU cores (at least 1)
         assert!(target_partitions >= 1);
         assert!(target_partitions <= 16); // Capped at max_partitions
+    }
+
+    #[test]
+    fn test_higher_order_functions_are_registered() {
+        let factory = DataFusionSessionFactory::new().unwrap();
+        let session = factory.create_session();
+        let names: Vec<_> = session
+            .state()
+            .higher_order_functions()
+            .keys()
+            .cloned()
+            .collect();
+        assert!(
+            names.iter().any(|name| name == "array_transform"),
+            "expected array_transform higher-order UDF, got {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lambda_array_transform_sql() {
+        let factory = DataFusionSessionFactory::new().unwrap();
+        let session = factory.create_session();
+        let result = session
+            .sql("SELECT array_transform([1, 2, 3], x -> x * 10)")
+            .await;
+        assert!(
+            result.is_ok(),
+            "lambda array_transform failed: {:?}",
+            result.err()
+        );
     }
 }

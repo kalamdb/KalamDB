@@ -1,15 +1,10 @@
-//! Partition statistics and [`PlanProperties`] builders.
-//!
-//! Kept narrow on purpose: these helpers wrap DataFusion's own
-//! `Statistics` and `PlanProperties` types so providers can emit trustworthy
-//! metadata without duplicating builder code.
+//! Partition [`PlanProperties`] builders for shared execution plans.
 
 use datafusion::{
-    common::stats::Precision,
     physical_expr::EquivalenceProperties,
     physical_plan::{
         execution_plan::{Boundedness, EmissionType},
-        Partitioning, PlanProperties, Statistics,
+        Partitioning, PlanProperties,
     },
 };
 
@@ -43,43 +38,4 @@ pub fn multi_partition_plan_properties(
         EmissionType::Incremental,
         Boundedness::Bounded,
     )
-}
-
-/// Build conservative [`Statistics`] when row-count and size are unknown.
-///
-/// Use when the source cannot cheaply estimate cardinality (e.g., live
-/// RocksDB tail reads). The optimizer will treat the source as unknown
-/// instead of accepting a fabricated estimate.
-pub fn unknown_statistics(num_columns: usize) -> Statistics {
-    Statistics {
-        num_rows: Precision::Absent,
-        total_byte_size: Precision::Absent,
-        column_statistics: Statistics::unknown_column(&arrow_schema::Schema::new(
-            (0..num_columns)
-                .map(|i| {
-                    arrow_schema::Field::new(
-                        format!("__col_{i}"),
-                        arrow_schema::DataType::Null,
-                        true,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )),
-    }
-}
-
-/// Build [`Statistics`] from an exact row count and an optional byte size
-/// estimate. Sources that already track accurate cardinality (e.g., count
-/// metadata from flushed manifests) should prefer this helper.
-pub fn exact_row_statistics(
-    num_columns: usize,
-    num_rows: usize,
-    total_byte_size: Option<usize>,
-) -> Statistics {
-    let mut stats = unknown_statistics(num_columns);
-    stats.num_rows = Precision::Exact(num_rows);
-    if let Some(bytes) = total_byte_size {
-        stats.total_byte_size = Precision::Exact(bytes);
-    }
-    stats
 }

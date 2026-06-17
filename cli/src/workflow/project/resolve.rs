@@ -199,6 +199,28 @@ mod tests {
     };
     use tempfile::TempDir;
 
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     fn sample_config() -> KalamProjectConfig {
         KalamProjectConfig {
             project: ProjectSection {
@@ -262,6 +284,9 @@ mod tests {
 
     #[test]
     fn default_env_from_config() {
+        let _env_guard = EnvVarGuard::unset(ENV_VAR_KALAM_ENV);
+        let _url_guard = EnvVarGuard::unset(ENV_VAR_KALAM_URL);
+        let _namespace_guard = EnvVarGuard::unset(ENV_VAR_KALAM_NAMESPACE);
         let config = sample_config();
         let resolved = resolve_environment(&config, &EnvironmentOverrides::default()).unwrap();
         assert_eq!(resolved.name, "dev");

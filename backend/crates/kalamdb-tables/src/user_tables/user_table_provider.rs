@@ -23,13 +23,13 @@ use datafusion::{
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{dml::InsertOp, Expr, TableProviderFilterPushDown},
-    physical_plan::{ExecutionPlan, Statistics},
+    physical_plan::ExecutionPlan,
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::{SeqId, UserTableRowId},
-    models::{datatypes::KalamDataType, rows::Row, OperationKind, UserId},
+    models::{rows::Row, OperationKind, UserId},
     websocket::ChangeNotification,
     StorageKey, TableType,
 };
@@ -124,30 +124,13 @@ impl UserTableProvider {
     /// * `store` - IndexedEntityStore with PK index for this table
     pub fn new(core: Arc<TableProviderCore>, store: Arc<UserTableIndexedStore>) -> Self {
         let pk_index = UserTablePkIndex::new(core.table_id(), core.primary_key_field_name());
-        let vector_columns: Vec<(String, u32)> = core
-            .table_def()
-            .columns
-            .iter()
-            .filter_map(|column| match &column.data_type {
-                KalamDataType::Embedding(dim) if *dim > 0 => {
-                    Some((column.column_name.clone(), *dim as u32))
-                },
-                _ => None,
-            })
-            .collect();
-        let backend = store.backend().clone();
-        let mut vector_stores: HashMap<String, Arc<UserVectorHotStore>> =
-            HashMap::with_capacity(vector_columns.len());
-        for (column_name, _) in &vector_columns {
-            vector_stores.insert(
-                column_name.clone(),
-                Arc::new(new_indexed_user_vector_hot_store(
-                    backend.clone(),
-                    core.table_id(),
-                    column_name,
-                )),
-            );
-        }
+        let vector_columns = base::embedding_columns(core.table_def());
+        let vector_stores = crate::utils::vector_staging::build_vector_store_map(
+            store.backend().clone(),
+            core.table_id(),
+            &vector_columns,
+            new_indexed_user_vector_hot_store,
+        );
 
         if log::log_enabled!(log::Level::Debug) {
             let field_names: Vec<_> = core.schema().fields().iter().map(|f| f.name()).collect();
@@ -2097,10 +2080,6 @@ impl TableProvider for UserTableProvider {
         filters: &[&Expr],
     ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.base_supports_filters_pushdown(filters)
-    }
-
-    fn statistics(&self) -> Option<Statistics> {
-        self.base_statistics()
     }
 
     async fn scan(

@@ -343,7 +343,12 @@ fn build_storage_registry(
         })
         .expect("seed local storage");
 
-    Arc::new(StorageRegistry::new(storages_provider, base_directory, Default::default()))
+    Arc::new(StorageRegistry::new(
+        storages_provider,
+        base_directory,
+        Default::default(),
+        Default::default(),
+    ))
 }
 
 fn build_services(
