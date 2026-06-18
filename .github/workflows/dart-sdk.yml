@@ -153,7 +153,7 @@ jobs:
         with:
           shared-key: dart-bridge
           cache-on-failure: true
-          workspaces: link -> link/target
+          workspaces: link/kalam-link-dart -> target
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2

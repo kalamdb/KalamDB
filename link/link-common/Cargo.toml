@@ -13,7 +13,7 @@ readme = "README.md"
 
 [dependencies]
 kalamdb-commons = { workspace = true, default-features = false, features = ["serde"] }
-tokio = { workspace = true, optional = true }
+tokio = { version = "1.52.3", optional = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls"], optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 serde = { workspace = true }
@@ -28,10 +28,7 @@ log = { workspace = true, optional = true }
 miniz_oxide = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aws-lc-rs = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["aws_lc_rs"], optional = true }
-quinn-proto = { workspace = true, optional = true }
-rustls-webpki = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -43,7 +40,7 @@ client-core = [
 	"dep:miniz_oxide",
 	"dep:rmp-serde",
 ]
-tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:aws-lc-rs", "dep:rustls", "dep:quinn-proto", "dep:rustls-webpki"]
+tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:rustls"]
 auth-flows = []
 setup = []
 healthcheck = []

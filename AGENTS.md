@@ -67,7 +67,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - Use `cargo nextest run` for tests unless explicitly told otherwise.
 - CLI smoke tests require a running server. Start the backend first, then run smoke tests from `cli`.
 - Smoke tests are required before committing changes that affect backend or CLI behavior.
-- For CLI e2e tests, run `cargo nextest run --features e2e-tests` without `--no-fail-fast`; fix the first failure, then rerun.
+- For CLI e2e tests, run `cargo nextest run -p kalam-cli-e2e` without `--no-fail-fast`; fix the first failure, then rerun.
 - For performance tests, benchmarks, or perf e2e cases, report each relevant runtime in seconds.
 - Add `#[ntest::timeout(time)]` to async tests using observed healthy runtime x 1.5.
 
@@ -75,9 +75,13 @@ Keep context small. Read only the files needed for the current task. Do not scan
 
 - Backend build: `cd backend && cargo build`
 - Backend run: `cd backend && cargo run --bin kalamdb-server`
+- Backend fast check (local dev, no S3/mimalloc/tracing): `cargo check -p kalamdb-server`
+- Backend prod-like build: `cargo build -p kalamdb-server --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws`
 - CLI build: `cd cli && cargo build --release`
 - CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
 - Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
+- Rust SDK (fast iteration): `cargo check -p kalam-client --features native-sdk,consumer,healthcheck`.
+- Rust SDK e2e: `cargo test -p kalam-client-e2e` (requires running server).
 - Version verification after SDK version changes: `python3 scripts/versions.py verify`
 
 ## SDK And Docs

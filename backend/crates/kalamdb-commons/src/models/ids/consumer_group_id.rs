@@ -5,6 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "storage")]
 use crate::StorageKey;
 
 /// Type-safe wrapper for consumer group identifiers.
@@ -72,6 +73,7 @@ impl From<&str> for ConsumerGroupId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for ConsumerGroupId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
@@ -88,6 +90,7 @@ impl StorageKey for ConsumerGroupId {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_consumer_group_id_creation() {
         let group_id = ConsumerGroupId::new("ai-service");
@@ -95,6 +98,7 @@ mod tests {
         assert_eq!(group_id.to_string(), "ai-service");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_consumer_group_id_storage_key() {
         let group_id = ConsumerGroupId::new("analytics-pipeline");

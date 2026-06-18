@@ -1,6 +1,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError};
 use pyo3::prelude::*;
+use pyo3::types::PyAny;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -155,7 +156,7 @@ fn table_live_sql(table: &str) -> PyResult<String> {
     Ok(format!("SELECT * FROM {table}"))
 }
 
-fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: SeqId) -> PyResult<PyObject> {
+fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: SeqId) -> PyResult<Py<PyAny>> {
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("subscription_id", subscription_id)?;
     dict.set_item("last_seq_id", seq_id.as_i64().to_string())?;
@@ -163,7 +164,7 @@ fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: SeqId) -> PyRe
 }
 
 fn call_checkpoint(
-    callback: Option<&PyObject>,
+    callback: Option<&Py<PyAny>>,
     subscription_id: &str,
     seq_id: Option<SeqId>,
 ) -> PyResult<()> {
@@ -173,9 +174,9 @@ fn call_checkpoint(
     let Some(callback) = callback else {
         return Ok(());
     };
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let checkpoint = checkpoint_dict(py, subscription_id, seq_id)?;
-        callback.call1(py, (checkpoint,))?;
+        callback.bind(py).call1((checkpoint,))?;
         Ok(())
     })
 }
@@ -216,13 +217,13 @@ fn change_event_checkpoint(event: &kalam_client::ChangeEvent) -> Option<(&str, S
     }
 }
 
-fn call_error(callback: Option<&PyObject>, message: &serde_json::Value) -> PyResult<()> {
+fn call_error(callback: Option<&Py<PyAny>>, message: &serde_json::Value) -> PyResult<()> {
     let Some(callback) = callback else {
         return Ok(());
     };
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let py_message = serde_json_value_to_py(py, message)?;
-        callback.call1(py, (py_message,))?;
+        callback.bind(py).call1((py_message,))?;
         Ok(())
     })
 }
@@ -378,6 +379,17 @@ impl PyFileUpload {
         }
     }
 
+    fn __repr__(&self) -> String {
+        format!(
+            "FileUpload(placeholder={:?}, filename={:?}, bytes={})",
+            self.placeholder,
+            self.filename,
+            self.data.len()
+        )
+    }
+}
+
+impl PyFileUpload {
     fn into_upload(&self) -> FileUpload {
         let mut upload = FileUpload::new(
             self.placeholder.clone(),
@@ -388,15 +400,6 @@ impl PyFileUpload {
             upload = upload.with_mime(mime.clone());
         }
         upload
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "FileUpload(placeholder={:?}, filename={:?}, bytes={})",
-            self.placeholder,
-            self.filename,
-            self.data.len()
-        )
     }
 }
 
@@ -432,8 +435,8 @@ impl Auth {
     /// Example:
     ///     auth = Auth.basic("admin", "password")
     #[staticmethod]
-    fn basic(username: &str, password: &str) -> PyObject {
-        Python::with_gil(|py| {
+    fn basic(username: &str, password: &str) -> Py<PyAny> {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("type", "basic").unwrap();
             dict.set_item("username", username).unwrap();
@@ -447,8 +450,8 @@ impl Auth {
     /// Example:
     ///     auth = Auth.jwt("eyJhbG...")
     #[staticmethod]
-    fn jwt(token: &str) -> PyObject {
-        Python::with_gil(|py| {
+    fn jwt(token: &str) -> Py<PyAny> {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("type", "jwt").unwrap();
             dict.set_item("token", token).unwrap();
@@ -593,7 +596,7 @@ impl KalamClient {
             let mut guard = state.lock().await;
             guard.authenticated = false;
             guard.jwt = None;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -606,7 +609,7 @@ impl KalamClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = state.lock().await;
             ensure_authenticated_locked(&mut guard).await?;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -637,7 +640,7 @@ impl KalamClient {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response = execute_with_auth_retry(&state, &sql, None, params).await?;
-            Python::with_gil(|py| serialize_to_py(py, &response))
+            Python::attach(|py| serialize_to_py(py, &response))
         })
     }
 
@@ -665,7 +668,7 @@ impl KalamClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response = execute_with_auth_retry(&state, &sql, None, params).await?;
 
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let rows = pyo3::types::PyList::empty(py);
 
                 if let Some(result) = response.results.first() {
@@ -768,7 +771,7 @@ impl KalamClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response =
                 execute_with_auth_retry(&state, &sql, Some(owned_files), params).await?;
-            Python::with_gil(|py| serialize_to_py(py, &response))
+            Python::attach(|py| serialize_to_py(py, &response))
         })
     }
 
@@ -800,7 +803,11 @@ impl KalamClient {
                     .await
                     .map_err(to_py_err)?
             };
-            Python::with_gil(|py| Py::new(py, PyFileDownload::from(download)).map(Into::into))
+            Python::attach(|py| {
+                Py::new(py, PyFileDownload::from(download))
+                    .map(|obj| obj.into_any())
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            })
         })
     }
 
@@ -847,7 +854,7 @@ impl KalamClient {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             execute_with_auth_retry(&state, &sql, None, Some(params)).await?;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -880,7 +887,7 @@ impl KalamClient {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             execute_with_auth_retry(&state, &sql, None, Some(params)).await?;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -894,13 +901,13 @@ impl KalamClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = state.lock().await;
             guard.client.disconnect().await;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Async context manager entry — enables `async with KalamClient(...) as client:`.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
+        let slf_obj: Py<PyAny> = slf.into_pyobject(py)?.unbind().into();
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
@@ -918,7 +925,7 @@ impl KalamClient {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = state.lock().await;
             guard.client.disconnect().await;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -976,7 +983,7 @@ impl KalamClient {
                 .build()
                 .map_err(to_py_err)?;
 
-            Ok(Python::with_gil(|py| {
+            Ok(Python::attach(|py| {
                 Py::new(
                     py,
                     Consumer {
@@ -1008,8 +1015,8 @@ impl KalamClient {
         last_rows: Option<u32>,
         from_: Option<Bound<'py, PyAny>>,
         auto_fetch_batches: Option<bool>,
-        on_checkpoint: Option<PyObject>,
-        on_error: Option<PyObject>,
+        on_checkpoint: Option<Py<PyAny>>,
+        on_error: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
         let from = py_seq_id(from_)?;
@@ -1027,7 +1034,7 @@ impl KalamClient {
             ensure_authenticated_locked(&mut guard).await?;
             let manager = guard.client.live_events_with_config(config).await.map_err(to_py_err)?;
 
-            Ok(Python::with_gil(|py| {
+            Ok(Python::attach(|py| {
                 Py::new(
                     py,
                     LiveEvents {
@@ -1054,7 +1061,7 @@ impl KalamClient {
         auto_fetch_batches: Option<bool>,
         limit: Option<usize>,
         key_columns: Option<Vec<String>>,
-        on_checkpoint: Option<PyObject>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
         let from = py_seq_id(from_)?;
@@ -1068,7 +1075,7 @@ impl KalamClient {
             let manager =
                 guard.client.live_with_config(config, live_config).await.map_err(to_py_err)?;
 
-            Ok(Python::with_gil(|py| {
+            Ok(Python::attach(|py| {
                 Py::new(
                     py,
                     LiveRows {
@@ -1094,7 +1101,7 @@ impl KalamClient {
         auto_fetch_batches: Option<bool>,
         limit: Option<usize>,
         key_columns: Option<Vec<String>>,
-        on_checkpoint: Option<PyObject>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let sql = table_live_sql(&table)?;
         self.live(
@@ -1138,7 +1145,7 @@ impl Consumer {
 
             let records = consumer.poll().await.map_err(to_py_err)?;
 
-            Python::with_gil(|py| serialize_to_py(py, &records))
+            Python::attach(|py| serialize_to_py(py, &records))
         })
     }
 
@@ -1179,7 +1186,7 @@ impl Consumer {
                 payload: Vec::new(),
             };
             consumer.mark_processed(&record);
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -1193,7 +1200,7 @@ impl Consumer {
                 guard.as_mut().ok_or_else(|| KalamError::new_err("Consumer is closed"))?;
 
             consumer.commit_sync().await.map_err(to_py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -1203,13 +1210,13 @@ impl Consumer {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
             *guard = None;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Async context manager entry.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
+        let slf_obj: Py<PyAny> = slf.into_pyobject(py)?.unbind().into();
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
@@ -1226,7 +1233,7 @@ impl Consumer {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
             *guard = None;
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -1248,8 +1255,8 @@ impl Consumer {
 #[pyclass]
 struct LiveEvents {
     inner: Arc<Mutex<Option<SubscriptionManager>>>,
-    on_checkpoint: Option<PyObject>,
-    on_error: Option<PyObject>,
+    on_checkpoint: Option<Py<PyAny>>,
+    on_error: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -1287,7 +1294,7 @@ impl LiveEvents {
                     ) {
                         call_error(on_error.as_ref(), &json_msg)?;
                     }
-                    Python::with_gil(|py| serde_json_value_to_py(py, &json_msg))
+                    Python::attach(|py| serde_json_value_to_py(py, &json_msg))
                 },
                 Some(Err(e)) => Err(to_py_err(e)),
                 None => {
@@ -1306,13 +1313,13 @@ impl LiveEvents {
             if let Some(mut manager) = guard.take() {
                 let _ = manager.close().await;
             }
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Async context manager entry — enables `async with await client.live_events(...) as events:`.
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
+        let slf_obj: Py<PyAny> = slf.into_pyobject(py)?.unbind().into();
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
@@ -1331,7 +1338,7 @@ impl LiveEvents {
             if let Some(mut manager) = guard.take() {
                 let _ = manager.close().await;
             }
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -1376,7 +1383,7 @@ impl LiveEvents {
                     ) {
                         call_error(on_error.as_ref(), &json_msg)?;
                     }
-                    Python::with_gil(|py| serde_json_value_to_py(py, &json_msg))
+                    Python::attach(|py| serde_json_value_to_py(py, &json_msg))
                 },
                 Some(Err(e)) => Err(to_py_err(e)),
                 None => Err(pyo3::exceptions::PyStopAsyncIteration::new_err("")),
@@ -1389,7 +1396,7 @@ impl LiveEvents {
 #[pyclass]
 struct LiveRows {
     inner: Arc<Mutex<Option<LiveRowsSubscription>>>,
-    on_checkpoint: Option<PyObject>,
+    on_checkpoint: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -1412,7 +1419,7 @@ impl LiveRows {
                     last_seq_id,
                 })) => {
                     call_checkpoint(on_checkpoint.as_ref(), &subscription_id, last_seq_id)?;
-                    Python::with_gil(|py| serialize_to_py(py, &rows))
+                    Python::attach(|py| serialize_to_py(py, &rows))
                 },
                 Some(Ok(LiveRowsEvent::Error { code, message, .. })) => {
                     Err(KalamServerError::new_err(format!("{code}: {message}")))
@@ -1434,12 +1441,12 @@ impl LiveRows {
             if let Some(mut manager) = guard.take() {
                 let _ = manager.close().await;
             }
-            Ok(Python::with_gil(|py| py.None()))
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     fn __aenter__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let slf_obj: PyObject = slf.into_pyobject(py)?.unbind().into();
+        let slf_obj: Py<PyAny> = slf.into_pyobject(py)?.unbind().into();
         pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf_obj) })
     }
 
@@ -1477,7 +1484,7 @@ impl LiveRows {
 /// Goes via serde_json::Value as an intermediate, but avoids the extra
 /// string-serialize + json.loads round-trip that shows up in profiles for
 /// large query responses.
-fn serialize_to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
+fn serialize_to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<Py<PyAny>> {
     let json_value = serde_json::to_value(value)
         .map_err(|e| PyRuntimeError::new_err(format!("JSON serialization error: {e}")))?;
     serde_json_value_to_py(py, &json_value)
@@ -1563,7 +1570,7 @@ fn py_to_json_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
 }
 
 /// Convert a serde_json::Value to a Python object.
-fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+fn serde_json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     if let Some(file_ref) = FileRef::from_json_value(value) {
         return Ok(Py::new(py, PyFileRef::from(file_ref))?.into());
     }

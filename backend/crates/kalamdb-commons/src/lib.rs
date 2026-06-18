@@ -57,6 +57,7 @@ pub mod models;
 #[cfg(feature = "serialization")]
 pub mod serialization; // KSerializable trait for entity storage
 pub mod storage; // Storage backend abstraction (Partition, StorageError, etc.)
+#[cfg(feature = "storage")]
 pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod system_tables; // System table enumeration (SystemTable, StoragePartition)
 #[cfg(feature = "full")]
@@ -93,8 +94,10 @@ pub use helpers::{
         normalize_sql_identifier, validate_namespace_reference, validate_sql_identifier,
         validate_user_namespace_name, SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
     },
-    security, string_interner,
+    security,
 };
+#[cfg(feature = "storage")]
+pub use helpers::string_interner;
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types
     datatypes,
@@ -123,7 +126,9 @@ pub use models::{
 pub use schemas::{TableAccess, TableName, TableType};
 #[cfg(feature = "serialization")]
 pub use serialization::KSerializable;
+#[cfg(feature = "storage")]
 pub use storage_key::{decode_key, encode_key, encode_prefix, next_storage_key_bytes, StorageKey};
+#[cfg(feature = "storage")]
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
 #[cfg(feature = "full")]

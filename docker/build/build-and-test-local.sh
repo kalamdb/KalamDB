@@ -68,7 +68,7 @@ main() {
     rustup target add "$LINUX_TARGET" >/dev/null
     if [ ! -f "$BINARY_OUTPUT_DIR/kalamdb-server" ] || [ ! -f "$BINARY_OUTPUT_DIR/kalam" ]; then
         log_info "Building with $BUILD_TOOL (this may take a while)..."
-        SKIP_UI_BUILD=1 "$BUILD_TOOL" build --release --target "$LINUX_TARGET" --features mimalloc -p kalamdb-server -p kalam-cli --bin kalamdb-server --bin kalam
+        SKIP_UI_BUILD=1 "$BUILD_TOOL" build --release --target "$LINUX_TARGET" --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws -p kalamdb-server -p kalam-cli --bin kalamdb-server --bin kalam
     else
         log_warn "Using existing Linux binaries from $BINARY_OUTPUT_DIR"
     fi

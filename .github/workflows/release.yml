@@ -954,7 +954,7 @@ jobs:
           cargo build `
             -p kalamdb-server `
             --no-default-features `
-            --features embedded-ui,traceability `
+            --features embedded-ui,traceability,mimalloc,cloud-aws `
             --profile release-dist `
             --timings `
             --bin kalamdb-server

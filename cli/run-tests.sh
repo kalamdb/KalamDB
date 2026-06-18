@@ -103,7 +103,8 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
-    echo "         using features: kalam-cli/e2e-tests and kalamdb-server/e2e-tests."
+    echo "         using backend e2e feature kalamdb-server/e2e-tests."
+    echo "         CLI integration tests live in the kalam-cli-e2e crate."
     echo "         Untargeted full runs also execute"
     echo "         TypeScript SDK unit/browser/e2e, example, UI, Dart, and Rust SDK test suites."
     echo ""
@@ -125,7 +126,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  $0 --test smoke --nocapture"
     echo "  $0 --url http://localhost:3000 --password mypass"
     echo "  $0 --cluster-urls http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903 --server-type cluster"
-    echo "  $0 --package kalam-cli --test-target cluster"
+    echo "  $0 --package kalam-cli-e2e --test-target cluster"
     echo "  $0 --package kalamdb-server --test-target test_scenarios_realtime"
     echo "  $0 --package kalam-cli --package kalam-link"
     echo "  $0 --test-list failed-tests.txt"
@@ -472,20 +473,10 @@ preflight_running_server() {
     validate_cluster_health "$SERVER_URL"
 }
 
-if [ ${#PACKAGE_FILTERS[@]} -gt 1 ]; then
-    for package in "${PACKAGE_FILTERS[@]}"; do
-        if [ "$package" = "kalam-cli" ]; then
-            echo "Error: run kalam-cli separately when using --package because e2e-tests is package-specific."
-            exit 1
-        fi
-    done
-fi
 
-FEATURE_MODE="workspace + CLI/backend e2e features"
+FEATURE_MODE="workspace + backend e2e feature"
 if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
-    if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && [ "${PACKAGE_FILTERS[0]}" = "kalam-cli" ]; then
-        FEATURE_MODE="package + CLI e2e feature"
-    elif [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && [ "${PACKAGE_FILTERS[0]}" = "kalamdb-server" ]; then
+    if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && [ "${PACKAGE_FILTERS[0]}" = "kalamdb-server" ]; then
         FEATURE_MODE="package + backend e2e feature"
     else
         FEATURE_MODE="package only"
@@ -543,8 +534,11 @@ if [ -n "$TEST_JOBS" ]; then
 fi
 echo "Mode:            $FEATURE_MODE"
 echo "Supplementary:   $SUPPLEMENTARY_MODE"
-echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
-echo "================================================"
+    echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
+    if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
+        echo "S3/MinIO tests:  auto-switch to fresh when running server lacks cloud-aws"
+    fi
+    echo "================================================"
 echo ""
 
 preflight_running_server
@@ -619,7 +613,7 @@ package_filters_include() {
 }
 
 verify_cli_test_layout() {
-    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli-e2e"; then
         return 0
     fi
 
@@ -629,7 +623,7 @@ verify_cli_test_layout() {
     fi
 
     local check_output
-    if ! check_output="$(python3 - "$REPO_ROOT/cli/Cargo.toml" "$REPO_ROOT/cli/tests" <<'PY'
+    if ! check_output="$(python3 - "$REPO_ROOT/cli/kalam-cli-e2e/Cargo.toml" "$REPO_ROOT/cli/kalam-cli-e2e/tests" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -674,7 +668,7 @@ missing_files = sorted(
 )
 
 if missing_files:
-    print("The following cli/tests files are not reachable from registered Cargo test targets:")
+    print("The following kalam-cli-e2e test files are not reachable from registered Cargo test targets:")
     for path in missing_files:
         print(path)
     raise SystemExit(1)
@@ -683,7 +677,7 @@ PY
         echo "Error: CLI test layout verification failed."
         echo "$check_output"
         echo ""
-        echo "Register new root tests in cli/Cargo.toml and wire nested test files into their aggregator targets before running run-tests.sh."
+        echo "Register new root tests in cli/kalam-cli-e2e/Cargo.toml and wire nested test files into their aggregator targets before running run-tests.sh."
         exit 1
     fi
 }
@@ -700,7 +694,7 @@ should_start_dex_for_oidc_tests() {
     esac
 
     if [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
-        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli"; then
+        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli-e2e"; then
             return 0
         fi
     fi
@@ -720,46 +714,109 @@ test_list_includes_cli_oidc() {
     grep -q 'oidc_cli_' "$TEST_LIST_FILE"
 }
 
-should_prebuild_cli_oidc_server_binary() {
-    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+should_prebuild_kalamdb_server_binary() {
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli-e2e"; then
         return 1
-    fi
-
-    if [ -n "$TEST_LIST_FILE" ]; then
-        test_list_includes_cli_oidc
-        return $?
-    fi
-
-    if [ -n "$TEST_FILTER" ]; then
-        [[ "$TEST_FILTER" == *oidc_cli_* ]]
-        return $?
-    fi
-
-    if [ -n "$TEST_TARGET" ]; then
-        [ "$TEST_TARGET" = "auth" ]
-        return $?
     fi
 
     return 0
 }
 
-prebuild_cli_oidc_server_binary_if_needed() {
-    if ! should_prebuild_cli_oidc_server_binary; then
+prebuild_kalamdb_server_binary_if_needed() {
+    if ! should_prebuild_kalamdb_server_binary; then
         return 0
     fi
 
     if [ -n "${KALAMDB_SERVER_BIN:-}" ] && [ -f "$KALAMDB_SERVER_BIN" ]; then
         chmod +x "$KALAMDB_SERVER_BIN" 2>/dev/null || true
-        step "Using prebuilt kalamdb-server for CLI OIDC tests"
+        step "Using prebuilt kalamdb-server for integration tests"
         return 0
     fi
 
-    step "Prebuilding kalamdb-server for CLI OIDC tests"
+    step "Prebuilding kalamdb-server with cloud-aws for integration tests"
     (
         cd "$REPO_ROOT"
-        cargo build -p kalamdb-server --bin kalamdb-server
+        cargo build -p kalamdb-server --bin kalamdb-server --features cloud-aws
     )
     export KALAMDB_SERVER_BIN="$REPO_ROOT/target/debug/kalamdb-server"
+}
+
+running_server_supports_s3_storage() {
+    local base_url="$1"
+    local probe_id="_run_tests_s3_probe_$$"
+    local auth_tmp_dir
+    local login_body
+    local token
+    local sql_body
+    local status
+    local config_json
+
+    if ! command -v curl >/dev/null 2>&1; then
+        return 1
+    fi
+
+    auth_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-s3-probe.XXXXXX")"
+    login_body="$auth_tmp_dir/login.json"
+    sql_body="$auth_tmp_dir/sql.json"
+
+    if ! supplementary_try_login root "$TEST_ROOT_PASSWORD" "$login_body"; then
+        if ! supplementary_try_login "$KALAMDB_ADMIN_USER" "$KALAMDB_ADMIN_PASSWORD" "$login_body"; then
+            rm -rf "$auth_tmp_dir"
+            return 1
+        fi
+    fi
+
+    token="$(supplementary_json_token_from_file "$login_body")"
+    if [ -z "$token" ]; then
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    config_json='{"type":"s3","region":"us-east-1","endpoint":"http://127.0.0.1:9120","allow_http":true,"access_key_id":"minioadmin","secret_access_key":"minioadmin"}'
+    status=$(curl -sS -o "$sql_body" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer $token" \
+        -d "{\"sql\":\"CREATE STORAGE ${probe_id} TYPE 's3' NAME 'probe' BASE_DIRECTORY 's3://kalamdb-test/probe/' CONFIG '${config_json}'\"}" \
+        "${base_url%/}/v1/api/sql")
+
+    if [ "$status" = "200" ]; then
+        curl -sS -o /dev/null \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $token" \
+            -d "{\"sql\":\"DROP STORAGE ${probe_id}\"}" \
+            "${base_url%/}/v1/api/sql" || true
+        rm -rf "$auth_tmp_dir"
+        return 0
+    fi
+
+    if [ -s "$sql_body" ] && grep -Eiq 'not compiled in|cloud-\* feature' "$sql_body"; then
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
+    rm -rf "$auth_tmp_dir"
+    return 0
+}
+
+maybe_switch_to_fresh_for_missing_s3() {
+    if [ "$SERVER_TYPE" != "running" ]; then
+        return 0
+    fi
+
+    if ! should_start_minio_for_storage_tests; then
+        return 0
+    fi
+
+    if running_server_supports_s3_storage "$SERVER_URL"; then
+        return 0
+    fi
+
+    echo ""
+    echo "Running server at $SERVER_URL does not include S3/object storage (cloud-aws)."
+    echo "Switching to KALAMDB_SERVER_TYPE=fresh for this run so tests auto-start a cloud-aws server."
+    echo ""
+    SERVER_TYPE="fresh"
+    export KALAMDB_SERVER_TYPE="fresh"
 }
 
 ensure_dex_for_oidc_tests() {
@@ -803,7 +860,7 @@ should_start_minio_for_storage_tests() {
     fi
 
     if [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
-        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli"; then
+        if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] || package_filters_include "kalam-cli-e2e"; then
             return 0
         fi
     fi
@@ -934,7 +991,7 @@ main_run_needs_running_server_auth() {
         return 1
     fi
 
-    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli"; then
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ] && ! package_filters_include "kalam-cli-e2e"; then
         return 1
     fi
 
@@ -1199,7 +1256,7 @@ build_test_cmd() {
             TEST_CMD+=(-p "$package")
 
             case "$package" in
-                kalam-cli|kalamdb-server)
+                kalamdb-server)
                     e2e_features+=("e2e-tests")
                     ;;
             esac
@@ -1213,7 +1270,7 @@ build_test_cmd() {
         # The PostgreSQL extension crate is tested via the dedicated pgrx workflow,
         # not through generic cargo test/nextest targets.
         TEST_CMD+=(--exclude "kalam-pg-extension")
-        TEST_CMD+=(--features "kalam-cli/e2e-tests kalamdb-server/e2e-tests")
+        TEST_CMD+=(--features "kalamdb-server/e2e-tests")
     fi
 
     if [ -n "$TEST_TARGET" ]; then
@@ -1327,7 +1384,8 @@ step "Verifying CLI test layout"
 verify_cli_test_layout
 validate_running_server_credentials_if_needed
 
-prebuild_cli_oidc_server_binary_if_needed
+prebuild_kalamdb_server_binary_if_needed
+maybe_switch_to_fresh_for_missing_s3
 ensure_dex_for_oidc_tests
 ensure_minio_for_storage_tests
 run_schema_diff_companion_tests_if_needed

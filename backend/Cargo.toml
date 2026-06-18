@@ -73,10 +73,13 @@ num_cpus = { workspace = true }
 libc = { workspace = true }
 
 [features]
-default = ["embedded-ui", "mimalloc", "traceability"]
+# Dev builds use `embedded-ui` only for faster compile (no mimalloc C build or traceability).
+# Production/release/docker builds pass explicit features — see docker/build and .github/workflows/release.yml.
+default = ["embedded-ui"]
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc", "kalamdb-observability/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
 traceability = ["kalamdb-core/traceability", "kalamdb-observability/traceability"]
+cloud-aws = ["kalamdb-core/cloud-aws"]
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 # End-to-end tests that require a full test server instance
 e2e-tests = []

@@ -314,6 +314,8 @@ fn docker_unavailable_message(message: &str) -> bool {
         || lower.contains("failed to initialize a docker client")
         || lower.contains("cannot connect to the docker daemon")
         || lower.contains("docker daemon is not running")
+        || lower.contains("client error (connect)")
+        || lower.contains("failed to create a container")
 }
 
 async fn with_dex_provider_if_available<T, F, Fut>(test_fn: F) -> Result<Option<T>>

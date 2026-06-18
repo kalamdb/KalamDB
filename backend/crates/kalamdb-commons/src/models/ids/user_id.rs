@@ -8,7 +8,9 @@ use std::{
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{constants::AuthConstants, StorageKey};
+use crate::constants::AuthConstants;
+#[cfg(feature = "storage")]
+use crate::StorageKey;
 
 /// Type-safe wrapper for user identifiers.
 ///
@@ -226,6 +228,7 @@ impl AsRef<[u8]> for UserId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for UserId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()

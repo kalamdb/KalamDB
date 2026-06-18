@@ -72,7 +72,7 @@ parking_lot = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store" }
 
 [features]
-default = ["cloud-aws"]
+default = []
 cloud-aws = ["object_store/aws"]
 cloud-gcp = ["object_store/gcp"]
 cloud-azure = ["object_store/azure"]

@@ -5,9 +5,11 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::{TableId, UserId};
+#[cfg(feature = "storage")]
 use crate::{
     storage_key::{decode_key, encode_key, encode_prefix},
-    StorageKey, TableId, UserId,
+    StorageKey,
 };
 
 /// Type-safe wrapper for manifest cache identifiers.
@@ -57,6 +59,7 @@ impl ManifestId {
     }
 
     /// Create a prefix for scanning all manifest entries for a table.
+#[cfg(feature = "storage")]
     pub fn table_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }
@@ -115,6 +118,7 @@ impl fmt::Display for ManifestId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for ManifestId {
     fn storage_key(&self) -> Vec<u8> {
         encode_key(&(
@@ -179,6 +183,7 @@ mod tests {
         assert!(id2.user_id().is_some());
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_manifest_id_display() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
@@ -186,6 +191,7 @@ mod tests {
         assert_eq!(format!("{}", id), "test:table:shared");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_manifest_id_storage_key() {
         let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));

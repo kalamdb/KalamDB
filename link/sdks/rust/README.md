@@ -330,6 +330,7 @@ From the repo root:
 
 ```bash
 cd link/sdks/rust
+cargo build -p kalam-client --features native-sdk
 cargo run -p quickstart
 cargo run -p file-attachments
 cargo run -p live-inbox

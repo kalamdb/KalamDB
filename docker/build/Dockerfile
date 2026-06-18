@@ -190,7 +190,7 @@ RUN echo '# Auto-generated for Docker build' > version.toml && \
     echo "build_date = \"$(date -u '+%Y-%m-%d %H:%M:%S UTC')\"" >> version.toml
 
 # Build dependencies only (this layer is cached until Cargo.toml/Cargo.lock changes)
-RUN SKIP_UI_BUILD=1 cargo build --profile docker --features mimalloc --bin kalamdb-server --bin kalam 2>/dev/null || true
+RUN SKIP_UI_BUILD=1 cargo build --profile docker --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws --bin kalamdb-server --bin kalam 2>/dev/null || true
 # The "|| true" handles expected errors from dummy source files
 # The important thing is that all dependencies are now compiled and cached
 
@@ -231,7 +231,7 @@ RUN if [ ! -f version.toml ]; then \
 
 # Build final binaries (dependencies are already cached from deps stage)
 # SKIP_UI_BUILD: the UI dist/ was already built on the host and COPY'd above.
-RUN SKIP_UI_BUILD=1 cargo build --profile docker --features mimalloc --bin kalamdb-server --bin kalam
+RUN SKIP_UI_BUILD=1 cargo build --profile docker --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws --bin kalamdb-server --bin kalam
 
 # ============================================================================
 # Stage 4: Runtime (optimized for minimal size)

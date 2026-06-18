@@ -5,11 +5,9 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    encode_prefix,
-    models::{ConnectionId, UserId},
-    StorageKey,
-};
+use crate::models::{ConnectionId, UserId};
+#[cfg(feature = "storage")]
+use crate::{encode_prefix, StorageKey};
 
 /// Unique identifier for live query subscriptions.
 ///
@@ -161,6 +159,7 @@ impl LiveQueryId {
     /// Creates a prefix key for scanning all live queries for a user.
     ///
     /// Used for getting all live queries belonging to a user.
+    #[cfg(feature = "storage")]
     pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
         encode_prefix(&(user_id.as_str(),))
     }
@@ -201,6 +200,7 @@ impl AsRef<[u8]> for LiveQueryId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for LiveQueryId {
     fn storage_key(&self) -> Vec<u8> {
         self.cached_string.as_bytes().to_vec()
@@ -280,6 +280,7 @@ mod tests {
         assert_eq!(id, deserialized);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_storage_key_roundtrip() {
         let id = create_test_live_query_id();

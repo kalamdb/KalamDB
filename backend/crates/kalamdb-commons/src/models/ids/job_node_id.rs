@@ -3,6 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{JobId, NodeId};
+#[cfg(feature = "storage")]
 use crate::{
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
@@ -72,6 +73,7 @@ impl JobNodeId {
         self.cached_string
     }
 
+    #[cfg(feature = "storage")]
     pub fn prefix_for_node(node_id: &NodeId) -> Vec<u8> {
         encode_prefix(&(node_id.as_u64(),))
     }
@@ -95,6 +97,7 @@ impl From<&str> for JobNodeId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for JobNodeId {
     fn storage_key(&self) -> Vec<u8> {
         encode_key(&(self.node_id.as_u64(), self.job_id.as_str()))

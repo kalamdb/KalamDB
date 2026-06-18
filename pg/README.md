@@ -47,7 +47,7 @@ cargo nextest run \
   --workspace \
   --all-targets \
   --exclude kalam-pg-extension \
-  --features "kalam-cli/e2e-tests"
+  cargo nextest run -p kalam-cli-e2e
 ```
 
 Run `cargo pgrx ...` commands either from `pg/` or from the repository root with

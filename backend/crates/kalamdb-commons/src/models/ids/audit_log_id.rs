@@ -5,6 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "storage")]
 use crate::StorageKey;
 
 /// Type-safe wrapper for audit log identifiers stored in system.audit_log.
@@ -67,6 +68,7 @@ impl AsRef<[u8]> for AuditLogId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for AuditLogId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
