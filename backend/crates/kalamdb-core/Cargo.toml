@@ -104,6 +104,7 @@ traceability = [
     "kalamdb-store/traceability",
     "kalamdb-tables/traceability",
 ]
+cloud-aws = ["kalamdb-filestore/cloud-aws"]
 
 [lib]
 doctest = false

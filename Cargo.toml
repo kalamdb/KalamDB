@@ -45,13 +45,16 @@ members = [
     "backend/crates/kalamdb-pg",
     "backend/crates/kalamdb-server-auth",
     "backend",
+    "cli",
+    "cli/crates/kalam-schema-diff",
+    "cli/kalam-cli-e2e",
     "link/link-common",
     "link/sdks/rust",
+    "link/sdks/rust-e2e",
     "link/kalam-link-wasm",
     "link/kalam-consumer-wasm",
     "link/kalam-link-dart",
-    "cli",
-    "cli/crates/kalam-schema-diff"
+    "link/sdks/python",
 ]
 exclude = ["benchv2"]
 

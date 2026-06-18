@@ -4271,7 +4271,6 @@ name = "kalam-cli"
 version = "0.5.3-rc.1"
 dependencies = [
  "anyhow",
- "assert_cmd",
  "base64 0.22.1",
  "chrono",
  "clap",
@@ -4279,16 +4278,52 @@ dependencies = [
  "console",
  "crossterm",
  "dirs",
- "dotenv",
  "flate2",
- "futures-util",
  "handlebars",
  "hex",
  "humantime",
  "indicatif",
- "jsonwebtoken",
  "kalam-client",
  "kalam-schema-diff",
+ "kalamdb-commons",
+ "libc",
+ "ntest",
+ "openidconnect",
+ "rand 0.10.1",
+ "reqwest 0.13.4",
+ "rpassword",
+ "rustyline",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "shlex 2.0.1",
+ "tar",
+ "tempfile",
+ "term_size",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "url",
+ "zip",
+]
+
+[[package]]
+name = "kalam-cli-e2e"
+version = "0.5.3-rc.1"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "dotenv",
+ "flate2",
+ "futures-util",
+ "hex",
+ "humantime",
+ "jsonwebtoken",
+ "kalam-cli",
+ "kalam-client",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-server",
@@ -4300,18 +4335,13 @@ dependencies = [
  "rand 0.10.1",
  "regex",
  "reqwest 0.13.4",
- "rpassword",
- "rustyline",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "shlex 2.0.1",
  "sysinfo",
  "tar",
  "tempfile",
- "term_size",
  "testcontainers-modules",
- "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "toml 1.1.2+spec-1.1.0",
@@ -4324,9 +4354,16 @@ dependencies = [
 name = "kalam-client"
 version = "0.5.3-rc.1"
 dependencies = [
+ "link-common",
+]
+
+[[package]]
+name = "kalam-client-e2e"
+version = "0.5.3-rc.1"
+dependencies = [
+ "kalam-client",
  "kalamdb-configs",
  "kalamdb-server",
- "link-common",
  "ntest",
  "reqwest 0.13.4",
  "serde_json",
@@ -4578,7 +4615,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "storekey",
  "thiserror 2.0.18",
  "tracing",
@@ -5000,6 +5036,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "kalamdb-python"
+version = "0.5.3-rc.1"
+dependencies = [
+ "kalam-client",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -5484,7 +5532,6 @@ dependencies = [
 name = "link-common"
 version = "0.5.3-rc.1"
 dependencies = [
- "aws-lc-rs",
  "base64 0.22.1",
  "bytes",
  "futures-util",
@@ -5493,11 +5540,9 @@ dependencies = [
  "kalamdb-commons",
  "log",
  "miniz_oxide 0.9.1",
- "quinn-proto",
  "reqwest 0.13.4",
  "rmp-serde",
  "rustls",
- "rustls-webpki",
  "serde",
  "serde_json",
  "tokio",
@@ -6985,6 +7030,20 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-ffi",
  "pyo3-macros",
+]
+
+[[package]]
+name = "pyo3-async-runtimes"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e7364a95bf00e8377bbf9b0f09d7ff9715a29d8fcf93b47d1a967363b973178"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "once_cell",
+ "pin-project-lite",
+ "pyo3",
+ "tokio",
 ]
 
 [[package]]

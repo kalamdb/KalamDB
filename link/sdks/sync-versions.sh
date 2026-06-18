@@ -160,6 +160,8 @@ else:
 PY
 }
 
+VERSION="$(resolve_workspace_version)"
+
 if [[ -n "$RUST_PUBLISH_MODE" ]]; then
   if [[ "$RUST_PUBLISH_MODE" == "apply" ]]; then
     if [[ -n "$RUST_PUBLISH_VERSION_OVERRIDE" ]]; then
@@ -223,7 +225,6 @@ python3 - \
     "${PUBLISH_SCOPE_OVERRIDE:-}" \
   "$DART_PUBSPEC" \
   "$PYTHON_PYPROJECT" \
-  "$PYTHON_CARGO" \
   "${TS_PACKAGE_JSON_FILES[@]}" <<'PY'
 import json
 import re
@@ -236,8 +237,7 @@ root_dir = Path(sys.argv[3])
 typescript_scope_override = sys.argv[4].strip()
 dart_pubspec = Path(sys.argv[5])
 python_pyproject = Path(sys.argv[6])
-python_cargo = Path(sys.argv[7])
-typescript_packages = [Path(value) for value in sys.argv[8:]]
+typescript_packages = [Path(value) for value in sys.argv[7:]]
 internal_packages = {
     "@kalamdb/client",
     "@kalamdb/consumer",
@@ -311,7 +311,6 @@ for package_path in typescript_packages:
 
 update_yaml_version(dart_pubspec, root_version)
 update_toml_section_version(python_pyproject, "project", root_version)
-update_toml_section_version(python_cargo, "package", root_version)
 PY
 
 python3 "$VERSIONS_SCRIPT" sync --write

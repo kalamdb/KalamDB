@@ -71,11 +71,19 @@ wasm-pack build kalam-link-wasm --target web --out-dir link/sdks/typescript/clie
 
 ### Compile the native Rust client (`kalam-client`)
 
-From the repo root:
+From the isolated link workspace (does not compile the backend server graph):
 
 ```bash
+cd link
 cargo build -p kalam-client
-cargo test -p kalam-client
+cargo test -p kalam-client --features consumer --test offline_api
+```
+
+Server-backed integration tests live in `kalam-client-e2e` and require a running server:
+
+```bash
+cd link
+cargo test -p kalam-client-e2e
 ```
 
 ### Build the TypeScript SDK

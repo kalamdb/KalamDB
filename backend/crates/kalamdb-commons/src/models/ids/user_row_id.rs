@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use super::user_id::UserId;
+#[cfg(feature = "storage")]
 use crate::{
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
@@ -49,16 +50,19 @@ impl UserRowId {
     }
 
     /// Create a prefix for scanning all rows for a user.
+    #[cfg(feature = "storage")]
     pub fn user_prefix(user_id: &UserId) -> Vec<u8> {
         encode_prefix(&(user_id.as_str(),))
     }
 
     /// Format as bytes for storage using storekey tuple encoding
+    #[cfg(feature = "storage")]
     pub fn as_storage_key(&self) -> Vec<u8> {
         encode_key(&(self.user_id.as_str(), self.row_id.clone()))
     }
 
     /// Parse from storage key bytes
+    #[cfg(feature = "storage")]
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((user_id_str, row_id)) = decode_key::<(String, Vec<u8>)>(key) {
             return Some(Self {
@@ -95,6 +99,7 @@ impl fmt::Display for UserRowId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for UserRowId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()
@@ -119,6 +124,7 @@ mod tests {
         assert_eq!(composite.row_id(), &row_id[..]);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_user_row_id_from_strings() {
         let composite = UserRowId::from_strings("user123", "row456");
@@ -126,6 +132,7 @@ mod tests {
         assert_eq!(composite.row_id(), b"row456");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_user_row_id_as_storage_key() {
         let composite = UserRowId::from_strings("user123", "row456");
@@ -135,6 +142,7 @@ mod tests {
         assert_eq!(parsed, composite);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_user_row_id_from_storage_key() {
         let key = UserRowId::from_strings("user123", "row456").as_storage_key();
@@ -144,6 +152,7 @@ mod tests {
         assert_eq!(composite.row_id(), b"row456");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_user_row_id_roundtrip() {
         let original = UserRowId::from_strings("user123", "row456");
@@ -167,6 +176,7 @@ mod tests {
         assert_eq!(composite, deserialized);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_user_row_id_with_binary_row_id() {
         let user_id = UserId::new("user123");

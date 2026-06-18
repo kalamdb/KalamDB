@@ -13,8 +13,9 @@ use crate::{
     helpers::naming::{
         validate_namespace_reference, validate_user_namespace_name, SqlIdentifierError,
     },
-    StorageKey,
 };
+#[cfg(feature = "storage")]
+use crate::StorageKey;
 
 /// Error returned when a namespace ID fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +254,7 @@ impl AsRef<[u8]> for NamespaceId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for NamespaceId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()

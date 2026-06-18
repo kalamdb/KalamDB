@@ -13,6 +13,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
+#[cfg(feature = "storage")]
 use crate::{ids::SnowflakeGenerator, StorageKey};
 
 /// Sequence ID for MVCC versioning
@@ -112,6 +113,7 @@ impl SeqId {
     /// This packs the timestamp together with the largest worker/sequence values
     /// so the returned SeqId encompasses every Snowflake generated at or before
     /// `timestamp_millis`.
+    #[cfg(feature = "storage")]
     pub fn max_id_for_timestamp(timestamp_millis: u64) -> Result<Self, String> {
         // let normalized = timestamp_millis.max(Self::EPOCH);
         let id = SnowflakeGenerator::max_id_for_timestamp(timestamp_millis)?;
@@ -195,6 +197,7 @@ impl From<SeqId> for i64 {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for SeqId {
     fn storage_key(&self) -> Vec<u8> {
         self.to_bytes().to_vec()
@@ -268,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "storage")]
     fn test_seq_id_max_id_for_timestamp() {
         let ts = SeqId::EPOCH + 5000;
         let seq_id = SeqId::max_id_for_timestamp(ts).expect("seq id");

@@ -12,14 +12,14 @@ categories = ["database"]
 
 [dependencies]
 # workspace deps
-dashmap = { workspace = true }
 once_cell = { workspace = true }
 hex = { workspace = true }
-sha2 = { workspace = true }
 thiserror = { workspace = true }
 datafusion-common = { workspace = true, optional = true, default-features = false }
-parking_lot = { workspace = true }
-storekey = { workspace = true }
+dashmap = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+storekey = { workspace = true, optional = true }
+kalamdb-observability = { workspace = true, default-features = false, optional = true }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -33,8 +33,7 @@ rmp-serde = { workspace = true, optional = true }
 rmp = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
-kalamdb-observability = { workspace = true, default-features = false }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -45,6 +44,7 @@ serde = [
 	"dep:serde",
 	"dep:serde_json",
 	]
+storage = ["dep:dashmap", "dep:parking_lot", "dep:storekey"]
 arrow = [
 	"serde",
 	"dep:arrow",
@@ -66,11 +66,13 @@ conversions = [
 	"rows",
 	"schema-metadata",
 	"dep:uuid",
+	"dep:kalamdb-observability",
 	]
 serialization = [
 	"rows",
 	"dep:flatbuffers",
 	"dep:flexbuffers",
+	"dep:kalamdb-observability",
 	]
 arrow-utils = [
 	"arrow",
@@ -78,10 +80,11 @@ arrow-utils = [
 	]
 websocket-auth = ["serde"]
 msgpack = ["serde", "dep:rmp", "dep:rmp-serde"]
-traceability = ["kalamdb-observability/traceability"]
+traceability = ["dep:kalamdb-observability", "dep:tracing", "kalamdb-observability/traceability"]
 # Full feature set including Arrow/DataFusion-backed utilities (for server use)
 full = [
 	"serde",
+	"storage",
 	"rows",
 	"conversions",
 	"serialization",
@@ -106,3 +109,4 @@ path = "src/lib.rs"
 [[bench]]
 name = "snowflake_generator"
 harness = false
+required-features = ["storage"]

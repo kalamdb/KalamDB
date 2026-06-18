@@ -1,0 +1,109 @@
+[package]
+name = "kalam-cli-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Server-backed integration tests for kalam-cli (not published)"
+publish = false
+
+[dev-dependencies]
+kalam-cli = { path = ".." }
+kalam-client = { workspace = true, features = ["native-cli"] }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+dotenv = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+regex = { workspace = true }
+ntest = { workspace = true }
+wait-timeout = { workspace = true }
+kalamdb-commons = { workspace = true, features = ["full"] }
+kalamdb-configs = { workspace = true }
+kalamdb-server = { workspace = true }
+object_store = { workspace = true, features = ["aws"] }
+jsonwebtoken = { workspace = true }
+sysinfo = { workspace = true }
+testcontainers-modules = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+libc = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+url = { workspace = true }
+openidconnect = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+clap = { workspace = true }
+humantime = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[[test]]
+name = "cluster"
+path = "tests/cluster.rs"
+
+[[test]]
+name = "connection"
+path = "tests/connection.rs"
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
+
+[[test]]
+name = "auth"
+path = "tests/auth.rs"
+
+[[test]]
+name = "auth_retry_test"
+path = "tests/auth_retry_test.rs"
+
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+
+[[test]]
+name = "flushing"
+path = "tests/flushing.rs"
+
+[[test]]
+name = "repro_issue"
+path = "tests/repro_issue.rs"
+
+[[test]]
+name = "storage"
+path = "tests/storage.rs"
+
+[[test]]
+name = "vector"
+path = "tests/vector.rs"
+
+[[test]]
+name = "subscription"
+path = "tests/subscription.rs"
+
+[[test]]
+name = "tables"
+path = "tests/tables.rs"
+
+[[test]]
+name = "usecases"
+path = "tests/usecases.rs"
+
+[[test]]
+name = "users"
+path = "tests/users.rs"
+
+[[test]]
+name = "performance"
+path = "tests/performance.rs"

@@ -12,6 +12,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use super::table_id::TableId;
+#[cfg(feature = "storage")]
 use crate::{
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
@@ -119,6 +120,7 @@ impl TableVersionId {
     /// let prefix = TableVersionId::version_scan_prefix(&table_id);
     /// // Returns storekey prefix for versioned entries
     /// ```
+#[cfg(feature = "storage")]
     pub fn version_scan_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(
             table_id.namespace_id().as_str(),
@@ -131,6 +133,7 @@ impl TableVersionId {
     ///
     /// Used by `delete_all_versions` and `list_versions` to find all storage
     /// entries for a single table without scanning the entire column family.
+#[cfg(feature = "storage")]
     pub fn table_scan_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }
@@ -138,6 +141,7 @@ impl TableVersionId {
     /// Create prefix for scanning all tables in a namespace.
     ///
     /// Matches both latest pointers and versioned entries within the namespace.
+#[cfg(feature = "storage")]
     pub fn namespace_scan_prefix(namespace_id: &crate::models::ids::NamespaceId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
@@ -146,6 +150,7 @@ impl TableVersionId {
     ///
     /// - Latest: (namespace, table, VERSION_KIND_LATEST)
     /// - Versioned: (namespace, table, VERSION_KIND_VERSIONED, version)
+#[cfg(feature = "storage")]
     pub fn as_storage_key(&self) -> Vec<u8> {
         let namespace_id = self.table_id.namespace_id().as_str();
         let table_name = self.table_id.table_name().as_str();
@@ -159,6 +164,7 @@ impl TableVersionId {
     /// Parse from storage key bytes
     ///
     /// Handles both latest pointer and versioned formats.
+#[cfg(feature = "storage")]
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((namespace_id, table_name, kind, version)) =
             decode_key::<(String, String, u8, u32)>(key)
@@ -189,6 +195,7 @@ impl fmt::Display for TableVersionId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for TableVersionId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()
@@ -208,6 +215,7 @@ mod tests {
         TableId::new(NamespaceId::default(), TableName::new("users"))
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_latest_key() {
         let latest = TableVersionId::latest(test_table_id());
@@ -221,6 +229,7 @@ mod tests {
         assert_eq!(parsed, latest);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_versioned_key() {
         let v1 = TableVersionId::versioned(test_table_id(), 1);
@@ -234,6 +243,7 @@ mod tests {
         assert_eq!(parsed, v1);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_version_ordering() {
         // Test that lexicographic ordering matches numeric ordering
@@ -252,6 +262,7 @@ mod tests {
         assert!(key10 < key100);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_from_storage_key_latest() {
         let original = TableVersionId::latest(test_table_id());
@@ -260,6 +271,7 @@ mod tests {
         assert_eq!(original, parsed);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_from_storage_key_versioned() {
         let original = TableVersionId::versioned(test_table_id(), 42);
@@ -268,6 +280,7 @@ mod tests {
         assert_eq!(original, parsed);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_version_scan_prefix() {
         let table_id = test_table_id();
@@ -295,6 +308,7 @@ mod tests {
         assert_eq!(version, Some(5));
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_invalid_key_parsing() {
         // Invalid format should return None

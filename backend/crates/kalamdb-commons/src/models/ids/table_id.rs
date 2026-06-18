@@ -6,8 +6,9 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::namespace_id::NamespaceId;
+use crate::models::schemas::TableName;
+#[cfg(feature = "storage")]
 use crate::{
-    models::schemas::TableName,
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
 };
@@ -74,17 +75,20 @@ impl TableId {
 
     /// Create a prefix for scanning all tables in a namespace.
     #[inline]
+#[cfg(feature = "storage")]
     pub fn namespace_prefix(namespace_id: &NamespaceId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
 
     /// Format as bytes for storage using storekey tuple encoding
     #[inline]
+#[cfg(feature = "storage")]
     pub fn as_storage_key(&self) -> Vec<u8> {
         encode_key(&(self.namespace_id.as_str(), self.table_name.as_str()))
     }
 
     /// Parse from storage key bytes
+#[cfg(feature = "storage")]
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((namespace_id, table_name)) = decode_key::<(String, String)>(key) {
             return Some(Self {
@@ -199,6 +203,7 @@ impl fmt::Display for TableId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for TableId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_storage_key()
@@ -237,12 +242,14 @@ mod tests {
         assert_eq!(table_id.table_name().as_str(), "users");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_table_id_try_from_strings_invalid() {
         let err = TableId::try_from_strings("../ns1", "users").unwrap_err();
         assert!(err.contains("invalid namespace_id"));
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_table_id_as_storage_key() {
         let table_id = TableId::from_strings("ns1", "users");
@@ -252,6 +259,7 @@ mod tests {
         assert_eq!(parsed, table_id);
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_table_id_from_storage_key() {
         let key = TableId::from_strings("ns1", "users").as_storage_key();
@@ -261,6 +269,7 @@ mod tests {
         assert_eq!(table_id.table_name().as_str(), "users");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_table_id_roundtrip() {
         let original = TableId::from_strings("ns1", "users");
@@ -302,6 +311,7 @@ mod tests {
         assert_eq!(table_name.as_str(), "users");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_table_id_with_underscore_namespace() {
         let table_id = TableId::try_from_strings("my_namespace", "table_name").unwrap();

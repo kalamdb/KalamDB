@@ -3,6 +3,7 @@ use std::{fmt, str::FromStr, sync::Arc};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[cfg(feature = "storage")]
 use crate::StorageKey;
 
 /// Type-safe wrapper for explicit transaction identifiers.
@@ -143,6 +144,7 @@ impl AsRef<[u8]> for TransactionId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for TransactionId {
     fn storage_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
@@ -199,6 +201,7 @@ mod tests {
         assert!(err.0.contains("36-character UUID"));
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn storage_round_trip_preserves_value() {
         let tx_id = TransactionId::new(VALID_TX_ID);

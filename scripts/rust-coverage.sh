@@ -67,8 +67,8 @@ if [[ "$INCLUDE_E2E" == "true" ]]; then
     RUN_ARGS+=(--features kalamdb-server/e2e-tests)
     REPORT_ARGS+=(--features kalamdb-server/e2e-tests)
   else
-    RUN_ARGS+=(--features "kalam-cli/e2e-tests,kalamdb-server/e2e-tests")
-    REPORT_ARGS+=(--features "kalam-cli/e2e-tests,kalamdb-server/e2e-tests")
+    RUN_ARGS+=(--features "kalamdb-server/e2e-tests")
+    REPORT_ARGS+=(--features "kalamdb-server/e2e-tests")
   fi
   echo "Running coverage with e2e features enabled."
   echo "If tests require a server, start KalamDB first (e.g. cd backend && cargo run)."

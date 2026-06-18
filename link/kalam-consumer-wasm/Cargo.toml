@@ -11,7 +11,7 @@ keywords = ["kalamdb", "consumer", "topics", "workers", "wasm"]
 categories = ["database", "web-programming::http-client", "wasm"]
 
 [dependencies]
-link-common = { path = "../link-common", default-features = false, features = ["consumer"] }
+link-common = { workspace = true, default-features = false, features = ["consumer"] }
 js-sys = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -32,9 +32,15 @@ async fn test_system_stats_expose_memory_breakdown_and_allocator_metrics() {
         "memory_rss_mb",
         "memory_virtual_mb",
         "memory_rss_gap_mb",
-        "allocator_name",
     ] {
         assert!(metric_names.contains(required), "missing metric: {required}");
+    }
+
+    if cfg!(feature = "mimalloc") {
+        assert!(
+            metric_names.contains("allocator_name"),
+            "missing metric: allocator_name"
+        );
     }
 
     #[cfg(target_os = "macos")]

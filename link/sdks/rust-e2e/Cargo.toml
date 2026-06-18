@@ -1,0 +1,73 @@
+[package]
+name = "kalam-client-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Server-backed integration tests for kalam-client (not published)"
+publish = false
+
+[dev-dependencies]
+kalam-client = { workspace = true, features = ["native-cli"] }
+kalamdb-configs = { workspace = true }
+kalamdb-server = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+tokio-netem = { workspace = true }
+tempfile = { workspace = true }
+ntest = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "integration_tests"
+path = "tests/integration_tests.rs"
+
+[[test]]
+name = "test_consumer"
+path = "tests/test_consumer.rs"
+
+[[test]]
+name = "test_user_table_subscriptions"
+path = "tests/test_user_table_subscriptions.rs"
+
+[[test]]
+name = "test_websocket_integration"
+path = "tests/test_websocket_integration.rs"
+
+[[test]]
+name = "test_subscription_cleanup"
+path = "tests/test_subscription_cleanup.rs"
+
+[[test]]
+name = "proxied"
+path = "tests/proxied.rs"
+
+[[test]]
+name = "test_files"
+path = "tests/test_files.rs"
+
+[[test]]
+name = "query_api"
+path = "tests/query_api.rs"
+
+[[test]]
+name = "healthcheck_api"
+path = "tests/healthcheck_api.rs"
+
+[[test]]
+name = "consumer_api"
+path = "tests/consumer_api.rs"
+
+[[test]]
+name = "live_rows"
+path = "tests/live_rows.rs"
+
+[[test]]
+name = "connection_lifecycle"
+path = "tests/connection_lifecycle.rs"
+
+[[test]]
+name = "test_shared_connection"
+path = "tests/test_shared_connection.rs"

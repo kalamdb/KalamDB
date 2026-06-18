@@ -5,6 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "storage")]
 use crate::StorageKey;
 
 /// Type-safe wrapper for topic identifiers.
@@ -72,6 +73,7 @@ impl From<&str> for TopicId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for TopicId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
@@ -86,6 +88,7 @@ impl StorageKey for TopicId {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_topic_id_creation() {
         let topic_id = TopicId::new("app.notifications");
@@ -93,6 +96,7 @@ mod tests {
         assert_eq!(topic_id.to_string(), "app.notifications");
     }
 
+    #[cfg(feature = "storage")]
     #[test]
     fn test_topic_id_storage_key() {
         let topic_id = TopicId::new("chat.messages");

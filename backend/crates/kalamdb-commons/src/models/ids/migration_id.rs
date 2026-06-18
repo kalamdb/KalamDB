@@ -5,6 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "storage")]
 use crate::StorageKey;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -54,6 +55,7 @@ impl From<&str> for MigrationId {
     }
 }
 
+#[cfg(feature = "storage")]
 impl StorageKey for MigrationId {
     fn storage_key(&self) -> Vec<u8> {
         self.0.as_bytes().to_vec()

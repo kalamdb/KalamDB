@@ -32,7 +32,8 @@ TypeScript splits consumer into `@kalamdb/consumer`. Rust keeps topic workers in
 | `link/sdks/rust/QUICKSTART.md` | Short onboarding guide |
 | `link/sdks/rust/examples/` | Runnable example binaries |
 | `link/sdks/rust/` | The `kalam-client` crate published to crates.io |
-| `link/sdks/rust/tests/` | SDK integration tests (`tests/*.rs`) |
+| `link/sdks/rust/tests/` | Offline API tests (no server) |
+| `link/sdks/rust-e2e/tests/` | Server-backed integration tests |
 | `link/sdks/rust/publish.sh` | crates.io publish helper |
 | `link/link-common/` | Shared implementation (path dependency today) |
 
@@ -45,17 +46,17 @@ TypeScript splits consumer into `@kalamdb/consumer`. Rust keeps topic workers in
 
 ## Build From Source
 
-Compile the library crate:
+Compile the library crate from the link workspace:
 
 ```bash
-cd link/sdks/rust
-cargo build --features native-sdk
+cd link
+cargo build -p kalam-client --features native-sdk
 ```
 
-Build the example workspace:
+Build all link workspace members:
 
 ```bash
-cd link/sdks/rust
+cd link
 cargo build --workspace
 ```
 
@@ -89,7 +90,7 @@ cargo run -p topic-consumer
 
 ## Running Tests
 
-SDK-focused tests live in the `rust-sdk-tests` package at `link/sdks/rust/`:
+SDK-focused tests:
 
 ```bash
 cd link/sdks/rust
@@ -97,13 +98,18 @@ NO_SERVER=true ./test.sh          # offline API tests only
 ./test.sh                         # offline + integration + quickstart example
 ```
 
+Server-backed integration tests compile separately in `kalam-client-e2e` (includes the full server graph only when you run them):
+
+```bash
+cd link
+cargo test -p kalam-client-e2e
+```
+
 CI uses the release-server harness:
 
 ```bash
 KALAMDB_SERVER_BIN=./kalamdb-server ./scripts/test-rust-sdk-release.sh
 ```
-
-Additional integration coverage lives in `link/sdks/rust/tests/` with `cargo test --features e2e-tests`.
 
 ## Feature Flags
 

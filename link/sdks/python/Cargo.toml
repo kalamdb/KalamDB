@@ -1,8 +1,6 @@
-[workspace]
-
 [package]
 name = "kalamdb-python"
-version = "0.5.3-rc.1"
+version.workspace = true
 edition = "2024"
 license = "Apache-2.0"
 description = "Python SDK for KalamDB — SQL-first realtime database"

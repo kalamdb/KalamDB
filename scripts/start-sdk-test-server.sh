@@ -103,7 +103,14 @@ perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs
 if [[ -n "$SERVER_BIN" ]]; then
     SERVER_CMD=("$SERVER_BIN" "$WORK_DIR/server.toml")
 else
-    SERVER_CMD=(cargo run --manifest-path "$ROOT_DIR/backend/Cargo.toml" --bin kalamdb-server -- "$WORK_DIR/server.toml")
+    SERVER_CMD=(
+        cargo run
+        --manifest-path "$ROOT_DIR/backend/Cargo.toml"
+        --bin kalamdb-server
+        --features cloud-aws
+        --
+        "$WORK_DIR/server.toml"
+    )
 fi
 
 SERVER_ENV=(

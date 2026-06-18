@@ -212,9 +212,15 @@ def get_workspace_version() -> str:
 def get_cargo_package(path: Path) -> dict[str, Any]:
     cargo = load_toml(path)
     try:
-        return cargo["package"]
+        package = dict(cargo["package"])
     except KeyError as error:
         raise VersionError(f"Missing [package] section in {path.relative_to(ROOT)}") from error
+
+    version = package.get("version")
+    if isinstance(version, dict) and version.get("workspace") is True:
+        package["version"] = get_workspace_version()
+
+    return package
 
 
 def get_package_json(path: Path) -> dict[str, Any]:
