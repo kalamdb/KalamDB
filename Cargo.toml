@@ -119,7 +119,7 @@ datafusion = { version = "54.0.0", default-features = false, features = ["sql", 
 datafusion-datasource = { version = "54.0.0", default-features = false }
 datafusion-common = { version = "54.0.0", default-features = false }
 datafusion-expr = { version = "54.0.0" }
-datafusion-functions-json = { version = "0.54.1" }
+datafusion-functions-json = { version = "0.54.2" }
 sqlparser = { version = "0.62.0" }
 parquet = { version = "58.3.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
@@ -182,7 +182,7 @@ prost = "0.14.4"
 prost-types = "0.14.4"
 
 # Additional dependencies
-bcrypt = "0.19.1"
+bcrypt = "0.19.2"
 rand = "0.10.1"
 rcgen = "0.14.8"
 x509-parser = "0.18.1"
@@ -214,13 +214,13 @@ async-trait = "0.1.89"
 once_cell = "1.21.4"
 regex = "1.12.4"
 dashmap = "6.2.1"
-bytes = "1.11.1"
+bytes = "1.12.0"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
 cc = "1.2.64"
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
-syn = { version = "2.0.117", features = ["full", "extra-traits"] }
+syn = { version = "2.0.118", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 object_store = { version = "0.13.2" }
