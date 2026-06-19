@@ -1323,8 +1323,7 @@ jobs:
           KALAMDB_TEST_FLUSH_COMPACTION: "1"
         run: |
           set -euo pipefail
-          cd cli
-          if cargo nextest run --features e2e-tests --test smoke 2>&1 | tee ../smoke-test-output.txt; then
+          if cargo nextest run -p kalam-cli-e2e --test smoke 2>&1 | tee smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"
           else

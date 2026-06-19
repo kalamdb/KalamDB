@@ -855,7 +855,7 @@ run_cluster_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-    cargo test --features e2e-tests --test cluster -- --nocapture
+        cargo test -p kalam-cli-e2e --test cluster -- --nocapture
 }
 
 run_smoke_tests() {
@@ -882,7 +882,7 @@ run_smoke_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --features e2e-tests --test smoke -- --nocapture
+        cargo test -p kalam-cli-e2e --test smoke -- --nocapture
 }
 
 run_smoke_tests_all_nodes() {
@@ -911,7 +911,7 @@ run_smoke_tests_all_nodes() {
            KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
               KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
            RUST_TEST_THREADS=1 \
-           cargo test --features e2e-tests --test smoke smoke_test_core_operations -- --nocapture; then
+           cargo test -p kalam-cli-e2e --test smoke smoke_test_core_operations -- --nocapture; then
             echo -e "${GREEN}✓ Core operations passed on $node_url${NC}"
             ((passed++))
         else
@@ -949,7 +949,7 @@ run_verification_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --features e2e-tests --test cluster cluster_test_system_tables -- --nocapture
+        cargo test -p kalam-cli-e2e --test cluster cluster_test_system_tables -- --nocapture
 
     echo ""
     echo -e "${BLUE}Running subscription tests...${NC}"
@@ -959,7 +959,7 @@ run_verification_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --features e2e-tests --test cluster cluster_test_subscription -- --nocapture
+        cargo test -p kalam-cli-e2e --test cluster cluster_test_subscription -- --nocapture
 
     echo ""
     echo -e "${BLUE}Running table identity tests...${NC}"
@@ -969,7 +969,7 @@ run_verification_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --features e2e-tests --test cluster cluster_test_table_identity -- --nocapture
+        cargo test -p kalam-cli-e2e --test cluster cluster_test_table_identity -- --nocapture
 
     echo ""
     echo -e "${BLUE}Running final consistency tests...${NC}"
@@ -979,7 +979,7 @@ run_verification_tests() {
     KALAMDB_ROOT_PASSWORD="$ROOT_PASSWORD" \
     KALAMDB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     RUST_TEST_THREADS=1 \
-        cargo test --features e2e-tests --test cluster cluster_test_final -- --nocapture
+        cargo test -p kalam-cli-e2e --test cluster cluster_test_final -- --nocapture
 
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
@@ -1056,7 +1056,7 @@ run_workspace_nextest_e2e() {
 
     cd "$PROJECT_ROOT/cli"
     KALAMDB_SERVER_BIN="$server_binary" \
-    cargo nextest run --features e2e-tests
+    cargo nextest run -p kalam-cli-e2e
 }
 
 detect_leader_url() {

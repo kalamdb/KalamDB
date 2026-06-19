@@ -13,23 +13,34 @@
 #   KALAM_PRE_RELEASE  - Set to 1 to install the latest prerelease
 #   KALAM_NO_MODIFY_PATH - Set to 1 to skip PATH modification
 
-if [ -z "${BASH_VERSION:-}" ]; then
-    if command -v bash >/dev/null 2>&1; then
-        case "$0" in
-            sh|-sh|*/sh|dash|-dash|*/dash)
-                ;;
-            *)
-                if [ -r "$0" ]; then
-                    KALAM_INSTALLER_REEXEC=1 exec bash "$0" "$@"
-                fi
-                ;;
-        esac
-
-        KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
+# Re-exec under full bash when invoked as /bin/sh. macOS /bin/sh is bash --posix,
+# which sets BASH_VERSION but still rejects bashisms such as process substitution.
+if [ "${KALAM_INSTALLER_REEXEC:-}" != "1" ]; then
+    _need_full_bash=0
+    if [ -z "${BASH_VERSION:-}" ]; then
+        _need_full_bash=1
+    elif command -v shopt >/dev/null 2>&1 && shopt -qo posix; then
+        _need_full_bash=1
     fi
 
-    echo "KalamDB installer requires bash. Install bash or run: curl -fsSL https://kalamdb.org/install.sh | bash" >&2
-    exit 1
+    if [ "$_need_full_bash" = "1" ]; then
+        if command -v bash >/dev/null 2>&1; then
+            case "$0" in
+                sh|-sh|*/sh|dash|-dash|*/dash)
+                    KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
+                    ;;
+                *)
+                    if [ -r "$0" ]; then
+                        KALAM_INSTALLER_REEXEC=1 exec bash "$0" "$@"
+                    fi
+                    KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
+                    ;;
+            esac
+        fi
+
+        echo "KalamDB installer requires bash. Install bash or run: curl -fsSL https://kalamdb.org/install.sh | bash" >&2
+        exit 1
+    fi
 fi
 
 set -euo pipefail
