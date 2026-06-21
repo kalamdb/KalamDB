@@ -7,9 +7,16 @@ pub mod migration;
 pub mod project;
 pub mod schema;
 pub(crate) mod auth;
+pub(crate) mod display;
+pub(crate) mod io;
 pub(crate) mod sql;
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+pub(crate) mod test_support;
+
+pub(crate) use io::display_project_path;
+
+use std::path::PathBuf;
 
 use crate::{
     config::{CLIConfiguration, WorkflowLoggingPolicy},
@@ -38,10 +45,6 @@ use crate::{
         sql::build_workflow_client,
     },
 };
-
-pub(crate) fn display_project_path(project_root: &Path, path: &Path) -> String {
-    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
-}
 
 /// Shared workflow context for command handlers.
 #[derive(Debug, Clone)]

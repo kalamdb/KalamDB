@@ -9,7 +9,6 @@ use std::{
 
 use reqwest::StatusCode;
 use serde_json::json;
-use url::Url;
 
 use crate::{
     error::{CLIError, Result},
@@ -33,7 +32,7 @@ use crate::{
                 dev_kalamdb_server_bin_missing, dev_kalamdb_server_non_interactive_download,
                 dev_kalamdb_server_not_found, dev_local_kalamdb_server_start_failed,
             },
-            templates::{find_template_file, render_template, resolve_scaffold_template},
+            templates::{find_scaffold_template_file, render_template},
         },
     },
 };
@@ -43,23 +42,7 @@ const SERVER_ARTIFACT_PREFIX: &str = "kalamdb-server";
 const SERVER_RELEASE_BASE_URL_ENV: &str = "KALAMDB_SERVER_RELEASE_BASE_URL";
 const SCAFFOLD_SERVER_CONFIG_PATH: &str = "kalam/server/server.toml";
 
-fn scaffold_template_file(project_path: &str) -> Result<&'static str> {
-    let template = resolve_scaffold_template()?;
-    find_template_file(template, project_path).ok_or_else(|| {
-        CLIError::ConfigurationError(format!("missing scaffold template file '{project_path}'"))
-    })
-}
-
-pub fn parse_server_port(server_url: &str) -> Result<u16> {
-    let url = Url::parse(server_url).map_err(|e| {
-        CLIError::ConfigurationError(format!("invalid server url '{server_url}': {e}"))
-    })?;
-    url.port_or_known_default().ok_or_else(|| {
-        CLIError::ConfigurationError(format!(
-            "server url '{server_url}' must include an explicit port"
-        ))
-    })
-}
+pub use crate::workflow::project::connection_url::parse_server_port;
 
 pub fn local_server_config_path(project_root: &Path, config: &KalamProjectConfig) -> PathBuf {
     config.local_server_config_path(project_root)
@@ -111,7 +94,7 @@ pub fn write_local_server_config(
     }
     let data_path = config.relative_local_server_data_path();
     let logs_path = config.relative_local_server_logs_path();
-    let template = scaffold_template_file(SCAFFOLD_SERVER_CONFIG_PATH)?;
+    let template = find_scaffold_template_file(SCAFFOLD_SERVER_CONFIG_PATH)?;
     let contents = render_template(
         template,
         &json!({
@@ -546,32 +529,12 @@ async fn check_server_health(client: &reqwest::Client, server_url: &str) -> bool
 mod tests {
     use super::*;
 
-    fn test_project_config() -> KalamProjectConfig {
-        KalamProjectConfig::parse(
-            r#"
-[project]
-name = "demo"
-
-[schema]
-mode = "sql"
-path = "schema.sql"
-
-[schema.targets.typescript]
-output = "src/generated/kalam.ts"
-"#,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn parse_server_port_reads_explicit_port() {
-        assert_eq!(parse_server_port("http://localhost:2900").unwrap(), 2900);
-    }
+    use crate::workflow::test_support::parse_minimal_project_config;
 
     #[test]
     fn write_local_server_config_uses_requested_port() {
         let temp = tempfile::TempDir::new().unwrap();
-        let config = test_project_config();
+        let config = parse_minimal_project_config();
         let path = write_local_server_config(temp.path(), &config, 3001).unwrap();
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("port = 3001"));
@@ -582,7 +545,7 @@ output = "src/generated/kalam.ts"
     #[test]
     fn write_local_server_config_uses_project_server_directory() {
         let temp = tempfile::TempDir::new().unwrap();
-        let config = test_project_config();
+        let config = parse_minimal_project_config();
         let path = write_local_server_config(temp.path(), &config, 2900).unwrap();
         assert_eq!(path, temp.path().join("kalam/server/server.toml"));
     }
@@ -590,7 +553,7 @@ output = "src/generated/kalam.ts"
     #[test]
     fn write_local_server_config_includes_required_server_sections() {
         let temp = tempfile::TempDir::new().unwrap();
-        let config = test_project_config();
+        let config = parse_minimal_project_config();
         let path = write_local_server_config(temp.path(), &config, 2900).unwrap();
         let contents = std::fs::read_to_string(path).unwrap();
         assert!(contents.contains("[limits]"));
@@ -605,7 +568,7 @@ output = "src/generated/kalam.ts"
     #[test]
     fn prepare_local_server_launch_preserves_existing_server_config() {
         let temp = tempfile::TempDir::new().unwrap();
-        let config = test_project_config();
+        let config = parse_minimal_project_config();
         let config_path = local_server_config_path(temp.path(), &config);
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
         std::fs::write(&config_path, "# manual config\n[server]\nport = 2900\n").unwrap();

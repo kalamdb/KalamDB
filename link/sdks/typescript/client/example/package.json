@@ -13,5 +13,9 @@
   },
   "devDependencies": {
     "http-server": "^14.1.1"
+  },
+  "overrides": {
+    "follow-redirects": "^1.16.0",
+    "qs": "^6.15.2"
   }
 }

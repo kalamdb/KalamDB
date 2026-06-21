@@ -5,9 +5,15 @@ import { users } from './generated/kalam.js';
 const url = process.env.KALAM_URL ?? '{{server_url}}';
 const namespace = process.env.KALAM_NAMESPACE ?? '{{namespace}}';
 const username = process.env.KALAM_USER ?? 'root';
-const password = process.env.KALAM_PASSWORD ?? 'mypass';
+const password = process.env.KALAM_PASSWORD;
 
 async function main(): Promise<void> {
+  if (!password) {
+    throw new Error(
+      'KALAM_PASSWORD is required. For local projects created with kalam init, check .env in the project root.',
+    );
+  }
+
   const client = createClient({
     url,
     namespace,

@@ -189,15 +189,13 @@ fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<Strin
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs};
+    use std::fs;
 
     use super::*;
     use kalamdb_commons::NamespaceId;
-
-    use crate::workflow::project::config::{
-        ConnectionEnv, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
-    };
     use tempfile::TempDir;
+
+    use crate::workflow::test_support::multi_env_resolve_test_config;
 
     struct EnvVarGuard {
         key: &'static str,
@@ -221,51 +219,9 @@ mod tests {
         }
     }
 
-    fn sample_config() -> KalamProjectConfig {
-        KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
-                package_manager: None,
-                kalam_dir: "kalam".into(),
-            },
-            connection: HashMap::from([
-                (
-                    "dev".into(),
-                    ConnectionEnv {
-                        url: "http://localhost:2900".into(),
-                        namespace: NamespaceId::new("app"),
-                    },
-                ),
-                (
-                    "prod".into(),
-                    ConnectionEnv {
-                        url: "https://db.example.com".into(),
-                        namespace: NamespaceId::new("app"),
-                    },
-                ),
-            ]),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
-                languages: vec!["typescript".into()],
-                targets: HashMap::from([(
-                    "typescript".into(),
-                    SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
-                    },
-                )]),
-            },
-            migrations: Default::default(),
-            dev: Default::default(),
-            logging: Default::default(),
-        }
-    }
-
     #[test]
     fn cli_flag_overrides_config() {
-        let config = sample_config();
+        let config = multi_env_resolve_test_config();
         let resolved = resolve_environment(
             &config,
             &EnvironmentOverrides {
@@ -287,7 +243,7 @@ mod tests {
         let _env_guard = EnvVarGuard::unset(ENV_VAR_KALAM_ENV);
         let _url_guard = EnvVarGuard::unset(ENV_VAR_KALAM_URL);
         let _namespace_guard = EnvVarGuard::unset(ENV_VAR_KALAM_NAMESPACE);
-        let config = sample_config();
+        let config = multi_env_resolve_test_config();
         let resolved = resolve_environment(&config, &EnvironmentOverrides::default()).unwrap();
         assert_eq!(resolved.name, "dev");
         assert_eq!(resolved.url, "http://localhost:2900");

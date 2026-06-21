@@ -12,7 +12,7 @@ use crate::{
             guidance::init_repository_templates_unavailable,
             prompts::prompt_select,
             scaffold,
-            templates::{render_template_pairs, EmbeddedTemplate},
+            templates::{render_template_pairs_for_path, EmbeddedTemplate},
             ts::{
                 guidance::init_no_templates,
                 package_manager::{
@@ -174,7 +174,7 @@ pub fn apply_scaffold(
             )?;
         }
 
-        let rendered = render_template_pairs(file.content, &replacements)?;
+        let rendered = render_template_pairs_for_path(file.project_path, file.content, &replacements)?;
         scaffold::io_with_guidance(
             "write template file",
             &destination_path,
@@ -208,37 +208,40 @@ mod tests {
             return;
         };
 
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        let mut observed: Option<(PathBuf, PackageManager)> = None;
-        run_init_with_installer(
-            InitOptions {
-                name: Some("demo-ts".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: Some("simple-live".into()),
-                package_manager: Some(manager),
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-            |root, selected| {
-                observed = Some((root.to_path_buf(), selected));
-                Ok(())
-            },
-        )
-        .expect("init should succeed");
+        crate::workflow::test_support::without_test_env_var(SKIP_PACKAGE_INSTALL_ENV, || {
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            let mut observed: Option<(PathBuf, PackageManager)> = None;
+            run_init_with_installer(
+                InitOptions {
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
+                    package_manager: Some(manager),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+                |root, selected| {
+                    observed = Some((root.to_path_buf(), selected));
+                    Ok(())
+                },
+            )
+            .expect("init should succeed");
 
-        let (root, selected) = observed.expect("typescript init should request a package install");
-        assert_eq!(root, temp.path());
-        assert_eq!(selected, manager);
-        let config = crate::workflow::project::config::KalamProjectConfig::load_from_path(
-            &temp.path().join("kalam.toml"),
-        )
-        .unwrap();
-        assert_eq!(config.project.package_manager.as_deref(), Some(manager.as_str()));
+            let (root, selected) =
+                observed.expect("typescript init should request a package install");
+            assert_eq!(root, temp.path());
+            assert_eq!(selected, manager);
+            let config = crate::workflow::project::config::KalamProjectConfig::load_from_path(
+                &temp.path().join("kalam.toml"),
+            )
+            .unwrap();
+            assert_eq!(config.project.package_manager.as_deref(), Some(manager.as_str()));
+        });
     }
 
     #[test]
@@ -248,32 +251,34 @@ mod tests {
             return;
         };
 
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        run_init_with_installer(
-            InitOptions {
-                name: Some("demo-ts".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: Some("simple-live".into()),
-                package_manager: Some(manager),
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-            |_, _| Ok(()),
-        )
-        .expect("init should succeed");
+        crate::workflow::test_support::without_test_env_var(SKIP_PACKAGE_INSTALL_ENV, || {
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            run_init_with_installer(
+                InitOptions {
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
+                    package_manager: Some(manager),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+                |_, _| Ok(()),
+            )
+            .expect("init should succeed");
 
-        let kalam_toml = fs::read_to_string(temp.path().join("kalam.toml")).unwrap();
-        assert!(kalam_toml.contains(&format!("package_manager = \"{}\"", manager.as_str())));
-        let config = crate::workflow::project::config::KalamProjectConfig::load_from_path(
-            &temp.path().join("kalam.toml"),
-        )
-        .unwrap();
-        assert_eq!(config.project.package_manager.as_deref(), Some(manager.as_str()));
+            let kalam_toml = fs::read_to_string(temp.path().join("kalam.toml")).unwrap();
+            assert!(kalam_toml.contains(&format!("package_manager = \"{}\"", manager.as_str())));
+            let config = crate::workflow::project::config::KalamProjectConfig::load_from_path(
+                &temp.path().join("kalam.toml"),
+            )
+            .unwrap();
+            assert_eq!(config.project.package_manager.as_deref(), Some(manager.as_str()));
+        });
     }
 
     #[test]
@@ -283,32 +288,32 @@ mod tests {
             return;
         };
 
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        let mut called = false;
-        env::set_var(SKIP_PACKAGE_INSTALL_ENV, "1");
-        run_init_with_installer(
-            InitOptions {
-                name: Some("demo-ts".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: Some("simple-live".into()),
-                package_manager: Some(manager),
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-            |_, _| {
-                called = true;
-                Ok(())
-            },
-        )
-        .expect("init should succeed");
-        env::remove_var(SKIP_PACKAGE_INSTALL_ENV);
+        crate::workflow::test_support::with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            let mut called = false;
+            run_init_with_installer(
+                InitOptions {
+                    name: Some("demo-ts".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
+                    package_manager: Some(manager),
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+                |_, _| {
+                    called = true;
+                    Ok(())
+                },
+            )
+            .expect("init should succeed");
 
-        assert!(!called, "install should be skipped when env var is set");
+            assert!(!called, "install should be skipped when env var is set");
+        });
     }
 
     #[test]

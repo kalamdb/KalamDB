@@ -16,7 +16,10 @@
   },
   "devDependencies": {
     "@types/node": "^25.7.0",
-    "tsx": "^4.20.6",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }

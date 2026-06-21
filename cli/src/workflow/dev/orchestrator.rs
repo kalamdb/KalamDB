@@ -23,6 +23,7 @@ use crate::{
                 update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
             },
         },
+        display::{emit_task_failure, emit_task_success},
         display_project_path,
         migration::{
             apply::{apply_pending_migrations, ApplyMigrationOptions},
@@ -371,6 +372,14 @@ async fn run_dev_session_inner(
 
 // ── Schema pipeline ───────────────────────────────────────────────────────────
 
+fn finish_schema_pipeline_success(
+    output: &WorkflowOutput,
+    progress_label: &str,
+    status_label: &str,
+) {
+    emit_task_success(output, "schema", progress_label, status_label);
+}
+
 async fn run_initial_schema_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
@@ -385,11 +394,7 @@ async fn run_initial_schema_pipeline(
 
     match run_schema_pipeline(ctx, output, force).await {
         Ok(()) => {
-            if output.display_mode == WorkflowDisplayMode::Progress {
-                output.progress_task("schema", ProgressTaskStatus::Succeeded, "Schema applied");
-            } else {
-                output.status("schema pipeline completed");
-            }
+            finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
             SchemaPipelineState::Synced
         },
         Err(error) => {
@@ -397,15 +402,11 @@ async fn run_initial_schema_pipeline(
                 output.warn("retrying schema pipeline (--force)");
                 return match run_schema_pipeline(ctx, output, true).await {
                     Ok(()) => {
-                        if output.display_mode == WorkflowDisplayMode::Progress {
-                            output.progress_task(
-                                "schema",
-                                ProgressTaskStatus::Succeeded,
-                                "Schema recovered",
-                            );
-                        } else {
-                            output.status("schema pipeline recovered");
-                        }
+                        finish_schema_pipeline_success(
+                            output,
+                            "Schema recovered",
+                            "schema pipeline recovered",
+                        );
                         SchemaPipelineState::Synced
                     },
                     Err(retry_error) => {
@@ -432,11 +433,7 @@ async fn run_confirmed_schema_draft_pipeline(
     output.clear_progress_details("schema");
     match apply_confirmed_schema_draft(ctx, output).await {
         Ok(()) => {
-            if output.display_mode == WorkflowDisplayMode::Progress {
-                output.progress_task("schema", ProgressTaskStatus::Succeeded, "Schema applied");
-            } else {
-                output.status("schema pipeline completed");
-            }
+            finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
             SchemaPipelineState::Synced
         },
         Err(error) => {
@@ -536,18 +533,12 @@ fn reset_local_schema_state(ctx: &WorkflowContext, output: &WorkflowOutput) -> R
 }
 
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
-    if output.display_mode == WorkflowDisplayMode::Progress {
-        output.progress_task(
-            "schema",
-            ProgressTaskStatus::Failed,
-            format!("Schema failed: {error}"),
+    emit_task_failure(output, "schema", format!("Schema failed: {error}"), || {
+        output.error(format!("schema pipeline failed: {error}"));
+        output.warn(
+            "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
         );
-        return;
-    }
-    output.error(format!("schema pipeline failed: {error}"));
-    output.warn(
-        "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
-    );
+    });
 }
 
 fn project_ready_message(project_name: &str, project_root: &std::path::Path) -> String {
@@ -585,12 +576,5 @@ mod tests {
             message,
             "Local server ready at http://localhost:2900 (full log: /tmp/demo/.kalam/logs/kalam.log)"
         );
-    }
-
-    #[test]
-    fn display_project_path_prefers_project_relative_output() {
-        let root = std::path::Path::new("/tmp/demo");
-        let path = root.join("schema.sql");
-        assert_eq!(display_project_path(root, &path), "schema.sql");
     }
 }

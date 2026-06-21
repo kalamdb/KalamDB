@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "tar": "^7.4.3"
+    "tar": "^7.5.16"
   },
   "engines": {
     "node": ">=18"

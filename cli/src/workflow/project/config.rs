@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{CLIError, Result},
     workflow::project::{
+        connection_url,
         identifiers::serde_namespace,
         templates::{find_template_file, resolve_scaffold_template},
     },
@@ -226,6 +227,14 @@ impl KalamProjectConfig {
             crate::workflow::project::ts::PackageManager::parse(manager)?;
         }
 
+        for (env_name, connection) in &self.connection {
+            connection_url::validate_http_server_url(&connection.url).map_err(|error| {
+                CLIError::ConfigurationError(format!(
+                    "connection.{env_name}.url is invalid: {error}"
+                ))
+            })?;
+        }
+
         match self.schema.mode {
             SchemaMode::Sql => {
                 let path = self.schema.path.as_deref().unwrap_or("").trim();
@@ -422,6 +431,28 @@ output = "src/generated/kalam.ts"
 "#;
         let config = KalamProjectConfig::parse(toml).expect("parse");
         assert_eq!(config.project.package_manager.as_deref(), Some("pnpm"));
+    }
+
+    #[test]
+    fn validate_rejects_non_http_connection_urls() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[connection.dev]
+url = "javascript:alert(1)"
+namespace = "app"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#;
+        let err = KalamProjectConfig::parse(toml).unwrap_err().to_string();
+        assert!(err.contains("http or https"));
     }
 
     #[test]

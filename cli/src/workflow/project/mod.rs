@@ -1,6 +1,8 @@
 pub mod config;
+pub mod connection_url;
 pub mod guidance;
 pub mod identifiers;
+pub mod scaffold_input;
 pub mod init;
 pub mod link;
 pub mod prompts;

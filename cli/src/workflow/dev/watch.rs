@@ -192,61 +192,19 @@ fn schema_file_stamp(path: &Path) -> SchemaFileStamp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use tempfile::TempDir;
 
     use crate::{
         config::WorkflowLoggingPolicy,
-        workflow::project::config::{
-            ConnectionEnv, DevSection, LoggingSection, MigrationsSection, ProjectSection,
-            SchemaMode, SchemaSection, SchemaTarget,
-        },
+        workflow::test_support::watch_test_config,
     };
-
-    fn sample_config() -> KalamProjectConfig {
-        KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
-                package_manager: None,
-                kalam_dir: "kalam".into(),
-            },
-            connection: HashMap::from([(
-                "dev".into(),
-                ConnectionEnv {
-                    url: "http://localhost:2900".into(),
-                    namespace: kalamdb_commons::NamespaceId::new("demo"),
-                },
-            )]),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
-                languages: vec!["typescript".into()],
-                targets: HashMap::from([(
-                    "typescript".into(),
-                    SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
-                    },
-                )]),
-            },
-            migrations: MigrationsSection::default(),
-            dev: DevSection {
-                apply_schema: true,
-                generate_types: false,
-                watch: true,
-                ..Default::default()
-            },
-            logging: LoggingSection::default(),
-        }
-    }
 
     #[test]
     fn update_baseline_copies_schema_source() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
         fs::write(root.join("schema.sql"), "CREATE TABLE t (id INT);").unwrap();
-        let config = sample_config();
+        let config = watch_test_config();
 
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         update_schema_baseline(root, &config, &output).unwrap();
@@ -298,7 +256,7 @@ mod tests {
         let root = temp.path();
         fs::create_dir_all(root.join("src/generated")).unwrap();
         fs::write(root.join("schema.sql"), "CREATE TABLE users (id INT);").unwrap();
-        let mut config = sample_config();
+        let mut config = watch_test_config();
         config.dev.apply_schema = false;
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let ctx = WorkflowContext {
@@ -338,13 +296,5 @@ INSERT INTO users VALUES ('hello;world');
         assert_eq!(statements.len(), 2);
         assert!(statements[0].contains("CREATE TABLE users"));
         assert!(statements[1].contains("'hello;world'"));
-    }
-
-    #[test]
-    fn display_project_path_prefers_project_relative_output() {
-        let root = Path::new("/tmp/demo");
-        let path = root.join("kalam/.schema-baseline.sql");
-
-        assert_eq!(display_project_path(root, &path), "kalam/.schema-baseline.sql");
     }
 }
