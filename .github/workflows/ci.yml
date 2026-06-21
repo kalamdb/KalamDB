@@ -182,6 +182,9 @@ jobs:
         run: |
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
+      - name: Build kalam CLI binary for e2e tests
+        run: cargo build -p kalam-cli --bin kalam
+
       - name: Run tests (nextest)
         id: nextest
         run: |
