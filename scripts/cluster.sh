@@ -1054,8 +1054,15 @@ run_workspace_nextest_e2e() {
         server_binary="$PROJECT_ROOT/target/debug/kalamdb-server"
     fi
 
+    local kalam_binary="$PROJECT_ROOT/target/debug/kalam"
+    if [ ! -f "$kalam_binary" ]; then
+        echo -e "${YELLOW}Building kalam CLI binary for e2e tests...${NC}"
+        (cd "$PROJECT_ROOT" && cargo build -p kalam-cli --bin kalam)
+    fi
+
     cd "$PROJECT_ROOT/cli"
     KALAMDB_SERVER_BIN="$server_binary" \
+    KALAM_BIN="$kalam_binary" \
     cargo nextest run -p kalam-cli-e2e
 }
 

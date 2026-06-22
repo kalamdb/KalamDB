@@ -741,6 +741,31 @@ prebuild_kalamdb_server_binary_if_needed() {
     export KALAMDB_SERVER_BIN="$REPO_ROOT/target/debug/kalamdb-server"
 }
 
+prebuild_kalam_cli_binary_if_needed() {
+    if ! should_prebuild_kalamdb_server_binary; then
+        return 0
+    fi
+
+    if [ -n "${KALAM_BIN:-}" ] && [ -f "$KALAM_BIN" ]; then
+        chmod +x "$KALAM_BIN" 2>/dev/null || true
+        step "Using prebuilt kalam CLI for integration tests"
+        return 0
+    fi
+
+    local kalam_bin="$REPO_ROOT/target/debug/kalam"
+    if [ -f "$kalam_bin" ]; then
+        export KALAM_BIN="$kalam_bin"
+        return 0
+    fi
+
+    step "Prebuilding kalam CLI binary for integration tests"
+    (
+        cd "$REPO_ROOT"
+        cargo build -p kalam-cli --bin kalam
+    )
+    export KALAM_BIN="$kalam_bin"
+}
+
 running_server_supports_s3_storage() {
     local base_url="$1"
     local probe_id="_run_tests_s3_probe_$$"
@@ -1385,6 +1410,7 @@ verify_cli_test_layout
 validate_running_server_credentials_if_needed
 
 prebuild_kalamdb_server_binary_if_needed
+prebuild_kalam_cli_binary_if_needed
 maybe_switch_to_fresh_for_missing_s3
 ensure_dex_for_oidc_tests
 ensure_minio_for_storage_tests

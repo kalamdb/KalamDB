@@ -291,13 +291,16 @@ mod tests {
     use tempfile::TempDir;
 
     struct EnvGuard {
+        _env_lock: std::sync::MutexGuard<'static, ()>,
         path: Option<OsString>,
         user_agent: Option<OsString>,
     }
 
     impl EnvGuard {
         fn set_path(path: &Path) -> Self {
+            let env_lock = crate::workflow::test_support::test_env_lock();
             let guard = Self {
+                _env_lock: env_lock,
                 path: env::var_os("PATH"),
                 user_agent: env::var_os("npm_config_user_agent"),
             };
@@ -474,19 +477,17 @@ mod tests {
 
     #[test]
     fn resolve_package_manager_for_init_honors_explicit_flag() {
-        let available = detect_installed_package_managers();
-        let Some(manager) = available.first().copied() else {
-            return;
-        };
+        let (_temp, bin_dir) = isolated_bin_dir(&[PackageManager::Pnpm]);
+        let _guard = EnvGuard::set_path(&bin_dir);
 
         let selected = resolve_package_manager_for_init(PackageManagerInitOptions {
-            explicit: Some(manager),
+            explicit: Some(PackageManager::Pnpm),
             non_interactive: true,
             color: false,
             detail: &|_| {},
         })
         .expect("explicit manager should resolve");
-        assert_eq!(selected, manager);
+        assert_eq!(selected, PackageManager::Pnpm);
     }
 
     #[test]

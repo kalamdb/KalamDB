@@ -10,7 +10,7 @@ use crate::{
     sql_batch,
     workflow::{
         display_project_path,
-        migration::{list_migration_files, migration_filename, DRAFT_MIGRATION_FILE},
+        migration::{list_migration_files, markers, migration_filename, read_migration_file, DRAFT_MIGRATION_FILE},
         project::config::KalamProjectConfig,
         schema::diff::{diff_project_schema_files, diff_project_schema_files_for_draft},
     },
@@ -42,11 +42,12 @@ pub fn create_migration(
     }
 
     let statements = build_migration_statements(project_root, config, false)?;
-    let contents = format!(
-        "-- Migration: {name}\n-- Created: {}\n\n-- UP\n{}\n\n-- DOWN\n{}\n",
-        Utc::now().to_rfc3339(),
-        statements.up.trim_end(),
-        statements.down.trim_end(),
+    let contents = format_migration_file(
+        &name,
+        "Created",
+        &Utc::now().to_rfc3339(),
+        &statements.up,
+        &statements.down,
     );
 
     fs::write(&path, contents).map_err(|e| {
@@ -106,11 +107,12 @@ pub fn update_draft_migration(
 
     fs::create_dir_all(&migrations_dir)?;
     let existed = draft_path.is_file();
-    let contents = format!(
-        "-- Migration: draft\n-- Updated: {}\n\n-- UP\n{}\n\n-- DOWN\n{}\n",
-        Utc::now().to_rfc3339(),
-        statements.up.trim_end(),
-        statements.down.trim_end(),
+    let contents = format_migration_file(
+        "draft",
+        "Updated",
+        &Utc::now().to_rfc3339(),
+        &statements.up,
+        &statements.down,
     );
     fs::write(&draft_path, contents).map_err(|e| {
         CLIError::FileError(format!(
@@ -147,13 +149,8 @@ pub fn seal_draft_migration(
         return Ok(None);
     }
 
-    let sql = fs::read_to_string(&draft_path).map_err(|e| {
-        CLIError::FileError(format!(
-            "failed to read draft migration '{}': {e}",
-            draft_path.display()
-        ))
-    })?;
-    if !has_executable_sql(&extract_up_section_from_text(&sql))? {
+    let sql = read_migration_file(Some(project_root), &draft_path)?;
+    if !has_executable_sql(&markers::extract_up_section(&sql))? {
         return Ok(None);
     }
 
@@ -221,91 +218,32 @@ fn next_migration_number(migrations_dir: &Path) -> Result<u32> {
     Ok(max + 1)
 }
 
-fn extract_up_section_from_text(sql: &str) -> String {
-    extract_between_markers(sql, "-- UP", "-- DOWN").unwrap_or_else(|| sql.trim().to_string())
+fn format_migration_file(
+    name: &str,
+    timestamp_label: &str,
+    timestamp: &str,
+    up: &str,
+    down: &str,
+) -> String {
+    format!(
+        "-- Migration: {name}\n-- {timestamp_label}: {timestamp}\n\n-- UP\n{up}\n\n-- DOWN\n{down}\n",
+        up = up.trim_end(),
+        down = down.trim_end(),
+    )
 }
 
 fn has_executable_sql(sql: &str) -> Result<bool> {
     Ok(!sql_batch::parse_execution_batch(sql)?.is_empty())
 }
 
-fn extract_between_markers(sql: &str, start_marker: &str, end_marker: &str) -> Option<String> {
-    let start = find_marker_line_end(sql, start_marker)?;
-    let rest = &sql[start..];
-    let end = find_marker_line_start(rest, end_marker).unwrap_or(rest.len());
-    Some(rest[..end].trim().to_string())
-}
-
-fn find_marker_line_end(sql: &str, marker: &str) -> Option<usize> {
-    let mut offset = 0usize;
-    for segment in sql.split_inclusive('\n') {
-        let line = segment.trim_end_matches(['\r', '\n']);
-        if line.trim().eq_ignore_ascii_case(marker) {
-            return Some(offset + segment.len());
-        }
-        offset += segment.len();
-    }
-    if sql[offset..].trim().eq_ignore_ascii_case(marker) {
-        return Some(sql.len());
-    }
-    None
-}
-
-fn find_marker_line_start(sql: &str, marker: &str) -> Option<usize> {
-    let mut offset = 0usize;
-    for segment in sql.split_inclusive('\n') {
-        let line = segment.trim_end_matches(['\r', '\n']);
-        if line.trim().eq_ignore_ascii_case(marker) {
-            return Some(offset);
-        }
-        offset += segment.len();
-    }
-    if sql[offset..].trim().eq_ignore_ascii_case(marker) {
-        return Some(offset);
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     use crate::{
         config::WorkflowLoggingPolicy,
-        workflow::project::config::{
-            ConnectionEnv, DevSection, LoggingSection, MigrationsSection, ProjectSection,
-            SchemaMode, SchemaSection,
-        },
+        workflow::test_support::minimal_sql_project_config,
     };
-
-    fn sample_config() -> KalamProjectConfig {
-        KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
-                package_manager: None,
-                kalam_dir: "kalam".into(),
-            },
-            connection: HashMap::from([(
-                "dev".into(),
-                ConnectionEnv {
-                    url: "http://localhost:2900".into(),
-                    namespace: kalamdb_commons::NamespaceId::new("demo"),
-                },
-            )]),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
-                languages: Vec::new(),
-                targets: HashMap::new(),
-            },
-            migrations: MigrationsSection::default(),
-            dev: DevSection::default(),
-            logging: LoggingSection::default(),
-        }
-    }
 
     #[test]
     fn sanitize_migration_name_replaces_spaces() {
@@ -322,15 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_up_section_from_text_ignores_updated_header() {
-        let sql = "-- Migration: draft\n-- Updated: 2026-06-08T17:45:18Z\n\n-- UP\nCREATE TABLE users (id INTEGER);\n\n-- DOWN\nDROP TABLE users;";
-
-        let up = extract_up_section_from_text(sql);
-
-        assert_eq!(up, "CREATE TABLE users (id INTEGER);");
-    }
-
-    #[test]
     fn has_executable_sql_rejects_comment_only_diff() {
         assert!(!has_executable_sql("-- no schema changes detected").unwrap());
         assert!(has_executable_sql("CREATE TABLE users (id INTEGER);").unwrap());
@@ -340,7 +269,7 @@ mod tests {
     fn update_draft_migration_removes_stale_draft_when_schema_matches_baseline() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
-        let config = sample_config();
+        let config = minimal_sql_project_config();
         let schema_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY);";
 
         fs::write(root.join("schema.sql"), schema_sql).unwrap();

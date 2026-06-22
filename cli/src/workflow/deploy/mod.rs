@@ -6,13 +6,13 @@ pub const DEPLOY_NOT_SUPPORTED_MESSAGE: &str =
 pub mod health;
 pub mod rollout;
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
-        migration::list_migration_files,
+        migration::{list_migration_files, read_migration_file},
         project::config::{KalamProjectConfig, SchemaMode},
         schema::diff::diff_project_schema_files,
         WorkflowContext,
@@ -94,9 +94,7 @@ fn has_unapplied_migration_covering_diff(
     let files = list_migration_files(&migrations_dir)?;
 
     for path in &files {
-        let sql = fs::read_to_string(path).map_err(|e| {
-            CLIError::FileError(format!("failed to read migration '{}': {e}", path.display()))
-        })?;
+        let sql = read_migration_file(Some(project_root), path)?;
         if sql.contains(diff_up.trim()) || diff_up.trim().contains("-- sqlparser-backed") {
             return Ok(true);
         }
@@ -109,64 +107,16 @@ fn has_unapplied_migration_covering_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use tempfile::TempDir;
 
-    use crate::workflow::project::config::{
-        ConnectionEnv, DevSection, LoggingSection, MigrationsSection, ProjectSection, SchemaMode,
-        SchemaSection, SchemaTarget,
-    };
-
-    fn sample_config() -> KalamProjectConfig {
-        KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
-                package_manager: None,
-                kalam_dir: "kalam".into(),
-            },
-            connection: HashMap::from([(
-                "prod".into(),
-                ConnectionEnv {
-                    url: "https://db.example.com".into(),
-                    namespace: kalamdb_commons::NamespaceId::new("app"),
-                },
-            )]),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
-                languages: vec!["typescript".into()],
-                targets: HashMap::from([(
-                    "typescript".into(),
-                    SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
-                    },
-                )]),
-            },
-            migrations: MigrationsSection {
-                auto_create: true,
-                ..Default::default()
-            },
-            dev: DevSection::default(),
-            logging: LoggingSection::default(),
-        }
-    }
+    use crate::workflow::test_support::{prod_deploy_test_config, test_workflow_context};
 
     #[tokio::test]
     async fn deploy_is_not_supported_yet() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
-        let ctx = WorkflowContext {
-            project_root: root.to_path_buf(),
-            config: sample_config(),
-            cli_config: crate::config::CLIConfiguration::default(),
-            use_color: false,
-            project_dir: None,
-            env_override: None,
-            namespace_override: None,
-            url_override: None,
-        };
+        let mut ctx = test_workflow_context(root);
+        ctx.config = prod_deploy_test_config();
 
         let err = run_deploy(
             &ctx,

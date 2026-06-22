@@ -1,6 +1,6 @@
 //! Schema loading for sql and remote modes.
 
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 use chrono::Utc;
 
@@ -9,6 +9,7 @@ use kalamdb_commons::NamespaceId;
 use crate::{
     error::{CLIError, Result},
     workflow::{
+        io::read_schema_file,
         project::{
             config::{KalamProjectConfig, SchemaMode},
             identifiers::{parse_table_name, parse_table_ref},
@@ -37,9 +38,7 @@ pub fn load_from_sql_file(
         .schema_source_path(project_root)
         .ok_or_else(|| CLIError::ConfigurationError("schema.path is not configured".into()))?;
 
-    let sql = fs::read_to_string(&path).map_err(|e| {
-        CLIError::FileError(format!("failed to read schema file '{}': {e}", path.display()))
-    })?;
+    let sql = read_schema_file(&path)?;
 
     parse_sql_schema(&sql).map(|mut snapshot| {
         snapshot.origin = SchemaOrigin::File;

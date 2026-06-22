@@ -1274,7 +1274,13 @@ jobs:
           CLI_BIN=$(find dist -name "kalamcli-*-linux-x86_64" -type f ! -name "*.tar.gz" | head -1)
           [[ -z "$CLI_BIN" ]] && { echo "CLI binary not found"; exit 1; }
           chmod +x "$CLI_BIN" && cp "$CLI_BIN" ./kalamcli
-          ls -la ./kalamdb-server ./kalamcli
+          mkdir -p target/debug target/release
+          cp ./kalamcli target/debug/kalam
+          cp ./kalamcli target/release/kalam
+          chmod +x target/debug/kalam target/release/kalam
+          echo "KALAM_BIN=${GITHUB_WORKSPACE}/kalamcli" >> "$GITHUB_ENV"
+          ls -la ./kalamdb-server ./kalamcli target/debug/kalam
+          ./kalamcli --version
 
       - name: Create server config
         shell: bash
@@ -1323,6 +1329,13 @@ jobs:
           KALAMDB_TEST_FLUSH_COMPACTION: "1"
         run: |
           set -euo pipefail
+          export KALAM_BIN="${KALAM_BIN:-${GITHUB_WORKSPACE}/kalamcli}"
+          if [ ! -x "$KALAM_BIN" ]; then
+            echo "Packaged CLI missing at $KALAM_BIN"
+            ls -la "${GITHUB_WORKSPACE}/kalamcli" "${GITHUB_WORKSPACE}/target/debug/kalam" || true
+            exit 1
+          fi
+          "$KALAM_BIN" --version
           if cargo nextest run -p kalam-cli-e2e --test smoke 2>&1 | tee smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"

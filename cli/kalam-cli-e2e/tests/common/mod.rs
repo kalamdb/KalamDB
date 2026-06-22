@@ -76,18 +76,52 @@ pub use tempfile::TempDir;
 
 /// Path to the `kalam` CLI binary for integration tests.
 ///
-/// Cargo sets `CARGO_BIN_EXE_kalam` at test runtime when `kalam-cli` is a
-/// dev-dependency. The separate `kalam-cli-e2e` crate cannot rely on the
-/// compile-time `env!` form, so resolve the path when tests execute.
+/// The `kalam-cli-e2e` crate depends on `kalam-cli` as a library dev-dependency,
+/// which does not automatically build the `kalam` binary. Workflows should either
+/// run `cargo build -p kalam-cli --bin kalam` or set `KALAM_BIN` to a packaged CLI.
 pub fn kalam_bin() -> PathBuf {
+    for path in kalam_bin_candidates() {
+        if path.is_file() {
+            return path;
+        }
+    }
+
+    kalam_bin_candidates().into_iter().next().unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/kalam")
+    })
+}
+
+fn kalam_bin_candidates() -> Vec<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../..");
+    let profile = std::env::var("CARGO_PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join("target"));
+
+    let mut candidates = Vec::new();
+    let mut push_candidate = |path: PathBuf| {
+        if !candidates.iter().any(|existing| existing == &path) {
+            candidates.push(path);
+        }
+    };
+
+    if let Ok(path) = std::env::var("KALAM_BIN") {
+        push_candidate(PathBuf::from(path));
+    }
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_kalam") {
-        return PathBuf::from(path);
+        push_candidate(PathBuf::from(path));
     }
     if let Some(path) = option_env!("CARGO_BIN_EXE_kalam") {
-        return PathBuf::from(path);
+        push_candidate(PathBuf::from(path));
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/debug/kalam")
+
+    push_candidate(workspace_root.join("kalamcli"));
+    push_candidate(target_dir.join(&profile).join("kalam"));
+    push_candidate(target_dir.join("debug/kalam"));
+    push_candidate(target_dir.join("release/kalam"));
+
+    candidates
 }
 
 #[derive(Debug, Clone, Deserialize)]

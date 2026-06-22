@@ -65,6 +65,140 @@ pub fn render_template_pairs(template: &str, replacements: &[(&str, &str)]) -> R
     render_template(template, &context)
 }
 
+pub fn find_scaffold_template_file(project_path: &str) -> Result<&'static str> {
+    let template = resolve_scaffold_template()?;
+    find_template_file(template, project_path).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "missing scaffold template file '{project_path}' in '{DEFAULT_SCAFFOLD_TEMPLATE}'"
+        ))
+    })
+}
+
+pub fn format_languages_array(languages: &[impl AsRef<str>]) -> String {
+    let quoted: Vec<String> = languages
+        .iter()
+        .map(|language| format!("\"{}\"", language.as_ref()))
+        .collect();
+    format!("[{}]", quoted.join(", "))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateStringEscape {
+    None,
+    DoubleQuoted,
+    JsSingleQuoted,
+}
+
+fn template_string_escape_for_path(project_path: &str) -> TemplateStringEscape {
+    if project_path.ends_with(".json") {
+        return TemplateStringEscape::DoubleQuoted;
+    }
+    if project_path.ends_with(".ts") || project_path.ends_with(".tsx") {
+        return TemplateStringEscape::JsSingleQuoted;
+    }
+    TemplateStringEscape::None
+}
+
+pub fn render_template_pairs_for_path(
+    project_path: &str,
+    template: &str,
+    replacements: &[(&str, &str)],
+) -> Result<String> {
+    match template_string_escape_for_path(project_path) {
+        TemplateStringEscape::None => render_template_pairs(template, replacements),
+        TemplateStringEscape::DoubleQuoted => {
+            render_template_pairs_escaped(template, replacements, escape_double_quoted_string)
+        },
+        TemplateStringEscape::JsSingleQuoted => {
+            render_template_pairs_escaped(template, replacements, escape_js_single_quoted_string)
+        },
+    }
+}
+
+pub struct KalamTomlScaffoldInput<'a> {
+    pub project_name: &'a str,
+    pub namespace: &'a str,
+    pub server_url: &'a str,
+    pub schema_mode: &'a str,
+    pub schema_path: &'a str,
+    pub languages: &'a [String],
+    pub auto_start_db: bool,
+    pub package_manager: Option<&'a str>,
+    pub dev_process_command: &'a str,
+}
+
+pub fn render_kalam_toml_scaffold(
+    template: &str,
+    input: &KalamTomlScaffoldInput<'_>,
+) -> Result<String> {
+    let language_names: Vec<&str> = input.languages.iter().map(String::as_str).collect();
+    render_template(
+        template,
+        &serde_json::json!({
+            "project_name": escape_double_quoted_string(input.project_name),
+            "namespace": escape_double_quoted_string(input.namespace),
+            "server_url": escape_double_quoted_string(input.server_url),
+            "schema_mode": input.schema_mode,
+            "schema_path": input.schema_path,
+            "languages_array": format_languages_array(&language_names),
+            "typescript": input.languages.iter().any(|language| language == "typescript"),
+            "dart": input.languages.iter().any(|language| language == "dart"),
+            "auto_start_db": input.auto_start_db,
+            "package_manager": input.package_manager.unwrap_or(""),
+            "dev_process_command": escape_double_quoted_string(input.dev_process_command),
+        }),
+    )
+}
+
+fn render_template_pairs_escaped(
+    template: &str,
+    replacements: &[(&str, &str)],
+    escape: fn(&str) -> String,
+) -> Result<String> {
+    let escaped: Vec<(String, String)> = replacements
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), escape(value)))
+        .collect();
+    let borrowed: Vec<(&str, &str)> = escaped
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    render_template_pairs(template, &borrowed)
+}
+
+fn escape_common_string(value: &str, quote: char) -> String {
+    let mut escaped = value.replace('\\', "\\\\");
+    if quote == '"' {
+        escaped = escaped.replace('"', "\\\"");
+    } else if quote == '\'' {
+        escaped = escaped.replace('\'', "\\'");
+    }
+    escaped
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
+/// Escape a value for use inside a TOML or JSON double-quoted string.
+pub fn escape_double_quoted_string(value: &str) -> String {
+    escape_common_string(value, '"')
+}
+
+/// Escape a value for use inside a TOML basic string (`"..."`).
+pub fn escape_toml_basic_string(value: &str) -> String {
+    escape_double_quoted_string(value)
+}
+
+/// Escape a value for use inside a JSON double-quoted string.
+pub fn escape_json_string(value: &str) -> String {
+    escape_double_quoted_string(value)
+}
+
+/// Escape a value for use inside a JavaScript single-quoted string literal.
+pub fn escape_js_single_quoted_string(value: &str) -> String {
+    escape_common_string(value, '\'')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +223,33 @@ mod tests {
     fn render_template_replaces_placeholders() {
         let rendered = render_template_pairs("hello {{name}}", &[("name", "world")]).unwrap();
         assert_eq!(rendered, "hello world");
+    }
+
+    #[test]
+    fn escape_toml_basic_string_quotes_special_characters() {
+        assert_eq!(
+            escape_toml_basic_string("my\"app\n"),
+            "my\\\"app\\n"
+        );
+    }
+
+    #[test]
+    fn escape_js_single_quoted_string_quotes_special_characters() {
+        assert_eq!(
+            escape_js_single_quoted_string("http://x'; alert(1);//"),
+            "http://x\\'; alert(1);//"
+        );
+    }
+
+    #[test]
+    fn render_template_pairs_for_js_keeps_generated_code_safe() {
+        let rendered = render_template_pairs_for_path(
+            "src/index.ts",
+            "const url = '{{server_url}}';",
+            &[("server_url", "http://x'; alert(1);//")],
+        )
+        .unwrap();
+        assert_eq!(rendered, "const url = 'http://x\\'; alert(1);//';");
     }
 
     #[test]
@@ -239,31 +400,25 @@ mod tests {
 
         let mut languages = Vec::new();
         if typescript {
-            languages.push("typescript");
+            languages.push("typescript".to_string());
         }
         if dart {
-            languages.push("dart");
+            languages.push("dart".to_string());
         }
-        let languages_array = languages
-            .iter()
-            .map(|language| format!("\"{language}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
 
-        render_template(
+        render_kalam_toml_scaffold(
             template,
-            &serde_json::json!({
-                "project_name": project_name,
-                "namespace": normalize_namespace_name(project_name),
-                "server_url": server_url,
-                "schema_mode": "sql",
-                "schema_path": "schema.sql",
-                "languages_array": format!("[{languages_array}]"),
-                "typescript": typescript,
-                "dart": dart,
-                "auto_start_db": auto_start_db,
-                "dev_process_command": dev_process_command.unwrap_or(""),
-            }),
+            &KalamTomlScaffoldInput {
+                project_name,
+                namespace: &normalize_namespace_name(project_name),
+                server_url,
+                schema_mode: "sql",
+                schema_path: "schema.sql",
+                languages: &languages,
+                auto_start_db,
+                package_manager: None,
+                dev_process_command: dev_process_command.unwrap_or(""),
+            },
         )
         .unwrap()
     }

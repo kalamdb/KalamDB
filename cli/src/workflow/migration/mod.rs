@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod create;
+pub mod markers;
 pub mod status;
 
 pub use apply::apply_pending_migrations;
@@ -172,9 +173,7 @@ pub fn list_migration_files(migrations_dir: &Path) -> Result<Vec<PathBuf>> {
     list_migration_files_inner(migrations_dir, false)
 }
 
-pub fn list_apply_migration_files(migrations_dir: &Path) -> Result<Vec<PathBuf>> {
-    list_migration_files_inner(migrations_dir, false)
-}
+pub use crate::workflow::io::read_migration_file;
 
 fn list_migration_files_inner(migrations_dir: &Path, include_draft: bool) -> Result<Vec<PathBuf>> {
     if !migrations_dir.exists() {
@@ -242,18 +241,6 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         assert_eq!(migration_filename(&files[0]), "0001_init.sql");
-    }
-
-    #[test]
-    fn list_apply_migration_files_ignores_draft() {
-        let temp = TempDir::new().unwrap();
-        fs::write(temp.path().join(DRAFT_MIGRATION_FILE), "SELECT 2;").unwrap();
-        fs::write(temp.path().join("0001_init.sql"), "SELECT 1;").unwrap();
-
-        let files = list_apply_migration_files(temp.path()).unwrap();
-        let names: Vec<_> = files.iter().map(|path| migration_filename(path)).collect();
-
-        assert_eq!(names, vec!["0001_init.sql"]);
     }
 
     #[test]

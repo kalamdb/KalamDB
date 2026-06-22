@@ -14,7 +14,12 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     terminal_ui::{self, SelectOption},
-    workflow::{display_project_path, WorkflowContext},
+    workflow::{
+        display_project_path,
+        migration::markers,
+        project::prompts::prompt_error,
+        WorkflowContext,
+    },
 };
 
 pub const DRAFT_PROMPT_MESSAGE: &str = "Apply schema draft?";
@@ -116,12 +121,8 @@ fn draft_summary_lines(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn prompt_error(error: io::Error) -> CLIError {
-    CLIError::FileError(format!("terminal prompt failed: {error}"))
-}
-
 pub fn summarize_draft_sql(sql: &str, max_lines: usize) -> Vec<String> {
-    let up = extract_up_section(sql);
+    let up = markers::extract_up_section_borrowed(sql);
     let mut lines = up
         .lines()
         .map(str::trim)
@@ -172,42 +173,6 @@ fn summarize_create_table(lines: &[String], max_lines: usize) -> Vec<String> {
         summary.push(line.clone());
     }
     summary
-}
-
-fn extract_up_section(sql: &str) -> &str {
-    let Some(start) = find_marker_end(sql, "-- UP") else {
-        return sql.trim();
-    };
-    let rest = &sql[start..];
-    let end = find_marker_start(rest, "-- DOWN").unwrap_or(rest.len());
-    rest[..end].trim()
-}
-
-fn find_marker_end(sql: &str, marker: &str) -> Option<usize> {
-    let mut offset = 0usize;
-    for segment in sql.split_inclusive('\n') {
-        let line = segment.trim_end_matches(['\r', '\n']);
-        if line.trim().eq_ignore_ascii_case(marker) {
-            return Some(offset + segment.len());
-        }
-        offset += segment.len();
-    }
-    if sql[offset..].trim().eq_ignore_ascii_case(marker) {
-        return Some(sql.len());
-    }
-    None
-}
-
-fn find_marker_start(sql: &str, marker: &str) -> Option<usize> {
-    let mut offset = 0usize;
-    for segment in sql.split_inclusive('\n') {
-        let line = segment.trim_end_matches(['\r', '\n']);
-        if line.trim().eq_ignore_ascii_case(marker) {
-            return Some(offset);
-        }
-        offset += segment.len();
-    }
-    None
 }
 
 #[cfg(test)]

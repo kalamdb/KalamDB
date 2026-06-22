@@ -67,7 +67,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - Use `cargo nextest run` for tests unless explicitly told otherwise.
 - CLI smoke tests require a running server. Start the backend first, then run smoke tests from `cli`.
 - Smoke tests are required before committing changes that affect backend or CLI behavior.
-- For CLI e2e tests, run `cargo nextest run -p kalam-cli-e2e` without `--no-fail-fast`; fix the first failure, then rerun.
+- For CLI e2e tests, run `cargo build -p kalam-cli --bin kalam` (or `./cli/run-tests.sh`, which prebuilds it) before `cargo nextest run -p kalam-cli-e2e` without `--no-fail-fast`; fix the first failure, then rerun.
 - For performance tests, benchmarks, or perf e2e cases, report each relevant runtime in seconds.
 - Add `#[ntest::timeout(time)]` to async tests using observed healthy runtime x 1.5.
 
