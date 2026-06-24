@@ -25,7 +25,14 @@ app = "npm run dev"
 agent = "npm run agent"
 ```
 
-The default local credentials are `root` / `kalamdb123` at `http://127.0.0.1:2900`, matching the local server managed by `kalam dev`. Override them with `KALAM_URL`, `KALAM_USER`, and `KALAM_PASSWORD` for the agent, and `VITE_KALAM_URL`, `VITE_KALAM_USER`, and `VITE_KALAM_PASSWORD` for the browser.
+The default local credentials are `root` / `kalamdb123` at `http://127.0.0.1:2900`, matching the local server managed by `kalam dev`.
+
+While `kalam dev` is running you can access that server directly:
+
+- **Admin UI:** [http://localhost:2900/ui](http://localhost:2900/ui) — sign in as `root` / `kalamdb123`
+- **CLI:** `kalam --url http://127.0.0.1:2900 --user root --password kalamdb123`
+
+Override them for app processes with `KALAM_URL`, `KALAM_USER`, and `KALAM_PASSWORD` for the agent, and `VITE_KALAM_URL`, `VITE_KALAM_USER`, and `VITE_KALAM_PASSWORD` for the browser.
 
 To wipe local database state and start over, stop `kalam dev` and run `kalam db reset`, then `kalam dev` again.
 

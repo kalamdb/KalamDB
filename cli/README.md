@@ -592,6 +592,10 @@ When `kalam dev` starts a local server, the generated `kalam/server/server.toml`
 `root` / `kalamdb123` by default. Scaffolded `.env` files include the same password for
 local development.
 
+Access the running server at **http://localhost:2900** (UI at **http://localhost:2900/ui**)
+with **`root` / `kalamdb123`**, or run
+`kalam --url http://127.0.0.1:2900 --user root --password kalamdb123` in another terminal.
+
 Use `kalam db reset` to delete `kalam/server/data` and `kalam/server/logs` when you want a
 fresh local database on the next `kalam dev`.
 

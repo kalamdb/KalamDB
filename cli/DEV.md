@@ -464,6 +464,15 @@ The generated local server config uses:
 Scaffolded `.env` and `.env.example` files include `KALAM_USER=root` and
 `KALAM_PASSWORD=kalamdb123` for local mode.
 
+#### Accessing the local server
+
+While `kalam dev` is running, the managed server uses your dev URL (default
+`http://localhost:2900`). Sign in with **`root` / `kalamdb123`**:
+
+- Admin UI: http://localhost:2900/ui
+- CLI: `kalam --url http://127.0.0.1:2900 --user root --password kalamdb123`
+- Health: `curl http://127.0.0.1:2900/v1/api/auth/status`
+
 #### Remote server mode
 
 When `dev.auto_start_db = false`:
