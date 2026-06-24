@@ -53,13 +53,13 @@ cargo test --test smoke -- --nocapture
 
 # Or inline for a single run
 KALAMDB_SERVER_URL="http://localhost:3000" \
-KALAMDB_ROOT_PASSWORD="mypass" \
+KALAMDB_ROOT_PASSWORD="kalamdb123" \
 cargo test --test smoke -- --nocapture
 ```
 
 **Environment Variables:**
 - `KALAMDB_SERVER_URL` - Server URL (default: `http://127.0.0.1:2900`)
-- `KALAMDB_ROOT_PASSWORD` - Root password (default: `""`)
+- `KALAMDB_ROOT_PASSWORD` - Root password (default: `kalamdb123` for local dev servers)
 
 ### Cluster Test Shortcuts
 
@@ -587,6 +587,13 @@ cargo build --release
 Project-oriented workflow commands such as `kalam init`, `kalam dev`, `kalam link`,
 `kalam schema gen`, `kalam migration create`, `kalam status`, and `kalam deploy` are
 documented in [`DEV.md`](./DEV.md).
+
+When `kalam dev` starts a local server, the generated `kalam/server/server.toml` uses
+`root` / `kalamdb123` by default. Scaffolded `.env` files include the same password for
+local development.
+
+Use `kalam db reset` to delete `kalam/server/data` and `kalam/server/logs` when you want a
+fresh local database on the next `kalam dev`.
 
 Use that guide for:
 

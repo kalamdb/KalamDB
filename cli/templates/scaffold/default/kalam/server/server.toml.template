@@ -16,7 +16,7 @@ log_to_console = true
 [performance]
 
 [auth]
-root_password = "mypass"
+root_password = "{{root_password}}"
 jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
 
 [rate_limit]

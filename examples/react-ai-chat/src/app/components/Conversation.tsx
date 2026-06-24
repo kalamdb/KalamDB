@@ -2,14 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KalamDBClient } from '@kalamdb/client';
 import { Database, MoreVertical, Share2 } from 'lucide-react';
 import type { ChatLiveContext } from '../App';
-import type { approvalActions, conversations, messages } from '../schema.generated';
-import type { ApprovalRow, ConversationRow, MessageRow, TypingTokenRow } from '../schema.generated';
+import type { approval_actions, conversations, messages } from '../schema.generated';
+import type {
+  Approvals as ApprovalRow,
+  Conversations as ConversationRow,
+  Messages as MessageRow,
+  TypingTokens as TypingTokenRow,
+} from '../schema.generated';
 import { ChatComposer } from './ChatComposer';
 import { Messages } from './Messages';
 
 type ConversationsTable = typeof conversations;
 type MessagesTable = typeof messages;
-type ApprovalActionsTable = typeof approvalActions;
+type ApprovalActionsTable = typeof approval_actions;
 
 export type PendingMessage = {
   id: string;
@@ -69,7 +74,7 @@ export function Conversation({
   const conversationId = conversation?.id ?? selectedConversationId;
 
   const confirmedClientIds = useMemo(() => new Set(
-    live.messages.rows.map((message) => message.clientId).filter((clientId): clientId is string => Boolean(clientId)),
+    live.messages.rows.map((message) => message.client_id).filter((clientId): clientId is string => Boolean(clientId)),
   ), [live.messages.rows]);
   const confirmedClientKey = useMemo(() => [...confirmedClientIds].sort().join('|'), [confirmedClientIds]);
 
@@ -95,8 +100,8 @@ export function Conversation({
       id,
       title: titleFromMessage(firstMessage),
       summary: firstMessage.slice(0, 96),
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
     });
     onSelectConversation(id);
     return id;
@@ -126,16 +131,16 @@ export function Conversation({
         );
       } else {
         await live.insert(messagesTable).values({
-          clientId,
-          conversationId: targetConversationId,
-          replyToMessageId: null,
+          client_id: clientId,
+          conversation_id: targetConversationId,
+          reply_to_message_id: null,
           role: 'user',
           body,
           status: 'sent',
           attachment: null,
-          approvalId: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          approval_id: null,
+          created_at: new Date(),
+          updated_at: new Date(),
         });
       }
     } catch (error) {
@@ -148,10 +153,10 @@ export function Conversation({
   const answerApproval = useCallback(async (approvalId: string, action: 'approved' | 'declined') => {
     markApprovalStatus(approvalId, action);
     await live.insert(approvalActionsTable).values({
-      approvalId,
-      conversationId,
+      approval_id: approvalId,
+      conversation_id: conversationId,
       action,
-      createdAt: new Date(),
+      created_at: new Date(),
     });
   }, [approvalActionsTable, conversationId, live, markApprovalStatus]);
 
@@ -189,7 +194,7 @@ export function Conversation({
 function useApprovalCache(client: KalamDBClient, rows: MessageRow[]) {
   const [cache, setCache] = useState<ApprovalCache>({});
   const approvalIds = useMemo(() => Array.from(new Set(
-    rows.map((row) => row.approvalId).filter((approvalId): approvalId is string => Boolean(approvalId)),
+    rows.map((row) => row.approval_id).filter((approvalId): approvalId is string => Boolean(approvalId)),
   )), [rows]);
   const approvalKey = approvalIds.sort().join('|');
 
@@ -237,7 +242,7 @@ function useApprovalCache(client: KalamDBClient, rows: MessageRow[]) {
         ...current,
         [approvalId]: {
           ...entry,
-          approval: { ...entry.approval, status, updatedAt: new Date() },
+          approval: { ...entry.approval, status, updated_at: new Date() },
         },
       };
     });
@@ -259,18 +264,18 @@ function buildMessageViews({
   confirmedClientIds: Set<string>;
   conversationId: string;
 }): MessageView[] {
-  const finalDraftClientIds = new Set(liveRows.map((row) => row.clientId).filter(Boolean));
+  const finalDraftClientIds = new Set(liveRows.map((row) => row.client_id).filter(Boolean));
   const liveViews = liveRows.map((row): MessageView => ({
     id: row.id,
-    clientId: row.clientId,
-    conversationId: row.conversationId,
+    clientId: row.client_id,
+    conversationId: row.conversation_id,
     role: row.role,
     body: row.body,
     status: row.status,
     attachmentName: row.attachment?.name ?? null,
-    approvalId: row.approvalId,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    approvalId: row.approval_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
     pending: false,
   }));
 
@@ -300,23 +305,23 @@ function buildMessageViews({
 function buildDraftMessages(tokens: TypingTokenRow[]): MessageView[] {
   const grouped = new Map<string, TypingTokenRow[]>();
   for (const token of tokens) {
-    grouped.set(token.messageId, [...(grouped.get(token.messageId) ?? []), token]);
+    grouped.set(token.message_id, [...(grouped.get(token.message_id) ?? []), token]);
   }
 
   return [...grouped.entries()].map(([messageId, tokenRows]) => {
-    const ordered = tokenRows.sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const ordered = tokenRows.sort((left, right) => left.created_at.getTime() - right.created_at.getTime());
     const latest = ordered[ordered.length - 1];
     return {
       id: messageId,
       clientId: messageId,
-      conversationId: latest.conversationId,
+      conversationId: latest.conversation_id,
       role: 'assistant',
       body: ordered.map((token) => token.token).join(''),
       status: latest.status,
       attachmentName: null,
       approvalId: null,
-      createdAt: ordered[0].createdAt,
-      updatedAt: latest.createdAt,
+      createdAt: ordered[0].created_at,
+      updatedAt: latest.created_at,
       pending: true,
     } satisfies MessageView;
   });
@@ -325,13 +330,13 @@ function buildDraftMessages(tokens: TypingTokenRow[]): MessageView[] {
 function mapApproval(row: Record<string, unknown>): ApprovalRow {
   return {
     id: cellString(row.id),
-    conversationId: cellString(row.conversation_id),
-    messageId: cellString(row.message_id),
+    conversation_id: cellString(row.conversation_id),
+    message_id: cellString(row.message_id),
     title: cellString(row.title),
     body: cellString(row.body),
     status: cellString(row.status),
-    createdAt: cellDate(row.created_at),
-    updatedAt: cellDate(row.updated_at),
+    created_at: cellDate(row.created_at),
+    updated_at: cellDate(row.updated_at),
   };
 }
 

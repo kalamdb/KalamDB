@@ -288,4 +288,32 @@ mod tests {
         assert_eq!(result, None);
         assert!(!root.join("kalam/migrations").join(DRAFT_MIGRATION_FILE).exists());
     }
+
+    #[test]
+    fn update_draft_migration_accepts_topic_schema_when_baseline_matches_source() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let mut config = minimal_sql_project_config();
+        config.schema.path = Some("chat-app.sql".into());
+        let schema_sql = r#"
+CREATE NAMESPACE IF NOT EXISTS react_ai_chat;
+
+CREATE TABLE IF NOT EXISTS react_ai_chat.messages (
+    id BIGINT PRIMARY KEY,
+    body TEXT NOT NULL
+) WITH (TYPE = 'USER');
+
+CREATE TOPIC IF NOT EXISTS react_ai_chat.agent_messages;
+ALTER TOPIC react_ai_chat.agent_messages ADD SOURCE react_ai_chat.messages ON INSERT;
+"#;
+
+        fs::write(root.join("chat-app.sql"), schema_sql).unwrap();
+        fs::create_dir_all(root.join("kalam/migrations")).unwrap();
+        fs::write(root.join("kalam/.schema-baseline.sql"), schema_sql).unwrap();
+
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let result = update_draft_migration(root, &config, &output).unwrap();
+
+        assert_eq!(result, None);
+    }
 }

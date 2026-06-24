@@ -6,7 +6,7 @@ use crate::{
     error::Result,
     output::WorkflowOutput,
     workflow::{
-        dev::server::write_local_server_config,
+        dev::server::{write_local_server_config, DEFAULT_LOCAL_DEV_ROOT_PASSWORD},
         display_project_path,
         project::{
             config::{KalamProjectConfig, SchemaMode, KALAM_TOML},
@@ -113,7 +113,8 @@ pub(super) fn write_project_scaffold(
         .map(|connection| connection.namespace.as_str())
         .unwrap_or("");
     let env_template = find_scaffold_template_file(".env.example")?;
-    let local_root_password = matches!(server_mode, ServerMode::Local).then_some("mypass");
+    let local_root_password =
+        matches!(server_mode, ServerMode::Local).then_some(DEFAULT_LOCAL_DEV_ROOT_PASSWORD);
     let env_contents = render_template(
         env_template,
         &json!({

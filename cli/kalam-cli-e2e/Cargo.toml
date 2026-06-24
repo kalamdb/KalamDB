@@ -9,6 +9,9 @@ repository.workspace = true
 description = "Server-backed integration tests for kalam-cli (not published)"
 publish = false
 
+[build-dependencies]
+chrono = { workspace = true }
+
 [dev-dependencies]
 kalam-cli = { path = ".." }
 kalam-client = { workspace = true, features = ["native-cli"] }

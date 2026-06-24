@@ -38,6 +38,7 @@ use crate::{
 };
 
 pub const DEFAULT_DEV_SERVER_URL: &str = "http://localhost:2900";
+pub const DEFAULT_LOCAL_DEV_ROOT_PASSWORD: &str = "kalamdb123";
 const SERVER_ARTIFACT_PREFIX: &str = "kalamdb-server";
 const SERVER_RELEASE_BASE_URL_ENV: &str = "KALAMDB_SERVER_RELEASE_BASE_URL";
 const SCAFFOLD_SERVER_CONFIG_PATH: &str = "kalam/server/server.toml";
@@ -101,6 +102,7 @@ pub fn write_local_server_config(
             "port": port,
             "data_path": data_path,
             "logs_path": logs_path,
+            "root_password": DEFAULT_LOCAL_DEV_ROOT_PASSWORD,
         }),
     )?;
     std::fs::write(&config_path, contents)?;
@@ -563,6 +565,9 @@ mod tests {
         assert!(contents.contains("max_queries_per_sec = 100000"));
         assert!(contents.contains("data_path = \"kalam/server/data\""));
         assert!(contents.contains("logs_path = \"kalam/server/logs\""));
+        assert!(contents.contains(&format!(
+            "root_password = \"{DEFAULT_LOCAL_DEV_ROOT_PASSWORD}\""
+        )));
     }
 
     #[test]

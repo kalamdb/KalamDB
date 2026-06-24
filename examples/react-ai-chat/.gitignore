@@ -3,3 +3,6 @@ dist/
 .env
 .env.local
 *.log
+kalam/cli/logs/
+kalam/server/
+kalam/.schema-baseline.sql
