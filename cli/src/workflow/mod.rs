@@ -24,6 +24,7 @@ use crate::{
     output::{WorkflowDisplayMode, WorkflowOutput},
     workflow::{
         db::migrate::apply_migrations_for_db_command,
+        db::reset::reset_local_dev_server_data,
         migration::{
             apply::{load_server_migration_state, save_server_migration_record},
             create::{create_migration, CreateMigrationOptions},
@@ -224,6 +225,12 @@ pub async fn repair_project_migration_mark_applied(
     state.mark_applied(&migration_id);
     save_server_migration_record(&client, state.record(&migration_id).unwrap(), true).await?;
     output.status(format!("marked migration {migration_id} as applied"));
+    Ok(())
+}
+
+pub async fn reset_database(ctx: &WorkflowContext) -> Result<()> {
+    let output = ctx.output();
+    reset_local_dev_server_data(ctx, &output)?;
     Ok(())
 }
 

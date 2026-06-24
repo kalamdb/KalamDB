@@ -156,6 +156,7 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
     assert!(server_toml.contains("[rate_limit]"));
     assert!(server_toml.contains("max_queries_per_sec = 100000"));
     assert!(server_toml.contains("port = 2900"));
+    assert!(server_toml.contains("root_password = \"kalamdb123\""));
 
     let package_json =
         fs::read_to_string(project_dir.join("package.json")).expect("read generated package.json");

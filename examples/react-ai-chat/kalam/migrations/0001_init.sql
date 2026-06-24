@@ -1,3 +1,7 @@
+-- Migration: init
+-- Created: 2026-06-24T00:00:00Z
+
+-- UP
 CREATE NAMESPACE IF NOT EXISTS react_ai_chat;
 
 DROP TABLE IF EXISTS react_ai_chat.approval_actions;
@@ -70,3 +74,12 @@ VALUES ('approval-project-alpha', 'project-alpha', '1001', 'Action Required', 'R
 
 INSERT INTO react_ai_chat.messages (id, client_id, conversation_id, role, body, status, approval_id)
 VALUES (1001, NULL, 'project-alpha', 'assistant', 'I analyzed the historical datasets and generated the quarterly summary chart. The European market outliers are isolated and ready for review.', 'complete', 'approval-project-alpha');
+
+-- DOWN
+DROP TOPIC react_ai_chat.agent_actions;
+DROP TOPIC react_ai_chat.agent_messages;
+DROP TABLE IF EXISTS react_ai_chat.approval_actions;
+DROP TABLE IF EXISTS react_ai_chat.typing_tokens;
+DROP TABLE IF EXISTS react_ai_chat.approvals;
+DROP TABLE IF EXISTS react_ai_chat.messages;
+DROP TABLE IF EXISTS react_ai_chat.conversations;

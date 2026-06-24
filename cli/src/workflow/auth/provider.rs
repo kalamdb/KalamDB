@@ -4,7 +4,7 @@ use crate::{
     error::{CLIError, Result},
     workflow::{
         auth::credentials::open_credentials_store,
-        dev::server::local_server_root_password,
+        dev::server::{local_server_root_password, DEFAULT_LOCAL_DEV_ROOT_PASSWORD},
         project::{
             connection_url::is_loopback_server_url,
             resolve::{resolve_kalam_profile, ResolvedEnvironment},
@@ -47,7 +47,9 @@ pub(crate) fn resolve_workflow_auth_provider(
             return Ok(AuthProvider::system_user_auth(password));
         }
         if is_loopback_server_url(&environment.url) {
-            return Ok(AuthProvider::system_user_auth("mypass".to_string()));
+            return Ok(AuthProvider::system_user_auth(
+                DEFAULT_LOCAL_DEV_ROOT_PASSWORD.to_string(),
+            ));
         }
     }
 

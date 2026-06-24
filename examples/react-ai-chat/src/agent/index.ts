@@ -10,9 +10,24 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(__dirname, '../../.env.local'), quiet: true });
 loadEnv({ path: resolve(__dirname, '../../.env'), quiet: true });
 
-const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
-const KALAMDB_USER = process.env.KALAMDB_USER ?? 'admin';
-const KALAMDB_PASSWORD = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
+type KalamConnectionEnv = Partial<Record<'KALAM_URL' | 'KALAM_USER' | 'KALAM_PASSWORD', string>>;
+
+export function resolveKalamConnection(env: KalamConnectionEnv = process.env): {
+  url: string;
+  user: string;
+  password: string;
+} {
+  return {
+    url: env.KALAM_URL ?? 'http://127.0.0.1:2900',
+    user: env.KALAM_USER ?? 'root',
+    password: env.KALAM_PASSWORD ?? 'kalamdb123',
+  };
+}
+
+const connection = resolveKalamConnection();
+const KALAM_URL = connection.url;
+const KALAM_USER = connection.user;
+const KALAM_PASSWORD = connection.password;
 const MESSAGE_TOPIC = 'react_ai_chat.agent_messages';
 const ACTION_TOPIC = 'react_ai_chat.agent_actions';
 const STREAM_DELAY_MS = 1_000;
@@ -36,7 +51,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function runSqlAsUser(client: KalamDBClient, sql: string, params?: unknown[]): Promise<void> {
-  await client.executeAsUser(sql, validUser(KALAMDB_USER), params);
+  await client.executeAsUser(sql, validUser(KALAM_USER), params);
 }
 
 async function insertTypingToken(
@@ -106,7 +121,7 @@ async function updateApproval(client: KalamDBClient, approvalId: string, status:
 
 async function readApproval(client: KalamDBClient, approvalId: string): Promise<TopicRow | null> {
   const rows = await client.queryAll(
-    `EXECUTE AS USER '${validUser(KALAMDB_USER)}' (SELECT * FROM react_ai_chat.approvals WHERE id = $1)`,
+    `EXECUTE AS USER '${validUser(KALAM_USER)}' (SELECT * FROM react_ai_chat.approvals WHERE id = $1)`,
     [approvalId],
   );
   const row = rows[0];
@@ -198,14 +213,14 @@ async function handleApprovalAction(client: KalamDBClient, row: TopicRow): Promi
 
 export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<void> {
   const client = createConsumerClient({
-    url: KALAMDB_URL,
-    authProvider: async () => Auth.basic(KALAMDB_USER, KALAMDB_PASSWORD),
+    url: KALAM_URL,
+    authProvider: async () => Auth.basic(KALAM_USER, KALAM_PASSWORD),
   });
   const sqlClient = client as unknown as KalamDBClient;
 
-  console.log(`[react-ai-chat-agent] starting (url=${KALAMDB_URL}, user=${KALAMDB_USER})`);
+  console.log(`[react-ai-chat-agent] starting (url=${KALAM_URL}, user=${KALAM_USER})`);
   console.log(`[react-ai-chat-agent] message topic=${MESSAGE_TOPIC}  action topic=${ACTION_TOPIC}`);
-  console.log(`[react-ai-chat-agent] connecting to KalamDB at ${KALAMDB_URL} ...`);
+  console.log(`[react-ai-chat-agent] connecting to KalamDB at ${KALAM_URL} ...`);
 
   let awaitingMessageReconnect = false;
   let awaitingActionReconnect = false;
@@ -215,7 +230,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       client,
       name: 'react-ai-chat-message-agent',
       topic: MESSAGE_TOPIC,
-      groupId: process.env.KALAMDB_GROUP ?? 'react-ai-chat-message-agent',
+      groupId: process.env.KALAM_GROUP ?? 'react-ai-chat-message-agent',
       start: 'earliest',
       batchSize: 10,
       timeoutSeconds: 30,
@@ -223,7 +238,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       onChange: async (_ctx, change) => handleUserMessage(sqlClient, change.data),
       onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
         if (!awaitingMessageReconnect) {
-          console.warn(`[react-ai-chat-agent] messages: cannot reach KalamDB at ${KALAMDB_URL}: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(`[react-ai-chat-agent] messages: cannot reach KalamDB at ${KALAM_URL}: ${error instanceof Error ? error.message : String(error)}`);
           awaitingMessageReconnect = true;
         }
         const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;
@@ -242,7 +257,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       client,
       name: 'react-ai-chat-action-agent',
       topic: ACTION_TOPIC,
-      groupId: process.env.KALAMDB_ACTION_GROUP ?? 'react-ai-chat-action-agent',
+      groupId: process.env.KALAM_ACTION_GROUP ?? 'react-ai-chat-action-agent',
       start: 'earliest',
       batchSize: 10,
       timeoutSeconds: 30,
@@ -250,7 +265,7 @@ export async function startReactAiChatAgent(stopSignal?: AbortSignal): Promise<v
       onChange: async (_ctx, change) => handleApprovalAction(sqlClient, change.data),
       onConnectionRetry: ({ error, attempt, maxAttempts, backoffMs }) => {
         if (!awaitingActionReconnect) {
-          console.warn(`[react-ai-chat-agent] actions: cannot reach KalamDB at ${KALAMDB_URL}: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(`[react-ai-chat-agent] actions: cannot reach KalamDB at ${KALAM_URL}: ${error instanceof Error ? error.message : String(error)}`);
           awaitingActionReconnect = true;
         }
         const attemptLabel = maxAttempts ? `${attempt}/${maxAttempts}` : `${attempt}`;

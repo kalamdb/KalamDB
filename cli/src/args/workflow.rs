@@ -266,7 +266,13 @@ pub struct DbArgs {
 pub enum DbCommand {
     /// Apply the committed migration history to the linked database
     Migrate(DbMigrateArgs),
+
+    /// Remove local dev server data so the next `kalam dev` starts with an empty database
+    Reset(DbResetArgs),
 }
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct DbResetArgs {}
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct DbMigrateArgs {}

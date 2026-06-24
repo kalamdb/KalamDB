@@ -142,6 +142,7 @@ async fn handle_db(cli: &Cli, args: &DbArgs) -> Result<()> {
 
     match &args.command {
         DbCommand::Migrate(_) => workflow::migrate_database(&ctx).await,
+        DbCommand::Reset(_) => workflow::reset_database(&ctx).await,
     }
 }
 

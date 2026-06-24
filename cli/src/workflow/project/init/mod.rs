@@ -272,7 +272,7 @@ mod tests {
         assert!(env_contents.contains("KALAM_PROFILE=kalam-dev"));
         assert!(env_contents.contains("KALAM_NAMESPACE=demo_app"));
         assert!(env_contents.contains("KALAM_USER=root"));
-        assert!(env_contents.contains("KALAM_PASSWORD=mypass"));
+        assert!(env_contents.contains("KALAM_PASSWORD=kalamdb123"));
 
         let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
         assert!(gitignore.lines().any(|line| line.trim() == ".env"));

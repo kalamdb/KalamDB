@@ -15,6 +15,7 @@ The workflow commands covered here are:
 - `kalam migration create`
 - `kalam migration status`
 - `kalam db migrate`
+- `kalam db reset`
 - `kalam dev`
 - `kalam status`
 - `kalam deploy`
@@ -384,6 +385,34 @@ It does not yet execute the SQL against a live server.
 kalam db migrate
 ```
 
+### `kalam db reset`
+
+Clears local dev server state under `kalam/server/` so the next `kalam dev` starts with an
+empty database.
+
+#### Options
+
+- `--project-dir <PATH>`
+- `--env <ENV>`
+
+#### Behavior
+
+- removes `kalam/server/data` when present
+- removes `kalam/server/logs` when present
+- keeps `kalam/server/server.toml`, migration files, and schema baseline
+- prints each removed directory (or reports when nothing was present)
+
+Stop `kalam dev` first if it is running, so RocksDB files are not locked.
+
+After reset, run `kalam dev` again. Pending migrations re-apply against the fresh server.
+
+#### Example
+
+```bash
+kalam db reset
+kalam dev
+```
+
 ### `kalam dev`
 
 Runs the local development orchestration loop.
@@ -428,8 +457,21 @@ The generated local server config uses:
 
 - host `127.0.0.1`
 - the port from the configured environment URL
-- storage under `.kalam/data`
-- logs under `.kalam/logs`
+- storage under `kalam/server/data`
+- logs under `kalam/server/logs`
+- default credentials `root` / `kalamdb123` in `kalam/server/server.toml`
+
+Scaffolded `.env` and `.env.example` files include `KALAM_USER=root` and
+`KALAM_PASSWORD=kalamdb123` for local mode.
+
+#### Accessing the local server
+
+While `kalam dev` is running, the managed server uses your dev URL (default
+`http://localhost:2900`). Sign in with **`root` / `kalamdb123`**:
+
+- Admin UI: http://localhost:2900/ui
+- CLI: `kalam --url http://127.0.0.1:2900 --user root --password kalamdb123`
+- Health: `curl http://127.0.0.1:2900/v1/api/auth/status`
 
 #### Remote server mode
 

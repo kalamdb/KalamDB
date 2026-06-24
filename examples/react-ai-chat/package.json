@@ -5,11 +5,11 @@
   "type": "module",
   "description": "KalamDB React live-query AI chat example with conversations, files, typing, tools, and approvals",
   "scripts": {
-    "setup": "node setup.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "agent": "tsx src/agent/index.ts",
+    "test:e2e": "playwright test tests/kalam-dev.e2e.spec.mjs",
     "test": "tsc && tsx --test tests/agent.test.ts && node --test tests/chat.spec.mjs"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "react-dom": "^19.2.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^25.7.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

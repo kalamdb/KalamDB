@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::{
     error::{CLIError, Result},
     workflow::{
-        dev::server::local_server_root_password,
+        dev::server::{local_server_root_password, DEFAULT_LOCAL_DEV_ROOT_PASSWORD},
         project::{
             connection_url::is_loopback_server_url,
             guidance::dev_auth_guidance_message,
@@ -23,7 +23,7 @@ pub(crate) fn resolve_local_dev_root_password(
     }
 
     if is_loopback_server_url(server_url) {
-        return Ok("mypass".to_string());
+        return Ok(DEFAULT_LOCAL_DEV_ROOT_PASSWORD.to_string());
     }
 
     Err(workflow_auth_config_error(

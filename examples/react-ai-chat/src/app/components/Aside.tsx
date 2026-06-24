@@ -1,5 +1,5 @@
 import { HelpCircle, MessageSquarePlus, Settings } from 'lucide-react';
-import type { ConversationRow } from '../schema.generated';
+import type { Conversations as ConversationRow } from '../schema.generated';
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
@@ -44,7 +44,7 @@ export function Aside({
                 <strong>{conversation.title}</strong>
                 <small>{conversation.summary}</small>
               </span>
-              <time>{dateFormatter.format(conversation.updatedAt)}</time>
+              <time>{dateFormatter.format(conversation.updated_at)}</time>
             </button>
           ))}
           {conversations.length === 0 ? <p className="aside-empty">No conversations yet</p> : null}

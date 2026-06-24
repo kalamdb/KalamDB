@@ -8,7 +8,10 @@
 pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// UTC build timestamp captured at compile time.
-pub const CLI_BUILD_DATE: &str = env!("BUILD_DATE");
+pub const CLI_BUILD_DATE: &str = match option_env!("BUILD_DATE") {
+    Some(value) => value,
+    None => "unknown",
+};
 
 pub mod completer;
 pub mod config;

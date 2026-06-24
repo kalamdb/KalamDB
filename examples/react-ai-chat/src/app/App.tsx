@@ -4,8 +4,8 @@ import { asc, desc, eq } from 'drizzle-orm';
 import { getExampleClient, isExampleDemoMode } from './client';
 import { Aside } from './components/Aside';
 import { Conversation } from './components/Conversation';
-import { approvalActions, conversations, messages, typingTokens } from './schema.generated';
-import type { ConversationRow } from './schema.generated';
+import { approval_actions as approvalActions, conversations, messages, typing_tokens as typingTokens } from './schema.generated';
+import type { Conversations as ConversationRow } from './schema.generated';
 
 const SELECTED_CONVERSATION_KEY = 'kalamdb-react-ai-chat-selected-v3';
 const DEFAULT_CONVERSATION_ID = 'project-alpha';
@@ -29,19 +29,19 @@ export function App() {
   const queries = useMemo(() => ({
     conversations: {
       table: conversations,
-      orderBy: (table: typeof conversations) => desc(table.updatedAt),
+      orderBy: (table: typeof conversations) => desc(table.updated_at),
       limit: 50,
     },
     messages: {
       table: messages,
-      where: (table: typeof messages) => eq(table.conversationId, selectedConversationId),
-      orderBy: (table: typeof messages) => asc(table.createdAt),
+      where: (table: typeof messages) => eq(table.conversation_id, selectedConversationId),
+      orderBy: (table: typeof messages) => asc(table.created_at),
       deps: [selectedConversationId],
     },
     typingTokens: {
       table: typingTokens,
-      where: (table: typeof typingTokens) => eq(table.conversationId, selectedConversationId),
-      orderBy: (table: typeof typingTokens) => asc(table.createdAt),
+      where: (table: typeof typingTokens) => eq(table.conversation_id, selectedConversationId),
+      orderBy: (table: typeof typingTokens) => asc(table.created_at),
       deps: [selectedConversationId],
     },
   }), [selectedConversationId]);
@@ -87,8 +87,8 @@ function ChatWorkspace({
       id,
       title: 'New chat',
       summary: 'Fresh conversation',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
     });
     onSelectConversation(id);
   };
