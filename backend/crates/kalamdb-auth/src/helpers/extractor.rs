@@ -35,14 +35,11 @@
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
 use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
-use jsonwebtoken::Algorithm;
-use kalamdb_commons::{models::ConnectionInfo, AuthType, Role, UserId};
+use kalamdb_commons::models::ConnectionInfo;
 
 use crate::{
     errors::error::AuthError,
-    helpers::authorization_header::extract_bearer_token,
     helpers::ip_extractor::extract_client_ip_secure,
-    providers::{jwt_auth, jwt_config::JwtConfig},
     repository::user_repo::UserRepository,
     services::unified::{authenticate, AuthRequest},
 };
@@ -192,9 +189,6 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::providers::jwt_auth::{
-        create_and_sign_refresh_token_with_auth_type, create_and_sign_token_with_auth_type,
-    };
 
     #[test]
     fn test_auth_extract_error_codes() {
@@ -270,98 +264,6 @@ mod tests {
         assert_eq!(body["error"]["code"], "INVALID_CREDENTIALS");
         assert_eq!(body["error"]["message"], "Invalid credentials");
     }
-
-    #[test]
-    fn stateless_fast_path_accepts_internal_oidc_user_access_token() {
-        let config = JwtConfig::for_tests(true, Role::User);
-        let (token, _) = create_and_sign_token_with_auth_type(
-            &UserId::new("oidc_user"),
-            &Role::User,
-            Some("oidc@example.com"),
-            None,
-            &config.secret,
-            AuthType::Oidc,
-        )
-        .expect("test token should be created");
-
-        let session = try_build_stateless_oidc_user_session(
-            &format!("Bearer {token}"),
-            &ConnectionInfo::new(Some("127.0.0.1".to_string())),
-            None,
-            &config,
-        )
-        .expect("fast path should succeed")
-        .expect("oidc user token should use fast path");
-
-        assert_eq!(session.user_id().as_str(), "oidc_user");
-        assert_eq!(session.role(), Role::User);
-        assert_eq!(session.auth_method(), kalamdb_session::AuthMethod::Bearer);
-    }
-
-    #[test]
-    fn stateless_fast_path_skips_non_oidc_or_non_user_tokens() {
-        let config = JwtConfig::for_tests(true, Role::User);
-        let (password_token, _) = create_and_sign_token_with_auth_type(
-            &UserId::new("password_user"),
-            &Role::User,
-            Some("password@example.com"),
-            None,
-            &config.secret,
-            AuthType::Password,
-        )
-        .expect("password token should be created");
-        let (dba_token, _) = create_and_sign_token_with_auth_type(
-            &UserId::new("dba_user"),
-            &Role::Dba,
-            Some("dba@example.com"),
-            None,
-            &config.secret,
-            AuthType::Oidc,
-        )
-        .expect("dba token should be created");
-
-        assert!(try_build_stateless_oidc_user_session(
-            &format!("Bearer {password_token}"),
-            &ConnectionInfo::new(Some("127.0.0.1".to_string())),
-            None,
-            &config,
-        )
-        .expect("password token should parse")
-        .is_none());
-
-        assert!(try_build_stateless_oidc_user_session(
-            &format!("Bearer {dba_token}"),
-            &ConnectionInfo::new(Some("127.0.0.1".to_string())),
-            None,
-            &config,
-        )
-        .expect("dba token should parse")
-        .is_none());
-    }
-
-    #[test]
-    fn stateless_fast_path_rejects_refresh_tokens() {
-        let config = JwtConfig::for_tests(true, Role::User);
-        let (refresh_token, _) = create_and_sign_refresh_token_with_auth_type(
-            &UserId::new("oidc_user"),
-            &Role::User,
-            Some("oidc@example.com"),
-            None,
-            &config.secret,
-            AuthType::Oidc,
-        )
-        .expect("refresh token should be created");
-
-        let err = try_build_stateless_oidc_user_session(
-            &format!("Bearer {refresh_token}"),
-            &ConnectionInfo::new(Some("127.0.0.1".to_string())),
-            None,
-            &config,
-        )
-        .expect_err("refresh tokens must be rejected");
-
-        assert!(matches!(err, AuthError::InvalidCredentials(_)));
-    }
 }
 
 /// Actix-web extractor wrapper for `kalamdb_session::AuthSession`.
@@ -392,69 +294,6 @@ impl From<AuthSessionExtractor> for kalamdb_session::AuthSession {
     fn from(extractor: AuthSessionExtractor) -> Self {
         extractor.0
     }
-}
-
-fn try_build_stateless_oidc_user_session(
-    auth_header: &str,
-    connection_info: &ConnectionInfo,
-    request_id: Option<Arc<str>>,
-    config: &JwtConfig,
-) -> Result<Option<kalamdb_session::AuthSession>, AuthError> {
-    let token = extract_bearer_token(auth_header)?;
-    let (alg, _header_typ, issuer) = jwt_auth::extract_header_claims_unverified(token)?;
-
-    if !jwt_auth::is_internal_issuer(&issuer) {
-        return Ok(None);
-    }
-
-    jwt_auth::verify_issuer(&issuer, &config.trusted_issuers)?;
-
-    match alg {
-        Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512 => {},
-        _ => {
-            return Err(AuthError::MalformedAuthorization(
-                "Internal 'kalamdb' tokens must use HS256, not an asymmetric algorithm."
-                    .to_string(),
-            ));
-        },
-    }
-
-    let claims = jwt_auth::validate_jwt_token(token, &config.secret, &config.trusted_issuers)?;
-
-    match claims.token_type {
-        Some(jwt_auth::TokenType::Access) => {},
-        Some(jwt_auth::TokenType::Refresh) => {
-            return Err(AuthError::InvalidCredentials(
-                "Refresh tokens cannot be used for API authentication".to_string(),
-            ));
-        },
-        None => {
-            return Err(AuthError::InvalidCredentials(
-                "Token missing required token_type claim".to_string(),
-            ));
-        },
-    }
-
-    if !matches!(claims.auth_type, Some(AuthType::Oidc)) || claims.role != Some(Role::User) {
-        return Ok(None);
-    }
-
-    let user_id = UserId::try_new(claims.sub).map_err(|_| {
-        AuthError::MalformedAuthorization("Token contains an invalid user claim".to_string())
-    })?;
-
-    let mut session = kalamdb_session::AuthSession::with_auth_details(
-        user_id,
-        Role::User,
-        connection_info.clone(),
-        kalamdb_session::AuthMethod::Bearer,
-    );
-
-    if let Some(rid) = request_id {
-        session = session.with_request_id(rid);
-    }
-
-    Ok(Some(session))
 }
 
 impl FromRequest for AuthSessionExtractor {
@@ -519,26 +358,6 @@ impl FromRequest for AuthSessionExtractor {
                 .get("X-Request-ID")
                 .and_then(|h| h.to_str().ok())
                 .map(Arc::<str>::from);
-
-            let jwt_config = crate::providers::jwt_config::get_jwt_config();
-            match try_build_stateless_oidc_user_session(
-                &auth_header,
-                &connection_info,
-                request_id.clone(),
-                &jwt_config,
-            ) {
-                Ok(Some(session)) => return Ok(AuthSessionExtractor(session)),
-                Ok(None) => {},
-                Err(e) => {
-                    let took = start_time.elapsed().as_secs_f64() * 1000.0;
-                    tracing::debug!(
-                        error = %e,
-                        took_ms = took,
-                        "HTTP bearer authentication fast path failed"
-                    );
-                    return Err(AuthExtractError::new(e, took));
-                },
-            }
 
             // Build auth request and authenticate
             let auth_request = AuthRequest::Header(auth_header);
