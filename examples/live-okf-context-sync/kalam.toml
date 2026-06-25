@@ -11,6 +11,10 @@ namespace = "okf_sync"
 mode = "sql"
 path = "kalam/schema.sql"
 watch = true
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/schema.generated.ts"
 
 [migrations]
 auto_create = true
@@ -18,13 +22,15 @@ auto_create = true
 [dev]
 auto_start_db = true
 apply_schema = true
-generate_types = false
+generate_types = true
 watch = true
 
+# The agent is a one-shot demo (`npm run dev:agent`), so it is intentionally not
+# a managed dev process. `kalam dev` keeps the database, schema/type generation,
+# the sync worker, and the web UI running.
 [dev.processes]
 sync = "npm run dev:sync"
 web = "npm run dev:web"
-agent = "npm run dev:agent"
 
 [logging]
 file = true

@@ -71,14 +71,14 @@ repository = "https://github.com/kalamdb/KalamDB"
 # Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0.150"
-handlebars = "6.3.2"
+handlebars = "6.4.2"
 
 # Error handling
 thiserror = "2.0.18"
 anyhow = "1.0.102"
 
 # Logging
-log = "0.4.32"
+log = "0.4.33"
 
 # Async runtime
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal", "parking_lot"] }
@@ -97,8 +97,8 @@ tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"]
 
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
 aws-lc-rs = { version = "1.17.0", default-features = false }
-rustls = { version = "0.23.40", default-features = false }
-quinn-proto = { version = "0.11.14", default-features = false }
+rustls = { version = "0.23.41", default-features = false }
+quinn-proto = { version = "0.11.15", default-features = false }
 rustls-webpki = { version = "0.103.13", default-features = false }
 
 # Time handling
@@ -132,7 +132,7 @@ actix-files = "0.6.10"
 actix-multipart = "0.7"
 
 # UUID generation
-uuid = { version = "1.23.3", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.23.4", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.5.0"
@@ -152,7 +152,7 @@ dotenv = "0.15"
 clap = { version = "4.6.1", features = ["derive", "color"] }
 console = { version = "0.16.3", default-features = false, features = ["unicode-width"] }
 humantime = "2.3.0"
-rustyline = { version = "18.0.0" }
+rustyline = { version = "18.0.1" }
 shlex = "2.0.1"
 
 # System
@@ -217,9 +217,9 @@ dashmap = "6.2.1"
 bytes = "1.12.0"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
-cc = "1.2.64"
+cc = "1.2.65"
 proc-macro2 = "1.0.106"
-quote = "1.0.45"
+quote = "1.0.46"
 syn = { version = "2.0.118", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
@@ -237,12 +237,12 @@ storekey = "0.11"
 moka = { version = "0.12.15", features = ["future", "sync"] }
 ntest = "0.9.5"
 ipnet = "2.11.0"
-wasm-bindgen = { version = "0.2.125" }
-wasm-bindgen-futures = { version = "0.4.75" }
-js-sys = { version = "0.3.102" }
+wasm-bindgen = { version = "0.2.126" }
+wasm-bindgen-futures = { version = "0.4.76" }
+js-sys = { version = "0.3.103" }
 libc = "0.2.186"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
-web-sys = { version = "0.3.102" }
+web-sys = { version = "0.3.103" }
 tsify = { version = "0.5.6", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6.5"
 flate2 = "1.1.9"
@@ -262,7 +262,7 @@ tokio-postgres = "0.7.18"
 # Tracing / observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
-tracing-actix-web = "0.7.21"
+tracing-actix-web = "0.7.22"
 tracing-log = "0.2"
 tracing-opentelemetry = "0.33.0"
 opentelemetry = "0.32.0"

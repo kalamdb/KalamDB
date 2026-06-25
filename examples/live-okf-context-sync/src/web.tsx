@@ -1,8 +1,10 @@
 import { createRoot } from 'react-dom/client';
 import { useEffect, useMemo, useState } from 'react';
-import type { RowData } from '@kalamdb/client';
-import { Auth, createClient } from '@kalamdb/client';
-import { LIVE_FILES_SQL, NAMESPACE } from './client.js';
+import { desc, eq } from 'drizzle-orm';
+import { liveTable } from '@kalamdb/orm';
+import { Auth, createClient, type SubscriptionErrorEvent } from '@kalamdb/client';
+import { createDb, NAMESPACE } from './client.js';
+import { context_files, type ContextFiles } from './schema.generated.js';
 import './web.css';
 
 type UserName = 'alice' | 'bob';
@@ -23,28 +25,16 @@ const USERS: Record<UserName, { password: string; folder: string }> = {
   bob: { password: 'bob123', folder: 'context/bob' },
 };
 
-function readText(row: RowData, key: string): string {
-  return row[key]?.asString() ?? '';
-}
-
-function readBool(row: RowData, key: string): boolean {
-  return row[key]?.asBool() ?? false;
-}
-
-function readInt(row: RowData, key: string): number {
-  return row[key]?.asInt() ?? 0;
-}
-
-function toFileRow(row: RowData): FileRow {
+function toFileRow(row: ContextFiles): FileRow {
   return {
-    path: readText(row, 'path'),
-    sha256: readText(row, 'sha256'),
-    mimeType: readText(row, 'mime_type'),
-    sizeBytes: readInt(row, 'size_bytes'),
-    isConflict: readBool(row, 'is_conflict'),
-    canonicalPath: readText(row, 'canonical_path') || null,
-    deleted: readBool(row, 'deleted'),
-    updatedAt: readText(row, 'updated_at'),
+    path: row.path,
+    sha256: row.sha256,
+    mimeType: row.mime_type,
+    sizeBytes: Number(row.size_bytes ?? 0),
+    isConflict: row.is_conflict ?? false,
+    canonicalPath: row.canonical_path,
+    deleted: row.deleted ?? false,
+    updatedAt: row.updated_at ? row.updated_at.toISOString() : '',
   };
 }
 
@@ -109,8 +99,9 @@ function App() {
       setPreviewPath(null);
 
       try {
-        unsubscribe = await client.live(
-          LIVE_FILES_SQL,
+        unsubscribe = await liveTable(
+          client,
+          context_files,
           (liveRows) => {
             if (!active) {
               return;
@@ -120,7 +111,8 @@ function App() {
             setStatus('live');
           },
           {
-            onError: (event) => {
+            orderBy: desc(context_files.updated_at),
+            onError: (event: SubscriptionErrorEvent) => {
               if (!active) {
                 return;
               }
@@ -167,18 +159,18 @@ function App() {
 
     try {
       await client.initialize();
+      const db = createDb(client);
       const login = await client.login();
-      const queryRows = await client.queryRows(
-        `SELECT path, file_ref FROM okf_sync.context_files WHERE path = $1`,
-        'okf_sync.context_files',
-        [row.path],
-      );
-      const fileRef = queryRows[0]?.file('file_ref');
+      const queryRows = await db
+        .select({ file_ref: context_files.file_ref })
+        .from(context_files)
+        .where(eq(context_files.path, row.path));
+      const fileRef = queryRows[0]?.file_ref;
       if (!fileRef) {
         throw new Error('missing file_ref');
       }
 
-      const response = await fetch(fileRef.downloadUrl(), {
+      const response = await fetch(fileRef.getDownloadUrl(url, NAMESPACE, 'context_files'), {
         headers: {
           Authorization: `Bearer ${login.access_token}`,
         },

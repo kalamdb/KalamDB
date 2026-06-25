@@ -1238,6 +1238,13 @@ run_supplementary_suites() {
     run_npm_suite "examples/react-ai-chat" "Running react-ai-chat example tests" "test"
     run_npm_suite "examples/simple-typescript" "Running simple-typescript Playwright tests" "test"
     run_npm_suite "examples/summarizer-agent" "Running summarizer-agent example tests" "test"
+
+    step "Running live-okf-context-sync example tests (with integration)"
+    (
+        cd "$REPO_ROOT/examples/live-okf-context-sync"
+        npm_install_dir
+        KALAM_INTEGRATION=1 KALAM_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" npm run test
+    )
     run_npm_suite "ui" "Running admin UI tests" "test:ci"
     run_npm_suite \
         "ui" \

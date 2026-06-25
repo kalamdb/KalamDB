@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { KalamDBClient, RowData } from '@kalamdb/client';
-import { TABLE } from './client.js';
+import type { KalamDBClient } from '@kalamdb/client';
+import { and, eq, sql } from 'drizzle-orm';
+import type { KalamDb } from './client.js';
+import { NAMESPACE, TABLE } from './client.js';
+import { context_files } from './schema.generated.js';
+
+const TABLE_NAME = 'context_files';
 
 export type UploadedFile = {
   sha256: string;
@@ -26,6 +31,11 @@ export function guessMimeType(relativePath: string): string {
   return 'application/octet-stream';
 }
 
+/**
+ * Uploads file bytes and upserts the metadata row in one request. FILE columns
+ * accept bytes through `queryWithFiles` + the `FILE("upload")` marker, so this
+ * write stays on the raw client even though reads use the typed ORM.
+ */
 export async function upsertMetadata(
   client: KalamDBClient,
   input: {
@@ -78,54 +88,49 @@ export async function upsertMetadata(
   );
 }
 
-export async function markDeleted(client: KalamDBClient, relativePath: string): Promise<void> {
-  await client.query(
-    `UPDATE ${TABLE}
-     SET deleted = true, updated_at = NOW()
-     WHERE path = $1`,
-    [relativePath],
-  );
+export async function markDeleted(db: KalamDb, relativePath: string): Promise<void> {
+  await db
+    .update(context_files)
+    .set({ deleted: true, updated_at: sql`NOW()` })
+    .where(eq(context_files.path, relativePath));
 }
 
-export async function fetchServerSha256(
-  client: KalamDBClient,
-  relativePath: string,
-): Promise<string | null> {
-  const rows = await client.queryAll(
-    `SELECT sha256, deleted FROM ${TABLE} WHERE path = $1`,
-    [relativePath],
-  );
+export async function fetchServerSha256(db: KalamDb, relativePath: string): Promise<string | null> {
+  const rows = await db
+    .select({ sha256: context_files.sha256, deleted: context_files.deleted })
+    .from(context_files)
+    .where(eq(context_files.path, relativePath));
 
   const row = rows[0];
-  if (!row || row.deleted?.asBool()) {
+  if (!row || row.deleted) {
     return null;
   }
 
-  return row.sha256?.asString() ?? null;
+  return row.sha256 ?? null;
 }
 
 export async function downloadFileText(
-  client: KalamDBClient,
+  db: KalamDb,
+  baseUrl: string,
   relativePath: string,
   accessToken: string,
 ): Promise<string> {
-  const rows = await client.queryRows(
-    `SELECT path, file_ref FROM ${TABLE} WHERE path = $1 AND deleted = false`,
-    TABLE,
-    [relativePath],
-  );
+  const rows = await db
+    .select({ path: context_files.path, file_ref: context_files.file_ref })
+    .from(context_files)
+    .where(and(eq(context_files.path, relativePath), eq(context_files.deleted, false)));
 
   const row = rows[0];
   if (!row) {
     throw new Error(`missing file row for ${relativePath}`);
   }
 
-  const fileRef = row.file('file_ref');
+  const fileRef = row.file_ref;
   if (!fileRef) {
     throw new Error(`missing file_ref for ${relativePath}`);
   }
 
-  const response = await fetch(fileRef.downloadUrl(), {
+  const response = await fetch(fileRef.getDownloadUrl(baseUrl, NAMESPACE, TABLE_NAME), {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },

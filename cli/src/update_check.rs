@@ -309,6 +309,29 @@ impl PartialOrd for PrereleasePart {
 mod tests {
     use super::*;
 
+    fn adjacent_core_version(delta: i64) -> String {
+        let core = CLI_VERSION
+            .split_once('-')
+            .map_or(CLI_VERSION, |(core, _)| core);
+        let mut parts = core
+            .split('.')
+            .map(|part| part.parse::<i64>().unwrap_or(0))
+            .collect::<Vec<_>>();
+        parts.resize(3, 0);
+
+        if delta.is_positive() {
+            parts[2] += delta;
+        } else if parts[2] > 0 {
+            parts[2] += delta;
+        } else if parts[1] > 0 {
+            parts[1] += delta;
+        } else {
+            parts[0] = (parts[0] + delta).max(0);
+        }
+
+        format!("{}.{}.{}", parts[0], parts[1], parts[2])
+    }
+
     #[test]
     fn version_comparison_handles_core_versions() {
         assert!(version_is_newer("0.5.2", "0.5.1"));
@@ -377,8 +400,11 @@ mod tests {
 
     #[test]
     fn update_needed_for_release_prefers_version_then_build_date() {
-        assert!(update_needed_for_release("0.5.3", None));
-        assert!(!update_needed_for_release("0.5.1", Some("2099-01-01 00:00:00 UTC")));
+        assert!(update_needed_for_release(&adjacent_core_version(1), None));
+        assert!(!update_needed_for_release(
+            &adjacent_core_version(-1),
+            Some("2099-01-01 00:00:00 UTC")
+        ));
         assert!(update_needed_for_release(CLI_VERSION, Some("2099-01-01 00:00:00 UTC")));
         assert!(!update_needed_for_release(CLI_VERSION, Some("2000-01-01 00:00:00 UTC")));
     }

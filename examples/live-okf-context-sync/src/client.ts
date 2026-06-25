@@ -1,7 +1,13 @@
 import { Auth, createClient, type KalamDBClient } from '@kalamdb/client';
+import { configureKalamOrm, kalamDriver } from '@kalamdb/orm';
+import { drizzle } from 'drizzle-orm/pg-proxy';
 
 export const NAMESPACE = 'okf_sync';
 export const TABLE = `${NAMESPACE}.context_files`;
+
+// The generated schema uses unqualified table names (single-namespace codegen),
+// so resolve them through the okf_sync namespace once at module load.
+configureKalamOrm({ namespace: NAMESPACE });
 
 export type KalamConnection = {
   url: string;
@@ -28,8 +34,14 @@ export function createKalamClient(connection: KalamConnection): KalamDBClient {
   });
 }
 
-export const LIVE_FILES_SQL = [
-  'SELECT path, sha256, mime_type, size_bytes, is_conflict, canonical_path, deleted, updated_at',
-  `FROM ${TABLE}`,
-  'ORDER BY updated_at DESC',
-].join(' ');
+/**
+ * Drizzle database bound to a KalamDB connection. Use it for typed reads,
+ * updates, and the live table subscription. File byte uploads still go through
+ * the raw client (`queryWithFiles`) because the ORM driver speaks SQL, not
+ * multipart uploads.
+ */
+export function createDb(client: KalamDBClient) {
+  return drizzle(kalamDriver(client));
+}
+
+export type KalamDb = ReturnType<typeof createDb>;
