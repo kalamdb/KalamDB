@@ -10,6 +10,7 @@ import { createDb, createKalamClient, resolveKalamConnection, TABLE } from '../s
 import { downloadFileByPath, fetchRemoteHash, sha256Hex, upsertFile } from '../src/sync/file-store.js';
 import { listSyncFiles } from '../src/lib/paths.js';
 import { FolderSyncApp } from '../src/sync/sync-app.js';
+import { stopSyncApp } from './sync.helpers.js';
 
 const SERVER_URL = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const ROOT_PASSWORD =
@@ -139,9 +140,11 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
   await cleanupClient.login();
 
   const expectedPaths: string[] = [];
+  let first: FolderSyncApp | undefined;
+  let second: FolderSyncApp | undefined;
 
   try {
-    const first = new FolderSyncApp({ syncDir, connection, watch: false });
+    first = new FolderSyncApp({ syncDir, connection, watch: false });
     await first.start();
 
     await mkdir(join(syncDir, testId), { recursive: true });
@@ -150,13 +153,14 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
 
     expectedPaths.push(...await listSyncFiles(syncDir));
     const expectedContents = Object.fromEntries(
-      await Promise.all(expectedPaths.map(async (path) => [path, await first.readLocalFile(path)] as const)),
+      await Promise.all(expectedPaths.map(async (path) => [path, await first!.readLocalFile(path)] as const)),
     );
 
-    await first.stop();
+    await stopSyncApp(first);
+    first = undefined;
     await rm(syncDir, { recursive: true, force: true });
 
-    const second = new FolderSyncApp({ syncDir, connection, watch: false });
+    second = new FolderSyncApp({ syncDir, connection, watch: false });
     await second.start();
     await second.waitForLocalFiles(expectedPaths, 20_000);
 
@@ -164,13 +168,13 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
       const restored = await second.readLocalFile(path);
       assert.equal(restored, expectedContents[path], `content mismatch for ${path}`);
     }
-
-    await second.stop();
   } finally {
+    await stopSyncApp(first);
+    await stopSyncApp(second);
     for (const path of expectedPaths) {
-      await cleanupClient.query(`DELETE FROM ${TABLE} WHERE path = $1`, [path]);
+      await cleanupClient.query(`DELETE FROM ${TABLE} WHERE path = $1`, [path]).catch(() => undefined);
     }
-    await cleanupClient.disconnect();
+    await cleanupClient.disconnect().catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });

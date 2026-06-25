@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -16,6 +16,7 @@ import {
   login,
   RUN_INTEGRATION,
   serverHealthy,
+  stopSyncApp,
   uniquePath,
 } from './sync.helpers.js';
 
@@ -31,9 +32,10 @@ test('integration: update overwrites remote file content', integration, async ()
   const v1 = '# version one\n';
   const v2 = '# version two\n';
   const paths = [path];
+  let app: FolderSyncApp | undefined;
 
   try {
-    const app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
     await app.start();
 
     await writeFile(join(syncDir, path), v1, 'utf8');
@@ -45,10 +47,9 @@ test('integration: update overwrites remote file content', integration, async ()
     await writeFile(join(syncDir, path), v2, 'utf8');
     await app.pushLocalFile(path);
     assert.equal(await fetchRemoteHash(db, path), sha256Hex(new TextEncoder().encode(v2)));
-
-    await app.stop();
   } finally {
-    await deletePaths(paths);
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });
@@ -63,22 +64,26 @@ test('integration: second client receives files pushed by the first', integratio
   const path = uniquePath('shared') + '/note.md';
   const content = `# shared ${Date.now()}\n`;
   const paths = [path];
+  let clientA: FolderSyncApp | undefined;
+  let clientB: FolderSyncApp | undefined;
 
   try {
-    const clientA = new FolderSyncApp({ syncDir: syncDirA, connection: aliceConnection(), watch: false });
+    clientA = new FolderSyncApp({ syncDir: syncDirA, connection: aliceConnection(), watch: false });
     await clientA.start();
     await mkdir(join(syncDirA, path.split('/').slice(0, -1).join('/')), { recursive: true });
     await writeFile(join(syncDirA, path), content, 'utf8');
     await clientA.pushLocalFile(path);
-    await clientA.stop();
+    await stopSyncApp(clientA);
+    clientA = undefined;
 
-    const clientB = new FolderSyncApp({ syncDir: syncDirB, connection: aliceConnection(), watch: false });
+    clientB = new FolderSyncApp({ syncDir: syncDirB, connection: aliceConnection(), watch: false });
     await clientB.start();
     await clientB.waitForLocalFiles([path], 20_000);
     assert.equal(await clientB.readLocalFile(path), content);
-    await clientB.stop();
   } finally {
-    await deletePaths(paths);
+    await stopSyncApp(clientA);
+    await stopSyncApp(clientB);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDirA, { recursive: true, force: true });
     await rm(syncDirB, { recursive: true, force: true });
   }
@@ -93,9 +98,10 @@ test('integration: pending upload queue retries after simulated failure', integr
   const path = uniquePath('pending') + '.md';
   const content = `# pending retry ${Date.now()}\n`;
   const paths = [path];
+  let app: FolderSyncApp | undefined;
 
   try {
-    const app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
     await app.start();
 
     await writeFile(join(syncDir, path), content, 'utf8');
@@ -120,10 +126,9 @@ test('integration: pending upload queue retries after simulated failure', integr
       .from(pending_uploads)
       .where(eq(pending_uploads.path, path));
     assert.equal(queued.length, 0);
-
-    await app.stop();
   } finally {
-    await deletePaths(paths);
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });
@@ -137,9 +142,10 @@ test('integration: pushLocalFile skips unchanged files', integration, async () =
   const path = uniquePath('skip') + '.md';
   const content = '# unchanged\n';
   const paths = [path];
+  let app: FolderSyncApp | undefined;
 
   try {
-    const app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
     await app.start();
 
     await writeFile(join(syncDir, path), content, 'utf8');
@@ -152,10 +158,9 @@ test('integration: pushLocalFile skips unchanged files', integration, async () =
     const hashAfter = await fetchRemoteHash(createDb(client), path);
     assert.equal(hashBefore, hashAfter);
     await client.disconnect();
-
-    await app.stop();
   } finally {
-    await deletePaths(paths);
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });
@@ -169,9 +174,10 @@ test('integration: remote delete removes local copy', integration, async () => {
   const path = uniquePath('delete') + '.md';
   const content = '# delete me\n';
   const paths = [path];
+  let app: FolderSyncApp | undefined;
 
   try {
-    const app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
     await app.start();
 
     await writeFile(join(syncDir, path), content, 'utf8');
@@ -180,9 +186,9 @@ test('integration: remote delete removes local copy', integration, async () => {
 
     await deletePaths([path]);
     await app.waitForLocalFileAbsent(path, 20_000);
-
-    await app.stop();
   } finally {
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });
@@ -195,9 +201,10 @@ test('integration: .index is never included in uploads', integration, async () =
   const syncDir = await mkdtemp(join(tmpdir(), 'okf-index-'));
   const userPath = uniquePath('user') + '.md';
   const paths = [userPath];
+  let app: FolderSyncApp | undefined;
 
   try {
-    const app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
     await app.start();
 
     await writeFile(join(syncDir, userPath), '# user file\n', 'utf8');
@@ -211,10 +218,9 @@ test('integration: .index is never included in uploads', integration, async () =
     const rows = await client.queryAll(`SELECT path FROM okf_sync.context_files WHERE path LIKE $1`, ['.index%']);
     assert.equal(rows.length, 0);
     await client.disconnect();
-
-    await app.stop();
   } finally {
-    await deletePaths(paths);
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }
 });

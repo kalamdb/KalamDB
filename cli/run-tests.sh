@@ -28,7 +28,7 @@ fi
 # Default values
 SERVER_URL="${KALAMDB_SERVER_URL:-}"
 CLUSTER_URLS="${KALAMDB_CLUSTER_URLS:-}"
-SERVER_TYPE="${KALAMDB_SERVER_TYPE:-}"
+SERVER_TYPE="${KALAMDB_SERVER_TYPE:-running}"
 ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD-}"
 ROOT_PASSWORD_SET=false
 if [ "${KALAMDB_ROOT_PASSWORD+x}" = "x" ]; then
@@ -111,7 +111,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
     echo "  --cluster-urls <URLS>    Comma-separated cluster node URLs"
-    echo "  --server-type <TYPE>     Server mode: fresh | running | cluster"
+    echo "  --server-type <TYPE>     Server mode: fresh | running (default) | cluster"
     echo "  -j, --jobs <N>           Override nextest process concurrency"
         echo "                           Cluster mode defaults to KALAMDB_CLUSTER_TEST_JOBS or 4"
     echo "  -P, --package <CRATE>    Limit the run to one package (repeatable)"
@@ -532,11 +532,11 @@ if [ -n "$TEST_JOBS" ]; then
         echo "Jobs:            $TEST_JOBS"
     fi
 fi
-echo "Mode:            $FEATURE_MODE"
-echo "Supplementary:   $SUPPLEMENTARY_MODE"
+    echo "Mode:            $FEATURE_MODE"
+    echo "Supplementary:   $SUPPLEMENTARY_MODE"
     echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
     if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
-        echo "S3/MinIO tests:  auto-switch to fresh when running server lacks cloud-aws"
+        echo "S3/MinIO tests:  use running server (build with cloud-aws for object storage)"
     fi
     echo "================================================"
 echo ""
@@ -823,7 +823,7 @@ running_server_supports_s3_storage() {
     return 0
 }
 
-maybe_switch_to_fresh_for_missing_s3() {
+maybe_warn_for_missing_s3_on_running_server() {
     if [ "$SERVER_TYPE" != "running" ]; then
         return 0
     fi
@@ -837,11 +837,9 @@ maybe_switch_to_fresh_for_missing_s3() {
     fi
 
     echo ""
-    echo "Running server at $SERVER_URL does not include S3/object storage (cloud-aws)."
-    echo "Switching to KALAMDB_SERVER_TYPE=fresh for this run so tests auto-start a cloud-aws server."
+    echo "Warning: running server at $SERVER_URL does not include S3/object storage (cloud-aws)."
+    echo "MinIO-backed storage tests may fail. Build with cloud-aws, or run with --server-type fresh."
     echo ""
-    SERVER_TYPE="fresh"
-    export KALAMDB_SERVER_TYPE="fresh"
 }
 
 ensure_dex_for_oidc_tests() {
@@ -1183,6 +1181,18 @@ start_supplementary_server_if_needed() {
         return 0
     fi
 
+    if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
+        if supplementary_server_responding; then
+            step "Using running server for supplementary suites at $KALAMDB_SERVER_URL"
+            setup_supplementary_auth_if_needed
+            return 0
+        fi
+
+        echo "Error: supplementary suites require a reachable server at $KALAMDB_SERVER_URL." >&2
+        echo "Start KalamDB on that URL or rerun with --server-type fresh." >&2
+        exit 1
+    fi
+
     server_port="$(allocate_free_local_port)"
     SUPPLEMENTARY_SERVER_URL="http://127.0.0.1:$server_port"
     export KALAMDB_SERVER_URL="$SUPPLEMENTARY_SERVER_URL"
@@ -1243,7 +1253,13 @@ run_supplementary_suites() {
     (
         cd "$REPO_ROOT/examples/live-okf-context-sync"
         npm_install_dir
-        KALAM_INTEGRATION=1 KALAM_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" npm run test
+        KALAM_INTEGRATION=1 \
+            KALAM_URL="$KALAMDB_SERVER_URL" \
+            KALAMDB_URL="$KALAMDB_SERVER_URL" \
+            KALAM_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" \
+            KALAMDB_PASSWORD="$TEST_ROOT_PASSWORD" \
+            KALAM_PASS="$TEST_ROOT_PASSWORD" \
+            npm run test
     )
     run_npm_suite "ui" "Running admin UI tests" "test:ci"
     run_npm_suite \
@@ -1418,7 +1434,7 @@ validate_running_server_credentials_if_needed
 
 prebuild_kalamdb_server_binary_if_needed
 prebuild_kalam_cli_binary_if_needed
-maybe_switch_to_fresh_for_missing_s3
+maybe_warn_for_missing_s3_on_running_server
 ensure_dex_for_oidc_tests
 ensure_minio_for_storage_tests
 run_schema_diff_companion_tests_if_needed

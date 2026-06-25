@@ -95,6 +95,7 @@ export class FolderSyncApp {
     this.kalamDb = createDb(this.client);
 
     const remoteRows = await this.kalamDb.select({ path: context_files.path }).from(context_files);
+    this.remotePaths = new Set(remoteRows.map((row) => row.path));
     const seeded = await maybeSeedSyncFolder(this.syncDir, remoteRows.length > 0);
     if (seeded > 0) {
       console.log(`[sync] seeded ${seeded} file(s) from seed/ into ${this.syncDir}`);
@@ -229,6 +230,7 @@ export class FolderSyncApp {
       });
       await this.recordLocalFile(relativePath, hash, now);
       await this.clearPendingUpload(relativePath);
+      this.remotePaths.add(relativePath);
       console.log(`[sync] pushed ${relativePath}`);
     } catch (error) {
       await this.queuePendingUpload(relativePath, hash, error);
@@ -320,6 +322,7 @@ export class FolderSyncApp {
       // File may already be gone.
     }
     await this.localDb.delete(local_context_files).where(eq(local_context_files.path, relativePath));
+    this.remotePaths.delete(relativePath);
     console.log(`[sync] removed ${relativePath}`);
   }
 

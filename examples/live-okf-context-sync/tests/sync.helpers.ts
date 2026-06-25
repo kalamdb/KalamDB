@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Auth, createClient } from '@kalamdb/client';
 import { createKalamClient, resolveKalamConnection, TABLE } from '../src/db/client.js';
+import type { FolderSyncApp } from '../src/sync/sync-app.js';
 
 export const SERVER_URL = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 export const ROOT_PASSWORD =
@@ -66,4 +67,15 @@ export async function deletePaths(paths: string[]): Promise<void> {
 
 export function uniquePath(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+export async function stopSyncApp(app: FolderSyncApp | undefined): Promise<void> {
+  if (!app) {
+    return;
+  }
+  try {
+    await app.stop();
+  } catch {
+    // Best-effort cleanup so open live subscriptions do not keep the test runner alive.
+  }
 }

@@ -658,11 +658,21 @@ impl StorageBackend for RocksDBBackend {
         Ok(())
     }
 
-    fn restore_from(&self, backup_dir: &std::path::Path) -> crate::storage_trait::Result<()> {
+    fn restore_from(
+        &self,
+        backup_dir: &std::path::Path,
+        restore_token: &str,
+    ) -> crate::storage_trait::Result<()> {
         use rocksdb::{
             backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
             Env,
         };
+
+        if restore_token.is_empty() {
+            return Err(crate::storage_trait::StorageError::Other(
+                "restore_token cannot be empty".to_string(),
+            ));
+        }
 
         let opts = BackupEngineOptions::new(backup_dir).map_err(|e| {
             crate::storage_trait::StorageError::Other(format!(
@@ -684,7 +694,7 @@ impl StorageBackend for RocksDBBackend {
         let db_path = self.db.path();
         let staging_path = {
             let mut p = db_path.as_os_str().to_os_string();
-            p.push("_restore_pending");
+            p.push(format!("_restore_pending_{}", restore_token));
             std::path::PathBuf::from(p)
         };
 

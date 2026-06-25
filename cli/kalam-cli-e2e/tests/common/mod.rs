@@ -1088,26 +1088,15 @@ fn server_type_from_env() -> Option<ServerType> {
         }
     }
 
-    None
+    Some(ServerType::Running)
 }
 
 fn should_auto_start_test_server() -> bool {
-    if let Some(server_type) = server_type_from_env() {
-        return matches!(server_type, ServerType::Fresh);
-    }
-
-    if has_explicit_server_target() {
-        return false;
-    }
-
-    true
+    matches!(server_type_from_env(), Some(ServerType::Fresh))
 }
 
 fn is_external_server_mode() -> bool {
-    if let Some(server_type) = server_type_from_env() {
-        return matches!(server_type, ServerType::Running | ServerType::Cluster);
-    }
-    has_explicit_server_target()
+    !matches!(server_type_from_env(), Some(ServerType::Fresh))
 }
 
 fn url_reachable(url: &str) -> bool {
