@@ -11,21 +11,19 @@ use std::{
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
-    workflow::{
-        project::{
-            config::{
-                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-                ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
-            },
-            guidance::{
-                init_config_validation_failed, init_project_already_exists, init_stage_context,
-            },
-            identifiers::{normalize_namespace_name, parse_namespace_id},
-            prompts::print_workflow_banner,
-            ts::{
-                execute_package_install, install_dependencies, resolve_package_manager,
-                resolve_template, PackageManager, SCHEMA_TARGET_OUTPUT,
-            },
+    workflow::project::{
+        config::{
+            ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
+            ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
+        },
+        guidance::{
+            init_config_validation_failed, init_project_already_exists, init_stage_context,
+        },
+        identifiers::{normalize_namespace_name, parse_namespace_id},
+        prompts::print_workflow_banner,
+        ts::{
+            execute_package_install, install_dependencies, resolve_package_manager,
+            resolve_template, PackageManager, SCHEMA_TARGET_OUTPUT,
         },
     },
 };
@@ -199,10 +197,7 @@ mod tests {
     use super::*;
     use crate::{
         config::WorkflowLoggingPolicy,
-        workflow::{
-            project::ts::SKIP_PACKAGE_INSTALL_ENV,
-            test_support::with_test_env_var,
-        },
+        workflow::{project::ts::SKIP_PACKAGE_INSTALL_ENV, test_support::with_test_env_var},
     };
     use std::fs;
     use tempfile::TempDir;
@@ -210,104 +205,98 @@ mod tests {
     #[test]
     fn init_scaffolds_project_files() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        run_init(
-            InitOptions {
-                name: Some("demo-app".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: Some("simple-live".into()),
-                package_manager: None,
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-        )
-        .unwrap();
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            run_init(
+                InitOptions {
+                    name: Some("demo-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: Some("simple-live".into()),
+                    package_manager: None,
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+            )
+            .unwrap();
 
-        assert!(temp.path().join(KALAM_TOML).is_file());
-        assert!(temp.path().join("schema.sql").is_file());
-        assert!(temp.path().join("package.json").is_file());
-        assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
-        assert!(temp.path().join("src/generated").is_dir());
-        assert!(temp.path().join("kalam/server/server.toml").is_file());
-        let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
-        assert!(kalam_toml.contains("[dev.processes]"));
-        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
-        assert!(
-            config
-                .dev
-                .processes
-                .get("app")
-                .is_some_and(|command| command.contains("dev"))
-        );
+            assert!(temp.path().join(KALAM_TOML).is_file());
+            assert!(temp.path().join("schema.sql").is_file());
+            assert!(temp.path().join("package.json").is_file());
+            assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
+            assert!(temp.path().join("src/generated").is_dir());
+            assert!(temp.path().join("kalam/server/server.toml").is_file());
+            let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
+            assert!(kalam_toml.contains("[dev.processes]"));
+            let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+            assert!(config.dev.processes.get("app").is_some_and(|command| command.contains("dev")));
         });
     }
 
     #[test]
     fn init_creates_project_env_file_and_ignores_it() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        run_init(
-            InitOptions {
-                name: Some("demo-app".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: None,
-                package_manager: None,
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-        )
-        .unwrap();
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            run_init(
+                InitOptions {
+                    name: Some("demo-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
+                    package_manager: None,
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+            )
+            .unwrap();
 
-        let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
-        assert!(env_contents.contains("KALAM_PROFILE=kalam-dev"));
-        assert!(env_contents.contains("KALAM_NAMESPACE=demo_app"));
-        assert!(env_contents.contains("KALAM_USER=root"));
-        assert!(env_contents.contains("KALAM_PASSWORD=kalamdb123"));
+            let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
+            assert!(env_contents.contains("KALAM_PROFILE=kalam-dev"));
+            assert!(env_contents.contains("KALAM_NAMESPACE=demo_app"));
+            assert!(env_contents.contains("KALAM_USER=root"));
+            assert!(env_contents.contains("KALAM_PASSWORD=kalamdb123"));
 
-        let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
-        assert!(gitignore.lines().any(|line| line.trim() == ".env"));
+            let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
+            assert!(gitignore.lines().any(|line| line.trim() == ".env"));
         });
     }
 
     #[test]
     fn init_dart_project_omits_package_manager_from_kalam_toml() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
 
-        run_init(
-            InitOptions {
-                name: Some("demo-dart".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["dart".into()]),
-                template: None,
-                package_manager: None,
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-        )
-        .unwrap();
+            run_init(
+                InitOptions {
+                    name: Some("demo-dart".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["dart".into()]),
+                    template: None,
+                    package_manager: None,
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+            )
+            .unwrap();
 
-        let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
-        assert!(!kalam_toml.contains("package_manager"));
-        assert!(kalam_toml.contains("# [dev.processes]"));
-        assert!(!kalam_toml.contains("\n[dev.processes]\n"));
+            let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
+            assert!(!kalam_toml.contains("package_manager"));
+            assert!(kalam_toml.contains("# [dev.processes]"));
+            assert!(!kalam_toml.contains("\n[dev.processes]\n"));
 
-        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
-        assert!(config.project.package_manager.is_none());
+            let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+            assert!(config.project.package_manager.is_none());
         });
     }
 
@@ -343,60 +332,60 @@ mod tests {
     #[test]
     fn init_normalizes_namespace_for_hyphenated_project_name() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        run_init(
-            InitOptions {
-                name: Some("dev-test1".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: None,
-                package_manager: None,
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-        )
-        .unwrap();
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            run_init(
+                InitOptions {
+                    name: Some("dev-test1".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
+                    package_manager: None,
+                    server_mode: Some(ServerMode::Local),
+                    server_url: None,
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+            )
+            .unwrap();
 
-        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
-        assert_eq!(config.project.name, "dev-test1");
-        assert_eq!(
-            config.connection.get("dev").expect("dev env").namespace,
-            kalamdb_commons::NamespaceId::new("dev_test1")
-        );
+            let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+            assert_eq!(config.project.name, "dev-test1");
+            assert_eq!(
+                config.connection.get("dev").expect("dev env").namespace,
+                kalamdb_commons::NamespaceId::new("dev_test1")
+            );
 
-        let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
-        assert!(env_contents.contains("KALAM_NAMESPACE=dev_test1"));
+            let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
+            assert!(env_contents.contains("KALAM_NAMESPACE=dev_test1"));
         });
     }
 
     #[test]
     fn remote_server_mode_disables_auto_start_db() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
-        let temp = TempDir::new().unwrap();
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        run_init(
-            InitOptions {
-                name: Some("remote-app".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["typescript".into()]),
-                template: None,
-                package_manager: None,
-                server_mode: Some(ServerMode::Remote),
-                server_url: Some("http://localhost:2900".into()),
-                yes: true,
-                cwd: temp.path().to_path_buf(),
-            },
-            &output,
-        )
-        .unwrap();
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+            run_init(
+                InitOptions {
+                    name: Some("remote-app".into()),
+                    schema_mode: Some(SchemaMode::Sql),
+                    languages: Some(vec!["typescript".into()]),
+                    template: None,
+                    package_manager: None,
+                    server_mode: Some(ServerMode::Remote),
+                    server_url: Some("http://localhost:2900".into()),
+                    yes: true,
+                    cwd: temp.path().to_path_buf(),
+                },
+                &output,
+            )
+            .unwrap();
 
-        let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
-        assert!(!config.dev.auto_start_db);
-        assert!(!temp.path().join("kalam/server/server.toml").exists());
+            let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
+            assert!(!config.dev.auto_start_db);
+            assert!(!temp.path().join("kalam/server/server.toml").exists());
         });
     }
 }

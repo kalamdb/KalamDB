@@ -10,7 +10,10 @@ use crate::{
     sql_batch,
     workflow::{
         display_project_path,
-        migration::{list_migration_files, markers, migration_filename, read_migration_file, DRAFT_MIGRATION_FILE},
+        migration::{
+            list_migration_files, markers, migration_filename, read_migration_file,
+            DRAFT_MIGRATION_FILE,
+        },
         project::config::KalamProjectConfig,
         schema::diff::{diff_project_schema_files, diff_project_schema_files_for_draft},
     },
@@ -241,8 +244,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        config::WorkflowLoggingPolicy,
-        workflow::test_support::minimal_sql_project_config,
+        config::WorkflowLoggingPolicy, workflow::test_support::minimal_sql_project_config,
     };
 
     #[test]

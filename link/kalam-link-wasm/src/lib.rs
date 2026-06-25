@@ -6,14 +6,14 @@
 
 use wasm_bindgen::prelude::*;
 
-mod wasm_auth;
 mod client;
 mod file_ref;
 mod helpers;
 mod reconnect;
 mod state;
-mod wasm_timestamp;
 mod validation;
+mod wasm_auth;
+mod wasm_timestamp;
 
 pub use client::KalamClient;
 pub use file_ref::{

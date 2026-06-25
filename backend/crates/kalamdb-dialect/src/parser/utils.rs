@@ -157,10 +157,7 @@ fn rewrite_json_expr(expr: &Expr) -> Option<Expr> {
 }
 
 fn is_json_path_operand(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Value(_) | Expr::Identifier(_) | Expr::CompoundIdentifier(_)
-    )
+    matches!(expr, Expr::Value(_) | Expr::Identifier(_) | Expr::CompoundIdentifier(_))
 }
 
 fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
@@ -342,20 +339,25 @@ pub fn extract_dml_table_id_from_statement(
 }
 
 pub fn object_name_to_string(name: &ObjectName) -> Option<String> {
-    let parts: Vec<String> = name
-        .0
-        .iter()
-        .filter_map(|part| match part {
-            ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
-            _ => None,
-        })
-        .collect();
-
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("."))
+    if name.0.len() == 1 {
+        if let ObjectNamePart::Identifier(ident) = &name.0[0] {
+            return Some(ident.value.clone());
+        }
+        return None;
     }
+
+    let mut parts = name.0.iter().filter_map(|part| match part {
+        ObjectNamePart::Identifier(ident) => Some(ident.value.as_str()),
+        _ => None,
+    });
+
+    let first = parts.next()?;
+    let mut result = String::from(first);
+    for part in parts {
+        result.push('.');
+        result.push_str(part);
+    }
+    Some(result)
 }
 
 pub fn insert_column_names_from_statement(statement: &Statement) -> Option<Vec<String>> {
@@ -370,16 +372,32 @@ pub fn insert_column_names_from_statement(statement: &Statement) -> Option<Vec<S
 pub fn insert_columns_match(statement: &Statement, expected_columns: &[String]) -> bool {
     match statement {
         Statement::Insert(insert) => {
-            let columns: Vec<String> =
-                insert.columns.iter().filter_map(object_name_to_string).collect();
-            columns.len() == expected_columns.len()
-                && columns
+            insert.columns.len() == expected_columns.len()
+                && insert
+                    .columns
                     .iter()
                     .zip(expected_columns.iter())
-                    .all(|(column, expected)| column == expected)
+                    .all(|(column, expected)| object_name_matches(column, expected))
         },
         _ => false,
     }
+}
+
+fn object_name_matches(name: &ObjectName, expected: &str) -> bool {
+    if name.0.len() == 1 {
+        return matches!(&name.0[0], ObjectNamePart::Identifier(ident) if ident.value == expected);
+    }
+
+    let mut expected_parts = expected.split('.');
+    for part in &name.0 {
+        let Some(expected_part) = expected_parts.next() else {
+            return false;
+        };
+        if !matches!(part, ObjectNamePart::Identifier(ident) if ident.value == expected_part) {
+            return false;
+        }
+    }
+    expected_parts.next().is_none()
 }
 
 fn table_id_from_parts(parts: &[String], default_namespace: &str) -> Option<TableId> {

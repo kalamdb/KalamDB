@@ -13,7 +13,6 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{
         create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
         serialize_json_to_js_value, subscription_hash,
@@ -26,6 +25,7 @@ use super::{
     validation::{
         quote_table_name, validate_column_name, validate_row_id, validate_sql_identifier,
     },
+    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
 };
 use link_common::{
@@ -687,7 +687,8 @@ fn build_runtime_connection_error(
         )
     };
 
-    let mut error = link_common::event_handlers::ConnectionError::new(message, recoverable).with_url(url);
+    let mut error =
+        link_common::event_handlers::ConnectionError::new(message, recoverable).with_url(url);
     if let Some(user) = auth_user {
         error = error.with_auth_user(user);
     }

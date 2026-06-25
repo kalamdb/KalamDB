@@ -8,16 +8,15 @@ use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
     conversions::{arrow_json_conversion::coerce_rows, json_value_to_scalar},
     ids::SnowflakeGenerator,
-    models::{rows::row::Row, TransactionId, UserId},
+    models::{rows::row::Row, OperationKind, TransactionId, UserId},
     schemas::{ColumnDefault, TableType},
     TableId,
 };
-use kalamdb_transactions::build_insert_staged_mutations;
-use sqlparser::ast::{Expr, Parens, SetExpr, Statement};
+use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
+use sqlparser::ast::{SelectItem, Statement};
 use ulid::Ulid;
 use uuid::Uuid;
 
-use super::helpers::ast_parsing;
 use crate::{
     app_context::AppContext,
     error::KalamDbError,
@@ -29,6 +28,12 @@ use crate::{
         },
         ExecutionContext,
     },
+};
+use kalamdb_sql::{
+    insert_columns_match, on_conflict_update_should_apply, on_conflict_values_insert,
+    parse_on_conflict_action, validate_primary_key_conflict_target, values_to_rows,
+    OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
+    ValuesInsertShapeOptions, ValuesInsertView,
 };
 
 static INSERT_DEFAULT_SNOWFLAKE_GENERATOR: OnceLock<SnowflakeGenerator> = OnceLock::new();
@@ -110,28 +115,6 @@ enum VolatileDefaultFunction {
     Ulid,
 }
 
-fn values_to_rows(
-    value_rows: &[Parens<Vec<Expr>>],
-    column_names: &[String],
-) -> Result<Vec<Row>, &'static str> {
-    let mut rows = Vec::with_capacity(value_rows.len());
-
-    for value_row in value_rows {
-        if value_row.content.len() != column_names.len() {
-            return Err("column count mismatch");
-        }
-
-        let mut values = BTreeMap::new();
-        for (expr, col_name) in value_row.content.iter().zip(column_names.iter()) {
-            let scalar = ast_parsing::expr_to_scalar(expr)?;
-            values.insert(col_name.clone(), scalar);
-        }
-        rows.push(Row::new(values));
-    }
-
-    Ok(rows)
-}
-
 fn apply_missing_defaults(
     rows: &mut [Row],
     missing_defaults: &[FastInsertDefaultEntry],
@@ -161,7 +144,22 @@ fn apply_missing_defaults(
 
 pub(crate) struct LiteralInsertRows {
     pub table_type: TableType,
+    pub primary_key_column: Option<String>,
     pub rows: Vec<Row>,
+    pub returning: Option<Vec<SelectItem>>,
+}
+
+pub(crate) struct LiteralOnConflictUpdateRows {
+    pub table_type: TableType,
+    pub primary_key_column: String,
+    pub rows: Vec<Row>,
+    pub action: ParsedOnConflictAction,
+    pub returning: Option<Vec<SelectItem>>,
+}
+
+pub(crate) struct OnConflictStagedMutation {
+    pub mutation: StagedMutation,
+    pub returned_row: Row,
 }
 
 pub(crate) fn try_build_literal_insert_rows(
@@ -170,33 +168,64 @@ pub(crate) fn try_build_literal_insert_rows(
     sql_cache_registry: &SqlCacheRegistry,
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
+    params: &[ScalarValue],
+) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    try_build_literal_insert_rows_inner(
+        statement,
+        app_context,
+        sql_cache_registry,
+        exec_ctx,
+        table_id,
+        false,
+        params,
+    )
+}
+
+fn try_build_literal_insert_rows_inner(
+    statement: &Statement,
+    app_context: &AppContext,
+    sql_cache_registry: &SqlCacheRegistry,
+    exec_ctx: &ExecutionContext,
+    table_id: &TableId,
+    allow_on_conflict: bool,
+    params: &[ScalarValue],
 ) -> Result<Option<LiteralInsertRows>, KalamDbError> {
     if table_id.namespace_id().is_system_namespace() {
         return Ok(None);
     }
 
-    let insert = match statement {
-        Statement::Insert(insert) => insert,
-        _ => return Ok(None),
+    let shape_options = if allow_on_conflict {
+        ValuesInsertShapeOptions::ON_CONFLICT_ROWS
+    } else {
+        ValuesInsertShapeOptions::PLAIN
     };
-
-    if insert.on.is_some() || insert.overwrite || insert.returning.is_some() {
+    let Some(view) = kalamdb_sql::values_insert_view_from_statement(statement, shape_options)
+    else {
         return Ok(None);
-    }
-
-    let source = match insert.source.as_ref() {
-        Some(source) => source,
-        None => return Ok(None),
     };
 
-    if source.with.is_some() || source.order_by.is_some() || source.limit_clause.is_some() {
-        return Ok(None);
-    }
+    build_literal_insert_rows_from_values(
+        view,
+        app_context,
+        sql_cache_registry,
+        exec_ctx,
+        table_id,
+        !allow_on_conflict,
+        params,
+    )
+}
 
-    let value_rows = match &*source.body {
-        SetExpr::Values(values) => &values.rows,
-        _ => return Ok(None),
-    };
+fn build_literal_insert_rows_from_values(
+    view: ValuesInsertView<'_>,
+    app_context: &AppContext,
+    sql_cache_registry: &SqlCacheRegistry,
+    exec_ctx: &ExecutionContext,
+    table_id: &TableId,
+    include_returning: bool,
+    params: &[ScalarValue],
+) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    let insert = view.insert;
+    let value_rows = view.value_rows;
 
     let cached_table = match app_context.schema_registry().get(table_id) {
         Some(cached) => cached,
@@ -232,7 +261,7 @@ pub(crate) fn try_build_literal_insert_rows(
         },
     };
 
-    let mut rows = match values_to_rows(value_rows, &insert_metadata.column_names) {
+    let mut rows = match values_to_rows(value_rows, &insert_metadata.column_names, params) {
         Ok(rows) => rows,
         Err(_) => return Ok(None),
     };
@@ -247,8 +276,204 @@ pub(crate) fn try_build_literal_insert_rows(
 
     Ok(Some(LiteralInsertRows {
         table_type: insert_metadata.table_type,
+        primary_key_column: insert_metadata.primary_key_column.clone(),
         rows,
+        returning: if include_returning {
+            insert.returning.clone()
+        } else {
+            None
+        },
     }))
+}
+
+pub(crate) fn try_build_literal_on_conflict_update_rows(
+    statement: &Statement,
+    app_context: &AppContext,
+    sql_cache_registry: &SqlCacheRegistry,
+    exec_ctx: &ExecutionContext,
+    table_id: &TableId,
+    params: &[ScalarValue],
+) -> Result<Option<LiteralOnConflictUpdateRows>, KalamDbError> {
+    let Some((view, on_conflict)) = on_conflict_values_insert(statement) else {
+        return Ok(None);
+    };
+
+    let insert_rows = match build_literal_insert_rows_from_values(
+        view,
+        app_context,
+        sql_cache_registry,
+        exec_ctx,
+        table_id,
+        false,
+        params,
+    )? {
+        Some(rows) => rows,
+        None => return Ok(None),
+    };
+
+    let primary_key_column = insert_rows.primary_key_column.ok_or_else(|| {
+        KalamDbError::InvalidOperation(
+            "ON CONFLICT requires a single primary key column".to_string(),
+        )
+    })?;
+
+    validate_primary_key_conflict_target(on_conflict, &primary_key_column)
+        .map_err(KalamDbError::InvalidOperation)?;
+
+    let action = parse_on_conflict_action(on_conflict).map_err(KalamDbError::InvalidOperation)?;
+
+    Ok(Some(LiteralOnConflictUpdateRows {
+        table_type: insert_rows.table_type,
+        primary_key_column,
+        rows: insert_rows.rows,
+        action,
+        returning: view.insert.returning.clone(),
+    }))
+}
+
+const SYSTEM_TABLE_DML_DENIED: &str = "cannot insert into system tables";
+
+pub(crate) fn reject_system_table_dml(table_type: TableType) -> Result<(), KalamDbError> {
+    if table_type == TableType::System {
+        return Err(KalamDbError::PermissionDenied(SYSTEM_TABLE_DML_DENIED.to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) struct OnConflictUserIds {
+    pub lookup_user_id: Option<UserId>,
+    pub default_mutation_user_id: Option<UserId>,
+}
+
+pub(crate) fn on_conflict_user_ids(
+    table_type: TableType,
+    exec_ctx: &ExecutionContext,
+) -> Result<OnConflictUserIds, KalamDbError> {
+    reject_system_table_dml(table_type)?;
+    let user_id = exec_ctx.user_id().clone();
+    Ok(match table_type {
+        TableType::User | TableType::Stream => OnConflictUserIds {
+            lookup_user_id: Some(user_id.clone()),
+            default_mutation_user_id: Some(user_id),
+        },
+        TableType::Shared => OnConflictUserIds {
+            lookup_user_id: Some(user_id),
+            default_mutation_user_id: None,
+        },
+        TableType::System => unreachable!("system tables rejected above"),
+    })
+}
+
+pub(crate) fn build_on_conflict_staged_mutation_for_action(
+    action: &ParsedOnConflictAction,
+    transaction_id: &TransactionId,
+    table_id: &TableId,
+    table_type: TableType,
+    mutation_user_id: Option<UserId>,
+    primary_key: String,
+    inserted_row: &Row,
+    existing_row: Option<&Row>,
+) -> Result<Option<OnConflictStagedMutation>, KalamDbError> {
+    match action {
+        ParsedOnConflictAction::DoNothing => {
+            if existing_row.is_some() {
+                return Ok(None);
+            }
+            Ok(Some(build_on_conflict_staged_mutation(
+                transaction_id,
+                table_id,
+                table_type,
+                mutation_user_id,
+                primary_key,
+                inserted_row,
+                &[],
+                None,
+            )?))
+        },
+        ParsedOnConflictAction::DoUpdate {
+            assignments,
+            where_clause,
+        } => {
+            if existing_row.is_some()
+                && !on_conflict_update_should_apply(where_clause)
+                    .map_err(KalamDbError::InvalidOperation)?
+            {
+                return Ok(None);
+            }
+            Ok(Some(build_on_conflict_staged_mutation(
+                transaction_id,
+                table_id,
+                table_type,
+                mutation_user_id,
+                primary_key,
+                inserted_row,
+                assignments,
+                existing_row,
+            )?))
+        },
+    }
+}
+
+pub(crate) fn build_on_conflict_staged_mutation(
+    transaction_id: &TransactionId,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<UserId>,
+    primary_key: String,
+    inserted_row: &Row,
+    assignments: &[OnConflictUpdateAssignment],
+    existing_row: Option<&Row>,
+) -> Result<OnConflictStagedMutation, KalamDbError> {
+    if let Some(existing_row) = existing_row {
+        let mut updates = BTreeMap::new();
+        for assignment in assignments {
+            let value = match &assignment.value {
+                OnConflictUpdateValue::InsertedColumn(column_name) => {
+                    inserted_row.values.get(column_name).cloned().ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "EXCLUDED.{} does not exist in the inserted row",
+                            column_name
+                        ))
+                    })?
+                },
+                OnConflictUpdateValue::Literal(value) => value.clone(),
+            };
+            updates.insert(assignment.column_name.clone(), value);
+        }
+
+        let mut returned_values = existing_row.values.clone();
+        for (column_name, value) in &updates {
+            returned_values.insert(column_name.clone(), value.clone());
+        }
+
+        Ok(OnConflictStagedMutation {
+            mutation: StagedMutation::new(
+                transaction_id.clone(),
+                table_id.clone(),
+                table_type,
+                user_id,
+                OperationKind::Update,
+                primary_key,
+                Row::new(updates),
+                false,
+            ),
+            returned_row: Row::new(returned_values),
+        })
+    } else {
+        Ok(OnConflictStagedMutation {
+            mutation: StagedMutation::new(
+                transaction_id.clone(),
+                table_id.clone(),
+                table_type,
+                user_id,
+                OperationKind::Insert,
+                primary_key,
+                inserted_row.clone(),
+                false,
+            ),
+            returned_row: inserted_row.clone(),
+        })
+    }
 }
 
 fn prepare_default_template(
@@ -358,9 +583,9 @@ pub(crate) fn try_batch_inserts_in_transaction(
         return Ok(None);
     }
 
-    let first_insert = match statements[0] {
-        Statement::Insert(insert) => insert,
-        _ => return Ok(None),
+    let first_insert = match kalamdb_sql::insert_from_statement(statements[0]) {
+        Some(insert) => insert,
+        None => return Ok(None),
     };
 
     let cached_table = match app_context.schema_registry().get(table_id) {
@@ -406,41 +631,25 @@ pub(crate) fn try_batch_inserts_in_transaction(
         None => return Ok(None),
     };
 
+    let schema = cached_table.arrow_schema()?;
     let user_id = staged_mutation_user_id(table_type, exec_ctx);
-    let mut all_mutations = Vec::new();
+    let mut all_rows = Vec::with_capacity(statements.len());
     let mut per_statement_counts = Vec::with_capacity(statements.len());
+    let mut total_rows = 0usize;
 
     for statement in statements {
-        let insert = match statement {
-            Statement::Insert(insert) => insert,
-            _ => return Ok(None),
-        };
-
-        let statement_columns: Vec<String> =
-            insert.columns.iter().filter_map(kalamdb_sql::object_name_to_string).collect();
-        if statement_columns != requested_columns {
+        if !insert_columns_match(statement, &requested_columns) {
             return Ok(None);
         }
 
-        if insert.on.is_some() || insert.overwrite || insert.returning.is_some() {
+        let Some(view) = kalamdb_sql::values_insert_view_from_statement(
+            statement,
+            ValuesInsertShapeOptions::BATCH,
+        ) else {
             return Ok(None);
-        }
-
-        let source = match insert.source.as_ref() {
-            Some(source) => source,
-            None => return Ok(None),
         };
 
-        if source.with.is_some() || source.order_by.is_some() || source.limit_clause.is_some() {
-            return Ok(None);
-        }
-
-        let value_rows = match &*source.body {
-            SetExpr::Values(values) => &values.rows,
-            _ => return Ok(None),
-        };
-
-        let mut rows = match values_to_rows(value_rows, &insert_metadata.column_names) {
+        let mut rows = match values_to_rows(view.value_rows, &insert_metadata.column_names, &[]) {
             Ok(rows) => rows,
             Err(_) => return Ok(None),
         };
@@ -449,22 +658,22 @@ pub(crate) fn try_batch_inserts_in_transaction(
             apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
         }
 
-        rows = coerce_rows(rows, &cached_table.arrow_schema()?).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
-        })?;
-
         per_statement_counts.push(rows.len());
-        let mutations = build_insert_staged_mutations(
-            transaction_id,
-            table_id,
-            table_type,
-            user_id.clone(),
-            pk_column,
-            rows,
-        )
-        .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
-        all_mutations.extend(mutations);
+        total_rows += rows.len();
+        all_rows.extend(rows);
     }
+
+    let all_rows = coerce_rows(all_rows, &schema)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+    let all_mutations = build_insert_staged_mutations(
+        transaction_id,
+        table_id,
+        table_type,
+        user_id,
+        pk_column,
+        all_rows,
+    )
+    .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
 
     app_context
         .transaction_coordinator()
@@ -473,7 +682,7 @@ pub(crate) fn try_batch_inserts_in_transaction(
     tracing::debug!(
         table_id = %table_id,
         statements = statements.len(),
-        total_rows = per_statement_counts.iter().sum::<usize>(),
+        total_rows,
         "sql.transaction_batch_insert"
     );
 

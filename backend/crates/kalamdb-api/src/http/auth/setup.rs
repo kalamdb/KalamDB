@@ -139,23 +139,25 @@ pub async fn server_setup_handler(
     }
 
     // Hash passwords
-    let root_password_hash = match hash_password(&body.root_password, Some(config.local.bcrypt_cost)).await {
-        Ok(hash) => hash,
-        Err(e) => {
-            log::error!("Failed to hash root password: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(AuthErrorResponse::new("internal_error", "Failed to hash password"));
-        },
-    };
+    let root_password_hash =
+        match hash_password(&body.root_password, Some(config.local.bcrypt_cost)).await {
+            Ok(hash) => hash,
+            Err(e) => {
+                log::error!("Failed to hash root password: {}", e);
+                return HttpResponse::InternalServerError()
+                    .json(AuthErrorResponse::new("internal_error", "Failed to hash password"));
+            },
+        };
 
-    let dba_password_hash = match hash_password(&body.password, Some(config.local.bcrypt_cost)).await {
-        Ok(hash) => hash,
-        Err(e) => {
-            log::error!("Failed to hash DBA password: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(AuthErrorResponse::new("internal_error", "Failed to hash password"));
-        },
-    };
+    let dba_password_hash =
+        match hash_password(&body.password, Some(config.local.bcrypt_cost)).await {
+            Ok(hash) => hash,
+            Err(e) => {
+                log::error!("Failed to hash DBA password: {}", e);
+                return HttpResponse::InternalServerError()
+                    .json(AuthErrorResponse::new("internal_error", "Failed to hash password"));
+            },
+        };
 
     // Update root user with password
     let mut updated_root = root_user.clone();

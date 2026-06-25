@@ -8,8 +8,7 @@ use crate::{
     output::WorkflowOutput,
     sql_batch,
     workflow::{
-        auth::resolve_workflow_auth_provider,
-        project::resolve::ResolvedEnvironment,
+        auth::resolve_workflow_auth_provider, project::resolve::ResolvedEnvironment,
         WorkflowContext,
     },
 };
@@ -128,16 +127,19 @@ mod tests {
     use super::*;
     use crate::{
         config::CLIConfiguration,
-        FileCredentialStore,
         workflow::{
             auth::resolve_workflow_auth_provider,
             project::config::{
-            ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-            ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
+                ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
             },
         },
+        FileCredentialStore,
     };
-    use kalam_client::{credentials::{CredentialStore, Credentials}, AuthProvider};
+    use kalam_client::{
+        credentials::{CredentialStore, Credentials},
+        AuthProvider,
+    };
     use tempfile::TempDir;
 
     #[test]

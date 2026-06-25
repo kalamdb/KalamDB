@@ -29,10 +29,7 @@ use crate::{
             apply::{apply_pending_migrations, ApplyMigrationOptions},
             create::update_draft_migration,
         },
-        project::{
-            config::SchemaMode,
-            guidance::dev_local_kalamdb_server_start_failed,
-        },
+        project::{config::SchemaMode, guidance::dev_local_kalamdb_server_start_failed},
         schema::{generate_schema_artifacts, GenerateOptions},
         sql::{build_workflow_client, drop_namespace_if_exists},
         WorkflowContext,
@@ -206,7 +203,8 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     let mut local_server_managed = false;
 
     let result =
-        run_dev_session_inner(ctx, options, &output, &mut supervisor, &mut local_server_managed).await;
+        run_dev_session_inner(ctx, options, &output, &mut supervisor, &mut local_server_managed)
+            .await;
 
     if local_server_managed {
         if let Some(pid) = supervisor.managed_pid("server") {
@@ -276,20 +274,13 @@ async fn run_dev_session_inner(
                 )
                 .await
             {
-                let message = dev_local_kalamdb_server_start_failed(
-                    &launch.program,
-                    &error.to_string(),
-                );
+                let message =
+                    dev_local_kalamdb_server_start_failed(&launch.program, &error.to_string());
                 output.status(&message);
                 return Err(CLIError::ConfigurationError(message));
             }
             *local_server_managed = true;
-            wait_for_server_ready(
-                &precheck.environment.url,
-                &launch.program,
-                output,
-                supervisor,
-            )
+            wait_for_server_ready(&precheck.environment.url, &launch.program, output, supervisor)
                 .await
                 .map_err(|error| {
                     output.status(error.to_string());

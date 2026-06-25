@@ -5,12 +5,12 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{TableId, UserId};
 #[cfg(feature = "storage")]
 use crate::{
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
 };
+use crate::{TableId, UserId};
 
 /// Type-safe wrapper for manifest cache identifiers.
 ///
@@ -59,7 +59,7 @@ impl ManifestId {
     }
 
     /// Create a prefix for scanning all manifest entries for a table.
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn table_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }

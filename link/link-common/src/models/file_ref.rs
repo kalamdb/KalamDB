@@ -78,8 +78,7 @@ impl BoundFileRef {
 
     /// Full download URL for this file.
     pub fn download_url(&self, base_url: &str) -> String {
-        self.file_ref
-            .download_url(base_url, self.namespace(), self.table())
+        self.file_ref.download_url(base_url, self.namespace(), self.table())
     }
 
     /// Relative HTTP path for this file.

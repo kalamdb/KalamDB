@@ -21,7 +21,10 @@ pub(crate) fn validate_applied_checksums(
     for path in files {
         let filename = migration_filename(path);
         let sql = read_migration_file(None, path)?;
-        state.validate_applied_checksum(&filename, &checksum_sql(&markers::extract_up_section(&sql)))?;
+        state.validate_applied_checksum(
+            &filename,
+            &checksum_sql(&markers::extract_up_section(&sql)),
+        )?;
     }
     Ok(())
 }
@@ -195,9 +198,7 @@ fn format_failed_migration_abort(record: &MigrationRecord) -> String {
 mod tests {
     use super::*;
     use crate::{
-        config::WorkflowLoggingPolicy,
-        output::WorkflowOutput,
-        workflow::migration::MigrationRecord,
+        config::WorkflowLoggingPolicy, output::WorkflowOutput, workflow::migration::MigrationRecord,
     };
 
     #[test]

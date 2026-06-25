@@ -12,6 +12,7 @@ pub(super) use super::test_support;
 
 // SQL Tests
 mod test_dml_parameters_http;
+mod test_insert_on_conflict_http;
 mod test_namespace_validation_http;
 mod test_naming_validation_http;
 mod test_quickstart_http;

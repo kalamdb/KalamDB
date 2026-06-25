@@ -31,15 +31,14 @@ impl UserExecutor {
         let user = user.clone();
         let cache_user_id = user.user_id.clone();
         let user_id = cache_user_id.clone();
-        let result = run_blocking_applier(move || {
-            app_context
-                .system_tables()
-                .users()
-                .create_user(user)
-                .map_err(|e| ApplierError::Execution(format!("Failed to create user: {}", e)))?;
-            Ok(format!("User {} created successfully", user_id))
-        })
-        .await?;
+        let result =
+            run_blocking_applier(move || {
+                app_context.system_tables().users().create_user(user).map_err(|e| {
+                    ApplierError::Execution(format!("Failed to create user: {}", e))
+                })?;
+                Ok(format!("User {} created successfully", user_id))
+            })
+            .await?;
         self.app_context.invalidate_cached_user(&cache_user_id);
         Ok(result)
     }
@@ -51,15 +50,14 @@ impl UserExecutor {
         let user = user.clone();
         let cache_user_id = user.user_id.clone();
         let user_id = cache_user_id.clone();
-        let result = run_blocking_applier(move || {
-            app_context
-                .system_tables()
-                .users()
-                .update_user(user)
-                .map_err(|e| ApplierError::Execution(format!("Failed to update user: {}", e)))?;
-            Ok(format!("User {} updated successfully", user_id))
-        })
-        .await?;
+        let result =
+            run_blocking_applier(move || {
+                app_context.system_tables().users().update_user(user).map_err(|e| {
+                    ApplierError::Execution(format!("Failed to update user: {}", e))
+                })?;
+                Ok(format!("User {} updated successfully", user_id))
+            })
+            .await?;
         self.app_context.invalidate_cached_user(&cache_user_id);
         Ok(result)
     }
@@ -72,15 +70,14 @@ impl UserExecutor {
         let app_context = self.app_context.clone();
         let cache_user_id = user_id.clone();
         let user_id = cache_user_id.clone();
-        let result = run_blocking_applier(move || {
-            app_context
-                .system_tables()
-                .users()
-                .delete_user(&user_id)
-                .map_err(|e| ApplierError::Execution(format!("Failed to delete user: {}", e)))?;
-            Ok(format!("User {} deleted successfully", user_id))
-        })
-        .await?;
+        let result =
+            run_blocking_applier(move || {
+                app_context.system_tables().users().delete_user(&user_id).map_err(|e| {
+                    ApplierError::Execution(format!("Failed to delete user: {}", e))
+                })?;
+                Ok(format!("User {} deleted successfully", user_id))
+            })
+            .await?;
         self.app_context.invalidate_cached_user(&cache_user_id);
         Ok(result)
     }

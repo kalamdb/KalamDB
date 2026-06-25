@@ -120,7 +120,7 @@ impl TableVersionId {
     /// let prefix = TableVersionId::version_scan_prefix(&table_id);
     /// // Returns storekey prefix for versioned entries
     /// ```
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn version_scan_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(
             table_id.namespace_id().as_str(),
@@ -133,7 +133,7 @@ impl TableVersionId {
     ///
     /// Used by `delete_all_versions` and `list_versions` to find all storage
     /// entries for a single table without scanning the entire column family.
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn table_scan_prefix(table_id: &TableId) -> Vec<u8> {
         encode_prefix(&(table_id.namespace_id().as_str(), table_id.table_name().as_str()))
     }
@@ -141,7 +141,7 @@ impl TableVersionId {
     /// Create prefix for scanning all tables in a namespace.
     ///
     /// Matches both latest pointers and versioned entries within the namespace.
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn namespace_scan_prefix(namespace_id: &crate::models::ids::NamespaceId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
@@ -150,7 +150,7 @@ impl TableVersionId {
     ///
     /// - Latest: (namespace, table, VERSION_KIND_LATEST)
     /// - Versioned: (namespace, table, VERSION_KIND_VERSIONED, version)
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn as_storage_key(&self) -> Vec<u8> {
         let namespace_id = self.table_id.namespace_id().as_str();
         let table_name = self.table_id.table_name().as_str();
@@ -164,7 +164,7 @@ impl TableVersionId {
     /// Parse from storage key bytes
     ///
     /// Handles both latest pointer and versioned formats.
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((namespace_id, table_name, kind, version)) =
             decode_key::<(String, String, u8, u32)>(key)

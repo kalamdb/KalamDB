@@ -24,9 +24,7 @@ pub fn is_loopback_server_url(server_url: &str) -> bool {
 pub fn validate_http_server_url(value: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(CLIError::ConfigurationError(
-            "server URL must not be empty".into(),
-        ));
+        return Err(CLIError::ConfigurationError("server URL must not be empty".into()));
     }
 
     let url = Url::parse(trimmed).map_err(|error| {
@@ -41,9 +39,7 @@ pub fn validate_http_server_url(value: &str) -> Result<String> {
     }
 
     if url.host_str().is_none() {
-        return Err(CLIError::ConfigurationError(
-            "server URL must include a host".into(),
-        ));
+        return Err(CLIError::ConfigurationError("server URL must include a host".into()));
     }
 
     url.port_or_known_default().ok_or_else(|| {
@@ -102,9 +98,7 @@ mod tests {
 
     #[test]
     fn validate_http_server_url_rejects_non_http_schemes() {
-        let err = validate_http_server_url("javascript:alert(1)")
-            .unwrap_err()
-            .to_string();
+        let err = validate_http_server_url("javascript:alert(1)").unwrap_err().to_string();
         assert!(err.contains("http or https"));
     }
 

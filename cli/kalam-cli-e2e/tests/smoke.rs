@@ -137,6 +137,8 @@ mod smoke_test_dml_extended;
 mod smoke_test_dml_watermark_optimization;
 #[path = "smoke/dml/smoke_test_dml_wide_columns.rs"]
 mod smoke_test_dml_wide_columns;
+#[path = "smoke/dml/smoke_test_insert_on_conflict_returning.rs"]
+mod smoke_test_insert_on_conflict_returning;
 #[path = "smoke/dml/smoke_test_insert_returning.rs"]
 mod smoke_test_insert_returning;
 #[path = "smoke/dml/smoke_test_insert_throughput.rs"]

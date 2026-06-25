@@ -168,8 +168,7 @@ fn writer_properties(
         .set_max_row_group_row_count(Some(128 * 1024));
 
     if options.content_defined_chunking {
-        props_builder =
-            props_builder.set_content_defined_chunking(Some(CdcOptions::default()));
+        props_builder = props_builder.set_content_defined_chunking(Some(CdcOptions::default()));
     }
 
     if let Some(cols) = bloom_filter_columns {
@@ -339,10 +338,7 @@ mod tests {
         )
         .unwrap();
 
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
-            .unwrap()
-            .build()
-            .unwrap();
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes).unwrap().build().unwrap();
         let read_batches: Vec<RecordBatch> = reader.map(|batch| batch.unwrap()).collect();
         assert_eq!(read_batches.len(), 1);
         assert_eq!(read_batches[0].num_rows(), 3);

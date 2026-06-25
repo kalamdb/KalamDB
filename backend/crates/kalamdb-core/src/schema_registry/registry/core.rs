@@ -153,8 +153,7 @@ impl SchemaRegistry {
         let reconcile_start = std::time::Instant::now();
         let reconcile_stats = self.reconcile_system_table_definitions()?;
         let reconcile_ms = reconcile_start.elapsed().as_secs_f64() * 1000.0;
-        let system_schema_unchanged =
-            reconcile_stats.created == 0 && reconcile_stats.upgraded == 0;
+        let system_schema_unchanged = reconcile_stats.created == 0 && reconcile_stats.upgraded == 0;
 
         let warm_start = std::time::Instant::now();
         self.warm_system_table_providers(system_schema_unchanged)?;
@@ -258,7 +257,9 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    fn reconcile_system_table_definitions(&self) -> Result<SystemSchemaReconcileStats, KalamDbError> {
+    fn reconcile_system_table_definitions(
+        &self,
+    ) -> Result<SystemSchemaReconcileStats, KalamDbError> {
         let system_tables = self.app_context().system_tables();
         let tables_provider = system_tables.tables();
         let expected_defs = system_tables.expected_system_table_definitions();

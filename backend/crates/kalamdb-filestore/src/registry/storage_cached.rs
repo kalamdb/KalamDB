@@ -64,7 +64,10 @@ impl StorageCached {
         )
     }
 
-    pub fn parquet_writer_options(&self, compression: TableCompression) -> crate::parquet::writer::ParquetWriterOptions {
+    pub fn parquet_writer_options(
+        &self,
+        compression: TableCompression,
+    ) -> crate::parquet::writer::ParquetWriterOptions {
         crate::parquet::writer::ParquetWriterOptions::new(compression)
             .with_content_defined_chunking(self.parquet_write.content_defined_chunking)
     }
@@ -432,12 +435,9 @@ impl StorageCached {
         let store = self.object_store_internal()?;
         let pr = self.get_file_path(table_type, table_id, user_id, file);
         let object_path = self.to_object_path(&pr.relative_path)?;
-        let stream = crate::parquet::reader::parse_parquet_stream_with_options(
-            store,
-            &object_path,
-            options,
-        )
-        .await?;
+        let stream =
+            crate::parquet::reader::parse_parquet_stream_with_options(store, &object_path, options)
+                .await?;
         kalamdb_observability::record_parquet_file_read();
         Ok(stream)
     }

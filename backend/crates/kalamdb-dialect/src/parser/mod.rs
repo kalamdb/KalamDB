@@ -19,11 +19,21 @@
 //! 3. **PostgreSQL/MySQL compatibility**: Accept common syntax variants
 //! 4. **Type-safe AST**: Strongly typed statement representations
 
+pub mod dml;
 pub mod extensions;
 pub mod query_parser;
 pub mod system;
 pub mod utils;
 
+pub use dml::{
+    build_on_conflict_update_assignments, conflict_target_is_primary_key, expr_to_scalar,
+    expr_to_scalar_with_params, insert_from_statement, insert_has_on_conflict,
+    insert_returning_items, on_conflict_update_should_apply, on_conflict_values_insert,
+    parse_on_conflict_action, single_values_insert_row, sql_value_to_scalar, strip_nested_expr,
+    validate_primary_key_conflict_target, values_insert_view, values_insert_view_from_statement,
+    values_rows_from_insert, values_to_rows, OnConflictUpdateAssignment, OnConflictUpdateValue,
+    ParsedOnConflictAction, ValuesInsertShapeOptions, ValuesInsertView,
+};
 pub use extensions::*;
 pub use query_parser::*;
 pub use system::*;

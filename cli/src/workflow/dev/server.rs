@@ -22,10 +22,7 @@ use crate::{
     },
     terminal_ui,
     workflow::{
-        dev::{
-            logs::ServiceLogSource,
-            processes::ProcessSupervisor,
-        },
+        dev::{logs::ServiceLogSource, processes::ProcessSupervisor},
         project::{
             config::KalamProjectConfig,
             guidance::{
@@ -118,17 +115,12 @@ pub fn managed_server_binary_path() -> PathBuf {
 }
 
 #[cfg(windows)]
-const MANAGED_SERVER_RUNTIME_DLLS: &[&str] = &[
-    "msvcp140.dll",
-    "vcruntime140.dll",
-    "vcruntime140_1.dll",
-];
+const MANAGED_SERVER_RUNTIME_DLLS: &[&str] =
+    &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"];
 
 #[cfg(windows)]
 fn managed_server_runtime_is_complete(install_dir: &Path) -> bool {
-    MANAGED_SERVER_RUNTIME_DLLS
-        .iter()
-        .all(|name| install_dir.join(name).is_file())
+    MANAGED_SERVER_RUNTIME_DLLS.iter().all(|name| install_dir.join(name).is_file())
 }
 
 #[cfg(not(windows))]
@@ -477,12 +469,10 @@ pub async fn wait_for_server_ready(
 
         for (name, code) in supervisor.reap_finished().await {
             if name == "server" {
-                return Err(CLIError::ConfigurationError(
-                    dev_local_kalamdb_server_start_failed(
-                        server_program,
-                        &format!("server exited with code {code} before becoming ready"),
-                    ),
-                ));
+                return Err(CLIError::ConfigurationError(dev_local_kalamdb_server_start_failed(
+                    server_program,
+                    &format!("server exited with code {code} before becoming ready"),
+                )));
             }
         }
 
@@ -565,9 +555,9 @@ mod tests {
         assert!(contents.contains("max_queries_per_sec = 100000"));
         assert!(contents.contains("data_path = \"kalam/server/data\""));
         assert!(contents.contains("logs_path = \"kalam/server/logs\""));
-        assert!(contents.contains(&format!(
-            "root_password = \"{DEFAULT_LOCAL_DEV_ROOT_PASSWORD}\""
-        )));
+        assert!(
+            contents.contains(&format!("root_password = \"{DEFAULT_LOCAL_DEV_ROOT_PASSWORD}\""))
+        );
     }
 
     #[test]

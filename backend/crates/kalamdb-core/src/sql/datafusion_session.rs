@@ -297,12 +297,7 @@ mod tests {
     fn test_higher_order_functions_are_registered() {
         let factory = DataFusionSessionFactory::new().unwrap();
         let session = factory.create_session();
-        let names: Vec<_> = session
-            .state()
-            .higher_order_functions()
-            .keys()
-            .cloned()
-            .collect();
+        let names: Vec<_> = session.state().higher_order_functions().keys().cloned().collect();
         assert!(
             names.iter().any(|name| name == "array_transform"),
             "expected array_transform higher-order UDF, got {names:?}"
@@ -313,13 +308,7 @@ mod tests {
     async fn test_lambda_array_transform_sql() {
         let factory = DataFusionSessionFactory::new().unwrap();
         let session = factory.create_session();
-        let result = session
-            .sql("SELECT array_transform([1, 2, 3], x -> x * 10)")
-            .await;
-        assert!(
-            result.is_ok(),
-            "lambda array_transform failed: {:?}",
-            result.err()
-        );
+        let result = session.sql("SELECT array_transform([1, 2, 3], x -> x * 10)").await;
+        assert!(result.is_ok(), "lambda array_transform failed: {:?}", result.err());
     }
 }

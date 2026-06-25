@@ -1,0 +1,31 @@
+[project]
+name = "live-okf-context-sync"
+default_env = "dev"
+package_manager = "npm"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "okf_sync"
+
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+watch = true
+
+[migrations]
+auto_create = true
+
+[dev]
+auto_start_db = true
+apply_schema = true
+generate_types = false
+watch = true
+
+[dev.processes]
+sync = "npm run dev:sync"
+web = "npm run dev:web"
+agent = "npm run dev:agent"
+
+[logging]
+file = true
+capture_process_output = true

@@ -1126,6 +1126,7 @@ mod tests {
   use std::collections::HashMap;
 
   use crate::comparison::{PreviousBenchmark, PreviousRun};
+  use crate::config::BenchmarkSuite;
 
     #[test]
     fn build_html_renders_full_description_details_and_exact_time_tooltips() {
@@ -1137,6 +1138,7 @@ mod tests {
             warmup: 0,
             concurrency: 1,
             output_dir: "results".to_string(),
+            suite: BenchmarkSuite::Standard,
             filter: Some("subscriber_scale".to_string()),
             bench: vec!["subscriber_scale".to_string()],
             list_benches: false,
@@ -1190,6 +1192,7 @@ mod tests {
           warmup: 0,
           concurrency: 1,
           output_dir: "results".to_string(),
+          suite: BenchmarkSuite::Standard,
           filter: None,
           bench: vec![],
           list_benches: false,

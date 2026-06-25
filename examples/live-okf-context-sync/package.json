@@ -1,0 +1,32 @@
+{
+  "name": "live-okf-context-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal OKF folder sync showcase: schema.sql + kalam dev + TypeScript",
+  "scripts": {
+    "dev:web": "vite --host 127.0.0.1 --port 5177",
+    "dev:sync": "tsx src/sync-worker.ts",
+    "dev:agent": "tsx src/agent.ts",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5177",
+    "test": "tsc && tsx --test tests/*.test.ts",
+    "test:e2e": "playwright test tests/e2e.spec.mjs"
+  },
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "dotenv": "^17.4.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^25.7.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  }
+}

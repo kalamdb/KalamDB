@@ -76,10 +76,7 @@ pub fn run_path_tool(name: &str, args: &[&str], working_dir: &Path) -> std::io::
 /// Spawn a shell script as an async child with piped stdout/stderr.
 pub fn spawn_shell_piped(script: &str) -> std::io::Result<Child> {
     let mut command = tokio_shell_command(script);
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     configure_supervised_child(&mut command);
     command.spawn()
 }
@@ -105,8 +102,5 @@ pub fn spawn_program_piped(
 
 /// Spawn a detached program without waiting for completion.
 pub fn spawn_detached(program: &str, args: &[impl AsRef<str>]) -> std::io::Result<()> {
-    Command::new(program)
-        .args(args.iter().map(AsRef::as_ref))
-        .spawn()
-        .map(|_| ())
+    Command::new(program).args(args.iter().map(AsRef::as_ref)).spawn().map(|_| ())
 }

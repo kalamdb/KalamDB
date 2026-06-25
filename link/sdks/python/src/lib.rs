@@ -5,12 +5,12 @@ use pyo3::types::PyAny;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use kalam_client::query::models::query_param::from_json_value;
 use kalam_client::{
     AuthProvider, FileDownload, FileRef, FileUpload, KalamLinkClient, KalamLinkError,
     LiveRowsConfig, LiveRowsEvent, LiveRowsSubscription, QueryParam, SeqId, SubscriptionConfig,
     SubscriptionManager, SubscriptionOptions,
 };
-use kalam_client::query::models::query_param::from_json_value;
 use kalam_client::{AutoOffsetReset, TopicConsumer};
 
 create_exception!(kalamdb, KalamError, PyException, "Base class for all KalamDB SDK errors.");
@@ -78,10 +78,7 @@ async fn execute_with_auth_retry(
         let mut guard = state.lock().await;
         ensure_authenticated_locked(&mut guard).await?;
 
-        let result = guard
-            .client
-            .execute_query(sql, files.clone(), params.clone(), None)
-            .await;
+        let result = guard.client.execute_query(sql, files.clone(), params.clone(), None).await;
 
         match result {
             Ok(response) => return Ok(response),
@@ -365,12 +362,7 @@ struct PyFileUpload {
 impl PyFileUpload {
     #[new]
     #[pyo3(signature = (placeholder, filename, data, mime=None))]
-    fn new(
-        placeholder: String,
-        filename: String,
-        data: Vec<u8>,
-        mime: Option<String>,
-    ) -> Self {
+    fn new(placeholder: String, filename: String, data: Vec<u8>, mime: Option<String>) -> Self {
         Self {
             placeholder,
             filename,
@@ -391,11 +383,8 @@ impl PyFileUpload {
 
 impl PyFileUpload {
     fn into_upload(&self) -> FileUpload {
-        let mut upload = FileUpload::new(
-            self.placeholder.clone(),
-            self.filename.clone(),
-            self.data.clone(),
-        );
+        let mut upload =
+            FileUpload::new(self.placeholder.clone(), self.filename.clone(), self.data.clone());
         if let Some(mime) = &self.mime {
             upload = upload.with_mime(mime.clone());
         }
@@ -769,8 +758,7 @@ impl KalamClient {
         }
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response =
-                execute_with_auth_retry(&state, &sql, Some(owned_files), params).await?;
+            let response = execute_with_auth_retry(&state, &sql, Some(owned_files), params).await?;
             Python::attach(|py| serialize_to_py(py, &response))
         })
     }
@@ -794,12 +782,7 @@ impl KalamClient {
                 ensure_authenticated_locked(&mut guard).await?;
                 guard
                     .client
-                    .download_file(
-                        &file_ref,
-                        &namespace,
-                        &table,
-                        target_user_id.as_deref(),
-                    )
+                    .download_file(&file_ref, &namespace, &table, target_user_id.as_deref())
                     .await
                     .map_err(to_py_err)?
             };

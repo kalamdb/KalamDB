@@ -8,14 +8,14 @@ use std::{
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "storage")]
+use crate::StorageKey;
 use crate::{
     constants::{RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE},
     helpers::naming::{
         validate_namespace_reference, validate_user_namespace_name, SqlIdentifierError,
     },
 };
-#[cfg(feature = "storage")]
-use crate::StorageKey;
 
 /// Error returned when a namespace ID fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]

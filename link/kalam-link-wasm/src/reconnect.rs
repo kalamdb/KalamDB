@@ -12,9 +12,9 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     helpers::{create_promise, send_ws_message, ws_url_from_http_opts},
     state::SubscriptionState,
+    wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
 };
 use link_common::models::{

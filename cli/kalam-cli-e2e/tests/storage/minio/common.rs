@@ -1,6 +1,11 @@
 #![allow(dead_code, unused_imports)]
 
-use std::{borrow::Cow, env, sync::{Arc, OnceLock}, time::Duration};
+use std::{
+    borrow::Cow,
+    env,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use futures_util::StreamExt;
 use object_store::{
@@ -15,8 +20,8 @@ use crate::common::{
     admin_username, default_password, default_username, execute_sql_as_root_via_cli,
     execute_sql_as_root_via_client_json, extract_typed_value, get_rows_as_hashmaps,
     is_cluster_mode, is_server_running, leader_or_server_url, parse_cli_json_output,
-    parse_job_id_from_flush_output, parse_job_id_from_json_message, server_url,
-    shared_http_client, verify_job_completed, wait_for_job_finished,
+    parse_job_id_from_flush_output, parse_job_id_from_json_message, server_url, shared_http_client,
+    verify_job_completed, wait_for_job_finished,
 };
 
 pub(super) const MINIO_ENDPOINT: &str = "http://127.0.0.1:9120";
@@ -71,11 +76,11 @@ fn server_supports_s3_storage() -> bool {
             Ok(_) => {
                 let _ = execute_sql_as_root_via_cli(&format!("DROP STORAGE {probe_id}"));
                 true
-            }
+            },
             Err(err) => {
                 let msg = err.to_string();
                 !msg.contains("not compiled in") && !msg.contains("cloud-* feature")
-            }
+            },
         }
     })
 }
@@ -108,7 +113,7 @@ pub(crate) fn should_run_minio_storage_tests() -> bool {
                 "⚠️  Failed to create tokio runtime for MinIO probe: {err}. Skipping MinIO storage test."
             );
             return false;
-        }
+        },
     };
     let store = build_minio_store(&format!("s3://{}/", minio_bucket()));
     if let Err(err) = minio_bucket_reachable(&runtime, &store) {

@@ -8,7 +8,9 @@ use crate::{
             verify_jwt_auth, verify_workflow_auth, workflow_auth_config_error,
         },
         dev::logs::ServiceLogSource,
-        project::resolve::{credential_instance_for_env, resolve_kalam_profile, ResolvedEnvironment},
+        project::resolve::{
+            credential_instance_for_env, resolve_kalam_profile, ResolvedEnvironment,
+        },
         WorkflowContext,
     },
 };
@@ -21,11 +23,7 @@ pub(crate) async fn ensure_authentication_ready(
 ) -> Result<()> {
     let profile = resolve_kalam_profile(&ctx.project_root)?;
     if let Err(detail) = verify_workflow_auth(ctx, environment).await {
-        return Err(workflow_auth_config_error(
-            &ctx.project_root,
-            profile.as_deref(),
-            detail,
-        ));
+        return Err(workflow_auth_config_error(&ctx.project_root, profile.as_deref(), detail));
     }
 
     emit_authentication_ready(output, &environment.url);

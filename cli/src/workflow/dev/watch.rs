@@ -194,10 +194,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    use crate::{
-        config::WorkflowLoggingPolicy,
-        workflow::test_support::watch_test_config,
-    };
+    use crate::{config::WorkflowLoggingPolicy, workflow::test_support::watch_test_config};
 
     #[test]
     fn update_baseline_copies_schema_source() {

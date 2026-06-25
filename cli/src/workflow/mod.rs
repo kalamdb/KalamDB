@@ -1,14 +1,14 @@
 //! Shared workflow module surface for project lifecycle commands.
 
+pub(crate) mod auth;
 pub mod db;
 pub mod deploy;
 pub mod dev;
+pub(crate) mod display;
+pub(crate) mod io;
 pub mod migration;
 pub mod project;
 pub mod schema;
-pub(crate) mod auth;
-pub(crate) mod display;
-pub(crate) mod io;
 pub(crate) mod sql;
 
 #[cfg(test)]

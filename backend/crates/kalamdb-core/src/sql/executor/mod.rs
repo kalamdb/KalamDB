@@ -9,7 +9,6 @@ pub mod default_ordering;
 pub mod handler_adapter;
 pub mod handler_registry;
 pub mod handlers;
-pub mod helpers;
 pub mod parameter_binding;
 pub mod request_transaction_state;
 mod sql_executor;

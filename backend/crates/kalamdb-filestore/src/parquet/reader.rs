@@ -138,7 +138,8 @@ pub async fn parse_parquet_stream_with_options(
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
 
     let row_groups_before_pruning = builder.metadata().num_row_groups();
-    let mut selected_row_groups = initial_row_groups(row_groups_before_pruning, &options.row_groups);
+    let mut selected_row_groups =
+        initial_row_groups(row_groups_before_pruning, &options.row_groups);
     let mut row_group_pruning_applied = options.row_groups.is_some();
 
     if let Some(seq_range) = &options.seq_range {
@@ -207,11 +208,9 @@ fn resolve_column_indices(
 
 fn initial_row_groups(total_row_groups: usize, requested: &Option<Vec<usize>>) -> Vec<usize> {
     match requested {
-        Some(row_groups) => row_groups
-            .iter()
-            .copied()
-            .filter(|idx| *idx < total_row_groups)
-            .collect(),
+        Some(row_groups) => {
+            row_groups.iter().copied().filter(|idx| *idx < total_row_groups).collect()
+        },
         None => (0..total_row_groups).collect(),
     }
 }
@@ -222,10 +221,8 @@ fn prune_row_groups_by_seq_range(
     row_groups: &[usize],
     range: &SeqRangePruning,
 ) -> Vec<usize> {
-    let Some(column_idx) = parquet_schema
-        .columns()
-        .iter()
-        .position(|column| column.name() == range.column)
+    let Some(column_idx) =
+        parquet_schema.columns().iter().position(|column| column.name() == range.column)
     else {
         return row_groups.to_vec();
     };
@@ -280,26 +277,24 @@ async fn prune_row_groups_by_pk_bloom(
 
     let mut selected = Vec::with_capacity(row_groups.len());
     for row_group_idx in row_groups {
-        let bloom_filter = match builder
-            .get_row_group_column_bloom_filter(*row_group_idx, column_idx)
-            .await
-        {
-            Ok(Some(filter)) => filter,
-            Ok(None) => {
-                selected.push(*row_group_idx);
-                continue;
-            },
-            Err(error) => {
-                tracing::debug!(
-                    row_group = *row_group_idx,
-                    column = %pruning.column,
-                    error = %error,
-                    "Ignoring Parquet bloom filter read error"
-                );
-                selected.push(*row_group_idx);
-                continue;
-            },
-        };
+        let bloom_filter =
+            match builder.get_row_group_column_bloom_filter(*row_group_idx, column_idx).await {
+                Ok(Some(filter)) => filter,
+                Ok(None) => {
+                    selected.push(*row_group_idx);
+                    continue;
+                },
+                Err(error) => {
+                    tracing::debug!(
+                        row_group = *row_group_idx,
+                        column = %pruning.column,
+                        error = %error,
+                        "Ignoring Parquet bloom filter read error"
+                    );
+                    selected.push(*row_group_idx);
+                    continue;
+                },
+            };
 
         if pruning
             .values
@@ -647,12 +642,7 @@ mod tests {
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 18_928);
-        let first_id = batches[0]
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap()
-            .value(0);
+        let first_id = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
         assert_eq!(first_id, 131_072);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -673,12 +663,8 @@ mod tests {
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 18_928);
-        let first_seq = batches[0]
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap()
-            .value(0);
+        let first_seq =
+            batches[0].column(2).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
         assert_eq!(first_seq, 131_072_000);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -704,12 +690,7 @@ mod tests {
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 18_928);
-        let first_id = batches[0]
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap()
-            .value(0);
+        let first_id = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
         assert_eq!(first_id, 131_072);
 
         let _ = fs::remove_dir_all(&temp_dir);

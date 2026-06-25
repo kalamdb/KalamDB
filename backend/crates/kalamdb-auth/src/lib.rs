@@ -46,6 +46,8 @@ pub use providers::jwt_auth::{
     refresh_jwt_token, JwtClaims, TokenType, DEFAULT_JWT_EXPIRY_HOURS, KALAMDB_ISSUER,
 };
 pub use repository::user_repo::{CachedUsersRepo, CoreUsersRepo, UserRepository};
+#[cfg(feature = "http")]
+pub use services::session_tokens::auth_cookie_config;
 pub use services::{
     login_tracker::{LoginTracker, LoginTrackingConfig},
     session_tokens::{issue_auth_tokens, IssuedAuthTokens},
@@ -54,5 +56,3 @@ pub use services::{
         AuthenticationResult,
     },
 };
-#[cfg(feature = "http")]
-pub use services::session_tokens::auth_cookie_config;

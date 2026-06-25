@@ -37,11 +37,19 @@ pub use ddl_parent::DdlAst;
 pub use dialect::KalamDbDialect;
 pub use execute_as::{extract_inner_sql, parse_execute_as, ExecuteAsEnvelope};
 pub use parser::{
-    extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
-    insert_column_names_from_statement, insert_columns_match,
-    normalize_context_keyword_calls_for_sqlparser, object_name_to_string, parse_single_statement,
+    build_on_conflict_update_assignments, conflict_target_is_primary_key, expr_to_scalar,
+    expr_to_scalar_with_params, extract_dml_table_id, extract_dml_table_id_fast,
+    extract_dml_table_id_from_statement, insert_column_names_from_statement, insert_columns_match,
+    insert_from_statement, insert_has_on_conflict, insert_returning_items,
+    normalize_context_keyword_calls_for_sqlparser, object_name_to_string,
+    on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
+    parse_single_statement,
     query_parser::{QueryParseError, QueryParser, SubscriptionQueryAnalysis},
-    rewrite_context_functions_for_datafusion, SqlParser,
+    rewrite_context_functions_for_datafusion, single_values_insert_row, sql_value_to_scalar,
+    strip_nested_expr, validate_primary_key_conflict_target, values_insert_view,
+    values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
+    OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction, SqlParser,
+    ValuesInsertShapeOptions, ValuesInsertView,
 };
 pub use query_features::{
     supports_general_query_feature, supports_subscription_query_feature, GeneralQueryFeature,

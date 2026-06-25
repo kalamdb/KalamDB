@@ -16,10 +16,7 @@ use crate::{
             watch::schema_watch_path,
         },
         display_project_path,
-        project::{
-            connection_url::validate_dev_environment_url,
-            resolve::ResolvedEnvironment,
-        },
+        project::{connection_url::validate_dev_environment_url, resolve::ResolvedEnvironment},
         WorkflowContext,
     },
 };
@@ -36,12 +33,14 @@ pub async fn run_dev_prechecks(
     server_source: &ServiceLogSource,
 ) -> Result<DevPrecheckReport> {
     let environment = ctx.resolved_environment()?;
-    validate_dev_environment_url(&environment.url, ctx.config.dev.auto_start_db).map_err(|error| {
-        CLIError::ConfigurationError(format!(
-            "precheck failed: invalid environment URL '{}': {error}",
-            environment.url
-        ))
-    })?;
+    validate_dev_environment_url(&environment.url, ctx.config.dev.auto_start_db).map_err(
+        |error| {
+            CLIError::ConfigurationError(format!(
+                "precheck failed: invalid environment URL '{}': {error}",
+                environment.url
+            ))
+        },
+    )?;
     output.status(format!("precheck: environment ready at {}", environment.url));
     output.progress_task("environment", ProgressTaskStatus::Succeeded, "Environment ready");
 
@@ -78,7 +77,8 @@ pub async fn run_dev_prechecks(
     };
 
     if ctx.config.dev.auto_start_db && local_server_reused {
-        auth::ensure_local_dev_authentication_ready(ctx, &environment, output, server_source).await?;
+        auth::ensure_local_dev_authentication_ready(ctx, &environment, output, server_source)
+            .await?;
     } else if !ctx.config.dev.auto_start_db {
         auth::ensure_authentication_ready(ctx, &environment, output, server_source).await?;
     }

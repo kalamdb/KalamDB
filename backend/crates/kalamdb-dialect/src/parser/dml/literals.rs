@@ -1,17 +1,13 @@
-//! Shared AST-level parsing utilities for transactional DML helpers.
+//! Literal and placeholder expression parsing for DML VALUES clauses.
 
-use datafusion::scalar::ScalarValue;
+use datafusion_common::ScalarValue;
 use sqlparser::ast::{Expr, UnaryOperator, Value};
-
-// ──────────────────────────────────────────────────────────────────────
-// Scalar / Value conversion
-// ──────────────────────────────────────────────────────────────────────
 
 /// Convert a sqlparser `Expr` to a DataFusion `ScalarValue`.
 ///
-/// Only handles literal values and simple negation.  Returns `Err` for
-/// anything more complex (functions, casts, subqueries, etc.) so the
-/// caller can fall back to DataFusion.
+/// Only handles literal values and simple negation. Returns `Err` for anything
+/// more complex (placeholders, functions, casts, subqueries, etc.) so the
+/// caller can fall back to DataFusion or use [`expr_to_scalar_with_params`].
 pub fn expr_to_scalar(expr: &Expr) -> Result<ScalarValue, &'static str> {
     match expr {
         Expr::Value(val) => sql_value_to_scalar(&val.value),
@@ -33,7 +29,76 @@ pub fn expr_to_scalar(expr: &Expr) -> Result<ScalarValue, &'static str> {
             },
             _ => Err("unsupported unary expression"),
         },
+        Expr::Nested(inner) => expr_to_scalar(inner),
         _ => Err("unsupported expression"),
+    }
+}
+
+/// Like [`expr_to_scalar`], but resolves PostgreSQL-style placeholders against
+/// `params` (`$1` maps to `params[0]`).
+pub fn expr_to_scalar_with_params(
+    expr: &Expr,
+    params: &[ScalarValue],
+) -> Result<ScalarValue, &'static str> {
+    match expr {
+        Expr::Value(val) => match &val.value {
+            Value::Placeholder(placeholder) => resolve_placeholder(placeholder, params),
+            other => sql_value_to_scalar(other),
+        },
+        Expr::UnaryOp {
+            op: UnaryOperator::Minus,
+            expr,
+        } => match strip_nested_expr(expr.as_ref()) {
+            Expr::Value(val) => match &val.value {
+                Value::Number(n, _) => {
+                    if let Ok(i) = n.parse::<i64>() {
+                        Ok(ScalarValue::Int64(Some(-i)))
+                    } else if let Ok(f) = n.parse::<f64>() {
+                        Ok(ScalarValue::Float64(Some(-f)))
+                    } else {
+                        Err("unsupported numeric literal")
+                    }
+                },
+                Value::Placeholder(placeholder) => {
+                    let scalar = resolve_placeholder(placeholder, params)?;
+                    negate_scalar(scalar)
+                },
+                _ => Err("unsupported unary literal"),
+            },
+            _ => Err("unsupported unary expression"),
+        },
+        Expr::Nested(inner) => expr_to_scalar_with_params(inner, params),
+        _ => Err("unsupported expression"),
+    }
+}
+
+fn resolve_placeholder(
+    placeholder: &str,
+    params: &[ScalarValue],
+) -> Result<ScalarValue, &'static str> {
+    let index = placeholder_param_index(placeholder)?;
+    params.get(index).cloned().ok_or("parameter index out of bounds")
+}
+
+fn placeholder_param_index(placeholder: &str) -> Result<usize, &'static str> {
+    let digits = placeholder.strip_prefix('$').unwrap_or(placeholder);
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return Err("invalid placeholder");
+    }
+
+    let one_based: usize = digits.parse().map_err(|_| "invalid placeholder")?;
+    if one_based == 0 {
+        return Err("invalid placeholder");
+    }
+
+    Ok(one_based - 1)
+}
+
+fn negate_scalar(value: ScalarValue) -> Result<ScalarValue, &'static str> {
+    match value {
+        ScalarValue::Int64(Some(value)) => Ok(ScalarValue::Int64(Some(-value))),
+        ScalarValue::Float64(Some(value)) => Ok(ScalarValue::Float64(Some(-value))),
+        _ => Err("unsupported unary literal"),
     }
 }
 
@@ -68,14 +133,16 @@ pub fn strip_nested_expr(expr: &Expr) -> &Expr {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::scalar::ScalarValue;
+    use datafusion_common::ScalarValue;
     use sqlparser::{
         ast::{Expr, SelectItem, SetExpr, Statement, UnaryOperator, Value},
         dialect::GenericDialect,
         parser::Parser,
     };
 
-    use super::{expr_to_scalar, sql_value_to_scalar, strip_nested_expr};
+    use super::{
+        expr_to_scalar, expr_to_scalar_with_params, sql_value_to_scalar, strip_nested_expr,
+    };
 
     fn parse_select_expr(expr_sql: &str) -> Expr {
         let sql = format!("SELECT {expr_sql}");
@@ -94,6 +161,32 @@ mod tests {
                 other => panic!("expected SELECT body, got {other:?}"),
             },
             other => panic!("expected query statement, got {other:?}"),
+        }
+    }
+
+    fn parse_values_expr(expr_sql: &str) -> Expr {
+        let sql = format!("INSERT INTO t (c) VALUES ({expr_sql})");
+        let statements =
+            Parser::parse_sql(&GenericDialect {}, &sql).expect("insert values should parse");
+        let statement = statements.into_iter().next().expect("one parsed statement");
+
+        match statement {
+            Statement::Insert(insert) => {
+                let source = insert.source.expect("insert source");
+                match *source.body {
+                    SetExpr::Values(values) => values
+                        .rows
+                        .into_iter()
+                        .next()
+                        .expect("one values row")
+                        .content
+                        .into_iter()
+                        .next()
+                        .expect("one value expression"),
+                    other => panic!("expected VALUES body, got {other:?}"),
+                }
+            },
+            other => panic!("expected insert statement, got {other:?}"),
         }
     }
 
@@ -137,6 +230,23 @@ mod tests {
     fn expr_to_scalar_rejects_non_literals() {
         let ident = parse_select_expr("some_column");
         assert_eq!(expr_to_scalar(&ident), Err("unsupported expression"));
+    }
+
+    #[test]
+    fn expr_to_scalar_with_params_resolves_placeholders() {
+        let placeholder = parse_values_expr("$1");
+        let params = vec![ScalarValue::Utf8(Some("bound".to_string()))];
+        assert_eq!(
+            expr_to_scalar_with_params(&placeholder, &params).unwrap(),
+            ScalarValue::Utf8(Some("bound".to_string()))
+        );
+
+        let negated = parse_values_expr("-$2");
+        let params = vec![ScalarValue::Null, ScalarValue::Int64(Some(7))];
+        assert_eq!(
+            expr_to_scalar_with_params(&negated, &params).unwrap(),
+            ScalarValue::Int64(Some(-7))
+        );
     }
 
     #[test]

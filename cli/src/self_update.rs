@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 #[cfg(windows)]
 use std::process::{Command, Stdio};
@@ -57,11 +54,7 @@ fn replace_immediately(current_exe: &Path, new_binary: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn schedule_deferred_replace(
-    current_exe: &Path,
-    new_binary: &Path,
-    temp_dir: &Path,
-) -> Result<()> {
+fn schedule_deferred_replace(current_exe: &Path, new_binary: &Path, temp_dir: &Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -81,10 +74,7 @@ fn schedule_deferred_replace(
         &leftover_tmp,
     );
     fs::write(&script_path, script).map_err(|error| {
-        CLIError::FileError(format!(
-            "Failed to write Windows update helper script: {}",
-            error
-        ))
+        CLIError::FileError(format!("Failed to write Windows update helper script: {}", error))
     })?;
 
     Command::new("powershell.exe")
@@ -104,10 +94,7 @@ fn schedule_deferred_replace(
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
         .map_err(|error| {
-            CLIError::FileError(format!(
-                "Failed to launch Windows update helper: {}",
-                error
-            ))
+            CLIError::FileError(format!("Failed to launch Windows update helper: {}", error))
         })?;
 
     Ok(())

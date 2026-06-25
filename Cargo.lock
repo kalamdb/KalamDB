@@ -4723,6 +4723,7 @@ version = "0.5.3-rc.1"
 dependencies = [
  "anyhow",
  "arrow",
+ "datafusion-common",
  "kalamdb-commons",
  "kalamdb-session",
  "kalamdb-system",

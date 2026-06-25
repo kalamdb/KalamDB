@@ -9,7 +9,9 @@ use datafusion::{
         datatypes::DataType,
     },
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility},
+    logical_expr::{
+        ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+    },
     scalar::ScalarValue,
 };
 use kalamdb_commons::arrow_utils::{arrow_float32, ArrowDataType};
@@ -23,10 +25,7 @@ fn native_cosine_distance_udf() -> Arc<ScalarUDF> {
 }
 
 fn uses_json_query_vector_types(arg_types: &[DataType]) -> bool {
-    matches!(
-        arg_types.get(1),
-        Some(DataType::Utf8 | DataType::LargeUtf8)
-    )
+    matches!(arg_types.get(1), Some(DataType::Utf8 | DataType::LargeUtf8))
 }
 
 fn uses_json_query_vector(args: &[ColumnarValue]) -> bool {
@@ -40,7 +39,9 @@ fn json_query_vector_return_type(_arg_types: &[ArrowDataType]) -> DataFusionResu
     Ok(arrow_float32())
 }
 
-fn json_query_vector_coerce_types(arg_types: &[ArrowDataType]) -> DataFusionResult<Vec<ArrowDataType>> {
+fn json_query_vector_coerce_types(
+    arg_types: &[ArrowDataType],
+) -> DataFusionResult<Vec<ArrowDataType>> {
     if arg_types.len() != 2 {
         return Err(DataFusionError::Plan(
             "COSINE_DISTANCE() expects exactly 2 arguments".to_string(),
@@ -391,10 +392,8 @@ mod tests {
     #[test]
     fn test_json_query_vector_coerce_types_preserves_json_query_vector() {
         let func = CosineDistanceFunction::new();
-        let row_vector = DataType::FixedSizeList(
-            Arc::new(Field::new("item", DataType::Float32, true)),
-            3,
-        );
+        let row_vector =
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 3);
         let arg_types = vec![row_vector.clone(), DataType::Utf8];
 
         let coerced = func.coerce_types(&arg_types).expect("coercion should pass");
@@ -406,7 +405,10 @@ mod tests {
     fn test_cosine_distance_dispatcher_uses_native_for_array_query_vector() {
         let func = CosineDistanceFunction::new();
         let list_field = Arc::new(Field::new("item", DataType::Float64, true));
-        let arg_types = vec![DataType::List(list_field.clone()), DataType::List(list_field)];
+        let arg_types = vec![
+            DataType::List(list_field.clone()),
+            DataType::List(list_field),
+        ];
 
         assert!(!uses_json_query_vector_types(&arg_types));
         assert!(func.coerce_types(&arg_types).is_ok());
