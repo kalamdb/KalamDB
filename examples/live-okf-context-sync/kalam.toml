@@ -14,7 +14,7 @@ watch = true
 languages = ["typescript"]
 
 [schema.targets.typescript]
-output = "src/schema.generated.ts"
+output = "src/models/schema.generated.ts"
 
 [migrations]
 auto_create = true
@@ -25,12 +25,8 @@ apply_schema = true
 generate_types = true
 watch = true
 
-# The agent is a one-shot demo (`npm run dev:agent`), so it is intentionally not
-# a managed dev process. `kalam dev` keeps the database, schema/type generation,
-# the sync worker, and the web UI running.
 [dev.processes]
-sync = "npm run dev:sync"
-web = "npm run dev:web"
+sync = "npm run dev -- data"
 
 [logging]
 file = true

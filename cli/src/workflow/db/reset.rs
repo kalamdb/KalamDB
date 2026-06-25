@@ -18,31 +18,51 @@ pub fn reset_local_dev_server_data(
     output: &WorkflowOutput,
 ) -> Result<ResetSummary> {
     let server_dir = ctx.config.local_server_dir(&ctx.project_root);
-    let targets = [server_dir.join("data"), server_dir.join("logs")];
+    let schema_baseline = ctx.config.schema_baseline_path(&ctx.project_root);
 
     let mut removed_paths = 0usize;
-    for path in targets {
-        if !path.exists() {
-            output.detail(format!(
-                "skipped {} (not present)",
-                display_project_path(&ctx.project_root, &path)
-            ));
-            continue;
-        }
 
-        fs::remove_dir_all(&path).map_err(|error| {
-            CLIError::FileError(format!("failed to remove '{}': {error}", path.display()))
+    if server_dir.exists() {
+        fs::remove_dir_all(&server_dir).map_err(|error| {
+            CLIError::FileError(format!("failed to remove '{}': {error}", server_dir.display()))
         })?;
         removed_paths += 1;
-        output.status(format!("removed {}", display_project_path(&ctx.project_root, &path)));
+        output.status(format!(
+            "removed {}",
+            display_project_path(&ctx.project_root, &server_dir)
+        ));
+    } else {
+        output.detail(format!(
+            "skipped {} (not present)",
+            display_project_path(&ctx.project_root, &server_dir)
+        ));
+    }
+
+    if schema_baseline.exists() {
+        fs::remove_file(&schema_baseline).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to remove '{}': {error}",
+                schema_baseline.display()
+            ))
+        })?;
+        removed_paths += 1;
+        output.status(format!(
+            "removed {}",
+            display_project_path(&ctx.project_root, &schema_baseline)
+        ));
+    } else {
+        output.detail(format!(
+            "skipped {} (not present)",
+            display_project_path(&ctx.project_root, &schema_baseline)
+        ));
     }
 
     if removed_paths == 0 {
         output.status("no local server data to reset");
     } else {
         output.status(format!(
-            "cleared local dev server data ({removed_paths} director{}); run `kalam dev` to start fresh",
-            if removed_paths == 1 { "y" } else { "ies" }
+            "cleared local dev server data ({removed_paths} path{}); run `kalam dev` to start fresh",
+            if removed_paths == 1 { "" } else { "s" }
         ));
     }
 
@@ -74,48 +94,69 @@ mod tests {
     }
 
     #[test]
-    fn reset_removes_data_and_logs_directories() {
+    fn reset_removes_entire_server_directory() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
-        let data = root.join("kalam/server/data/rocksdb");
-        let logs = root.join("kalam/server/logs");
+        let server_dir = root.join("kalam/server");
+        let data = server_dir.join("data/rocksdb");
+        let logs = server_dir.join("logs");
+        let config_path = server_dir.join("server.toml");
         fs::create_dir_all(&data).unwrap();
         fs::write(data.join("CURRENT"), "ok").unwrap();
         fs::create_dir_all(&logs).unwrap();
         fs::write(logs.join("server.log"), "log").unwrap();
+        fs::write(&config_path, "[auth]\nroot_password = \"kalamdb123\"\n").unwrap();
 
         let ctx = test_context(root);
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let summary = reset_local_dev_server_data(&ctx, &output).unwrap();
 
-        assert_eq!(summary.removed_paths, 2);
-        assert!(!data.exists());
-        assert!(!logs.exists());
+        assert_eq!(summary.removed_paths, 1);
+        assert!(!server_dir.exists());
     }
 
     #[test]
-    fn reset_is_no_op_when_directories_are_missing() {
+    fn reset_removes_schema_baseline_file() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        let ctx = test_context(root);
+        let baseline = ctx.config.schema_baseline_path(root);
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        fs::write(&baseline, "CREATE TABLE foo (id INT);").unwrap();
+
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let summary = reset_local_dev_server_data(&ctx, &output).unwrap();
+
+        assert_eq!(summary.removed_paths, 1);
+        assert!(!baseline.exists());
+    }
+
+    #[test]
+    fn reset_removes_server_directory_and_schema_baseline() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        let ctx = test_context(root);
+        let server_dir = ctx.config.local_server_dir(root);
+        let baseline = ctx.config.schema_baseline_path(root);
+        fs::create_dir_all(server_dir.join("data")).unwrap();
+        fs::create_dir_all(baseline.parent().unwrap()).unwrap();
+        fs::write(&baseline, "CREATE TABLE foo (id INT);").unwrap();
+
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let summary = reset_local_dev_server_data(&ctx, &output).unwrap();
+
+        assert_eq!(summary.removed_paths, 2);
+        assert!(!server_dir.exists());
+        assert!(!baseline.exists());
+    }
+
+    #[test]
+    fn reset_is_no_op_when_nothing_is_present() {
         let temp = TempDir::new().unwrap();
         let ctx = test_context(temp.path());
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let summary = reset_local_dev_server_data(&ctx, &output).unwrap();
 
         assert_eq!(summary.removed_paths, 0);
-    }
-
-    #[test]
-    fn reset_preserves_server_config() {
-        let temp = TempDir::new().unwrap();
-        let root = temp.path();
-        let config_path = root.join("kalam/server/server.toml");
-        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-        fs::write(&config_path, "[auth]\nroot_password = \"kalamdb123\"\n").unwrap();
-        fs::create_dir_all(root.join("kalam/server/data")).unwrap();
-
-        let ctx = test_context(root);
-        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-        reset_local_dev_server_data(&ctx, &output).unwrap();
-
-        assert!(config_path.is_file());
     }
 }

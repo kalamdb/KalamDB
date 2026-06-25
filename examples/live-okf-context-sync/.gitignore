@@ -1,8 +1,7 @@
 node_modules/
 dist/
 .env.local
-context/.kalam-sync-state.json
-context/alice/.kalam-sync-state.json
-context/bob/.kalam-sync-state.json
+data/
+data-test/
+**/.index/
 test-results/
-playwright-report/
