@@ -30,15 +30,21 @@ Each device runs a sync worker for its OKF folder. The web UI and agents do not 
 
 ## Design rule
 
-The source of truth for the database schema is:
+The single source of truth for the database schema is:
 
 ```text
 kalam/schema.sql
 ```
 
-Not `schema.ts`, Drizzle schema, or generated TypeScript schema.
+You never hand-write the TypeScript schema. The typed Drizzle tables in
+`src/schema.generated.ts` are **generated from `kalam/schema.sql`** by
+`@kalamdb/orm` (`kalam dev` regenerates them automatically; run
+`kalam schema gen` to refresh manually). Do not edit that file by hand.
 
-The TypeScript code uses the KalamDB TypeScript SDK to connect, query, subscribe, upload, and download files.
+The TypeScript code uses `@kalamdb/orm` typed tables for reads, live
+subscriptions, and updates (Drizzle query builder + `liveTable`), and
+`@kalamdb/client` for the parts the SQL ORM does not cover: FILE byte uploads
+(`queryWithFiles` + `FILE(...)`) and file download URLs.
 
 ## Quick start
 
@@ -55,7 +61,7 @@ Then:
 4. See the file update live in the UI
 5. Run the demo agent: `npm run dev:agent -- "Who is Alice?"`
 
-`kalam dev` starts KalamDB Server, applies `kalam/schema.sql`, runs the sync worker, web UI, and demo agent.
+`kalam dev` starts KalamDB Server, applies `kalam/schema.sql`, regenerates `src/schema.generated.ts` via `@kalamdb/orm`, then runs the sync worker, web UI, and demo agent.
 
 Site docs: [Live OKF Context Sync](https://kalamdb.org/docs/use-cases/live-okf-context-sync)
 
@@ -88,6 +94,7 @@ examples/live-okf-context-sync/
   context/bob/...
   src/
     client.ts
+    schema.generated.ts   # generated from kalam/schema.sql by @kalamdb/orm
     sync-worker.ts
     file-store.ts
     conflicts.ts
@@ -98,9 +105,18 @@ examples/live-okf-context-sync/
 
 ## Schema
 
-`kalam/schema.sql` defines one user-scoped metadata table. OKF file content is **not** stored in SQL columns.
+`kalam/schema.sql` defines one user-scoped table with a `file_ref FILE` column.
+The FILE datatype stores the OKF file bytes on the KalamDB server and returns a
+`FileRef` to clients. The other columns (`path`, `sha256`, frontmatter, conflict
+flags) are metadata that make live sync and conflict detection cheap.
 
-The `file_ref` column uses KalamDB's `FILE` datatype so the TypeScript SDK can upload and download bytes with `queryWithFiles()` and file download URLs.
+`@kalamdb/orm` generates `src/schema.generated.ts` from this file, giving the
+TypeScript code typed table objects for Drizzle queries and `liveTable`
+subscriptions.
+
+The generated `file()` column reads back as a `FileRef` for server-to-client
+downloads, while uploads use the raw client (`queryWithFiles()` +
+`FILE("upload")`) to send bytes into the FILE column.
 
 ## Sync flow
 
@@ -108,18 +124,21 @@ When a local OKF Markdown file changes:
 
 1. Compute `sha256`
 2. Parse OKF YAML frontmatter
-3. Upload file bytes first
+3. Upload file bytes into the `file_ref FILE` column
 4. Compare `base_sha256` with server `sha256`
 5. Update the canonical row or create a dated conflict copy
-6. Live subscribers on other clients receive the metadata update
+6. Live subscribers on other clients receive the row update and download the
+   server file through `FileRef`
 
 Conflict policy: the faster writer keeps the canonical path. A stale writer on another device creates `profile.conflict-{timestamp}.md`.
 
 ## Files worth reading
 
 - `kalam/schema.sql` — the only schema source of truth
+- `src/schema.generated.ts` — typed tables generated from `schema.sql` by `@kalamdb/orm`
+- `src/client.ts` — connection + Drizzle (`createDb`) wiring
 - `src/sync-worker.ts` — local OKF folder watcher and push logic
-- `src/web.tsx` — live metadata table UI
+- `src/web.tsx` — live metadata table UI (`liveTable`)
 - `src/agent.ts` — downloads canonical OKF files for demo answers (not from disk)
 - `kalam.toml` — `kalam dev` process wiring
 

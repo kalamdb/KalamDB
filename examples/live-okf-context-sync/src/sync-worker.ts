@@ -4,7 +4,7 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createKalamClient, resolveKalamConnection } from './client.js';
+import { createDb, createKalamClient, resolveKalamConnection } from './client.js';
 import { decideConflictAction } from './conflicts.js';
 import {
   fetchServerSha256,
@@ -14,6 +14,7 @@ import {
   upsertMetadata,
 } from './file-store.js';
 import { parseFrontmatter } from './frontmatter.js';
+import { resolveRootPassword } from './server-credentials.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -85,6 +86,7 @@ async function pushFile(
   });
   const client = createKalamClient(connection);
   await client.initialize();
+  const db = createDb(client);
 
   const fullPath = join(watchDir(user), relativePath);
   const bytes = new Uint8Array(await readFile(fullPath));
@@ -97,7 +99,7 @@ async function pushFile(
   }
 
   const mimeType = guessMimeType(relativePath);
-  const serverSha256 = await fetchServerSha256(client, relativePath);
+  const serverSha256 = await fetchServerSha256(db, relativePath);
   const decision = decideConflictAction({
     relativePath,
     localBaseSha256: saved?.serverSha256 ?? null,
@@ -143,7 +145,8 @@ async function removeFile(user: string, relativePath: string, state: SyncState):
   });
   const client = createKalamClient(connection);
   await client.initialize();
-  await markDeleted(client, relativePath);
+  const db = createDb(client);
+  await markDeleted(db, relativePath);
   await client.disconnect();
 
   const next = { ...state };
@@ -176,7 +179,7 @@ async function ensureDemoUsers(): Promise<void> {
   const connection = resolveKalamConnection({
     ...process.env,
     KALAM_USER: 'root',
-    KALAM_PASSWORD: process.env.KALAM_ROOT_PASSWORD ?? 'kalamdb123',
+    KALAM_PASSWORD: resolveRootPassword(),
   });
   const client = createKalamClient(connection);
   await client.initialize();

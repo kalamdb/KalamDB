@@ -6,16 +6,18 @@
   "description": "Minimal OKF folder sync showcase: schema.sql + kalam dev + TypeScript",
   "scripts": {
     "dev:web": "vite --host 127.0.0.1 --port 5177",
-    "dev:sync": "tsx src/sync-worker.ts",
-    "dev:agent": "tsx src/agent.ts",
+    "dev:sync": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/sync-worker.ts",
+    "dev:agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5177",
-    "test": "tsc && tsx --test tests/*.test.ts",
+    "test": "tsc && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/*.test.ts",
     "test:e2e": "playwright test tests/e2e.spec.mjs"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
     "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

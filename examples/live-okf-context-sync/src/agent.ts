@@ -1,46 +1,37 @@
 #!/usr/bin/env node
 import 'dotenv/config';
-import type { RowData } from '@kalamdb/client';
-import { createKalamClient, resolveKalamConnection, TABLE } from './client.js';
+import { and, asc, eq } from 'drizzle-orm';
+import { createDb, createKalamClient, resolveKalamConnection, type KalamDb } from './client.js';
 import { downloadFileText } from './file-store.js';
 import { stripFrontmatter } from './frontmatter.js';
+import { context_files } from './schema.generated.js';
 
 type ContextRow = {
   path: string;
   sha256: string;
 };
 
-async function loadCanonicalFiles(): Promise<ContextRow[]> {
-  const connection = resolveKalamConnection();
-  const client = createKalamClient(connection);
-  await client.initialize();
-
-  const rows = await client.queryAll(
-    `SELECT path, sha256
-     FROM ${TABLE}
-     WHERE deleted = false AND is_conflict = false
-     ORDER BY path`,
-  );
-
-  await client.disconnect();
-  return rows.map((row: RowData) => ({
-    path: row.path?.asString() ?? '',
-    sha256: row.sha256?.asString() ?? '',
-  }));
+async function loadCanonicalFiles(db: KalamDb): Promise<ContextRow[]> {
+  return db
+    .select({ path: context_files.path, sha256: context_files.sha256 })
+    .from(context_files)
+    .where(and(eq(context_files.deleted, false), eq(context_files.is_conflict, false)))
+    .orderBy(asc(context_files.path));
 }
 
 async function buildAgentContext(accessToken: string): Promise<string> {
   const connection = resolveKalamConnection();
   const client = createKalamClient(connection);
   await client.initialize();
+  const db = createDb(client);
   const login = await client.login();
   const token = accessToken || login.access_token;
 
-  const rows = await loadCanonicalFiles();
+  const rows = await loadCanonicalFiles(db);
   const chunks: string[] = [];
 
   for (const row of rows) {
-    const text = await downloadFileText(client, row.path, token);
+    const text = await downloadFileText(db, connection.url, row.path, token);
     const body = row.path.endsWith('.md') ? stripFrontmatter(text) : text;
     chunks.push(`## ${row.path}\n${body.trim()}`);
   }

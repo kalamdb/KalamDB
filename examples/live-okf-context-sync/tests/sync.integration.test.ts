@@ -3,13 +3,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Auth, createClient } from '@kalamdb/client';
-import { TABLE } from '../src/client.js';
+import { createDb, TABLE } from '../src/client.js';
 import { decideConflictAction } from '../src/conflicts.js';
 import { downloadFileText, fetchServerSha256, upsertMetadata } from '../src/file-store.js';
 
-const SERVER_URL = process.env.KALAM_URL ?? 'http://127.0.0.1:2900';
-const ROOT_PASSWORD = process.env.KALAM_ROOT_PASSWORD ?? 'kalamdb123';
+const SERVER_URL = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
+const ROOT_PASSWORD =
+  process.env.KALAM_ROOT_PASSWORD
+  ?? process.env.KALAMDB_PASSWORD
+  ?? process.env.KALAM_PASS
+  ?? 'kalamdb123';
 const RUN_INTEGRATION = process.env.KALAM_INTEGRATION === '1';
+
+async function ensureOkfSchema(root: Awaited<ReturnType<typeof login>>): Promise<void> {
+  const schema = await readFile(resolve('kalam/schema.sql'), 'utf8');
+  await root.client.query(schema);
+}
 
 async function serverHealthy(): Promise<boolean> {
   try {
@@ -37,6 +46,7 @@ test('integration: metadata roundtrip and isolation', { skip: !RUN_INTEGRATION }
   }
 
   const root = await login('root', ROOT_PASSWORD);
+  await ensureOkfSchema(root);
   try {
     await root.client.query(`CREATE USER 'alice' WITH PASSWORD 'alice123' ROLE 'user'`);
   } catch {
@@ -51,6 +61,8 @@ test('integration: metadata roundtrip and isolation', { skip: !RUN_INTEGRATION }
 
   const alice = await login('alice', 'alice123');
   const bob = await login('bob', 'bob123');
+  const aliceDb = createDb(alice.client);
+  const bobDb = createDb(bob.client);
 
   const path = `integration-${Date.now()}.md`;
   const bytes = new TextEncoder().encode('# integration test\n');
@@ -69,7 +81,7 @@ test('integration: metadata roundtrip and isolation', { skip: !RUN_INTEGRATION }
       fileBytes: bytes,
     });
 
-    const serverSha = await fetchServerSha256(alice.client, path);
+    const serverSha = await fetchServerSha256(aliceDb, path);
     assert.ok(serverSha);
 
     const aliceRows = await alice.client.queryAll(
@@ -84,11 +96,11 @@ test('integration: metadata roundtrip and isolation', { skip: !RUN_INTEGRATION }
     );
     assert.equal(bobRows.length, 0);
 
-    const text = await downloadFileText(alice.client, path, alice.token);
+    const text = await downloadFileText(aliceDb, SERVER_URL, path, alice.token);
     assert.match(text, /integration test/);
 
     await assert.rejects(
-      () => downloadFileText(bob.client, path, bob.token),
+      () => downloadFileText(bobDb, SERVER_URL, path, bob.token),
       /missing file row/,
     );
 
