@@ -92,11 +92,8 @@ impl StorageRegistry {
             .map_err(|e| FilestoreError::StorageError(e.to_string()))?;
 
         if let Some(s) = storage {
-            let cached = Arc::new(StorageCached::new(
-                s,
-                self.timeouts.clone(),
-                self.parquet_write.clone(),
-            ));
+            let cached =
+                Arc::new(StorageCached::new(s, self.timeouts.clone(), self.parquet_write.clone()));
             self.cache.insert(storage_id.clone(), Arc::clone(&cached));
             Ok(Some(cached))
         } else {

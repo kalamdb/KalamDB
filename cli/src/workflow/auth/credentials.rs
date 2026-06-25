@@ -5,8 +5,7 @@ use crate::{
     workflow::{
         dev::server::{local_server_root_password, DEFAULT_LOCAL_DEV_ROOT_PASSWORD},
         project::{
-            connection_url::is_loopback_server_url,
-            guidance::dev_auth_guidance_message,
+            connection_url::is_loopback_server_url, guidance::dev_auth_guidance_message,
             resolve::resolve_kalam_profile,
         },
         WorkflowContext,
@@ -38,11 +37,7 @@ pub(crate) fn workflow_auth_config_error(
     profile: Option<&str>,
     detail: impl Into<String>,
 ) -> CLIError {
-    CLIError::ConfigurationError(dev_auth_guidance_message(
-        project_root,
-        profile,
-        &detail.into(),
-    ))
+    CLIError::ConfigurationError(dev_auth_guidance_message(project_root, profile, &detail.into()))
 }
 
 pub(crate) fn open_credentials_store() -> Result<FileCredentialStore> {

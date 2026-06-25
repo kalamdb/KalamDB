@@ -468,11 +468,7 @@ fn wait_for_recorded_sql_contains(
     let upper = needle.to_ascii_uppercase();
     wait_for_recorded_requests(
         requests,
-        |recorded| {
-            recorded
-                .iter()
-                .any(|request| request.sql.to_ascii_uppercase().contains(&upper))
-        },
+        |recorded| recorded.iter().any(|request| request.sql.to_ascii_uppercase().contains(&upper)),
         timeout,
     )
 }

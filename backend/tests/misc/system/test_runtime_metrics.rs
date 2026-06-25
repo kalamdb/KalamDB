@@ -37,10 +37,7 @@ async fn test_system_stats_expose_memory_breakdown_and_allocator_metrics() {
     }
 
     if cfg!(feature = "mimalloc") {
-        assert!(
-            metric_names.contains("allocator_name"),
-            "missing metric: allocator_name"
-        );
+        assert!(metric_names.contains("allocator_name"), "missing metric: allocator_name");
     }
 
     #[cfg(target_os = "macos")]

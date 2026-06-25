@@ -2,8 +2,7 @@ use tokio::runtime::Runtime;
 
 use crate::common::{
     admin_username, execute_sql_as_root_via_cli, execute_sql_as_root_via_client_json,
-    generate_unique_namespace, generate_unique_table, get_rows_as_hashmaps,
-    parse_cli_json_output,
+    generate_unique_namespace, generate_unique_table, get_rows_as_hashmaps, parse_cli_json_output,
 };
 
 use super::common::{should_run_minio_storage_tests, *};

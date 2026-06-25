@@ -75,20 +75,20 @@ impl TableId {
 
     /// Create a prefix for scanning all tables in a namespace.
     #[inline]
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn namespace_prefix(namespace_id: &NamespaceId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
 
     /// Format as bytes for storage using storekey tuple encoding
     #[inline]
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn as_storage_key(&self) -> Vec<u8> {
         encode_key(&(self.namespace_id.as_str(), self.table_name.as_str()))
     }
 
     /// Parse from storage key bytes
-#[cfg(feature = "storage")]
+    #[cfg(feature = "storage")]
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((namespace_id, table_name)) = decode_key::<(String, String)>(key) {
             return Some(Self {

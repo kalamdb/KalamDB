@@ -75,10 +75,8 @@ pub fn find_scaffold_template_file(project_path: &str) -> Result<&'static str> {
 }
 
 pub fn format_languages_array(languages: &[impl AsRef<str>]) -> String {
-    let quoted: Vec<String> = languages
-        .iter()
-        .map(|language| format!("\"{}\"", language.as_ref()))
-        .collect();
+    let quoted: Vec<String> =
+        languages.iter().map(|language| format!("\"{}\"", language.as_ref())).collect();
     format!("[{}]", quoted.join(", "))
 }
 
@@ -159,10 +157,8 @@ fn render_template_pairs_escaped(
         .iter()
         .map(|(key, value)| ((*key).to_string(), escape(value)))
         .collect();
-    let borrowed: Vec<(&str, &str)> = escaped
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect();
+    let borrowed: Vec<(&str, &str)> =
+        escaped.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
     render_template_pairs(template, &borrowed)
 }
 
@@ -173,10 +169,7 @@ fn escape_common_string(value: &str, quote: char) -> String {
     } else if quote == '\'' {
         escaped = escaped.replace('\'', "\\'");
     }
-    escaped
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    escaped.replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
 }
 
 /// Escape a value for use inside a TOML or JSON double-quoted string.
@@ -227,10 +220,7 @@ mod tests {
 
     #[test]
     fn escape_toml_basic_string_quotes_special_characters() {
-        assert_eq!(
-            escape_toml_basic_string("my\"app\n"),
-            "my\\\"app\\n"
-        );
+        assert_eq!(escape_toml_basic_string("my\"app\n"), "my\\\"app\\n");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use datafusion::{
-    arrow::array::{BooleanArray, Float64Array, Float32Array, Int64Array, ListArray, StringArray},
+    arrow::array::{BooleanArray, Float32Array, Float64Array, Int64Array, ListArray, StringArray},
     prelude::SessionContext,
 };
 use kalamdb_commons::{Role, UserId};
@@ -20,7 +20,13 @@ fn exec_ctx() -> ExecutionContext {
 }
 
 async fn scalar_bool(session: &SessionContext, sql: &str) -> bool {
-    let batches = session.sql(sql).await.expect("query should plan").collect().await.expect("query should execute");
+    let batches = session
+        .sql(sql)
+        .await
+        .expect("query should plan")
+        .collect()
+        .await
+        .expect("query should execute");
     batches[0]
         .column(0)
         .as_any()
@@ -30,7 +36,13 @@ async fn scalar_bool(session: &SessionContext, sql: &str) -> bool {
 }
 
 async fn scalar_f64(session: &SessionContext, sql: &str) -> f64 {
-    let batches = session.sql(sql).await.expect("query should plan").collect().await.expect("query should execute");
+    let batches = session
+        .sql(sql)
+        .await
+        .expect("query should plan")
+        .collect()
+        .await
+        .expect("query should execute");
     batches[0]
         .column(0)
         .as_any()
@@ -46,11 +58,7 @@ async fn test_json_arrow_operator_without_sql_rewrite() {
     let result = session
         .sql("SELECT doc->>'name' AS name FROM (SELECT '{\"name\":\"alice\"}' AS doc) docs")
         .await;
-    assert!(
-        result.is_ok(),
-        "native JSON operator query failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "native JSON operator query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();
     let name = batches[0]
@@ -127,9 +135,7 @@ async fn test_numeric_string_comparison_uses_numeric_coercion() {
 async fn test_scalar_subquery_with_multiple_rows_errors() {
     let session = exec_ctx().create_session_with_user();
 
-    let result = session
-        .sql("SELECT (SELECT n FROM (VALUES (1), (2)) AS t(n)) AS value")
-        .await;
+    let result = session.sql("SELECT (SELECT n FROM (VALUES (1), (2)) AS t(n)) AS value").await;
     assert!(result.is_ok(), "scalar subquery should plan: {:?}", result.err());
 
     let execution = result.unwrap().collect().await;
@@ -203,15 +209,9 @@ async fn test_array_transform_lambda_multiplies_elements() {
         .downcast_ref::<ListArray>()
         .expect("scaled list column");
     let scaled_values = list.value(0);
-    let values = scaled_values
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .expect("scaled values");
+    let values = scaled_values.as_any().downcast_ref::<Int64Array>().expect("scaled values");
     assert_eq!(
-        values
-            .iter()
-            .map(|value| value.expect("scaled value"))
-            .collect::<Vec<_>>(),
+        values.iter().map(|value| value.expect("scaled value")).collect::<Vec<_>>(),
         vec![10, 20, 30, 40, 50]
     );
 }
@@ -226,11 +226,7 @@ async fn test_array_filter_and_transform_lambda_compose() {
              AS filtered_scaled",
         )
         .await;
-    assert!(
-        result.is_ok(),
-        "composed lambda array query failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "composed lambda array query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();
     let list = batches[0]
@@ -239,15 +235,9 @@ async fn test_array_filter_and_transform_lambda_compose() {
         .downcast_ref::<ListArray>()
         .expect("filtered list column");
     let filtered_values = list.value(0);
-    let values = filtered_values
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .expect("filtered values");
+    let values = filtered_values.as_any().downcast_ref::<Int64Array>().expect("filtered values");
     assert_eq!(
-        values
-            .iter()
-            .map(|value| value.expect("filtered value"))
-            .collect::<Vec<_>>(),
+        values.iter().map(|value| value.expect("filtered value")).collect::<Vec<_>>(),
         vec![30, 40, 50]
     );
 }
@@ -256,9 +246,7 @@ async fn test_array_filter_and_transform_lambda_compose() {
 async fn test_array_any_match_lambda() {
     let session = exec_ctx().create_session_with_user();
 
-    let result = session
-        .sql("SELECT array_any_match([1, 2, 3], x -> x > 2) AS has_large")
-        .await;
+    let result = session.sql("SELECT array_any_match([1, 2, 3], x -> x > 2) AS has_large").await;
     assert!(result.is_ok(), "array_any_match query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();

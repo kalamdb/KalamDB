@@ -70,9 +70,11 @@ pub use user_commands::{
     AlterUserStatement, CreateUserMode, CreateUserStatement, DropUserStatement, UserModification,
 };
 
-/// DML statement markers for TypedStatementHandler pattern
-/// These are empty markers since the actual SQL parsing happens in the handlers
-/// Marker for INSERT statements (parsed in handler using sqlparser)
+/// DML statement markers for TypedStatementHandler pattern.
+///
+/// Classification uses these markers; INSERT shape, VALUES, RETURNING, and ON CONFLICT
+/// syntax parsing lives in [`crate::parser::dml`], while execution stays in
+/// `kalamdb-core`.
 #[derive(Debug, Clone)]
 pub struct InsertStatement;
 

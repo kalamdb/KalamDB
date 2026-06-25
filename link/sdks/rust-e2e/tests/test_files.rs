@@ -2,7 +2,9 @@
 
 mod common;
 
-use kalam_client::{AuthProvider, FileUpload, KalamLinkClient, KalamLinkError, QueryParam, TableId};
+use kalam_client::{
+    AuthProvider, FileUpload, KalamLinkClient, KalamLinkError, QueryParam, TableId,
+};
 
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     let token = common::root_access_token_blocking()

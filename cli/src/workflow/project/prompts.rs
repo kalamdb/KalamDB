@@ -30,7 +30,8 @@ pub fn echo_prompt_selection(label: &str, value: &str, color: bool) {
 }
 
 pub fn prompt_text(label: &str, color: bool) -> Result<String> {
-    terminal_input::prompt_line(&terminal_ui::prompt_label(label, color)).map_err(prompt_input_error)
+    terminal_input::prompt_line(&terminal_ui::prompt_label(label, color))
+        .map_err(prompt_input_error)
 }
 
 pub fn prompt_text_with_default(label: &str, default: &str, color: bool) -> Result<String> {

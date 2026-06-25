@@ -3,10 +3,7 @@ use std::cmp::Ordering;
 use super::StoredScalarValue;
 
 /// Compare two stored scalar bounds when both sides share a comparable type.
-pub fn stored_scalar_cmp(
-    left: &StoredScalarValue,
-    right: &StoredScalarValue,
-) -> Option<Ordering> {
+pub fn stored_scalar_cmp(left: &StoredScalarValue, right: &StoredScalarValue) -> Option<Ordering> {
     match (left, right) {
         (StoredScalarValue::Int8(Some(left)), StoredScalarValue::Int8(Some(right))) => {
             Some(left.cmp(right))

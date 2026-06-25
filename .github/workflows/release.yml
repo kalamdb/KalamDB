@@ -1746,12 +1746,34 @@ jobs:
 
           echo "Stamped packages.core_components.cli.build_date=${BUILD_DATE} into versions.json"
 
+      - name: Determine prerelease flag
+        id: prerelease_flag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.read_version.outputs.tag }}"
+
+          # If a release for this tag already exists, preserve its current
+          # prerelease status instead of overwriting it with the workflow input.
+          if EXISTING_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease' 2>/dev/null)"; then
+            echo "Release $TAG already exists; preserving prerelease=${EXISTING_PRERELEASE}"
+            echo "prerelease=${EXISTING_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.inputs.pre_release }}" == "true" ]]; then
+            echo "Release $TAG does not exist; creating as prerelease"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG does not exist; creating as full release"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
           target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
-          prerelease: ${{ github.event.inputs.pre_release == 'true' }}
+          prerelease: ${{ steps.prerelease_flag.outputs.prerelease }}
           generate_release_notes: true
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz

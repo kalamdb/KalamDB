@@ -11,9 +11,7 @@ use tokio::{
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
-    process::{
-        kill_supervised_child, spawn_program_piped, spawn_shell_piped, SupervisedKillScope,
-    },
+    process::{kill_supervised_child, spawn_program_piped, spawn_shell_piped, SupervisedKillScope},
     workflow::{
         dev::logs::{ServiceLogRegistry, ServiceLogSource},
         project::guidance::{dev_empty_process_command, dev_process_spawn_failed},
@@ -85,10 +83,7 @@ impl ProcessSupervisor {
         let command_display = format!(
             "{} {}",
             program.display(),
-            args.iter()
-                .map(|arg| arg.as_ref())
-                .collect::<Vec<_>>()
-                .join(" ")
+            args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>().join(" ")
         );
         self.attach_managed_process(
             name,
@@ -182,9 +177,7 @@ impl ProcessSupervisor {
         })?;
 
         let pid = child.id().ok_or_else(|| {
-            CLIError::ConfigurationError(format!(
-                "failed to capture pid for dev process '{name}'"
-            ))
+            CLIError::ConfigurationError(format!("failed to capture pid for dev process '{name}'"))
         })?;
 
         let stdout = child.stdout.take();

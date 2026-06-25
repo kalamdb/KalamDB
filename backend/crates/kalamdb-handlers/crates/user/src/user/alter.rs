@@ -77,8 +77,8 @@ impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
                     hash_password(new_pw, Some(self.app_context.config().auth.local.bcrypt_cost))
                         .await
                         .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("Password hash error: {}", e))
-                    })?;
+                            KalamDbError::InvalidOperation(format!("Password hash error: {}", e))
+                        })?;
             },
             UserModification::SetRole(new_role) => {
                 if updated.user_id.is_admin() {

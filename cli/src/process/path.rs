@@ -90,8 +90,9 @@ mod tests {
         if !cfg!(windows) {
             return;
         }
-        let normalized =
-            shell_working_directory(Path::new(r"\\?\C:\git\test-kalam")).display().to_string();
+        let normalized = shell_working_directory(Path::new(r"\\?\C:\git\test-kalam"))
+            .display()
+            .to_string();
         assert_eq!(normalized, r"C:\git\test-kalam");
     }
 

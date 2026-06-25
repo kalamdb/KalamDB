@@ -279,8 +279,7 @@ impl SchemasStore {
     pub fn read_schema_reconcile_marker(
         &self,
     ) -> Result<Option<Vec<u8>>, kalamdb_store::StorageError> {
-        self.backend
-            .get(&self.metadata_partition, Self::SCHEMA_RECONCILE_MARKER_KEY)
+        self.backend.get(&self.metadata_partition, Self::SCHEMA_RECONCILE_MARKER_KEY)
     }
 
     /// Persist the system-schema reconcile marker after a successful pass.
@@ -289,11 +288,8 @@ impl SchemasStore {
         marker: &[u8],
     ) -> Result<(), kalamdb_store::StorageError> {
         self.cleanup_legacy_reconcile_marker()?;
-        self.backend.put(
-            &self.metadata_partition,
-            Self::SCHEMA_RECONCILE_MARKER_KEY,
-            marker,
-        )
+        self.backend
+            .put(&self.metadata_partition, Self::SCHEMA_RECONCILE_MARKER_KEY, marker)
     }
 
     /// Remove the old raw marker accidentally written into `system.schemas`.
@@ -404,10 +400,7 @@ mod tests {
 
         store.write_schema_reconcile_marker(b"marker-v1").unwrap();
 
-        assert_eq!(
-            store.read_schema_reconcile_marker().unwrap(),
-            Some(b"marker-v1".to_vec())
-        );
+        assert_eq!(store.read_schema_reconcile_marker().unwrap(), Some(b"marker-v1".to_vec()));
         assert!(store
             .backend
             .get(&store.partition, SchemasStore::LEGACY_SCHEMA_RECONCILE_GENERATION_KEY)

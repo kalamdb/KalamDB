@@ -172,9 +172,7 @@ fn selected_scopes(
         .filter(|scope| scope.as_str() != "openid")
         .filter(|scope| {
             requested_scopes.is_empty()
-                || requested_scopes
-                    .iter()
-                    .any(|requested_scope| requested_scope == *scope)
+                || requested_scopes.iter().any(|requested_scope| requested_scope == *scope)
         })
         .map(|scope| Scope::new(scope.clone()))
         .collect()

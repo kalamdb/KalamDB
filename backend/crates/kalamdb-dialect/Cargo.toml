@@ -9,7 +9,8 @@ repository.workspace = true
 description = "KalamDB SQL dialect, parser, and statement classification"
 
 [dependencies]
-kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["serde", "rows"] }
+datafusion-common = { workspace = true, default-features = false }
 kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-system = { path = "../kalamdb-system" }
 

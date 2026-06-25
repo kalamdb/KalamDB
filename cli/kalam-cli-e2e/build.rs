@@ -7,10 +7,10 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let fallback = read_version_toml(&format!("{manifest_dir}/../../version.toml"));
 
-    let commit_hash = git_output(&["rev-parse", "--short", "HEAD"])
-        .unwrap_or_else(|| fallback.0.clone());
-    let branch = git_output(&["rev-parse", "--abbrev-ref", "HEAD"])
-        .unwrap_or_else(|| fallback.1.clone());
+    let commit_hash =
+        git_output(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| fallback.0.clone());
+    let branch =
+        git_output(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| fallback.1.clone());
     let build_date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
     println!("cargo:rustc-env=GIT_COMMIT_HASH={commit_hash}");
@@ -33,11 +33,7 @@ fn git_output(args: &[&str]) -> Option<String> {
 }
 
 fn read_version_toml(path: &str) -> (String, String, String) {
-    let default = (
-        "unknown".to_string(),
-        "unknown".to_string(),
-        "unknown".to_string(),
-    );
+    let default = ("unknown".to_string(), "unknown".to_string(), "unknown".to_string());
 
     let content = match fs::read_to_string(path) {
         Ok(content) => content,

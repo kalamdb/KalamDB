@@ -47,9 +47,7 @@ pub(crate) fn resolve_workflow_auth_provider(
             return Ok(AuthProvider::system_user_auth(password));
         }
         if is_loopback_server_url(&environment.url) {
-            return Ok(AuthProvider::system_user_auth(
-                DEFAULT_LOCAL_DEV_ROOT_PASSWORD.to_string(),
-            ));
+            return Ok(AuthProvider::system_user_auth(DEFAULT_LOCAL_DEV_ROOT_PASSWORD.to_string()));
         }
     }
 

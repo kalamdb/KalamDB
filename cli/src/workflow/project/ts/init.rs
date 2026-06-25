@@ -174,7 +174,8 @@ pub fn apply_scaffold(
             )?;
         }
 
-        let rendered = render_template_pairs_for_path(file.project_path, file.content, &replacements)?;
+        let rendered =
+            render_template_pairs_for_path(file.project_path, file.content, &replacements)?;
         scaffold::io_with_guidance(
             "write template file",
             &destination_path,

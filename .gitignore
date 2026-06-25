@@ -136,3 +136,5 @@ cli/kalam.toml
 /link/kalam-link-wasm/sdks/typescript/client/.wasm-cargo-home
 /link/kalam-link-wasm/sdks/typescript/client/.wasm-target
 /cli/kalam-cli-e2e/logs
+/cli/kalam-cli-e2e/logs
+/cli/kalam-cli-e2e/logs

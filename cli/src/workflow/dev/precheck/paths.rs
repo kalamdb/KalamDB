@@ -5,9 +5,7 @@ use crate::{
     output::WorkflowOutput,
     terminal_ui::ProgressTaskStatus,
     workflow::{
-        dev::logs::ServiceLogSource,
-        display_project_path,
-        project::config::SchemaMode,
+        dev::logs::ServiceLogSource, display_project_path, project::config::SchemaMode,
         WorkflowContext,
     },
 };
@@ -31,16 +29,8 @@ pub(crate) fn migrations_ready_message(project_root: &Path, migrations_dir: &Pat
     )
 }
 
-fn precheck_path_status(
-    ctx: &WorkflowContext,
-    output: &WorkflowOutput,
-    prefix: &str,
-    path: &Path,
-) {
-    output.status(format!(
-        "{prefix} {}",
-        display_project_path(&ctx.project_root, path)
-    ));
+fn precheck_path_status(ctx: &WorkflowContext, output: &WorkflowOutput, prefix: &str, path: &Path) {
+    output.status(format!("{prefix} {}", display_project_path(&ctx.project_root, path)));
 }
 
 fn ensure_schema_source(

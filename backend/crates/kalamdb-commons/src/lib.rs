@@ -88,6 +88,8 @@ pub use errors::{CommonError, NotLeaderError, Result};
 pub use helpers::arrow_utils;
 #[cfg(feature = "arrow-utils")]
 pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
+#[cfg(feature = "storage")]
+pub use helpers::string_interner;
 pub use helpers::{
     file_helpers, naming,
     naming::{
@@ -96,8 +98,6 @@ pub use helpers::{
     },
     security,
 };
-#[cfg(feature = "storage")]
-pub use helpers::string_interner;
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types
     datatypes,

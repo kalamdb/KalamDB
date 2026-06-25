@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,
@@ -16,7 +16,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, StorageId, TableId, TableName, UserId,
+        KalamCellValue, NamespaceId, StorageId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
     NodeId, Role, TableAccess, TableType,
@@ -236,8 +236,32 @@ pub async fn execute_ok(
     executor.execute(sql, exec_ctx, vec![]).await.expect(sql)
 }
 
+pub async fn execute_ok_with_params(
+    executor: &SqlExecutor,
+    exec_ctx: &ExecutionContext,
+    sql: &str,
+    params: Vec<ScalarValue>,
+) -> ExecutionResult {
+    executor.execute(sql, exec_ctx, params).await.expect(sql)
+}
+
 pub async fn execute_err(executor: &SqlExecutor, exec_ctx: &ExecutionContext, sql: &str) -> String {
     executor.execute(sql, exec_ctx, vec![]).await.unwrap_err().to_string()
+}
+
+pub fn result_rows(result: ExecutionResult) -> Vec<HashMap<String, KalamCellValue>> {
+    let ExecutionResult::Rows {
+        batches, row_count, ..
+    } = result
+    else {
+        panic!("expected rows result");
+    };
+
+    let mut rows = Vec::with_capacity(row_count);
+    for batch in batches {
+        rows.extend(record_batch_to_json_rows(&batch).expect("json rows"));
+    }
+    rows
 }
 
 pub async fn select_names(

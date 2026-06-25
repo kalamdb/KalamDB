@@ -556,9 +556,7 @@ async fn start_kalamdb_oidc_server(config: &OidcServerConfig) -> Result<KalamDbT
         .open(&log_path)
         .with_context(|| format!("failed to open {}", log_path.display()))?;
     let log_file_err = log_file.try_clone().context("failed to clone server log file")?;
-    let config_path = common::workspace_root()
-        .join("backend")
-        .join("server.toml");
+    let config_path = common::workspace_root().join("backend").join("server.toml");
     let server_bin = common::kalamdb_server_bin()
         .map_err(|error| anyhow::anyhow!("failed to resolve kalamdb-server binary: {error}"))?;
     let mut command = ProcessCommand::new(server_bin);

@@ -8,9 +8,7 @@ const MAX_PROJECT_DISPLAY_NAME_LEN: usize = 64;
 pub fn validate_project_display_name(value: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(CLIError::ConfigurationError(
-            "project name must not be empty".into(),
-        ));
+        return Err(CLIError::ConfigurationError("project name must not be empty".into()));
     }
 
     if trimmed.len() > MAX_PROJECT_DISPLAY_NAME_LEN {
@@ -48,10 +46,7 @@ mod tests {
 
     #[test]
     fn validate_project_display_name_accepts_simple_names() {
-        assert_eq!(
-            validate_project_display_name("my-app").unwrap(),
-            "my-app"
-        );
+        assert_eq!(validate_project_display_name("my-app").unwrap(), "my-app");
     }
 
     #[test]

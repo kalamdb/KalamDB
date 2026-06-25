@@ -18,10 +18,7 @@ pub fn reset_local_dev_server_data(
     output: &WorkflowOutput,
 ) -> Result<ResetSummary> {
     let server_dir = ctx.config.local_server_dir(&ctx.project_root);
-    let targets = [
-        server_dir.join("data"),
-        server_dir.join("logs"),
-    ];
+    let targets = [server_dir.join("data"), server_dir.join("logs")];
 
     let mut removed_paths = 0usize;
     for path in targets {
@@ -34,16 +31,10 @@ pub fn reset_local_dev_server_data(
         }
 
         fs::remove_dir_all(&path).map_err(|error| {
-            CLIError::FileError(format!(
-                "failed to remove '{}': {error}",
-                path.display()
-            ))
+            CLIError::FileError(format!("failed to remove '{}': {error}", path.display()))
         })?;
         removed_paths += 1;
-        output.status(format!(
-            "removed {}",
-            display_project_path(&ctx.project_root, &path)
-        ));
+        output.status(format!("removed {}", display_project_path(&ctx.project_root, &path)));
     }
 
     if removed_paths == 0 {
@@ -66,8 +57,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::WorkflowLoggingPolicy,
-        workflow::test_support::parse_minimal_project_config,
+        config::WorkflowLoggingPolicy, workflow::test_support::parse_minimal_project_config,
     };
 
     fn test_context(root: &std::path::Path) -> WorkflowContext {

@@ -8,10 +8,7 @@ use kalam_client::{
 use crate::{
     error::{CLIError, Result},
     workflow::{
-        auth::{
-            credentials::open_credentials_store,
-            provider::resolve_workflow_auth_provider,
-        },
+        auth::{credentials::open_credentials_store, provider::resolve_workflow_auth_provider},
         project::resolve::ResolvedEnvironment,
         WorkflowContext,
     },
@@ -51,7 +48,10 @@ pub(crate) async fn login_with_credentials(
         .map_err(|error| format!("login failed: {error}"))
 }
 
-pub(crate) async fn verify_jwt_auth(server_url: &str, token: &str) -> std::result::Result<(), String> {
+pub(crate) async fn verify_jwt_auth(
+    server_url: &str,
+    token: &str,
+) -> std::result::Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(AUTH_REQUEST_TIMEOUT)
         .build()

@@ -421,8 +421,10 @@ async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
     let insert_result = client
         .execute_with_files(
             &insert_sql,
-            vec![FileUpload::new("attachment", initial_file_name, initial_file_bytes.clone())
-                .with_mime(initial_file_mime)],
+            vec![
+                FileUpload::new("attachment", initial_file_name, initial_file_bytes.clone())
+                    .with_mime(initial_file_mime),
+            ],
             None,
             None,
         )
@@ -454,8 +456,10 @@ async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
     let update_result = client
         .execute_with_files(
             &update_sql,
-            vec![FileUpload::new("attachment", updated_file_name, updated_file_bytes.clone())
-                .with_mime(updated_file_mime)],
+            vec![
+                FileUpload::new("attachment", updated_file_name, updated_file_bytes.clone())
+                    .with_mime(updated_file_mime),
+            ],
             None,
             None,
         )

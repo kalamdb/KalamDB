@@ -84,8 +84,11 @@ pub async fn login_handler(
     };
 
     let cookie_config = auth_cookie_config(config.get_ref());
-    let auth_cookie =
-        create_auth_cookie(&issued_tokens.access_token, issued_tokens.access_expires_in, &cookie_config);
+    let auth_cookie = create_auth_cookie(
+        &issued_tokens.access_token,
+        issued_tokens.access_expires_in,
+        &cookie_config,
+    );
     let refresh_cookie = create_refresh_cookie(
         &issued_tokens.refresh_token,
         issued_tokens.refresh_expires_in,

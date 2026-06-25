@@ -15,10 +15,7 @@ use crate::{
     output::WorkflowOutput,
     terminal_ui::{self, SelectOption},
     workflow::{
-        display_project_path,
-        migration::markers,
-        project::prompts::prompt_error,
-        WorkflowContext,
+        display_project_path, migration::markers, project::prompts::prompt_error, WorkflowContext,
     },
 };
 

@@ -8,11 +8,7 @@ fn assert_kalam_toml_scaffolds_dev_process(kalam_toml: &str, config_path: &std::
     assert!(kalam_toml.contains("[dev.processes]"));
     let config = KalamProjectConfig::load_from_path(config_path).expect("load kalam.toml");
     assert!(
-        config
-            .dev
-            .processes
-            .get("app")
-            .is_some_and(|command| command.contains("dev")),
+        config.dev.processes.get("app").is_some_and(|command| command.contains("dev")),
         "expected app dev process command in kalam.toml\n{kalam_toml}"
     );
 }
