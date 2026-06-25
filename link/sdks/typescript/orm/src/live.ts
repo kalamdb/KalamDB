@@ -129,6 +129,10 @@ export function liveTable<TTable extends Table>(
   return client.connect().then(() => client.live<InferSelectModel<TTable>>(
     buildTableQuery(table, where),
     callback,
-    { ...liveOptions, mapRow: descriptor.mapRow },
+    {
+      ...liveOptions,
+      mapRow: descriptor.mapRow,
+      ...(descriptor.getKey ? { getKey: descriptor.getKey } : {}),
+    },
   ));
 }

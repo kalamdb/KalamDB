@@ -1325,6 +1325,7 @@ jobs:
         shell: bash
         env:
           KALAMDB_SERVER_URL: "http://localhost:2900"
+          KALAMDB_SERVER_TYPE: running
           KALAMDB_ROOT_PASSWORD: "kalamdb123"
           KALAMDB_TEST_FLUSH_COMPACTION: "1"
         run: |

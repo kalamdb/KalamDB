@@ -4,17 +4,18 @@
 //! Parquet files, snapshots, streams). They must not overlap each other or
 //! in-flight flush / segment-compaction jobs that write those trees.
 
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
 use kalamdb_core::error::KalamDbError;
 use kalamdb_system::{providers::jobs::models::JobFilter, JobStatus, JobType};
-use tokio::time::sleep;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::{
     executors::{JobContext, JobParams},
-    jobs_manager::JobsManager,
     AppContextJobsExt,
 };
+
+static DATABASE_TRANSFER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Maximum time to wait for storage-writing jobs before backup/restore.
 const STORAGE_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -31,10 +32,22 @@ fn is_active_job_status(status: JobStatus) -> bool {
     )
 }
 
+/// Serialize full-database backup/restore against each other.
+pub(crate) async fn acquire_database_transfer_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    DATABASE_TRANSFER_LOCK.lock().await
+}
+
 /// Wait until no flush or segment-compaction jobs are active.
+///
+/// Skipped when the job manager is not initialized (unit tests with a minimal
+/// AppContext).
 pub(crate) async fn wait_for_storage_quiescence(
     ctx: &JobContext<impl JobParams>,
 ) -> Result<(), KalamDbError> {
+    if !ctx.app_ctx.is_job_manager_initialized() {
+        return Ok(());
+    }
+
     let job_manager = ctx.app_ctx.job_manager();
     let deadline = tokio::time::Instant::now() + STORAGE_QUIESCENCE_TIMEOUT;
 
@@ -72,11 +85,4 @@ pub(crate) async fn wait_for_storage_quiescence(
         ));
         sleep(STORAGE_QUIESCENCE_POLL).await;
     }
-}
-
-/// Serialize full-database backup/restore against each other.
-pub(crate) async fn acquire_database_transfer_lock(
-    job_manager: &JobsManager,
-) -> tokio::sync::MutexGuard<'_, ()> {
-    job_manager.database_transfer_lock().lock().await
 }
