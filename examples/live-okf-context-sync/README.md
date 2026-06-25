@@ -1,28 +1,22 @@
 # Live OKF Context Sync
 
-This example shows how to sync a **Google Open Knowledge Format (OKF)** folder of Markdown context files with KalamDB using `live()` subscriptions.
+Sync a **Google Open Knowledge Format (OKF)** Markdown folder with KalamDB: local files on disk stay aligned with a USER table that stores each path and a `FILE` column for the bytes.
 
-Each client watches a local folder, uploads changes to KalamDB, and downloads remote updates when `file_ref.sha256` differs from the local file hash. Local state lives under `.index/` inside the sync folder and is never uploaded.
+Full documentation: [Live OKF Context Sync on kalamdb.org](https://kalamdb.org/docs/use-cases/live-okf-context-sync)
 
 ## Folder layout
 
 ```text
-data/                         # or test1/, or any folder you pass
+data/                         # default sync folder (or pass another path)
   .index/
-    sync.db                   # SQLite metadata + pending upload queue
-    sync.db-wal               # WAL files (ignored, never synced)
-    sync.db-shm
-  index.md                    # user-visible synced files
+    sync.db                   # SQLite metadata + pending upload queue (never synced)
+  index.md                    # user-visible Markdown files
   profile.md
-  notes/getting-started.md
 
 seed/                         # copied into an empty folder on first run only
-  index.md
-  profile.md
-  notes/getting-started.md
 ```
 
-`.index/` is excluded from sync — only Markdown and other user files upload to KalamDB.
+`.index/`, `.git/`, and `.DS_Store` are excluded from sync.
 
 ## Quick start
 
@@ -31,24 +25,32 @@ npm install
 kalam dev
 ```
 
+`kalam dev` starts KalamDB, applies `kalam/schema.sql`, regenerates types, and runs the sync worker on `data/`.
+
+Default sync user: `alice` / `alice123` at `http://127.0.0.1:2900`.
+
 ```bash
 npm run dev -- data
 npm run dev -- test1/
 ```
 
-Default credentials: `alice` / `alice123` at `http://127.0.0.1:2900`.
+## Verify restore from server
+
+1. `kalam dev` — start server + sync
+2. Edit files under `data/`
+3. Stop with Ctrl+C
+4. `rm -rf data/` — local copy only; server data stays in `kalam/server/data/`
+5. `kalam dev` again — files should pull back from KalamDB
 
 ## Bootstrap rules
 
-1. If the sync folder has **no user files** and KalamDB has **no rows**, files from `seed/` are copied in and pushed.
-2. If you delete the sync folder but the server still has data, a fresh folder pulls from `live()` — seed is skipped.
-3. `.index/` is recreated locally; it never goes to the server.
+1. Empty `data/` + empty server → copy `seed/`, then push
+2. Empty `data/` + server has rows → pull from server (no seed)
+3. `.index/` is recreated locally; never uploaded
 
-## Validation
+## Tests
 
 ```bash
 npm test
-KALAM_INTEGRATION=1 npm test
+KALAM_INTEGRATION=1 npm test   # requires kalam dev or running server
 ```
-
-The integration test `delete local folder and restore from database` uploads edits, removes the local folder, restarts sync, and verifies files are restored from KalamDB.

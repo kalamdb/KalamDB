@@ -112,6 +112,35 @@ describe('liveTable', () => {
     assert.ok(!rows.some((r) => r.name === 'updated-name'));
   });
 
+  it('receives realtime DELETE for non-id primary keys', async () => {
+    await client.query('DROP TABLE IF EXISTS test_live.paths');
+    await client.query(`
+      CREATE TABLE test_live.paths (
+        path TEXT PRIMARY KEY,
+        body TEXT NOT NULL
+      )
+    `);
+    await client.query("INSERT INTO test_live.paths (path, body) VALUES ('docs/a.md', 'alpha')");
+
+    const test_live_paths = kTable('test_live.paths', {
+      path: text('path').primaryKey(),
+      body: text('body'),
+    });
+
+    const promise = waitForRows(
+      client,
+      test_live_paths,
+      (rows) => rows.length === 0,
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    await client.query("DELETE FROM test_live.paths WHERE path = 'docs/a.md'");
+
+    const rows = await promise;
+    assert.equal(rows.length, 0);
+
+    await client.query('DROP TABLE IF EXISTS test_live.paths');
+  });
+
   it('supports WHERE clauses without raw SQL strings', async () => {
     const rows = await waitForRows(
       client,

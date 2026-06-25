@@ -16,6 +16,9 @@ env:
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # CI has no pre-started dev server; e2e tests auto-start an ephemeral server per suite.
+  KALAMDB_SERVER_TYPE: fresh
+  KALAMDB_ROOT_PASSWORD: kalamdb123
 
 jobs:
   fmt:

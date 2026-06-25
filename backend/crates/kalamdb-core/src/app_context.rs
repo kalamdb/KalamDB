@@ -994,6 +994,10 @@ impl AppContext {
         self.storage_backend.clone()
     }
 
+    pub fn is_job_manager_initialized(&self) -> bool {
+        self.job_manager.get().is_some()
+    }
+
     pub fn job_manager_raw(&self) -> &Arc<dyn std::any::Any + Send + Sync> {
         self.job_manager.get().expect("JobsManager not initialized")
     }
