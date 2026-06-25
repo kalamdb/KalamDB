@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/client",
   "type": "module",
-  "version": "0.5.3-rc.1",
+  "version": "0.5.4-rc.1",
   "description": "KalamDB client library for TypeScript, providing a WebSocket-based interface for interacting with KalamDB servers, supporting live queries, authentication, and real-time updates.",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
