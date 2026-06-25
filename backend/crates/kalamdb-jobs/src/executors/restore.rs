@@ -33,7 +33,11 @@ use kalamdb_system::JobType;
 use kalamdb_transfer::{copy_dir_to_dir, finalize_database_restore, prepare_database_restore};
 use serde::{Deserialize, Serialize};
 
-use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
+use crate::executors::{
+    database_transfer::{acquire_database_transfer_lock, wait_for_storage_quiescence},
+    JobContext, JobDecision, JobExecutor, JobParams,
+};
+use crate::AppContextJobsExt;
 
 /// Typed parameters for full database restore operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,12 +86,17 @@ impl JobExecutor for RestoreExecutor {
         let params = ctx.params();
         let backup_source = std::path::PathBuf::from(&params.backup_path);
 
+        let job_manager = ctx.app_ctx.job_manager();
+        let _transfer_guard = acquire_database_transfer_lock(&job_manager).await;
+        wait_for_storage_quiescence(ctx).await?;
+
         let config = ctx.app_ctx.config();
         let storage = &config.storage;
 
         ctx.log_info(&format!("Starting full database restore from '{}'", backup_source.display()));
 
         let storage_backend = ctx.app_ctx.storage_backend();
+        let restore_token = ctx.job_id.as_str().to_string();
 
         let dst_storage = storage.storage_dir();
         let dst_snapshots = storage.resolved_snapshots_dir();
@@ -99,7 +108,7 @@ impl JobExecutor for RestoreExecutor {
 
             // 1. RocksDB native restore (overwrites current data)
             if rocksdb_backup_dir.exists() {
-                storage_backend.restore_from(&rocksdb_backup_dir).map_err(|e| {
+                storage_backend.restore_from(&rocksdb_backup_dir, &restore_token).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("RocksDB restore failed: {}", e))
                 })?;
             }

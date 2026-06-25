@@ -3,32 +3,29 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Minimal OKF folder sync showcase: schema.sql + kalam dev + TypeScript",
+  "description": "OKF folder sync showcase: KalamDB live() + local SQLite mirror",
   "scripts": {
-    "dev:web": "vite --host 127.0.0.1 --port 5177",
-    "dev:sync": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/sync-worker.ts",
-    "dev:agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
-    "build": "tsc && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 5177",
+    "dev": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/sync/sync-app.ts",
+    "build": "tsc",
     "test": "tsc && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/*.test.ts",
-    "test:e2e": "playwright test tests/e2e.spec.mjs"
+    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/@kalamdb/orm/node_modules/drizzle-orm';try{fs.rmSync(p,{recursive:true,force:true})}catch{}\""
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
+    "better-sqlite3": "^12.6.2",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.7.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "@kalamdb/orm": {
+      "drizzle-orm": "$drizzle-orm"
+    }
   }
 }

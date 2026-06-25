@@ -513,10 +513,9 @@ impl UserTableProvider {
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let prefix = self.pk_index.build_prefix_for_pk(user_id, pk_value);
         self.store
-            .scan_by_index_async(0, Some(prefix), None)
+            .get_latest_by_index_prefix_async(0, prefix)
             .await
             .into_kalamdb_error("PK index scan failed")
-            .map(|entries| entries.into_iter().max_by_key(|(row_id, _)| row_id.seq))
     }
 
     pub async fn find_by_pk(

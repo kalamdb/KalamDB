@@ -97,8 +97,9 @@ use kalamdb_commons::{
 };
 use kalamdb_datafusion_sources::{
     exec::{
-        count_resolved_from_metadata, finalize_deferred_batch, resolve_latest_kvs_from_cold_batch,
-        DeferredBatchExec, DeferredBatchSource, ParquetRowData, VersionedRow,
+        count_resolved_from_metadata, finalize_deferred_batch, prefers_version,
+        resolve_latest_kvs_from_cold_batch, DeferredBatchExec, DeferredBatchSource, ParquetRowData,
+        VersionedRow,
     },
     provider::{
         combined_filter, pushdown_results_for_filters, remap_projection_indices, SourceProvider,
@@ -193,72 +194,13 @@ where
 
         if self.allow_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
-                if let Some((row_id, row)) = self.scan_hot_pk_row(scan_context, &pk_scalar).await? {
-                    // log::debug!(
-                    //     "[MvccScan] PK fast-path hit for {}={} (table={}; scope={}; subject={})",
-                    //     pk_name,
-                    //     pk_scalar,
-                    //     self.table_id(),
-                    //     scope_label,
-                    //     subject_user
-                    // );
-                    return rows_to_arrow_batch(
-                        &schema,
-                        vec![(row_id, row)],
-                        projection,
-                        |_, _| {},
-                    );
-                }
-
-                if self.hot_pk_tombstoned(scan_context, &pk_scalar).await? {
-                    // log::debug!(
-                    //     "[MvccScan] PK fast-path tombstone for {}={} (table={}; scope={};
-                    // subject={})",     pk_name,
-                    //     pk_scalar,
-                    //     self.table_id(),
-                    //     scope_label,
-                    //     subject_user
-                    // );
-                    return rows_to_arrow_batch(
-                        &schema,
-                        Vec::<(K, V)>::new(),
-                        projection,
-                        |_, _| {},
-                    );
-                }
-
-                let cold_found = find_row_by_pk(
-                    self,
-                    self.scan_cold_scope(scan_context),
-                    &pk_scalar.to_string(),
-                )
-                .await?;
-                if let Some((row_id, row)) = cold_found {
-                    // log::debug!(
-                    //     "[MvccScan] PK fast-path cold hit for {}={} (table={}; scope={};
-                    // subject={})",     pk_name,
-                    //     pk_scalar,
-                    //     self.table_id(),
-                    //     scope_label,
-                    //     subject_user
-                    // );
-                    return rows_to_arrow_batch(
-                        &schema,
-                        vec![(row_id, row)],
-                        projection,
-                        |_, _| {},
-                    );
-                }
-
-                // log::debug!(
-                //     "[MvccScan] PK fast-path miss for {}={} (table={}; scope={}; subject={})",
-                //     pk_name,
-                //     pk_scalar,
-                //     self.table_id(),
-                //     scope_label,
-                //     subject_user
-                // );
-                return rows_to_arrow_batch(&schema, Vec::<(K, V)>::new(), projection, |_, _| {});
+                let resolved = resolve_pk_point_lookup(self, scan_context, &pk_scalar).await?;
+                return rows_to_arrow_batch(
+                    &schema,
+                    resolved.into_iter().collect(),
+                    projection,
+                    |_, _| {},
+                );
             }
         }
 
@@ -1023,6 +965,49 @@ pub fn is_count_only_projection(projection: Option<&Vec<usize>>, filter: Option<
     projection.is_some_and(|proj| proj.is_empty()) && filter.is_none()
 }
 
+fn prefers_scan_row_version<V: ScanRow>(candidate: &V, current: &V) -> bool {
+    prefers_version(
+        candidate.commit_seq_value(),
+        SeqId::from_i64(candidate.seq_value()),
+        current.commit_seq_value(),
+        SeqId::from_i64(current.seq_value()),
+    )
+}
+
+fn prefers_scan_row_pair<K, V: ScanRow>(candidate: &(K, V), current: &(K, V)) -> bool {
+    prefers_scan_row_version(&candidate.1, &current.1)
+}
+
+/// Resolve a single PK equality lookup by merging the latest hot and cold versions.
+async fn resolve_pk_point_lookup<P, K, V>(
+    provider: &P,
+    scan_context: &P::ScanContext,
+    pk_scalar: &ScalarValue,
+) -> Result<Option<(K, V)>, KalamDbError>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Send + Sync + 'static,
+    V: ScanRow + Send + Sync + 'static,
+{
+    if provider.hot_pk_tombstoned(scan_context, pk_scalar).await? {
+        return Ok(None);
+    }
+
+    let hot = provider.scan_hot_pk_row(scan_context, pk_scalar).await?;
+    let cold =
+        find_row_by_pk(provider, provider.scan_cold_scope(scan_context), &pk_scalar.to_string())
+            .await?;
+
+    Ok(match (hot, cold) {
+        (Some(candidate), Some(current)) if prefers_scan_row_pair(&current, &candidate) => {
+            Some(current)
+        },
+        (Some(candidate), Some(_)) => Some(candidate),
+        (Some(row), None) | (None, Some(row)) => Some(row),
+        (None, None) => None,
+    })
+}
+
 /// Locate the latest non-deleted row matching the provided primary-key value (async).
 ///
 /// This function scans cold storage (Parquet files) to find a row by its primary key.
@@ -1103,8 +1088,19 @@ where
                 continue;
             }
 
-            // Keep the row with highest _seq (latest version)
-            if latest.as_ref().map(|l| row_data.seq_id > l.seq_id).unwrap_or(true) {
+            // Keep the row with the highest (commit_seq, seq) version.
+            if latest
+                .as_ref()
+                .map(|current| {
+                    prefers_version(
+                        row_data.commit_seq,
+                        row_data.seq_id,
+                        current.commit_seq,
+                        current.seq_id,
+                    )
+                })
+                .unwrap_or(true)
+            {
                 latest = Some(row_data);
             }
         }

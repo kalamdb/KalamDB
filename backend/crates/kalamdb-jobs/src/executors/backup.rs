@@ -33,7 +33,11 @@ use kalamdb_system::JobType;
 use kalamdb_transfer::{copy_dir_to_dir, finalize_database_backup, prepare_database_backup};
 use serde::{Deserialize, Serialize};
 
-use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
+use crate::executors::{
+    database_transfer::{acquire_database_transfer_lock, wait_for_storage_quiescence},
+    JobContext, JobDecision, JobExecutor, JobParams,
+};
+use crate::AppContextJobsExt;
 
 /// Typed parameters for full database backup operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +86,10 @@ impl JobExecutor for BackupExecutor {
     async fn execute(&self, ctx: &JobContext<Self::Params>) -> Result<JobDecision, KalamDbError> {
         let params = ctx.params();
         let backup_target = std::path::PathBuf::from(&params.backup_path);
+
+        let job_manager = ctx.app_ctx.job_manager();
+        let _transfer_guard = acquire_database_transfer_lock(&job_manager).await;
+        wait_for_storage_quiescence(ctx).await?;
 
         let config = ctx.app_ctx.config();
         let storage = &config.storage;

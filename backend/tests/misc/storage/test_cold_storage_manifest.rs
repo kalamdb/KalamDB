@@ -14,9 +14,88 @@
 //! - Manifest-based file pruning by seq range
 //! - Fallback to directory scan when manifest missing
 
-use kalam_client::{models::ResponseStatus, parse_i64};
+use kalam_client::{models::ResponseStatus, parse_i64, KalamCellValue};
+use kalamdb_api::http::sql::models::{ResponseStatus as ApiResponseStatus, SqlResponse};
+use kalamdb_commons::{Role, UserId};
+use kalamdb_system::FileRef;
+use reqwest::multipart;
 
 use super::test_support::{fixtures, flush_helpers, TestServer};
+
+async fn execute_sql_multipart_as_user(
+    http: &super::test_support::http_server::HttpTestServer,
+    user: &str,
+    sql: &str,
+    files: Vec<(&str, &str, &'static [u8], &str)>,
+) -> SqlResponse {
+    let user_id = UserId::new(user);
+    let token = http.create_jwt_token_with_id(&user_id, &Role::User);
+    let auth_header = format!("Bearer {}", token);
+    let url = format!("{}/v1/api/sql", http.base_url());
+    let client = reqwest::Client::new();
+
+    let mut form = multipart::Form::new().text("sql", sql.to_string());
+    for (field, filename, data, mime) in files {
+        let part = multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .expect("valid mime type");
+        form = form.part(format!("file:{}", field), part);
+    }
+
+    client
+        .post(url)
+        .header("Authorization", auth_header)
+        .multipart(form)
+        .send()
+        .await
+        .expect("multipart SQL request")
+        .json::<SqlResponse>()
+        .await
+        .expect("multipart SQL response")
+}
+
+fn file_ref_size(cell: &KalamCellValue) -> u64 {
+    cell.as_file()
+        .unwrap_or_else(|| {
+            let raw = cell.as_str().expect("file_ref should be string or object");
+            FileRef::try_from_json(raw).expect("file_ref json")
+        })
+        .size
+}
+
+async fn assert_pk_file_size(
+    server: &TestServer,
+    namespace: &str,
+    user: &str,
+    path: &str,
+    expected_size: u64,
+    step: &str,
+) {
+    let select = server
+        .execute_sql_as_user(
+            &format!(
+                "SELECT file_ref FROM {namespace}.context_files WHERE path = '{path}'",
+                namespace = namespace,
+                path = path
+            ),
+            user,
+        )
+        .await;
+    assert_eq!(
+        select.status,
+        ResponseStatus::Success,
+        "{step}: SELECT failed: {:?}",
+        select.error
+    );
+    let rows = select.rows_as_maps();
+    assert_eq!(rows.len(), 1, "{step}: expected one row");
+    assert_eq!(
+        file_ref_size(rows[0].get("file_ref").expect("file_ref column")),
+        expected_size,
+        "{step}: PK lookup returned stale FILE version"
+    );
+}
 
 /// Test: User table cold storage query uses manifest cache
 ///
@@ -632,4 +711,137 @@ async fn test_shared_table_manifest_isolation() {
     assert_eq!(rows[0].get("name").unwrap().as_str().unwrap(), "category_5");
 
     println!("✅ Manifest correctly isolates multiple shared tables");
+}
+
+/// Regression: PK lookup must return the latest MVCC `file_ref` version.
+///
+/// Mirrors `examples/live-okf-context-sync`: a USER table with `path TEXT PRIMARY KEY`
+/// and `file_ref FILE NOT NULL`, updated repeatedly via multipart SQL. Before the fix,
+/// `SELECT ... WHERE path = ?` could return the oldest `file_ref` after multiple updates
+/// or after flush (hot cleared, cold-only read).
+#[actix_web::test]
+async fn test_pk_lookup_returns_latest_file_ref_after_multiple_updates() {
+    let server = TestServer::new_shared().await;
+    let http = super::test_support::http_server::get_global_server().await;
+
+    let ns = format!("file_pk_mvcc_{}", std::process::id());
+    let user = format!("file_pk_user_{}", std::process::id());
+    let path = "test2-offline.md";
+
+    fixtures::create_namespace(&server, &ns).await;
+    let create_response = server
+        .execute_sql(&format!(
+            r#"CREATE TABLE {ns}.context_files (
+                path TEXT PRIMARY KEY,
+                file_ref FILE NOT NULL,
+                updated_at TIMESTAMP DEFAULT NOW()
+            ) WITH (
+                TYPE = 'USER',
+                STORAGE_ID = 'local'
+            )"#,
+            ns = ns
+        ))
+        .await;
+    assert_eq!(
+        create_response.status,
+        ResponseStatus::Success,
+        "CREATE TABLE failed: {:?}",
+        create_response.error
+    );
+
+    server.create_user(&user, "test123", Role::User).await;
+
+    let table = format!("{ns}.context_files", ns = ns);
+
+    // v1: initial insert ("offline", 7 bytes) — same shape as the live-okf repro.
+    let insert_v1 = execute_sql_multipart_as_user(
+        http,
+        &user,
+        &format!(
+            r#"INSERT INTO {table} (path, file_ref, updated_at)
+               VALUES ('{path}', FILE("upload"), NOW())"#,
+            table = table,
+            path = path
+        ),
+        vec![("upload", "test2-offline.md", b"offline", "text/markdown")],
+    )
+    .await;
+    assert_eq!(
+        insert_v1.status,
+        ApiResponseStatus::Success,
+        "insert v1 failed: {:?}",
+        insert_v1.error
+    );
+    assert_pk_file_size(&server, &ns, &user, path, 7, "after insert v1").await;
+
+    // v2 and v3: repeated UPDATEs while rows stay in hot storage.
+    for (content, label) in [(b"offline2".as_slice(), "v2"), (b"offline2222333".as_slice(), "v3")]
+    {
+        let update = execute_sql_multipart_as_user(
+            http,
+            &user,
+            &format!(
+                r#"UPDATE {table}
+                   SET file_ref = FILE("upload"), updated_at = NOW()
+                   WHERE path = '{path}'"#,
+                table = table,
+                path = path
+            ),
+            vec![("upload", "test2-offline.md", content, "text/markdown")],
+        )
+        .await;
+        assert_eq!(
+            update.status,
+            ApiResponseStatus::Success,
+            "update {label} failed: {:?}",
+            update.error
+        );
+        assert_pk_file_size(
+            &server,
+            &ns,
+            &user,
+            path,
+            content.len() as u64,
+            &format!("after update {label}"),
+        )
+        .await;
+    }
+
+    // Flush v3 to cold; hot keys for this row are removed (same state as after restart).
+    let flush_result = flush_helpers::execute_flush_synchronously(&server, &ns, "context_files").await;
+    assert!(flush_result.is_ok(), "flush failed: {:?}", flush_result.err());
+    assert_pk_file_size(&server, &ns, &user, path, 14, "after flush (cold-only read)").await;
+
+    // v4: update after flush — PK lookup must merge hot v4 over cold v3.
+    let after_flush = b"after-flush-latest";
+    let update_v4 = execute_sql_multipart_as_user(
+        http,
+        &user,
+        &format!(
+            r#"UPDATE {table}
+               SET file_ref = FILE("upload"), updated_at = NOW()
+               WHERE path = '{path}'"#,
+            table = table,
+            path = path
+        ),
+        vec![("upload", "test2-offline.md", after_flush.as_slice(), "text/markdown")],
+    )
+    .await;
+    assert_eq!(
+        update_v4.status,
+        ApiResponseStatus::Success,
+        "update v4 failed: {:?}",
+        update_v4.error
+    );
+    assert_pk_file_size(
+        &server,
+        &ns,
+        &user,
+        path,
+        after_flush.len() as u64,
+        "after flush + update (hot+cold merge)",
+    )
+    .await;
+
+    println!("✅ PK lookup returns latest FILE MVCC version across hot, cold, and merge");
 }

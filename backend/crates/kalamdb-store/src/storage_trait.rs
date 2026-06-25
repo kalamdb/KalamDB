@@ -213,12 +213,13 @@ pub trait StorageBackend: Send + Sync {
     /// Restores the storage engine from a backup directory created by
     /// [`StorageBackend::backup_to`].
     ///
-    /// For RocksDB this calls `BackupEngine::restore_from_latest_backup`, overwriting the
-    /// current data directory. **The server must be restarted after this call** to reload
-    /// the restored data into memory.
+    /// For RocksDB this calls `BackupEngine::restore_from_latest_backup` into a
+    /// per-operation staging directory derived from `restore_token`. **The server
+    /// must be restarted after this call** to reload the restored data into memory.
     ///
     /// Returns `Err` for backends that do not support native restore.
-    fn restore_from(&self, _backup_dir: &Path) -> Result<()> {
+    fn restore_from(&self, backup_dir: &Path, restore_token: &str) -> Result<()> {
+        let _ = (backup_dir, restore_token);
         Err(StorageError::Other(
             "restore_from is not supported by this storage backend".to_string(),
         ))

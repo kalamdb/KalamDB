@@ -6,7 +6,7 @@ use std::sync::{
 use kalamdb_commons::{JobId, NodeId};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_system::{JobNodesTableProvider, JobsTableProvider};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, Mutex, Notify};
 
 use crate::executors::JobRegistry;
 
@@ -44,6 +44,9 @@ pub struct JobsManager {
     pub(crate) awake_sender: mpsc::UnboundedSender<JobId>,
     /// Channel receiver for job awakening (consumed by run_loop)
     pub(crate) awake_receiver: parking_lot::Mutex<Option<mpsc::UnboundedReceiver<JobId>>>,
+
+    /// Exclusive lock for full-database backup and restore jobs.
+    pub(crate) database_transfer_lock: Mutex<()>,
 }
 
 impl JobsManager {
@@ -71,7 +74,12 @@ impl JobsManager {
             app_context: Arc::downgrade(&app_ctx),
             awake_sender,
             awake_receiver: parking_lot::Mutex::new(Some(awake_receiver)),
+            database_transfer_lock: Mutex::new(()),
         }
+    }
+
+    pub(crate) fn database_transfer_lock(&self) -> &Mutex<()> {
+        &self.database_transfer_lock
     }
 
     /// Get attached AppContext (panics if AppContext was dropped)
