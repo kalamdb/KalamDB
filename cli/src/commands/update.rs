@@ -8,7 +8,9 @@ use kalam_cli::{
     release_target::{ReleaseTarget, CLI_ARTIFACT_PREFIX},
     release_version::ReleaseVersion,
     self_update::{replace_installed_binary, ReplaceMode},
-    update_check, CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
+    update_check,
+    workflow::dev::server::{install_managed_server_version, managed_server_install_dir},
+    CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
 };
 
 use crate::args::{Cli, UpdateArgs};
@@ -42,6 +44,12 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         println!("Archive: {}", archive_name);
         println!("Download URL: {}", archive_url);
         println!("Install path: {}", current_exe.display());
+        if should_install_managed_server(&target, args) {
+            println!(
+                "Managed server install path: {}",
+                managed_server_install_dir().display()
+            );
+        }
         return Ok(true);
     }
 
@@ -97,6 +105,10 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         println!("Updating kalam from {} to {}", CLI_VERSION, target.version());
     }
 
+    if should_install_managed_server(&target, args) {
+        install_managed_server_after_cli_update(&target, !cli.no_spinner).await?;
+    }
+
     eprintln!("Extracting binary");
     let temp_dir = create_temp_dir("kalam-update")?;
     let binary_path = {
@@ -132,6 +144,25 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
     }
 
     Ok(true)
+}
+
+fn should_install_managed_server(target: &ReleaseTarget, args: &UpdateArgs) -> bool {
+    args.force || target.version().as_str() != CLI_VERSION
+}
+
+async fn install_managed_server_after_cli_update(
+    target: &ReleaseTarget,
+    show_progress: bool,
+) -> Result<()> {
+    eprintln!("Downloading kalamdb-server {}", target.version());
+    let path =
+        install_managed_server_version(target.version().as_str(), show_progress).await?;
+    println!(
+        "Installed kalamdb-server {} to {}",
+        target.version(),
+        path.display()
+    );
+    Ok(())
 }
 
 enum SameVersionUpdate {

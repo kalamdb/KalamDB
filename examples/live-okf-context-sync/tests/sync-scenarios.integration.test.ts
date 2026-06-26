@@ -10,6 +10,7 @@ import { openLocalDb } from '../src/db/local-db.js';
 import { syncDbPath } from '../src/lib/paths.js';
 import { pending_uploads } from '../src/models/schema.local.js';
 import { FolderSyncApp } from '../src/sync-app.js';
+import { sleep } from '../src/helpers.js';
 import {
   aliceConnection,
   deletePaths,
@@ -267,6 +268,38 @@ test('integration: .index is never included in uploads', integration, async () =
     const { client } = await login('alice', 'alice123');
     const rows = await client.queryAll(`SELECT path FROM okf_sync.context_files WHERE path LIKE $1`, ['.index%']);
     assert.equal(rows.length, 0);
+    await client.disconnect();
+  } finally {
+    await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
+    await rm(syncDir, { recursive: true, force: true });
+  }
+});
+
+test('integration: local edit while sync is running is pushed to server', integration, async () => {
+  if (!(await serverHealthy())) {
+    return;
+  }
+
+  const syncDir = await mkdtemp(join(tmpdir(), 'okf-live-edit-'));
+  const path = uniquePath('live') + '.md';
+  const v1 = '# version one\n';
+  const v2 = '# version two while live\n';
+  const paths = [path];
+  let app: FolderSyncApp | undefined;
+
+  try {
+    await writeFile(join(syncDir, path), v1, 'utf8');
+
+    app = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: true });
+    await app.start();
+
+    await writeFile(join(syncDir, path), v2, 'utf8');
+    await sleep(1_500);
+
+    const { client } = await login('alice', 'alice123');
+    const db = createDb(client);
+    assert.equal(await fetchRemoteHash(db, path), sha256Hex(new TextEncoder().encode(v2)));
     await client.disconnect();
   } finally {
     await stopSyncApp(app);

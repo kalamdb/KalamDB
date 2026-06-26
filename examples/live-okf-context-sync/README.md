@@ -17,7 +17,9 @@ Full documentation: [Live OKF Context Sync on kalamdb.org](https://kalamdb.org/d
                     sync-app.ts
 ```
 
-**Startup order:** local folder is scanned and pushed first, then the live subscription starts.
+**Startup order:** download missing server files, scan/push local changes, then `liveTable` keeps disk aligned with KalamDB.
+
+**Deletes:** `liveTable` delivers the full current row set. When a path disappears from that snapshot, the worker removes the local file. Local deletes (unlink in the sync folder) remove the KalamDB row. With multiple clients on the same user, a shared sync queue and per-path tombstones prevent stale live snapshots or not-yet-updated folders from re-uploading deleted files during bulk deletes.
 
 ## Source layout
 
@@ -72,6 +74,13 @@ KALAM_SYNC_DIR=test1 npm run dev
 
 ## Console logging
 
+While `kalam dev` is running, edit files under `data/` (not `seed/`). You should see lines like:
+
+```text
+[sync] file 'profile.md' updated
+[sync] file 'profile.md' pushed to server (148 B)
+```
+
 ```text
 [sync] initial sync for folder '.../data' started ...
 [sync] file 'profile.md' added
@@ -82,7 +91,7 @@ KALAM_SYNC_DIR=test1 npm run dev
 
 ## Offline edits
 
-While `kalam dev` is stopped you can add, edit, or delete files under `data/`. On the next run chokidar rescans with `ignoreInitial: false`, pushes changes, reconciles offline deletions, then starts live pull.
+While `kalam dev` is stopped you can add, edit, or delete files under `data/`. On the next run the worker downloads any missing server files first, then chokidar rescans with `ignoreInitial: false`, pushes local changes, reconciles offline deletions, then starts live pull.
 
 ## Verify restore from server
 
@@ -97,8 +106,8 @@ While `kalam dev` is stopped you can add, edit, or delete files under `data/`. O
 | Local `data/` | Server rows | What happens |
 |---------------|-------------|--------------|
 | Empty | Empty | Copy `seed/`, then push |
-| Empty | Has rows | Pull from server (no seed) |
-| Has files | Any | Push local files; live pull reconciles |
+| Empty | Has rows | Download from server first, then push/watch |
+| Has files | Any | Download missing server files, then push local changes; live pull reconciles |
 
 ## Tests
 

@@ -25,6 +25,7 @@ import {
   writeSyncFile,
 } from './helpers.js';
 import { isSafeSyncPath, listSyncFiles, resolveSyncDir, syncDbPath, syncFilePath } from './lib/paths.js';
+import { SyncTombstones } from './lib/sync-tombstones.js';
 import { asFileRef } from './lib/file-utils.js';
 import { maybeSeedSyncFolder } from './lib/seed.js';
 import {
@@ -74,10 +75,14 @@ export class FolderSyncApp {
   private accessToken = '';
   private remotePaths = new Set<string>();
   private ignoringPaths = new Set<string>();
-  private liveQueue = new TaskQueue();
+  /** Paths with local edits being pushed; live pull must not overwrite these. */
+  private localDirtyPaths = new Set<string>();
+  private syncQueue = new TaskQueue();
+  private tombstones = new SyncTombstones();
   private liveUnsub: (() => Promise<void>) | null = null;
   private folderWatcher: FolderWatcher | null = null;
   private initialSyncTracker: InitialSyncTracker | null = null;
+  private liveSnapshotsHandled = 0;
 
   constructor(options: FolderSyncOptions) {
     this.syncDir = options.syncDir;
@@ -95,7 +100,7 @@ export class FolderSyncApp {
     this.accessToken = login.access_token;
     this.kalamDb = createDb(this.client);
 
-    const remoteRows = await this.kalamDb.select({ path: context_files.path }).from(context_files);
+    const remoteRows = await this.kalamDb.select().from(context_files);
     this.remotePaths = new Set(remoteRows.map((row) => row.path));
 
     const seeded = await maybeSeedSyncFolder(this.syncDir, remoteRows.length > 0);
@@ -115,14 +120,21 @@ export class FolderSyncApp {
     this.initialSyncTracker = initialSync;
     logInitialSyncStarted(this.syncDir);
 
+    await this.pullInitialRemoteFiles(remoteRows, initialSync);
+
     if (this.watchEnabled) {
       this.folderWatcher = await watchSyncFolder(
         this.syncDir,
         {
           onUpsert: (path) => this.pushLocalFile(path),
-          onDelete: (path) => this.deleteRemoteFile(path, { log: false }),
+          onDelete: (path) => {
+            if (this.ignoringPaths.has(path)) {
+              return Promise.resolve();
+            }
+            return this.deleteRemoteFile(path, { log: false });
+          },
         },
-        { initialSync },
+        { initialSync, shouldSuppressEvent: (path) => this.ignoringPaths.has(path), taskQueue: this.syncQueue },
       );
       await this.reconcileLocalDeletions(initialSync);
     } else {
@@ -146,7 +158,7 @@ export class FolderSyncApp {
       await this.liveUnsub();
       this.liveUnsub = null;
     }
-    await this.liveQueue.waitIdle();
+    await this.syncQueue.waitIdle();
     await this.client.disconnect();
   }
 
@@ -166,7 +178,7 @@ export class FolderSyncApp {
     return waitForLocalFileAbsent(this.syncDir, relativePath, timeoutMs);
   }
 
-  private markIgnoring(path: string, ms = 500): void {
+  private markIgnoring(path: string, ms = 1_000): void {
     this.ignoringPaths.add(path);
     setTimeout(() => this.ignoringPaths.delete(path), ms);
   }
@@ -182,11 +194,20 @@ export class FolderSyncApp {
       return;
     }
 
+    this.localDirtyPaths.add(relativePath);
+
     const { cachedHash, hasPending } = await readLocalSyncState(this.localDb, relativePath);
     const bytes = await readSyncFileBytes(this.syncDir, relativePath);
     const hash = sha256Hex(bytes);
 
+    if (this.tombstones.shouldBlockLocalPush(relativePath, hash)) {
+      await clearPendingUpload(this.localDb, relativePath);
+      this.localDirtyPaths.delete(relativePath);
+      return;
+    }
+
     if (!hasPending && cachedHash === hash) {
+      this.localDirtyPaths.delete(relativePath);
       return;
     }
 
@@ -199,8 +220,10 @@ export class FolderSyncApp {
       await recordSyncedFile(this.localDb, relativePath, hash);
       await clearPendingUpload(this.localDb, relativePath);
       this.remotePaths.add(relativePath);
+      this.tombstones.clear(relativePath);
       logFilePushed(relativePath, bytes.byteLength);
       this.notePush();
+      this.localDirtyPaths.delete(relativePath);
     } catch (error) {
       await queuePendingUpload(this.localDb, relativePath, hash, error);
       throw error;
@@ -266,6 +289,10 @@ export class FolderSyncApp {
       return;
     }
 
+    const { cachedHash } = await readLocalSyncState(this.localDb, relativePath);
+    const contentHash = cachedHash ?? await readSyncFileHash(this.syncDir, relativePath);
+    this.tombstones.mark(relativePath, contentHash);
+
     if (options.log ?? true) {
       logFileDeleted(relativePath);
       if (this.initialSyncTracker) {
@@ -279,10 +306,38 @@ export class FolderSyncApp {
     this.remotePaths.delete(relativePath);
   }
 
-  private async pullRemoteRow(row: ContextFiles): Promise<void> {
+  private async pullInitialRemoteFiles(
+    rows: ContextFiles[],
+    initialSync: InitialSyncTracker,
+  ): Promise<void> {
+    if (rows.length === 0) {
+      return;
+    }
+
+    for (const row of rows) {
+      try {
+        await this.pullRemoteRow(row, { skipLocalConflicts: true });
+      } catch (error) {
+        console.error(`[sync] failed to download ${row.path} during initial sync:`, error);
+      }
+    }
+
+    if (initialSync.downloaded > 0) {
+      console.log(`[sync] downloaded ${initialSync.downloaded} file(s) from server`);
+    }
+  }
+
+  private async pullRemoteRow(
+    row: ContextFiles,
+    options: { skipLocalConflicts?: boolean } = {},
+  ): Promise<void> {
     const relativePath = row.path;
     if (!isSafeSyncPath(relativePath)) {
       console.warn(`[sync] ignoring remote row with unsafe path: ${relativePath}`);
+      return;
+    }
+
+    if (this.localDirtyPaths.has(relativePath) || this.ignoringPaths.has(relativePath)) {
       return;
     }
 
@@ -290,6 +345,10 @@ export class FolderSyncApp {
     const remoteHash = remoteContentHash(fileRef);
     if (!fileRef || !remoteHash) {
       console.warn(`[sync] skipping ${relativePath}: missing file_ref.sha256`);
+      return;
+    }
+
+    if (this.tombstones.shouldBlockRemotePull(relativePath, remoteHash)) {
       return;
     }
 
@@ -301,6 +360,10 @@ export class FolderSyncApp {
         remoteHash,
         row.updated_at ?? row.created_at ?? new Date(),
       );
+      return;
+    }
+
+    if (options.skipLocalConflicts && localHash !== null) {
       return;
     }
 
@@ -317,6 +380,9 @@ export class FolderSyncApp {
     });
     await recordSyncedFile(this.localDb, record.path, record.sha256, record.updated_at);
     logFileDownloaded(relativePath, bytes.byteLength);
+    if (this.initialSyncTracker) {
+      this.initialSyncTracker.downloaded += 1;
+    }
   }
 
   private async removeLocalFile(relativePath: string): Promise<void> {
@@ -324,6 +390,8 @@ export class FolderSyncApp {
       return;
     }
 
+    const contentHash = await readSyncFileHash(this.syncDir, relativePath);
+    this.tombstones.mark(relativePath, contentHash);
     this.markIgnoring(relativePath);
     await removeSyncFile(this.syncDir, relativePath);
     await removeLocalRecord(this.localDb, relativePath);
@@ -332,13 +400,27 @@ export class FolderSyncApp {
   }
 
   private async handleLiveRows(rows: ContextFiles[]): Promise<void> {
-    const nextPaths = new Set(rows.map((row) => row.path));
+    const nextPaths = new Set(
+      rows.map((row) => row.path).filter((path) => isSafeSyncPath(path)),
+    );
 
-    for (const path of this.remotePaths) {
-      if (!nextPaths.has(path)) {
-        await this.removeLocalFile(path);
+    this.liveSnapshotsHandled += 1;
+    const isInitialLiveSnapshot = this.liveSnapshotsHandled === 1;
+
+    // The live client can emit an empty snapshot before initial rows arrive.
+    // Never treat that as "delete everything we just downloaded".
+    if (isInitialLiveSnapshot && nextPaths.size === 0 && this.remotePaths.size > 0) {
+      return;
+    }
+
+    if (!isInitialLiveSnapshot) {
+      for (const path of this.remotePaths) {
+        if (!nextPaths.has(path)) {
+          await this.removeLocalFile(path);
+        }
       }
     }
+
     this.remotePaths = nextPaths;
 
     for (const row of rows) {
@@ -352,7 +434,7 @@ export class FolderSyncApp {
 
   private async startLivePull(): Promise<void> {
     this.liveUnsub = await liveTable(this.client, context_files, (rows) => {
-      this.liveQueue.enqueue(() => this.handleLiveRows(rows));
+      this.syncQueue.enqueue(() => this.handleLiveRows(rows));
     });
     console.log('[sync] live subscription active');
   }

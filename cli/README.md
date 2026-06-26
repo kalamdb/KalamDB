@@ -596,8 +596,7 @@ Access the running server at **http://localhost:2900** (UI at **http://localhost
 with **`root` / `kalamdb123`**, or run
 `kalam --url http://127.0.0.1:2900 --user root --password kalamdb123` in another terminal.
 
-Use `kalam db reset` to delete `kalam/server/data` and `kalam/server/logs` when you want a
-fresh local database on the next `kalam dev`.
+Use `kalam db reset` to clear local project state (`kalam/server/`, schema baseline) and drop the linked namespace when appropriate. Use `--yes` when reusing a non-project server or in non-interactive shells. Run `kalam dev` afterward for a fresh database.
 
 Use that guide for:
 

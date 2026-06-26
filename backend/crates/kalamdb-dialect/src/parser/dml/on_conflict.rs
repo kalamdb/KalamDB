@@ -6,7 +6,7 @@ use sqlparser::ast::{
     OnConflictAction, OnInsert, Value,
 };
 
-use super::literals::expr_to_scalar;
+use super::literals::expr_to_scalar_with_params;
 
 pub type DmlParseResult<T> = Result<T, String>;
 
@@ -61,9 +61,20 @@ pub fn validate_primary_key_conflict_target(
 pub fn parse_on_conflict_action(
     on_conflict: &OnConflict,
 ) -> DmlParseResult<ParsedOnConflictAction> {
+    parse_on_conflict_action_with_params(on_conflict, &[])
+}
+
+/// Parse the action clause for INSERT ... ON CONFLICT with bound parameters.
+pub fn parse_on_conflict_action_with_params(
+    on_conflict: &OnConflict,
+    params: &[ScalarValue],
+) -> DmlParseResult<ParsedOnConflictAction> {
     match &on_conflict.action {
         OnConflictAction::DoUpdate(do_update) => Ok(ParsedOnConflictAction::DoUpdate {
-            assignments: build_on_conflict_update_assignments(&do_update.assignments)?,
+            assignments: build_on_conflict_update_assignments_with_params(
+                &do_update.assignments,
+                params,
+            )?,
             where_clause: do_update.selection.clone(),
         }),
         OnConflictAction::DoNothing => Ok(ParsedOnConflictAction::DoNothing),
@@ -92,6 +103,13 @@ pub fn on_conflict_update_should_apply(where_clause: &Option<Expr>) -> DmlParseR
 pub fn build_on_conflict_update_assignments(
     assignments: &[Assignment],
 ) -> DmlParseResult<Vec<OnConflictUpdateAssignment>> {
+    build_on_conflict_update_assignments_with_params(assignments, &[])
+}
+
+pub fn build_on_conflict_update_assignments_with_params(
+    assignments: &[Assignment],
+    params: &[ScalarValue],
+) -> DmlParseResult<Vec<OnConflictUpdateAssignment>> {
     assignments
         .iter()
         .map(|assignment| {
@@ -107,13 +125,16 @@ pub fn build_on_conflict_update_assignments(
 
             Ok(OnConflictUpdateAssignment {
                 column_name,
-                value: parse_on_conflict_update_value(&assignment.value)?,
+                value: parse_on_conflict_update_value(&assignment.value, params)?,
             })
         })
         .collect()
 }
 
-fn parse_on_conflict_update_value(expr: &Expr) -> DmlParseResult<OnConflictUpdateValue> {
+fn parse_on_conflict_update_value(
+    expr: &Expr,
+    params: &[ScalarValue],
+) -> DmlParseResult<OnConflictUpdateValue> {
     match expr {
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
             let [qualifier, column] = parts.as_slice() else {
@@ -128,9 +149,13 @@ fn parse_on_conflict_update_value(expr: &Expr) -> DmlParseResult<OnConflictUpdat
                 ))
             }
         },
-        _ => expr_to_scalar(expr).map(OnConflictUpdateValue::Literal).map_err(|_| {
-            "ON CONFLICT DO UPDATE assignments support literals or EXCLUDED.<column>".to_string()
-        }),
+        _ => expr_to_scalar_with_params(expr, params)
+            .map(OnConflictUpdateValue::Literal)
+            .map_err(|_| {
+                "ON CONFLICT DO UPDATE assignments support literals, parameters, or \
+                 EXCLUDED.<column>"
+                    .to_string()
+            }),
     }
 }
 
@@ -149,6 +174,7 @@ pub fn on_conflict_from_insert(insert: &Insert) -> Option<&OnConflict> {
 
 #[cfg(test)]
 mod tests {
+    use datafusion_common::ScalarValue;
     use sqlparser::{dialect::GenericDialect, parser::Parser};
 
     use super::*;
@@ -198,6 +224,38 @@ mod tests {
                 && matches!(
                     assignments[0].value,
                     OnConflictUpdateValue::InsertedColumn(ref column) if column == "name"
+                )
+        ));
+    }
+
+    #[test]
+    fn parse_on_conflict_action_resolves_assignment_placeholders() {
+        let on_conflict = parse_on_conflict(
+            "INSERT INTO t (id, name) VALUES ($1, $2) \
+             ON CONFLICT (id) DO UPDATE SET name = $3",
+        );
+
+        let action = parse_on_conflict_action_with_params(
+            &on_conflict,
+            &[
+                ScalarValue::Int64(Some(1)),
+                ScalarValue::Utf8(Some("inserted".to_string())),
+                ScalarValue::Utf8(Some("updated".to_string())),
+            ],
+        )
+        .expect("action should parse");
+
+        assert!(matches!(
+            action,
+            ParsedOnConflictAction::DoUpdate {
+                assignments,
+                where_clause: None,
+            } if assignments.len() == 1
+                && assignments[0].column_name == "name"
+                && matches!(
+                    assignments[0].value,
+                    OnConflictUpdateValue::Literal(ScalarValue::Utf8(Some(ref value)))
+                        if value == "updated"
                 )
         ));
     }

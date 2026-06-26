@@ -125,6 +125,22 @@ pub fn credential_instance_for_env(env_name: &str) -> String {
     format!("kalam-{env_name}")
 }
 
+/// Resolve a server URL from `kalam.toml` when `instance` matches `kalam-{env}`.
+pub fn resolve_project_server_url_for_instance(start: &Path, instance: &str) -> Option<String> {
+    let (_project_root, config) = KalamProjectConfig::discover(start, None).ok()?;
+    for env_name in config.connection.keys() {
+        if credential_instance_for_env(env_name) != instance {
+            continue;
+        }
+        let overrides = EnvironmentOverrides {
+            env: Some(env_name),
+            ..EnvironmentOverrides::default()
+        };
+        return resolve_environment(&config, &overrides).ok().map(|resolved| resolved.url);
+    }
+    None
+}
+
 /// Resolve stored credentials for a workflow environment without embedding secrets in kalam.toml.
 pub fn load_env_credentials(
     store: &FileCredentialStore,
@@ -247,6 +263,41 @@ mod tests {
         let resolved = resolve_environment(&config, &EnvironmentOverrides::default()).unwrap();
         assert_eq!(resolved.name, "dev");
         assert_eq!(resolved.url, "http://localhost:2900");
+    }
+
+    #[test]
+    fn resolve_project_server_url_for_instance_reads_matching_env() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("kalam.toml"),
+            r#"
+[project]
+name = "demo"
+default_env = "dev"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "demo"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_project_server_url_for_instance(temp.path(), "kalam-dev").as_deref(),
+            Some("http://localhost:2900")
+        );
+        assert_eq!(
+            resolve_project_server_url_for_instance(temp.path(), "kalam-prod"),
+            None
+        );
     }
 
     #[test]

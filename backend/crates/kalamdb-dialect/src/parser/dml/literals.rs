@@ -72,6 +72,16 @@ pub fn expr_to_scalar_with_params(
     }
 }
 
+/// Returns true when an expression is the SQL `DEFAULT` keyword.
+pub fn is_default_expr(expr: &Expr) -> bool {
+    match strip_nested_expr(expr) {
+        Expr::Identifier(ident) => {
+            ident.quote_style.is_none() && ident.value.eq_ignore_ascii_case("default")
+        },
+        _ => false,
+    }
+}
+
 fn resolve_placeholder(
     placeholder: &str,
     params: &[ScalarValue],
@@ -141,7 +151,8 @@ mod tests {
     };
 
     use super::{
-        expr_to_scalar, expr_to_scalar_with_params, sql_value_to_scalar, strip_nested_expr,
+        expr_to_scalar, expr_to_scalar_with_params, is_default_expr, sql_value_to_scalar,
+        strip_nested_expr,
     };
 
     fn parse_select_expr(expr_sql: &str) -> Expr {
@@ -247,6 +258,18 @@ mod tests {
             expr_to_scalar_with_params(&negated, &params).unwrap(),
             ScalarValue::Int64(Some(-7))
         );
+    }
+
+    #[test]
+    fn is_default_expr_matches_unquoted_default_keyword() {
+        let default_expr = parse_values_expr("DEFAULT");
+        assert!(is_default_expr(&default_expr));
+
+        let nested_default = parse_values_expr("(DEFAULT)");
+        assert!(is_default_expr(&nested_default));
+
+        let quoted_default = parse_values_expr("\"DEFAULT\"");
+        assert!(!is_default_expr(&quoted_default));
     }
 
     #[test]

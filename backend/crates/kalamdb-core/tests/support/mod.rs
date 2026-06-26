@@ -207,6 +207,79 @@ pub async fn create_user_table(
     table_id
 }
 
+pub async fn create_context_files_table(
+    app_ctx: &Arc<AppContext>,
+    namespace: &NamespaceId,
+    table_name: &str,
+) -> TableId {
+    let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
+    let path_col = ColumnDefinition::new(
+        1,
+        "path".to_string(),
+        1,
+        KalamDataType::Text,
+        false,
+        true,
+        false,
+        ColumnDefault::None,
+        None,
+    );
+    let file_ref_col = ColumnDefinition::new(
+        2,
+        "file_ref".to_string(),
+        2,
+        KalamDataType::File,
+        false,
+        false,
+        false,
+        ColumnDefault::None,
+        None,
+    );
+    let created_at_col = ColumnDefinition::new(
+        3,
+        "created_at".to_string(),
+        3,
+        KalamDataType::Timestamp,
+        true,
+        false,
+        false,
+        ColumnDefault::function("NOW", vec![]),
+        None,
+    );
+    let updated_at_col = ColumnDefinition::new(
+        4,
+        "updated_at".to_string(),
+        4,
+        KalamDataType::Timestamp,
+        true,
+        false,
+        false,
+        ColumnDefault::function("NOW", vec![]),
+        None,
+    );
+
+    let mut table_def = TableDefinition::new(
+        namespace.clone(),
+        table_id.table_name().clone(),
+        TableType::User,
+        vec![path_col, file_ref_col, created_at_col, updated_at_col],
+        TableOptions::user(),
+        None,
+    )
+    .expect("create context files table definition");
+    app_ctx
+        .system_columns_service()
+        .add_system_columns(&mut table_def)
+        .expect("add system columns");
+
+    app_ctx
+        .schema_registry()
+        .register_table(table_def)
+        .expect("register context files table");
+
+    table_id
+}
+
 pub async fn setup_shared_table(
     namespace_prefix: &str,
     table_name: &str,

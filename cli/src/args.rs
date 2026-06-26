@@ -337,7 +337,7 @@ pub struct UpdateArgs {
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 
-    /// Reinstall even when the requested version matches the current version
+    /// Reinstall the CLI and managed kalamdb-server even when the requested version matches
     #[arg(long = "force")]
     pub force: bool,
 }

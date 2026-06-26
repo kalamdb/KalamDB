@@ -106,8 +106,12 @@ export function isExcludedWatchPath(filename: string): boolean {
 /** Skip chokidar events for local-only paths under the sync folder. */
 export function shouldIgnoreWatchAbsolutePath(syncDir: string, absolutePath: string): boolean {
   const rel = toRelativeSyncPath(syncDir, absolutePath);
-  if (rel === '' || rel.startsWith('..')) {
+  if (rel.startsWith('..')) {
     return true;
+  }
+  // Never ignore the watch root (rel === ''); chokidar treats that as ignoring the whole tree.
+  if (rel === '') {
+    return false;
   }
   return isExcludedWatchPath(rel) || isExcludedRelativePath(rel);
 }
