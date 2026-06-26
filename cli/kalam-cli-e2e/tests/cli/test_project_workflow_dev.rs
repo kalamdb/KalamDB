@@ -189,6 +189,7 @@ pub(crate) fn start_migration_tracking_server(
 
     #[derive(Clone, Default)]
     struct FakeMig {
+        migration_key: String,
         migration_id: String,
         namespace: String,
         name: String,
@@ -233,12 +234,13 @@ pub(crate) fn start_migration_tracking_server(
     }
 
     fn build_migrations_response(records: &[FakeMig]) -> String {
-        let schema = r#"[{"name":"migration_id","data_type":"Text","index":0},{"name":"namespace","data_type":"Text","index":1},{"name":"name","data_type":"Text","index":2},{"name":"checksum","data_type":"Text","index":3},{"name":"status","data_type":"Text","index":4},{"name":"started_at","data_type":"Text","index":5},{"name":"finished_at","data_type":"Text","index":6},{"name":"error_message","data_type":"Text","index":7},{"name":"source","data_type":"Text","index":8},{"name":"kalam_version","data_type":"Text","index":9}]"#;
+        let schema = r#"[{"name":"migration_key","data_type":"Text","index":0},{"name":"migration_id","data_type":"Text","index":1},{"name":"namespace","data_type":"Text","index":2},{"name":"name","data_type":"Text","index":3},{"name":"checksum","data_type":"Text","index":4},{"name":"status","data_type":"Text","index":5},{"name":"started_at","data_type":"Text","index":6},{"name":"finished_at","data_type":"Text","index":7},{"name":"error_message","data_type":"Text","index":8},{"name":"source","data_type":"Text","index":9},{"name":"kalam_version","data_type":"Text","index":10}]"#;
         let rows: Vec<String> = records
             .iter()
             .map(|r| {
                 format!(
-                    r#"["{}","{}","{}","{}","{}",null,null,null,"{}",null]"#,
+                    r#"["{}","{}","{}","{}","{}","{}",null,null,null,"{}",null]"#,
+                    r.migration_key.replace('"', "\\\""),
                     r.migration_id.replace('"', "\\\""),
                     r.namespace.replace('"', "\\\""),
                     r.name.replace('"', "\\\""),
@@ -354,8 +356,9 @@ pub(crate) fn start_migration_tracking_server(
                     ) {
                         let src = nth_quoted(&sql, 6).unwrap_or_else(|| mid.clone());
                         migrations.lock().expect("lock migs").insert(
-                            key,
+                            key.clone(),
                             FakeMig {
+                                migration_key: key,
                                 migration_id: mid,
                                 namespace: mns,
                                 name,
@@ -520,6 +523,92 @@ fn create_isolated_cli_std_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     cmd
+}
+
+#[test]
+fn test_project_workflow_dev_migration_recovery_abort_stops_dev_session() {
+    let temp = TempDir::new().expect("temp dir");
+    let project_dir = temp.path().join("dev-abort-migration-app");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let isolated_home = temp.path().join("home");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    store_test_dev_credentials(&credentials_path);
+
+    let (server_url, _requests, _server_handle) = start_migration_tracking_server();
+
+    let mut init = create_isolated_cli_std_command(&isolated_home, &credentials_path);
+    init.current_dir(&project_dir).args([
+        "init",
+        "--yes",
+        "--name",
+        "dev-abort-migration-app",
+        "--schema-mode",
+        "sql",
+        "--server-mode",
+        "remote",
+        "--server-url",
+        &server_url,
+    ]);
+    let init_output = init.output().expect("init project");
+    assert!(
+        init_output.status.success(),
+        "init failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&init_output.stdout),
+        String::from_utf8_lossy(&init_output.stderr)
+    );
+
+    update_dev_project(&project_dir, |config| {
+        config.dev.processes.clear();
+        config.dev.watch = false;
+        config.schema.watch = false;
+        config.dev.generate_types = false;
+    });
+
+    let migration_path = project_dir.join("kalam/migrations/20250101120000_fail.sql");
+    fs::write(&migration_path, "-- UP\nSELECT __KALAM_TEST_SCHEMA_FAIL__;\n\n-- DOWN\n")
+        .expect("write failing migration");
+
+    let mut first_run = create_isolated_cli_std_command(&isolated_home, &credentials_path);
+    first_run.current_dir(&project_dir).arg("dev");
+    let first_output = first_run.output().expect("run first kalam dev");
+    assert!(
+        first_output.status.success(),
+        "first dev run should pause schema and complete without processes\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    let first_stderr = String::from_utf8_lossy(&first_output.stderr);
+    assert!(
+        first_stderr.contains("schema pipeline paused"),
+        "expected first run to record a failed migration\nstderr: {first_stderr}"
+    );
+
+    let mut second_run = create_isolated_cli_std_command(&isolated_home, &credentials_path);
+    second_run.current_dir(&project_dir).stdin(Stdio::piped()).arg("dev");
+    let mut child = second_run.spawn().expect("spawn second kalam dev");
+    child
+        .stdin
+        .take()
+        .expect("capture second run stdin")
+        .write_all(b"a")
+        .expect("send abort decision");
+    let second_output = child.wait_with_output().expect("collect second dev output");
+    assert!(
+        !second_output.status.success(),
+        "abort should fail kalam dev\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let second_stderr = String::from_utf8_lossy(&second_output.stderr);
+    assert!(
+        second_stderr.contains("migration 20250101120000_fail.sql recovery aborted"),
+        "expected migration recovery abort error\nstderr: {second_stderr}"
+    );
+    assert!(
+        second_stderr.contains("schema pipeline aborted; stopping kalam dev"),
+        "expected abort to stop dev instead of pausing\nstderr: {second_stderr}"
+    );
 }
 
 #[test]

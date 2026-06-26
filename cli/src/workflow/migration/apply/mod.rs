@@ -1,6 +1,7 @@
 //! Apply pending migrations with local migration tracking.
 
 mod recovery;
+mod recovery_prompt;
 mod server_state;
 
 use crate::{
@@ -18,7 +19,9 @@ use crate::{
     },
 };
 
-pub(crate) use server_state::{load_server_migration_state, save_server_migration_record};
+pub(crate) use server_state::{
+    load_server_migration_state, save_server_migration_record, save_server_migration_records,
+};
 
 pub struct ApplyMigrationOptions {
     pub force: bool,
@@ -76,8 +79,24 @@ pub async fn apply_pending_migrations(
     }
 
     recovery::validate_applied_checksums(&state, &files)?;
-    recovery::handle_stuck_applying(&mut state, &migrations_dir, options, output)?;
-    recovery::handle_failed_records(&mut state, &migrations_dir, options, output)?;
+    recovery::handle_stuck_applying(
+        &mut state,
+        &migrations_dir,
+        options,
+        output,
+        &client,
+        &environment.namespace,
+    )
+    .await?;
+    recovery::handle_failed_records(
+        &mut state,
+        &migrations_dir,
+        options,
+        output,
+        &client,
+        &environment.namespace,
+    )
+    .await?;
 
     let mut pending = recovery::pending_migration_files(&state, files)?;
     let draft_pending = options.include_draft

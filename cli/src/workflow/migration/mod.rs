@@ -45,6 +45,9 @@ impl std::fmt::Display for MigrationStatus {
 pub struct MigrationRecord {
     pub migration_id: String,
     pub namespace: NamespaceId,
+    /// Server-side primary key (`namespace:migration_id`) when loaded from `system.migrations`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_key: Option<String>,
     pub name: String,
     pub checksum: String,
     pub status: MigrationStatus,
@@ -82,6 +85,19 @@ impl MigrationState {
         self.records.iter().find(|record| record.migration_id == migration_id)
     }
 
+    pub fn records_for_migration_id(&self, migration_id: &str) -> Vec<&MigrationRecord> {
+        self.records
+            .iter()
+            .filter(|record| record.migration_id == migration_id)
+            .collect()
+    }
+
+    pub fn has_failed_migration_id(&self, migration_id: &str) -> bool {
+        self.records.iter().any(|record| {
+            record.migration_id == migration_id && record.status == MigrationStatus::Failed
+        })
+    }
+
     pub fn failed_records(&self) -> Vec<MigrationRecord> {
         self.records
             .iter()
@@ -111,6 +127,7 @@ impl MigrationState {
         let record = MigrationRecord {
             migration_id: migration_id.to_string(),
             namespace: namespace.clone(),
+            migration_key: Some(format!("{}:{migration_id}", namespace.as_str())),
             name,
             checksum,
             status: MigrationStatus::Applying,
@@ -130,9 +147,10 @@ impl MigrationState {
     }
 
     pub fn mark_applied(&mut self, migration_id: &str) {
-        if let Some(record) = self.records.iter_mut().find(|r| r.migration_id == migration_id) {
+        let now = now_timestamp();
+        for record in self.records.iter_mut().filter(|record| record.migration_id == migration_id) {
             record.status = MigrationStatus::Applied;
-            record.finished_at = Some(now_timestamp());
+            record.finished_at = Some(now.clone());
             record.error_message = None;
         }
         if !self.applied.iter().any(|entry| entry == migration_id) {
@@ -296,5 +314,49 @@ mod tests {
         assert_eq!(failed.error_message.as_deref(), Some("test failure"));
         assert!(failed.finished_at.is_some());
         assert!(!state.is_applied("0002_add_email.sql"));
+    }
+
+    #[test]
+    fn mark_applied_updates_all_records_for_migration_id() {
+        let namespace = NamespaceId::new("okf_sync");
+        let mut state = MigrationState {
+            records: vec![
+                MigrationRecord {
+                    migration_id: "0001_auto.sql".into(),
+                    namespace: namespace.clone(),
+                    migration_key: Some("legacy:0001_auto.sql".into()),
+                    name: "auto".into(),
+                    checksum: "abc".into(),
+                    status: MigrationStatus::Failed,
+                    started_at: None,
+                    finished_at: None,
+                    error_message: Some("table already exists".into()),
+                    sql: None,
+                    source: Some("0001_auto.sql".into()),
+                    kalam_version: None,
+                },
+                MigrationRecord {
+                    migration_id: "0001_auto.sql".into(),
+                    namespace: namespace.clone(),
+                    migration_key: Some("okf_sync:0001_auto.sql".into()),
+                    name: "auto".into(),
+                    checksum: "abc".into(),
+                    status: MigrationStatus::Failed,
+                    started_at: None,
+                    finished_at: None,
+                    error_message: Some("table already exists".into()),
+                    sql: None,
+                    source: Some("0001_auto.sql".into()),
+                    kalam_version: None,
+                },
+            ],
+            applied: Vec::new(),
+        };
+
+        state.mark_applied("0001_auto.sql");
+
+        assert!(state.records.iter().all(|record| record.status == MigrationStatus::Applied));
+        assert!(!state.has_failed_migration_id("0001_auto.sql"));
+        assert_eq!(state.records_for_migration_id("0001_auto.sql").len(), 2);
     }
 }

@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createDb } from '../src/db/client.js';
 import { fetchRemoteHash, sha256Hex } from '../src/remote-files.js';
 import { openLocalDb } from '../src/db/local-db.js';
-import { syncDbPath } from '../src/lib/paths.js';
+import { listSyncFiles, syncDbPath } from '../src/lib/paths.js';
 import { pending_uploads } from '../src/models/schema.local.js';
 import { FolderSyncApp } from '../src/sync-app.js';
-import { sleep } from '../src/helpers.js';
+import { sleep, waitForLocalFileAbsent, waitForLocalFiles } from '../src/helpers.js';
 import {
   aliceConnection,
   deletePaths,
@@ -79,8 +79,8 @@ test('integration: second client receives files pushed by the first', integratio
 
     clientB = new FolderSyncApp({ syncDir: syncDirB, connection: aliceConnection(), watch: false });
     await clientB.start();
-    await clientB.waitForLocalFiles([path], 20_000);
-    assert.equal(await clientB.readLocalFile(path), content);
+    await waitForLocalFiles(syncDirB, [path], 20_000);
+    assert.equal(await readFile(join(syncDirB, path), 'utf8'), content);
   } finally {
     await stopSyncApp(clientA);
     await stopSyncApp(clientB);
@@ -183,10 +183,10 @@ test('integration: remote delete removes local copy', integration, async () => {
 
     await writeFile(join(syncDir, path), content, 'utf8');
     await app.pushLocalFile(path);
-    await app.waitForLocalFiles([path]);
+    await waitForLocalFiles(syncDir, [path]);
 
     await deletePaths([path]);
-    await app.waitForLocalFileAbsent(path, 20_000);
+    await waitForLocalFileAbsent(syncDir, path, 20_000);
   } finally {
     await stopSyncApp(app);
     await deletePaths(paths).catch(() => undefined);
@@ -261,7 +261,7 @@ test('integration: .index is never included in uploads', integration, async () =
     await writeFile(join(syncDir, userPath), '# user file\n', 'utf8');
     await app.pushAllLocalFiles();
 
-    const files = await app.listLocalFiles();
+    const files = await listSyncFiles(syncDir);
     assert.equal(files.some((file) => file.startsWith('.index/')), false);
     assert.equal(files.includes(userPath), true);
 

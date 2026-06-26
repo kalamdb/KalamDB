@@ -1,16 +1,12 @@
 import { createHash } from 'node:crypto';
-import { FileRef } from '@kalamdb/client';
+import { FileRef, parseFileRef } from '@kalamdb/client';
 
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
 export function asFileRef(value: unknown): FileRef | null {
-  return value instanceof FileRef ? value : null;
-}
-
-export function remoteContentHash(fileRef: unknown): string | null {
-  return asFileRef(fileRef)?.sha256 ?? null;
+  return parseFileRef(value);
 }
 
 export function guessMimeType(relativePath: string): string {

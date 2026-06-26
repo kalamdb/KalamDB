@@ -1,21 +1,19 @@
 //! Modal draft migration confirmation prompt for `kalam dev`.
-//!
-//! The dev command is append-only while it is running. When user input is
-//! required, terminal output is paused by the caller, the screen is cleared, and
-//! this module renders an init-style selector.
 
 use std::{
     fs,
-    io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
 };
 
 use crate::{
-    error::{CLIError, Result},
+    error::Result,
     output::WorkflowOutput,
-    terminal_ui::{self, SelectOption},
+    terminal_ui::SelectOption,
     workflow::{
-        display_project_path, migration::markers, project::prompts::prompt_error, WorkflowContext,
+        display_project_path,
+        migration::markers,
+        prompts::{read_single_key_decision, run_workflow_modal_prompt, WorkflowModalPrompt},
+        WorkflowContext,
     },
 };
 
@@ -47,68 +45,65 @@ pub fn prompt_for_draft_application(
     draft_path: &Path,
 ) -> Result<DraftPromptDecision> {
     let summary = draft_summary_lines(draft_path);
-    output.workflow_event(DRAFT_PROMPT_MESSAGE);
-    for line in &summary {
-        output.workflow_event(line);
+    let draft_display = display_project_path(project_root, draft_path);
+    let mut context_lines = summary;
+    context_lines.push(format!("Full changes: {draft_display}"));
+    run_workflow_modal_prompt(output, &DraftMigrationPrompt { context_lines })
+}
+
+struct DraftMigrationPrompt {
+    context_lines: Vec<String>,
+}
+
+impl WorkflowModalPrompt for DraftMigrationPrompt {
+    type Decision = DraftPromptDecision;
+
+    fn message(&self) -> &str {
+        DRAFT_PROMPT_MESSAGE
     }
-    output.run_terminal_modal(|| {
-        let draft_display = display_project_path(project_root, draft_path);
-        render_draft_summary(&summary, &draft_display, output.use_color);
 
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return read_noninteractive_decision();
-        }
+    fn banner_title(&self) -> &str {
+        "Schema draft pending"
+    }
 
-        let options = [
+    fn banner_subtitle(&self) -> Option<&str> {
+        Some("Review before applying.")
+    }
+
+    fn context_lines(&self) -> &[String] {
+        &self.context_lines
+    }
+
+    fn select_options(&self) -> Vec<SelectOption<'static>> {
+        vec![
             SelectOption::described("Apply changes", "Seal and apply this schema draft now"),
             SelectOption::described(
                 "Reset and rebuild",
                 "Drop the namespace, clear migrations, and apply schema.sql from scratch",
             ),
             SelectOption::described("Cancel", "Stop kalam dev without applying this draft"),
-        ];
-        let selected =
-            match terminal_ui::prompt_select(DRAFT_PROMPT_MESSAGE, &options, 0, output.use_color) {
-                Ok(selected) => selected,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => 2,
-                Err(error) => return Err(prompt_error(error)),
-            };
+        ]
+    }
 
-        Ok(match selected {
+    fn default_index(&self) -> usize {
+        0
+    }
+
+    fn decision_from_selected_index(&self, index: usize) -> Result<Self::Decision> {
+        Ok(match index {
             0 => DraftPromptDecision::Apply,
             1 => DraftPromptDecision::Reset,
             _ => DraftPromptDecision::Cancel,
         })
-    })
-}
-
-fn read_noninteractive_decision() -> Result<DraftPromptDecision> {
-    let mut buf = [0_u8; 1];
-    io::stdin()
-        .read_exact(&mut buf)
-        .map_err(|e| CLIError::FileError(format!("failed to read schema prompt input: {e}")))?;
-    match buf[0] as char {
-        'y' | 'Y' => Ok(DraftPromptDecision::Apply),
-        'r' | 'R' => Ok(DraftPromptDecision::Reset),
-        _ => Ok(DraftPromptDecision::Cancel),
     }
-}
 
-fn render_draft_summary(summary: &[String], draft_display: &str, color: bool) {
-    terminal_ui::print_banner("Schema draft pending", Some("Review before applying."), color);
-    println!();
-    println!("{}", terminal_ui::style_info("Pending changes:", color));
-
-    if summary.is_empty() {
-        println!("  _draft.sql has pending changes");
-    } else {
-        for line in summary {
-            println!("  {line}");
-        }
+    fn read_noninteractive_decision(&self) -> Result<Self::Decision> {
+        read_single_key_decision("schema prompt input", |key| match key {
+            'y' | 'Y' => Ok(DraftPromptDecision::Apply),
+            'r' | 'R' => Ok(DraftPromptDecision::Reset),
+            _ => Ok(DraftPromptDecision::Cancel),
+        })
     }
-    println!();
-    println!("Full changes: {draft_display}");
-    println!();
 }
 
 fn draft_summary_lines(path: &Path) -> Vec<String> {
@@ -190,5 +185,15 @@ mod tests {
         let result = summarize_draft_sql(sql, 3);
         assert_eq!(result[0], "CREATE TABLE users (");
         assert!(result.iter().any(|l| l.contains("...")));
+    }
+
+    #[test]
+    fn draft_prompt_maps_apply_reset_cancel() {
+        let prompt = DraftMigrationPrompt {
+            context_lines: vec!["CREATE TABLE users (id INTEGER);".into()],
+        };
+        assert_eq!(prompt.decision_from_selected_index(0).unwrap(), DraftPromptDecision::Apply);
+        assert_eq!(prompt.decision_from_selected_index(1).unwrap(), DraftPromptDecision::Reset);
+        assert_eq!(prompt.decision_from_selected_index(2).unwrap(), DraftPromptDecision::Cancel);
     }
 }

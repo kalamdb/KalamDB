@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FileRef } from '@kalamdb/client';
-import { guessMimeType, remoteContentHash, sha256Hex } from '../src/lib/file-utils.js';
+import { asFileRef, guessMimeType, sha256Hex } from '../src/lib/file-utils.js';
 import { downloadFileBytes } from '../src/remote-files.js';
 
 test('guessMimeType maps common extensions', () => {
@@ -11,7 +11,7 @@ test('guessMimeType maps common extensions', () => {
   assert.equal(guessMimeType('blob.bin'), 'application/octet-stream');
 });
 
-test('remoteContentHash reads sha256 from FileRef', () => {
+test('asFileRef accepts FileRef instances', () => {
   const ref = new FileRef({
     id: '1',
     sub: 'f0001',
@@ -20,8 +20,22 @@ test('remoteContentHash reads sha256 from FileRef', () => {
     mime: 'text/markdown',
     sha256: 'abc123',
   });
-  assert.equal(remoteContentHash(ref), 'abc123');
-  assert.equal(remoteContentHash(null), null);
+  assert.equal(asFileRef(ref)?.sha256, 'abc123');
+  assert.equal(asFileRef(null), null);
+});
+
+test('asFileRef accepts plain file-ref rows from query and live results', () => {
+  const ref = asFileRef({
+    id: '1',
+    sub: 'f0001',
+    name: 'index.md',
+    size: 4,
+    mime: 'text/markdown',
+    sha256: 'abc123',
+  });
+
+  assert.ok(ref instanceof FileRef);
+  assert.equal(ref.sha256, 'abc123');
 });
 
 test('downloadFileBytes verifies content against FileRef.sha256', async () => {

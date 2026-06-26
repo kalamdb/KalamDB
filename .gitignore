@@ -140,3 +140,4 @@ cli/kalam.toml
 /cli/kalam-cli-e2e/logs
 /examples/live-okf-context-sync/data2
 /examples/live-okf-context-sync/data3
+/examples/live-okf-context-sync/data5
