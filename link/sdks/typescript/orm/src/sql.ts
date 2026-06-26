@@ -1,10 +1,12 @@
-import type { KalamDBClient, QueryResponse, UserId } from '@kalamdb/client';
+import type { KalamDBClient, QueryResponse, UploadProgress, UserId } from '@kalamdb/client';
 import type { SQLWrapper } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { rewriteSqlParamsForFileUploads } from './file-upload.js';
 import { stripDefaults } from './driver.js';
 import { stripQuotedIdentifiers } from './query-normalize.js';
 
 type ExecuteAsUserClient = Pick<KalamDBClient, 'executeAsUser'>;
+type QueryWithFilesClient = Pick<KalamDBClient, 'queryWithFiles'>;
 
 export interface CompiledQuery {
   sql: string;
@@ -78,4 +80,30 @@ export async function executeAsUser(
 
   const compiled = compileQuery(source);
   return client.executeAsUser(compiled.sql, user, compiled.params);
+}
+
+/**
+ * Compile a Drizzle builder (or raw SQL) and execute it with FILE uploads.
+ *
+ * Drizzle-generated SQL is normalized for KalamDB before calling `queryWithFiles`.
+ */
+export async function queryWithFiles(
+  client: QueryWithFilesClient,
+  source: SqlSource,
+  files: Record<string, File | Blob>,
+  params?: unknown[],
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<QueryResponse> {
+  if (typeof source === 'string') {
+    return client.queryWithFiles(source, files, params, onProgress);
+  }
+
+  const compiled = compileQuery(source);
+  const rewritten = rewriteSqlParamsForFileUploads(compiled.sql, compiled.params);
+  return client.queryWithFiles(
+    rewritten.sql,
+    { ...files, ...rewritten.files },
+    rewritten.params,
+    onProgress,
+  );
 }

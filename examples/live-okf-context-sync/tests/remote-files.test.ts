@@ -1,12 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FileRef } from '@kalamdb/client';
-import {
-  downloadFileBytes,
-  guessMimeType,
-  remoteContentHash,
-  sha256Hex,
-} from '../src/sync/file-store.js';
+import { guessMimeType, remoteContentHash, sha256Hex } from '../src/lib/file-utils.js';
+import { downloadFileBytes } from '../src/remote-files.js';
 
 test('guessMimeType maps common extensions', () => {
   assert.equal(guessMimeType('readme.md'), 'text/markdown');

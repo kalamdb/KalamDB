@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { drizzle } from 'drizzle-orm/pg-proxy';
 import { text, bigint, timestamp } from 'drizzle-orm/pg-core';
 import { eq, desc } from 'drizzle-orm';
-import { kalamDriver, executeAsUser, file, kTable } from '../dist/index.js';
+import { kalamDriver, executeAsUser, file, kalamFile, kTable } from '../dist/index.js';
 import { requirePassword, createTestClient, USER } from './helpers.mjs';
 
 requirePassword();
@@ -376,6 +376,39 @@ describe('kalamDriver', () => {
     assert.ok(rows[0].attachment.getDownloadUrl('http://localhost:8088', 'test_orm', 'docs').includes('/f0001/99999'));
 
     await client.query('DROP TABLE IF EXISTS test_orm.docs');
+    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+  });
+
+  it('uploads FILE bytes through db.insert with kalamFile()', async () => {
+    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm');
+    await client.query('DROP TABLE IF EXISTS test_orm.uploads');
+    await client.query(`
+      CREATE TABLE test_orm.uploads (
+        id TEXT PRIMARY KEY,
+        attachment FILE
+      )
+    `);
+
+    const uploads = kTable('test_orm.uploads', {
+      id: text('id'),
+      attachment: file('attachment'),
+    });
+
+    const content = `upload-via-driver:${Date.now()}`;
+    await db.insert(uploads).values({
+      id: 'row-1',
+      attachment: kalamFile(
+        'upload',
+        new File([content], 'driver-upload.txt', { type: 'text/plain' }),
+      ),
+    });
+
+    const rows = await db.select().from(uploads);
+    assert.equal(rows.length, 1);
+    assert.ok(rows[0].attachment);
+    assert.equal(rows[0].attachment.name, 'driver-upload.txt');
+
+    await client.query('DROP TABLE IF EXISTS test_orm.uploads');
     await client.query('DROP NAMESPACE IF EXISTS test_orm');
   });
 

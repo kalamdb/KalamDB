@@ -1,8 +1,12 @@
 import type { RemoteCallback } from 'drizzle-orm/pg-proxy';
 import type { KalamDBClient } from '@kalamdb/client';
+import {
+  rewriteSqlParamsForFileUploads,
+  sqlReferencesFilePlaceholder,
+} from './file-upload.js';
 import { stripQuotedIdentifiers } from './query-normalize.js';
 
-type QueryClient = Pick<KalamDBClient, 'query'>;
+type QueryClient = Pick<KalamDBClient, 'query'> & Partial<Pick<KalamDBClient, 'queryWithFiles'>>;
 type ColumnNormalizer = (value: unknown) => unknown;
 
 export function toMilliseconds(value: number): number {
@@ -103,6 +107,10 @@ function normalizerForSchemaType(field: { data_type?: string; dataType?: string;
 }
 
 export function stripDefaults(sql: string, params: unknown[]): { sql: string; params: unknown[] } {
+  if (/on conflict/i.test(sql)) {
+    return { sql, params };
+  }
+
   const match = sql.match(/^(INSERT\s+INTO\s+\S+)\s*\(([^)]+)\)\s*VALUES\s*/i);
   if (!match) return { sql, params };
 
@@ -153,7 +161,26 @@ export function kalamDriver(client: QueryClient): RemoteCallback {
     const stripped = stripDefaults(cleanSql, params);
     cleanSql = stripped.sql;
 
-    const response = await client.query(cleanSql, stripped.params);
+    const rewritten = rewriteSqlParamsForFileUploads(cleanSql, stripped.params);
+    cleanSql = rewritten.sql;
+    const queryParams = rewritten.params;
+
+    let response;
+    if (Object.keys(rewritten.files).length > 0) {
+      if (!client.queryWithFiles) {
+        throw new Error(
+          'kalamDriver() received a FILE upload but the client has no queryWithFiles(); pass a KalamDBClient',
+        );
+      }
+      response = await client.queryWithFiles(cleanSql, rewritten.files, queryParams);
+    } else if (sqlReferencesFilePlaceholder(cleanSql)) {
+      throw new Error(
+        'SQL references FILE("...") but no upload bytes were provided; pass kalamFile(name, blob) in .values()/.set()',
+      );
+    } else {
+      response = await client.query(cleanSql, queryParams);
+    }
+
     if (method === 'execute') return { rows: [] };
     const result = response.results?.[0];
     const schema = (result?.schema as Array<{ name: string; data_type?: string; dataType?: string; type?: string }> | undefined) ?? [];

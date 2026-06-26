@@ -10,6 +10,16 @@ describe('SQL normalization', () => {
     assert.equal(normalized, 'SELECT room FROM chat_demo.messages WHERE content = \'a"b\'');
   });
 
+  it('preserves quoted FILE placeholders while stripping table identifiers', () => {
+    const normalized = stripQuotedIdentifiers(
+      'insert into "demo"."context_files" ("path", "file_ref") values ($1, FILE("upload"))',
+    );
+    assert.equal(
+      normalized,
+      'insert into demo.context_files (path, file_ref) values ($1, FILE("upload"))',
+    );
+  });
+
   it('preserves escaped single quotes and double quotes inside inline parameters', () => {
     const compiled = compileInlineQuery(sql`SELECT * FROM ${sql.raw('chat_demo.messages')} WHERE content = ${"a\"b and it's ok"}`);
     assert.equal(compiled.sql, "SELECT * FROM chat_demo.messages WHERE content = 'a\"b and it''s ok'");

@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const LOCAL_INDEX_DIR = '.index';
@@ -20,6 +20,11 @@ const LOCAL_ONLY_FILES = new Set([
 const DEFAULT_SYNC_DIR = 'data';
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
+type ListFilesOptions = {
+  skipEntry?: (name: string, isDirectory: boolean) => boolean;
+  includePath?: (relativePath: string) => boolean;
+};
+
 export function projectRoot(): string {
   return ROOT;
 }
@@ -39,6 +44,18 @@ export function indexDir(syncDir: string): string {
 
 export function syncDbPath(syncDir: string): string {
   return join(indexDir(syncDir), SYNC_DB_NAME);
+}
+
+export function syncFilePath(syncDir: string, relativePath: string): string {
+  return join(syncDir, relativePath);
+}
+
+export function syncParentDir(syncDir: string, relativePath: string): string {
+  return dirname(syncFilePath(syncDir, relativePath));
+}
+
+export function toRelativeSyncPath(baseDir: string, absolutePath: string): string {
+  return relative(baseDir, absolutePath).replaceAll('\\', '/');
 }
 
 export function shouldSkipLocalEntry(name: string, isDirectory: boolean): boolean {
@@ -86,7 +103,21 @@ export function isExcludedWatchPath(filename: string): boolean {
   return LOCAL_ONLY_FILES.has(base);
 }
 
-export async function listSyncFiles(dir: string, base = dir): Promise<string[]> {
+/** Skip chokidar events for local-only paths under the sync folder. */
+export function shouldIgnoreWatchAbsolutePath(syncDir: string, absolutePath: string): boolean {
+  const rel = toRelativeSyncPath(syncDir, absolutePath);
+  if (rel === '' || rel.startsWith('..')) {
+    return true;
+  }
+  return isExcludedWatchPath(rel) || isExcludedRelativePath(rel);
+}
+
+/** Recursively list relative file paths under `dir`. */
+export async function listFilesRecursive(
+  dir: string,
+  base = dir,
+  options: ListFilesOptions = {},
+): Promise<string[]> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -100,23 +131,30 @@ export async function listSyncFiles(dir: string, base = dir): Promise<string[]> 
   const files: string[] = [];
 
   for (const entry of entries) {
-    if (shouldSkipLocalEntry(entry.name, entry.isDirectory())) {
+    if (options.skipEntry?.(entry.name, entry.isDirectory())) {
       continue;
     }
 
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await listSyncFiles(fullPath, base)));
+      files.push(...(await listFilesRecursive(fullPath, base, options)));
       continue;
     }
 
     if (entry.isFile()) {
       const relativePath = relative(base, fullPath).replaceAll('\\', '/');
-      if (isSafeSyncPath(relativePath)) {
+      if (!options.includePath || options.includePath(relativePath)) {
         files.push(relativePath);
       }
     }
   }
 
   return files;
+}
+
+export async function listSyncFiles(dir: string, base = dir): Promise<string[]> {
+  return listFilesRecursive(dir, base, {
+    skipEntry: shouldSkipLocalEntry,
+    includePath: isSafeSyncPath,
+  });
 }
