@@ -10,6 +10,7 @@ import { createDb, createKalamClient, resolveKalamConnection, TABLE } from '../s
 import { downloadFileByPath, fetchRemoteHash, sha256Hex, upsertSyncFile } from '../src/remote-files.js';
 import { listSyncFiles } from '../src/lib/paths.js';
 import { FolderSyncApp } from '../src/sync-app.js';
+import { waitForLocalFiles } from '../src/helpers.js';
 import { stopSyncApp } from './sync.helpers.js';
 
 const SERVER_URL = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
@@ -153,7 +154,7 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
 
     expectedPaths.push(...await listSyncFiles(syncDir));
     const expectedContents = Object.fromEntries(
-      await Promise.all(expectedPaths.map(async (path) => [path, await first!.readLocalFile(path)] as const)),
+      await Promise.all(expectedPaths.map(async (path) => [path, await readFile(join(syncDir, path), 'utf8')] as const)),
     );
 
     await stopSyncApp(first);
@@ -162,10 +163,10 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
 
     second = new FolderSyncApp({ syncDir, connection, watch: false });
     await second.start();
-    await second.waitForLocalFiles(expectedPaths, 20_000);
+    await waitForLocalFiles(syncDir, expectedPaths, 20_000);
 
     for (const path of expectedPaths) {
-      const restored = await second.readLocalFile(path);
+      const restored = await readFile(join(syncDir, path), 'utf8');
       assert.equal(restored, expectedContents[path], `content mismatch for ${path}`);
     }
   } finally {

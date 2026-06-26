@@ -29,6 +29,9 @@ pub enum CLIError {
     /// User cancelled operation
     Cancelled,
 
+    /// User explicitly aborted migration recovery
+    MigrationRecoveryAborted(String),
+
     /// Readline error
     ReadlineError(String),
 
@@ -117,6 +120,7 @@ impl fmt::Display for CLIError {
             CLIError::FileError(msg) => write!(f, "File error: {}", msg),
             CLIError::ParseError(msg) => write!(f, "Parse error: {}", msg),
             CLIError::Cancelled => write!(f, "Operation cancelled"),
+            CLIError::MigrationRecoveryAborted(msg) => write!(f, "{msg}"),
             CLIError::ReadlineError(msg) => write!(f, "Input error: {}", msg),
             CLIError::HistoryError(msg) => write!(f, "History error: {}", msg),
             CLIError::FormatError(msg) => write!(f, "Format error: {}", msg),

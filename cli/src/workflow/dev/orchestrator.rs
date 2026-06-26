@@ -77,7 +77,7 @@ impl DevSchemaLoop {
             return Ok(DevLoopAction::Continue);
         }
 
-        let _ = run_initial_schema_pipeline(ctx, output, self.force, None).await;
+        let _ = run_initial_schema_pipeline(ctx, output, self.force, None).await?;
         self.refresh_schema_mtime(ctx);
         self.prompt_pending_draft(ctx, output).await
     }
@@ -102,7 +102,7 @@ impl DevSchemaLoop {
         let watched_path = display_project_path(&ctx.project_root, &path);
         let message = format!("Schema changed in {watched_path}; applying...");
         output.status(&message);
-        let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await;
+        let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await?;
         self.schema_mtime = schema_file_mtime(&path).or(stable_mtime);
         self.prompt_pending_draft(ctx, output).await
     }
@@ -141,7 +141,7 @@ impl DevSchemaLoop {
         let schema_path = schema_watch_path(&ctx.project_root, &ctx.config);
         let before_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
         let before_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
-        let pipeline_state = run_confirmed_schema_draft_pipeline(ctx, output).await;
+        let pipeline_state = run_confirmed_schema_draft_pipeline(ctx, output).await?;
         self.schema_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
 
         let after_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
@@ -161,7 +161,7 @@ impl DevSchemaLoop {
                 self.force,
                 Some("Refreshing schema draft after concurrent edit...".to_string()),
             )
-            .await;
+            .await?;
             self.refresh_schema_mtime(ctx);
         }
 
@@ -190,7 +190,7 @@ impl DevSchemaLoop {
             self.force,
             Some("Rebuilding schema draft from schema.sql...".to_string()),
         )
-        .await;
+        .await?;
         self.apply_confirmed_draft(ctx, output).await?;
         self.refresh_schema_mtime(ctx);
         Ok(())
@@ -376,7 +376,7 @@ async fn run_initial_schema_pipeline(
     output: &WorkflowOutput,
     force: bool,
     running_message: Option<String>,
-) -> SchemaPipelineState {
+) -> Result<SchemaPipelineState> {
     let running_message = running_message.unwrap_or_else(|| "Applying schema...".to_string());
     // Clear stale details (e.g. a lingering "Apply? [y/N]:" from a previous
     // prompt cycle) before the new pipeline run adds its own lines.
@@ -386,9 +386,13 @@ async fn run_initial_schema_pipeline(
     match run_schema_pipeline(ctx, output, force).await {
         Ok(()) => {
             finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
-            SchemaPipelineState::Synced
+            Ok(SchemaPipelineState::Synced)
         },
         Err(error) => {
+            if should_stop_dev_for_schema_pipeline_error(&error) {
+                emit_schema_failure(output, &error);
+                return Err(error);
+            }
             if force {
                 output.warn("retrying schema pipeline (--force)");
                 return match run_schema_pipeline(ctx, output, true).await {
@@ -398,16 +402,20 @@ async fn run_initial_schema_pipeline(
                             "Schema recovered",
                             "schema pipeline recovered",
                         );
-                        SchemaPipelineState::Synced
+                        Ok(SchemaPipelineState::Synced)
                     },
                     Err(retry_error) => {
+                        if should_stop_dev_for_schema_pipeline_error(&retry_error) {
+                            emit_schema_failure(output, &retry_error);
+                            return Err(retry_error);
+                        }
                         emit_schema_failure(output, &retry_error);
-                        SchemaPipelineState::Paused
+                        Ok(SchemaPipelineState::Paused)
                     },
                 };
             }
             emit_schema_failure(output, &error);
-            SchemaPipelineState::Paused
+            Ok(SchemaPipelineState::Paused)
         },
     }
 }
@@ -415,7 +423,7 @@ async fn run_initial_schema_pipeline(
 async fn run_confirmed_schema_draft_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
-) -> SchemaPipelineState {
+) -> Result<SchemaPipelineState> {
     output.progress_task(
         "schema",
         ProgressTaskStatus::Running,
@@ -425,11 +433,15 @@ async fn run_confirmed_schema_draft_pipeline(
     match apply_confirmed_schema_draft(ctx, output).await {
         Ok(()) => {
             finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
-            SchemaPipelineState::Synced
+            Ok(SchemaPipelineState::Synced)
         },
         Err(error) => {
+            if should_stop_dev_for_schema_pipeline_error(&error) {
+                emit_schema_failure(output, &error);
+                return Err(error);
+            }
             emit_schema_failure(output, &error);
-            SchemaPipelineState::Paused
+            Ok(SchemaPipelineState::Paused)
         },
     }
 }
@@ -526,10 +538,18 @@ fn reset_local_schema_state(ctx: &WorkflowContext, output: &WorkflowOutput) -> R
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
     emit_task_failure(output, "schema", format!("Schema failed: {error}"), || {
         output.error(format!("schema pipeline failed: {error}"));
-        output.warn(
-            "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
-        );
+        if should_stop_dev_for_schema_pipeline_error(error) {
+            output.warn("schema pipeline aborted; stopping kalam dev");
+        } else {
+            output.warn(
+                "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
+            );
+        }
     });
+}
+
+fn should_stop_dev_for_schema_pipeline_error(error: &crate::error::CLIError) -> bool {
+    matches!(error, crate::error::CLIError::MigrationRecoveryAborted(_))
 }
 
 fn project_ready_message(project_name: &str, project_root: &std::path::Path) -> String {

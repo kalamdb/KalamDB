@@ -38,8 +38,15 @@ export function logFileDeleted(relativePath: string): void {
   console.log(`[sync] file '${relativePath}' deleted`);
 }
 
-export function logFilePushed(relativePath: string, sizeBytes: number): void {
-  console.log(`[sync] file '${relativePath}' pushed to server (${formatSize(sizeBytes)})`);
+export type FilePushLog = {
+  path: string;
+  seq?: string | null;
+  sizeBytes: number;
+};
+
+export function logFilePushed(event: FilePushLog): void {
+  const seq = event.seq ? ` _seq=${event.seq}` : '';
+  console.log(`[sync] pushed path='${event.path}'${seq} size=${formatSize(event.sizeBytes)}`);
 }
 
 export function logFileDownloaded(relativePath: string, sizeBytes: number): void {

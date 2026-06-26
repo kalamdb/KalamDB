@@ -1,7 +1,7 @@
 /**
  * Shared helpers for the OKF folder sync example.
  *
- * Small, reusable utilities live here so sync-app.ts stays focused on orchestration.
+ * Small, reusable utilities live here so sync-engine.ts stays focused on orchestration.
  */
 
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';

@@ -8,6 +8,7 @@ pub(crate) mod display;
 pub(crate) mod io;
 pub mod migration;
 pub mod project;
+pub mod prompts;
 pub mod schema;
 pub(crate) mod sql;
 
@@ -28,7 +29,10 @@ use crate::{
         db::migrate::apply_migrations_for_db_command,
         db::reset::{reset_local_dev_server_data, reset_remote_namespace_if_ready},
         migration::{
-            apply::{load_server_migration_state, save_server_migration_record},
+            apply::{
+                load_server_migration_state, save_server_migration_record,
+                save_server_migration_records,
+            },
             create::{create_migration, CreateMigrationOptions},
             seal_draft_migration,
             status::migration_status,
@@ -219,13 +223,20 @@ pub async fn repair_project_migration_mark_applied(
     let environment = ctx.resolved_environment()?;
     let client = build_workflow_client(ctx, &environment)?;
     let mut state = load_server_migration_state(&client, &environment.namespace).await?;
-    if state.record(&migration_id).is_none() {
+    if state.records_for_migration_id(&migration_id).is_empty() {
         return Err(CLIError::ConfigurationError(format!(
             "migration record not found: {migration_id}"
         )));
     }
     state.mark_applied(&migration_id);
-    save_server_migration_record(&client, state.record(&migration_id).unwrap(), true).await?;
+    let records: Vec<_> = state.records_for_migration_id(&migration_id);
+    save_server_migration_records(&client, &records).await?;
+    state = load_server_migration_state(&client, &environment.namespace).await?;
+    if state.has_failed_migration_id(&migration_id) || !state.is_applied(&migration_id) {
+        return Err(CLIError::ConfigurationError(format!(
+            "migration {migration_id} is still not applied on the server"
+        )));
+    }
     output.status(format!("marked migration {migration_id} as applied"));
     Ok(())
 }

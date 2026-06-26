@@ -14,7 +14,7 @@ Full documentation: [Live OKF Context Sync on kalamdb.org](https://kalamdb.org/d
            │                    └─────────────────────────────────┘
            │  push (chokidar)              ▲
            └───────────────────────────────┘  pull (liveTable)
-                    sync-app.ts
+                    sync-app.ts -> sync-engine.ts
 ```
 
 **Startup order:** download missing server files, scan/push local changes, then `liveTable` keeps disk aligned with KalamDB.
@@ -25,7 +25,8 @@ Full documentation: [Live OKF Context Sync on kalamdb.org](https://kalamdb.org/d
 
 ```text
 src/
-  sync-app.ts          # main worker: startup order, push/pull orchestration
+  sync-app.ts          # tiny runnable entrypoint
+  sync-engine.ts       # startup order, push/pull/live orchestration
   folder-watcher.ts    # chokidar wrapper (ignoreInitial: false)
   remote-files.ts      # ORM upsert/delete/select + FILE download helpers
   local-cache.ts       # SQLite metadata + pending upload queue
@@ -78,13 +79,13 @@ While `kalam dev` is running, edit files under `data/` (not `seed/`). You should
 
 ```text
 [sync] file 'profile.md' updated
-[sync] file 'profile.md' pushed to server (148 B)
+[sync] pushed path='profile.md' _seq=123456789 size=148 B
 ```
 
 ```text
 [sync] initial sync for folder '.../data' started ...
 [sync] file 'profile.md' added
-[sync] file 'profile.md' pushed to server (142 B)
+[sync] pushed path='profile.md' _seq=123456789 size=142 B
 [sync] initial sync for folder '.../data' completed: 1 added, 0 updated, 0 deleted, 1 pushed, 0 downloaded (1 total changes)
 [sync] live subscription active
 ```

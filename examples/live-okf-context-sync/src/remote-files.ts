@@ -6,23 +6,27 @@
  * multipart SQL automatically.
  */
 
-import type { FileRef } from '@kalamdb/client';
+import type { FileRef, KalamDBClient } from '@kalamdb/client';
 import { kalamFile } from '@kalamdb/orm';
 import { eq } from 'drizzle-orm';
 import type { KalamDb } from './db/client.js';
-import { NAMESPACE } from './db/client.js';
+import { NAMESPACE, TABLE } from './db/client.js';
 import {
   buildUploadFile,
   guessMimeType,
   asFileRef,
-  remoteContentHash,
   sha256Hex,
 } from './lib/file-utils.js';
 import { context_files } from './models/schema.generated.js';
 
 const TABLE_NAME = 'context_files';
 
-export { guessMimeType, remoteContentHash, sha256Hex };
+export { guessMimeType, sha256Hex };
+
+export type RemoteFileVersion = {
+  path: string;
+  seq: string | null;
+};
 
 /** Upsert path + bytes through Drizzle; the driver handles multipart upload. */
 export async function upsertSyncFile(
@@ -59,7 +63,26 @@ export async function fetchRemoteHash(db: KalamDb, relativePath: string): Promis
     .from(context_files)
     .where(eq(context_files.path, relativePath));
 
-  return remoteContentHash(rows[0]?.file_ref);
+  return asFileRef(rows[0]?.file_ref)?.sha256 ?? null;
+}
+
+export async function fetchRemoteFileVersion(
+  client: KalamDBClient,
+  relativePath: string,
+): Promise<RemoteFileVersion | null> {
+  const rows = await client.queryAll(
+    `SELECT path, _seq FROM ${TABLE} WHERE path = $1`,
+    [relativePath],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    path: row.path?.asString() ?? relativePath,
+    seq: row._seq?.asSeqId()?.toString() ?? row._seq?.asString() ?? null,
+  };
 }
 
 export async function deleteRemoteFile(db: KalamDb, relativePath: string): Promise<void> {
