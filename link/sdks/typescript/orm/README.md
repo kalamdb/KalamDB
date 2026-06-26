@@ -236,6 +236,23 @@ await executeAsUser(
 
 Only pass a user id that your service account is authorized to impersonate.
 
+## FILE uploads from Drizzle
+
+Pass upload bytes in `.values()` or `.set()` with `kalamFile()`. `kalamDriver()` detects them and routes to `queryWithFiles()` automatically — the same path as normal inserts:
+
+```ts
+import { kalamFile } from '@kalamdb/orm';
+
+await db.insert(attachments).values({
+  id: 'att_1',
+  file_data: kalamFile('upload', selectedFile),
+});
+```
+
+You can also pass a `File` or `Blob` directly to a generated `file()` column; the driver uses the blob name (or `upload`) as the multipart field name.
+
+`queryWithFiles()` remains available for raw SQL strings. `compileQuery()` is exported when you need normalized SQL and params without executing.
+
 ## Kalam CLI workflow generation
 
 When using the KalamDB project workflow, configure TypeScript output in `kalam.toml`:

@@ -104,5 +104,14 @@ describe('stripDefaults', () => {
     assert.equal(result.sql, input);
     assert.deepEqual(result.params, params);
   });
+
+  it('leaves ON CONFLICT upserts unchanged', () => {
+    const input =
+      'insert into demo.context_files (path, file_ref) values ($1, FILE("upload")) on conflict (path) do update set file_ref = FILE("upload")';
+    const params = ['notes/readme.md'];
+    const result = stripDefaults(input, params);
+    assert.equal(result.sql, input);
+    assert.deepEqual(result.params, params);
+  });
 });
 

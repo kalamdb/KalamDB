@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveKalamConnection } from '../src/db/client.js';
-import { sha256Hex } from '../src/sync/file-store.js';
+import { sha256Hex } from '../src/lib/file-utils.js';
 
 test('resolveKalamConnection uses kalam dev defaults', () => {
   assert.deepEqual(resolveKalamConnection({}), {

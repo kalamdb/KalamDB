@@ -5,7 +5,7 @@
   "type": "module",
   "description": "OKF folder sync showcase: KalamDB live() + local SQLite mirror",
   "scripts": {
-    "dev": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/sync/sync-app.ts",
+    "dev": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/sync-app.ts",
     "build": "tsc",
     "test": "tsc && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/*.test.ts",
     "postinstall": "node -e \"const fs=require('fs');const p='node_modules/@kalamdb/orm/node_modules/drizzle-orm';try{fs.rmSync(p,{recursive:true,force:true})}catch{}\""
@@ -13,6 +13,7 @@
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
+    "chokidar": "^4.0.3",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2"

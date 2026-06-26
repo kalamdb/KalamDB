@@ -19,6 +19,16 @@ export function stripQuotedIdentifiers(sql: string): string {
     }
 
     if (!inSingleQuotedString && char === '"') {
+      const prefix = sql.slice(0, index);
+      if (/FILE\s*\(\s*$/i.test(prefix)) {
+        const end = sql.indexOf('"', index + 1);
+        if (end !== -1) {
+          normalized += sql.slice(index, end + 1);
+          index = end + 1;
+          continue;
+        }
+      }
+
       const end = sql.indexOf('"', index + 1);
       if (end !== -1) {
         normalized += sql.slice(index + 1, end);

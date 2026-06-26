@@ -251,6 +251,14 @@ function useApprovalCache(client: KalamDBClient, rows: MessageRow[]) {
   return { approvals: cache, markApprovalStatus };
 }
 
+function readAttachmentName(attachment: MessageRow['attachment']): string | null {
+  if (!attachment) return null;
+  if ('name' in attachment && typeof attachment.name === 'string') {
+    return attachment.name;
+  }
+  return null;
+}
+
 function buildMessageViews({
   messages: liveRows,
   tokens,
@@ -272,7 +280,7 @@ function buildMessageViews({
     role: row.role,
     body: row.body,
     status: row.status,
-    attachmentName: row.attachment?.name ?? null,
+    attachmentName: readAttachmentName(row.attachment),
     approvalId: row.approval_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

@@ -20,7 +20,7 @@ use kalamdb_commons::{
     TableId,
 };
 use kalamdb_raft::TransactionApplyResult;
-use kalamdb_system::{NotificationService as NotificationServiceTrait, TopicPublisher};
+use kalamdb_system::{FileRef, NotificationService as NotificationServiceTrait, TopicPublisher};
 use kalamdb_tables::{utils::base as table_base, StreamTableRow};
 use kalamdb_transactions::StagedMutation;
 
@@ -97,6 +97,88 @@ impl DmlExecutor {
                 );
                 false
             },
+        }
+    }
+
+    async fn collect_user_file_refs_for_mutation(
+        &self,
+        provider: &UserTableProvider,
+        table_id: &TableId,
+        user_id: &UserId,
+        pk_value: &str,
+        operation_kind: OperationKind,
+        payload: Option<&Row>,
+    ) -> Vec<FileRef> {
+        if !self.table_has_file_columns(table_id) {
+            return Vec::new();
+        }
+
+        let Some(prior_row) =
+            self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await
+        else {
+            return Vec::new();
+        };
+
+        match operation_kind {
+            OperationKind::Update => {
+                let Some(payload) = payload else {
+                    log::warn!(
+                        "Missing update payload while collecting file refs for {}",
+                        table_id
+                    );
+                    return Vec::new();
+                };
+                collect_replaced_file_refs_for_update(
+                    self.app_context.as_ref(),
+                    table_id,
+                    &prior_row,
+                    payload,
+                )
+            },
+            OperationKind::Delete => {
+                collect_file_refs_from_row(self.app_context.as_ref(), table_id, &prior_row)
+            },
+            OperationKind::Insert => Vec::new(),
+        }
+    }
+
+    async fn collect_shared_file_refs_for_mutation(
+        &self,
+        provider: &SharedTableProvider,
+        table_id: &TableId,
+        pk_value: &str,
+        operation_kind: OperationKind,
+        payload: Option<&Row>,
+    ) -> Vec<FileRef> {
+        if !self.table_has_file_columns(table_id) {
+            return Vec::new();
+        }
+
+        let Some(prior_row) = self.load_shared_row_for_cleanup(provider, table_id, pk_value).await
+        else {
+            return Vec::new();
+        };
+
+        match operation_kind {
+            OperationKind::Update => {
+                let Some(payload) = payload else {
+                    log::warn!(
+                        "Missing update payload while collecting file refs for {}",
+                        table_id
+                    );
+                    return Vec::new();
+                };
+                collect_replaced_file_refs_for_update(
+                    self.app_context.as_ref(),
+                    table_id,
+                    &prior_row,
+                    payload,
+                )
+            },
+            OperationKind::Delete => {
+                collect_file_refs_from_row(self.app_context.as_ref(), table_id, &prior_row)
+            },
+            OperationKind::Insert => Vec::new(),
         }
     }
 
@@ -237,21 +319,16 @@ impl DmlExecutor {
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
-            let replaced_refs = if self.table_has_file_columns(table_id) {
-                self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
-                    .await
-                    .as_ref()
-                    .map_or_else(Vec::new, |row| {
-                        collect_replaced_file_refs_for_update(
-                            self.app_context.as_ref(),
-                            table_id,
-                            row,
-                            update_row,
-                        )
-                    })
-            } else {
-                Vec::new()
-            };
+            let replaced_refs = self
+                .collect_user_file_refs_for_mutation(
+                    provider,
+                    table_id,
+                    user_id,
+                    pk_value,
+                    OperationKind::Update,
+                    Some(update_row),
+                )
+                .await;
 
             let updated = provider
                 .update_by_pk_value_deferred(user_id, pk_value, update_row.clone(), commit_seq)
@@ -322,15 +399,16 @@ impl DmlExecutor {
         {
             let mut deleted_count = 0;
             for pk_value in pk_values {
-                let file_refs = if self.table_has_file_columns(table_id) {
-                    self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value)
-                        .await
-                        .map_or_else(Vec::new, |row| {
-                            collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
-                        })
-                } else {
-                    Vec::new()
-                };
+                let file_refs = self
+                    .collect_user_file_refs_for_mutation(
+                        provider,
+                        table_id,
+                        user_id,
+                        pk_value,
+                        OperationKind::Delete,
+                        None,
+                    )
+                    .await;
 
                 if let Some((_row_key, notification)) = provider
                     .delete_by_pk_value_deferred(user_id, pk_value, commit_seq)
@@ -468,21 +546,15 @@ impl DmlExecutor {
         {
             let update_row = updates[0].clone();
 
-            let replaced_refs = if self.table_has_file_columns(table_id) {
-                self.load_shared_row_for_cleanup(provider, table_id, pk_value)
-                    .await
-                    .as_ref()
-                    .map_or_else(Vec::new, |row| {
-                        collect_replaced_file_refs_for_update(
-                            self.app_context.as_ref(),
-                            table_id,
-                            row,
-                            &update_row,
-                        )
-                    })
-            } else {
-                Vec::new()
-            };
+            let replaced_refs = self
+                .collect_shared_file_refs_for_mutation(
+                    provider,
+                    table_id,
+                    pk_value,
+                    OperationKind::Update,
+                    Some(&update_row),
+                )
+                .await;
 
             let updated = provider
                 .update_by_pk_value_deferred(pk_value, update_row, commit_seq)
@@ -555,15 +627,15 @@ impl DmlExecutor {
             let mut deleted_count = 0;
 
             for pk_value in pk_values {
-                let file_refs = if self.table_has_file_columns(table_id) {
-                    self.load_shared_row_for_cleanup(provider, table_id, pk_value)
-                        .await
-                        .map_or_else(Vec::new, |row| {
-                            collect_file_refs_from_row(self.app_context.as_ref(), table_id, &row)
-                        })
-                } else {
-                    Vec::new()
-                };
+                let file_refs = self
+                    .collect_shared_file_refs_for_mutation(
+                        provider,
+                        table_id,
+                        pk_value,
+                        OperationKind::Delete,
+                        None,
+                    )
+                    .await;
 
                 if let Some((_row_key, notification)) = provider
                     .delete_by_pk_value_deferred(pk_value, commit_seq)
@@ -904,6 +976,17 @@ impl DmlExecutor {
                     ))
                 })?;
 
+            let file_refs_to_delete = self
+                .collect_user_file_refs_for_mutation(
+                    provider,
+                    &mutation.table_id,
+                    &user_id,
+                    &mutation.primary_key,
+                    mutation.operation_kind,
+                    Some(&mutation.payload),
+                )
+                .await;
+
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
@@ -939,6 +1022,15 @@ impl DmlExecutor {
             let Some((_row_key, notification)) = applied else {
                 continue;
             };
+
+            delete_file_refs_best_effort(
+                self.app_context.as_ref(),
+                &mutation.table_id,
+                TableType::User,
+                Some(&user_id),
+                &file_refs_to_delete,
+            )
+            .await;
 
             affected_rows += 1;
             side_effect_plan.record_manifest_update();
@@ -1096,6 +1188,16 @@ impl DmlExecutor {
                     ))
                 })?;
 
+            let file_refs_to_delete = self
+                .collect_shared_file_refs_for_mutation(
+                    provider,
+                    &mutation.table_id,
+                    &mutation.primary_key,
+                    mutation.operation_kind,
+                    Some(&mutation.payload),
+                )
+                .await;
+
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
@@ -1126,6 +1228,15 @@ impl DmlExecutor {
             let Some((_row_key, notification)) = applied else {
                 continue;
             };
+
+            delete_file_refs_best_effort(
+                self.app_context.as_ref(),
+                &mutation.table_id,
+                TableType::Shared,
+                None,
+                &file_refs_to_delete,
+            )
+            .await;
 
             affected_rows += 1;
             side_effect_plan.record_manifest_update();

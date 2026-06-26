@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createDb } from '../src/db/client.js';
-import { fetchRemoteHash, sha256Hex } from '../src/sync/file-store.js';
+import { fetchRemoteHash, sha256Hex } from '../src/remote-files.js';
 import { openLocalDb } from '../src/db/local-db.js';
 import { syncDbPath } from '../src/lib/paths.js';
 import { pending_uploads } from '../src/models/schema.local.js';
-import { FolderSyncApp } from '../src/sync/sync-app.js';
+import { FolderSyncApp } from '../src/sync-app.js';
 import {
   aliceConnection,
   deletePaths,
@@ -188,6 +188,56 @@ test('integration: remote delete removes local copy', integration, async () => {
     await app.waitForLocalFileAbsent(path, 20_000);
   } finally {
     await stopSyncApp(app);
+    await deletePaths(paths).catch(() => undefined);
+    await rm(syncDir, { recursive: true, force: true });
+  }
+});
+
+test('integration: local changes while sync stopped are pushed on restart', integration, async () => {
+  if (!(await serverHealthy())) {
+    return;
+  }
+
+  const syncDir = await mkdtemp(join(tmpdir(), 'okf-offline-'));
+  const keptPath = uniquePath('kept') + '.md';
+  const addedPath = uniquePath('added') + '.md';
+  const deletedPath = uniquePath('deleted') + '.md';
+  const v1 = '# version one\n';
+  const v2 = '# version two\n';
+  const addedContent = '# added while offline\n';
+  const deletedContent = '# delete me offline\n';
+  const paths = [keptPath, addedPath, deletedPath];
+  let first: FolderSyncApp | undefined;
+  let second: FolderSyncApp | undefined;
+
+  try {
+    first = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: false });
+    await first.start();
+
+    await writeFile(join(syncDir, keptPath), v1, 'utf8');
+    await writeFile(join(syncDir, deletedPath), deletedContent, 'utf8');
+    await first.pushLocalFile(keptPath);
+    await first.pushLocalFile(deletedPath);
+
+    await stopSyncApp(first);
+    first = undefined;
+
+    await writeFile(join(syncDir, keptPath), v2, 'utf8');
+    await writeFile(join(syncDir, addedPath), addedContent, 'utf8');
+    await rm(join(syncDir, deletedPath));
+
+    second = new FolderSyncApp({ syncDir, connection: aliceConnection(), watch: true });
+    await second.start();
+
+    const { client } = await login('alice', 'alice123');
+    const db = createDb(client);
+    assert.equal(await fetchRemoteHash(db, keptPath), sha256Hex(new TextEncoder().encode(v2)));
+    assert.equal(await fetchRemoteHash(db, addedPath), sha256Hex(new TextEncoder().encode(addedContent)));
+    assert.equal(await fetchRemoteHash(db, deletedPath), null);
+    await client.disconnect();
+  } finally {
+    await stopSyncApp(first);
+    await stopSyncApp(second);
     await deletePaths(paths).catch(() => undefined);
     await rm(syncDir, { recursive: true, force: true });
   }

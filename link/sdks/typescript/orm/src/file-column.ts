@@ -1,23 +1,38 @@
 import { customType } from 'drizzle-orm/pg-core';
 import { FileRef } from '@kalamdb/client';
+import { isKalamFileUpload, kalamFile, type KalamFileUpload } from './file-upload.js';
 
-export const file = customType<{ data: FileRef | null; driverData: string | null }>({
+export const file = customType<{
+  data: FileRef | KalamFileUpload | File | Blob | null;
+  driverData: string | KalamFileUpload | null;
+}>({
   dataType() {
     return 'file';
   },
-  fromDriver(value: string | null): FileRef | null {
+  fromDriver(value: string | KalamFileUpload | null): FileRef | null {
+    if (isKalamFileUpload(value)) {
+      throw new Error('file column received an upload marker while reading from the database');
+    }
     return FileRef.from(value);
   },
-  toDriver(value: FileRef | null): string | null {
-    if (!value) return null;
+  toDriver(value: FileRef | KalamFileUpload | File | Blob | null): string | KalamFileUpload | null {
+    if (value === null || value === undefined) return null;
+    if (isKalamFileUpload(value)) return value;
+    if (typeof File !== 'undefined' && value instanceof File) {
+      return kalamFile(value.name || 'upload', value);
+    }
+    if (typeof Blob !== 'undefined' && value instanceof Blob) {
+      return kalamFile('upload', value);
+    }
+    const fileRef = value as FileRef;
     return JSON.stringify({
-      id: value.id,
-      sub: value.sub,
-      name: value.name,
-      size: value.size,
-      mime: value.mime,
-      sha256: value.sha256,
-      shard: value.shard,
+      id: fileRef.id,
+      sub: fileRef.sub,
+      name: fileRef.name,
+      size: fileRef.size,
+      mime: fileRef.mime,
+      sha256: fileRef.sha256,
+      shard: fileRef.shard,
     });
   },
 });

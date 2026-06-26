@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { openLocalDb } from '../src/db/local-db.js';
 import { indexDir, syncDbPath } from '../src/lib/paths.js';
-import { maybeSeedSyncFolder } from '../src/sync/seed.js';
+import { maybeSeedSyncFolder } from '../src/lib/seed.js';
 import { local_context_files, pending_uploads } from '../src/models/schema.local.js';
-import { sha256Hex } from '../src/sync/file-store.js';
+import { sha256Hex } from '../src/lib/file-utils.js';
 
 test('maybeSeedSyncFolder copies seed/ when local and server are empty', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'okf-seed-'));
