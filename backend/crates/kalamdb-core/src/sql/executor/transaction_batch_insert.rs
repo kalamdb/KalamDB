@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{btree_map::Entry, BTreeMap},
     sync::{Arc, OnceLock},
 };
 
@@ -13,7 +13,7 @@ use kalamdb_commons::{
     TableId,
 };
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
-use sqlparser::ast::{SelectItem, Statement};
+use sqlparser::ast::{Expr, Parens, SelectItem, Statement};
 use ulid::Ulid;
 use uuid::Uuid;
 
@@ -30,8 +30,9 @@ use crate::{
     },
 };
 use kalamdb_sql::{
-    insert_columns_match, on_conflict_update_should_apply, on_conflict_values_insert,
-    parse_on_conflict_action, validate_primary_key_conflict_target, values_to_rows,
+    expr_to_scalar_with_params, insert_columns_match, is_default_expr,
+    on_conflict_update_should_apply, on_conflict_values_insert,
+    parse_on_conflict_action_with_params, validate_primary_key_conflict_target,
     OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
     ValuesInsertShapeOptions, ValuesInsertView,
 };
@@ -115,6 +116,17 @@ enum VolatileDefaultFunction {
     Ulid,
 }
 
+enum InsertValuesRowsError {
+    Unsupported,
+    Execution(KalamDbError),
+}
+
+impl From<KalamDbError> for InsertValuesRowsError {
+    fn from(error: KalamDbError) -> Self {
+        Self::Execution(error)
+    }
+}
+
 fn apply_missing_defaults(
     rows: &mut [Row],
     missing_defaults: &[FastInsertDefaultEntry],
@@ -140,6 +152,125 @@ fn apply_missing_defaults(
     }
 
     Ok(())
+}
+
+fn try_build_insert_rows_from_values_rows(
+    value_rows: &[Parens<Vec<Expr>>],
+    insert_metadata: &FastInsertMetadata,
+    cached_table: &CachedTableData,
+    exec_ctx: &ExecutionContext,
+    params: &[ScalarValue],
+) -> Result<Option<Vec<Row>>, KalamDbError> {
+    let mut rows = match build_insert_rows_from_values_rows(
+        value_rows,
+        &insert_metadata.column_names,
+        cached_table,
+        exec_ctx,
+        params,
+    ) {
+        Ok(rows) => rows,
+        Err(InsertValuesRowsError::Unsupported) => return Ok(None),
+        Err(InsertValuesRowsError::Execution(error)) => return Err(error),
+    };
+
+    if !insert_metadata.missing_defaults.is_empty() {
+        apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
+    }
+
+    Ok(Some(rows))
+}
+
+fn build_insert_rows_from_values_rows(
+    value_rows: &[Parens<Vec<Expr>>],
+    column_names: &[String],
+    cached_table: &CachedTableData,
+    exec_ctx: &ExecutionContext,
+    params: &[ScalarValue],
+) -> Result<Vec<Row>, InsertValuesRowsError> {
+    let mut rows = Vec::with_capacity(value_rows.len());
+    let mut explicit_default_values = BTreeMap::new();
+
+    for value_row in value_rows {
+        if value_row.content.len() != column_names.len() {
+            return Err(InsertValuesRowsError::Unsupported);
+        }
+
+        let mut values = BTreeMap::new();
+        for (expr, column_name) in value_row.content.iter().zip(column_names.iter()) {
+            values.insert(
+                column_name.clone(),
+                insert_value_expr_to_scalar(
+                    expr,
+                    column_name,
+                    cached_table,
+                    exec_ctx,
+                    params,
+                    &mut explicit_default_values,
+                )?,
+            );
+        }
+        rows.push(Row::new(values));
+    }
+
+    Ok(rows)
+}
+
+fn insert_value_expr_to_scalar(
+    expr: &Expr,
+    column_name: &str,
+    cached_table: &CachedTableData,
+    exec_ctx: &ExecutionContext,
+    params: &[ScalarValue],
+    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>,
+) -> Result<ScalarValue, InsertValuesRowsError> {
+    if is_default_expr(expr) {
+        return materialize_explicit_default(
+            column_name,
+            cached_table,
+            exec_ctx,
+            explicit_default_values,
+        )
+        .map_err(InsertValuesRowsError::Execution);
+    }
+
+    expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported)
+}
+
+fn materialize_explicit_default(
+    column_name: &str,
+    cached_table: &CachedTableData,
+    exec_ctx: &ExecutionContext,
+    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>,
+) -> Result<ScalarValue, KalamDbError> {
+    let prepared_default = match explicit_default_values.entry(column_name.to_string()) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            entry.insert(prepare_explicit_default(column_name, cached_table, exec_ctx)?)
+        },
+    };
+    materialize_prepared_default(prepared_default, exec_ctx)
+}
+
+fn prepare_explicit_default(
+    column_name: &str,
+    cached_table: &CachedTableData,
+    exec_ctx: &ExecutionContext,
+) -> Result<PreparedDefaultValue, KalamDbError> {
+    let column = cached_table
+        .table
+        .columns
+        .iter()
+        .find(|column| column.column_name.eq_ignore_ascii_case(column_name))
+        .ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
+        })?;
+
+    if column.default_value.is_none() {
+        return Ok(PreparedDefaultValue::Constant(ScalarValue::Null));
+    }
+
+    let template = prepare_default_template(&column.default_value)?;
+    prepare_statement_default(&template, exec_ctx)
 }
 
 pub(crate) struct LiteralInsertRows {
@@ -261,14 +392,16 @@ fn build_literal_insert_rows_from_values(
         },
     };
 
-    let mut rows = match values_to_rows(value_rows, &insert_metadata.column_names, params) {
-        Ok(rows) => rows,
-        Err(_) => return Ok(None),
+    let rows = match try_build_insert_rows_from_values_rows(
+        value_rows,
+        &insert_metadata,
+        cached_table.as_ref(),
+        exec_ctx,
+        params,
+    )? {
+        Some(rows) => rows,
+        None => return Ok(None),
     };
-
-    if !insert_metadata.missing_defaults.is_empty() {
-        apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
-    }
 
     let schema = cached_table.arrow_schema()?;
     let rows = coerce_rows(rows, &schema)
@@ -320,7 +453,8 @@ pub(crate) fn try_build_literal_on_conflict_update_rows(
     validate_primary_key_conflict_target(on_conflict, &primary_key_column)
         .map_err(KalamDbError::InvalidOperation)?;
 
-    let action = parse_on_conflict_action(on_conflict).map_err(KalamDbError::InvalidOperation)?;
+    let action = parse_on_conflict_action_with_params(on_conflict, params)
+        .map_err(KalamDbError::InvalidOperation)?;
 
     Ok(Some(LiteralOnConflictUpdateRows {
         table_type: insert_rows.table_type,
@@ -649,14 +783,16 @@ pub(crate) fn try_batch_inserts_in_transaction(
             return Ok(None);
         };
 
-        let mut rows = match values_to_rows(view.value_rows, &insert_metadata.column_names, &[]) {
-            Ok(rows) => rows,
-            Err(_) => return Ok(None),
+        let rows = match try_build_insert_rows_from_values_rows(
+            view.value_rows,
+            &insert_metadata,
+            cached_table.as_ref(),
+            exec_ctx,
+            &[],
+        )? {
+            Some(rows) => rows,
+            None => return Ok(None),
         };
-
-        if !insert_metadata.missing_defaults.is_empty() {
-            apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx)?;
-        }
 
         per_statement_counts.push(rows.len());
         total_rows += rows.len();

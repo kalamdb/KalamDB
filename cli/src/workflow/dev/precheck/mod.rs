@@ -57,11 +57,12 @@ pub async fn run_dev_prechecks(
     }
 
     let local_server_reused = if ctx.config.dev.auto_start_db {
-        if server_already_ready(&environment.url).await {
+        let server_running = server_already_ready(&environment.url).await;
+        let binary = ensure_local_server_binary(ctx.use_color, output, server_source).await?;
+        if server_running {
             output.status(format!("precheck: local server reachable at {}", environment.url));
             true
         } else {
-            let binary = ensure_local_server_binary(ctx.use_color, output, server_source).await?;
             output.status(format!("precheck: local server binary ready at {}", binary.display()));
             false
         }

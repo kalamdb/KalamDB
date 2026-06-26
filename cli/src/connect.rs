@@ -12,7 +12,10 @@ use kalam_client::{
 };
 use url::Url;
 
-use kalam_cli::workflow::project::identifiers::preferred_user_label;
+use kalam_cli::workflow::project::{
+    identifiers::preferred_user_label,
+    resolve::resolve_project_server_url_for_instance,
+};
 
 use crate::args::Cli;
 use crate::terminal_input::{prompt_line, prompt_password};
@@ -23,6 +26,7 @@ const DEFAULT_LOCAL_SERVER_URL: &str = "http://localhost:2900";
 enum ServerUrlSource {
     CliUrl,
     HostPort,
+    ProjectConfig,
     StoredCredentials,
     DefaultLocalFallback,
 }
@@ -197,7 +201,11 @@ fn resolve_server_target(
         (Some(url), _) => (url, ServerUrlSource::CliUrl),
         (None, Some(host)) => (format!("http://{}:{}", host, cli.port), ServerUrlSource::HostPort),
         (None, None) => {
-            if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
+            if let Some(url) =
+                resolve_project_server_url_for_instance(std::env::current_dir().unwrap_or_default().as_path(), &cli.instance)
+            {
+                (url, ServerUrlSource::ProjectConfig)
+            } else if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
                 CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
             })? {
                 let creds_url = creds.get_server_url();
@@ -226,6 +234,9 @@ fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: boo
             "No server URL was configured. Kalam is using its default local address."
         },
         ServerUrlSource::StoredCredentials => "Using the server URL stored for this instance.",
+        ServerUrlSource::ProjectConfig => {
+            "Using the server URL from kalam.toml for this credential instance."
+        },
         ServerUrlSource::CliUrl => "Using the server URL you provided.",
         ServerUrlSource::HostPort => "Using the host and port you provided.",
     };

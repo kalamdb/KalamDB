@@ -5,12 +5,36 @@ use std::fs;
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
-    workflow::{display_project_path, WorkflowContext},
+    terminal_ui,
+    workflow::{
+        dev::server::server_already_ready,
+        display_project_path,
+        project::{
+            connection_url::is_loopback_server_url,
+            prompts::interactive_available,
+            resolve::ResolvedEnvironment,
+        },
+        sql::{build_workflow_client, drop_namespace_if_exists},
+        WorkflowContext,
+    },
 };
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DbResetOptions {
+    pub assume_yes: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResetSummary {
     pub removed_paths: usize,
+}
+
+/// Returns true when the configured server is this project's local `kalam/server` instance.
+pub(crate) fn reset_targets_project_local_server(
+    server_url: &str,
+    had_local_server_data: bool,
+) -> bool {
+    is_loopback_server_url(server_url) && had_local_server_data
 }
 
 pub fn reset_local_dev_server_data(
@@ -67,6 +91,92 @@ pub fn reset_local_dev_server_data(
     }
 
     Ok(ResetSummary { removed_paths })
+}
+
+pub async fn reset_remote_namespace_if_ready(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+    had_local_server_data: bool,
+    assume_yes: bool,
+) -> Result<()> {
+    let environment = ctx.resolved_environment()?;
+
+    if !server_already_ready(&environment.url).await {
+        output.detail(format!(
+            "skipped remote namespace reset because server at {} is not reachable",
+            environment.url
+        ));
+        return Ok(());
+    }
+
+    let project_local_server =
+        reset_targets_project_local_server(&environment.url, had_local_server_data);
+    if !project_local_server {
+        match confirm_external_namespace_reset(ctx, &environment, assume_yes)? {
+            ResetNamespaceConfirmation::Confirmed => {}
+            ResetNamespaceConfirmation::Declined => {
+                output.status(format!(
+                    "skipped dropping namespace {} on {}",
+                    environment.namespace, environment.url
+                ));
+                return Ok(());
+            },
+            ResetNamespaceConfirmation::NeedsYesFlag => {
+                output.status(format!(
+                    "skipped dropping namespace {} on {}; rerun with --yes to confirm",
+                    environment.namespace, environment.url
+                ));
+                return Ok(());
+            },
+        }
+    }
+
+    let client = build_workflow_client(ctx, &environment)?;
+    output.status(format!(
+        "dropping namespace {} on {}",
+        environment.namespace, environment.url
+    ));
+    drop_namespace_if_exists(&client, &environment.namespace).await?;
+    output.status(format!("reset namespace {}", environment.namespace));
+    Ok(())
+}
+
+enum ResetNamespaceConfirmation {
+    Confirmed,
+    Declined,
+    NeedsYesFlag,
+}
+
+fn confirm_external_namespace_reset(
+    ctx: &WorkflowContext,
+    environment: &ResolvedEnvironment,
+    assume_yes: bool,
+) -> Result<ResetNamespaceConfirmation> {
+    if assume_yes {
+        return Ok(ResetNamespaceConfirmation::Confirmed);
+    }
+
+    if !interactive_available() {
+        return Ok(ResetNamespaceConfirmation::NeedsYesFlag);
+    }
+
+    let server_kind = if is_loopback_server_url(&environment.url) {
+        "a different KalamDB server"
+    } else {
+        "a remote KalamDB server"
+    };
+    let prompt = format!(
+        "Drop namespace {} on {} ({server_kind})? This permanently deletes schema and migration history",
+        environment.namespace, environment.url
+    );
+    let confirmed = terminal_ui::prompt_confirm(&prompt, false, ctx.use_color).map_err(|error| {
+        CLIError::FileError(format!("failed to read reset confirmation: {error}"))
+    })?;
+    Ok(if confirmed {
+        ResetNamespaceConfirmation::Confirmed
+    } else {
+        ResetNamespaceConfirmation::Declined
+    })
 }
 
 #[cfg(test)]
@@ -158,5 +268,13 @@ mod tests {
         let summary = reset_local_dev_server_data(&ctx, &output).unwrap();
 
         assert_eq!(summary.removed_paths, 0);
+    }
+
+    #[test]
+    fn project_local_server_requires_loopback_and_local_data() {
+        assert!(reset_targets_project_local_server("http://localhost:2900", true));
+        assert!(!reset_targets_project_local_server("http://localhost:2900", false));
+        assert!(!reset_targets_project_local_server("http://db.example.com:2900", true));
+        assert!(!reset_targets_project_local_server("http://db.example.com:2900", false));
     }
 }

@@ -387,29 +387,49 @@ kalam db migrate
 
 ### `kalam db reset`
 
-Clears local dev server state under `kalam/server/` so the next `kalam dev` starts with an
-empty database.
+Clears local dev project state and, when appropriate, drops the linked namespace on the server so the next `kalam dev` can re-apply migrations cleanly.
 
 #### Options
 
 - `--project-dir <PATH>`
 - `--env <ENV>`
+- `--yes` — drop the namespace on a remote or non-project server without prompting
 
 #### Behavior
 
-- removes `kalam/server/data` when present
-- removes `kalam/server/logs` when present
-- keeps `kalam/server/server.toml`, migration files, and schema baseline
-- prints each removed directory (or reports when nothing was present)
+**Local files removed** (when present):
+
+- `kalam/server/` — entire local server directory (data, logs, and `server.toml`)
+- `kalam/.schema-baseline.sql` — schema diff baseline
+
+**Kept:**
+
+- `kalam/migrations/` — migration SQL files on disk
+
+**Server namespace drop** (when the linked KalamDB server is reachable):
+
+| Server | Namespace drop |
+|--------|----------------|
+| This project's `kalam/server` on localhost (existed before reset) | Automatic |
+| Another KalamDB process on localhost (reused URL, no local `kalam/server`) | Prompt (default No); use `--yes` |
+| Remote URL (non-loopback) | Prompt (default No); use `--yes` |
+
+Dropping the namespace clears tables and server-side migration records for that namespace.
+
+If you decline the prompt, or run non-interactively without `--yes`, local files are still cleared but the server namespace is unchanged. The next `kalam dev` may report `migration failed previously` until you run `kalam db reset --yes` or repair manually.
 
 Stop `kalam dev` first if it is running, so RocksDB files are not locked.
 
-After reset, run `kalam dev` again. Pending migrations re-apply against the fresh server.
+After reset, run `kalam dev` again. Pending migrations re-apply against a fresh server or dropped namespace.
 
 #### Example
 
 ```bash
 kalam db reset
+kalam dev
+
+# Non-interactive or reused localhost server
+kalam db reset --yes
 kalam dev
 ```
 

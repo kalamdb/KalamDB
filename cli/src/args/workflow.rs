@@ -272,7 +272,11 @@ pub enum DbCommand {
 }
 
 #[derive(Args, Debug, Clone, Default)]
-pub struct DbResetArgs {}
+pub struct DbResetArgs {
+    /// Confirm dropping namespace data on a remote or non-project server without prompting
+    #[arg(long)]
+    pub yes: bool,
+}
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct DbMigrateArgs {}

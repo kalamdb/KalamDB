@@ -10,8 +10,9 @@ use kalamdb_commons::{
 use kalamdb_core::sql::context::{ExecutionContext, ExecutionResult};
 use kalamdb_tables::UserTableProvider;
 use support::{
-    create_cluster_app_context, create_executor, create_user_table, execute_ok,
-    execute_ok_with_params, request_exec_ctx, result_rows, select_names, unique_namespace,
+    create_cluster_app_context, create_context_files_table, create_executor, create_user_table,
+    execute_ok, execute_ok_with_params, request_exec_ctx, result_rows, select_names,
+    unique_namespace,
 };
 
 fn row_i64(row: &HashMap<String, KalamCellValue>, column_name: &str) -> i64 {
@@ -26,6 +27,10 @@ fn row_text<'a>(row: &'a HashMap<String, KalamCellValue>, column_name: &str) -> 
     row.get(column_name)
         .and_then(|value| value.as_str())
         .unwrap_or_else(|| panic!("expected text column '{}'", column_name))
+}
+
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 async fn load_user_rows(
@@ -517,4 +522,88 @@ async fn insert_on_conflict_do_nothing_returning_skips_duplicate_key_from_same_s
     assert_eq!(row_i64(&rows[0], "id"), 1);
     assert_eq!(row_text(&rows[0], "name"), "alpha");
     assert_eq!(select_names(&executor, &exec_ctx, &table_id).await, vec!["alpha"]);
+}
+
+#[tokio::test]
+#[ntest::timeout(8000)]
+async fn parameterized_file_insert_on_conflict_supports_explicit_default_and_set_params() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let table_id = create_context_files_table(
+        &app_ctx,
+        &unique_namespace("sql_insert_context_files_conflict"),
+        "context_files",
+    )
+    .await;
+    let executor = create_executor(app_ctx.clone());
+    let exec_ctx = ExecutionContext::new(
+        UserId::from("sql-insert-context-file-user"),
+        Role::User,
+        app_ctx.base_session_context(),
+    );
+
+    let first_file_ref = r#"{"id":"328909262921138176","sub":"f0001","name":"index.md","size":241,"mime":"text/markdown","sha256":"7505522b895796b845b734eab8baef4a60b6fe224cc2615978ee26a768bdb392"}"#;
+    let second_file_ref = r#"{"id":"328909262921138177","sub":"f0001","name":"index.md","size":242,"mime":"text/markdown","sha256":"8505522b895796b845b734eab8baef4a60b6fe224cc2615978ee26a768bdb393"}"#;
+
+    let upsert_sql = |file_ref: &str| {
+        format!(
+            "INSERT INTO {}.{} (path, file_ref, created_at, updated_at) \
+             VALUES ($1, {}, DEFAULT, $2) \
+             ON CONFLICT (path) DO UPDATE SET file_ref = {}, updated_at = $3 \
+             RETURNING path, file_ref",
+            table_id.namespace_id(),
+            table_id.table_name(),
+            sql_string(file_ref),
+            sql_string(file_ref)
+        )
+    };
+
+    let first_returned_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &exec_ctx,
+            &upsert_sql(first_file_ref),
+            vec![
+                ScalarValue::Utf8(Some("index.md".to_string())),
+                ScalarValue::TimestampMicrosecond(Some(1_786_000_000_000_000), None),
+                ScalarValue::TimestampMicrosecond(Some(1_786_000_000_000_001), None),
+            ],
+        )
+        .await,
+    );
+    assert_eq!(first_returned_rows.len(), 1);
+    assert_eq!(row_text(&first_returned_rows[0], "path"), "index.md");
+    assert_eq!(row_text(&first_returned_rows[0], "file_ref"), first_file_ref);
+
+    let second_returned_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &exec_ctx,
+            &upsert_sql(second_file_ref),
+            vec![
+                ScalarValue::Utf8(Some("index.md".to_string())),
+                ScalarValue::TimestampMicrosecond(Some(1_786_000_000_000_010), None),
+                ScalarValue::TimestampMicrosecond(Some(1_786_000_000_000_011), None),
+            ],
+        )
+        .await,
+    );
+    assert_eq!(second_returned_rows.len(), 1);
+    assert_eq!(row_text(&second_returned_rows[0], "path"), "index.md");
+    assert_eq!(row_text(&second_returned_rows[0], "file_ref"), second_file_ref);
+
+    let result = execute_ok(
+        &executor,
+        &exec_ctx,
+        &format!(
+            "SELECT path, file_ref FROM {}.{} WHERE path = 'index.md'",
+            table_id.namespace_id(),
+            table_id.table_name()
+        ),
+    )
+    .await;
+    let rows = result_rows(result);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_text(&rows[0], "path"), "index.md");
+    assert_eq!(row_text(&rows[0], "file_ref"), second_file_ref);
 }

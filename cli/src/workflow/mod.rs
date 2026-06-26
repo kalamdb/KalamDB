@@ -16,6 +16,8 @@ pub(crate) mod test_support;
 
 pub(crate) use io::display_project_path;
 
+pub use db::reset::DbResetOptions;
+
 use std::path::PathBuf;
 
 use crate::{
@@ -24,7 +26,7 @@ use crate::{
     output::{WorkflowDisplayMode, WorkflowOutput},
     workflow::{
         db::migrate::apply_migrations_for_db_command,
-        db::reset::reset_local_dev_server_data,
+        db::reset::{reset_local_dev_server_data, reset_remote_namespace_if_ready},
         migration::{
             apply::{load_server_migration_state, save_server_migration_record},
             create::{create_migration, CreateMigrationOptions},
@@ -228,9 +230,11 @@ pub async fn repair_project_migration_mark_applied(
     Ok(())
 }
 
-pub async fn reset_database(ctx: &WorkflowContext) -> Result<()> {
+pub async fn reset_database(ctx: &WorkflowContext, options: DbResetOptions) -> Result<()> {
     let output = ctx.output();
+    let had_local_server_data = ctx.config.local_server_dir(&ctx.project_root).exists();
     reset_local_dev_server_data(ctx, &output)?;
+    reset_remote_namespace_if_ready(ctx, &output, had_local_server_data, options.assume_yes).await?;
     Ok(())
 }
 

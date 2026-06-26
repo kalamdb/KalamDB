@@ -26,13 +26,15 @@ pub mod system;
 pub mod utils;
 
 pub use dml::{
-    build_on_conflict_update_assignments, conflict_target_is_primary_key, expr_to_scalar,
-    expr_to_scalar_with_params, insert_from_statement, insert_has_on_conflict,
-    insert_returning_items, on_conflict_update_should_apply, on_conflict_values_insert,
-    parse_on_conflict_action, single_values_insert_row, sql_value_to_scalar, strip_nested_expr,
-    validate_primary_key_conflict_target, values_insert_view, values_insert_view_from_statement,
-    values_rows_from_insert, values_to_rows, OnConflictUpdateAssignment, OnConflictUpdateValue,
-    ParsedOnConflictAction, ValuesInsertShapeOptions, ValuesInsertView,
+    build_on_conflict_update_assignments, build_on_conflict_update_assignments_with_params,
+    conflict_target_is_primary_key, expr_to_scalar, expr_to_scalar_with_params,
+    insert_from_statement, insert_has_on_conflict, insert_returning_items, is_default_expr,
+    on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
+    parse_on_conflict_action_with_params, single_values_insert_row, sql_value_to_scalar,
+    strip_nested_expr, validate_primary_key_conflict_target, values_insert_view,
+    values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
+    OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
+    ValuesInsertShapeOptions, ValuesInsertView,
 };
 pub use extensions::*;
 pub use query_parser::*;

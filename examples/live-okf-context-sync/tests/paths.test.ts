@@ -8,6 +8,7 @@ import {
   isExcludedWatchPath,
   isSafeSyncPath,
   listSyncFiles,
+  shouldIgnoreWatchAbsolutePath,
   syncDbPath,
 } from '../src/lib/paths.js';
 
@@ -43,6 +44,13 @@ test('isExcludedWatchPath ignores local index, git, and sqlite artifacts', () =>
   assert.equal(isExcludedWatchPath('.git/config'), true);
   assert.equal(isExcludedWatchPath('.DS_Store'), true);
   assert.equal(isExcludedWatchPath('notes/readme.md'), false);
+});
+
+test('shouldIgnoreWatchAbsolutePath never ignores the watch root directory', () => {
+  const syncDir = '/project/data';
+  assert.equal(shouldIgnoreWatchAbsolutePath(syncDir, syncDir), false);
+  assert.equal(shouldIgnoreWatchAbsolutePath(syncDir, `${syncDir}/notes.md`), false);
+  assert.equal(shouldIgnoreWatchAbsolutePath(syncDir, `${syncDir}/.index/sync.db`), true);
 });
 
 test('listSyncFiles skips .index and .git but includes user files', async () => {

@@ -64,6 +64,15 @@ pub fn parse_server_port(server_url: &str) -> Result<u16> {
     })
 }
 
+/// Compare two HTTP(S) server URLs for credential matching.
+pub fn server_urls_match(stored: &str, environment: &str) -> bool {
+    normalize_server_url_for_match(stored) == normalize_server_url_for_match(environment)
+}
+
+fn normalize_server_url_for_match(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
 /// Validate the active dev environment URL, including loopback checks for managed servers.
 pub fn validate_dev_environment_url(server_url: &str, auto_start_db: bool) -> Result<()> {
     validate_http_server_url(server_url)?;
@@ -113,6 +122,18 @@ mod tests {
     #[test]
     fn parse_server_port_reads_explicit_port() {
         assert_eq!(parse_server_port("http://localhost:2900").unwrap(), 2900);
+    }
+
+    #[test]
+    fn server_urls_match_ignores_trailing_slash_and_case() {
+        assert!(server_urls_match(
+            "http://localhost:2900",
+            "HTTP://LOCALHOST:2900/"
+        ));
+        assert!(!server_urls_match(
+            "http://localhost:2900",
+            "http://localhost:2933"
+        ));
     }
 
     #[test]

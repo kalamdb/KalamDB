@@ -344,9 +344,10 @@ pub fn prepare_local_server_launch(
     })
 }
 
-async fn download_and_install_managed_server(
-    output: &WorkflowOutput,
-    _server_source: &ServiceLogSource,
+/// Download and install the managed `kalamdb-server` release matching `version`.
+pub async fn install_managed_server_version(
+    version: &str,
+    show_progress: bool,
 ) -> Result<PathBuf> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -356,7 +357,6 @@ async fn download_and_install_managed_server(
             CLIError::ConfigurationError(format!("failed to create HTTP client: {error}"))
         })?;
 
-    let version = env!("CARGO_PKG_VERSION");
     let platform = detect_platform()?;
     let archive_kind = archive_kind_for_platform(&platform);
     let archive_name = archive_name(SERVER_ARTIFACT_PREFIX, version, &platform, archive_kind);
@@ -364,10 +364,9 @@ async fn download_and_install_managed_server(
     let archive_url = format!("{base_url}/{archive_name}");
     let checksums_url = format!("{base_url}/SHA256SUMS");
 
-    let archive_bytes = download_bytes(&client, &archive_url, &archive_name, true).await?;
+    let archive_bytes = download_bytes(&client, &archive_url, &archive_name, show_progress).await?;
     let checksums = download_text(&client, &checksums_url, "checksum file").await?;
     verify_checksum(&archive_name, &archive_bytes, &checksums)?;
-    output.status("precheck: downloaded and verified kalamdb-server");
 
     let temp_dir = create_temp_dir("kalamdb-server-install")?;
     let cleanup_dir = temp_dir.clone();
@@ -377,6 +376,15 @@ async fn download_and_install_managed_server(
     })();
     let _ = fs::remove_dir_all(cleanup_dir);
     install_result
+}
+
+async fn download_and_install_managed_server(
+    output: &WorkflowOutput,
+    _server_source: &ServiceLogSource,
+) -> Result<PathBuf> {
+    let path = install_managed_server_version(env!("CARGO_PKG_VERSION"), true).await?;
+    output.status("precheck: downloaded and verified kalamdb-server");
+    Ok(path)
 }
 
 fn install_server_payload(extracted_root: &Path) -> Result<PathBuf> {

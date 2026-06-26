@@ -30,24 +30,62 @@ export type FolderWatcher = {
 
 export type WatchSyncFolderOptions = {
   initialSync?: InitialSyncTracker;
+  /** Skip events caused by the sync worker writing or removing files itself. */
+  shouldSuppressEvent?: (relativePath: string) => boolean;
+  /** Share one queue with live pull so push/delete never races snapshot apply. */
+  taskQueue?: TaskQueue;
 };
 
 type FolderEvent = 'add' | 'change' | 'unlink';
+
+/** Wait for atomic editor saves (unlink + add/rename) before treating a path as deleted. */
+const UNLINK_DEBOUNCE_MS = 400;
 
 export async function watchSyncFolder(
   syncDir: string,
   handlers: FolderWatchHandlers,
   options: WatchSyncFolderOptions = {},
 ): Promise<FolderWatcher> {
-  const { initialSync } = options;
+  const { initialSync, shouldSuppressEvent, taskQueue } = options;
   let initialScan = true;
-  const queue = new TaskQueue();
+  const queue = taskQueue ?? new TaskQueue();
+  const pendingUnlinks = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const cancelPendingUnlink = (relativePath: string): void => {
+    const timer = pendingUnlinks.get(relativePath);
+    if (timer) {
+      clearTimeout(timer);
+      pendingUnlinks.delete(relativePath);
+    }
+  };
+
+  const scheduleUnlink = (relativePath: string): void => {
+    cancelPendingUnlink(relativePath);
+    pendingUnlinks.set(
+      relativePath,
+      setTimeout(() => {
+        pendingUnlinks.delete(relativePath);
+        logFileDeleted(relativePath);
+        if (initialScan && initialSync) {
+          initialSync.deleted += 1;
+        }
+        queue.enqueue(() => handlers.onDelete(relativePath));
+      }, UNLINK_DEBOUNCE_MS),
+    );
+  };
 
   const handleEvent = (event: FolderEvent, absolutePath: string): void => {
     const rel = toRelativeSyncPath(syncDir, absolutePath);
-    if (!isSafeSyncPath(rel)) {
+    if (!isSafeSyncPath(rel) || shouldSuppressEvent?.(rel)) {
       return;
     }
+
+    if (event === 'unlink') {
+      scheduleUnlink(rel);
+      return;
+    }
+
+    cancelPendingUnlink(rel);
 
     if (event === 'add') {
       logFileAdded(rel);
@@ -58,25 +96,17 @@ export async function watchSyncFolder(
       return;
     }
 
-    if (event === 'change') {
-      logFileUpdated(rel);
-      if (initialScan && initialSync) {
-        initialSync.updated += 1;
-      }
-      queue.enqueue(() => handlers.onUpsert(rel));
-      return;
-    }
-
-    logFileDeleted(rel);
+    logFileUpdated(rel);
     if (initialScan && initialSync) {
-      initialSync.deleted += 1;
+      initialSync.updated += 1;
     }
-    queue.enqueue(() => handlers.onDelete(rel));
+    queue.enqueue(() => handlers.onUpsert(rel));
   };
 
   const watcher: FSWatcher = chokidar.watch(syncDir, {
     ignoreInitial: false,
     persistent: true,
+    alwaysStat: true,
     awaitWriteFinish: {
       stabilityThreshold: 250,
       pollInterval: 100,
@@ -99,6 +129,10 @@ export async function watchSyncFolder(
 
   return {
     close: async () => {
+      for (const timer of pendingUnlinks.values()) {
+        clearTimeout(timer);
+      }
+      pendingUnlinks.clear();
       await watcher.close();
       await queue.waitIdle();
     },

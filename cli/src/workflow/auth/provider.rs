@@ -6,14 +6,17 @@ use crate::{
         auth::credentials::open_credentials_store,
         dev::server::{local_server_root_password, DEFAULT_LOCAL_DEV_ROOT_PASSWORD},
         project::{
-            connection_url::is_loopback_server_url,
+            connection_url::{is_loopback_server_url, server_urls_match},
             resolve::{resolve_kalam_profile, ResolvedEnvironment},
         },
         WorkflowContext,
     },
 };
 
-pub(crate) fn load_project_profile_token(ctx: &WorkflowContext) -> Result<Option<String>> {
+pub(crate) fn load_project_profile_token(
+    ctx: &WorkflowContext,
+    environment: &ResolvedEnvironment,
+) -> Result<Option<String>> {
     let Some(profile) = resolve_kalam_profile(&ctx.project_root)? else {
         return Ok(None);
     };
@@ -25,11 +28,15 @@ pub(crate) fn load_project_profile_token(ctx: &WorkflowContext) -> Result<Option
         ))
     })?;
 
-    let credentials = credentials.ok_or_else(|| {
-        CLIError::ConfigurationError(format!(
-            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam login --instance {profile}`"
-        ))
-    })?;
+    let Some(credentials) = credentials else {
+        return Ok(None);
+    };
+
+    if let Some(stored_url) = credentials.server_url.as_deref() {
+        if !server_urls_match(stored_url, &environment.url) {
+            return Ok(None);
+        }
+    }
 
     Ok(Some(credentials.jwt_token))
 }
@@ -38,8 +45,29 @@ pub(crate) fn resolve_workflow_auth_provider(
     ctx: &WorkflowContext,
     environment: &ResolvedEnvironment,
 ) -> Result<AuthProvider> {
-    if let Some(token) = load_project_profile_token(ctx)? {
+    if let Some(token) = load_project_profile_token(ctx, environment)? {
         return Ok(AuthProvider::jwt_token(token));
+    }
+
+    if let Some(profile) = resolve_kalam_profile(&ctx.project_root)? {
+        if let Ok(store) = open_credentials_store() {
+            if let Ok(Some(credentials)) = store.get_credentials(&profile) {
+                if credentials
+                    .server_url
+                    .as_deref()
+                    .is_some_and(|stored| !server_urls_match(stored, &environment.url))
+                {
+                    return Err(CLIError::ConfigurationError(format!(
+                        "profile '{profile}' was saved for {} but this project uses {}; run `kalam login --instance {profile}` from the project directory or pass `--url`",
+                        credentials.server_url.as_deref().unwrap_or("another server"),
+                        environment.url
+                    )));
+                }
+            }
+        }
+        return Err(CLIError::ConfigurationError(format!(
+            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam login --instance {profile}`"
+        )));
     }
 
     if ctx.config.dev.auto_start_db {
