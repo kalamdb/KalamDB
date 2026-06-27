@@ -1,6 +1,7 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # KalamDB CLI Installer
 # Usage: curl -fsSL https://kalamdb.org/install.sh | sh
+#        curl -fsSL https://kalamdb.org/install.sh | bash
 #
 # Flags:
 #   --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
@@ -13,35 +14,30 @@
 #   KALAM_PRE_RELEASE  - Set to 1 to install the latest prerelease
 #   KALAM_NO_MODIFY_PATH - Set to 1 to skip PATH modification
 
-# Re-exec under full bash when invoked as /bin/sh. macOS /bin/sh is bash --posix,
-# which sets BASH_VERSION but still rejects bashisms such as process substitution.
+# When piped to /bin/sh (dash on Linux), the shell consumes part of stdin before any
+# re-exec, so bash -s would receive a truncated script. Re-fetch under bash instead.
 if [ "${KALAM_INSTALLER_REEXEC:-}" != "1" ]; then
     _need_full_bash=0
     if [ -z "${BASH_VERSION:-}" ]; then
         _need_full_bash=1
-    elif command -v shopt >/dev/null 2>&1 && shopt -qo posix; then
+    elif command -v shopt >/dev/null 2>&1 && shopt -qo posix 2>/dev/null; then
         _need_full_bash=1
     fi
 
     if [ "$_need_full_bash" = "1" ]; then
-        if command -v bash >/dev/null 2>&1; then
-            case "$0" in
-                sh|-sh|*/sh|dash|-dash|*/dash)
-                    KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
-                    ;;
-                *)
-                    if [ -r "$0" ]; then
-                        KALAM_INSTALLER_REEXEC=1 exec bash "$0" "$@"
-                    fi
-                    KALAM_INSTALLER_REEXEC=1 exec bash -s -- "$@"
-                    ;;
-            esac
+        _install_url="${KALAM_INSTALL_SCRIPT_URL:-https://kalamdb.org/install.sh}"
+        if command -v bash >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+            KALAM_INSTALLER_REEXEC=1 exec bash -c "$(curl -fsSL "$_install_url")" bash "$@"
         fi
 
-        echo "KalamDB installer requires bash. Install bash or run: curl -fsSL https://kalamdb.org/install.sh | bash" >&2
+        printf '%s\n' \
+            "KalamDB installer requires bash and curl." \
+            "Install them or run: curl -fsSL https://kalamdb.org/install.sh | bash" >&2
         exit 1
     fi
 fi
+
+{ # this ensures the entire script is downloaded #
 
 set -euo pipefail
 
@@ -474,3 +470,5 @@ main() {
 }
 
 main "$@"
+
+} # this ensures the entire script is downloaded #
