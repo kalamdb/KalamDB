@@ -12,6 +12,8 @@
 //! `<user_id>` may be single-quoted (`'alice'`) or bare (`alice`).
 //! The inner SQL must be exactly one statement.
 
+use kalamdb_commons::models::UserId;
+
 use crate::split_statements;
 
 /// Prefixes used for case-insensitive matching.
@@ -219,6 +221,9 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
         return Err("EXECUTE AS can only wrap a single SQL statement".to_string());
     }
 
+    UserId::try_new(&username)
+        .map_err(|error| format!("Invalid EXECUTE AS user id: {}", error))?;
+
     Ok(Some(ExecuteAsEnvelope {
         username,
         inner_sql: inner_statements[0].trim().to_string(),
@@ -351,14 +356,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_escaped_quote_in_username() {
-        let result =
-            parse_execute_as("EXECUTE AS USER 'alice''o' (INSERT INTO default.t VALUES (1))")
-                .expect("should parse")
-                .expect("should be an envelope");
-
-        assert_eq!(result.username, "alice'o");
-        assert_eq!(result.inner_sql, "INSERT INTO default.t VALUES (1)");
+    fn parse_escaped_quote_in_username_is_rejected_as_invalid_user_id() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice''o' (INSERT INTO default.t VALUES (1))")
+            .expect_err("quoted apostrophe in user id must be rejected");
+        assert!(
+            err.contains("Invalid EXECUTE AS user id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -494,6 +498,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn security_reject_invalid_execute_as_user_id_characters() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice;drop' (SELECT 1)")
+            .expect_err("invalid user id characters must be rejected");
+        assert!(
+            err.contains("Invalid EXECUTE AS user id") || err.contains("ASCII letters"),
+            "Invalid user id must error: {err}"
+        );
+    }
+
+    #[test]
+    fn security_reject_invalid_bare_execute_as_user_id_characters() {
+        let err = parse_execute_as("EXECUTE AS USER alice;drop (SELECT 1)")
+            .expect_err("invalid bare user id must be rejected");
+        assert!(
+            err.contains("Invalid EXECUTE AS user id") || err.contains("exactly"),
+            "Invalid bare user id must error: {err}"
+        );
+    }
+
     // Content after the closing ')' is a sign of injection or malformed input.
     #[test]
     fn security_reject_trailing_content_after_close_paren() {
@@ -527,23 +551,17 @@ mod tests {
         );
     }
 
-    // Doubled single-quotes used as an escape in the username produce a literal
-    // quote character in the string value — they do NOT execute as SQL.
-    // For example: 'alice'' OR ''1''=''1' is the username string alice' OR '1'='1.
-    // The server must then reject this via a user-not-found authorisation error,
-    // but at the dialect layer the parse succeeds and the value is a plain string.
+    // Doubled single-quotes in the username are parsed as a literal quote in the
+    // extracted string, but canonical user ids reject that character. The dialect
+    // layer now rejects the envelope before any server-side lookup can occur.
     #[test]
-    fn security_username_injection_via_escaped_quotes_is_a_literal_string() {
-        let result = parse_execute_as("EXECUTE AS USER 'alice'' OR ''1''=''1' (SELECT 1)")
-            .expect("parser must succeed")
-            .expect("must be an envelope");
-
-        // The username is the raw string value — no SQL evaluation.
-        assert_eq!(
-            result.username, "alice' OR '1'='1",
-            "Escaped-quote injection must produce a literal string, not execute SQL"
+    fn security_username_injection_via_escaped_quotes_is_rejected() {
+        let err = parse_execute_as("EXECUTE AS USER 'alice'' OR ''1''=''1' (SELECT 1)")
+            .expect_err("escaped-quote injection username must be rejected");
+        assert!(
+            err.contains("Invalid EXECUTE AS user id"),
+            "Invalid user id must error: {err}"
         );
-        assert_eq!(result.inner_sql, "SELECT 1");
     }
 
     // Nested EXECUTE AS: the dialect parser does NOT recursively validate the

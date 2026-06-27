@@ -9,15 +9,34 @@ pub struct SessionSettings {
 }
 
 impl SessionSettings {
+    /// Parse and validate a raw `kalam.user_id` GUC value.
+    pub fn parse_user_id_value(raw: &str) -> Result<UserId, KalamPgError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(KalamPgError::Validation(format!(
+                "{USER_ID_GUC} cannot be empty"
+            )));
+        }
+
+        UserId::try_new(trimmed.to_string()).map_err(|error| {
+            KalamPgError::Validation(format!("invalid {USER_ID_GUC}: {error}"))
+        })
+    }
+
+    /// Parse an optional raw GUC value into a validated user id.
+    pub fn parse_optional_user_id_value(raw: Option<&str>) -> Result<Option<UserId>, KalamPgError> {
+        match raw.map(str::trim).filter(|value| !value.is_empty()) {
+            None => Ok(None),
+            Some(value) => Self::parse_user_id_value(value).map(Some),
+        }
+    }
+
     /// Parse the supported PostgreSQL session values used by the extension.
     pub fn from_guc_values(
         user_id_value: Option<&str>,
         current_schema_value: Option<&str>,
     ) -> Result<Self, KalamPgError> {
-        let session_user_id = user_id_value
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| UserId::new(value.to_string()));
+        let session_user_id = Self::parse_optional_user_id_value(user_id_value)?;
         let current_schema = current_schema_value
             .map(str::trim)
             .filter(|value| !value.is_empty())

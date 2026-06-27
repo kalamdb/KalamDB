@@ -204,8 +204,7 @@ unsafe fn begin_foreign_scan_impl(node: *mut pg_sys::ForeignScanState) -> Result
     let table_options = resolve_table_options_for_relation(relation, &options)?;
 
     // Read session user_id from GUC
-    let user_id_str = crate::current_kalam_user_id();
-    let user_id = user_id_str.map(kalamdb_commons::models::UserId::new);
+    let user_id = crate::current_validated_kalam_user_id()?;
 
     // Ensure remote connection
     let remote_state = crate::remote_server::remote_state_for_server_id((*ft).serverid)?;

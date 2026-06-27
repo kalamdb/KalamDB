@@ -6,6 +6,7 @@
  */
 
 import chokidar, { type FSWatcher } from 'chokidar';
+import { existsSync } from 'node:fs';
 import {
   isSafeSyncPath,
   shouldIgnoreWatchAbsolutePath,
@@ -34,6 +35,10 @@ export type WatchSyncFolderOptions = {
   shouldSuppressEvent?: (relativePath: string) => boolean;
   /** Share one queue with live pull so push/delete never races snapshot apply. */
   taskQueue?: TaskQueue;
+  /** Called synchronously before enqueue so live pull cannot overwrite local edits. */
+  onLocalChange?: (relativePath: string) => void;
+  /** When true, startup files are pushed explicitly instead of via the initial scan. */
+  ignoreInitial?: boolean;
 };
 
 type FolderEvent = 'add' | 'change' | 'unlink';
@@ -46,7 +51,7 @@ export async function watchSyncFolder(
   handlers: FolderWatchHandlers,
   options: WatchSyncFolderOptions = {},
 ): Promise<FolderWatcher> {
-  const { initialSync, shouldSuppressEvent, taskQueue } = options;
+  const { initialSync, shouldSuppressEvent, taskQueue, onLocalChange, ignoreInitial = false } = options;
   let initialScan = true;
   const queue = taskQueue ?? new TaskQueue();
   const pendingUnlinks = new Map<string, ReturnType<typeof setTimeout>>();
@@ -87,11 +92,16 @@ export async function watchSyncFolder(
 
     cancelPendingUnlink(rel);
 
+    if ((event === 'add' || event === 'change') && !existsSync(absolutePath)) {
+      return;
+    }
+
     if (event === 'add') {
       logFileAdded(rel);
       if (initialScan && initialSync) {
         initialSync.added += 1;
       }
+      onLocalChange?.(rel);
       queue.enqueue(() => handlers.onUpsert(rel));
       return;
     }
@@ -100,13 +110,13 @@ export async function watchSyncFolder(
     if (initialScan && initialSync) {
       initialSync.updated += 1;
     }
+    onLocalChange?.(rel);
     queue.enqueue(() => handlers.onUpsert(rel));
   };
 
   const watcher: FSWatcher = chokidar.watch(syncDir, {
-    ignoreInitial: false,
+    ignoreInitial,
     persistent: true,
-    alwaysStat: true,
     awaitWriteFinish: {
       stabilityThreshold: 250,
       pollInterval: 100,
@@ -121,7 +131,12 @@ export async function watchSyncFolder(
 
   await new Promise<void>((resolve, reject) => {
     watcher.once('ready', () => resolve());
-    watcher.once('error', reject);
+    watcher.on('error', (error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      reject(error);
+    });
   });
 
   await queue.waitIdle();

@@ -272,8 +272,11 @@ unsafe fn exec_foreign_insert_impl(
     let state = &*((*rinfo).ri_FdwState as *mut KalamModifyState);
     let (row, explicit_userid) = slot_to_row(slot, &state.column_names)?;
 
-    let session_user_id = crate::current_kalam_user_id().map(UserId::new);
-    let explicit_user_id = explicit_userid.map(UserId::new);
+    let session_user_id = crate::current_validated_kalam_user_id()?;
+    let explicit_user_id = explicit_userid
+        .as_deref()
+        .map(crate::SessionSettings::parse_user_id_value)
+        .transpose()?;
     let effective =
         resolve_insert_user_id(state.table_options.table_type, session_user_id, explicit_user_id)?;
 
@@ -308,13 +311,16 @@ unsafe fn exec_foreign_batch_insert_impl(
 ) -> Result<(), KalamPgError> {
     let state = &*((*rinfo).ri_FdwState as *mut KalamModifyState);
 
-    let session_user_id = crate::current_kalam_user_id().map(UserId::new);
+    let session_user_id = crate::current_validated_kalam_user_id()?;
 
     // Single-row case: buffer for cross-statement batching within transactions
     if num_slots == 1 {
         let slot = *slots.add(0);
         let (row, explicit_userid) = slot_to_row(slot, &state.column_names)?;
-        let explicit_user_id = explicit_userid.map(UserId::new);
+        let explicit_user_id = explicit_userid
+            .as_deref()
+            .map(crate::SessionSettings::parse_user_id_value)
+            .transpose()?;
         let effective = resolve_insert_user_id(
             state.table_options.table_type,
             session_user_id,
@@ -360,7 +366,7 @@ unsafe fn exec_foreign_batch_insert_impl(
         let slot = *slots.add(i);
         let (row, explicit_userid) = slot_to_row(slot, &state.column_names)?;
         if let Some(uid) = explicit_userid {
-            let uid = UserId::new(uid);
+            let uid = crate::SessionSettings::parse_user_id_value(&uid)?;
             if let Some(ref first) = batch_explicit_userid {
                 if &uid != first {
                     return Err(KalamPgError::Validation(
@@ -409,8 +415,7 @@ unsafe fn exec_foreign_update_impl(
     let pk_value = extract_pk_value(plan_slot, &state.pk_column, &state.column_names)?;
     let (updates, _explicit_userid) = slot_to_row(slot, &state.column_names)?;
 
-    let user_id_str = crate::current_kalam_user_id();
-    let user_id = user_id_str.map(UserId::new);
+    let user_id = crate::current_validated_kalam_user_id()?;
 
     let request = UpdateRequest::new(
         state.table_options.table_id.clone(),
@@ -440,8 +445,7 @@ unsafe fn exec_foreign_delete_impl(
     }
     let pk_value = extract_pk_value(plan_slot, &state.pk_column, &state.column_names)?;
 
-    let user_id_str = crate::current_kalam_user_id();
-    let user_id = user_id_str.map(UserId::new);
+    let user_id = crate::current_validated_kalam_user_id()?;
 
     let request = DeleteRequest::new(
         state.table_options.table_id.clone(),

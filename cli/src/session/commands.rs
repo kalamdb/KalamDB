@@ -2,6 +2,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 
 use colored::Colorize;
 use kalam_client::SubscriptionConfig;
+use kalamdb_commons::models::UserId;
 
 use super::{CLISession, OutputFormat};
 use crate::{
@@ -412,6 +413,10 @@ impl CLISession {
             return Err(CLIError::ParseError("\\as requires a target user".to_string()));
         }
 
+        UserId::try_new(normalized).map_err(|error| {
+            CLIError::ParseError(format!("\\as target user is invalid: {}", error))
+        })?;
+
         Ok(normalized.to_string())
     }
 
@@ -731,9 +736,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_execute_as_query_escapes_user_literal() {
-        let query = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap();
-        assert_eq!(query, "EXECUTE AS 'o''brien' (SELECT 1)");
+    fn test_build_execute_as_query_rejects_invalid_user_id() {
+        let err = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap_err();
+        assert!(
+            err.to_string().contains("invalid"),
+            "expected invalid user id error, got: {err}"
+        );
     }
 
     #[test]

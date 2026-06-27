@@ -503,7 +503,7 @@ impl LiveQueryManager {
         where_clause
             .map(|where_clause| {
                 let resolved =
-                    QueryParser::resolve_where_clause_placeholders(where_clause, user_id);
+                    QueryParser::resolve_where_clause_placeholders(where_clause, user_id)?;
                 parse_where_clause(&resolved).map_err(Into::into)
             })
             .transpose()

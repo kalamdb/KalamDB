@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::error::{CLIError, Result};
+use crate::{
+    error::{CLIError, Result},
+    fs_atomic::{self, FileReadPolicy, FileWriteOptions},
+};
 
 fn is_usable_home_dir(path: &Path) -> bool {
     !path.as_os_str().is_empty() && path != Path::new("/")
@@ -172,12 +175,11 @@ impl CommandHistory {
 
     /// Load history from file
     pub fn load(&self) -> Result<Vec<String>> {
-        if !self.path.exists() {
+        let Some(contents) = fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets)
+            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?
+        else {
             return Ok(Vec::new());
-        }
-
-        let contents = std::fs::read_to_string(&self.path)
-            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
+        };
 
         let entries = parse_history_entries(&contents);
 
@@ -193,12 +195,11 @@ impl CommandHistory {
 
     /// Count entries in the history file (without truncation)
     pub fn entry_count(&self) -> Result<usize> {
-        if !self.path.exists() {
+        let Some(contents) = fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets)
+            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?
+        else {
             return Ok(0);
-        }
-
-        let contents = std::fs::read_to_string(&self.path)
-            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
+        };
 
         Ok(parse_history_entries(&contents).len())
     }
@@ -224,18 +225,8 @@ impl CommandHistory {
             .collect::<Vec<_>>()
             .join("\n---ENTRY---\n");
 
-        std::fs::write(&self.path, contents)
+        fs_atomic::write_atomic(&self.path, contents.as_bytes(), FileWriteOptions::SECRET_FILE)
             .map_err(|e| CLIError::HistoryError(format!("Failed to write history file: {}", e)))?;
-
-        // Restrict history permissions on Unix to avoid accidental disclosure.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let permissions = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&self.path, permissions).map_err(|e| {
-                CLIError::HistoryError(format!("Failed to secure history file permissions: {}", e))
-            })?;
-        }
 
         Ok(())
     }

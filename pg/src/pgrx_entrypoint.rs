@@ -1,4 +1,5 @@
-use kalam_pg_common::USER_ID_GUC;
+use kalam_pg_common::{KalamPgError, USER_ID_GUC};
+use kalamdb_commons::models::UserId;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
 use pgrx::prelude::*;
 use std::ffi::{CStr, CString};
@@ -135,6 +136,13 @@ pub fn current_kalam_user_id() -> Option<String> {
     KALAM_USER_ID_SETTING
         .get()
         .map(|value| value.to_string_lossy().into_owned())
+}
+
+/// Read and validate the active PostgreSQL GUC value for `kalam.user_id`.
+pub fn current_validated_kalam_user_id() -> Result<Option<UserId>, KalamPgError> {
+    crate::SessionSettings::parse_optional_user_id_value(
+        current_kalam_user_id().as_deref(),
+    )
 }
 
 /// Execute an arbitrary SQL statement on the connected KalamDB server and return the

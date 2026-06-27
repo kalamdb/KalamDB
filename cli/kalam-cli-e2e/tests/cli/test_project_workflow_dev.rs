@@ -368,7 +368,7 @@ pub(crate) fn start_migration_tracking_server(
                             },
                         );
                     }
-                    make_response(r#"{"status":"success","results":[]}"#)
+                    make_response(r#"{"status":"success","results":[{"schema":[],"rows":[],"row_count":1}]}"#)
                 } else if sql_up.starts_with("UPDATE SYSTEM.MIGRATIONS") {
                     // Extract new status (always 4th quoted string: ns, name,
                     // checksum, status) and migration_key from the WHERE clause
@@ -382,7 +382,7 @@ pub(crate) fn start_migration_tracking_server(
                             rec.status = new_status;
                         }
                     }
-                    make_response(r#"{"status":"success","results":[]}"#)
+                    make_response(r#"{"status":"success","results":[{"schema":[],"rows":[],"row_count":1}]}"#)
                 } else {
                     make_response(r#"{"status":"success","results":[]}"#)
                 }

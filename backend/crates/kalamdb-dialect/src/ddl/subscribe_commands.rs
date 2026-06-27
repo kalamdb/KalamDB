@@ -991,7 +991,8 @@ mod tests {
         let resolved = crate::parser::query_parser::QueryParser::resolve_where_clause_placeholders(
             "category = 'CURRENT_USER' AND owner_id = CURRENT_USER",
             &kalamdb_commons::models::UserId::from("alice"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'CURRENT_USER'"),
             "String literal CURRENT_USER must NOT be replaced; got: {resolved}"
@@ -1017,7 +1018,8 @@ mod tests {
         let resolved = crate::parser::query_parser::QueryParser::resolve_where_clause_placeholders(
             "owner_id = CURRENT_USER AND delegate_id = CURRENT_USER",
             &kalamdb_commons::models::UserId::from("carol"),
-        );
+        )
+        .expect("placeholder resolution");
         assert_eq!(
             resolved.matches("'carol'").count(),
             2,
@@ -1036,7 +1038,8 @@ mod tests {
         let resolved = crate::parser::query_parser::QueryParser::resolve_where_clause_placeholders(
             "(owner_id = CURRENT_USER() OR shared = true) AND active = true",
             &kalamdb_commons::models::UserId::from("dave"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'dave'"),
             "CURRENT_USER() inside AND/OR must be replaced; got: {resolved}"
@@ -1053,7 +1056,8 @@ mod tests {
         let resolved = crate::parser::query_parser::QueryParser::resolve_where_clause_placeholders(
             "owner_id = CURRENT_USER_ID()",
             &kalamdb_commons::models::UserId::from("frank"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'frank'"),
             "CURRENT_USER_ID() must be replaced; got: {resolved}"

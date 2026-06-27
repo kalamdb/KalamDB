@@ -135,7 +135,9 @@ impl StorageKey for ManifestId {
             let user_id = if scope == "shared" {
                 None
             } else {
-                Some(UserId::from(scope.as_str()))
+                Some(UserId::try_new(scope.as_str()).map_err(|error| {
+                    format!("invalid manifest user scope '{}': {}", scope, error)
+                })?)
             };
             return Ok(Self { table_id, user_id });
         }

@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fs,
     path::Path,
     sync::{Arc, Mutex},
     time::Instant,
@@ -13,6 +12,7 @@ use super::{CLISession, OutputFormat};
 use crate::{
     config::expand_config_path,
     error::{CLIError, Result},
+    fs_atomic::{self, FileReadPolicy},
 };
 
 #[derive(Debug, Clone)]
@@ -182,13 +182,19 @@ impl CLISession {
         let mut uploads = Vec::with_capacity(specs.len());
         for (placeholder, path, mime) in specs {
             let expanded = expand_config_path(Path::new(&path));
-            if !expanded.exists() {
-                return Err(CLIError::FileError(format!("File not found: {}", expanded.display())));
-            }
-
-            let data = fs::read(&expanded).map_err(|e| {
-                CLIError::FileError(format!("Failed to read file {}: {}", expanded.display(), e))
-            })?;
+            let data = fs_atomic::read_bytes(&expanded, FileReadPolicy::UserProvided).map_err(
+                |error| match error.kind() {
+                    std::io::ErrorKind::NotFound => CLIError::FileError(format!(
+                        "File not found: {}",
+                        expanded.display()
+                    )),
+                    _ => CLIError::FileError(format!(
+                        "Failed to read file {}: {}",
+                        expanded.display(),
+                        error
+                    )),
+                },
+            )?;
 
             let filename = expanded
                 .file_name()
