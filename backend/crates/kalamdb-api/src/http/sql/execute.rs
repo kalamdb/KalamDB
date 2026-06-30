@@ -40,13 +40,14 @@ use uuid::Uuid;
 
 use super::{
     execution_paths::{execute_batch_path, execute_file_upload_path},
-    file_utils::extract_file_placeholders,
+    file_utils::{extract_file_placeholders, sql_may_contain_file_placeholder},
     forward::{forward_sql_if_follower, prepared_statement_target_group},
     helpers::parse_scalar_params,
     models::{ErrorCode, QueryRequest, SqlResponse},
     request::{parse_incoming_payload, took_ms, validate_sql_length},
     statements::{
-        authorized_username, split_and_prepare_statements, PreparedApiExecutionStatement,
+        authorized_username, split_and_prepare_statements,
+        split_and_prepare_statements_light, PreparedApiExecutionStatement,
     },
 };
 use crate::limiter::RateLimiter;
@@ -163,13 +164,27 @@ pub async fn execute_sql_v1(
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace.clone());
 
-    // 5. Split, parse, and classify SQL statements once. Follower forwarding reuses
-    // this metadata so read-only follower requests do not pay a second parse pass.
-    let prepared_statements =
+    // 5. Split, parse, and classify SQL statements once. FILE() uploads use light prepare
+    // (classify + table extract only) because execute_file_upload_path fully prepares
+    // the substituted SQL before execution.
+    let file_upload_request =
+        files_present || sql_may_contain_file_placeholder(&sql);
+    let prepared_statements = if file_upload_request {
+        match split_and_prepare_statements_light(
+            &sql,
+            &exec_ctx,
+            sql_executor.get_ref(),
+            start_time,
+        ) {
+            Ok(stmts) => stmts,
+            Err(resp) => return resp,
+        }
+    } else {
         match split_and_prepare_statements(&sql, &exec_ctx, sql_executor.get_ref(), start_time) {
             Ok(stmts) => stmts,
             Err(resp) => return resp,
-        };
+        }
+    };
 
     if let Some(resp) =
         reject_unauthorized_prepared_statements(&prepared_statements, &exec_ctx, start_time)
@@ -255,8 +270,12 @@ pub async fn execute_sql_v1(
     }
 
     // 10. Dispatch to file-upload or batch execution path.
-    let required_files = extract_file_placeholders(&sql);
-    if !required_files.is_empty() || files_present {
+    let required_files = if file_upload_request {
+        extract_file_placeholders(&sql)
+    } else {
+        Vec::new()
+    };
+    if file_upload_request {
         let schema_registry = app_context.schema_registry();
         return execute_file_upload_path(
             is_multipart,

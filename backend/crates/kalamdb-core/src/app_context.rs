@@ -4,6 +4,7 @@
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -11,6 +12,7 @@ use std::{
 use async_trait::async_trait;
 use datafusion::{catalog::SchemaProvider, prelude::SessionContext};
 use kalamdb_auth::{CachedUsersRepo, CoreUsersRepo, UserRepository};
+use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
     models::{NamespaceId, TransactionOrigin, UserId},
@@ -22,14 +24,15 @@ use kalamdb_live::{
     ConnectionsManager, LiveQueryManager, NotificationService, TopicPrimaryKeyLookup,
     TopicPublisherService,
 };
-use kalamdb_pg::{KalamPgService, LivePgTransaction};
+use kalamdb_pg::KalamPgService;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
 use kalamdb_system::{ClusterCoordinator, Namespace, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use kalamdb_views::{
-    sessions::{PgSessionSnapshot, SessionsSnapshotCallback},
+    pg_catalog::PgCatalogSchemaProvider,
+    sessions::{ConnectionSessionSnapshot, SessionsSnapshotCallback},
     transactions::{TransactionSnapshot, TransactionsSnapshotCallback},
 };
 use once_cell::sync::OnceCell;
@@ -160,6 +163,7 @@ pub struct AppContext {
     // ===== Transaction Coordination =====
     commit_sequence_tracker: Arc<CommitSequenceTracker>,
     transaction_coordinator: OnceCell<Arc<TransactionCoordinator>>,
+    backend_session_manager: OnceCell<Arc<BackendSessionManager>>,
 
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
@@ -190,6 +194,7 @@ impl std::fmt::Debug for AppContext {
             .field("applier", &"OnceCell<Arc<dyn UnifiedApplier>>")
             .field("commit_sequence_tracker", &"Arc<CommitSequenceTracker>")
             .field("transaction_coordinator", &"OnceCell<Arc<TransactionCoordinator>>")
+            .field("backend_session_manager", &"OnceCell<Arc<BackendSessionManager>>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
@@ -510,6 +515,7 @@ impl AppContext {
                 applier: OnceCell::new(),
                 commit_sequence_tracker: Arc::clone(&commit_sequence_tracker),
                 transaction_coordinator: OnceCell::new(),
+                backend_session_manager: OnceCell::new(),
                 session_factory,
                 base_session_context,
                 system_columns_service,
@@ -563,7 +569,30 @@ impl AppContext {
                 },
             }
 
-            // Wire the cluster message handler for non-live cluster RPCs.
+            // Job manager is initialized externally by kalamdb-jobs (via set_job_manager)
+
+            let applier = crate::applier::create_applier(Arc::clone(&app_ctx));
+            if app_ctx.applier.set(applier).is_err() {
+                panic!("UnifiedApplier already initialized");
+            }
+
+            let transaction_coordinator = Arc::new(TransactionCoordinator::new(
+                Arc::clone(&app_ctx),
+                Arc::clone(&commit_sequence_tracker),
+            ));
+            if app_ctx.transaction_coordinator.set(transaction_coordinator).is_err() {
+                panic!("TransactionCoordinator already initialized");
+            }
+            let transaction_engine: Arc<dyn kalamdb_transactions::TransactionEngine> =
+                app_ctx.transaction_coordinator();
+            let backend_session_manager = Arc::new(BackendSessionManager::new(transaction_engine));
+            if app_ctx.backend_session_manager.set(backend_session_manager).is_err() {
+                panic!("BackendSessionManager already initialized");
+            }
+            app_ctx.transaction_coordinator().start_timeout_sweeper();
+
+            // Wire the cluster message handler for non-live cluster RPCs after
+            // the transaction coordinator and shared backend session manager exist.
             if let Some(raft_executor) =
                 app_ctx.executor().as_any().downcast_ref::<kalamdb_raft::RaftExecutor>()
             {
@@ -580,67 +609,94 @@ impl AppContext {
                 let pg_service = Arc::new(
                     KalamPgService::new(mtls, pg_auth_token)
                         .with_bearer_auth(pg_user_repo)
+                        .with_backend_session_manager(app_ctx.backend_session_manager())
                         .with_operation_executor(pg_executor),
                 );
                 let app_ctx_for_sessions = Arc::clone(&app_ctx);
-                let pg_service_for_sessions = Arc::clone(&pg_service);
                 let sessions_snapshot_callback: SessionsSnapshotCallback = Arc::new(move || {
-                    let active_pg_transactions = app_ctx_for_sessions
+                    let active_transactions_by_owner = app_ctx_for_sessions
                         .try_transaction_coordinator()
                         .map(|transaction_coordinator| {
                             transaction_coordinator
                                 .active_metrics()
                                 .into_iter()
-                                .filter(|metric| matches!(metric.origin, TransactionOrigin::PgRpc))
-                                .map(|metric| {
-                                    LivePgTransaction::new(
-                                        metric.owner_id.to_string(),
-                                        metric.transaction_id.clone(),
-                                        metric.state,
-                                        metric.write_count > 0,
+                                .filter(|metric| {
+                                    matches!(
+                                        metric.origin,
+                                        TransactionOrigin::PgRpc | TransactionOrigin::PgWire
                                     )
                                 })
-                                .collect::<Vec<_>>()
+                                .map(|metric| (metric.owner_id.to_string(), metric))
+                                .collect::<HashMap<_, _>>()
                         })
                         .unwrap_or_default();
-                    pg_service_for_sessions
-                        .snapshot_with_live_transactions(active_pg_transactions)
+                    app_ctx_for_sessions
+                        .backend_session_manager()
+                        .snapshot()
                         .into_iter()
-                        .map(|session| PgSessionSnapshot {
-                            transaction_id: session.transaction_id().map(ToOwned::to_owned),
-                            transaction_state: session
-                                .transaction_state()
-                                .map(|state| state.as_str().to_string()),
-                            transaction_has_writes: session.transaction_has_writes(),
-                            session_id: session.session_id().to_string(),
-                            current_schema: session.current_schema().map(ToOwned::to_owned),
-                            client_addr: session.client_addr().map(ToOwned::to_owned),
-                            opened_at_ms: session.opened_at_ms(),
-                            last_seen_at_ms: session.last_seen_at_ms(),
-                            last_method: session.last_method().map(ToOwned::to_owned),
+                        .map(|session| {
+                            let metric = active_transactions_by_owner.get(&session.session_id);
+                            let backend_pid = if matches!(
+                                session.origin,
+                                kalamdb_commons::models::SessionOrigin::ExtensionBridge
+                            ) {
+                                session
+                                    .session_id
+                                    .strip_prefix("pg-")
+                                    .and_then(|value| value.split('-').next())
+                                    .and_then(|value| value.parse::<i64>().ok())
+                            } else {
+                                None
+                            };
+                            ConnectionSessionSnapshot {
+                                transaction_id: metric
+                                    .map(|metric| metric.transaction_id.to_string())
+                                    .or_else(|| {
+                                        session.transaction_id.as_ref().map(ToString::to_string)
+                                    }),
+                                transaction_state: metric
+                                    .map(|metric| metric.state.as_str().to_string())
+                                    .or_else(|| {
+                                        session
+                                            .transaction_state
+                                            .map(|state| state.as_str().to_string())
+                                    }),
+                                transaction_has_writes: metric
+                                    .map(|metric| metric.write_count > 0)
+                                    .unwrap_or(session.transaction_has_writes),
+                                session_id: session.session_id,
+                                origin: session.origin.as_str().to_string(),
+                                backend_pid,
+                                authenticated_user_id: session
+                                    .authenticated_user_id
+                                    .map(|user_id| user_id.to_string()),
+                                current_schema: session.current_schema,
+                                state: session.state,
+                                client_addr: session.client_addr,
+                                opened_at_ms: session.opened_at_ms,
+                                last_seen_at_ms: session.last_seen_at_ms,
+                                last_method: session.last_method,
+                            }
                         })
                         .collect()
                 });
-                sessions_view.set_snapshot_callback(sessions_snapshot_callback);
+                sessions_view.set_snapshot_callback(Arc::clone(&sessions_snapshot_callback));
+                if app_ctx.config().postgres_wire.pg_catalog_enabled {
+                    let pg_catalog_schema = Arc::new(PgCatalogSchemaProvider::new(
+                        app_ctx.system_tables(),
+                        sessions_snapshot_callback,
+                    ));
+                    let catalog = app_ctx.base_session_context().catalog("kalam").expect(
+                        "Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly \
+                         configured",
+                    );
+                    catalog
+                        .register_schema("pg_catalog", pg_catalog_schema as Arc<dyn SchemaProvider>)
+                        .expect("Failed to register pg_catalog schema");
+                }
                 raft_executor.set_pg_service(pg_service);
                 log::debug!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
             }
-
-            // Job manager is initialized externally by kalamdb-jobs (via set_job_manager)
-
-            let applier = crate::applier::create_applier(Arc::clone(&app_ctx));
-            if app_ctx.applier.set(applier).is_err() {
-                panic!("UnifiedApplier already initialized");
-            }
-
-            let transaction_coordinator = Arc::new(TransactionCoordinator::new(
-                Arc::clone(&app_ctx),
-                Arc::clone(&commit_sequence_tracker),
-            ));
-            if app_ctx.transaction_coordinator.set(transaction_coordinator).is_err() {
-                panic!("TransactionCoordinator already initialized");
-            }
-            app_ctx.transaction_coordinator().start_timeout_sweeper();
 
             let app_ctx_for_transactions = Arc::clone(&app_ctx);
             let transactions_snapshot_callback: TransactionsSnapshotCallback =
@@ -918,6 +974,7 @@ impl AppContext {
             applier: OnceCell::new(),
             commit_sequence_tracker: Arc::clone(&commit_sequence_tracker),
             transaction_coordinator: OnceCell::new(),
+            backend_session_manager: OnceCell::new(),
             session_factory,
             base_session_context,
             system_columns_service,
@@ -954,6 +1011,12 @@ impl AppContext {
         ));
         if app_ctx.transaction_coordinator.set(transaction_coordinator).is_err() {
             panic!("TransactionCoordinator already initialized");
+        }
+        let transaction_engine: Arc<dyn kalamdb_transactions::TransactionEngine> =
+            app_ctx.transaction_coordinator();
+        let backend_session_manager = Arc::new(BackendSessionManager::new(transaction_engine));
+        if app_ctx.backend_session_manager.set(backend_session_manager).is_err() {
+            panic!("BackendSessionManager already initialized");
         }
         app_ctx.transaction_coordinator().start_timeout_sweeper();
 
@@ -1208,6 +1271,17 @@ impl AppContext {
     pub fn transaction_coordinator(&self) -> Arc<TransactionCoordinator> {
         self.try_transaction_coordinator()
             .expect("TransactionCoordinator not initialized in AppContext")
+    }
+
+    /// Try to access the backend session manager if it has been initialized.
+    pub fn try_backend_session_manager(&self) -> Option<Arc<BackendSessionManager>> {
+        self.backend_session_manager.get().map(Arc::clone)
+    }
+
+    /// Get the backend session manager.
+    pub fn backend_session_manager(&self) -> Arc<BackendSessionManager> {
+        self.try_backend_session_manager()
+            .expect("BackendSessionManager not initialized in AppContext")
     }
 
     /// Get the system columns service (Phase 12, US5, T027)

@@ -46,6 +46,19 @@ api_version = "v1"
 # Uncomment to serve the UI bundle directly from the server.
 # ui_path = "./ui/dist"
 
+[postgres_wire]
+# PostgreSQL wire protocol listener. Disabled by default while the
+# direct pgwire adapter is completed and validated.
+enabled = false
+host = "127.0.0.1"
+port = 5432
+tls_enabled = false
+# tls_cert_path = "./certs/postgres-wire.crt"
+# tls_key_path = "./certs/postgres-wire.key"
+pg_catalog_enabled = false
+prepared_statement_limit = 1024
+portal_limit = 1024
+
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:

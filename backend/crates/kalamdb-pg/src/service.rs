@@ -9,7 +9,12 @@ use kalamdb_auth::{
     UserRepository,
 };
 #[cfg(feature = "server")]
-use kalamdb_commons::models::{ConnectionInfo, TransactionId};
+use kalamdb_backend::{
+    manager::{BackendSessionError, BackendSessionManager},
+    session::BackendAuth,
+};
+#[cfg(feature = "server")]
+use kalamdb_commons::models::{ConnectionInfo, Role, SessionOrigin, TransactionId, UserId};
 #[cfg(feature = "server")]
 use tonic::Request;
 use tonic::{codegen::*, Response, Status};
@@ -879,6 +884,7 @@ pub struct KalamPgService {
     /// Optional bearer-token validation path for DBA/system PG bridge accounts.
     bearer_user_repo: Option<Arc<dyn UserRepository>>,
     session_registry: Arc<SessionRegistry>,
+    backend_session_manager: Option<Arc<BackendSessionManager>>,
     operation_executor: Option<Arc<dyn OperationExecutor>>,
 }
 
@@ -900,6 +906,7 @@ impl Default for KalamPgService {
             expected_auth_header: None,
             bearer_user_repo: None,
             session_registry: Arc::new(SessionRegistry::default()),
+            backend_session_manager: None,
             operation_executor: None,
         }
     }
@@ -917,6 +924,7 @@ impl KalamPgService {
             expected_auth_header,
             bearer_user_repo: None,
             session_registry: Arc::new(SessionRegistry::default()),
+            backend_session_manager: None,
             operation_executor: None,
         }
     }
@@ -941,6 +949,11 @@ impl KalamPgService {
     pub fn with_operation_executor(mut self, executor: Arc<dyn OperationExecutor>) -> Self {
         self.operation_executor = Some(executor);
         self.warn_if_unauthenticated();
+        self
+    }
+
+    pub fn with_backend_session_manager(mut self, manager: Arc<BackendSessionManager>) -> Self {
+        self.backend_session_manager = Some(manager);
         self
     }
 
@@ -1094,6 +1107,204 @@ impl KalamPgService {
         Arc::clone(&self.session_registry)
     }
 
+    fn backend_auth_from_bridge(&self, bridge_auth: &BridgeAuth) -> Result<BackendAuth, Status> {
+        let user_id = UserId::try_new(bridge_auth.user_id.clone())
+            .map_err(|error| Status::unauthenticated(error.to_string()))?;
+        Ok(BackendAuth::new(
+            user_id,
+            Role::from(bridge_auth.role.as_str()),
+            bridge_auth.auth_mode.clone(),
+            bridge_auth.lease_expires_at_ms,
+        ))
+    }
+
+    fn map_backend_session_error(error: BackendSessionError) -> Status {
+        match error {
+            BackendSessionError::DuplicateSession { .. }
+            | BackendSessionError::ActiveBlock(_)
+            | BackendSessionError::FailedBlock(_)
+            | BackendSessionError::InvalidOwnerKey(_) => {
+                Status::failed_precondition(error.to_string())
+            },
+            BackendSessionError::SessionNotFound(_) => Status::not_found(error.to_string()),
+            BackendSessionError::TransactionEngine(_) => {
+                Status::failed_precondition(error.to_string())
+            },
+        }
+    }
+
+    async fn shared_begin_transaction(&self, session_id: &str) -> Result<TransactionId, Status> {
+        let Some(manager) = &self.backend_session_manager else {
+            if let Some(executor) = self.operation_executor.as_deref() {
+                if let Some(stale_transaction) = executor.active_transaction(session_id).await? {
+                    let stale_transaction_id = stale_transaction.transaction_id().clone();
+                    match executor.rollback_transaction(session_id, &stale_transaction_id).await {
+                        Ok(_) => {
+                            self.session_registry.clear_transaction_state_if_matches(
+                                session_id,
+                                Some(&stale_transaction_id),
+                            );
+                        },
+                        Err(status) if Self::is_terminal_transaction_status(&status) => {
+                            self.session_registry.clear_transaction_state_if_matches(
+                                session_id,
+                                Some(&stale_transaction_id),
+                            );
+                        },
+                        Err(status) => return Err(status),
+                    }
+                }
+                return match executor.begin_transaction(session_id).await? {
+                    Some(transaction_id) => self
+                        .session_registry
+                        .pin_transaction(session_id, &transaction_id)
+                        .map_err(Status::failed_precondition),
+                    None => self
+                        .session_registry
+                        .begin_transaction(session_id)
+                        .map_err(Status::failed_precondition),
+                };
+            }
+            return self
+                .session_registry
+                .begin_transaction(session_id)
+                .map_err(Status::failed_precondition);
+        };
+
+        manager.begin_block(session_id).await.map_err(Self::map_backend_session_error)
+    }
+
+    async fn shared_commit_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<TransactionId, Status> {
+        let Some(manager) = &self.backend_session_manager else {
+            if let Some(executor) = self.operation_executor.as_deref() {
+                let finalized_id = executor
+                    .commit_transaction(session_id, transaction_id)
+                    .await
+                    .map_err(|status| {
+                        if Self::is_terminal_transaction_status(&status) {
+                            self.session_registry.clear_transaction_state_if_matches(
+                                session_id,
+                                Some(transaction_id),
+                            );
+                        }
+                        status
+                    })?
+                    .unwrap_or_else(|| transaction_id.clone());
+                self.session_registry
+                    .clear_transaction_state_if_matches(session_id, Some(&finalized_id))
+                    .ok_or_else(|| {
+                        Status::failed_precondition(format!("session '{}' not found", session_id))
+                    })?;
+                return Ok(finalized_id);
+            }
+            return self
+                .session_registry
+                .commit_transaction(session_id, transaction_id)
+                .map_err(Status::failed_precondition);
+        };
+
+        let active_transaction_id = manager
+            .transaction_id(session_id)
+            .map_err(Self::map_backend_session_error)?
+            .ok_or_else(|| {
+                Status::failed_precondition(format!("transaction '{}' not found", transaction_id))
+            })?;
+        if active_transaction_id != *transaction_id {
+            return Err(Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{}', got '{}'",
+                active_transaction_id, transaction_id
+            )));
+        }
+
+        manager
+            .commit_block(session_id)
+            .await
+            .map_err(Self::map_backend_session_error)?;
+        self.session_registry
+            .clear_transaction_state_if_matches(session_id, Some(transaction_id));
+        Ok(transaction_id.clone())
+    }
+
+    async fn shared_rollback_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<TransactionId, Status> {
+        let Some(manager) = &self.backend_session_manager else {
+            if let Some(executor) = self.operation_executor.as_deref() {
+                let finalized_id = executor
+                    .rollback_transaction(session_id, transaction_id)
+                    .await
+                    .map_err(|status| {
+                        if Self::is_terminal_transaction_status(&status) {
+                            self.session_registry.clear_transaction_state_if_matches(
+                                session_id,
+                                Some(transaction_id),
+                            );
+                        }
+                        status
+                    })?
+                    .unwrap_or_else(|| transaction_id.clone());
+                self.session_registry
+                    .clear_transaction_state_if_matches(session_id, Some(&finalized_id))
+                    .ok_or_else(|| {
+                        Status::failed_precondition(format!("session '{}' not found", session_id))
+                    })?;
+                return Ok(finalized_id);
+            }
+            return self
+                .session_registry
+                .rollback_transaction(session_id, transaction_id)
+                .map_err(Status::failed_precondition);
+        };
+
+        let active_transaction_id = manager
+            .transaction_id(session_id)
+            .map_err(Self::map_backend_session_error)?
+            .ok_or_else(|| {
+                Status::failed_precondition(format!("transaction '{}' not found", transaction_id))
+            })?;
+        if active_transaction_id != *transaction_id {
+            return Err(Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{}', got '{}'",
+                active_transaction_id, transaction_id
+            )));
+        }
+
+        manager
+            .rollback_block(session_id)
+            .await
+            .map_err(Self::map_backend_session_error)?;
+        self.session_registry
+            .clear_transaction_state_if_matches(session_id, Some(transaction_id));
+        Ok(transaction_id.clone())
+    }
+
+    fn is_terminal_transaction_status(status: &Status) -> bool {
+        if !matches!(status.code(), tonic::Code::FailedPrecondition | tonic::Code::NotFound) {
+            return false;
+        }
+
+        let message = status.message();
+        message.contains("not found")
+            || message.contains("no active transaction")
+            || message.contains("already committed")
+            || message.contains("already rolled back")
+            || message.contains("timed out and was aborted")
+            || message.contains("timed_out")
+            || message.contains("because it was aborted")
+            || message.contains(" was aborted")
+            || message.contains(" is aborted")
+            || message.contains("while it is committed")
+            || message.contains("while it is committing")
+            || message.contains("while it is rolling_back")
+            || message.contains("while it is rolled_back")
+    }
+
     pub fn snapshot_with_live_transactions<I>(&self, active_transactions: I) -> Vec<RemotePgSession>
     where
         I: IntoIterator<Item = LivePgTransaction>,
@@ -1117,202 +1328,29 @@ impl KalamPgService {
         }
     }
 
-    fn should_reconcile_local_transaction_state(status: &Status) -> bool {
-        if !matches!(status.code(), tonic::Code::FailedPrecondition | tonic::Code::NotFound) {
-            return false;
-        }
-
-        let message = status.message();
-        message.contains("not found")
-            || message.contains("no active transaction")
-            || message.contains("already committed")
-            || message.contains("already rolled back")
-            || message.contains("timed out and was aborted")
-            || message.contains("timed_out")
-            || message.contains("because it was aborted")
-            || message.contains(" was aborted")
-            || message.contains(" is aborted")
-            || message.contains("while it is committed")
-            || message.contains("while it is committing")
-            || message.contains("while it is rolling_back")
-            || message.contains("while it is rolled_back")
-    }
-
-    async fn tracked_transaction_id(&self, session_id: &str) -> Option<TransactionId> {
-        if let Some(executor) = self.operation_executor.as_deref() {
-            match executor.active_transaction(session_id).await {
-                Ok(Some(transaction)) => return Some(transaction.transaction_id().clone()),
-                Ok(None) => {},
-                Err(status) => {
-                    log::debug!(
-                        "PG tracked_transaction_id: authoritative lookup failed for session '{}' \
-                         with {}: {}; falling back to pinned session state",
-                        session_id,
-                        status.code(),
-                        status.message()
-                    );
-                },
-            }
-        }
-
-        self.session_registry
-            .get(session_id)
-            .and_then(|session| session.transaction_id_value().cloned())
-    }
-
-    fn reconcile_local_transaction_state(
-        &self,
-        session_id: &str,
-        transaction_id: &TransactionId,
-        rpc_name: &str,
-        status: &Status,
-    ) {
-        self.session_registry
-            .clear_transaction_state_if_matches(session_id, Some(transaction_id));
-        log::debug!(
-            "PG {}: cleared local transaction bookkeeping for session '{}' tx '{}' after executor \
-             returned {}: {}",
-            rpc_name,
-            session_id,
-            transaction_id,
-            status.code(),
-            status.message()
-        );
-    }
-
-    async fn cleanup_after_terminal_transaction_error(
-        &self,
-        session_id: &str,
-        transaction_id: &TransactionId,
-        rpc_name: &str,
-        status: &Status,
-    ) {
-        if let Some(executor) = self.operation_executor.as_deref() {
-            match executor.rollback_transaction(session_id, transaction_id).await {
-                Ok(_) => {
-                    log::debug!(
-                        "PG {}: finalized terminal transaction cleanup for session '{}' tx '{}' \
-                         via rollback",
-                        rpc_name,
-                        session_id,
-                        transaction_id
-                    );
-                },
-                Err(rollback_status)
-                    if Self::should_reconcile_local_transaction_state(&rollback_status) =>
-                {
-                    log::debug!(
-                        "PG {}: rollback cleanup for session '{}' tx '{}' also returned terminal \
-                         state {}: {}",
-                        rpc_name,
-                        session_id,
-                        transaction_id,
-                        rollback_status.code(),
-                        rollback_status.message()
-                    );
-                },
-                Err(rollback_status) => {
-                    log::warn!(
-                        "PG {}: rollback cleanup for session '{}' tx '{}' failed after terminal \
-                         error {}: {}",
-                        rpc_name,
-                        session_id,
-                        transaction_id,
-                        rollback_status.code(),
-                        rollback_status.message()
-                    );
-                },
-            }
-        }
-
-        self.reconcile_local_transaction_state(session_id, transaction_id, rpc_name, status);
-    }
-
-    async fn cleanup_current_transaction_after_terminal_error(
-        &self,
-        session_id: &str,
-        rpc_name: &str,
-        status: &Status,
-    ) {
-        if let Some(transaction_id) = self.tracked_transaction_id(session_id).await {
-            self.cleanup_after_terminal_transaction_error(
-                session_id,
-                &transaction_id,
-                rpc_name,
-                status,
-            )
-            .await;
-        }
-    }
-
     async fn handle_statement_transaction_result<T>(
         &self,
         session_id: &str,
         rpc_name: &str,
         result: Result<T, Status>,
     ) -> Result<T, Status> {
-        match result {
-            Ok(value) => Ok(value),
-            Err(status) if Self::should_reconcile_local_transaction_state(&status) => {
-                self.cleanup_current_transaction_after_terminal_error(
-                    session_id, rpc_name, &status,
-                )
-                .await;
-                Err(status)
-            },
-            Err(status) => Err(status),
-        }
-    }
-
-    async fn handle_explicit_transaction_result<T>(
-        &self,
-        session_id: &str,
-        transaction_id: &TransactionId,
-        rpc_name: &str,
-        result: Result<T, Status>,
-    ) -> Result<T, Status> {
-        match result {
-            Ok(value) => Ok(value),
-            Err(status) if Self::should_reconcile_local_transaction_state(&status) => {
-                self.cleanup_after_terminal_transaction_error(
-                    session_id,
-                    transaction_id,
+        if let Err(status) = &result {
+            if let Some(manager) = &self.backend_session_manager {
+                if Self::is_terminal_transaction_status(status) {
+                    let _ = manager.rollback_block(session_id).await;
+                } else if status.code() == tonic::Code::FailedPrecondition {
+                    let _ = manager.mark_statement_failed(session_id);
+                }
+                log::debug!(
+                    "PG {}: updated backend session '{}' after statement error {}: {}",
                     rpc_name,
-                    &status,
-                )
-                .await;
-                Err(status)
-            },
-            Err(status) => Err(status),
+                    session_id,
+                    status.code(),
+                    status.message()
+                );
+            }
         }
-    }
-
-    /// Finalize an explicit commit/rollback that was already driven through the
-    /// executor (if one is configured). Reconciles the registry bookkeeping and
-    /// returns the finalized transaction id the RPC should echo back.
-    async fn finalize_explicit_transaction_with_executor(
-        &self,
-        session_id: &str,
-        transaction_id: &TransactionId,
-        rpc_name: &'static str,
-        executor_result: Result<Option<TransactionId>, Status>,
-    ) -> Result<TransactionId, Status> {
-        let finalized_id = self
-            .handle_explicit_transaction_result(
-                session_id,
-                transaction_id,
-                rpc_name,
-                executor_result,
-            )
-            .await?
-            .unwrap_or_else(|| transaction_id.clone());
-
-        self.session_registry
-            .clear_transaction_state_if_matches(session_id, Some(&finalized_id))
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("session '{}' not found", session_id))
-            })?;
-        Ok(finalized_id)
+        result
     }
 
     fn record_session_activity<T>(
@@ -1397,8 +1435,25 @@ impl PgService for KalamPgService {
             Some(request.session_id.as_str()),
             current_schema,
             remote_addr.as_deref(),
-            bridge_auth,
+            bridge_auth.clone(),
         );
+        if let Some(manager) = &self.backend_session_manager {
+            if matches!(manager.transaction_id(session.session_id()), Ok(Some(_))) {
+                manager
+                    .close_session(session.session_id())
+                    .await
+                    .map_err(Self::map_backend_session_error)?;
+            }
+            manager
+                .open_session(
+                    SessionOrigin::ExtensionBridge,
+                    session.session_id().to_string(),
+                    self.backend_auth_from_bridge(&bridge_auth)?,
+                    session.current_schema().map(ToOwned::to_owned),
+                    remote_addr,
+                )
+                .map_err(Self::map_backend_session_error)?;
+        }
 
         Ok(Response::new(OpenSessionResponse {
             session_id: session.session_id().to_string(),
@@ -1418,29 +1473,22 @@ impl PgService for KalamPgService {
         }
 
         // Allow close even for expired sessions so cleanup always works.
-        if let Some(transaction_id) = self.tracked_transaction_id(session_id).await {
-            if let Some(executor) = self.operation_executor.as_deref() {
-                match executor.rollback_transaction(session_id, &transaction_id).await {
-                    Ok(_) => {},
-                    Err(status) if Self::should_reconcile_local_transaction_state(&status) => {
-                        self.reconcile_local_transaction_state(
-                            session_id,
-                            &transaction_id,
-                            "close_session",
-                            &status,
-                        );
-                    },
-                    Err(status) => {
-                        log::warn!(
-                            "PG close_session: proceeding after remote rollback error for session \
-                             '{}' tx '{}': {}",
-                            session_id,
-                            transaction_id,
-                            status
-                        );
-                    },
-                }
+        if let Some(manager) = &self.backend_session_manager {
+            match manager.close_session(session_id).await {
+                Ok(()) | Err(BackendSessionError::SessionNotFound(_)) => {},
+                Err(error) => return Err(Self::map_backend_session_error(error)),
             }
+        } else if let Some(executor) = self.operation_executor.as_deref() {
+            if let Some(transaction) = executor.active_transaction(session_id).await? {
+                let _ =
+                    executor.rollback_transaction(session_id, transaction.transaction_id()).await;
+            }
+        } else if let Some(transaction_id) = self
+            .session_registry
+            .get(session_id)
+            .and_then(|session| session.transaction_id_value().cloned())
+        {
+            let _ = self.session_registry.rollback_transaction(session_id, &transaction_id);
         }
 
         self.session_registry.close_session(session_id);
@@ -1477,7 +1525,7 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Insert", &request);
-        if self.operation_executor.is_none() {
+        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
             self.session_registry.mark_transaction_writes(session_id.as_str());
         }
         let inner = request.into_inner();
@@ -1507,7 +1555,7 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Update", &request);
-        if self.operation_executor.is_none() {
+        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
             self.session_registry.mark_transaction_writes(session_id.as_str());
         }
         let inner = request.into_inner();
@@ -1532,7 +1580,7 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Delete", &request);
-        if self.operation_executor.is_none() {
+        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
             self.session_registry.mark_transaction_writes(session_id.as_str());
         }
         let inner = request.into_inner();
@@ -1567,48 +1615,7 @@ impl PgService for KalamPgService {
             Some("BeginTransaction"),
         );
 
-        if let Some(stale_transaction_id) = self.tracked_transaction_id(session_id).await {
-            log::warn!(
-                "PG begin_transaction: auto-rolling back stale transaction '{}' for session '{}'",
-                stale_transaction_id,
-                session_id
-            );
-
-            if let Some(executor) = self.operation_executor.as_deref() {
-                match executor.rollback_transaction(session_id, &stale_transaction_id).await {
-                    Ok(_) => {},
-                    Err(status) if Self::should_reconcile_local_transaction_state(&status) => {
-                        self.reconcile_local_transaction_state(
-                            session_id,
-                            &stale_transaction_id,
-                            "begin_transaction",
-                            &status,
-                        );
-                    },
-                    Err(status) => return Err(status),
-                }
-            }
-
-            self.session_registry
-                .clear_transaction_state_if_matches(session_id, Some(&stale_transaction_id));
-        }
-
-        let transaction_id = if let Some(executor) = self.operation_executor.as_deref() {
-            match executor.begin_transaction(session_id).await? {
-                Some(transaction_id) => self
-                    .session_registry
-                    .pin_transaction(session_id, &transaction_id)
-                    .map_err(Status::failed_precondition)?,
-                None => self
-                    .session_registry
-                    .begin_transaction(session_id)
-                    .map_err(Status::failed_precondition)?,
-            }
-        } else {
-            self.session_registry
-                .begin_transaction(session_id)
-                .map_err(Status::failed_precondition)?
-        };
+        let transaction_id = self.shared_begin_transaction(session_id).await?;
 
         log::debug!("PG begin_transaction: session={} tx={}", session_id, transaction_id);
 
@@ -1639,20 +1646,7 @@ impl PgService for KalamPgService {
             Some("CommitTransaction"),
         );
 
-        let committed_id = if let Some(executor) = self.operation_executor.as_deref() {
-            let executor_result = executor.commit_transaction(session_id, &transaction_id).await;
-            self.finalize_explicit_transaction_with_executor(
-                session_id,
-                &transaction_id,
-                "commit_transaction",
-                executor_result,
-            )
-            .await?
-        } else {
-            self.session_registry
-                .commit_transaction(session_id, &transaction_id)
-                .map_err(Status::failed_precondition)?
-        };
+        let committed_id = self.shared_commit_transaction(session_id, &transaction_id).await?;
 
         log::debug!("PG commit_transaction: session={} tx={}", session_id, committed_id);
 
@@ -1680,20 +1674,7 @@ impl PgService for KalamPgService {
             Some("RollbackTransaction"),
         );
 
-        let rolled_back_id = if let Some(executor) = self.operation_executor.as_deref() {
-            let executor_result = executor.rollback_transaction(session_id, &transaction_id).await;
-            self.finalize_explicit_transaction_with_executor(
-                session_id,
-                &transaction_id,
-                "rollback_transaction",
-                executor_result,
-            )
-            .await?
-        } else {
-            self.session_registry
-                .rollback_transaction(session_id, &transaction_id)
-                .map_err(Status::failed_precondition)?
-        };
+        let rolled_back_id = self.shared_rollback_transaction(session_id, &transaction_id).await?;
 
         log::debug!("PG rollback_transaction: session={} tx={}", session_id, rolled_back_id);
 

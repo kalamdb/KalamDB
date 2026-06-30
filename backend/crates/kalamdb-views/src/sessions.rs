@@ -2,8 +2,8 @@
 //!
 //! **Type**: Virtual View (not backed by persistent storage)
 //!
-//! Provides the current set of active PostgreSQL gRPC sessions tracked by the
-//! server-side pg session registry.
+//! Provides the current set of active connection sessions tracked by the
+//! shared backend session manager.
 
 use std::sync::{Arc, OnceLock};
 
@@ -21,11 +21,15 @@ use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
 
-/// Serializable snapshot of a live PostgreSQL gRPC session.
+/// Serializable snapshot of a live connection session.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PgSessionSnapshot {
+pub struct ConnectionSessionSnapshot {
     pub session_id: String,
+    pub origin: String,
+    pub backend_pid: Option<i64>,
+    pub authenticated_user_id: Option<String>,
     pub current_schema: Option<String>,
+    pub state: String,
     pub transaction_id: Option<String>,
     pub transaction_state: Option<String>,
     pub transaction_has_writes: bool,
@@ -36,7 +40,7 @@ pub struct PgSessionSnapshot {
 }
 
 /// Active-session snapshot callback type.
-pub type SessionsSnapshotCallback = Arc<dyn Fn() -> Vec<PgSessionSnapshot> + Send + Sync>;
+pub type SessionsSnapshotCallback = Arc<dyn Fn() -> Vec<ConnectionSessionSnapshot> + Send + Sync>;
 
 fn sessions_schema() -> SchemaRef {
     static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -49,21 +53,7 @@ fn sessions_schema() -> SchemaRef {
         .clone()
 }
 
-fn parse_backend_pid(session_id: &str) -> Option<i64> {
-    session_id
-        .strip_prefix("pg-")
-        .and_then(|value| value.split('-').next())
-        .and_then(|value| value.parse::<i64>().ok())
-}
-
-fn derive_state(snapshot: &PgSessionSnapshot) -> &'static str {
-    match snapshot.transaction_state.as_deref() {
-        Some("active") => "idle in transaction",
-        _ => "idle",
-    }
-}
-
-/// Virtual view that snapshots active PostgreSQL gRPC sessions from memory.
+/// Virtual view that snapshots active connection sessions from memory.
 pub struct SessionsView {
     snapshot_callback: Arc<RwLock<Option<SessionsSnapshotCallback>>>,
 }
@@ -102,8 +92,19 @@ impl SessionsView {
             ),
             ColumnDefinition::new(
                 2,
-                "backend_pid",
+                "origin",
                 2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Connection entry point that opened this session".to_string()),
+            ),
+            ColumnDefinition::new(
+                3,
+                "backend_pid",
+                3,
                 KalamDataType::BigInt,
                 true,
                 false,
@@ -116,20 +117,31 @@ impl SessionsView {
                 ),
             ),
             ColumnDefinition::new(
-                3,
-                "current_schema",
-                3,
+                4,
+                "authenticated_user_id",
+                4,
                 KalamDataType::Text,
                 true,
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current schema reported by the pg extension session".to_string()),
+                Some("Authenticated KalamDB user id for this connection session".to_string()),
             ),
             ColumnDefinition::new(
-                4,
+                5,
+                "current_schema",
+                5,
+                KalamDataType::Text,
+                true,
+                false,
+                false,
+                ColumnDefault::None,
+                Some("Current schema reported by the connection session".to_string()),
+            ),
+            ColumnDefinition::new(
+                6,
                 "state",
-                4,
+                6,
                 KalamDataType::Text,
                 false,
                 false,
@@ -138,9 +150,9 @@ impl SessionsView {
                 Some("Session state similar to pg_stat_activity semantics".to_string()),
             ),
             ColumnDefinition::new(
-                5,
+                7,
                 "transaction_id",
-                5,
+                7,
                 KalamDataType::Text,
                 true,
                 false,
@@ -149,9 +161,9 @@ impl SessionsView {
                 Some("Active remote transaction identifier, if any".to_string()),
             ),
             ColumnDefinition::new(
-                6,
+                8,
                 "transaction_state",
-                6,
+                8,
                 KalamDataType::Text,
                 true,
                 false,
@@ -160,9 +172,9 @@ impl SessionsView {
                 Some("Current remote transaction lifecycle state".to_string()),
             ),
             ColumnDefinition::new(
-                7,
+                9,
                 "transaction_has_writes",
-                7,
+                9,
                 KalamDataType::Boolean,
                 false,
                 false,
@@ -171,9 +183,9 @@ impl SessionsView {
                 Some("Whether the active transaction has performed writes".to_string()),
             ),
             ColumnDefinition::new(
-                8,
+                10,
                 "client_addr",
-                8,
+                10,
                 KalamDataType::Text,
                 true,
                 false,
@@ -182,9 +194,9 @@ impl SessionsView {
                 Some("Observed client socket address for the gRPC session".to_string()),
             ),
             ColumnDefinition::new(
-                9,
+                11,
                 "transport",
-                9,
+                11,
                 KalamDataType::Text,
                 false,
                 false,
@@ -193,9 +205,9 @@ impl SessionsView {
                 Some("Transport used by the session".to_string()),
             ),
             ColumnDefinition::new(
-                10,
+                12,
                 "opened_at",
-                10,
+                12,
                 KalamDataType::Timestamp,
                 false,
                 false,
@@ -204,9 +216,9 @@ impl SessionsView {
                 Some("When the server first observed this session".to_string()),
             ),
             ColumnDefinition::new(
-                11,
+                13,
                 "last_seen_at",
-                11,
+                13,
                 KalamDataType::Timestamp,
                 false,
                 false,
@@ -215,9 +227,9 @@ impl SessionsView {
                 Some("Most recent RPC activity timestamp for this session".to_string()),
             ),
             ColumnDefinition::new(
-                12,
+                14,
                 "last_method",
-                12,
+                14,
                 KalamDataType::Text,
                 true,
                 false,
@@ -233,7 +245,7 @@ impl SessionsView {
             TableType::System,
             columns,
             TableOptions::system(),
-            Some("Active PostgreSQL gRPC sessions tracked by the pg extension bridge".to_string()),
+            Some("Active connection sessions tracked by KalamDB".to_string()),
         )
         .expect("Failed to create system.sessions view definition")
     }
@@ -264,7 +276,9 @@ impl VirtualView for SessionsView {
         });
 
         let mut session_ids = StringBuilder::new();
+        let mut origins = StringBuilder::new();
         let mut backend_pids = Int64Builder::new();
+        let mut authenticated_user_ids = StringBuilder::new();
         let mut current_schemas = StringBuilder::new();
         let mut states = StringBuilder::new();
         let mut transaction_ids = StringBuilder::new();
@@ -278,11 +292,18 @@ impl VirtualView for SessionsView {
 
         for session in snapshot {
             session_ids.append_value(&session.session_id);
+            origins.append_value(&session.origin);
 
-            if let Some(backend_pid) = parse_backend_pid(&session.session_id) {
+            if let Some(backend_pid) = session.backend_pid {
                 backend_pids.append_value(backend_pid);
             } else {
                 backend_pids.append_null();
+            }
+
+            if let Some(authenticated_user_id) = session.authenticated_user_id.as_deref() {
+                authenticated_user_ids.append_value(authenticated_user_id);
+            } else {
+                authenticated_user_ids.append_null();
             }
 
             if let Some(current_schema) = session.current_schema.as_deref() {
@@ -291,7 +312,7 @@ impl VirtualView for SessionsView {
                 current_schemas.append_null();
             }
 
-            states.append_value(derive_state(&session));
+            states.append_value(&session.state);
 
             if let Some(transaction_id) = session.transaction_id.as_deref() {
                 transaction_ids.append_value(transaction_id);
@@ -313,7 +334,7 @@ impl VirtualView for SessionsView {
                 client_addrs.append_null();
             }
 
-            transports.append_value("grpc");
+            transports.append_value(&session.origin);
             opened_ats.append_value(session.opened_at_ms * 1000);
             last_seen_ats.append_value(session.last_seen_at_ms * 1000);
 
@@ -328,7 +349,9 @@ impl VirtualView for SessionsView {
             self.schema(),
             vec![
                 Arc::new(session_ids.finish()) as ArrayRef,
+                Arc::new(origins.finish()) as ArrayRef,
                 Arc::new(backend_pids.finish()) as ArrayRef,
+                Arc::new(authenticated_user_ids.finish()) as ArrayRef,
                 Arc::new(current_schemas.finish()) as ArrayRef,
                 Arc::new(states.finish()) as ArrayRef,
                 Arc::new(transaction_ids.finish()) as ArrayRef,
@@ -360,16 +383,20 @@ mod tests {
     fn sessions_view_definition_has_expected_name() {
         let definition = SessionsView::definition();
         assert_eq!(definition.table_name.as_str(), "sessions");
-        assert_eq!(definition.columns.len(), 12);
+        assert_eq!(definition.columns.len(), 14);
     }
 
     #[test]
     fn sessions_view_compute_batch_uses_snapshot_callback() {
         let view = SessionsView::new();
         let callback: SessionsSnapshotCallback = Arc::new(|| {
-            vec![PgSessionSnapshot {
+            vec![ConnectionSessionSnapshot {
                 session_id: "pg-321-deadbeef".to_string(),
+                origin: "extension_bridge".to_string(),
+                backend_pid: Some(321),
+                authenticated_user_id: Some("bridge-user".to_string()),
                 current_schema: Some("app".to_string()),
+                state: "idle in transaction".to_string(),
                 transaction_id: Some("tx-pg-321-0".to_string()),
                 transaction_state: Some("active".to_string()),
                 transaction_has_writes: true,
@@ -383,12 +410,6 @@ mod tests {
 
         let batch = view.compute_batch().expect("compute batch");
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 12);
-    }
-
-    #[test]
-    fn parse_backend_pid_accepts_config_scoped_session_ids() {
-        assert_eq!(parse_backend_pid("pg-321-deadbeef"), Some(321));
-        assert_eq!(parse_backend_pid("pg-321"), Some(321));
+        assert_eq!(batch.num_columns(), 14);
     }
 }

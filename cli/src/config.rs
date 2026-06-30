@@ -269,10 +269,11 @@ impl CLIConfiguration {
     /// diagnostic commands that should report configuration state without changing it.
     pub fn load_existing(path: &Path) -> Result<Option<Self>> {
         let expanded_path = expand_config_path(path);
-        let Some(contents) = fs_atomic::read_to_string_if_exists(&expanded_path, FileReadPolicy::LocalSecrets)
-            .map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
-            })?
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(&expanded_path, FileReadPolicy::LocalSecrets)
+                .map_err(|e| {
+                    CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
+                })?
         else {
             return Ok(None);
         };
@@ -288,10 +289,10 @@ impl CLIConfiguration {
         let expanded_path = expand_config_path(path);
         let path = &expanded_path;
 
-        let Some(contents) = fs_atomic::read_to_string_if_exists(path, FileReadPolicy::LocalSecrets)
-            .map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
-            })?
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(path, FileReadPolicy::LocalSecrets).map_err(
+                |e| CLIError::ConfigurationError(format!("Failed to read config file: {}", e)),
+            )?
         else {
             let default_config = Self::default();
             if let Err(e) = default_config.save(path) {

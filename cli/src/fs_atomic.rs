@@ -28,7 +28,9 @@ pub struct FileWriteOptions {
 
 impl FileWriteOptions {
     pub const DEFAULT: Self = Self { unix_mode: None };
-    pub const SECRET_FILE: Self = Self { unix_mode: Some(0o600) };
+    pub const SECRET_FILE: Self = Self {
+        unix_mode: Some(0o600),
+    };
 }
 
 /// Read a UTF-8 file, returning `Ok(None)` when the path does not exist.
@@ -59,10 +61,7 @@ pub fn read_bytes(path: &Path, policy: FileReadPolicy) -> io::Result<Vec<u8>> {
     {
         use std::os::unix::fs::OpenOptionsExt;
 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)?;
+        let mut file = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)?;
         let mut contents = Vec::new();
         file.read_to_end(&mut contents)?;
         return Ok(contents);
@@ -88,7 +87,7 @@ pub fn write_atomic(path: &Path, contents: &[u8], options: FileWriteOptions) -> 
         Err(error) => {
             let _ = fs::remove_file(&staging_path);
             Err(error)
-        }
+        },
     }
 }
 
@@ -104,11 +103,7 @@ fn write_staging_file(path: &Path, contents: &[u8], options: FileWriteOptions) -
         use std::os::unix::fs::OpenOptionsExt;
 
         let mode = options.unix_mode.unwrap_or(0o644);
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(mode)
-            .open(path)?;
+        let mut file = OpenOptions::new().write(true).create_new(true).mode(mode).open(path)?;
         file.write_all(contents)?;
         file.sync_all()?;
         return Ok(());
@@ -158,7 +153,8 @@ mod tests {
     fn read_to_string_if_exists_returns_none_for_missing_file() {
         let temp = TempDir::new().expect("tempdir");
         let missing = temp.path().join("missing.txt");
-        let contents = read_to_string_if_exists(&missing, FileReadPolicy::LocalSecrets).expect("read");
+        let contents =
+            read_to_string_if_exists(&missing, FileReadPolicy::LocalSecrets).expect("read");
         assert!(contents.is_none());
     }
 

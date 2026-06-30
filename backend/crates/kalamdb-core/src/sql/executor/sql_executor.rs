@@ -142,19 +142,17 @@ impl SqlExecutor {
             }
         }
 
-        let dialect = sqlparser::dialect::GenericDialect {};
-        let parsed_statements = kalamdb_sql::parser::utils::parse_sql_statements(sql, &dialect)
-            .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
-        if parsed_statements.len() != 1 {
-            return Ok(None);
-        }
+        let parsed_statement = match metadata.parsed_dml.as_ref() {
+            Some(statement) => statement,
+            None => return Ok(None),
+        };
 
         // ON CONFLICT must be handled before the active-transaction bail-out below.
-        if let Statement::Insert(insert) = &parsed_statements[0] {
+        if let Statement::Insert(insert) = parsed_statement {
             if kalamdb_sql::insert_has_on_conflict(insert) {
                 if let Some(on_conflict_rows) =
                     super::transaction_batch_insert::try_build_literal_on_conflict_update_rows(
-                        &parsed_statements[0],
+                        parsed_statement,
                         self.app_context.as_ref(),
                         self.sql_cache_registry.as_ref(),
                         exec_ctx,
@@ -177,7 +175,7 @@ impl SqlExecutor {
         }
 
         let Some(insert_rows) = super::transaction_batch_insert::try_build_literal_insert_rows(
-            &parsed_statements[0],
+            parsed_statement,
             self.app_context.as_ref(),
             self.sql_cache_registry.as_ref(),
             exec_ctx,
@@ -642,18 +640,6 @@ impl SqlExecutor {
             .is_some()
     }
 
-    fn parse_single_statement(sql: &str) -> Result<Statement, KalamDbError> {
-        let dialect = sqlparser::dialect::GenericDialect {};
-        let mut statements = kalamdb_sql::parser::utils::parse_sql_statements(sql, &dialect)
-            .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
-        if statements.len() != 1 {
-            return Err(KalamDbError::InvalidSql(
-                "Expected exactly one system.migrations statement".to_string(),
-            ));
-        }
-        Ok(statements.remove(0))
-    }
-
     fn object_name_parts(name: &ObjectName) -> Option<Vec<&str>> {
         name.0
             .iter()
@@ -876,7 +862,6 @@ impl SqlExecutor {
 
     async fn try_execute_system_migrations_dml(
         &self,
-        sql: &str,
         metadata: &PreparedExecutionStatement,
         dml_kind: DmlKind,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
@@ -886,7 +871,11 @@ impl SqlExecutor {
 
         match dml_kind {
             DmlKind::Insert => {
-                let statement = Self::parse_single_statement(sql)?;
+                let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidSql(
+                        "Missing prepared DML metadata for system.migrations INSERT".to_string(),
+                    )
+                })?;
                 let Statement::Insert(insert) = statement else {
                     return Ok(None);
                 };
@@ -952,7 +941,11 @@ impl SqlExecutor {
                 Ok(Some(ExecutionResult::Inserted { rows_affected: 1 }))
             },
             DmlKind::Update => {
-                let statement = Self::parse_single_statement(sql)?;
+                let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidSql(
+                        "Missing prepared DML metadata for system.migrations UPDATE".to_string(),
+                    )
+                })?;
                 let Statement::Update(update) = statement else {
                     return Ok(None);
                 };
@@ -1184,7 +1177,11 @@ impl SqlExecutor {
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<TransactionQueryContext>, KalamDbError> {
-        let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
+        let transaction_id = match exec_ctx.transaction_id().cloned() {
+            Some(transaction_id) => Some(transaction_id),
+            None => self.active_request_transaction_id(exec_ctx)?,
+        };
+        let Some(transaction_id) = transaction_id else {
             return Ok(None);
         };
 
@@ -1376,25 +1373,12 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
         transaction_id: &TransactionId,
     ) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
-        let batch_sql_len = statements.iter().map(|statement| statement.sql.len()).sum::<usize>()
-            + statements.len().saturating_sub(1) * 2;
-        let mut batch_sql = String::with_capacity(batch_sql_len);
-        for (idx, statement) in statements.iter().enumerate() {
-            if idx > 0 {
-                batch_sql.push_str("; ");
-            }
-            batch_sql.push_str(statement.sql.as_str());
-        }
-        let dialect = sqlparser::dialect::GenericDialect {};
-        let parsed_stmts_storage =
-            kalamdb_sql::parser::utils::parse_sql_statements(&batch_sql, &dialect)
-                .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
-
-        if parsed_stmts_storage.len() != statements.len() {
-            return Ok(None);
-        }
-
-        let parsed_stmts: Vec<&sqlparser::ast::Statement> = parsed_stmts_storage.iter().collect();
+        let parsed_stmts: Option<Vec<&sqlparser::ast::Statement>> =
+            statements.iter().map(|statement| statement.parsed_dml.as_ref()).collect();
+        let parsed_stmts = match parsed_stmts {
+            Some(stmts) => stmts,
+            None => return Ok(None),
+        };
 
         let table_id = match statements[0].table_id.as_ref() {
             Some(id) => id,
@@ -1424,10 +1408,27 @@ impl SqlExecutor {
         sql: &str,
         exec_ctx: &ExecutionContext,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
-        self.prepare_statement_metadata_for_role(
+        self.prepare_statement_metadata_for_role_with_options(
             sql,
             &exec_ctx.default_namespace(),
             exec_ctx.user_role(),
+            true,
+        )
+    }
+
+    /// Classify SQL and resolve DML table metadata without retaining a sqlparser AST.
+    ///
+    /// Used for FILE() placeholder SQL that will be fully prepared again after substitution.
+    pub fn prepare_statement_metadata_light(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        self.prepare_statement_metadata_for_role_with_options(
+            sql,
+            &exec_ctx.default_namespace(),
+            exec_ctx.user_role(),
+            false,
         )
     }
 
@@ -1437,15 +1438,21 @@ impl SqlExecutor {
         default_namespace: &NamespaceId,
         role: Role,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        self.prepare_statement_metadata_for_role_with_options(sql, default_namespace, role, true)
+    }
+
+    fn prepare_statement_metadata_for_role_with_options(
+        &self,
+        sql: &str,
+        default_namespace: &NamespaceId,
+        role: Role,
+        include_dml_ast: bool,
+    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         let classified = SqlStatement::classify_and_parse(sql, default_namespace, role)?;
-        let table_id = match classified.kind() {
-            SqlStatementKind::Insert(_)
-            | SqlStatementKind::Update(_)
-            | SqlStatementKind::Delete(_) => {
-                kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace.as_str())
-                    .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace.as_str()))
-            },
-            _ => None,
+        let (table_id, parsed_dml) = if include_dml_ast {
+            Self::parse_dml_metadata(sql, classified.kind(), default_namespace.as_str())?
+        } else {
+            Self::extract_dml_table_id_only(sql, classified.kind(), default_namespace.as_str())
         };
         let table_type = table_id.as_ref().and_then(|table_id| {
             self.app_context
@@ -1454,12 +1461,65 @@ impl SqlExecutor {
                 .map(|cached| cached.table_entry().table_type)
         });
 
+        let track_slow_query = classified.is_slow_query_trackable();
+
         Ok(PreparedExecutionStatement::new(
             sql.to_string(),
             table_id,
             table_type,
             Some(classified),
+            track_slow_query,
+            parsed_dml,
         ))
+    }
+
+    fn parse_dml_metadata(
+        sql: &str,
+        kind: &SqlStatementKind,
+        default_namespace: &str,
+    ) -> Result<(Option<TableId>, Option<Statement>), StatementClassificationError> {
+        match kind {
+            SqlStatementKind::Insert(_)
+            | SqlStatementKind::Update(_)
+            | SqlStatementKind::Delete(_) => {
+                let dialect = sqlparser::dialect::GenericDialect {};
+                let mut statements = kalamdb_sql::parser::utils::parse_sql_statements(
+                    sql, &dialect,
+                )
+                .map_err(|error| StatementClassificationError::InvalidSql {
+                    sql: sql.to_string(),
+                    message: error.to_string(),
+                })?;
+                if statements.len() != 1 {
+                    return Err(StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message: "Expected exactly one SQL statement".to_string(),
+                    });
+                }
+                let statement = statements.remove(0);
+                let table_id =
+                    kalamdb_sql::extract_dml_table_id_from_statement(&statement, default_namespace);
+                Ok((table_id, Some(statement)))
+            },
+            _ => Ok((None, None)),
+        }
+    }
+
+    fn extract_dml_table_id_only(
+        sql: &str,
+        kind: &SqlStatementKind,
+        default_namespace: &str,
+    ) -> (Option<TableId>, Option<Statement>) {
+        let table_id = match kind {
+            SqlStatementKind::Insert(_)
+            | SqlStatementKind::Update(_)
+            | SqlStatementKind::Delete(_) => {
+                kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
+                    .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
+            },
+            _ => None,
+        };
+        (table_id, None)
     }
 
     /// Execute a statement without request metadata.
@@ -1872,8 +1932,7 @@ impl SqlExecutor {
             ));
         }
         if params.is_empty() {
-            if let Some(result) =
-                self.try_execute_system_migrations_dml(sql, metadata, dml_kind).await?
+            if let Some(result) = self.try_execute_system_migrations_dml(metadata, dml_kind).await?
             {
                 return Ok(result);
             }

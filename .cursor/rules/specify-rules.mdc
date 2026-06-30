@@ -12,8 +12,9 @@ shell commands, and other important information, read `specs/033-unified-backend
 - Wire txs: **`BackendSessionManager` block API** (same as gRPC `BeginTransaction`/`Commit`); wire SQL data path: **`SqlExecutor`**; HTTP batch txs: **`RequestTransactionBatchGuard`** only
 - Existing stack — `tokio`, `tonic`, `dashmap`, `datafusion` 54.x, `kalamdb-transactions`, `kalamdb-api`, `kalamdb-views`; **`pgwire`** workspace-pinned in `kalamdb-postgres-wire` only
 - No `arrow-pg` in wire MVP — `row_encoder.rs` uses existing `ExecutionResult`/`RecordBatch`; optional encoder spike later
+- Client catalog: **`pg_catalog` shim views** project from `system.*` (US9); not aliases; enable via `postgres_wire.client_catalog.enabled`
 - Stability-first migration: preserve 027 behavior; regression gates per `specs/033-unified-backend-pgwire/quickstart.md`
 - Connection sessions expose `origin` in `system.sessions`: `extension_bridge` | `wire_protocol`
 
 ## Recent Changes
-- 033-unified-backend-pgwire: Plan pivoted to direct `pgwire` after DF53 spike; wire tx control mirrors gRPC manager path, not HTTP SqlExecutor BEGIN
+- 033-unified-backend-pgwire: Direct `pgwire`; gRPC-style tx control via `BackendSessionManager`; US9 client catalog shims project from `system.*`

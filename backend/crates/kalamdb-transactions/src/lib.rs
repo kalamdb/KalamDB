@@ -8,6 +8,7 @@
 pub mod access;
 pub mod binding;
 pub mod commit_sequence;
+pub mod engine;
 pub mod handle;
 pub mod metrics;
 pub mod overlay;
@@ -22,6 +23,7 @@ pub mod write_set;
 pub use access::{TransactionAccessError, TransactionAccessValidator};
 pub use binding::TransactionRaftBinding;
 pub use commit_sequence::{CommitSequenceSource, CommitSequenceTracker};
+pub use engine::{TransactionEngine, TransactionEngineError, TransactionEngineResult};
 pub use handle::TransactionHandle;
 pub use metrics::ActiveTransactionMetric;
 pub use overlay::{TransactionOverlay, TransactionOverlayEntry};

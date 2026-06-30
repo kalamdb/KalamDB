@@ -14,6 +14,7 @@ server = [
 	"dep:async-trait",
 	"dep:dashmap",
 	"dep:kalamdb-auth",
+	"dep:kalamdb-backend",
 	"dep:kalamdb-commons",
 	"dep:kalamdb-server-auth",
 	"dep:log",
@@ -24,6 +25,7 @@ tls = ["tonic/tls-webpki-roots", "tonic/tls-ring"]
 
 [dependencies]
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false, optional = true }
+kalamdb-backend = { path = "../kalamdb-backend", optional = true }
 kalamdb-commons = { path = "../kalamdb-commons", default-features = false, features = ["rows"], optional = true }
 arrow = { workspace = true, optional = true }
 arrow-ipc = { workspace = true, optional = true }

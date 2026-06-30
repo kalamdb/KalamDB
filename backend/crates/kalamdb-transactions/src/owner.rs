@@ -81,7 +81,7 @@ fn parse_u64_hex(value: &[u8], session_id: &str) -> Result<u64, TransactionOwner
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExecutionOwnerKey {
     PgSession { backend_pid: u32, config_hash: u64 },
-    PgSessionUuid { session_uuid: u128 },
+    BackendSessionUuid { session_uuid: u128 },
     SqlRequest { request_nonce: u64 },
     Internal { source_nonce: u64 },
 }
@@ -98,19 +98,22 @@ impl ExecutionOwnerKey {
     }
 
     #[inline]
+    pub fn backend_session_uuid(session_uuid: Uuid) -> Self {
+        Self::BackendSessionUuid {
+            session_uuid: session_uuid.as_u128(),
+        }
+    }
+
+    #[inline]
     pub fn from_pg_session_id(session_id: &str) -> Result<Self, TransactionOwnerParseError> {
         let bytes = session_id.as_bytes();
         if !bytes.starts_with(b"pg-") {
-            return Uuid::parse_str(session_id)
-                .map(|session_uuid| Self::PgSessionUuid {
-                    session_uuid: session_uuid.as_u128(),
-                })
-                .map_err(|_| {
-                    invalid_pg_session_id(
-                        session_id,
-                        "expected pg-<pid>-<config_hash> or a server-issued UUID handle",
-                    )
-                });
+            return Uuid::parse_str(session_id).map(Self::backend_session_uuid).map_err(|_| {
+                invalid_pg_session_id(
+                    session_id,
+                    "expected pg-<pid>-<config_hash> or a server-issued UUID handle",
+                )
+            });
         }
 
         let rest = &bytes[3..];
@@ -184,7 +187,18 @@ mod tests {
             ExecutionOwnerKey::from_pg_session_id("019dabfa-1538-7c23-8e61-de751d8c1c38").unwrap();
         assert_eq!(
             owner,
-            ExecutionOwnerKey::PgSessionUuid {
+            ExecutionOwnerKey::BackendSessionUuid {
+                session_uuid: 0x019dabfa15387c238e61de751d8c1c38,
+            }
+        );
+    }
+
+    #[test]
+    fn builds_backend_session_uuid_owner_from_uuid() {
+        let uuid = Uuid::parse_str("019dabfa-1538-7c23-8e61-de751d8c1c38").unwrap();
+        assert_eq!(
+            ExecutionOwnerKey::backend_session_uuid(uuid),
+            ExecutionOwnerKey::BackendSessionUuid {
                 session_uuid: 0x019dabfa15387c238e61de751d8c1c38,
             }
         );

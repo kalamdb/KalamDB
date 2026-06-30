@@ -8,14 +8,14 @@
 1. Build server from `/Users/jamal/git/KalamDB/backend`.
 2. Capture **pre-change baseline** (Phase 0): run regression gate tests and save pass list.
 3. For extension scenarios: PostgreSQL with pg_kalam configured (see `specs/027-pg-transactions/quickstart.md`).
-4. For wire scenarios (Phase 5+): enable `postgres_wire` in server config; `psql` available locally. **Use direct `pgwire`** (see `validation/datafusion-postgres-spike.md`).
+4. For wire scenarios (Phase 5+): enable `postgres_wire` in server config; `psql` available locally. **Use direct `pgwire`** (see `validation/datafusion-postgres-spike.md`). For DBeaver browsing (Phase 5b+), also enable `postgres_wire.client_catalog.enabled`.
 
 ## Phase 0: Regression baseline (before any refactor)
 
 ```bash
 cd /Users/jamal/git/KalamDB/backend
 cargo nextest run -p kalamdb-core sql_transaction
-cargo nextest run -p kalamdb-core system_transactions_view
+cargo nextest run -p kalamdb-core -E 'binary(system_transactions_view)'
 cargo nextest run -p kalamdb-pg
 # With server running + pg configured:
 # cd ../pg && cargo test --test e2e_dml
@@ -133,8 +133,32 @@ Run 100 idle wire connections (script or `psql` pool); measure process RSS delta
 
 ---
 
+## Scenario 8: Client catalog validation (Phase 5b)
+
+**Primary gate (automated)**:
+
+```bash
+cd backend
+cargo test --test pgwire_catalog --features e2e-tests
+```
+
+Requires a running server with `[postgres_wire] enabled = true` and `pg_catalog_enabled = true` (test harness will embed this when wire listener lands; until then use env vars documented in `validation/us9-client-catalog.md`).
+
+**Optional manual (DBeaver / psql)**:
+
+1. Connect via PostgreSQL driver.
+2. Browse schemas — KalamDB namespaces the role may access.
+3. Compare browser to `system.tables` / `system.columns` for the same namespace.
+4. (Admin) Compare `pg_catalog.pg_stat_activity` to `system.sessions`.
+
+**Expected (SC-011)**: Wire e2e green; manual browse matches `system.*` for that role.
+
+---
+
 ## Sign-off checklist
 
+- [ ] SC-011 DBeaver/catalog browse matches `system.*`
+- [ ] SC-012 catalog shims project only from existing sources
 - [ ] 027 SQL batch tests green (SC-010)
 - [ ] pg e2e transaction tests green
 - [ ] SC-009 origin labels correct

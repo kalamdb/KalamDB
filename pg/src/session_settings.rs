@@ -13,14 +13,11 @@ impl SessionSettings {
     pub fn parse_user_id_value(raw: &str) -> Result<UserId, KalamPgError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(KalamPgError::Validation(format!(
-                "{USER_ID_GUC} cannot be empty"
-            )));
+            return Err(KalamPgError::Validation(format!("{USER_ID_GUC} cannot be empty")));
         }
 
-        UserId::try_new(trimmed.to_string()).map_err(|error| {
-            KalamPgError::Validation(format!("invalid {USER_ID_GUC}: {error}"))
-        })
+        UserId::try_new(trimmed.to_string())
+            .map_err(|error| KalamPgError::Validation(format!("invalid {USER_ID_GUC}: {error}")))
     }
 
     /// Parse an optional raw GUC value into a validated user id.

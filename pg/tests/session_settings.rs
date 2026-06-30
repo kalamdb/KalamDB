@@ -13,10 +13,7 @@ fn parses_blank_guc_as_missing_user() {
 fn rejects_invalid_kalam_user_id_guc() {
     let err = SessionSettings::from_guc_values(Some("alice;drop"), None)
         .expect_err("invalid kalam.user_id must be rejected");
-    assert!(
-        err.to_string().contains("invalid kalam.user_id"),
-        "unexpected error: {err}"
-    );
+    assert!(err.to_string().contains("invalid kalam.user_id"), "unexpected error: {err}");
 }
 
 #[test]

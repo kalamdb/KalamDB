@@ -5,7 +5,10 @@
 
 use std::{fs::OpenOptions, io::Write, path::Path, sync::Arc};
 
-use kalamdb_commons::models::{TableName, UserId};
+use kalamdb_commons::{
+    helpers::security::redact_sensitive_sql,
+    models::{TableName, UserId},
+};
 use tokio::sync::mpsc;
 
 use crate::schema_registry::TableType;
@@ -105,13 +108,16 @@ impl SlowQueryLogger {
 
     /// Log a query if it exceeds the threshold
     ///
-    /// This method is designed to be extremely lightweight:
+    /// This method is designed to be extremely lightweight on the hot path:
+    /// - Precomputed `track` flag (no SQL inspection)
     /// - Early return if query is fast (no allocation)
+    /// - Redaction and string cloning only when actually logging
     /// - Channel send is non-blocking (O(1) operation)
     /// - Actual I/O happens in background task
     ///
     /// # Arguments
-    /// * `query` - SQL query text
+    /// * `track` - Precomputed flag from `PreparedExecutionStatement::track_slow_query`
+    /// * `query` - SQL query text (borrowed; cloned only when logging)
     /// * `duration_secs` - Query execution time in seconds
     /// * `row_count` - Number of rows returned
     /// * `user_id` - User who executed the query
@@ -119,20 +125,25 @@ impl SlowQueryLogger {
     /// * `table_name` - Optional table name
     pub fn log_if_slow(
         &self,
-        query: String,
+        track: bool,
+        query: &str,
         duration_secs: f64,
         row_count: usize,
         user_id: UserId,
         table_type: TableType,
         table_name: Option<TableName>,
     ) {
-        // Convert duration to milliseconds for comparison
-        let duration_ms = (duration_secs * 1000.0) as u64;
+        if !track {
+            return;
+        }
 
         // Fast path: skip if query is faster than threshold (no allocations)
+        let duration_ms = (duration_secs * 1000.0) as u64;
         if duration_ms < self.threshold_ms {
             return;
         }
+
+        let query = redact_sensitive_sql(query);
 
         // Log to console as warning
         log::warn!(
@@ -177,7 +188,8 @@ mod tests {
 
         // Fast query - should not log
         logger.log_if_slow(
-            "SELECT * FROM fast_table".to_string(),
+            true,
+            "SELECT * FROM fast_table",
             0.5,
             100,
             UserId::new("user1"),
@@ -187,11 +199,23 @@ mod tests {
 
         // Slow query - should log
         logger.log_if_slow(
-            "SELECT * FROM slow_table".to_string(),
+            true,
+            "SELECT * FROM slow_table",
             2.5,
             1000,
             UserId::new("user1"),
             TableType::Shared,
+            None,
+        );
+
+        // Slow DDL - should not log even above threshold
+        logger.log_if_slow(
+            false,
+            "DROP TABLE slow_table",
+            5.0,
+            0,
+            UserId::new("user1"),
+            TableType::User,
             None,
         );
 

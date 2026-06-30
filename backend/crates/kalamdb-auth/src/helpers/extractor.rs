@@ -35,8 +35,6 @@
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
 use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
-use kalamdb_commons::models::ConnectionInfo;
-
 use crate::{
     errors::error::AuthError,
     helpers::ip_extractor::extract_client_ip_secure,

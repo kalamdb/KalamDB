@@ -175,8 +175,10 @@ impl CommandHistory {
 
     /// Load history from file
     pub fn load(&self) -> Result<Vec<String>> {
-        let Some(contents) = fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets)
-            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets).map_err(
+                |e| CLIError::HistoryError(format!("Failed to read history file: {}", e)),
+            )?
         else {
             return Ok(Vec::new());
         };
@@ -195,8 +197,10 @@ impl CommandHistory {
 
     /// Count entries in the history file (without truncation)
     pub fn entry_count(&self) -> Result<usize> {
-        let Some(contents) = fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets)
-            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(&self.path, FileReadPolicy::LocalSecrets).map_err(
+                |e| CLIError::HistoryError(format!("Failed to read history file: {}", e)),
+            )?
         else {
             return Ok(0);
         };

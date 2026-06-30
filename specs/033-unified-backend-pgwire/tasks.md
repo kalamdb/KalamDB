@@ -11,7 +11,7 @@
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel because it touches different files and has no dependency on an incomplete task.
-- **[Story]**: Maps to spec user story (US1-US8).
+- **[Story]**: Maps to spec user story (US1-US9).
 - Every task includes exact file paths or an exact validation artifact path.
 
 ---
@@ -20,7 +20,7 @@
 
 **Purpose**: Capture the zero-diff baseline, add crate shells, and establish shared typed models before behavior changes.
 
-- [ ] T001 Create `specs/033-unified-backend-pgwire/validation/phase0-baseline.md` with the exact Phase 0 commands and pass/fail output from `specs/033-unified-backend-pgwire/quickstart.md`
+- [x] T001 Create `specs/033-unified-backend-pgwire/validation/phase0-baseline.md` with the exact Phase 0 commands and pass/fail output from `specs/033-unified-backend-pgwire/quickstart.md`
 - [x] T002 Register `kalamdb-backend` in the workspace members and dependencies in `backend/Cargo.toml`
 - [x] T003 [P] Create `backend/crates/kalamdb-backend/Cargo.toml` using only workspace dependencies such as `dashmap`, `tokio`, `uuid`, `kalamdb-commons`, and `kalamdb-transactions`
 - [x] T004 [P] Create `backend/crates/kalamdb-backend/src/lib.rs` exporting `session` and `manager` modules
@@ -175,31 +175,66 @@
 ### Implementation for User Story 2
 
 - [x] T068 [US2] Run the DataFusion 54.x and `datafusion-postgres` compatibility spike and record findings in `specs/033-unified-backend-pgwire/validation/datafusion-postgres-spike.md` (**outcome: use direct pgwire**)
-- [ ] T069 [US2] Pin `pgwire` in root `Cargo.toml` `[workspace.dependencies]` and add to `backend/crates/kalamdb-postgres-wire/Cargo.toml` with server API features
+- [x] T069 [US2] Pin `pgwire` in root `Cargo.toml` `[workspace.dependencies]` and add to `backend/crates/kalamdb-postgres-wire/Cargo.toml` with server API features
+- [x] T070 [US2] Record selected `pgwire` version, enabled feature flags, and API notes in `specs/033-unified-backend-pgwire/validation/pgwire-api-notes.md`
 - [x] T071 [US2] Add `PostgresWireConfig` with `enabled`, host, port, TLS, and optional pg_catalog fields in `backend/crates/kalamdb-configs/src/config/types.rs`
 - [x] T072 [US2] Add config defaults and TOML coverage for `postgres_wire` in `backend/crates/kalamdb-configs/src/config/defaults.rs`
 - [x] T073 [US2] Add `postgres_wire` example config with default `enabled = false` in `backend/server.example.toml`
 - [x] T074 [US2] Add startup port validation for the PostgreSQL wire listener in `backend/src/main.rs`
-- [ ] T075 [US2] Implement `pgwire` startup handler (password auth → existing `handlers.rs` → `BackendSessionManager::open_session`) in `backend/crates/kalamdb-postgres-wire/src/startup.rs`
-- [ ] T076 [US2] Implement disconnect `close_session` in startup/connection drop path in `backend/crates/kalamdb-postgres-wire/src/startup.rs`
-- [ ] T077 [US2] Implement `tx_control.rs`: classify and route SQL `BEGIN`/`COMMIT`/`ROLLBACK` to `BackendSessionManager` (**not** `SqlExecutor` request tx path)
-- [ ] T078 [US2] Implement `sql_exec.rs`: route other SQL through `SqlExecutor` with wire `ExecutionContext` and `TransactionQueryExtension` when block open
-- [ ] T079 [US2] Implement `row_encoder.rs`: map `ExecutionResult`/`RecordBatch` to pgwire row responses (reuse KalamDB Arrow batches; no `arrow-pg` in MVP)
-- [ ] T080 [US2] Implement `query.rs`: `SimpleQueryHandler` + `ExtendedQueryHandler` delegating to `tx_control` and `sql_exec`
-- [ ] T081 [US2] Implement `server.rs`: tokio listener + pgwire server bootstrap and optional TLS
-- [ ] T082 [US2] Map statement errors to `mark_statement_failed` and ReadyForQuery labels in `backend/crates/kalamdb-postgres-wire/src/query.rs`
-- [ ] T083 [US2] Spawn and gracefully stop the wire listener from server lifecycle when enabled in `backend/src/lifecycle.rs`
-- [ ] T084 [P] [US2] Add wire smoke test for login and `SELECT 1` in `backend/crates/kalamdb-postgres-wire/tests/wire_smoke.rs`
-- [ ] T085 [P] [US2] Add wire explicit transaction test (`BEGIN`/DML/`COMMIT` via manager path) in `backend/crates/kalamdb-postgres-wire/tests/wire_transactions.rs`
-- [ ] T086 [P] [US2] Optional follow-up: spike whether `arrow-pg` reduces `row_encoder.rs` code; do not refactor `pg/src/arrow_to_pg.rs` in this feature
+- [x] T075 [US2] Add `WireConnectionState` with session id, auth, current schema, prepared statement map, and portal map in `backend/crates/kalamdb-postgres-wire/src/connection.rs`
+- [x] T076 [US2] Export `connection`, `startup`, `tx_control`, `sql_exec`, `row_encoder`, `query`, and `server` modules from `backend/crates/kalamdb-postgres-wire/src/lib.rs`
+- [x] T077 [US2] Implement `pgwire` startup handler (password auth -> existing `handlers.rs` -> `BackendSessionManager::open_session`) in `backend/crates/kalamdb-postgres-wire/src/startup.rs`
+- [x] T078 [US2] Implement disconnect and connection-drop cleanup that always calls `BackendSessionManager::close_session` in `backend/crates/kalamdb-postgres-wire/src/startup.rs`
+- [x] T079 [US2] Implement `tx_control.rs` SQL classification for `BEGIN`, `START TRANSACTION`, `COMMIT`, and `ROLLBACK` without adding a hot-path SQL rewrite pass in `backend/crates/kalamdb-postgres-wire/src/tx_control.rs`
+- [x] T080 [US2] Route classified transaction-control statements to `BackendSessionManager::begin_block`, `commit_block`, and `rollback_block` in `backend/crates/kalamdb-postgres-wire/src/tx_control.rs`
+- [x] T081 [US2] Implement wire `ExecutionContext` construction from `BackendAuth`, role, namespace/search path, and client metadata in `backend/crates/kalamdb-postgres-wire/src/sql_exec.rs`
+- [x] T082 [US2] Route non-transaction-control SQL through `SqlExecutor`, using autocommit when idle and `TransactionQueryExtension` when a block is open, in `backend/crates/kalamdb-postgres-wire/src/sql_exec.rs`
+- [x] T083 [US2] Implement `row_encoder.rs` schema mapping from KalamDB `ExecutionResult` and Arrow `RecordBatch` fields to pgwire column metadata in `backend/crates/kalamdb-postgres-wire/src/row_encoder.rs`
+- [x] T084 [US2] Implement `row_encoder.rs` value encoding for null, bool, integer, float, text/string, timestamp/date, decimal fallback, and unsupported-type errors in `backend/crates/kalamdb-postgres-wire/src/row_encoder.rs`
+- [x] T085 [US2] Implement `SimpleQueryHandler` in `backend/crates/kalamdb-postgres-wire/src/query.rs` delegating to `tx_control`, `sql_exec`, and `row_encoder`
+- [x] T086 [US2] Implement `ExtendedQueryHandler` parse/bind/execute/close behavior with per-session prepared-statement and portal limits in `backend/crates/kalamdb-postgres-wire/src/query.rs`
+- [x] T087 [US2] Map statement errors to PostgreSQL `ErrorResponse`, `BackendSessionManager::mark_statement_failed`, and ReadyForQuery labels in `backend/crates/kalamdb-postgres-wire/src/query.rs`
+- [x] T088 [US2] Implement `server.rs` tokio listener, pgwire server bootstrap, default-off startup behavior, and optional TLS wiring in `backend/crates/kalamdb-postgres-wire/src/server.rs`
+- [x] T089 [US2] Spawn and gracefully stop the wire listener from server lifecycle when enabled in `backend/src/lifecycle.rs`
+- [x] T090 [P] [US2] Add wire smoke test for login and `SELECT 1` in `backend/crates/kalamdb-postgres-wire/tests/wire_smoke.rs`
+- [x] T091 [P] [US2] Add wire explicit transaction test (`BEGIN`/DML/`COMMIT` via manager path) in `backend/crates/kalamdb-postgres-wire/tests/wire_transactions.rs`
+- [x] T092 [P] [US2] Add prepared-statement and portal limit tests in `backend/crates/kalamdb-postgres-wire/tests/wire_extended_query.rs`
 
 **Checkpoint**: PostgreSQL wire MVP is available behind `postgres_wire.enabled = false` by default.
 
-**Removed/replaced vs prior plan**: T069–T070 `datafusion-postgres` deps; T078 `serve_with_handlers`; T081 optional `datafusion_pg_catalog`.
+**Removed/replaced vs prior plan**: `datafusion-postgres` deps, `serve_with_handlers`, and optional `datafusion_pg_catalog`.
 
 ---
 
-## Phase 9: User Story 7 - Observable, Lean Connection State (Priority: P3)
+## Phase 9: User Story 9 - Browse Namespaces, Tables, and Sessions in SQL Clients (Priority: P2)
+
+**Goal**: DBeaver/DataGrip/`psql` can list namespaces (as schemas), tables, columns, and (admin) sessions via **`pg_catalog` compatibility views** projecting from existing `system.*` sources.
+
+**Independent Test**: `cargo test --test pgwire_catalog --features e2e-tests` — `tokio-postgres` connects to a running server (`postgres_wire.enabled` + `pg_catalog_enabled`); asserts all required `pg_catalog` shims and `information_schema` tables return data and match `system.*` (SC-011). See `validation/us9-client-catalog.md`.
+
+**Depends on**: US2 wire listener (Phase 8); benefits from US6 `system.sessions` origin column.
+
+### Implementation for User Story 9
+
+- [x] T093 [US9] Finalize namespace-to-schema mapping, required columns, RBAC expectations, and disabled-config behavior in `specs/033-unified-backend-pgwire/contracts/client-catalog-shim.md`
+- [x] T094 [US9] Add `pg_catalog` module exports in `backend/crates/kalamdb-views/src/lib.rs` and `backend/crates/kalamdb-views/src/pg_catalog/mod.rs`
+- [x] T095 [P] [US9] Implement `pg_namespace` shim projecting `system.namespaces` in `backend/crates/kalamdb-views/src/pg_catalog/namespace.rs`
+- [x] T096 [P] [US9] Implement `pg_class` shim projecting `system.tables` in `backend/crates/kalamdb-views/src/pg_catalog/class.rs`
+- [x] T097 [P] [US9] Implement `pg_attribute` shim projecting `system.columns` in `backend/crates/kalamdb-views/src/pg_catalog/attribute.rs`
+- [x] T098 [P] [US9] Implement minimal `pg_database` stub view in `backend/crates/kalamdb-views/src/pg_catalog/database.rs`
+- [x] T099 [US9] Implement admin-only `pg_stat_activity` shim projecting `system.sessions` in `backend/crates/kalamdb-views/src/pg_catalog/stat_activity.rs`
+- [x] T100 [US9] Register `pg_catalog` shim views through the existing system/catalog provider path without adding persisted metadata stores in `backend/crates/kalamdb-core/src/app_context.rs`
+- [x] T101 [US9] Wire `postgres_wire.client_catalog.enabled` or the existing `postgres_wire.pg_catalog_enabled` config field to conditionally register shims in `backend/crates/kalamdb-configs/src/config/types.rs` and `backend/crates/kalamdb-core/src/app_context.rs`
+- [x] T102 [P] [US9] Add in-process projection tests for namespace, table, column, and database shim rows in `backend/crates/kalamdb-core/tests/pg_catalog_shims.rs`
+- [x] T103 [P] [US9] Add RBAC tests proving non-admin users cannot see other users' sessions or unauthorized namespaces through `pg_catalog` shims in `backend/crates/kalamdb-core/tests/pg_catalog_shims.rs`
+- [x] T104 [P] [US9] Implement wire e2e catalog suite in `backend/tests/pgwire_catalog/` (`catalog_checks.rs` + `test_client_catalog.rs`); assert `pg_catalog` + `information_schema` + `system.*` parity per `validation/us9-client-catalog.md`
+- [ ] T105 [US9] Run `cargo test --test pgwire_catalog --features e2e-tests` green and record output in `specs/033-unified-backend-pgwire/validation/us9-client-catalog.md` sign-off (SC-011); optional DBeaver manual in quickstart Scenario 8
+
+**Checkpoint**: Client catalog enabled optionally; canonical metadata remains `system.*` only (SC-012 review).
+
+---
+
+## Phase 10: User Story 7 - Observable, Lean Connection State (Priority: P3)
 
 **Goal**: Keep session and transaction observability accurate and bounded under scale.
 
@@ -207,19 +242,21 @@
 
 ### Implementation for User Story 7
 
-- [x] T085 [US7] Clear stale `pinned_transaction_id` values when coordinator state is terminal or missing in `backend/crates/kalamdb-backend/src/manager.rs`
-- [x] T086 [US7] Add idle session TTL cleanup metrics and cleanup counters in `backend/crates/kalamdb-backend/src/manager.rs`
-- [ ] T087 [US7] Cap wire prepared-statement/session-local maps through config in `backend/crates/kalamdb-postgres-wire/src/session_bridge.rs`
-- [ ] T088 [P] [US7] Add SC-006 extension-plus-wire reconciliation coverage in `backend/crates/kalamdb-core/tests/session_tx_reconciliation.rs`
-- [ ] T089 [P] [US7] Add idle-session memory measurement helper in `backend/benches/backend_sessions_memory.rs`
-- [ ] T090 [P] [US7] Add begin/end block latency measurement helper in `backend/benches/backend_session_block_latency.rs`
-- [ ] T091 [US7] Record SC-004 and SC-005 runtime results in seconds in `specs/033-unified-backend-pgwire/validation/us7-performance.md`
+- [x] T106 [US7] Clear stale `pinned_transaction_id` values when coordinator state is terminal or missing in `backend/crates/kalamdb-backend/src/manager.rs`
+- [x] T107 [US7] Add idle session TTL cleanup metrics and cleanup counters in `backend/crates/kalamdb-backend/src/manager.rs`
+- [x] T108 [US7] Cap wire prepared-statement and portal maps through config in `backend/crates/kalamdb-postgres-wire/src/connection.rs`
+- [x] T109 [US7] Add cleanup-on-disconnect metrics for wire sessions in `backend/crates/kalamdb-postgres-wire/src/startup.rs`
+- [x] T110 [P] [US7] Add SC-006 extension-plus-wire reconciliation coverage in `backend/crates/kalamdb-core/tests/session_tx_reconciliation.rs`
+- [x] T111 [P] [US7] Add idle-session memory measurement helper in `backend/benches/backend_sessions_memory.rs`
+- [x] T112 [P] [US7] Add begin/end block latency measurement helper in `backend/benches/backend_session_block_latency.rs`
+- [x] T113 [US7] Record SC-004 and SC-005 runtime results in seconds in `specs/033-unified-backend-pgwire/validation/us7-performance.md`
+- [x] T114 [US7] Record 1,000 idle connection cleanup behavior and timeout rollback evidence in `specs/033-unified-backend-pgwire/validation/us7-cleanup.md`
 
 **Checkpoint**: Session state is observable, non-duplicated, and measured.
 
 ---
 
-## Phase 10: User Story 8 - Consolidate Duplicate Session Logic Without Breaking What Works (Priority: P3)
+## Phase 11: User Story 8 - Consolidate Duplicate Session Logic Without Breaking What Works (Priority: P3)
 
 **Goal**: Remove obsolete session and transaction lifecycle logic after extension, HTTP, and wire parity are proven.
 
@@ -227,32 +264,37 @@
 
 ### Implementation for User Story 8
 
-- [ ] T092 [US8] Delete duplicate transaction metadata fields from `backend/crates/kalamdb-pg/src/session_registry.rs`
-- [ ] T093 [US8] Delete obsolete reconciliation helper tests from `backend/crates/kalamdb-pg/src/session_registry.rs`
-- [ ] T094 [US8] Remove deprecated reconciliation helper calls from `backend/crates/kalamdb-pg/src/service.rs`
-- [ ] T095 [US8] Remove obsolete `LivePgTransaction` transport-specific exports from `backend/crates/kalamdb-pg/src/lib.rs`
-- [ ] T096 [US8] Update session/transaction imports after cleanup in `backend/crates/kalamdb-core/src/app_context.rs`
-- [ ] T097 [US8] Record duplicate-session-code search results in `specs/033-unified-backend-pgwire/validation/duplicate-session-scan.md`
-- [ ] T098 [US8] Record architecture review against SC-007 in `specs/033-unified-backend-pgwire/validation/architecture-review.md`
-- [ ] T099 [US8] Run full SC-010 regression gates and record output in `specs/033-unified-backend-pgwire/validation/us8-full-regression.md`
+- [ ] T115 [US8] Delete duplicate transaction metadata fields from `backend/crates/kalamdb-pg/src/session_registry.rs`
+- [ ] T116 [US8] Delete obsolete reconciliation helper tests from `backend/crates/kalamdb-pg/src/session_registry.rs`
+- [ ] T117 [US8] Remove deprecated reconciliation helper calls from `backend/crates/kalamdb-pg/src/service.rs`
+- [ ] T118 [US8] Remove obsolete `LivePgTransaction` transport-specific exports from `backend/crates/kalamdb-pg/src/lib.rs`
+- [ ] T119 [US8] Replace any remaining `session_registry` imports with `kalamdb_backend` imports in `backend/crates/kalamdb-pg/src/service.rs`
+- [ ] T120 [US8] Update session and transaction imports after cleanup in `backend/crates/kalamdb-core/src/app_context.rs`
+- [x] T121 [US8] Record duplicate-session-code search results using `rg "SessionRegistry|tracked_transaction_id|reconcile_local_transaction_state|LivePgTransaction"` in `specs/033-unified-backend-pgwire/validation/duplicate-session-scan.md`
+- [x] T122 [US8] Record architecture review against SC-007 in `specs/033-unified-backend-pgwire/validation/architecture-review.md`
+- [x] T123 [US8] Run full SC-010 regression gates and record output in `specs/033-unified-backend-pgwire/validation/us8-full-regression.md`
+- [x] T124 [US8] Remove or document every temporary compatibility shim with a release-window note in `specs/033-unified-backend-pgwire/validation/compat-shim-removal.md`
 
 **Checkpoint**: Single shared lifecycle remains; temporary shims are either removed or explicitly documented.
 
 ---
 
-## Phase 11: Polish & Cross-Cutting Concerns
+## Phase 12: Polish & Cross-Cutting Concerns
 
 **Purpose**: Documentation, operator notes, final validation, and external skill/doc mirrors required by AGENTS.md.
 
-- [ ] T100 [P] Write `docs/architecture/decisions/adr-0XX-unified-backend-session.md`
-- [ ] T101 [P] Update connection-session vs request-scoped transaction behavior in `docs/architecture/transactions.md`
-- [ ] T102 [P] Update extension bridge connectivity and shared manager ownership in `docs/architecture/pg-extension-grpc-connectivity.md`
-- [ ] T103 [P] Update PostgreSQL wire config and operations notes in `docs/architecture/transactions.md`
-- [ ] T104 [P] Update canonical KalamDB skill content for new user-facing wire/session behavior in `../kalamdb-skills/skills/kalamdb/SKILL.md`
-- [ ] T105 Record whether generated in-repo skill mirrors need regeneration in `specs/033-unified-backend-pgwire/validation/skill-mirror-check.md`
-- [ ] T106 Run the full quickstart sign-off checklist and record output in `specs/033-unified-backend-pgwire/validation/quickstart-signoff.md`
-- [ ] T107 Run CLI smoke when auth/API surfaces changed and record output in `specs/033-unified-backend-pgwire/validation/cli-smoke.md`
-- [ ] T108 Run final affected-crate `cargo nextest run` sweep and record output in `specs/033-unified-backend-pgwire/validation/final-nextest.md`
+- [x] T125 [P] Write `docs/architecture/decisions/adr-0XX-unified-backend-session.md`
+- [x] T126 [P] Update connection-session vs request-scoped transaction behavior in `docs/architecture/transactions.md`
+- [x] T127 [P] Update extension bridge connectivity and shared manager ownership in `docs/architecture/pg-extension-grpc-connectivity.md`
+- [x] T128 [P] Update PostgreSQL wire config, port, TLS, and client catalog operations notes in `docs/architecture/transactions.md`
+- [x] T129 [P] Update canonical KalamDB skill content for new user-facing wire/session behavior in `../kalamdb-skills/skills/kalamdb/SKILL.md`
+- [x] T130 Record whether generated in-repo skill mirrors need regeneration in `specs/033-unified-backend-pgwire/validation/skill-mirror-check.md`
+- [ ] T131 Run the full quickstart sign-off checklist and record output in `specs/033-unified-backend-pgwire/validation/quickstart-signoff.md`
+- [ ] T132 Run CLI smoke when auth/API surfaces changed and record output in `specs/033-unified-backend-pgwire/validation/cli-smoke.md`
+- [x] T133 Run final affected-crate `cargo check -p kalamdb-server -p kalamdb-backend -p kalamdb-postgres-wire -p kalamdb-pg -p kalamdb-core -p kalamdb-views -p kalamdb-configs` and record output in `specs/033-unified-backend-pgwire/validation/final-cargo-check.md`
+- [x] T134 Run final affected-crate `cargo nextest run` sweep and record output in `specs/033-unified-backend-pgwire/validation/final-nextest.md`
+- [x] T135 Record security review for auth, RBAC, pg_catalog exposure, and disabled-user failures in `specs/033-unified-backend-pgwire/validation/security-review.md`
+- [x] T136 Record final release-note decisions and deferred PostgreSQL protocol gaps in `specs/033-unified-backend-pgwire/validation/release-notes.md`
 
 ---
 
@@ -270,9 +312,10 @@
 | 6 US6 | Phases 3-4 | Origin-aware `system.sessions` |
 | 7 US4 | Phase 2 | Reusable wire auth helper |
 | 8 US2 | Phases 3, 6, 7 | PostgreSQL wire MVP |
-| 9 US7 | Phases 4, 6, 8 | Observability and performance hardening |
-| 10 US8 | Phases 4-9 | Duplicate logic removal |
-| 11 Polish | Phase 10 | Docs, mirrors, and final sign-off |
+| 9 US9 | Phase 8 | Client catalog shims (DBeaver) |
+| 10 US7 | Phases 4, 6, 8, 9 | Observability and performance hardening |
+| 11 US8 | Phases 4-10 | Duplicate logic removal |
+| 12 Polish | Phase 11 | Docs, mirrors, and final sign-off |
 
 ### User Story Dependencies
 
@@ -283,9 +326,10 @@
 | US3 | Foundational | None |
 | US6 | US1 plus US5 for live extension rows | None |
 | US4 | Foundational | None |
-| US2 | US1, US4, US6 | pgwire MVP (spike complete — no DF54 wait) |
-| US7 | US5, US6, US2 | Live wire sessions for full measurement |
-| US8 | US5, US6, US2, US7 | All parity and cleanup gates |
+| US2 | US1, US4, US6 | pgwire MVP |
+| US9 | US2, US6 | Client catalog shims |
+| US7 | US5, US6, US2, US9 | Live wire + catalog for measurement |
+| US8 | US5, US6, US2, US7, US9 | All parity and cleanup gates |
 
 ### Parallel Opportunities
 
@@ -294,16 +338,19 @@
 - US5: T040 and T041 can run in parallel because they touch different test crates.
 - US6: T056 and T057 can run in parallel after T050-T055.
 - US4: T065 and T066 can run in parallel after T060-T064.
-- US2: T084, T085, T086 can run in parallel after T075-T083.
-- US7: T088, T089, and T090 can run in parallel.
-- Polish: T100-T104 can run in parallel because they touch separate docs.
+- US2: T090, T091, and T092 can run in parallel after T075-T089.
+- US9: T095, T096, T097, and T098 can run in parallel after T094.
+- US9: T102, T103, and T104 can run in parallel after T100-T101.
+- US7: T110, T111, and T112 can run in parallel.
+- Polish: T125-T129 can run in parallel because they touch separate docs.
 
 ### Parallel Example: US2
 
 ```bash
-# After T075-T083:
-# Task T084: smoke test in backend/crates/kalamdb-postgres-wire/tests/wire_smoke.rs
-# Task T085: transaction test in backend/crates/kalamdb-postgres-wire/tests/wire_transactions.rs
+# After T075-T089:
+# Task T090: smoke test in backend/crates/kalamdb-postgres-wire/tests/wire_smoke.rs
+# Task T091: transaction test in backend/crates/kalamdb-postgres-wire/tests/wire_transactions.rs
+# Task T092: extended query limit test in backend/crates/kalamdb-postgres-wire/tests/wire_extended_query.rs
 ```
 
 ---
@@ -324,7 +371,8 @@
 | MVP | 1-4 | Shared connection sessions with extension behavior preserved |
 | Observability | 5-6 | HTTP proof and admin session-origin view |
 | Auth + Wire | 7-8 | Standard PostgreSQL client connectivity |
-| Hardening | 9-11 | Memory, cleanup, duplicate removal, docs, final sign-off |
+| Client catalog | 9 | DBeaver schema/session browsing |
+| Hardening | 10-12 | Memory, cleanup, duplicate removal, docs, final sign-off |
 
 ### Suggested MVP Scope
 
@@ -340,6 +388,7 @@
 - HTTP SQL keeps `RequestTransactionBatchGuard` and never opens a `BackendSession`.
 - Transport crates do not own commit, rollback, staging, provider writes, RocksDB access, or DataFusion SQL rewrite passes.
 - Wire `BEGIN`/`COMMIT`/`ROLLBACK` call `BackendSessionManager`, not `SqlExecutor` request-scoped transaction helpers (HTTP only).
+- Client catalog shims project from `system.*` only — no duplicate metadata stores (SC-012).
 - Cleanup is part of the feature, not a follow-up: stale pins, close rollback, timeout rollback, and duplicate session logic removal all have explicit tasks.
 
 ---
@@ -348,7 +397,8 @@
 
 | Metric | Count |
 |--------|-------|
-| Total tasks | 108 |
+| Total tasks | 136 |
+| US9 | 13 |
 | Setup | 9 |
 | Foundational | 10 |
 | US1 | 12 |
@@ -356,9 +406,9 @@
 | US3 | 6 |
 | US6 | 10 |
 | US4 | 8 |
-| US2 | 17 |
-| US7 | 7 |
-| US8 | 8 |
-| Polish | 9 |
+| US2 | 25 |
+| US7 | 9 |
+| US8 | 10 |
+| Polish | 12 |
 
 **Format validation target**: All executable tasks must match `- [ ] T### [P?] [USn?] Description with file path`.

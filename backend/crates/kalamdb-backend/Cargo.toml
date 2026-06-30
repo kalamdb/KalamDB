@@ -1,0 +1,40 @@
+[package]
+name = "kalamdb-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared backend connection session lifecycle for KalamDB"
+keywords = ["kalamdb", "backend", "sessions"]
+categories = ["database"]
+
+[dependencies]
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-transactions = { path = "../kalamdb-transactions" }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[lib]
+name = "kalamdb_backend"
+path = "src/lib.rs"
+doctest = false
+
+[[bench]]
+name = "backend_sessions_memory"
+path = "benches/backend_sessions_memory.rs"
+harness = false
+
+[[bench]]
+name = "backend_session_block_latency"
+path = "benches/backend_session_block_latency.rs"
+harness = false
+
+[dev-dependencies]
+ntest = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = { workspace = true }

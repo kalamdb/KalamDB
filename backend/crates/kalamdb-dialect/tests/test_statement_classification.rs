@@ -106,3 +106,37 @@ fn test_classify_whitespace_before_with() {
     let stmt = result.unwrap();
     assert!(matches!(stmt.kind(), SqlStatementKind::Select));
 }
+
+#[test]
+fn test_slow_query_trackable_dml_and_select_only() {
+    let ns = NamespaceId::new("default");
+    let role = Role::Dba;
+
+    let trackable = [
+        "SELECT * FROM users",
+        "WITH t AS (SELECT 1) SELECT * FROM t",
+        "INSERT INTO users (name) VALUES ('Alice')",
+        "UPDATE users SET name = 'Bob' WHERE id = 1",
+        "DELETE FROM users WHERE id = 1",
+    ];
+    for sql in trackable {
+        let stmt = SqlStatement::classify_and_parse(sql, &ns, role).expect(sql);
+        assert!(stmt.is_slow_query_trackable(), "expected trackable: {sql}");
+    }
+
+    let not_trackable = [
+        "DROP TABLE users",
+        "ALTER TABLE users ADD COLUMN age INT",
+        "CREATE TABLE users (id INT)",
+        "SHOW TABLES",
+        "BEGIN",
+        "COMMIT",
+    ];
+    for sql in not_trackable {
+        let stmt = SqlStatement::classify_and_parse(sql, &ns, role).expect(sql);
+        assert!(
+            !stmt.is_slow_query_trackable(),
+            "expected not trackable: {sql}"
+        );
+    }
+}

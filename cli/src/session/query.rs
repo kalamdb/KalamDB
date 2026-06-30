@@ -184,10 +184,9 @@ impl CLISession {
             let expanded = expand_config_path(Path::new(&path));
             let data = fs_atomic::read_bytes(&expanded, FileReadPolicy::UserProvided).map_err(
                 |error| match error.kind() {
-                    std::io::ErrorKind::NotFound => CLIError::FileError(format!(
-                        "File not found: {}",
-                        expanded.display()
-                    )),
+                    std::io::ErrorKind::NotFound => {
+                        CLIError::FileError(format!("File not found: {}", expanded.display()))
+                    },
                     _ => CLIError::FileError(format!(
                         "Failed to read file {}: {}",
                         expanded.display(),

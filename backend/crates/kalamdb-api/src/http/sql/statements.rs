@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use actix_web::HttpResponse;
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::UserId;
 use kalamdb_core::{
     error::KalamDbError,
     sql::{
@@ -75,24 +75,29 @@ pub(super) fn parse_execute_statement(statement: &str) -> Result<ParsedExecution
     }
 }
 
-pub(super) fn classify_sql(
+pub(super) fn prepare_metadata_or_http_error(
+    sql_executor: &SqlExecutor,
     sql: &str,
-    default_namespace: &NamespaceId,
     exec_ctx: &ExecutionContext,
     start_time: Instant,
-) -> Result<kalamdb_sql::classifier::SqlStatement, HttpResponse> {
-    kalamdb_sql::classifier::SqlStatement::classify_and_parse(
-        sql,
-        default_namespace,
-        exec_ctx.user_role(),
-    )
-    .map_err(|err| match err {
+) -> Result<PreparedExecutionStatement, HttpResponse> {
+    sql_executor
+        .prepare_statement_metadata(sql, exec_ctx)
+        .map_err(|err| map_classification_error(err, start_time, exec_ctx.is_admin()))
+}
+
+fn map_classification_error(
+    err: kalamdb_sql::classifier::StatementClassificationError,
+    start_time: Instant,
+    is_admin: bool,
+) -> HttpResponse {
+    match err {
         kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
             HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
                 ErrorCode::PermissionDenied,
                 &msg,
                 took_ms(start_time),
-                exec_ctx.is_admin(),
+                is_admin,
             ))
         },
         kalamdb_sql::classifier::StatementClassificationError::InvalidSql { message, .. } => {
@@ -100,10 +105,10 @@ pub(super) fn classify_sql(
                 ErrorCode::InvalidSql,
                 &message,
                 took_ms(start_time),
-                exec_ctx.is_admin(),
+                is_admin,
             ))
         },
-    })
+    }
 }
 
 fn fast_single_statement_sql(sql: &str) -> Option<&str> {
@@ -133,6 +138,7 @@ fn prepare_api_statement(
     exec_ctx: &ExecutionContext,
     sql_executor: &SqlExecutor,
     start_time: Instant,
+    light: bool,
 ) -> Result<PreparedApiExecutionStatement, HttpResponse> {
     let parsed = parse_execute_statement(raw_statement).map_err(|err| {
         HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
@@ -143,26 +149,12 @@ fn prepare_api_statement(
         ))
     })?;
 
-    let prepared_statement = sql_executor
-        .prepare_statement_metadata(&parsed.sql, exec_ctx)
-        .map_err(|err| match err {
-            kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
-                HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
-                    ErrorCode::PermissionDenied,
-                    &msg,
-                    took_ms(start_time),
-                    exec_ctx.is_admin(),
-                ))
-            },
-            kalamdb_sql::classifier::StatementClassificationError::InvalidSql {
-                message, ..
-            } => HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-                ErrorCode::InvalidSql,
-                &message,
-                took_ms(start_time),
-                exec_ctx.is_admin(),
-            )),
-        })?;
+    let prepared_statement = if light {
+        sql_executor.prepare_statement_metadata_light(&parsed.sql, exec_ctx)
+    } else {
+        sql_executor.prepare_statement_metadata(&parsed.sql, exec_ctx)
+    }
+    .map_err(|err| map_classification_error(err, start_time, exec_ctx.is_admin()))?;
 
     Ok(PreparedApiExecutionStatement {
         execute_as_username: parsed.execute_as_username,
@@ -176,12 +168,32 @@ pub(super) fn split_and_prepare_statements(
     sql_executor: &SqlExecutor,
     start_time: Instant,
 ) -> Result<Vec<PreparedApiExecutionStatement>, HttpResponse> {
+    split_and_prepare_statements_with_depth(sql, exec_ctx, sql_executor, start_time, false)
+}
+
+pub(super) fn split_and_prepare_statements_light(
+    sql: &str,
+    exec_ctx: &ExecutionContext,
+    sql_executor: &SqlExecutor,
+    start_time: Instant,
+) -> Result<Vec<PreparedApiExecutionStatement>, HttpResponse> {
+    split_and_prepare_statements_with_depth(sql, exec_ctx, sql_executor, start_time, true)
+}
+
+fn split_and_prepare_statements_with_depth(
+    sql: &str,
+    exec_ctx: &ExecutionContext,
+    sql_executor: &SqlExecutor,
+    start_time: Instant,
+    light: bool,
+) -> Result<Vec<PreparedApiExecutionStatement>, HttpResponse> {
     if let Some(single_statement) = fast_single_statement_sql(sql) {
         return Ok(vec![prepare_api_statement(
             single_statement,
             exec_ctx,
             sql_executor,
             start_time,
+            light,
         )?]);
     }
 
@@ -209,7 +221,7 @@ pub(super) fn split_and_prepare_statements(
 
     for raw_statement in &raw_statements {
         let prepared_stmt =
-            prepare_api_statement(raw_statement, &prepare_ctx, sql_executor, start_time)?;
+            prepare_api_statement(raw_statement, &prepare_ctx, sql_executor, start_time, light)?;
 
         if let Some(classified) = prepared_stmt.prepared_statement.classified_statement.as_ref() {
             if let SqlStatementKind::UseNamespace(stmt) = classified.kind() {

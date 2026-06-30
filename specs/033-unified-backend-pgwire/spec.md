@@ -152,6 +152,23 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 
 ---
 
+### User Story 9 - Browse Namespaces, Tables, and Sessions in SQL Clients (Priority: P2)
+
+A DBA or developer connecting with DBeaver, DataGrip, or `psql` metadata commands needs to discover KalamDB **namespaces (as schemas)**, **tables**, **columns**, and (for admins) **connection sessions** without learning KalamDB-specific catalog layout first.
+
+**Why this priority**: Wire access is only useful if standard clients can browse metadata. KalamDB already exposes rich metadata via `system.*` and partial `information_schema`; wire clients expect PostgreSQL catalog shapes (`pg_catalog`, `information_schema`).
+
+**Independent Test**: Automated wire e2e (`backend/tests/pgwire_catalog/`) connects with a native PostgreSQL client (`tokio-postgres`) to a running server with wire and client catalog enabled; verifies required `pg_catalog` shims and `information_schema` tables return data and match `system.tables` / `system.columns` (and admin `pg_stat_activity` vs `system.sessions`). See `validation/us9-client-catalog.md`. Optional manual DBeaver/`psql` smoke afterward.
+
+**Acceptance Scenarios**:
+
+1. **Given** a wire-protocol client connected as a normal user, **When** the client lists schemas/namespaces, **Then** user-visible KalamDB namespaces appear as PostgreSQL schemas the role may access (excluding unauthorized `system.*` internals unless permitted).
+2. **Given** a wire-protocol client, **When** it lists tables and columns in a namespace, **Then** results match `system.tables` / `system.columns` (or equivalent `information_schema` queries) for that namespace.
+3. **Given** a wire-protocol client connected as an administrator, **When** it queries the session activity compatibility view, **Then** rows reflect `system.sessions` connection sessions with origin labels (not HTTP API requests).
+4. **Given** catalog compatibility views are enabled, **When** maintainers inspect implementation, **Then** each compatibility view projects from existing `system.*` sources — no second persisted metadata store.
+
+---
+
 ### Edge Cases
 
 - What happens when a client disconnects mid-transaction? Uncommitted work is rolled back and connection state is reclaimed.
@@ -161,6 +178,7 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 - What happens when the same user opens many concurrent connections? Each connection maintains independent session and block state without cross-connection leakage.
 - What happens when an API batch request mixes valid and invalid statements inside one open block? The block is rolled back according to unified error-handling rules and the client receives a deterministic error outcome.
 - What happens when an administrator queries sessions during heavy API-only traffic? Connection session listings remain limited to wire and extension-bridge connections; active API request transactions appear only in transaction status views if applicable.
+- What happens when a SQL client queries `pg_catalog` before compatibility views are enabled? The client may see empty or minimal metadata; operators enable `postgres_wire.client_catalog.enabled` (or equivalent) for DBeaver-style browsing.
 
 ## Requirements *(mandatory)*
 
@@ -191,6 +209,11 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 - **FR-023**: The refactor MUST preserve existing correct behavior for extension bridge transactions, HTTP SQL batch transactions, and durable commit/rollback paths; changes MUST be limited to deduplication, shared session lifecycle, and wire-protocol enablement unless a defect is being fixed.
 - **FR-024**: The system MUST keep non-transactional request paths on a low-overhead autocommit path that does not allocate full transaction block resources unless an explicit block is opened.
 - **FR-025**: The system MUST document intentional differences between connection-based sessions (wire and extension bridge) and stateless HTTP SQL request transactions without duplicating core transaction logic.
+- **FR-026**: When wire client catalog compatibility is enabled, the system MUST expose user KalamDB namespaces to SQL clients as PostgreSQL **schemas** using thin compatibility views — not a duplicate metadata store.
+- **FR-027**: Compatibility catalog views MUST **project from** existing authoritative sources (`system.namespaces`, `system.tables`, `system.columns`, `system.schemas` as needed) and DataFusion's existing `information_schema` support where applicable.
+- **FR-028**: The system MUST provide minimal `pg_catalog` shim views sufficient for common DBeaver/DataGrip introspection (at minimum namespace/schema, table/relation, and column metadata; admin-only session activity optional via `pg_stat_activity` shim → `system.sessions`).
+- **FR-029**: Catalog compatibility views MUST respect the same RBAC rules as the underlying `system.*` views — non-admin roles MUST NOT see other users' sessions or unauthorized namespaces through catalog aliases.
+- **FR-030**: Canonical operational metadata MUST remain queryable as `system.sessions`, `system.transactions`, `system.tables`, and `system.columns`; compatibility views are projections for client ergonomics, not replacements.
 
 ### Key Entities
 
@@ -215,6 +238,8 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 - **SC-008**: At least 90% of maintainers surveyed in feature review agree the session and transaction code paths are easier to extend to new entry points than before the refactor.
 - **SC-009**: In admin acceptance testing, 100% of concurrently open wire-protocol and extension-bridge sessions appear in the connection session view with the correct origin label, and zero HTTP SQL requests appear as connection sessions.
 - **SC-010**: Regression suite for feature 027 extension and SQL batch transaction scenarios shows zero behavioral diffs attributable to this refactor before feature sign-off.
+- **SC-011**: In acceptance testing, DBeaver (or equivalent) connected via wire protocol lists user namespaces/schemas, tables, and columns consistent with `system.tables` / `system.columns` for the same role without custom driver patches.
+- **SC-012**: Catalog compatibility implementation review confirms zero duplicated persisted metadata — all `pg_catalog` / client-facing shims delegate to existing `system.*` or DataFusion `information_schema` sources.
 
 ## Assumptions
 
@@ -226,6 +251,7 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 - Obsolete code removal is scoped to duplicated connection-session and transaction lifecycle logic; unrelated legacy cleanup and large rewrites of working commit paths are not required.
 - Refactor strategy is incremental: preserve proven extension and API behavior, consolidate duplicates, and add wire-protocol support on the shared connection session path.
 - Standard PostgreSQL client compatibility targets commonly used connection modes needed for operational tooling and application drivers; exotic replication or copy protocol features may be deferred to later specifications.
+- **Client catalog strategy**: Prefer **virtual compatibility views** in reserved `pg_catalog` (and augment `information_schema` where DataFusion's built-in coverage is insufficient) that **project** from existing `system.*` views — not SQL aliases and not duplicate persisted tables. KalamDB namespaces map to PostgreSQL schemas in catalog projections.
 - Existing role-based access rules and audit expectations for authenticated users remain unchanged unless separately specified.
 
 ## Dependencies
@@ -236,7 +262,9 @@ Maintainers need duplicate connection-session and transaction tracking removed s
 
 ## Out of Scope
 
-- Full PostgreSQL SQL and protocol compatibility beyond the connection, authentication, query, and explicit transaction workflows required for supported clients in this feature.
+- Full PostgreSQL SQL and protocol compatibility beyond connection, authentication, query, explicit transaction, and **minimal client catalog browsing** workflows required for supported clients in this feature.
+- Full PostgreSQL `pg_catalog` emulation (every PostgreSQL system table and function).
+- Replacing or renaming canonical `system.*` operational views with `pg_catalog` names.
 - Persistent HTTP session tokens for multi-request explicit transactions across separate API calls.
 - Listing stateless HTTP SQL requests in connection session views.
 - Large-scale rewrites of working transaction commit, rollback, or extension bridge behavior unrelated to session deduplication.

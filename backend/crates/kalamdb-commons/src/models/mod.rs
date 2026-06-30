@@ -42,6 +42,7 @@ mod file_ref;
 mod payload_mode;
 mod read_context;
 mod role;
+mod session_origin;
 mod topic_op;
 mod transaction;
 
@@ -66,6 +67,7 @@ pub use role::Role;
 #[cfg(feature = "rows")]
 pub use rows::{KTableRow, StreamTableRow, SystemTableRow, UserTableRow};
 pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
+pub use session_origin::SessionOrigin;
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
 

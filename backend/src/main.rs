@@ -96,6 +96,34 @@ fn validate_startup_ports(config: &ServerConfig) -> Result<()> {
         ensure_any_addr_bindable(&rpc_addrs, "Raft RPC", &cluster.rpc_addr)?;
     }
 
+    if config.postgres_wire.enabled {
+        let pg_wire_addr = format!("{}:{}", config.postgres_wire.host, config.postgres_wire.port);
+        let pg_wire_addrs = resolve_bind_addrs(&pg_wire_addr, "PostgreSQL wire")?;
+
+        if !http_addrs.is_disjoint(&pg_wire_addrs) {
+            return Err(anyhow!(
+                "Invalid configuration: HTTP '{}' and PostgreSQL wire '{}' resolve to at least \
+                 one identical socket address. Configure distinct ports.",
+                http_addr,
+                pg_wire_addr
+            ));
+        }
+
+        if let Some(cluster) = &config.cluster {
+            let rpc_addrs = resolve_bind_addrs(&cluster.rpc_addr, "Raft RPC")?;
+            if !rpc_addrs.is_disjoint(&pg_wire_addrs) {
+                return Err(anyhow!(
+                    "Invalid configuration: Raft RPC '{}' and PostgreSQL wire '{}' resolve to at \
+                     least one identical socket address. Configure distinct ports.",
+                    cluster.rpc_addr,
+                    pg_wire_addr
+                ));
+            }
+        }
+
+        ensure_any_addr_bindable(&pg_wire_addrs, "PostgreSQL wire", &pg_wire_addr)?;
+    }
+
     ensure_any_addr_bindable(&http_addrs, "HTTP", &http_addr)?;
 
     Ok(())

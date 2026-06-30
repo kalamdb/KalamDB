@@ -19,6 +19,7 @@ members = [
     "backend/crates/kalamdb-session",
     "backend/crates/kalamdb-session-datafusion",
     "backend/crates/kalamdb-transactions",
+    "backend/crates/kalamdb-backend",
     "backend/crates/kalamdb-datafusion-sources",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
@@ -43,6 +44,7 @@ members = [
     "backend/crates/kalamdb-raft",
     "backend/crates/kalamdb-views",
     "backend/crates/kalamdb-pg",
+    "backend/crates/kalamdb-postgres-wire",
     "backend/crates/kalamdb-server-auth",
     "backend",
     "cli",
@@ -193,6 +195,8 @@ kalam-client = { path = "link/sdks/rust", default-features = false }
 kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
 kalamdb-transfer = { path = "backend/crates/kalamdb-transfer" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
+kalamdb-backend = { path = "backend/crates/kalamdb-backend" }
+kalamdb-postgres-wire = { path = "backend/crates/kalamdb-postgres-wire" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
 kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources" }
@@ -214,6 +218,7 @@ async-trait = "0.1.89"
 once_cell = "1.21.4"
 regex = "1.12.4"
 dashmap = "6.2.1"
+pgwire = { version = "0.40.4", default-features = false, features = ["server-api-aws-lc-rs"] }
 bytes = "1.12.0"
 http-body = "1.0.1"
 http-body-util = "0.1.3"

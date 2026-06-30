@@ -119,12 +119,8 @@ impl LiveQueryId {
             ));
         }
 
-        let user_id = UserId::try_new(user.unwrap().to_string()).map_err(|error| {
-            format!(
-                "Invalid user_id in live_query_id '{}': {}",
-                s, error
-            )
-        })?;
+        let user_id = UserId::try_new(user.unwrap().to_string())
+            .map_err(|error| format!("Invalid user_id in live_query_id '{}': {}", s, error))?;
         let connection_id = ConnectionId::new(connection.unwrap().to_string());
         let subscription_id = subscription.unwrap().to_string();
 
@@ -246,10 +242,7 @@ mod tests {
     #[test]
     fn test_live_query_id_from_string_rejects_invalid_user_id() {
         let err = LiveQueryId::from_string("alice;drop-conn123-sub456").unwrap_err();
-        assert!(
-            err.contains("Invalid user_id"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("Invalid user_id"), "unexpected error: {err}");
     }
 
     #[test]

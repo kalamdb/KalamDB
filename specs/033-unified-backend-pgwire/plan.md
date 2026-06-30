@@ -79,11 +79,13 @@ backend/crates/
 ├── kalamdb-pg/                # SHRINK — gRPC transport; delegates sessions to kalamdb-backend
 ├── kalamdb-core/              # MINIMAL — TransactionEngine trait impl on coordinator; AppContext wiring
 ├── kalamdb-transactions/      # EXTEND — TransactionEngine trait + BackendSessionUuid owner key
-├── kalamdb-views/             # EXTEND — system.sessions origin + rename doc to connection sessions
+├── kalamdb-views/             # EXTEND — system.sessions origin + pg_catalog shim views (US9)
+│   └── src/pg_catalog/        # pg_namespace, pg_class, pg_attribute, pg_stat_activity shims
 ├── kalamdb-configs/           # EXTEND — postgres_wire config
 ├── kalamdb-auth/              # REUSE — authenticate() for wire startup (no parallel password path)
 └── kalamdb-commons/           # EXTEND — SessionOrigin, TransactionOrigin::PgWire
 
+backend/tests/pgwire_catalog/                    # US9 acceptance — wire e2e (tokio-postgres); see validation/us9-client-catalog.md
 backend/src/lifecycle.rs                         # EXTEND — spawn/stop pgwire listener
 backend/src/main.rs                              # EXTEND — validate pgwire bind address when enabled
 backend/crates/kalamdb-pg/src/session_registry.rs  # DEPRECATE → thin re-export or delete after Phase 2
@@ -121,9 +123,10 @@ pg/                                                 # UNCHANGED behavior; gRPC c
 | **3** | `system.sessions` origin column; admin visibility (US6) | View integration test: extension + mock wire session labels |
 | **4** | Shared wire auth helper (password → JWT/session identity) | Auth parity test: same user pass/fail on API login vs wire startup |
 | **5** | `kalamdb-postgres-wire` MVP via **`pgwire`**: startup auth, tx control via `BackendSessionManager`, SQL via `SqlExecutor`, row encoder | `psql`: login, `SELECT 1`, `BEGIN`/`COMMIT`; SC-002 |
+| **5b** | **Client catalog shims** for DBeaver: `pg_catalog` compatibility views projecting from `system.*` | Wire e2e: `cargo test --test pgwire_catalog --features e2e-tests` green (SC-011); SC-012 projection-only review |
 | **6** | Delete deprecated session duplication; docs/ADR | SC-007/SC-010 architecture + zero-diff sign-off |
 
-Phases 1–3 deliver value for extension stability and observability **before** wire access lands. Phase 5 ships behind `server.postgres_wire.enabled` (default off). **`datafusion-postgres` rejected** — see `validation/datafusion-postgres-spike.md`.
+Phases 1–3 deliver value for extension stability and observability **before** wire access lands. Phase 5 ships behind `postgres_wire.enabled` (default off). **`datafusion-postgres` rejected** — see `validation/datafusion-postgres-spike.md`.
 
 ## Phase 0: Outline & Research
 
@@ -138,7 +141,8 @@ Key decisions preview:
 - Wire tx control: SQL `BEGIN`/`COMMIT`/`ROLLBACK` → **`BackendSessionManager` block API** (same durable path as gRPC `BeginTransaction`/`Commit`/`Rollback`; **not** `SqlExecutor::execute_begin_transaction` / `RequestTransactionState`).
 - Wire data SQL: classify statement; route SELECT/DML/DDL through `SqlExecutor` with `ExecutionContext` + `TransactionQueryExtension` when a block is open (read-your-writes overlay).
 - Wire results: `ExecutionResult` → pgwire row messages via `row_encoder.rs` (KalamDB-owned; optional future `arrow-pg` evaluation for encoder only).
-- Protocol: `pgwire` simple + extended query + optional TLS; defer COPY/replication/savepoints and `pg_catalog` shims per spec out-of-scope.
+- Protocol: `pgwire` simple + extended query + optional TLS; defer COPY/replication/savepoints per spec out-of-scope.
+- **Client catalog (US9)**: thin **`pg_catalog` compatibility views** in `kalamdb-views` (or dedicated `kalamdb-catalog` module) that **project** from `system.namespaces`, `system.tables`, `system.columns`, `system.sessions` — **not** duplicate stores, **not** SQL aliases. Augment DataFusion `information_schema` where already enabled. Map namespace → PostgreSQL schema. Optional admin `pg_stat_activity` shim → `system.sessions`.
 
 ## Phase 1: Design & Contracts
 
@@ -167,6 +171,8 @@ Key decisions preview:
 | gRPC contract | `backend/crates/kalamdb-pg/tests/` | Protobuf unchanged — contract test |
 | Auth parity | New wire auth integration test | Same credentials API vs wire |
 | postgres wire | `psql` manual + integration test via `pgwire` | SC-002 three clients |
+| client catalog | Wire e2e `backend/tests/pgwire_catalog/` (`tokio-postgres` over TCP) | SC-011 parity vs `system.*`; optional DBeaver manual |
+| catalog review | Architecture check: shims delegate to `system.*` only | SC-012 |
 | Memory | Idle connection count test | 1k idle / 15 min (SC-004) |
 
 ## Architecture (target)
@@ -209,18 +215,112 @@ Key decisions preview:
                          (no BackendSession row; NOT used by wire/gRPC connections)
 ```
 
+## Client catalog compatibility (US9 — recommended approach)
+
+**Question**: views, aliases, or duplicate tables for DBeaver?
+
+**Decision**: **Virtual compatibility views** in reserved catalog schemas — same pattern as existing `system.tables` / `system.columns` (computed from `system.schemas`).
+
+| Approach | Verdict |
+|----------|---------|
+| Duplicate persisted catalog tables | Reject — drift from `system.*` |
+| SQL `CREATE ALIAS` / synonyms | Reject — not an established KalamDB metadata pattern |
+| **`pg_catalog` shim views projecting `system.*`** | **Accept** — one source of truth, RBAC at provider layer |
+| DataFusion built-in `information_schema` only | Partial — already enabled; insufficient alone for DBeaver (`pg_catalog` queries) |
+
+**Canonical sources (unchanged)**:
+
+- Namespaces → `system.namespaces`
+- Tables → `system.tables` (view over `system.schemas`)
+- Columns → `system.columns` (view over `system.schemas`)
+- Connection sessions → `system.sessions`
+- Active txs → `system.transactions`
+
+**Compatibility projections (new, wire-focused)**:
+
+| Client expects | Shim view | Projects from |
+|----------------|-----------|---------------|
+| PostgreSQL schema list | `pg_catalog.pg_namespace` | `system.namespaces` (namespace_id → `nspname`) |
+| Table/relation list | `pg_catalog.pg_class` | `system.tables` |
+| Column list | `pg_catalog.pg_attribute` | `system.columns` |
+| Current database | `pg_catalog.pg_database` | static/single-db stub + config |
+| Session activity (admin) | `pg_catalog.pg_stat_activity` | `system.sessions` (+ tx fields) |
+
+Enable behind `postgres_wire.client_catalog.enabled` (reuse/extend existing `pg_catalog_enabled` config field). HTTP and gRPC clients continue using `system.*` directly.
+
+### Performance (lazy loading — no extra work required)
+
+Existing `system.*` virtual views are already lazy: `SystemSchemaProvider` creates providers on first `table()` access; `VirtualView::compute_batch()` runs only when a client `SELECT`s the view. `pg_catalog` shims MUST follow the same pattern — config-gated schema registration only; no eager metadata scans at startup. Steady-state server cost is **zero** until a wire client queries catalog tables (expected when DBeaver/psql browse metadata).
+
+## Client catalog validation (US9 — wire e2e gate)
+
+**End result**: US9 is accepted when an automated **wire-protocol e2e suite** passes against a running server — not when an in-process DataFusion-only integration test passes, and not when manual DBeaver smoke alone is done.
+
+**Why wire e2e**: DBeaver and `psql` use the same TCP + PostgreSQL startup path as `tokio-postgres`. Catalog visibility must be proven over that path, including auth, search path, and provider RBAC — not only via HTTP SQL or `AppContext::base_session_context()`.
+
+**Primary gate (SC-011)**:
+
+```bash
+cd backend && cargo test --test pgwire_catalog --features e2e-tests
+```
+
+**Test location**: `backend/tests/pgwire_catalog/` (driver + shared query helpers).
+
+**Server fixture** (embedded test harness when wire listener lands; until then env-based connect to a dev server):
+
+- `postgres_wire.enabled = true`
+- `postgres_wire.pg_catalog_enabled = true`
+- Ephemeral wire port (extend existing `http_server` test pattern in `backend/tests/common/testserver/`)
+
+**Client**: `tokio-postgres` (`NoTls` for local tests).
+
+**Fixture data** (created over wire before assertions):
+
+1. `CREATE NAMESPACE catalog_e2e`
+2. `CREATE TABLE catalog_e2e.items (id INT PRIMARY KEY, name TEXT)`
+
+**Required surfaces — each must succeed and return rows** (see [validation/us9-client-catalog.md](validation/us9-client-catalog.md) for exact SQL):
+
+| Surface | Purpose |
+|---------|---------|
+| `pg_catalog.pg_namespace` | Namespace → schema list |
+| `pg_catalog.pg_class` | Table/relation list (fixture table visible) |
+| `pg_catalog.pg_attribute` | Column list (≥ 2 columns on fixture) |
+| `pg_catalog.pg_database` | Logical database stub |
+| `pg_catalog.pg_stat_activity` | Admin: ≥ 1 connection session row |
+| `information_schema.schemata` | Standard schema introspection |
+| `information_schema.tables` | Fixture table visible |
+| `information_schema.columns` | Fixture columns visible |
+
+**Parity assertions** (same wire connection):
+
+- Sorted table names from `pg_catalog.pg_class` == `system.tables` for fixture namespace
+- Sorted column names from `pg_catalog.pg_attribute` == `system.columns` for fixture table
+- Admin `pg_stat_activity` row count consistent with `system.sessions` (connection sessions only)
+
+**Negative cases** (same suite):
+
+- `pg_catalog_enabled = false` → `pg_catalog.pg_class` not queryable or empty (no silent full metadata)
+- Non-admin connect → other users' sessions hidden from `pg_stat_activity`; unauthorized namespaces hidden
+
+**Secondary gate (regression only)**: Keep `backend/crates/kalamdb-core/tests/test_information_schema_columns.rs` for HTTP/DataFusion path — does **not** replace wire e2e.
+
+**Optional follow-up**: Manual DBeaver / `psql \dn` / `\dt` smoke documented in [quickstart.md](quickstart.md) Scenario 8 after e2e is green.
+
+**Sign-off artifact**: Record passing `cargo test --test pgwire_catalog` output in [validation/us9-client-catalog.md](validation/us9-client-catalog.md).
+
 ## Documentation Updates (same release)
 
 - `docs/architecture/transactions.md` — connection session vs request-scoped tx; origin labels
 - `docs/architecture/decisions/adr-0XX-unified-backend-session.md` (new)
 - Update `docs/architecture/pg-extension-grpc-connectivity.md` — points at `kalamdb-backend`
 
-## Out of Scope for This Plan (defer to tasks/follow-ups)
+## Out of Scope for This Plan (follow-ups after MVP)
 
 - Savepoints, prepared statement cache persistence across reconnect
 - Full PostgreSQL protocol beyond pgwire MVP (COPY, replication, LISTEN/NOTIFY, etc.)
 - `datafusion-postgres` / `datafusion-pg-catalog` (blocked on DF 53; not needed with direct pgwire + SqlExecutor)
-- `pg_catalog` emulation for DBeaver (defer; not required for SC-002 MVP)
+- Full `pg_catalog` emulation for every PostgreSQL client query; this plan ships only **minimal shim views** in Phase 5b with acceptance via wire e2e in `backend/tests/pgwire_catalog/`
 - Refactoring `pg/src/arrow_to_pg.rs` or gRPC Arrow IPC to use `arrow-pg` (separate follow-up if wire encoder spike shows value)
 
 ## Next Step

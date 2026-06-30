@@ -285,6 +285,14 @@ pub async fn parse_sql_payload(
     }
 }
 
+/// Cheap guard before the full FILE("name") scan.
+#[inline]
+pub fn sql_may_contain_file_placeholder(sql: &str) -> bool {
+    sql.as_bytes()
+        .windows(5)
+        .any(|window| window.eq_ignore_ascii_case(b"file("))
+}
+
 /// Extract FILE("name") placeholders from SQL string.
 ///
 /// Matches patterns like:

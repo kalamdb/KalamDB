@@ -32,8 +32,7 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 

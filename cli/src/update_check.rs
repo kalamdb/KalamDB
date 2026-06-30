@@ -310,13 +310,9 @@ mod tests {
     use super::*;
 
     fn adjacent_core_version(delta: i64) -> String {
-        let core = CLI_VERSION
-            .split_once('-')
-            .map_or(CLI_VERSION, |(core, _)| core);
-        let mut parts = core
-            .split('.')
-            .map(|part| part.parse::<i64>().unwrap_or(0))
-            .collect::<Vec<_>>();
+        let core = CLI_VERSION.split_once('-').map_or(CLI_VERSION, |(core, _)| core);
+        let mut parts =
+            core.split('.').map(|part| part.parse::<i64>().unwrap_or(0)).collect::<Vec<_>>();
         parts.resize(3, 0);
 
         if delta.is_positive() {

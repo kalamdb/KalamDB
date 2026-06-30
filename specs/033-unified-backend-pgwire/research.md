@@ -142,9 +142,19 @@
 - **Alternatives considered**:
   - Manual testing only: rejected — not repeatable.
 
+## Decision 20: Client catalog — compatibility views, not aliases or duplicate tables
+
+- **Decision**: For DBeaver/DataGrip-style introspection over wire, add **minimal `pg_catalog` virtual views** that **project** from existing `system.namespaces`, `system.tables`, `system.columns`, and (admin-only) `system.sessions`. Keep DataFusion `information_schema` enabled as secondary coverage. Do **not** add persisted duplicate catalog tables or SQL alias objects.
+- **Rationale**: KalamDB already maintains authoritative metadata in `system.*` (`TablesView`/`ColumnsView` pattern). Clients expect `pg_catalog.pg_namespace` / `pg_class` / `pg_attribute`; mapping namespace→schema in views satisfies FR-026–FR-030 with one source of truth (SC-012).
+- **Alternatives considered**:
+  - Point DBeaver users at `system.*` only: rejected — poor UX; clients hard-code `pg_catalog` queries.
+  - `datafusion-pg-catalog` crate: rejected — DF 53 dependency; same rejection as `datafusion-postgres`.
+  - Full `pg_catalog` emulation: deferred — out of scope; minimal shims sufficient for SC-011.
+
 ## Open Items Deferred to `/speckit-tasks`
 
 - Pin exact `pgwire` workspace version and TLS feature flags
 - `row_encoder.rs` MVP type coverage vs optional `arrow-pg` follow-up spike
 - Extended query portal/prepared-statement memory caps per session
-- Minimal `pg_catalog` stubs for DBeaver (defer post-MVP)
+- Exact column mapping for `pg_catalog.pg_class` / `pg_attribute` vs `system.tables` / `system.columns`
+- Which `pg_stat_activity` columns DBeaver requires for session browser (admin-only)

@@ -491,6 +491,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "array-init"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d62b7694a562cdf5a74227903507c56ab2cc8bdd1f781ed5cb4cf9c9f810bfc"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -965,6 +971,16 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "bcder"
+version = "0.7.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b593e5aeaf7992d388c08a9831c921cd703718064b3e50ba8e6d666d6cf86ca7"
+dependencies = [
+ "bytes",
+ "smallvec",
+]
 
 [[package]]
 name = "bcrypt"
@@ -2798,6 +2814,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-new"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cdc8d50f426189eef89dac62fabfa0abb27d5cc008f25bf4156a0203325becc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4594,6 +4621,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalamdb-backend"
+version = "0.5.4-rc.1"
+dependencies = [
+ "async-trait",
+ "dashmap 6.2.1",
+ "kalamdb-commons",
+ "kalamdb-transactions",
+ "libc",
+ "ntest",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "kalamdb-commons"
 version = "0.5.4-rc.1"
 dependencies = [
@@ -4648,6 +4689,7 @@ dependencies = [
  "futures-util",
  "hostname",
  "kalamdb-auth",
+ "kalamdb-backend",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-dialect",
@@ -4995,6 +5037,7 @@ dependencies = [
  "dashmap 6.2.1",
  "datafusion-common",
  "kalamdb-auth",
+ "kalamdb-backend",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-core",
@@ -5018,6 +5061,27 @@ dependencies = [
  "datafusion",
  "kalamdb-commons",
  "moka",
+]
+
+[[package]]
+name = "kalamdb-postgres-wire"
+version = "0.5.4-rc.1"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "futures-util",
+ "kalamdb-auth",
+ "kalamdb-backend",
+ "kalamdb-commons",
+ "kalamdb-core",
+ "kalamdb-dialect",
+ "kalamdb-system",
+ "parking_lot",
+ "pgwire",
+ "sqlparser",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]
@@ -5123,6 +5187,7 @@ dependencies = [
  "kalamdb-jobs",
  "kalamdb-live",
  "kalamdb-observability",
+ "kalamdb-postgres-wire",
  "kalamdb-raft",
  "kalamdb-store",
  "kalamdb-system",
@@ -5147,6 +5212,7 @@ dependencies = [
  "tempfile",
  "testcontainers-modules",
  "tokio",
+ "tokio-postgres",
  "tokio-tungstenite",
  "tracing",
  "tracing-actix-web",
@@ -5291,12 +5357,14 @@ dependencies = [
 name = "kalamdb-transactions"
 version = "0.5.4-rc.1"
 dependencies = [
+ "async-trait",
  "datafusion",
  "futures-util",
  "kalamdb-commons",
  "kalamdb-datafusion-sources",
  "kalamdb-sharding",
  "serde",
+ "thiserror 2.0.18",
  "tokio",
  "uuid",
 ]
@@ -5351,6 +5419,8 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-datafusion-sources",
  "kalamdb-raft",
+ "kalamdb-session",
+ "kalamdb-session-datafusion",
  "kalamdb-system",
  "parking_lot",
  "serde",
@@ -5364,6 +5434,29 @@ name = "language-tags"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4345964bb142484797b161f473a503a434de77149dd8c7427788c6e13379388"
+
+[[package]]
+name = "lazy-regex"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bae91019476d3ec7147de9aa291cadb6d870abf2f3015d2da73a90325ac1496"
+dependencies = [
+ "lazy-regex-proc_macros",
+ "once_cell",
+ "regex-lite",
+]
+
+[[package]]
+name = "lazy-regex-proc_macros"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de9c1e1439d8b7b3061b2d209809f447ca33241733d9a3c01eabf2dc8d94358"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.118",
+]
 
 [[package]]
 name = "lazy_static"
@@ -5664,6 +5757,12 @@ dependencies = [
  "cfg-if",
  "digest 0.11.2",
 ]
+
+[[package]]
+name = "md5"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "memchr"
@@ -6551,6 +6650,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pg_interval"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c386dd54fce258fc04e668126ae68589a0d92e03a90ea67881d1300f70fd6170"
+dependencies = [
+ "bytes",
+ "chrono",
+ "postgres-types",
+]
+
+[[package]]
 name = "pgrx"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6663,6 +6773,36 @@ dependencies = [
  "syn 2.0.118",
  "thiserror 1.0.69",
  "unescape",
+]
+
+[[package]]
+name = "pgwire"
+version = "0.40.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7981cfde34009be689a05a30c497ad5fbb552531d3d54230b3627264ff1bc384"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "bytes",
+ "derive-new",
+ "futures",
+ "hex",
+ "lazy-regex",
+ "md5",
+ "pg_interval",
+ "postgres-types",
+ "rand 0.10.1",
+ "rustls-pki-types",
+ "ryu",
+ "serde_json",
+ "smol_str",
+ "stringprep",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "x509-certificate",
 ]
 
 [[package]]
@@ -6825,6 +6965,7 @@ version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "851ca9db4932932d69f3ea811b1abe63087a0f740a47692619dd40d4899b68be"
 dependencies = [
+ "array-init",
  "bytes",
  "fallible-iterator",
  "postgres-protocol",
@@ -8245,6 +8386,16 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smol_str"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+dependencies = [
+ "borsh",
+ "serde_core",
+]
 
 [[package]]
 name = "snap"
@@ -10191,6 +10342,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "x509-certificate"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca9eb9a0c822c67129d5b8fcc2806c6bc4f50496b420825069a440669bcfbf7f"
+dependencies = [
+ "bcder",
+ "bytes",
+ "chrono",
+ "der",
+ "hex",
+ "pem",
+ "ring",
+ "signature",
+ "spki",
+ "thiserror 2.0.18",
+ "zeroize",
 ]
 
 [[package]]

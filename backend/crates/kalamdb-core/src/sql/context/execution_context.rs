@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{models::ReadContext, NamespaceId, Role, UserId};
+use kalamdb_commons::{models::ReadContext, NamespaceId, Role, TransactionId, UserId};
 use kalamdb_session::AuthSession;
 use kalamdb_session_datafusion::SessionUserContext;
 use once_cell::sync::OnceCell;
@@ -16,6 +16,8 @@ pub struct ExecutionContext {
     auth_session: AuthSession,
     /// Optional namespace for this query execution
     namespace_id: Option<NamespaceId>,
+    /// Optional existing transaction supplied by a connection-scoped caller.
+    transaction_id: Option<TransactionId>,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
     base_session_context: Arc<SessionContext>,
@@ -47,6 +49,7 @@ impl ExecutionContext {
         Self {
             auth_session: AuthSession::new(user_id, user_role),
             namespace_id: None,
+            transaction_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -60,6 +63,7 @@ impl ExecutionContext {
         Self {
             auth_session,
             namespace_id: None,
+            transaction_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -74,6 +78,7 @@ impl ExecutionContext {
         Self {
             auth_session: AuthSession::new(user_id, user_role),
             namespace_id: Some(namespace_id),
+            transaction_id: None,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -127,6 +132,17 @@ impl ExecutionContext {
         self
     }
 
+    pub fn with_transaction_id(mut self, transaction_id: TransactionId) -> Self {
+        self.transaction_id = Some(transaction_id);
+        self.session_context_cache = Arc::new(OnceCell::new());
+        self
+    }
+
+    #[inline]
+    pub fn transaction_id(&self) -> Option<&TransactionId> {
+        self.transaction_id.as_ref()
+    }
+
     /// Clone this context with an explicit effective identity while preserving
     /// namespace and request metadata.
     ///
@@ -140,6 +156,7 @@ impl ExecutionContext {
         Self {
             auth_session,
             namespace_id: self.namespace_id.clone(),
+            transaction_id: self.transaction_id.clone(),
             base_session_context: Arc::clone(&self.base_session_context),
             session_context_cache: Arc::new(OnceCell::new()),
         }

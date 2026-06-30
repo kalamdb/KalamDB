@@ -85,10 +85,27 @@ impl TransactionCoordinator {
         );
 
         match self.active_by_owner.entry(owner_key) {
-            Entry::Occupied(_) => Err(KalamDbError::Conflict(format!(
-                "owner '{}' already has an active transaction",
-                owner_id
-            ))),
+            Entry::Occupied(mut entry) => {
+                let existing_transaction_id = entry.get().clone();
+                let existing_is_open = self
+                    .active_by_id
+                    .get(&existing_transaction_id)
+                    .map(|handle| handle.state.is_open())
+                    .unwrap_or(false);
+
+                if existing_is_open {
+                    return Err(KalamDbError::Conflict(format!(
+                        "owner '{}' already has an active transaction",
+                        owner_id
+                    )));
+                }
+
+                self.active_by_id.remove(&existing_transaction_id);
+                self.write_sets.remove(&existing_transaction_id);
+                self.active_by_id.insert(transaction_id.clone(), handle);
+                entry.insert(transaction_id.clone());
+                Ok(transaction_id)
+            },
             Entry::Vacant(entry) => {
                 self.active_by_id.insert(transaction_id.clone(), handle);
                 entry.insert(transaction_id.clone());
@@ -755,5 +772,44 @@ impl TransactionCoordinator {
              node '{}' to '{}'; retry in a new transaction",
             transaction_id, group_id, prior_leader_node_id, current_leader
         ))
+    }
+}
+
+#[async_trait::async_trait]
+impl kalamdb_transactions::TransactionEngine for TransactionCoordinator {
+    async fn begin(
+        &self,
+        owner_key: ExecutionOwnerKey,
+        owner_id: Arc<str>,
+        origin: TransactionOrigin,
+    ) -> kalamdb_transactions::TransactionEngineResult<TransactionId> {
+        TransactionCoordinator::begin(self, owner_key, owner_id, origin)
+            .map_err(kalamdb_transactions::TransactionEngineError::operation)
+    }
+
+    async fn commit(
+        &self,
+        transaction_id: &TransactionId,
+    ) -> kalamdb_transactions::TransactionEngineResult<()> {
+        TransactionCoordinator::commit(self, transaction_id)
+            .await
+            .map(|_| ())
+            .map_err(kalamdb_transactions::TransactionEngineError::operation)
+    }
+
+    async fn rollback(
+        &self,
+        transaction_id: &TransactionId,
+    ) -> kalamdb_transactions::TransactionEngineResult<()> {
+        TransactionCoordinator::rollback(self, transaction_id)
+            .map_err(kalamdb_transactions::TransactionEngineError::operation)
+    }
+
+    fn active_for_owner(&self, owner_key: &ExecutionOwnerKey) -> Option<TransactionId> {
+        TransactionCoordinator::active_for_owner(self, owner_key)
+    }
+
+    fn get_handle(&self, transaction_id: &TransactionId) -> Option<TransactionHandle> {
+        TransactionCoordinator::get_handle(self, transaction_id)
     }
 }

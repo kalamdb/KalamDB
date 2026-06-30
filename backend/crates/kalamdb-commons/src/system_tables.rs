@@ -257,7 +257,7 @@ pub enum SystemTable {
     Stats,
     /// system.live - Active in-memory live subscriptions (computed on-demand)
     Live,
-    /// system.sessions - Active PostgreSQL gRPC sessions (computed on-demand)
+    /// system.sessions - Active connection sessions (computed on-demand)
     Sessions,
     /// system.transactions - Active explicit transactions across all origins (computed on-demand)
     Transactions,

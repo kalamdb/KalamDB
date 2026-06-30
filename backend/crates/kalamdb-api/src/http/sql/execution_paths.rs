@@ -40,7 +40,7 @@ use super::{
     models::{ErrorCode, QueryRequest, QueryResult, SqlResponse},
     request::took_ms,
     statements::{
-        classify_sql, resolve_execute_as_user, resolve_result_username,
+        prepare_metadata_or_http_error, resolve_execute_as_user, resolve_result_username,
         PreparedApiExecutionStatement,
     },
 };
@@ -375,7 +375,7 @@ pub(super) async fn execute_file_upload_path(
     exec_ctx: &ExecutionContext,
     impersonation_service: &SqlImpersonationService,
     authorized_username: &str,
-    default_namespace: &NamespaceId,
+    _default_namespace: &NamespaceId,
     params: Vec<ScalarValue>,
     schema_registry: &SchemaRegistry,
     start_time: Instant,
@@ -506,39 +506,15 @@ pub(super) async fn execute_file_upload_path(
 
     let modified_sql = substitute_file_placeholders(&stmt.prepared_statement.sql, &file_refs);
 
-    match kalamdb_sql::parse_single_statement(&modified_sql) {
-        Ok(Some(_)) => {},
-        Ok(None) => {
-            return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-                ErrorCode::InvalidSql,
-                "Expected exactly one SQL statement after FILE() substitution",
-                took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
-        },
-        Err(err) => {
-            let message = err.to_string();
-            return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-                ErrorCode::InvalidSql,
-                &message,
-                took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
-        },
+    let modified_metadata = match prepare_metadata_or_http_error(
+        sql_executor,
+        &modified_sql,
+        exec_ctx,
+        start_time,
+    ) {
+        Ok(metadata) => metadata,
+        Err(resp) => return resp,
     };
-
-    let modified_classified =
-        match classify_sql(&modified_sql, default_namespace, exec_ctx, start_time) {
-            Ok(c) => c,
-            Err(resp) => return resp,
-        };
-
-    let modified_metadata = PreparedExecutionStatement::new(
-        modified_sql.clone(),
-        Some(table_id.clone()),
-        Some(table_type),
-        Some(modified_classified),
-    );
 
     let effective_username =
         resolve_result_username(authorized_username, stmt.execute_as_username.as_deref());
@@ -805,10 +781,14 @@ pub(super) async fn execute_batch_path(
                 let stmt_duration_ms = stmt_duration_secs * 1000.0;
                 let row_count = exec_result.affected_rows();
 
-                let safe_sql = kalamdb_commons::helpers::security::redact_sensitive_sql(
-                    &stmt.prepared_statement.sql,
-                );
-                if log::log_enabled!(log::Level::Debug) {
+                let safe_sql = if log::log_enabled!(log::Level::Debug) {
+                    Some(kalamdb_commons::helpers::security::redact_sensitive_sql(
+                        &stmt.prepared_statement.sql,
+                    ))
+                } else {
+                    None
+                };
+                if let Some(safe_sql) = safe_sql.as_ref() {
                     log::debug!(
                         target: "sql::exec",
                         "✅ SQL executed | sql='{}' | user='{}' | role='{:?}' | rows={} | took={:.3}ms",
@@ -821,12 +801,15 @@ pub(super) async fn execute_batch_path(
                 }
 
                 app_context.slow_query_logger().log_if_slow(
-                    safe_sql,
+                    stmt.prepared_statement.track_slow_query,
+                    &stmt.prepared_statement.sql,
                     stmt_duration_secs,
                     row_count,
                     statement_exec_ctx.user_id().clone(),
-                    kalamdb_core::schema_registry::TableType::User,
-                    None,
+                    stmt.prepared_statement
+                        .table_type
+                        .unwrap_or(kalamdb_core::schema_registry::TableType::User),
+                    stmt.prepared_statement.table_id.as_ref().map(|id| id.table_name().clone()),
                 );
 
                 if !is_batch {

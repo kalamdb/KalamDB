@@ -221,8 +221,7 @@ pub fn parse_execute_as(statement: &str) -> Result<Option<ExecuteAsEnvelope>, St
         return Err("EXECUTE AS can only wrap a single SQL statement".to_string());
     }
 
-    UserId::try_new(&username)
-        .map_err(|error| format!("Invalid EXECUTE AS user id: {}", error))?;
+    UserId::try_new(&username).map_err(|error| format!("Invalid EXECUTE AS user id: {}", error))?;
 
     Ok(Some(ExecuteAsEnvelope {
         username,
@@ -359,10 +358,7 @@ mod tests {
     fn parse_escaped_quote_in_username_is_rejected_as_invalid_user_id() {
         let err = parse_execute_as("EXECUTE AS USER 'alice''o' (INSERT INTO default.t VALUES (1))")
             .expect_err("quoted apostrophe in user id must be rejected");
-        assert!(
-            err.contains("Invalid EXECUTE AS user id"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("Invalid EXECUTE AS user id"), "unexpected error: {err}");
     }
 
     #[test]
@@ -558,10 +554,7 @@ mod tests {
     fn security_username_injection_via_escaped_quotes_is_rejected() {
         let err = parse_execute_as("EXECUTE AS USER 'alice'' OR ''1''=''1' (SELECT 1)")
             .expect_err("escaped-quote injection username must be rejected");
-        assert!(
-            err.contains("Invalid EXECUTE AS user id"),
-            "Invalid user id must error: {err}"
-        );
+        assert!(err.contains("Invalid EXECUTE AS user id"), "Invalid user id must error: {err}");
     }
 
     // Nested EXECUTE AS: the dialect parser does NOT recursively validate the

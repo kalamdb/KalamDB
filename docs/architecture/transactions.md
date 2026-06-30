@@ -10,6 +10,7 @@ Two different caller families feed that model today:
 
 - KalamDB-native callers such as HTTP SQL batches and typed internal services
 - PostgreSQL FDW callers routed through the gRPC `PgService`
+- PostgreSQL wire protocol callers routed through `kalamdb-postgres-wire`
 
 The important design rule is that explicit transactions do not create a separate write path. Both caller families eventually use the same server-side transaction coordinator and the same durable commit path into the RocksDB-backed table providers.
 
@@ -43,6 +44,13 @@ Autocommit requests are different: they bypass transaction staging and go direct
   File: `backend/crates/kalamdb-core/src/sql/executor/request_transaction_state.rs`
   Role: thin adapter from the shared request transaction lifecycle interface to the core `TransactionCoordinator`. It is not transaction state; it exists because only `kalamdb-core` can access `AppContext`, Raft, and the applier.
 
+- `BackendSessionManager`
+  File: `backend/crates/kalamdb-backend/src/manager.rs`
+  Role: shared authority for connection-scoped backend sessions. Extension and
+  PostgreSQL wire transports use this manager for authenticated session rows,
+  one active block per connection, disconnect cleanup, idle cleanup, and
+  observable `system.sessions` snapshots.
+
 ### Typed execution path
 
 - `OperationService`
@@ -51,11 +59,20 @@ Autocommit requests are different: they bypass transaction staging and go direct
 
 - `KalamPgService`
   File: `backend/crates/kalamdb-pg/src/service.rs`
-  Role: gRPC server surface for the PostgreSQL extension. It translates PG RPCs into typed domain requests and delegates transaction begin / commit / rollback to `OperationService` through `OperationExecutor`.
+  Role: gRPC server surface for the PostgreSQL extension. It translates PG RPCs into typed domain requests and delegates connection-scoped begin / commit / rollback through `BackendSessionManager` when the shared manager is available.
 
 - `SessionRegistry`
   File: `backend/crates/kalamdb-pg/src/session_registry.rs`
-  Role: tracks remote PostgreSQL sessions and pinned transaction ids for observability and cleanup. It is not the authoritative source for durable transaction state; the coordinator is.
+  Role: compatibility adapter for extension RPC authentication, lease validation,
+  and legacy session handles. It must not be treated as the authoritative
+  transaction state when `BackendSessionManager` is available.
+
+- `kalamdb-postgres-wire`
+  Files under: `backend/crates/kalamdb-postgres-wire/src/`
+  Role: PostgreSQL wire listener, authentication, protocol handling, query
+  execution, prepared statement and portal state. Wire `BEGIN`, `COMMIT`, and
+  `ROLLBACK` call the shared `BackendSessionManager`; row encoding and protocol
+  state remain in the wire crate.
 
 ### Durable commit path
 
@@ -96,6 +113,31 @@ HTTP SQL batches and cluster-forwarded SQL batches share the same request-scoped
 5. call `ensure_closed()` at the end of the batch so `BEGIN; INSERT ...;` without `COMMIT` cannot leak staged writes or active coordinator state
 
 Cluster forwarding preserves the caller request id when it builds the forwarded `ExecutionContext`, so the receiving node uses the same owner key and the same guard behavior as the local HTTP path.
+
+## Connection-Scoped Backend Sessions
+
+Extension and PostgreSQL wire clients are connection-oriented. They use
+`BackendSessionManager` instead of request-scoped HTTP guards because a single
+connection can run many statements and can hold one explicit transaction block
+across protocol messages.
+
+The manager stores the connection session identity, origin, authenticated user,
+lease expiry, current schema, client address, last activity, and the optional
+pinned transaction id. It delegates transaction work to the shared transaction
+engine and coordinator, so it is not a separate durable transaction authority.
+
+The boundary is:
+
+- HTTP SQL: `RequestTransactionBatchGuard`, one request owner, no
+  `BackendSession`
+- PostgreSQL extension: `BackendSessionManager` session with
+  `SessionOrigin::ExtensionBridge`
+- PostgreSQL wire: `BackendSessionManager` session with
+  `SessionOrigin::WireProtocol`
+
+On disconnect or explicit close, the manager rolls back an active block before
+removing the session row. Idle cleanup clears stale pins when the coordinator no
+longer has matching active state.
 
 ### 1. Begin
 
@@ -293,23 +335,54 @@ Because KalamDB explicit writes are staged until commit, rollback does not need 
 
 The current PostgreSQL bridge is transaction-aware, but it is not a full two-phase commit coordinator.
 
+## PostgreSQL Wire Operations
+
+The wire listener is configured under `[postgres_wire]` and is disabled by
+default unless explicitly enabled:
+
+- `enabled`: starts the PostgreSQL wire listener
+- `addr`: listener address, for example `127.0.0.1:5433`
+- `tls_enabled`: enables PostgreSQL wire TLS
+- `tls_cert_path` and `tls_key_path`: PEM certificate and private key paths when
+  TLS is enabled
+- `prepared_statement_limit`: per-connection cap for named prepared statements
+- `portal_limit`: per-connection cap for portals
+- `pg_catalog_enabled`: registers minimal PostgreSQL-compatible catalog shims
+  for client browsing
+
+Prepared statement and portal state is protocol state and lives in
+`kalamdb-postgres-wire`. It is bounded per connection and is cleared on protocol
+close/sync or disconnect. Durable data, transaction state, RocksDB access,
+Parquet lifecycle, and metadata ownership remain in the existing backend crates.
+
+The optional `pg_catalog` shims are compatibility views only. They project from
+canonical `system.*` metadata and the shared session snapshot path; they do not
+create persisted PostgreSQL catalog tables.
+
 ## Observability
 
 Useful runtime views:
 
 - `system.sessions`
-  Shows remote PostgreSQL session state, client identity, and pinned transaction state.
+  Shows extension and wire connection session state, client identity, origin,
+  cleanup state, and pinned transaction state.
 
 - `system.transactions`
   Shows active KalamDB transaction coordinator state such as owner, origin, state, and write count.
 
 These are the best places to verify that a PostgreSQL backend is reusing one remote transaction id across multiple foreign statements.
 
+When `postgres_wire.pg_catalog_enabled = true`, admins can also query
+`pg_catalog.pg_stat_activity`, which projects from the same session snapshot
+source as `system.sessions`.
+
 ## Code Anchors
 
 - `backend/crates/kalamdb-core/src/transactions/coordinator.rs`
 - `backend/crates/kalamdb-core/src/sql/executor/request_transaction_state.rs`
 - `backend/crates/kalamdb-core/src/operations/service.rs`
+- `backend/crates/kalamdb-backend/src/manager.rs`
+- `backend/crates/kalamdb-postgres-wire/src/`
 - `backend/crates/kalamdb-core/src/applier/applier.rs`
 - `backend/crates/kalamdb-core/src/applier/executor/dml.rs`
 - `backend/crates/kalamdb-pg/src/service.rs`
