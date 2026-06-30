@@ -36,7 +36,7 @@ test('React AI chat example is driven by kalam dev project config', async () => 
   const packageJson = await readFile(new URL('../package.json', import.meta.url), 'utf8');
 
   assert.match(kalamToml, /\[schema\]/);
-  assert.match(kalamToml, /path = "chat-app\.sql"/);
+  assert.match(kalamToml, /path = "kalam\/schema\.sql"/);
   assert.match(kalamToml, /output = "src\/app\/schema\.generated\.ts"/);
   assert.match(kalamToml, /\[dev\.processes\]/);
   assert.match(kalamToml, /app = "npm run dev"/);

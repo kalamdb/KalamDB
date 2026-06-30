@@ -13,7 +13,7 @@ const room = process.env.CHAT_TEST_ROOM ?? 'playwright-room-fallback';
 const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
 const rootPassword = process.env.KALAMDB_ROOT_PASSWORD ?? adminPassword;
-const chatSetupStatements = readFileSync(path.join(exampleRoot, 'chat-app.sql'), 'utf8')
+const chatSetupStatements = readFileSync(path.join(exampleRoot, 'kalam/schema.sql'), 'utf8')
   .split(/;\s*(?:\r?\n|$)/)
   .map((statement) => statement.trim())
   .filter(Boolean);

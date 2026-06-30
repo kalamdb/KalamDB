@@ -88,7 +88,7 @@ async function waitForStableCommittedOffset(
 }
 
 test('agent writes summaries back into blog.blogs', async () => {
-  execFileSync(process.execPath, ['setup.mjs'], {
+  execFileSync(process.execPath, ['setup.mjs', '--force'], {
     cwd: exampleRoot,
     stdio: 'inherit',
     env: {
@@ -128,7 +128,7 @@ test('agent writes summaries back into blog.blogs', async () => {
 });
 
 test('agent resumes the same group without replaying completed messages', async () => {
-  execFileSync(process.execPath, ['setup.mjs'], {
+  execFileSync(process.execPath, ['setup.mjs', '--force'], {
     cwd: exampleRoot,
     stdio: 'inherit',
     env: {

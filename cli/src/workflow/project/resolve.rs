@@ -294,10 +294,7 @@ output = "src/generated/kalam.ts"
             resolve_project_server_url_for_instance(temp.path(), "kalam-dev").as_deref(),
             Some("http://localhost:2900")
         );
-        assert_eq!(
-            resolve_project_server_url_for_instance(temp.path(), "kalam-prod"),
-            None
-        );
+        assert_eq!(resolve_project_server_url_for_instance(temp.path(), "kalam-prod"), None);
     }
 
     #[test]

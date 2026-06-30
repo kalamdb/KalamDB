@@ -18,7 +18,7 @@ loadEnv({ path: resolve(__dirname, '../.env.local'), quiet: true });
 loadEnv({ path: resolve(__dirname, '../.env'), quiet: true });
 
 const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
-const KALAMDB_USER = process.env.KALAMDB_USER ?? 'admin';
+const KALAMDB_USER = process.env.KALAMDB_USER ?? 'root';
 const KALAMDB_PASSWORD = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 const THINKING_DELAY_MS = 250;
 const STREAM_DELAY_MS = 120;

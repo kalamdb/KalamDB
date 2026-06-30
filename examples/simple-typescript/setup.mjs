@@ -6,8 +6,8 @@
  * Usage: node setup.mjs [--url <url>] [--user <user>] [--password <pass>]
  * Env:   KALAMDB_URL  KALAMDB_USER  KALAMDB_PASSWORD
  *
- * The schema creates a 'demo-user' (password: demo123) that owns the
- * activity_feed rows. The Vite app connects as demo-user by default.
+ * The helper creates a 'demo-user' (password: demo123) for the Playwright
+ * tests. The kalam dev path uses root / kalamdb123 by default.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -33,7 +33,7 @@ const args = parseArgs();
 const url = args.url ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const user = args.user ?? process.env.KALAMDB_USER ?? 'admin';
 const password = args.password ?? process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
-const sqlFile = resolve(__dirname, 'activity-feed.sql');
+const sqlFile = resolve(__dirname, 'kalam/schema.sql');
 const envFile = resolve(__dirname, '.env.local');
 
 function runKalam(commandArgs, { allowFailure = false } = {}) {
@@ -58,8 +58,44 @@ function runKalam(commandArgs, { allowFailure = false } = {}) {
   return result;
 }
 
+async function ensureServerSetup() {
+  let status;
+  try {
+    status = await fetch(`${url}/v1/api/auth/status`);
+  } catch {
+    return;
+  }
+
+  if (!status.ok) {
+    return;
+  }
+
+  const body = await status.json().catch(() => null);
+  if (body?.needs_setup !== true) {
+    return;
+  }
+
+  const setup = await fetch(`${url}/v1/api/auth/setup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user,
+      password,
+      root_password: process.env.KALAMDB_ROOT_PASSWORD ?? password,
+      email: null,
+    }),
+  });
+
+  if (!setup.ok) {
+    console.error(`[setup] auth setup failed: ${setup.status} ${await setup.text()}`);
+    process.exit(1);
+  }
+}
+
 console.log(`[setup] importing ${sqlFile}`);
 console.log(`[setup] server: ${url}  user: ${user}`);
+
+await ensureServerSetup();
 
 console.log('[setup] ensuring demo-user exists');
 runKalam(["--command", "CREATE USER 'demo-user' WITH PASSWORD 'demo123' ROLE 'user'"], { allowFailure: true });

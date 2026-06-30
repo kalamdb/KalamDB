@@ -10,8 +10,7 @@ use crate::{
         dev::server::server_already_ready,
         display_project_path,
         project::{
-            connection_url::is_loopback_server_url,
-            prompts::interactive_available,
+            connection_url::is_loopback_server_url, prompts::interactive_available,
             resolve::ResolvedEnvironment,
         },
         sql::{build_workflow_client, drop_namespace_if_exists},
@@ -51,10 +50,7 @@ pub fn reset_local_dev_server_data(
             CLIError::FileError(format!("failed to remove '{}': {error}", server_dir.display()))
         })?;
         removed_paths += 1;
-        output.status(format!(
-            "removed {}",
-            display_project_path(&ctx.project_root, &server_dir)
-        ));
+        output.status(format!("removed {}", display_project_path(&ctx.project_root, &server_dir)));
     } else {
         output.detail(format!(
             "skipped {} (not present)",
@@ -113,7 +109,7 @@ pub async fn reset_remote_namespace_if_ready(
         reset_targets_project_local_server(&environment.url, had_local_server_data);
     if !project_local_server {
         match confirm_external_namespace_reset(ctx, &environment, assume_yes)? {
-            ResetNamespaceConfirmation::Confirmed => {}
+            ResetNamespaceConfirmation::Confirmed => {},
             ResetNamespaceConfirmation::Declined => {
                 output.status(format!(
                     "skipped dropping namespace {} on {}",
@@ -132,10 +128,7 @@ pub async fn reset_remote_namespace_if_ready(
     }
 
     let client = build_workflow_client(ctx, &environment)?;
-    output.status(format!(
-        "dropping namespace {} on {}",
-        environment.namespace, environment.url
-    ));
+    output.status(format!("dropping namespace {} on {}", environment.namespace, environment.url));
     drop_namespace_if_exists(&client, &environment.namespace).await?;
     output.status(format!("reset namespace {}", environment.namespace));
     Ok(())
@@ -169,9 +162,10 @@ fn confirm_external_namespace_reset(
         "Drop namespace {} on {} ({server_kind})? This permanently deletes schema and migration history",
         environment.namespace, environment.url
     );
-    let confirmed = terminal_ui::prompt_confirm(&prompt, false, ctx.use_color).map_err(|error| {
-        CLIError::FileError(format!("failed to read reset confirmation: {error}"))
-    })?;
+    let confirmed =
+        terminal_ui::prompt_confirm(&prompt, false, ctx.use_color).map_err(|error| {
+            CLIError::FileError(format!("failed to read reset confirmation: {error}"))
+        })?;
     Ok(if confirmed {
         ResetNamespaceConfirmation::Confirmed
     } else {

@@ -1,0 +1,33 @@
+[project]
+name = "summarizer-agent"
+default_env = "dev"
+package_manager = "npm"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "blog"
+
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+watch = true
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/schema.generated.ts"
+
+[migrations]
+auto_create = true
+
+[dev]
+auto_start_db = true
+apply_schema = true
+generate_types = true
+watch = true
+
+[dev.processes]
+agent = "npm run start"
+
+[logging]
+file = true
+capture_process_output = true

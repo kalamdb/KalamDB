@@ -775,8 +775,10 @@ async fn test_pk_lookup_returns_latest_file_ref_after_multiple_updates() {
     assert_pk_file_size(&server, &ns, &user, path, 7, "after insert v1").await;
 
     // v2 and v3: repeated UPDATEs while rows stay in hot storage.
-    for (content, label) in [(b"offline2".as_slice(), "v2"), (b"offline2222333".as_slice(), "v3")]
-    {
+    for (content, label) in [
+        (b"offline2".as_slice(), "v2"),
+        (b"offline2222333".as_slice(), "v3"),
+    ] {
         let update = execute_sql_multipart_as_user(
             http,
             &user,
@@ -808,7 +810,8 @@ async fn test_pk_lookup_returns_latest_file_ref_after_multiple_updates() {
     }
 
     // Flush v3 to cold; hot keys for this row are removed (same state as after restart).
-    let flush_result = flush_helpers::execute_flush_synchronously(&server, &ns, "context_files").await;
+    let flush_result =
+        flush_helpers::execute_flush_synchronously(&server, &ns, "context_files").await;
     assert!(flush_result.is_ok(), "flush failed: {:?}", flush_result.err());
     assert_pk_file_size(&server, &ns, &user, path, 14, "after flush (cold-only read)").await;
 

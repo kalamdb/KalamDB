@@ -24,5 +24,11 @@ CREATE TABLE IF NOT EXISTS chat_demo.agent_events (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (TYPE = 'STREAM', TTL_SECONDS = 10);
 
-CREATE TOPIC chat_demo.ai_inbox;
+CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
+
+INSERT INTO chat_demo.messages (role, author, sender_username, content)
+VALUES ('user', 'user_1', 'root', 'Hello everyone!');
+
+INSERT INTO chat_demo.messages (role, author, sender_username, content)
+VALUES ('assistant', 'ai_bot', 'assistant', 'Hi, how can I help?');

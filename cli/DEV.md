@@ -190,8 +190,10 @@ When run in a TTY without `--yes`, `kalam init` asks:
 1. Project name
 2. Schema mode
 3. Language targets
-4. Server mode
-5. Server URL when server mode is `remote`
+4. Project template when TypeScript is selected
+5. Package manager when TypeScript is selected and more than one manager is available
+6. Server mode
+7. Server URL when server mode is `remote`
 
 The interactive menus support:
 
@@ -210,6 +212,22 @@ Language targets are a multi-select menu:
 - `TypeScript`
 - `Dart`
 
+The project template menu includes two starter sources:
+
+- embedded TypeScript templates compiled into the CLI from `cli/templates/typescript/*`
+- repository examples downloaded from `examples/*` in the KalamDB GitHub repository
+
+- `simple-live` - live subscription starter with sample inserts
+- `live-okf-context-sync` - OKF folder sync with live FILE columns
+- `realtime-ops-feed` - small browser app with live SQL subscriptions
+- `chat-with-ai` - topic-driven React chat with an agent worker
+- `react-ai-chat` - full React chat with approvals and attachments
+- `summarizer-agent` - worker-only topic consumer that enriches rows
+
+Repository examples are not bundled into the binary. A released `kalam` CLI still shows them in
+`kalam init`; when a user selects one, the CLI downloads the matching `examples/<name>` folder
+from the repository archive and writes it into the target project directory.
+
 Server mode is a single-choice menu:
 
 - `Local` - `kalam dev` starts or reuses a local KalamDB server
@@ -220,6 +238,7 @@ Server mode is a single-choice menu:
 - `--name <NAME>`: project name
 - `--schema-mode <sql|remote>`: active schema source mode
 - `--languages <LIST>`: comma-separated language list, currently `typescript` and/or `dart`
+- `--template <ID>`: embedded template or repository example id
 - `--server-mode <local|remote>`: local server management mode for `kalam dev`
 - `--server-url <URL>`: server URL for the scaffolded `dev` environment
 - `--yes`: non-interactive mode; uses defaults for unspecified values
@@ -230,7 +249,8 @@ Server mode is a single-choice menu:
 When `--yes` is used and no explicit values are supplied:
 
 - schema mode: `sql`
-- languages: `typescript,dart`
+- languages: `typescript`
+- template: `simple-live`
 - server mode: `local`
 - server URL: `http://localhost:2900`
 - project name: current directory name, or `my-app`

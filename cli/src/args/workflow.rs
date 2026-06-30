@@ -18,7 +18,7 @@ pub struct InitArgs {
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
 
-    /// Built-in project template id (for example simple-live)
+    /// Project template or repository example id (for example simple-live or chat-with-ai)
     #[arg(long = "template")]
     pub template: Option<String>,
 

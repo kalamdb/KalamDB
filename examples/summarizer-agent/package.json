@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Small worker-only example using runConsumer to enrich rows through a topic route",
   "scripts": {
+    "kalam:dev": "kalam dev",
     "start": "tsx src/agent.ts",
     "test": "node --import tsx --test tests/summarizer.integration.test.ts",
     "setup": "node setup.mjs"

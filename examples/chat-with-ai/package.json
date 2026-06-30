@@ -4,6 +4,7 @@
   "private": true,
   "description": "Compact chat example showing user-table inserts, topic fan-out, and a runConsumer worker",
   "scripts": {
+    "kalam:dev": "kalam dev",
     "generate:schema": "node scripts/generate-schema.mjs",
     "dev": "vite",
     "build": "tsc && vite build",

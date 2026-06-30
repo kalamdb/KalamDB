@@ -126,14 +126,8 @@ mod tests {
 
     #[test]
     fn server_urls_match_ignores_trailing_slash_and_case() {
-        assert!(server_urls_match(
-            "http://localhost:2900",
-            "HTTP://LOCALHOST:2900/"
-        ));
-        assert!(!server_urls_match(
-            "http://localhost:2900",
-            "http://localhost:2933"
-        ));
+        assert!(server_urls_match("http://localhost:2900", "HTTP://LOCALHOST:2900/"));
+        assert!(!server_urls_match("http://localhost:2900", "http://localhost:2933"));
     }
 
     #[test]

@@ -21,9 +21,10 @@ use crate::{
         },
         identifiers::{normalize_namespace_name, parse_namespace_id},
         prompts::print_workflow_banner,
+        repository_examples,
         ts::{
             execute_package_install, install_dependencies, resolve_package_manager,
-            resolve_template, PackageManager, SCHEMA_TARGET_OUTPUT,
+            resolve_starter, PackageManager, ProjectStarter, SCHEMA_TARGET_OUTPUT,
         },
     },
 };
@@ -47,11 +48,11 @@ pub struct InitOptions {
     pub cwd: PathBuf,
 }
 
-pub fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
-    run_init_with_installer(options, output, execute_package_install)
+pub async fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
+    run_init_with_installer(options, output, execute_package_install).await
 }
 
-pub(crate) fn run_init_with_installer<F>(
+pub(crate) async fn run_init_with_installer<F>(
     options: InitOptions,
     output: &WorkflowOutput,
     mut installer: F,
@@ -76,12 +77,28 @@ where
     let name = prompts::resolve_project_name(&options, output.use_color)?;
     let schema_mode = prompts::resolve_schema_mode(&options, output.use_color)?;
     let languages = prompts::resolve_languages(&options, output.use_color)?;
-    let typescript_template =
-        resolve_template(&languages, options.template.as_deref(), options.yes, output.use_color)?;
-    let server_mode = prompts::resolve_server_mode(&options, output.use_color)?;
-    let server_url = prompts::resolve_server_url(&options, server_mode, output.use_color)?;
+    let starter =
+        resolve_starter(&languages, options.template.as_deref(), options.yes, output.use_color)?;
     let package_manager =
         resolve_package_manager(&languages, options.package_manager, options.yes, output)?;
+    if let Some(ProjectStarter::Repository(example)) = starter {
+        output.status(format!("downloading KalamDB example '{}'", example.id));
+        repository_examples::download_repository_example(&options.cwd, example, output.use_color)
+            .await
+            .map_err(|error| map_init_stage_error("downloading repository example", error))?;
+        install_dependencies(&options.cwd, package_manager, output, &mut installer)
+            .map_err(|error| map_init_stage_error("installing JavaScript dependencies", error))?;
+        output.status(format!("initialized KalamDB example '{}'", example.id));
+        return Ok(());
+    }
+
+    let typescript_template = match starter {
+        Some(ProjectStarter::Embedded(template)) => Some(template),
+        Some(ProjectStarter::Repository(_)) => unreachable!("repository examples return earlier"),
+        None => None,
+    };
+    let server_mode = prompts::resolve_server_mode(&options, output.use_color)?;
+    let server_url = prompts::resolve_server_url(&options, server_mode, output.use_color)?;
 
     let config =
         build_config(&name, schema_mode, &languages, server_mode, &server_url, package_manager)?;
@@ -202,12 +219,16 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn block_on_init<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new().expect("tokio runtime").block_on(future)
+    }
+
     #[test]
     fn init_scaffolds_project_files() {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-            run_init(
+            block_on_init(run_init(
                 InitOptions {
                     name: Some("demo-app".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -220,7 +241,7 @@ mod tests {
                     cwd: temp.path().to_path_buf(),
                 },
                 &output,
-            )
+            ))
             .unwrap();
 
             assert!(temp.path().join(KALAM_TOML).is_file());
@@ -241,7 +262,7 @@ mod tests {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-            run_init(
+            block_on_init(run_init(
                 InitOptions {
                     name: Some("demo-app".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -254,7 +275,7 @@ mod tests {
                     cwd: temp.path().to_path_buf(),
                 },
                 &output,
-            )
+            ))
             .unwrap();
 
             let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();
@@ -274,7 +295,7 @@ mod tests {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
 
-            run_init(
+            block_on_init(run_init(
                 InitOptions {
                     name: Some("demo-dart".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -287,7 +308,7 @@ mod tests {
                     cwd: temp.path().to_path_buf(),
                 },
                 &output,
-            )
+            ))
             .unwrap();
 
             let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
@@ -306,7 +327,7 @@ mod tests {
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
         let mut called = false;
 
-        run_init_with_installer(
+        block_on_init(run_init_with_installer(
             InitOptions {
                 name: Some("demo-dart".into()),
                 schema_mode: Some(SchemaMode::Sql),
@@ -323,7 +344,7 @@ mod tests {
                 called = true;
                 Ok(())
             },
-        )
+        ))
         .unwrap();
 
         assert!(!called, "dart-only init should not request npm install");
@@ -334,7 +355,7 @@ mod tests {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-            run_init(
+            block_on_init(run_init(
                 InitOptions {
                     name: Some("dev-test1".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -347,7 +368,7 @@ mod tests {
                     cwd: temp.path().to_path_buf(),
                 },
                 &output,
-            )
+            ))
             .unwrap();
 
             let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
@@ -367,7 +388,7 @@ mod tests {
         with_test_env_var(SKIP_PACKAGE_INSTALL_ENV, "1", || {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-            run_init(
+            block_on_init(run_init(
                 InitOptions {
                     name: Some("remote-app".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -380,7 +401,7 @@ mod tests {
                     cwd: temp.path().to_path_buf(),
                 },
                 &output,
-            )
+            ))
             .unwrap();
 
             let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();

@@ -20,7 +20,7 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
 
     match subcommand {
         CliCommand::Init(args) => {
-            handle_init(cli, args)?;
+            handle_init(cli, args).await?;
             Ok(true)
         },
         CliCommand::Link(args) => {
@@ -55,7 +55,7 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
     }
 }
 
-fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
+async fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
     let cwd = args
         .project_dir
         .clone()
@@ -75,6 +75,7 @@ fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
         },
         !cli.no_color,
     )
+    .await
 }
 
 fn workflow_context(
