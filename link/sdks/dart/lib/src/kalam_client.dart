@@ -71,7 +71,9 @@ class KalamClient {
   static Future<void> init() => _ensureRustRuntimeInitialized();
 
   static Future<void> _ensureRustRuntimeInitialized() {
-    if (_isRustRuntimeInitialized) {
+    // Tests may bootstrap the bridge via RustLib.initMock before connect().
+    if (_isRustRuntimeInitialized || RustLib.instance.initialized) {
+      _isRustRuntimeInitialized = true;
       return Future.value();
     }
 
