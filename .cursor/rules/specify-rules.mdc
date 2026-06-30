@@ -4,12 +4,16 @@ alwaysApply: true
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read `specs/032-cli-dev-workflow/plan.md`
+shell commands, and other important information, read `specs/033-unified-backend-pgwire/plan.md`
 <!-- SPECKIT END -->
 
 ## Active Technologies
-- Rust 1.92 (workspace edition 2021) for the CLI and workflow engine; generated output targets for TypeScript and Dart in the first release + Existing `kalam-cli` stack (`clap`, `tokio`, `toml`, `reqwest`, `colored`, `indicatif`, `anyhow`, `thiserror`, `dirs`, `serde`), `kalam-client` for connectivity, existing TypeScript and Dart SDK packages under `link/sdks/typescript/**` and `link/sdks/dart/**`; no full tracing stack in the first pass (hotfixes/transfer)
-- Project `kalam.toml`; local schema files such as `schema.sql`; migration files under `kalam/migrations/`; generated project artifacts for TypeScript and Dart; existing CLI home data under `~/.kalam/`; optional workflow log file at a configured project or CLI path (hotfixes/transfer)
+- Rust 1.92 (workspace edition 2021) for backend crates; `kalamdb-backend` (connection session registry), `kalamdb-postgres-wire` (thin **`pgwire`** adapter — not `datafusion-postgres`), existing `kalamdb-pg` gRPC bridge, `kalamdb-core` `TransactionCoordinator`, `kalamdb-auth` unified login
+- Wire txs: **`BackendSessionManager` block API** (same as gRPC `BeginTransaction`/`Commit`); wire SQL data path: **`SqlExecutor`**; HTTP batch txs: **`RequestTransactionBatchGuard`** only
+- Existing stack — `tokio`, `tonic`, `dashmap`, `datafusion` 54.x, `kalamdb-transactions`, `kalamdb-api`, `kalamdb-views`; **`pgwire`** workspace-pinned in `kalamdb-postgres-wire` only
+- No `arrow-pg` in wire MVP — `row_encoder.rs` uses existing `ExecutionResult`/`RecordBatch`; optional encoder spike later
+- Stability-first migration: preserve 027 behavior; regression gates per `specs/033-unified-backend-pgwire/quickstart.md`
+- Connection sessions expose `origin` in `system.sessions`: `extension_bridge` | `wire_protocol`
 
 ## Recent Changes
-- hotfixes/transfer: Added Rust 1.92 (workspace edition 2021) for the CLI and workflow engine; generated output targets for TypeScript and Dart in the first release + Existing `kalam-cli` stack (`clap`, `tokio`, `toml`, `reqwest`, `colored`, `indicatif`, `anyhow`, `thiserror`, `dirs`, `serde`), `kalam-client` for connectivity, existing TypeScript and Dart SDK packages under `link/sdks/typescript/**` and `link/sdks/dart/**`; no full tracing stack in the first pass
+- 033-unified-backend-pgwire: Plan pivoted to direct `pgwire` after DF53 spike; wire tx control mirrors gRPC manager path, not HTTP SqlExecutor BEGIN
