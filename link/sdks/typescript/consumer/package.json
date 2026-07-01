@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/consumer",
   "type": "module",
-  "version": "0.5.4-rc.1",
+  "version": "0.5.5-rc.1",
   "description": "Topic consumer and agent runtime package for KalamDB",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -47,7 +47,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@kalamdb/client": ">=0.5.4-0 <0.6.0"
+    "@kalamdb/client": ">=0.5.5-0 <0.6.0"
   },
   "devDependencies": {
     "@kalamdb/client": "file:../client",

@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/react",
   "type": "module",
-  "version": "0.5.4-rc.1",
+  "version": "0.5.5-rc.1",
   "description": "React bindings for KalamDB live queries and mutation state",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -45,8 +45,8 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@kalamdb/client": ">=0.5.4-0 <0.6.0",
-    "@kalamdb/orm": ">=0.5.4-0 <0.6.0",
+    "@kalamdb/client": ">=0.5.5-0 <0.6.0",
+    "@kalamdb/orm": ">=0.5.5-0 <0.6.0",
     "drizzle-orm": ">=0.45.2",
     "react": ">=18.0.0 || >=19.0.0",
     "react-dom": ">=18.0.0 || >=19.0.0"
