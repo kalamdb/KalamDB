@@ -62,7 +62,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.5.4-rc.1"
+version = "0.5.5-rc.1"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
@@ -78,7 +78,7 @@ handlebars = "6.4.2"
 
 # Error handling
 thiserror = "2.0.18"
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 
 # Logging
 log = "0.4.33"
@@ -99,7 +99,7 @@ url = "2.5.8"
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
 
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
-aws-lc-rs = { version = "1.17.0", default-features = false }
+aws-lc-rs = { version = "1.17.1", default-features = false }
 rustls = { version = "0.23.41", default-features = false }
 quinn-proto = { version = "0.11.15", default-features = false }
 rustls-webpki = { version = "0.103.13", default-features = false }
@@ -127,12 +127,12 @@ sqlparser = { version = "0.62.0" }
 parquet = { version = "58.3.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
 # Web framework
-actix-web = { version = "4.13.0", features = ["http2"] }
+actix-web = { version = "4.14.0", features = ["http2"] }
 actix-ws = "0.4.0"
 actix-cors = "0.7"
 actix-rt = "2.10"
 actix-files = "0.6.10"
-actix-multipart = "0.7"
+actix-multipart = "0.8.0"
 
 # UUID generation
 uuid = { version = "1.23.4", features = ["v4", "v7", "serde"] }
@@ -153,7 +153,7 @@ dotenv = "0.15"
 
 # CLI tools
 clap = { version = "4.6.1", features = ["derive", "color"] }
-console = { version = "0.16.3", default-features = false, features = ["unicode-width"] }
+console = { version = "0.16.4", default-features = false, features = ["unicode-width"] }
 humantime = "2.3.0"
 rustyline = { version = "18.0.1" }
 shlex = "2.0.1"
@@ -204,7 +204,7 @@ kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources
 cookie = "0.18"
 colored = "3.1.1"
 fern = "0.7"
-indicatif = "0.18.4"
+indicatif = "0.18.6"
 rpassword = "7.5.4"
 dirs = "6.0"
 term_size = "0.3"
