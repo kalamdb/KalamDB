@@ -187,6 +187,7 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: None,
     },
     SystemTableMetadata {
+        #[allow(deprecated)]
         table: SystemTable::Tables,
         sql_name: "tables",
         aliases: &["tables", "system_tables"],
@@ -194,6 +195,7 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: None,
     },
     SystemTableMetadata {
+        #[allow(deprecated)]
         table: SystemTable::Columns,
         sql_name: "columns",
         aliases: &["columns", "system_columns"],
@@ -276,9 +278,17 @@ pub enum SystemTable {
     Datatypes,
     /// system.describe - DESCRIBE TABLE functionality (computed on-demand)
     Describe,
-    /// system.tables - Table metadata view (computed from system.schemas)
+    /// Deprecated. Use `information_schema.tables` (`kdb_*` columns).
+    #[deprecated(
+        since = "0.5.4-rc.1",
+        note = "use `information_schema.tables` with `kdb_*` columns instead"
+    )]
     Tables,
-    /// system.columns - Column metadata view (computed from system.schemas)
+    /// Deprecated. Use `information_schema.columns` (`kdb_*` columns).
+    #[deprecated(
+        since = "0.5.4-rc.1",
+        note = "use `information_schema.columns` with `kdb_*` columns instead"
+    )]
     Columns,
 }
 
@@ -339,6 +349,7 @@ impl SystemTable {
     }
 
     /// Get all system views (computed on-demand)
+    #[allow(deprecated)]
     pub fn all_views() -> &'static [SystemTable] {
         &[
             SystemTable::Stats,
@@ -358,6 +369,7 @@ impl SystemTable {
     }
 
     /// Get all system tables and views
+    #[allow(deprecated)]
     pub fn all() -> &'static [SystemTable] {
         &[
             // Tables
@@ -400,6 +412,7 @@ impl SystemTable {
     ///
     /// Allocates each Partition once and returns a reference,
     /// avoiding repeated String allocations across the codebase.
+    #[allow(deprecated)]
     pub fn partition(&self) -> Option<&'static crate::storage::Partition> {
         static USERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_users"));
         static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new("system_namespaces"));
@@ -617,6 +630,7 @@ impl std::fmt::Display for SystemTable {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

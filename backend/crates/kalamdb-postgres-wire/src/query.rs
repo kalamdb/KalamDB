@@ -24,6 +24,7 @@ use pgwire::{
 
 use crate::{
     connection::{WireConnectionState, WirePortal, WirePreparedStatement},
+    params::portal_parameters_to_scalar_values,
     sql_exec::{backend_session_error_to_response, pg_error, WireSqlExecutor},
     statement::{KalamQueryParser, WireCachedStatement},
     tx_control::{
@@ -82,6 +83,7 @@ impl KalamQueryHandler {
         &self,
         state: &WireConnectionState,
         cached: &WireCachedStatement,
+        params: Vec<kalamdb_core::sql::ScalarValue>,
     ) -> PgWireResult<Vec<Response>> {
         if let Some(control) = classify_transaction_control(cached.metadata.sql.as_str()) {
             let outcome = execute_transaction_control(
@@ -104,7 +106,7 @@ impl KalamQueryHandler {
             }]);
         }
 
-        self.sql_executor.execute_metadata(state, &cached.metadata).await
+        self.sql_executor.execute_metadata(state, &cached.metadata, params).await
     }
 }
 
@@ -255,7 +257,11 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             .session_extensions()
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
-        let mut responses = self.execute_cached(&state, &portal.statement.statement).await?;
+        let params =
+            portal_parameters_to_scalar_values(portal, &portal.statement.statement.parameter_types)?;
+        let mut responses = self
+            .execute_cached(&state, &portal.statement.statement, params)
+            .await?;
         Ok(responses.remove(0))
     }
 }

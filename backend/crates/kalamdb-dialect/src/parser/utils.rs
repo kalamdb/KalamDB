@@ -11,8 +11,8 @@ use regex::Regex;
 use sqlparser::{
     ast::{
         BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
-        FunctionArguments, Ident, ObjectName, ObjectNamePart, Statement, TableFactor, TableObject,
-        VisitMut, VisitorMut,
+        FunctionArguments, Ident, ObjectName, ObjectNamePart, SelectItem, SetExpr, Statement,
+        TableFactor, TableObject, UnaryOperator, Value, VisitMut, VisitorMut,
     },
     dialect::Dialect,
     parser::{Parser, ParserError, ParserOptions},
@@ -23,6 +23,30 @@ use crate::dialect::KalamDbDialect;
 
 const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
 
+static CURRENT_SCHEMA_CALL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_SCHEMA\s*\(\s*\)").expect("valid regex"));
+static CURRENT_DATABASE_CALL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_DATABASE\s*\(\s*\)").expect("valid regex"));
+static CURRENT_SCHEMA_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_SCHEMA)([^A-Za-z0-9_(]|$)").expect("valid regex")
+});
+static CURRENT_DATABASE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_DATABASE)([^A-Za-z0-9_(]|$)").expect("valid regex")
+});
+static UNQUALIFIED_PG_CATALOG_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)(^|[\s,(])pg_(aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|get_keywords|index|inherits|init_privs|language|largeobject|largeobject_metadata|matviews|namespace|opclass|operator|opfamily|parameter_acl|partitioned_table|policy|proc|publication|publication_namespace|publication_rel|range|replication_origin|replication_slots|rewrite|roles|seclabel|sequence|settings|shdepend|shdescription|shseclabel|stat_activity|stat_gssapi|stat_user_tables|statistic|statistic_ext|statistic_ext_data|subscription|subscription_rel|tables|tablespace|transform|trigger|ts_config|ts_config_map|ts_dict|ts_parser|ts_template|type|user_mapping|views)\b",
+    )
+    .expect("valid regex")
+});
+/// DBeaver/pgAdmin metadata filter: correlated `pg_class.relkind` subquery that DataFusion
+/// cannot plan. Our `pg_type` shim always uses `typrelid = 0`, so the OR branch is redundant.
+static DBEAVER_TYPRELID_FILTER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?is)\(\s*(\w+)\.typrelid\s*=\s*0\s+OR\s+\(\s*SELECT\s+\w+\.relkind\s*=\s*'c'\s+FROM\s+pg_catalog\.pg_class\s+(?:AS\s+)?\w+\s+WHERE\s+\w+\.oid\s*=\s*(\w+)\.typrelid\s*\)\s*\)",
+    )
+    .expect("valid regex")
+});
 static CURRENT_USER_CALL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bCURRENT_USER\s*\(\s*\)").expect("valid regex"));
 static CURRENT_ROLE_CALL_RE: Lazy<Regex> =
@@ -34,6 +58,22 @@ static CURRENT_USER_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
 });
 static CURRENT_ROLE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_ROLE)([^A-Za-z0-9_(]|$)").expect("valid regex")
+});
+static PG_CATALOG_COL_DESCRIPTION_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bpg_catalog\.col_description\s*\(").expect("valid regex")
+});
+static PG_CATALOG_FORMAT_TYPE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bpg_catalog\.format_type\s*\(").expect("valid regex")
+});
+static PG_CATALOG_PG_GET_EXPR_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bpg_catalog\.pg_get_expr\s*\(").expect("valid regex")
+});
+/// DBeaver column metadata: `format('%I.%I', ...)::regclass::oid` is not supported.
+static DBEAVER_FORMAT_REGCLASS_OID_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)format\s*\(\s*'%I\.%I'\s*,\s*table_schema\s*,\s*table_name\s*\)\s*::\s*regclass\s*::\s*oid",
+    )
+    .expect("valid regex")
 });
 
 /// Default sqlparser options used across KalamDB
@@ -50,16 +90,63 @@ pub fn normalize_context_keyword_calls_for_sqlparser(sql: &str) -> std::borrow::
     use std::borrow::Cow;
     let s1 = CURRENT_USER_CALL_RE.replace_all(sql, "CURRENT_USER");
     let s2 = CURRENT_ROLE_CALL_RE.replace_all(&s1, "CURRENT_ROLE");
-    match s2 {
-        Cow::Borrowed(_) if matches!(s1, Cow::Borrowed(_)) => Cow::Borrowed(sql),
-        _ => Cow::Owned(s2.into_owned()),
+    let s3 = CURRENT_SCHEMA_CALL_RE.replace_all(&s2, "CURRENT_SCHEMA");
+    let s4 = CURRENT_DATABASE_CALL_RE.replace_all(&s3, "CURRENT_DATABASE");
+    let result: &str = &s4;
+    if result == sql {
+        Cow::Borrowed(sql)
+    } else {
+        Cow::Owned(s4.into_owned())
+    }
+}
+
+/// Qualify bare `pg_*` catalog tables so they resolve when the session namespace
+/// is not `pg_catalog` (PostgreSQL clients often omit the schema prefix).
+fn rewrite_unqualified_pg_catalog_tables(sql: &str) -> std::borrow::Cow<'_, str> {
+    UNQUALIFIED_PG_CATALOG_TABLE_RE.replace_all(sql, "${1}pg_catalog.pg_$2")
+}
+
+fn rewrite_dbeaver_typrelid_filter(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !sql.contains("typrelid") || !sql.contains("relkind") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+
+    let mut changed = false;
+    let rewritten = DBEAVER_TYPRELID_FILTER_RE.replace_all(sql, |caps: &regex::Captures<'_>| {
+        let alias = &caps[1];
+        let correlated_alias = &caps[2];
+        if alias != correlated_alias {
+            return caps[0].to_string();
+        }
+        changed = true;
+        format!("({alias}.typrelid = 0)")
+    });
+
+    if changed {
+        rewritten
+    } else {
+        std::borrow::Cow::Borrowed(sql)
+    }
+}
+
+/// Rewrite PostgreSQL catalog function spellings that DataFusion cannot resolve.
+fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
+    let s1 = PG_CATALOG_COL_DESCRIPTION_RE.replace_all(sql, "col_description(");
+    let s2 = PG_CATALOG_FORMAT_TYPE_RE.replace_all(&s1, "format_type(");
+    let s3 = PG_CATALOG_PG_GET_EXPR_RE.replace_all(&s2, "pg_get_expr(");
+    let s4 = DBEAVER_FORMAT_REGCLASS_OID_RE.replace_all(&s3, "0");
+    if s1 == sql && s2 == s1 && s3 == s2 && s4 == s3 {
+        std::borrow::Cow::Borrowed(sql)
+    } else {
+        std::borrow::Cow::Owned(s4.into_owned())
     }
 }
 
 /// Rewrite public context function spellings to KalamDB's internal DataFusion UDFs.
 ///
-/// These aliases let user-facing SQL use `CURRENT_USER()`, `CURRENT_USER_ID()`, and
-/// `CURRENT_ROLE()` while execution resolves to the registered `KDB_*` functions.
+/// These aliases let user-facing SQL use `CURRENT_USER()`, `CURRENT_USER_ID()`,
+/// `CURRENT_ROLE()`, `CURRENT_SCHEMA()`, and `CURRENT_DATABASE()` while execution
+/// resolves to the registered `KDB_*` functions.
 /// `CURRENT_USER_ID()` is an alias for `CURRENT_USER()` (both return the user id).
 ///
 /// PostgreSQL JSON operators (`->`, `->>`, `?`) are rewritten to `json_get_json`,
@@ -78,44 +165,58 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     let s1 = CURRENT_USER_ID_CALL_RE.replace_all(sql, "KDB_CURRENT_USER()");
     let s2 = CURRENT_USER_CALL_RE.replace_all(&s1, "KDB_CURRENT_USER()");
     let s3 = CURRENT_ROLE_CALL_RE.replace_all(&s2, "KDB_CURRENT_ROLE()");
-    let s4 = CURRENT_USER_KEYWORD_RE.replace_all(&s3, "${1}KDB_CURRENT_USER()${3}");
-    let s5 = CURRENT_ROLE_KEYWORD_RE.replace_all(&s4, "${1}KDB_CURRENT_ROLE()${3}");
+    let s4 = CURRENT_SCHEMA_CALL_RE.replace_all(&s3, "KDB_CURRENT_SCHEMA()");
+    let s5 = CURRENT_DATABASE_CALL_RE.replace_all(&s4, "KDB_CURRENT_DATABASE()");
+    let s6 = CURRENT_USER_KEYWORD_RE.replace_all(&s5, "${1}KDB_CURRENT_USER()${3}");
+    let s7 = CURRENT_ROLE_KEYWORD_RE.replace_all(&s6, "${1}KDB_CURRENT_ROLE()${3}");
+    let s8 = CURRENT_SCHEMA_KEYWORD_RE.replace_all(&s7, "${1}KDB_CURRENT_SCHEMA()${3}");
+    let s9 = CURRENT_DATABASE_KEYWORD_RE.replace_all(&s8, "${1}KDB_CURRENT_DATABASE()${3}");
 
-    // The Cow variant of s5 only reflects the LAST replacement step.
-    // Earlier steps (s1–s3) may have produced Owned results, but if s4/s5
+    // The Cow variant of s9 only reflects the LAST replacement step.
+    // Earlier steps (s1–s7) may have produced Owned results, but if s8/s9
     // found no further matches they return Borrowed (pointing into an owned
     // intermediate). Compare the string content to detect any change.
-    let result: &str = &s5;
-    if needs_json_operator_rewrite(result) {
-        Cow::Owned(rewrite_json_operators_for_datafusion(result))
-    } else if result == sql {
+    let s10 = rewrite_unqualified_pg_catalog_tables(&s9);
+    let s11 = rewrite_dbeaver_typrelid_filter(&s10);
+    let s12 = rewrite_pg_catalog_functions(&s11);
+    let result: &str = &s12;
+    let after_ast = if needs_ast_operator_rewrite(result) {
+        rewrite_ast_operators_for_datafusion(result)
+    } else {
+        result.to_string()
+    };
+    // AST round-trip (e.g. for `!~` → regexp_like) can reformat aliases as `AS c`, which the
+    // pre-AST regex pass does not see. Run typrelid simplification again as the final pass.
+    let final_sql = rewrite_dbeaver_typrelid_filter(&after_ast);
+    if final_sql == sql {
         Cow::Borrowed(sql)
     } else {
-        Cow::Owned(s5.into_owned())
+        Cow::Owned(final_sql.into_owned())
     }
 }
 
-/// Quick check for JSON operator tokens that would need rewriting.
-/// Avoids the full SQL re-parse when none are present.
+/// Quick check for AST operator rewrites (JSON extraction, PostgreSQL regex).
 #[inline]
-fn needs_json_operator_rewrite(sql: &str) -> bool {
-    // Look for -> or ->> or standalone ? that might be a JSON contains operator.
-    // This is a cheap scan that avoids false negatives; false positives (e.g. `?` in
-    // a string literal or `->` in a comment) just cause an unnecessary but correct
-    // re-parse. Lambda SQL that PostgreSQL cannot parse falls back to the original
-    // statement unchanged.
-    sql.contains("->") || sql.contains('?')
+fn needs_ast_operator_rewrite(sql: &str) -> bool {
+    // Cheap scan; false positives only cause an unnecessary but correct re-parse.
+    sql.contains("->") || sql.contains('?') || sql.contains('~')
 }
 
-fn rewrite_json_operators_for_datafusion(sql: &str) -> String {
+fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
     let dialect = KalamDbDialect::default();
     let mut statements = match parse_sql_statements(sql, &dialect) {
         Ok(statements) => statements,
         Err(_) => return sql.to_string(),
     };
 
-    let mut visitor = JsonOperatorRewriter;
-    let _ = statements.visit(&mut visitor);
+    let mut json_visitor = JsonOperatorRewriter;
+    let _ = statements.visit(&mut json_visitor);
+
+    let mut pg_visitor = PgWireCompatRewriter;
+    let _ = statements.visit(&mut pg_visitor);
+
+    let mut typrelid_visitor = DbeaverTyprelidRewriter;
+    let _ = statements.visit(&mut typrelid_visitor);
 
     statements_to_sql(&statements)
 }
@@ -178,6 +279,187 @@ fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
         over: None,
         within_group: vec![],
     })
+}
+
+struct PgWireCompatRewriter;
+
+impl VisitorMut for PgWireCompatRewriter {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(rewritten) = rewrite_pg_regex_expr(expr) {
+            *expr = rewritten;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::BinaryOp { left, op, right } = expr else {
+        return None;
+    };
+
+    match op {
+        BinaryOperator::PGRegexNotMatch => Some(Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(make_function_call(
+                "regexp_like",
+                vec![(**left).clone(), (**right).clone()],
+            )),
+        }),
+        BinaryOperator::PGRegexMatch => Some(make_function_call(
+            "regexp_like",
+            vec![(**left).clone(), (**right).clone()],
+        )),
+        BinaryOperator::PGRegexNotIMatch => Some(Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(make_function_call(
+                "regexp_like",
+                vec![
+                    (**left).clone(),
+                    (**right).clone(),
+                    Expr::value(Value::SingleQuotedString("i".to_string())),
+                ],
+            )),
+        }),
+        _ => None,
+    }
+}
+
+/// Strip DBeaver/pgAdmin `pg_type.typrelid` OR-filters that use a correlated `pg_class.relkind`
+/// subquery. KalamDB's `pg_type` shim always emits `typrelid = 0`, so the OR branch is dead.
+struct DbeaverTyprelidRewriter;
+
+impl VisitorMut for DbeaverTyprelidRewriter {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(simplified) = simplify_dbeaver_typrelid_filter(expr) {
+            *expr = simplified;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn simplify_dbeaver_typrelid_filter(expr: &Expr) -> Option<Expr> {
+    let Expr::BinaryOp { left, op: BinaryOperator::Or, right } = unwrap_nested_expr(expr) else {
+        return None;
+    };
+
+    let typrelid_alias = if let Some(alias) = typrelid_zero_alias(left) {
+        if is_pg_class_relkind_subquery(right, alias.as_str()) {
+            alias
+        } else {
+            return None;
+        }
+    } else if let Some(alias) = typrelid_zero_alias(right) {
+        if is_pg_class_relkind_subquery(left, alias.as_str()) {
+            alias
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    Some(Expr::Nested(Box::new(make_typrelid_zero_expr(&typrelid_alias))))
+}
+
+fn unwrap_nested_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Nested(inner) => unwrap_nested_expr(inner),
+        other => other,
+    }
+}
+
+fn typrelid_zero_alias(expr: &Expr) -> Option<String> {
+    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+        return None;
+    };
+    let alias = compound_field_alias(left, "typrelid")?;
+    is_zero_literal(right).then_some(alias)
+}
+
+fn make_typrelid_zero_expr(alias: &str) -> Expr {
+    Expr::BinaryOp {
+        left: Box::new(compound_field_expr(alias, "typrelid")),
+        op: BinaryOperator::Eq,
+        right: Box::new(Expr::value(Value::Number("0".to_string(), false))),
+    }
+}
+
+fn compound_field_expr(alias: &str, field: &str) -> Expr {
+    Expr::CompoundIdentifier(vec![Ident::new(alias), Ident::new(field)])
+}
+
+fn compound_field_alias(expr: &Expr, field: &str) -> Option<String> {
+    let Expr::CompoundIdentifier(parts) = unwrap_nested_expr(expr) else {
+        return None;
+    };
+    if parts.len() != 2 || parts[1].value != field {
+        return None;
+    }
+    Some(parts[0].value.clone())
+}
+
+fn is_zero_literal(expr: &Expr) -> bool {
+    let Expr::Value(value) = unwrap_nested_expr(expr) else {
+        return false;
+    };
+    matches!(
+        &value.value,
+        Value::Number(number, _) if number == "0" || number == "0.0"
+    )
+}
+
+fn is_pg_class_relkind_subquery(expr: &Expr, typrelid_alias: &str) -> bool {
+    let Expr::Subquery(query) = unwrap_nested_expr(expr) else {
+        return false;
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return false;
+    };
+    if select.from.len() != 1 {
+        return false;
+    }
+    let TableFactor::Table { name, .. } = &select.from[0].relation else {
+        return false;
+    };
+    if !object_name_matches(name, "pg_catalog.pg_class") && !object_name_matches(name, "pg_class") {
+        return false;
+    }
+    if select.projection.len() != 1 {
+        return false;
+    }
+    let SelectItem::UnnamedExpr(projection) = &select.projection[0] else {
+        return false;
+    };
+    if !is_relkind_eq_c(projection) {
+        return false;
+    }
+    select
+        .selection
+        .as_ref()
+        .is_some_and(|where_expr| is_oid_eq_typrelid(where_expr, typrelid_alias))
+}
+
+fn is_relkind_eq_c(expr: &Expr) -> bool {
+    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+        return false;
+    };
+    let Expr::Value(value) = unwrap_nested_expr(right) else {
+        return false;
+    };
+    compound_field_alias(left, "relkind").is_some()
+        && matches!(&value.value, Value::SingleQuotedString(relkind) if relkind == "c")
+}
+
+fn is_oid_eq_typrelid(expr: &Expr, typrelid_alias: &str) -> bool {
+    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+        return false;
+    };
+    compound_field_alias(left, "oid").is_some()
+        && compound_field_alias(right, "typrelid").as_deref() == Some(typrelid_alias)
 }
 
 /// Parse SQL into statements using KalamDB defaults (options + recursion limit)
@@ -816,6 +1098,101 @@ mod tests {
     }
 
     #[test]
+    fn test_rewrite_unqualified_pg_catalog_tables_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT t.typname FROM pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = \
+             t.typnamespace",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT t.typname FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_namespace n ON \
+             n.oid = t.typnamespace"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_unqualified_pg_database_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT datname FROM pg_database WHERE datistemplate = $1 ORDER BY datname",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = $1 ORDER BY datname"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_dbeaver_pg_type_metadata_query_for_datafusion() {
+        let sql = "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as typeid \
+                   FROM pg_type t \
+                   LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+                   WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c \
+                   WHERE c.oid = t.typrelid)) \
+                     AND n.nspname NOT IN ('pg_catalog', 'information_schema') \
+                     AND t.typname !~ '^_';";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            rewritten.contains("pg_catalog.pg_type"),
+            "expected unqualified pg_type to be qualified: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("relkind = 'c'"),
+            "expected correlated pg_class subquery to be simplified: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("NOT regexp_like(t.typname, '^_')"),
+            "expected !~ rewrite to regexp_like: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_dbeaver_typrelid_filter_multiline_exact() {
+        let sql = "\
+SELECT n.nspname AS schema, t.typname AS typename, t.oid::integer AS typeid
+FROM pg_type t
+LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND t.typname !~ '^_';";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            !rewritten.contains("relkind"),
+            "expected typrelid OR subquery to be removed: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("t.typrelid = 0"),
+            "expected simplified typrelid filter: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_dbeaver_typrelid_filter_after_ast_as_alias() {
+        let sql = "\
+SELECT t.typname FROM pg_catalog.pg_type t \
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c WHERE c.oid = t.typrelid)) \
+  AND t.typname !~ '^_';";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            !rewritten.contains("relkind"),
+            "expected AS-alias pg_class subquery to be simplified: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_current_schema_for_datafusion() {
+        let rewritten =
+            rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
+        assert_eq!(rewritten, "SELECT KDB_CURRENT_SCHEMA() AS schema");
+    }
+
+    #[test]
+    fn test_rewrite_current_database_for_datafusion() {
+        let rewritten =
+            rewrite_context_functions_for_datafusion("SELECT CURRENT_DATABASE() AS database");
+        assert_eq!(rewritten, "SELECT KDB_CURRENT_DATABASE() AS database");
+    }
+
+    #[test]
     fn test_rewrite_context_functions_for_datafusion() {
         let rewritten = rewrite_context_functions_for_datafusion(
             "SELECT CURRENT_USER(), CURRENT_USER_ID(), CURRENT_ROLE()",
@@ -874,6 +1251,30 @@ mod tests {
             rewritten,
             "SELECT json_as_text(doc, 'priority') AS p FROM docs WHERE json_as_text(doc, \
              'status') = 'active'"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pg_catalog_col_description_for_datafusion() {
+        let sql = "SELECT pg_catalog.col_description(123::oid, 1) AS comment";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert_eq!(rewritten, "SELECT col_description(123::oid, 1) AS comment");
+    }
+
+    #[test]
+    fn test_rewrite_dbeaver_column_metadata_query_for_datafusion() {
+        let sql = "\
+SELECT pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, \
+ordinal_position) AS column_comment \
+FROM information_schema.columns";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            rewritten.contains("col_description(0, ordinal_position)"),
+            "expected format/regclass rewrite: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("pg_catalog.col_description"),
+            "expected pg_catalog prefix stripped: {rewritten}"
         );
     }
 

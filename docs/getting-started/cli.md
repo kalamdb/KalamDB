@@ -31,7 +31,7 @@ kalam --help
 
 # inside kalam
 \dt
-SELECT * FROM system.tables LIMIT 5;
+SELECT * FROM information_schema.tables LIMIT 5;
 ```
 
 4) Optional: start a live query
@@ -93,7 +93,7 @@ When `kalam login` runs in an interactive terminal, it enters the normal SQL she
 
 ```bash
 # One command and exit
-kalam -c "SELECT * FROM system.tables LIMIT 5;"
+kalam -c "SELECT * FROM information_schema.tables LIMIT 5;"
 
 # File and exit
 kalam -f setup.sql
@@ -139,7 +139,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `--subscription-timeout` – subscription idle timeout in seconds (0 = no timeout)
 - `--initial-data-timeout` – max seconds to wait for initial data batch
 - `--list-subscriptions` – list active subscriptions
-- `--watch-schema` – poll `system.tables` and run a local command on schema changes
+- `--watch-schema` – poll `information_schema.tables` and run a local command on schema changes
 - `--namespace` – repeat to scope schema watch to one or more namespaces
 - `--table` – repeat to scope schema watch to one or more `namespace.table` targets
 - `--run` – shell command executed after schema changes are detected
@@ -166,7 +166,7 @@ In interactive mode, meta-commands start with `\`:
 | `\quit`, `\q`                   | Exit                                      |
 | `\info`, `\session`             | Show session info                         |
 | `\history`, `\h`                | Open command history                      |
-| `\dt`, `\tables`               | List tables (`system.tables`)             |
+| `\dt`, `\tables`               | List tables (`information_schema.tables`) |
 | `\d <table>`, `\describe <table>` | Describe table                         |
 | `\as <user_id> <SQL>`           | Wrap one statement as `EXECUTE AS '<user_id>'` |
 | `\stats`, `\metrics`          | Show `system.stats`                       |

@@ -5,7 +5,7 @@
 //! Provides the current set of active connection sessions tracked by the
 //! shared backend session manager.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanBuilder, Int64Builder, StringBuilder, TimestampMicrosecondBuilder},
@@ -14,12 +14,16 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, SystemTable, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
+    SystemTable,
 };
 use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
+
+use super::common::{system_view_definition, SystemViewProvider};
+
+crate::memoized_view_schema!(sessions_schema, SessionsView);
 
 /// Serializable snapshot of a live connection session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,17 +45,6 @@ pub struct ConnectionSessionSnapshot {
 
 /// Active-session snapshot callback type.
 pub type SessionsSnapshotCallback = Arc<dyn Fn() -> Vec<ConnectionSessionSnapshot> + Send + Sync>;
-
-fn sessions_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            SessionsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert system.sessions TableDefinition to Arrow schema")
-        })
-        .clone()
-}
 
 /// Virtual view that snapshots active connection sessions from memory.
 pub struct SessionsView {
@@ -239,15 +232,11 @@ impl SessionsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Sessions.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Sessions,
             columns,
-            TableOptions::system(),
-            Some("Active connection sessions tracked by KalamDB".to_string()),
+            "Active connection sessions tracked by KalamDB",
         )
-        .expect("Failed to create system.sessions view definition")
     }
 }
 
@@ -373,7 +362,7 @@ impl VirtualView for SessionsView {
     }
 }
 
-pub type SessionsTableProvider = crate::view_base::ViewTableProvider<SessionsView>;
+pub type SessionsTableProvider = SystemViewProvider<SessionsView>;
 
 #[cfg(test)]
 mod tests {

@@ -173,7 +173,8 @@ fn build_schema_change_query(
 ) -> String {
     let scope = build_scope_predicate(namespaces, tables);
     format!(
-        "SELECT COUNT(*) AS changed_count FROM system.tables WHERE {scope} AND updated_at > '{}'",
+        "SELECT COUNT(*) AS changed_count FROM information_schema.tables WHERE {scope} AND \
+         kdb_updated_at > '{}'",
         escape_sql_literal(last_seen)
     )
 }
@@ -181,13 +182,18 @@ fn build_schema_change_query(
 fn build_scope_predicate(namespaces: &[NamespaceId], tables: &[TableSelector]) -> String {
     let namespace_predicates = namespaces
         .iter()
-        .map(|namespace| format!("namespace_id = '{}'", escape_sql_literal(namespace.as_str())))
+        .map(|namespace| {
+            format!(
+                "kdb_namespace_id = '{}'",
+                escape_sql_literal(namespace.as_str())
+            )
+        })
         .collect::<Vec<_>>();
     let table_predicates = tables
         .iter()
         .map(|table| {
             format!(
-                "(namespace_id = '{}' AND table_name = '{}')",
+                "(kdb_namespace_id = '{}' AND table_name = '{}')",
                 escape_sql_literal(table.table_id.namespace_id().as_str()),
                 escape_sql_literal(table.table_id.table_name().as_str())
             )
@@ -212,7 +218,7 @@ fn build_scope_predicate(namespaces: &[NamespaceId], tables: &[TableSelector]) -
     }
 
     if predicates.is_empty() {
-        "namespace_id != 'system'".to_string()
+        "kdb_namespace_id != 'system'".to_string()
     } else if predicates.len() == 1 {
         predicates.remove(0)
     } else {
@@ -268,7 +274,8 @@ mod tests {
 
         assert_eq!(
             query,
-            "SELECT COUNT(*) AS changed_count FROM system.tables WHERE namespace_id = 'chat' AND updated_at > '2026-05-05T11:05:27.741Z'"
+            "SELECT COUNT(*) AS changed_count FROM information_schema.tables WHERE \
+             kdb_namespace_id = 'chat' AND kdb_updated_at > '2026-05-05T11:05:27.741Z'"
         );
     }
 
@@ -279,7 +286,9 @@ mod tests {
 
         assert_eq!(
             query,
-            "SELECT COUNT(*) AS changed_count FROM system.tables WHERE (namespace_id = 'chat' OR namespace_id = 'billing') AND updated_at > '2026-05-05T11:05:27.741Z'"
+            "SELECT COUNT(*) AS changed_count FROM information_schema.tables WHERE \
+             (kdb_namespace_id = 'chat' OR kdb_namespace_id = 'billing') AND kdb_updated_at > \
+             '2026-05-05T11:05:27.741Z'"
         );
     }
 
@@ -300,7 +309,9 @@ mod tests {
 
         assert_eq!(
             query,
-            "SELECT COUNT(*) AS changed_count FROM system.tables WHERE (namespace_id = 'chat' AND table_name = 'messages') AND updated_at > '2026-05-05T11:05:27.741Z'"
+            "SELECT COUNT(*) AS changed_count FROM information_schema.tables WHERE \
+             (kdb_namespace_id = 'chat' AND table_name = 'messages') AND kdb_updated_at > \
+             '2026-05-05T11:05:27.741Z'"
         );
     }
 
@@ -310,7 +321,8 @@ mod tests {
 
         assert_eq!(
             query,
-            "SELECT COUNT(*) AS changed_count FROM system.tables WHERE namespace_id != 'system' AND updated_at > '2026-05-05T11:05:27.741Z'"
+            "SELECT COUNT(*) AS changed_count FROM information_schema.tables WHERE \
+             kdb_namespace_id != 'system' AND kdb_updated_at > '2026-05-05T11:05:27.741Z'"
         );
     }
 

@@ -52,6 +52,7 @@ members = [
     "cli/kalam-cli-e2e",
     "link/link-common",
     "link/sdks/rust",
+    "link/sdks/rust/examples/quickstart",
     "link/sdks/rust-e2e",
     "link/kalam-link-wasm",
     "link/kalam-consumer-wasm",

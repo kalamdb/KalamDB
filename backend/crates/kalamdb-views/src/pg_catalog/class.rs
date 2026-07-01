@@ -10,7 +10,7 @@ use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    pg_catalog::{stable_oid, visible_table_definitions, PgCatalogView},
+    pg_catalog::{pg_relkind, stable_oid, visible_table_definitions, PgCatalogView},
 };
 
 fn schema() -> SchemaRef {
@@ -61,7 +61,7 @@ impl PgCatalogView for PgClassView {
             oids.append_value(stable_oid(&["class", namespace, table_name]));
             names.append_value(table_name);
             namespace_oids.append_value(stable_oid(&["namespace", namespace]));
-            kinds.append_value("r");
+            kinds.append_value(pg_relkind(&table));
             tuples.append_value(0.0);
         }
 

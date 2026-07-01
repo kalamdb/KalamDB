@@ -5,7 +5,7 @@
 //! Provides the current set of active explicit transactions tracked by the
 //! in-memory transaction coordinator.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder},
@@ -14,14 +14,17 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, SystemTable, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
+    SystemTable,
 };
 use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
 
-/// Serializable snapshot of an active explicit transaction.
+use super::common::{system_view_definition, SystemViewProvider};
+
+crate::memoized_view_schema!(transactions_schema, TransactionsView);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransactionSnapshot {
     pub transaction_id: String,
@@ -38,17 +41,6 @@ pub struct TransactionSnapshot {
 
 /// Active-transaction snapshot callback type.
 pub type TransactionsSnapshotCallback = Arc<dyn Fn() -> Vec<TransactionSnapshot> + Send + Sync>;
-
-fn transactions_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            TransactionsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert system.transactions TableDefinition to Arrow schema")
-        })
-        .clone()
-}
 
 /// Virtual view that snapshots active explicit transactions from memory.
 pub struct TransactionsView {
@@ -188,18 +180,11 @@ impl TransactionsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Transactions.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Transactions,
             columns,
-            TableOptions::system(),
-            Some(
-                "Active explicit transactions across pg RPC, SQL batch, and internal origins"
-                    .to_string(),
-            ),
+            "Active explicit transactions across pg RPC, SQL batch, and internal origins",
         )
-        .expect("Failed to create system.transactions view definition")
     }
 }
 
@@ -268,4 +253,4 @@ impl VirtualView for TransactionsView {
     }
 }
 
-pub type TransactionsTableProvider = crate::view_base::ViewTableProvider<TransactionsView>;
+pub type TransactionsTableProvider = SystemViewProvider<TransactionsView>;

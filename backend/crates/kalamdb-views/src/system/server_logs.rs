@@ -15,7 +15,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 use datafusion::arrow::{
@@ -25,27 +25,15 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_system::SystemTable;
 
-use crate::{
-    error::RegistryError,
-    view_base::{ViewTableProvider, VirtualView},
-};
+use crate::{error::RegistryError, view_base::VirtualView};
 
-/// Get or initialize the server_logs schema (memoized)
-fn server_logs_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            ServerLogsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert server_logs TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::{system_view_definition, SystemViewProvider, view_provider_with};
+
+crate::memoized_view_schema!(server_logs_schema, ServerLogsView);
 
 /// Parsed server log entry exposed through `system.server_logs`.
 #[derive(Debug)]
@@ -178,15 +166,11 @@ impl ServerLogsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::ServerLogs.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::ServerLogs,
             columns,
-            TableOptions::system(),
-            Some("Server log entries from JSON log files (read-only view)".to_string()),
+            "Server log entries from JSON log files (read-only view)",
         )
-        .expect("Failed to create system.server_logs view definition")
     }
 
     /// Create a new server logs view
@@ -304,12 +288,10 @@ impl VirtualView for ServerLogsView {
     }
 }
 
-/// Type alias for the server logs table provider
-pub type ServerLogsTableProvider = ViewTableProvider<ServerLogsView>;
+pub type ServerLogsTableProvider = SystemViewProvider<ServerLogsView>;
 
-/// Helper function to create a server logs table provider
 pub fn create_server_logs_provider(logs_path: impl Into<PathBuf>) -> ServerLogsTableProvider {
-    ViewTableProvider::new(Arc::new(ServerLogsView::new(logs_path)))
+    view_provider_with(logs_path.into(), ServerLogsView::new)
 }
 
 #[cfg(test)]

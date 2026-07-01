@@ -1430,6 +1430,7 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
         .env("KALAMDB_CLUSTER_RPC_ADDR", format!("127.0.0.1:{}", rpc_port))
         .env("KALAMDB_CLUSTER_API_ADDR", format!("127.0.0.1:{}", api_port))
         .env("KALAMDB_DATA_DIR", data_path.to_string_lossy().into_owned())
+        .env("KALAMDB_ENABLE_PGWIRE", "false")
         .env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC", "200000")
         .env("KALAMDB_LOG_LEVEL", "warn")
         .arg(config_path)

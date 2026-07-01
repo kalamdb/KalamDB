@@ -15,7 +15,7 @@
 //! **Schema Caching**: Memoized via `OnceLock`
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, StringBuilder},
@@ -24,24 +24,15 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_system::SystemTable;
 
 use crate::view_base::VirtualView;
 
-/// Get or initialize the datatypes schema (memoized)
-fn datatypes_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            DatatypesView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert datatypes TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::{system_view_definition, SystemViewProvider, view_provider};
+
+crate::memoized_view_schema!(datatypes_schema, DatatypesView);
 
 /// Virtual view that provides Arrow → KalamDB type mappings
 ///
@@ -108,15 +99,11 @@ impl DatatypesView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Datatypes.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Datatypes,
             columns,
-            TableOptions::system(),
-            Some("Arrow to KalamDB SQL type mappings (read-only view)".to_string()),
+            "Arrow to KalamDB SQL type mappings (read-only view)",
         )
-        .expect("Failed to create system.datatypes view definition")
     }
 
     /// Create a new datatypes view
@@ -252,12 +239,10 @@ impl VirtualView for DatatypesView {
     }
 }
 
-// Re-export as DatatypesTableProvider for consistency
-pub type DatatypesTableProvider = crate::view_base::ViewTableProvider<DatatypesView>;
+pub type DatatypesTableProvider = SystemViewProvider<DatatypesView>;
 
-/// Helper function to create a datatypes table provider
 pub fn create_datatypes_provider() -> DatatypesTableProvider {
-    DatatypesTableProvider::new(Arc::new(DatatypesView::new()))
+    view_provider(DatatypesView::new)
 }
 
 #[cfg(test)]

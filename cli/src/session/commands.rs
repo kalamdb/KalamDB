@@ -104,8 +104,9 @@ impl CLISession {
             },
             Command::ListTables => {
                 self.execute(
-                    "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables \
-                     ORDER BY namespace_id, table_name",
+                    "SELECT kdb_namespace_id AS namespace, table_name, kdb_table_type AS \
+                     table_type FROM information_schema.tables ORDER BY kdb_namespace_id, \
+                     table_name",
                 )
                 .await?;
             },

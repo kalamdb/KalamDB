@@ -79,6 +79,20 @@ max_write_buffers = 2
 write_buffer_size = 262144
 max_write_buffers = 2
 
+[postgres_wire]
+# PostgreSQL wire protocol listener. Disabled by default while the
+# direct pgwire adapter is completed and validated.
+enabled = true
+host = "127.0.0.1"
+port = 5432
+tls_enabled = false
+# tls_cert_path = "./certs/postgres-wire.crt"
+# tls_key_path = "./certs/postgres-wire.key"
+pg_catalog_enabled = true
+prepared_statement_limit = 1024
+portal_limit = 1024
+
+
 [datafusion]
 # Memory limit for query execution in bytes (default: 64MB)
 # KalamDB is optimised for mobile/OLTP workloads, not heavy analytics.
@@ -170,7 +184,7 @@ default_query_limit = 50
 
 [logging]
 # Log level: error, warn, info, debug, trace (default: info)
-level = "info"
+level = "debug"
 
 # Directory for all log files (default: "./logs")
 # Server will create app.log, slow.jsonl, and other log files in this directory

@@ -12,7 +12,7 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder},
@@ -27,17 +27,9 @@ use kalamdb_system::SystemTable;
 
 use crate::{error::RegistryError, view_base::VirtualView};
 
-/// Get the describe schema (memoized)
-fn describe_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            DescribeView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert describe TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::system_view_definition;
+
+crate::memoized_view_schema!(describe_schema, DescribeView);
 
 /// Callback type for fetching table definition
 /// Returns the TableDefinition for the specified table
@@ -183,15 +175,11 @@ impl DescribeView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Describe.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Describe,
             columns,
-            TableOptions::system(),
-            Some("Virtual view for DESCRIBE TABLE functionality".to_string()),
+            "Virtual view for DESCRIBE TABLE functionality",
         )
-        .expect("Failed to create system.describe view definition")
     }
 
     /// Create a new describe view without a callback (placeholder mode)

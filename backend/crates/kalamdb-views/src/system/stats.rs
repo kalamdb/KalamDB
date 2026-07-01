@@ -12,7 +12,7 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, StringBuilder},
@@ -21,29 +21,19 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_system::SystemTable;
 use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
 
-/// Metrics provider callback type
-/// Returns a vector of (metric_name, metric_value) tuples
-pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
+use super::common::{system_view_definition, SystemViewProvider};
 
-/// Get the stats schema (memoized)
-fn stats_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            StatsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert stats TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+crate::memoized_view_schema!(stats_schema, StatsView);
+
+/// Metrics provider callback type.
+pub type MetricsCallback = Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
 
 /// Virtual view that emits key-value metrics computed at query time
 ///
@@ -101,15 +91,11 @@ impl StatsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Stats.table_name()),
-            TableType::System, // Views are system-level objects
+        system_view_definition(
+            SystemTable::Stats,
             columns,
-            TableOptions::system(),
-            Some("Runtime metrics and statistics (computed on each query)".to_string()),
+            "Runtime metrics and statistics (computed on each query)",
         )
-        .expect("Failed to create system.stats view definition")
     }
 
     /// Create a new stats view without a callback (placeholder mode)
@@ -188,7 +174,7 @@ impl VirtualView for StatsView {
     }
 }
 
-pub type StatsTableProvider = crate::view_base::ViewTableProvider<StatsView>;
+pub type StatsTableProvider = SystemViewProvider<StatsView>;
 
 #[cfg(test)]
 mod tests {

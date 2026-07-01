@@ -105,13 +105,16 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Default: runs all workspace tests via cargo nextest, with CLI and backend e2e tests enabled"
     echo "         using backend e2e feature kalamdb-server/e2e-tests."
     echo "         CLI integration tests live in the kalam-cli-e2e crate."
-    echo "         Untargeted full runs also execute"
-    echo "         TypeScript SDK unit/browser/e2e, example, UI, Dart, and Rust SDK test suites."
+    echo "         Untargeted full runs also execute PostgreSQL wire e2e tests (smoke,"
+    echo "         transactions, client catalog) and TypeScript SDK unit/browser/e2e,"
+    echo "         example, UI, Dart, and Rust SDK test suites."
     echo ""
     echo "Options:"
     echo "  -u, --url <URL>          Single-node server URL"
     echo "  --cluster-urls <URLS>    Comma-separated cluster node URLs"
     echo "  --server-type <TYPE>     Server mode: fresh | running (default) | cluster"
+    echo "                           fresh: auto-starts wire-enabled server for pgwire e2e"
+    echo "                           running: reuse server; enable [postgres_wire] or use fresh"
     echo "  -j, --jobs <N>           Override nextest process concurrency"
         echo "                           Cluster mode defaults to KALAMDB_CLUSTER_TEST_JOBS or 4"
     echo "  -P, --package <CRATE>    Limit the run to one package (repeatable)"
@@ -534,6 +537,7 @@ if [ -n "$TEST_JOBS" ]; then
 fi
     echo "Mode:            $FEATURE_MODE"
     echo "Supplementary:   $SUPPLEMENTARY_MODE"
+    echo "PgWire E2E:      included in full runs (smoke, transactions, client catalog)"
     echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
     if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
         echo "S3/MinIO tests:  use running server (build with cloud-aws for object storage)"
@@ -963,6 +967,262 @@ SUPPLEMENTARY_SERVER_PID=""
 SUPPLEMENTARY_SERVER_WORK_DIR=""
 SUPPLEMENTARY_SERVER_URL=""
 
+PGWIRE_SERVER_PID=""
+PGWIRE_SERVER_WORK_DIR=""
+PGWIRE_SERVER_URL=""
+PGWIRE_HOST=""
+PGWIRE_PORT=""
+
+cleanup_pgwire_test_server() {
+    if [ -n "$PGWIRE_SERVER_PID" ]; then
+        kill "$PGWIRE_SERVER_PID" 2>/dev/null || true
+        wait "$PGWIRE_SERVER_PID" 2>/dev/null || true
+        PGWIRE_SERVER_PID=""
+    fi
+
+    if [ -n "$PGWIRE_SERVER_WORK_DIR" ]; then
+        rm -rf "$PGWIRE_SERVER_WORK_DIR"
+        PGWIRE_SERVER_WORK_DIR=""
+    fi
+}
+
+pgwire_port_open() {
+    local host="$1"
+    local port="$2"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    python3 - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+sock = socket.socket()
+sock.settimeout(2)
+try:
+    sock.connect((host, port))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+}
+
+export_pgwire_env() {
+    local host="$1"
+    local port="$2"
+    local user="${3:-root}"
+    local password="$4"
+
+    PGWIRE_HOST="$host"
+    PGWIRE_PORT="$port"
+    export KALAMDB_PGWIRE_HOST="$host"
+    export KALAMDB_PGWIRE_PORT="$port"
+    export KALAMDB_PGWIRE_USER="$user"
+    export KALAMDB_PGWIRE_PASSWORD="$password"
+
+    if [ -n "$password" ]; then
+        export KALAMDB_PGWIRE_TEST_URL="postgresql://${user}:${password}@${host}:${port}/kalam"
+    else
+        export KALAMDB_PGWIRE_TEST_URL="postgresql://${user}@${host}:${port}/kalam"
+    fi
+}
+
+pgwire_e2e_should_run() {
+    if [ -n "$TEST_LIST_FILE" ]; then
+        if [ "$TEST_LIST_FILE" = "-" ]; then
+            return 0
+        fi
+        if grep -Eqi 'wire_|pgwire|pg_catalog' "$TEST_LIST_FILE"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        case "$TEST_FILTER" in
+            *wire*|*pgwire*|*pg_catalog*)
+                return 0
+                ;;
+        esac
+        return 1
+    fi
+
+    if [ -n "$TEST_TARGET" ]; then
+        case "$TEST_TARGET" in
+            wire_*|pgwire_*|pgwire_catalog)
+                return 0
+                ;;
+        esac
+        return 1
+    fi
+
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
+        package_filters_include "kalamdb-postgres-wire" && return 0
+        package_filters_include "kalamdb-server" && return 0
+        return 1
+    fi
+
+    return 0
+}
+
+pgwire_catalog_tests_should_run() {
+    if ! pgwire_e2e_should_run; then
+        return 1
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        case "$TEST_FILTER" in
+            *pg_catalog*|wire_client_catalog*)
+                return 0
+                ;;
+            wire_*)
+                return 1
+                ;;
+        esac
+    fi
+
+    if [ -n "$TEST_TARGET" ] && [ "$TEST_TARGET" != "pgwire_catalog" ]; then
+        return 1
+    fi
+
+    if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && package_filters_include "kalamdb-postgres-wire"; then
+        return 1
+    fi
+
+    return 0
+}
+
+resolve_pgwire_host() {
+    if [ -n "${KALAMDB_PGWIRE_HOST:-}" ]; then
+        printf '%s\n' "$KALAMDB_PGWIRE_HOST"
+        return 0
+    fi
+
+    local host_port
+    host_port="$(parse_host_port_from_url "$SERVER_URL")" || {
+        printf '127.0.0.1\n'
+        return 0
+    }
+    printf '%s\n' "$(printf '%s\n' "$host_port" | sed -n '1p')"
+}
+
+start_pgwire_test_server() {
+    local server_log
+    local server_pid_file
+    local http_port
+    local pgwire_host
+
+    local server_bin="${KALAMDB_SERVER_BIN:-$REPO_ROOT/target/debug/kalamdb-server}"
+    if [ ! -x "$server_bin" ]; then
+        step "Prebuilding kalamdb-server for PostgreSQL wire e2e"
+        (
+            cd "$REPO_ROOT"
+            cargo build -p kalamdb-server --bin kalamdb-server --features cloud-aws
+        )
+    fi
+    export KALAMDB_SERVER_BIN="$server_bin"
+
+    http_port="$(allocate_free_local_port)"
+    PGWIRE_PORT="$(allocate_free_local_port)"
+    pgwire_host="127.0.0.1"
+    PGWIRE_SERVER_URL="http://127.0.0.1:$http_port"
+
+    PGWIRE_SERVER_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-pgwire-test-server.XXXXXX")"
+    server_log="$PGWIRE_SERVER_WORK_DIR/server.log"
+    server_pid_file="$PGWIRE_SERVER_WORK_DIR/server.pid"
+
+    step "Starting PostgreSQL wire test server on ${pgwire_host}:${PGWIRE_PORT}"
+    KALAMDB_SERVER_WORK_DIR="$PGWIRE_SERVER_WORK_DIR" \
+        KALAMDB_SERVER_LOG="$server_log" \
+        KALAMDB_SERVER_PID_FILE="$server_pid_file" \
+        KALAMDB_SERVER_BIN="${KALAMDB_SERVER_BIN:-$REPO_ROOT/target/debug/kalamdb-server}" \
+        KALAMDB_URL="$PGWIRE_SERVER_URL" \
+        KALAMDB_ENABLE_PGWIRE=true \
+        KALAMDB_PGWIRE_HOST="$pgwire_host" \
+        KALAMDB_PGWIRE_PORT="$PGWIRE_PORT" \
+        KALAMDB_PGWIRE_CATALOG_ENABLED=true \
+        KALAMDB_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" \
+        KALAMDB_SERVER_WAIT_SECONDS="${KALAMDB_SERVER_WAIT_SECONDS:-180}" \
+        bash "$REPO_ROOT/scripts/start-sdk-test-server.sh"
+
+    PGWIRE_SERVER_PID="$(cat "$server_pid_file")"
+
+    if ! pgwire_port_open "$pgwire_host" "$PGWIRE_PORT"; then
+        echo "Error: PostgreSQL wire listener did not become reachable on ${pgwire_host}:${PGWIRE_PORT}." >&2
+        if [ -s "$server_log" ]; then
+            echo "Recent server log output:" >&2
+            tail -n 40 "$server_log" >&2 || true
+        fi
+        exit 1
+    fi
+
+    export_pgwire_env "$pgwire_host" "$PGWIRE_PORT" root "$TEST_ROOT_PASSWORD"
+
+    local previous_server_url="${KALAMDB_SERVER_URL:-}"
+    export KALAMDB_SERVER_URL="$PGWIRE_SERVER_URL"
+    export KALAMDB_URL="$PGWIRE_SERVER_URL"
+    setup_supplementary_auth_if_needed
+    if [ -n "$previous_server_url" ]; then
+        export KALAMDB_SERVER_URL="$previous_server_url"
+        export KALAMDB_URL="$previous_server_url"
+    else
+        unset KALAMDB_SERVER_URL
+        unset KALAMDB_URL
+    fi
+}
+
+ensure_pgwire_e2e_env() {
+    if ! pgwire_e2e_should_run; then
+        return 0
+    fi
+
+    if [ -n "$PGWIRE_HOST" ] && [ -n "$PGWIRE_PORT" ]; then
+        return 0
+    fi
+
+    local pgwire_host
+    local pgwire_port
+
+    pgwire_host="$(resolve_pgwire_host)"
+    pgwire_port="${KALAMDB_PGWIRE_PORT:-5432}"
+
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        start_pgwire_test_server
+        return 0
+    fi
+
+    if pgwire_port_open "$pgwire_host" "$pgwire_port"; then
+        step "Using PostgreSQL wire listener at ${pgwire_host}:${pgwire_port}"
+        export_pgwire_env "$pgwire_host" "$pgwire_port" root "$TEST_ROOT_PASSWORD"
+        return 0
+    fi
+
+    echo "Error: PostgreSQL wire listener is not reachable at ${pgwire_host}:${pgwire_port}." >&2
+    echo "Enable [postgres_wire] in the running server config (enabled = true, pg_catalog_enabled = true)," >&2
+    echo "set KALAMDB_PGWIRE_HOST/KALAMDB_PGWIRE_PORT if needed, or rerun with --server-type fresh." >&2
+    exit 1
+}
+
+run_pgwire_catalog_companion_tests_if_needed() {
+    if ! pgwire_catalog_tests_should_run; then
+        return 0
+    fi
+
+    ensure_pgwire_e2e_env
+
+    step "Running PostgreSQL wire client catalog e2e tests"
+    cargo nextest run \
+        -p kalamdb-server \
+        --features e2e-tests \
+        --test pgwire_catalog \
+        --run-ignored all \
+        wire_client_catalog_returns_data
+}
+
 cleanup_supplementary_server() {
     if [ -n "$SUPPLEMENTARY_SERVER_PID" ]; then
         kill "$SUPPLEMENTARY_SERVER_PID" 2>/dev/null || true
@@ -976,7 +1236,12 @@ cleanup_supplementary_server() {
     fi
 }
 
-trap cleanup_supplementary_server EXIT
+cleanup_test_resources() {
+    cleanup_pgwire_test_server
+    cleanup_supplementary_server
+}
+
+trap cleanup_test_resources EXIT
 
 supplementary_json_token_from_file() {
     local path="$1"
@@ -1292,8 +1557,10 @@ build_test_cmd() {
         filter_targets_smoke=true
     fi
 
+    # Custom `harness = false` benches (e.g. kalamdb-backend) do not implement
+    # libtest --list; exclude them when widening discovery beyond default tests.
     if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = false ]; then
-        TEST_CMD+=(--all-targets)
+        TEST_CMD+=(--all-targets --filter-expr 'not kind(bench)')
     fi
 
     local e2e_features=()
@@ -1323,6 +1590,12 @@ build_test_cmd() {
 
     if [ -n "$TEST_TARGET" ]; then
         TEST_CMD+=(--test "$TEST_TARGET")
+        if [ "$TEST_TARGET" = "pgwire_catalog" ]; then
+            TEST_CMD+=(--run-ignored all)
+            if [ -z "$test_filter" ]; then
+                TEST_CMD+=(wire_client_catalog_returns_data)
+            fi
+        fi
     fi
 
     # nextest.toml already serializes the stateful kalam-cli / kalam-link
@@ -1378,7 +1651,7 @@ run_schema_diff_companion_tests_if_needed() {
     fi
 
     step "Running Kalam schema diff tests"
-    cargo nextest run -p kalam-schema-diff --all-targets
+    cargo nextest run -p kalam-schema-diff
 }
 
 run_test_list() {
@@ -1438,12 +1711,15 @@ maybe_warn_for_missing_s3_on_running_server
 ensure_dex_for_oidc_tests
 ensure_minio_for_storage_tests
 run_schema_diff_companion_tests_if_needed
+ensure_pgwire_e2e_env
 
 if [ -n "$TEST_LIST_FILE" ]; then
     run_test_list "$TEST_LIST_FILE"
 else
     run_single_test "$TEST_FILTER"
 fi
+
+run_pgwire_catalog_companion_tests_if_needed
 
 if [ "$RUN_SUPPLEMENTARY_SUITES" = true ]; then
     run_supplementary_suites

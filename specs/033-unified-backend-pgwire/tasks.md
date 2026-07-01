@@ -90,12 +90,12 @@
 - [x] T035 [US5] Route `CloseSession` through `BackendSessionManager::close_session` in `backend/crates/kalamdb-pg/src/service.rs`
 - [x] T036 [US5] Route typed `BeginTransaction`, `CommitTransaction`, and `RollbackTransaction` through manager block methods in `backend/crates/kalamdb-pg/src/service.rs`
 - [x] T037 [US5] Preserve lazy remote transaction opening in `pg/src/fdw_xact.rs`
-- [ ] T038 [US5] Replace `SessionRegistry` with a thin compatibility re-export or adapter in `backend/crates/kalamdb-pg/src/session_registry.rs`
+- [x] T038 [US5] Replace `SessionRegistry` with a thin compatibility re-export or adapter in `backend/crates/kalamdb-pg/src/session_registry.rs`
 - [x] T039 [US5] Remove `tracked_transaction_id` and `reconcile_local_transaction_state` production paths from `backend/crates/kalamdb-pg/src/service.rs`
 - [x] T040 [P] [US5] Update gRPC transaction race tests for the shared manager in `backend/crates/kalamdb-pg/tests/transaction_races.rs`
 - [x] T041 [P] [US5] Update core transaction race tests for the renamed backend UUID owner key in `backend/crates/kalamdb-core/tests/transaction_races.rs`
 - [x] T042 [US5] Run `cargo nextest run -p kalamdb-pg` and `cargo nextest run -p kalamdb-core sql_transaction` and record output in `specs/033-unified-backend-pgwire/validation/us5-extension-regression.md`
-- [ ] T043 [US5] Run pg extension e2e transaction cases and record output in `specs/033-unified-backend-pgwire/validation/us5-pg-e2e.md`
+- [x] T043 [US5] Run pg extension e2e transaction cases and record output in `specs/033-unified-backend-pgwire/validation/us5-pg-e2e.md`
 
 **Checkpoint**: Extension path uses the shared manager and SC-010 is still green for extension and core SQL transaction subsets.
 
@@ -228,7 +228,7 @@
 - [x] T102 [P] [US9] Add in-process projection tests for namespace, table, column, and database shim rows in `backend/crates/kalamdb-core/tests/pg_catalog_shims.rs`
 - [x] T103 [P] [US9] Add RBAC tests proving non-admin users cannot see other users' sessions or unauthorized namespaces through `pg_catalog` shims in `backend/crates/kalamdb-core/tests/pg_catalog_shims.rs`
 - [x] T104 [P] [US9] Implement wire e2e catalog suite in `backend/tests/pgwire_catalog/` (`catalog_checks.rs` + `test_client_catalog.rs`); assert `pg_catalog` + `information_schema` + `system.*` parity per `validation/us9-client-catalog.md`
-- [ ] T105 [US9] Run `cargo test --test pgwire_catalog --features e2e-tests` green and record output in `specs/033-unified-backend-pgwire/validation/us9-client-catalog.md` sign-off (SC-011); optional DBeaver manual in quickstart Scenario 8
+- [x] T105 [US9] Run `cargo test --test pgwire_catalog --features e2e-tests` green and record output in `specs/033-unified-backend-pgwire/validation/us9-client-catalog.md` sign-off (SC-011); optional DBeaver manual in quickstart Scenario 8
 
 **Checkpoint**: Client catalog enabled optionally; canonical metadata remains `system.*` only (SC-012 review).
 
@@ -264,12 +264,12 @@
 
 ### Implementation for User Story 8
 
-- [ ] T115 [US8] Delete duplicate transaction metadata fields from `backend/crates/kalamdb-pg/src/session_registry.rs`
-- [ ] T116 [US8] Delete obsolete reconciliation helper tests from `backend/crates/kalamdb-pg/src/session_registry.rs`
-- [ ] T117 [US8] Remove deprecated reconciliation helper calls from `backend/crates/kalamdb-pg/src/service.rs`
-- [ ] T118 [US8] Remove obsolete `LivePgTransaction` transport-specific exports from `backend/crates/kalamdb-pg/src/lib.rs`
-- [ ] T119 [US8] Replace any remaining `session_registry` imports with `kalamdb_backend` imports in `backend/crates/kalamdb-pg/src/service.rs`
-- [ ] T120 [US8] Update session and transaction imports after cleanup in `backend/crates/kalamdb-core/src/app_context.rs`
+- [x] T115 [US8] Delete duplicate transaction metadata fields from `backend/crates/kalamdb-pg/src/session_registry.rs`
+- [x] T116 [US8] Delete obsolete reconciliation helper tests from `backend/crates/kalamdb-pg/src/session_registry.rs`
+- [x] T117 [US8] Remove deprecated reconciliation helper calls from `backend/crates/kalamdb-pg/src/service.rs`
+- [x] T118 [US8] Remove obsolete `LivePgTransaction` transport-specific exports from `backend/crates/kalamdb-pg/src/lib.rs`
+- [x] T119 [US8] Replace any remaining `session_registry` imports with `kalamdb_backend` imports in `backend/crates/kalamdb-pg/src/service.rs`
+- [x] T120 [US8] Update session and transaction imports after cleanup in `backend/crates/kalamdb-core/src/app_context.rs`
 - [x] T121 [US8] Record duplicate-session-code search results using `rg "SessionRegistry|tracked_transaction_id|reconcile_local_transaction_state|LivePgTransaction"` in `specs/033-unified-backend-pgwire/validation/duplicate-session-scan.md`
 - [x] T122 [US8] Record architecture review against SC-007 in `specs/033-unified-backend-pgwire/validation/architecture-review.md`
 - [x] T123 [US8] Run full SC-010 regression gates and record output in `specs/033-unified-backend-pgwire/validation/us8-full-regression.md`
@@ -289,8 +289,8 @@
 - [x] T128 [P] Update PostgreSQL wire config, port, TLS, and client catalog operations notes in `docs/architecture/transactions.md`
 - [x] T129 [P] Update canonical KalamDB skill content for new user-facing wire/session behavior in `../kalamdb-skills/skills/kalamdb/SKILL.md`
 - [x] T130 Record whether generated in-repo skill mirrors need regeneration in `specs/033-unified-backend-pgwire/validation/skill-mirror-check.md`
-- [ ] T131 Run the full quickstart sign-off checklist and record output in `specs/033-unified-backend-pgwire/validation/quickstart-signoff.md`
-- [ ] T132 Run CLI smoke when auth/API surfaces changed and record output in `specs/033-unified-backend-pgwire/validation/cli-smoke.md`
+- [x] T131 Run the full quickstart sign-off checklist and record output in `specs/033-unified-backend-pgwire/validation/quickstart-signoff.md`
+- [x] T132 Run CLI smoke when auth/API surfaces changed and record output in `specs/033-unified-backend-pgwire/validation/cli-smoke.md`
 - [x] T133 Run final affected-crate `cargo check -p kalamdb-server -p kalamdb-backend -p kalamdb-postgres-wire -p kalamdb-pg -p kalamdb-core -p kalamdb-views -p kalamdb-configs` and record output in `specs/033-unified-backend-pgwire/validation/final-cargo-check.md`
 - [x] T134 Run final affected-crate `cargo nextest run` sweep and record output in `specs/033-unified-backend-pgwire/validation/final-nextest.md`
 - [x] T135 Record security review for auth, RBAC, pg_catalog exposure, and disabled-user failures in `specs/033-unified-backend-pgwire/validation/security-review.md`

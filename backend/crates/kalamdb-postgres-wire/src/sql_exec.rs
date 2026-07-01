@@ -6,6 +6,7 @@ use kalamdb_core::{
     app_context::AppContext,
     sql::{ExecutionContext, SqlExecutor},
 };
+use kalamdb_core::sql::ScalarValue;
 use pgwire::{
     api::results::Response,
     error::{ErrorInfo, PgWireError, PgWireResult},
@@ -52,6 +53,7 @@ impl WireSqlExecutor {
         &self,
         state: &WireConnectionState,
         metadata: &kalamdb_core::sql::executor::PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
     ) -> PgWireResult<Vec<Response>> {
         if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
             return Ok(vec![Response::Error(Box::new(error_info(
@@ -70,7 +72,7 @@ impl WireSqlExecutor {
             exec_ctx = exec_ctx.with_transaction_id(transaction_id);
         }
 
-        match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, Vec::new()).await {
+        match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, params).await {
             Ok(result) => execution_result_to_responses(result),
             Err(error) => {
                 self.mark_statement_failed_if_in_block(state);

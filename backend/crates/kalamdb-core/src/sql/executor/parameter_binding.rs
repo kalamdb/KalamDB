@@ -78,18 +78,42 @@ pub fn replace_placeholders_in_plan(
         return Ok(plan);
     }
 
-    // Convert to ParamValues (DataFusion's wrapper type for positional params)
-    // ParamValues::List expects Vec<ScalarValue>
-    let param_values: ParamValues = params.to_vec().into();
-
     // Use DataFusion's built-in method which handles:
     // - Type inference via infer_placeholder_types
     // - Subquery traversal
     // - Schema updates after replacement
+    let param_values: ParamValues = params.to_vec().into();
     plan.with_param_values(param_values)
-        .map_err(|e| KalamDbError::ParameterBindingError {
-            message: e.to_string(),
+        .map_err(|error| KalamDbError::ParameterBindingError {
+            message: error.to_string(),
         })
+}
+
+/// Highest `$n` placeholder index in SQL (0 when none).
+pub fn max_placeholder_index(sql: &str) -> usize {
+    let bytes = sql.as_bytes();
+    let mut index = 0usize;
+    let mut max = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'$' {
+            index += 1;
+            let start = index;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            if index > start {
+                if let Ok(number) = std::str::from_utf8(&bytes[start..index])
+                    .unwrap_or("")
+                    .parse::<usize>()
+                {
+                    max = max.max(number);
+                }
+            }
+        } else {
+            index += 1;
+        }
+    }
+    max
 }
 
 #[cfg(test)]
@@ -128,5 +152,15 @@ mod tests {
             24 + 5
         );
         assert_eq!(estimate_scalar_value_size(&ScalarValue::Null), 1);
+    }
+
+    #[test]
+    fn max_placeholder_index_finds_highest_number() {
+        assert_eq!(
+            max_placeholder_index(
+                "SELECT * FROM t WHERE table_schema = $1 AND table_name = $2 ORDER BY $1"
+            ),
+            2
+        );
     }
 }

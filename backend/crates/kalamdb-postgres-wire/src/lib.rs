@@ -2,6 +2,7 @@
 
 pub mod connection;
 pub mod handlers;
+pub mod params;
 pub mod query;
 pub mod row_encoder;
 pub mod server;

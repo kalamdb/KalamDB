@@ -31,6 +31,7 @@ use kalamdb_store::StorageBackend;
 use kalamdb_system::{ClusterCoordinator, Namespace, SystemTablesRegistry};
 use kalamdb_tables::{SharedTableStore, UserTableStore};
 use kalamdb_views::{
+    information_schema::KalamInformationSchemaProvider,
     pg_catalog::PgCatalogSchemaProvider,
     sessions::{ConnectionSessionSnapshot, SessionsSnapshotCallback},
     transactions::{TransactionSnapshot, TransactionsSnapshotCallback},
@@ -372,8 +373,17 @@ impl AppContext {
                 session_factory.register_namespaces(&base_session_context, &namespace_names);
             }
 
-            // Note: information_schema.tables and information_schema.columns are provided
-            // by DataFusion's built-in support (enabled via .with_information_schema(true))
+            let catalog_list = Arc::clone(base_session_context.state().catalog_list());
+            let information_schema = Arc::new(KalamInformationSchemaProvider::new(
+                catalog_list,
+                Arc::clone(&system_tables),
+            ));
+            catalog
+                .register_schema(
+                    "information_schema",
+                    information_schema as Arc<dyn SchemaProvider>,
+                )
+                .expect("Failed to register information_schema schema");
 
             // Create job registry and register all 13 executors (Phase 9, T154)
             // Moved to kalamdb-jobs — callers set job_manager via set_job_manager()

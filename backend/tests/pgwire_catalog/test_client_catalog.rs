@@ -81,11 +81,11 @@ async fn wire_client_catalog_returns_data_and_matches_system_views() {
 
     assert_pg_class_matches_system_tables(&client)
         .await
-        .expect("pg_class vs system.tables");
+        .expect("pg_class vs information_schema.tables");
 
     assert_pg_attribute_matches_system_columns(&client)
         .await
-        .expect("pg_attribute vs system.columns");
+        .expect("pg_attribute vs information_schema.columns");
 
     assert_admin_pg_stat_activity(&client).await.expect("admin pg_stat_activity");
 }

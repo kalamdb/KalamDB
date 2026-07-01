@@ -5,7 +5,7 @@
 //! Provides the current set of active subscriptions from the in-memory
 //! connection registry.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder, TimestampMicrosecondBuilder},
@@ -18,24 +18,19 @@ use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
 
-/// Live-query snapshot callback type.
-pub type LiveSnapshotCallback = Arc<dyn Fn() -> Vec<LiveQuery> + Send + Sync>;
+use super::common::SystemViewProvider;
+
+crate::memoized_view_schema!(live_schema_for_live, @ LiveView::definition_for(SystemTable::Live));
 
 fn live_schema(system_table: SystemTable) -> SchemaRef {
     match system_table {
-        SystemTable::Live => {
-            static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-            SCHEMA
-                .get_or_init(|| {
-                    LiveView::definition_for(SystemTable::Live)
-                        .to_arrow_schema()
-                        .expect("Failed to convert system.live TableDefinition to Arrow schema")
-                })
-                .clone()
-        },
+        SystemTable::Live => live_schema_for_live(),
         _ => unreachable!("LiveView only supports system.live"),
     }
 }
+
+/// Live-query snapshot callback type.
+pub type LiveSnapshotCallback = Arc<dyn Fn() -> Vec<LiveQuery> + Send + Sync>;
 
 /// Virtual view that snapshots active subscriptions from memory.
 pub struct LiveView {
@@ -158,7 +153,7 @@ impl VirtualView for LiveView {
     }
 }
 
-pub type LiveTableProvider = crate::view_base::ViewTableProvider<LiveView>;
+pub type LiveTableProvider = SystemViewProvider<LiveView>;
 
 #[cfg(test)]
 mod tests {

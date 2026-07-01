@@ -546,8 +546,14 @@ fn log_server_started(
     } else {
         crate::http_runtime::format_startup_ui_status_plain(config, ui_status)
     };
+    let pgwire_segment = if config.postgres_wire.enabled {
+        let pgwire_addr = format!("{}:{}", config.postgres_wire.host, config.postgres_wire.port);
+        format!(" | PostgreSQL wire on {pgwire_addr}")
+    } else {
+        String::new()
+    };
     let message = format!(
-        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr} | UI: {ui_segment})"
+        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | UI: {ui_segment})"
     );
 
     if crate::http_runtime::should_print_terminal_hyperlinks(config) {

@@ -54,7 +54,8 @@ async fn test_cluster_basic_crud_operations() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let table_query = format!(
-        "SELECT COUNT(*) as cnt FROM system.tables WHERE namespace_id = '{}' AND table_name = '{}'",
+        "SELECT COUNT(*) as cnt FROM information_schema.tables WHERE kdb_namespace_id = '{}' AND \
+         table_name = '{}'",
         namespace, table
     );
     let consistency = cluster

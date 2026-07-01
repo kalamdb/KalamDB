@@ -880,7 +880,7 @@ pub(crate) fn render_meta_command_help(color_enabled: bool) -> String {
     help.push_str(&format!("{}\n", format_help_heading("Examples", color_enabled)));
     for example in [
         "USE NAMESPACE chat;",
-        "SELECT * FROM system.tables LIMIT 5;",
+        "SELECT * FROM information_schema.tables LIMIT 5;",
         "\\flush table messages",
         "\\describe chat.messages;",
         "\\as user_123 SELECT * FROM user.orders LIMIT 5;",

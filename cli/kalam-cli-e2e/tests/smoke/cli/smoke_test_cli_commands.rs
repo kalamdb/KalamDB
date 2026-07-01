@@ -64,10 +64,10 @@ fn smoke_cli_list_tables_command() {
     ))
     .expect("Failed to create table");
 
-    // Query system.tables with a narrow filter (this is what \dt uses internally).
+    // Query information_schema.tables with a narrow filter (this is what \dt uses internally).
     let result = execute_sql_as_root_via_client(&format!(
-        "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables WHERE \
-         namespace_id = '{}' AND table_name = '{}'",
+        "SELECT kdb_namespace_id AS namespace, table_name, kdb_table_type AS table_type FROM \
+         information_schema.tables WHERE kdb_namespace_id = '{}' AND table_name = '{}'",
         namespace, table
     ))
     .expect("Failed to list tables");

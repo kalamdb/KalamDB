@@ -5,7 +5,7 @@
 //! Provides per-Raft-group OpenRaft metrics directly from RaftMetrics.
 //! Each row represents one Raft group's current state on this node.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Array, StringArray},
@@ -14,27 +14,16 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_raft::{CommandExecutor, GroupId};
 use kalamdb_system::SystemTable;
 
-use crate::{
-    error::RegistryError,
-    view_base::{ViewTableProvider, VirtualView},
-};
+use crate::{error::RegistryError, view_base::VirtualView};
 
-fn cluster_groups_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            ClusterGroupsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert cluster_groups TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::{system_view_definition, SystemViewProvider, view_provider_with};
+
+crate::memoized_view_schema!(cluster_groups_schema, ClusterGroupsView);
 
 #[derive(Debug)]
 pub struct ClusterGroupsView {
@@ -203,15 +192,11 @@ impl ClusterGroupsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::ClusterGroups.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::ClusterGroups,
             columns,
-            TableOptions::system(),
-            Some("Per-Raft-group membership and replication status (read-only view)".to_string()),
+            "Per-Raft-group membership and replication status (read-only view)",
         )
-        .expect("Failed to create system.cluster_groups view definition")
     }
 
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
@@ -347,12 +332,12 @@ impl VirtualView for ClusterGroupsView {
     }
 }
 
-pub type ClusterGroupsTableProvider = ViewTableProvider<ClusterGroupsView>;
+pub type ClusterGroupsTableProvider = SystemViewProvider<ClusterGroupsView>;
 
 pub fn create_cluster_groups_provider(
     executor: Arc<dyn CommandExecutor>,
 ) -> ClusterGroupsTableProvider {
-    ViewTableProvider::new(Arc::new(ClusterGroupsView::new(executor)))
+    view_provider_with(executor, ClusterGroupsView::new)
 }
 
 #[cfg(test)]

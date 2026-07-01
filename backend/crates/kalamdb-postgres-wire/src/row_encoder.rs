@@ -3,8 +3,8 @@ use std::sync::Arc;
 use arrow::{
     array::{
         Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-        Int8Array, LargeStringArray, RecordBatch, StringArray, UInt16Array, UInt32Array,
-        UInt64Array, UInt8Array,
+        Int8Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt16Array,
+        UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::{DataType, Field, SchemaRef},
     util::display::array_value_to_string,
@@ -112,7 +112,7 @@ fn pg_type_for_arrow(data_type: &DataType) -> PgWireResult<Type> {
         DataType::Float64 => Type::FLOAT8,
         DataType::Date32 | DataType::Date64 => Type::DATE,
         DataType::Timestamp(_, _) => Type::TIMESTAMP,
-        DataType::Utf8 | DataType::LargeUtf8 => Type::TEXT,
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Type::TEXT,
         DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::TEXT,
         _ => return Err(unsupported_type_error(data_type)),
     })
@@ -161,6 +161,9 @@ fn encode_array_value(
         return encoder.encode_field(&array.value(row_index));
     }
     if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
+        return encoder.encode_field(&array.value(row_index));
+    }
+    if let Some(array) = array.as_any().downcast_ref::<StringViewArray>() {
         return encoder.encode_field(&array.value(row_index));
     }
     if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
@@ -273,6 +276,29 @@ mod tests {
                 Type::TEXT,
             ]
         );
+    }
+
+    #[test]
+    fn encodes_utf8_view_columns() {
+        let schema = Arc::new(Schema::new(vec![Field::new("label", DataType::Utf8View, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(StringViewArray::from(vec!["int8", "text"])) as ArrayRef],
+        )
+        .expect("batch is valid");
+
+        let responses = execution_result_to_responses(ExecutionResult::Rows {
+            batches: vec![batch],
+            row_count: 2,
+            schema: Some(schema),
+        })
+        .expect("utf8view values encode");
+
+        let Response::Query(query) = &responses[0] else {
+            panic!("expected query response");
+        };
+        assert_eq!(query.row_schema.len(), 1);
+        assert_eq!(query.row_schema[0].datatype(), &Type::TEXT);
     }
 
     #[test]

@@ -23,6 +23,8 @@ datafusion = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 
 # Serialization
 serde = { workspace = true }

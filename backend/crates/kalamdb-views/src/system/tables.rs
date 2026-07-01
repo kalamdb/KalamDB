@@ -1,4 +1,7 @@
-//! system.tables virtual view
+//! Deprecated `system.tables` virtual view.
+//!
+//! Table metadata is now exposed through `information_schema.tables` with `kdb_*`
+//! columns. This view remains registered for backward compatibility.
 //!
 //! **Type**: Virtual View (computed from system.schemas)
 //!
@@ -10,7 +13,7 @@
 //!
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder, TimestampMicrosecondBuilder},
@@ -19,25 +22,22 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, SystemTable, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions},
+    SystemTable,
 };
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{error::RegistryError, view_base::VirtualView};
 
-/// Get the tables view schema (memoized)
-fn tables_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            TablesView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert tables view TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::{registry_view_provider, system_view_definition, SystemViewProvider};
 
+crate::memoized_view_schema!(tables_schema, TablesView);
+
+/// Deprecated. Prefer `information_schema.tables` (`kdb_*` columns).
+#[deprecated(
+    since = "0.5.4-rc.1",
+    note = "use `information_schema.tables` with `kdb_*` columns instead"
+)]
 /// Virtual view that computes table metadata from system.schemas
 pub struct TablesView {
     /// Reference to system tables registry for accessing system.schemas
@@ -166,15 +166,11 @@ impl TablesView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Tables.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Tables,
             columns,
-            TableOptions::system(),
-            Some("Table metadata view (computed from system.schemas)".to_string()),
+            "Table metadata view (computed from system.schemas)",
         )
-        .expect("Failed to create system.tables view definition")
     }
 
     /// Create a new tables view
@@ -263,14 +259,22 @@ impl VirtualView for TablesView {
     }
 }
 
-// Re-export as TablesViewTableProvider
-pub type TablesViewTableProvider = crate::view_base::ViewTableProvider<TablesView>;
+/// Deprecated. Prefer `information_schema.tables` (`kdb_*` columns).
+#[deprecated(
+    since = "0.5.4-rc.1",
+    note = "use `information_schema.tables` with `kdb_*` columns instead"
+)]
+pub type TablesTableProvider = SystemViewProvider<TablesView>;
 
-/// Helper function to create a tables view provider
-pub fn create_tables_view_provider(
+/// Create a deprecated `system.tables` view provider.
+#[deprecated(
+    since = "0.5.4-rc.1",
+    note = "use `information_schema.tables` with `kdb_*` columns instead"
+)]
+pub fn create_tables_provider(
     system_registry: Arc<SystemTablesRegistry>,
-) -> TablesViewTableProvider {
-    TablesViewTableProvider::new(Arc::new(TablesView::new(system_registry)))
+) -> TablesTableProvider {
+    registry_view_provider(system_registry, TablesView::new)
 }
 
 #[cfg(test)]

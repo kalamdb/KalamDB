@@ -9,36 +9,28 @@
 //! View providers now use the shared deferred execution substrate so batch
 //! computation happens at execute time instead of inside `TableProvider::scan()`.
 
-pub mod cluster;
-pub mod cluster_groups;
-pub mod columns_view;
-pub mod datatypes;
-pub mod describe;
 pub mod error;
-pub mod live;
+pub mod information_schema;
 pub mod pg_catalog;
-pub mod server_logs;
-pub mod sessions;
-pub mod settings;
-pub mod slow_queries;
-pub mod stats;
-pub mod tables_view;
-pub mod transactions;
+pub mod system;
 pub mod view_base;
 
-pub use cluster::*;
-pub use cluster_groups::*;
-pub use columns_view::*;
-pub use datatypes::*;
-pub use describe::*;
 pub use error::*;
-pub use live::*;
-pub use pg_catalog::*;
-pub use server_logs::*;
-pub use sessions::*;
-pub use settings::*;
-pub use slow_queries::*;
-pub use stats::*;
-pub use tables_view::*;
-pub use transactions::*;
 pub use view_base::*;
+
+// Re-export `system` view modules at the crate root for backward compatibility.
+// `system::tables` is omitted because it collides with `pg_catalog::tables`.
+pub use system::{
+    cluster, cluster_groups, columns, datatypes, describe, live, server_logs, sessions,
+    settings, slow_queries, stats, transactions,
+};
+#[allow(deprecated)]
+pub use system::columns::{
+    create_columns_provider, ColumnsTableProvider, ColumnsView,
+};
+pub use system::datatypes::create_datatypes_provider;
+#[allow(deprecated)]
+pub use system::tables::{
+    create_tables_provider, TablesTableProvider, TablesView,
+};
+pub use system::system_view_table_definition;

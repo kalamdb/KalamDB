@@ -19,9 +19,9 @@ use tonic::Status;
 
 use crate::{
     service::{ScanRpcRequest, ScanRpcResponse},
-    session_registry::LivePgTransaction,
     DeleteRpcRequest, InsertRpcRequest, UpdateRpcRequest,
 };
+use kalamdb_backend::session::LiveSessionTransaction;
 
 /// Domain-typed query executor.
 ///
@@ -36,7 +36,7 @@ pub trait OperationExecutor: Send + Sync + 'static {
     async fn active_transaction(
         &self,
         _session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, Status> {
+    ) -> Result<Option<LiveSessionTransaction>, Status> {
         Ok(None)
     }
     async fn begin_transaction(&self, _session_id: &str) -> Result<Option<TransactionId>, Status> {

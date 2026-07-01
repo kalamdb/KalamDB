@@ -4465,6 +4465,7 @@ dependencies = [
  "bytes",
  "kalam-pg-api",
  "kalam-pg-common",
+ "kalamdb-backend",
  "kalamdb-commons",
  "kalamdb-pg",
  "ntest",
@@ -4472,6 +4473,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
+ "uuid",
 ]
 
 [[package]]
@@ -5415,6 +5417,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "datafusion",
+ "futures-util",
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-datafusion-sources",
@@ -7240,6 +7243,14 @@ checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
 dependencies = [
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "quickstart"
+version = "0.0.0"
+dependencies = [
+ "kalam-client",
+ "tokio",
 ]
 
 [[package]]

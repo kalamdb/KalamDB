@@ -110,6 +110,10 @@ impl ServerConfig {
     /// - KALAMDB_RPC_TLS_SERVER_KEY: Override rpc_tls.server_key (file path or inline PEM)
     /// - KALAMDB_RPC_TLS_REQUIRE_CLIENT_CERT: Override rpc_tls.require_client_cert
     /// - KALAMDB_SERVER_WORKERS: Override server.workers (actix-web worker threads)
+    /// - KALAMDB_ENABLE_PGWIRE: Override postgres_wire.enabled ("true" | "false")
+    /// - KALAMDB_PGWIRE_HOST: Override postgres_wire.host
+    /// - KALAMDB_PGWIRE_PORT: Override postgres_wire.port
+    /// - KALAMDB_PGWIRE_CATALOG_ENABLED: Override postgres_wire.pg_catalog_enabled
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> Result<()> {
@@ -121,8 +125,30 @@ impl ServerConfig {
         self.apply_websocket_env_overrides()?;
         self.apply_storage_env_overrides();
         self.apply_cluster_env_overrides()?;
+        self.apply_postgres_wire_env_overrides();
         self.apply_rpc_tls_env_overrides();
         Ok(())
+    }
+
+    fn apply_postgres_wire_env_overrides(&mut self) {
+        if let Ok(value) = env::var("KALAMDB_ENABLE_PGWIRE") {
+            if value.eq_ignore_ascii_case("true") || value == "1" {
+                self.postgres_wire.enabled = true;
+            } else if value.eq_ignore_ascii_case("false") || value == "0" {
+                self.postgres_wire.enabled = false;
+            }
+        }
+        if let Ok(host) = env::var("KALAMDB_PGWIRE_HOST") {
+            self.postgres_wire.host = host;
+        }
+        if let Ok(value) = env::var("KALAMDB_PGWIRE_PORT") {
+            if let Ok(port) = value.parse() {
+                self.postgres_wire.port = port;
+            }
+        }
+        if let Some(enabled) = env_truthy("KALAMDB_PGWIRE_CATALOG_ENABLED") {
+            self.postgres_wire.pg_catalog_enabled = enabled;
+        }
     }
 
     fn apply_server_env_overrides(&mut self) -> Result<()> {

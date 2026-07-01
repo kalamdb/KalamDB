@@ -27,8 +27,9 @@ use kalamdb_configs::DataFusionSettings;
 
 use crate::sql::{
     functions::{
-        CosineDistanceFunction, CurrentRoleFunction, CurrentUserFunction, SnowflakeIdFunction,
-        UlidFunction, UuidV7Function,
+        ColDescriptionFunction, CosineDistanceFunction, CurrentDatabaseFunction, CurrentRoleFunction,
+        CurrentSchemaFunction, CurrentUserFunction, FormatTypeFunction, PgBackendPidFunction,
+        PgGetExprFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -86,7 +87,7 @@ impl DataFusionSessionFactory {
         // higher-order array functions such as array_transform and array_filter.
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "duckdb")
-            .with_information_schema(true)
+            .with_information_schema(false)
             .with_parquet_bloom_filter_pruning(true)
             .with_parquet_page_index_pruning(true)
             .with_target_partitions(target_partitions)
@@ -160,6 +161,17 @@ impl DataFusionSessionFactory {
 
         // Register CURRENT_ROLE() — resolves role from SessionUserContext at execution time
         ctx.register_udf(ScalarUDF::from(CurrentRoleFunction::new()));
+
+        // Register CURRENT_SCHEMA() / CURRENT_DATABASE() for PostgreSQL wire clients
+        ctx.register_udf(ScalarUDF::from(CurrentSchemaFunction::new()));
+        ctx.register_udf(ScalarUDF::from(CurrentDatabaseFunction::new()));
+
+        // PostgreSQL wire client introspection stubs
+        ctx.register_udf(ScalarUDF::from(PgBackendPidFunction::new()));
+        ctx.register_udf(ScalarUDF::from(VersionFunction::new()));
+        ctx.register_udf(ScalarUDF::from(ColDescriptionFunction::new()));
+        ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
+        ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));
 
         // Register PostgreSQL-compatible JSON functions and operators (->, ->>, ?).
         // User-facing SQL still uses PostgreSQL operator syntax, but the DuckDB dialect

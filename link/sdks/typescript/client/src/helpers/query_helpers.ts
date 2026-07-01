@@ -150,7 +150,7 @@ export function normalizeQueryResponse(
 /* ================================================================== */
 
 /**
- * Canonical column order for system.tables
+ * Canonical column order for information_schema.tables
  */
 export const SYSTEM_TABLES_ORDER = [
   'table_id',

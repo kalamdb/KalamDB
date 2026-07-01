@@ -13,7 +13,7 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use datafusion::arrow::{
     array::{ArrayRef, StringBuilder},
@@ -22,8 +22,7 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_system::SystemTable;
@@ -31,17 +30,9 @@ use parking_lot::RwLock;
 
 use crate::view_base::VirtualView;
 
-/// Get the settings schema (memoized)
-fn settings_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            SettingsView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert settings TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::{system_view_definition, SystemViewProvider};
+
+crate::memoized_view_schema!(settings_schema, SettingsView);
 
 /// Macro to add multiple settings in a concise way
 /// Usage: add_settings!(builders, [ (name, value, description, category), ... ])
@@ -123,15 +114,11 @@ impl SettingsView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Settings.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Settings,
             columns,
-            TableOptions::system(),
-            Some("Server configuration settings (read-only view)".to_string()),
+            "Server configuration settings (read-only view)",
         )
-        .expect("Failed to create system.settings view definition")
     }
 
     /// Create a new settings view
@@ -749,7 +736,7 @@ impl VirtualView for SettingsView {
 }
 
 // Re-export as SettingsTableProvider for consistency
-pub type SettingsTableProvider = crate::view_base::ViewTableProvider<SettingsView>;
+pub type SettingsTableProvider = SystemViewProvider<SettingsView>;
 
 #[cfg(test)]
 mod tests {

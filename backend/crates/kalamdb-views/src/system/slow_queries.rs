@@ -7,7 +7,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 
 use datafusion::arrow::{
@@ -17,29 +17,18 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_system::SystemTable;
 
-use crate::{
-    error::RegistryError,
-    view_base::{ViewTableProvider, VirtualView},
-};
+use crate::{error::RegistryError, view_base::VirtualView};
+
+use super::common::{system_view_definition, SystemViewProvider, view_provider_with};
+
+crate::memoized_view_schema!(slow_queries_schema, SlowQueriesView);
 
 const SLOW_QUERY_READ_BYTES: u64 = 1024 * 1024;
 const SLOW_QUERY_MAX_ROWS: usize = 200;
-
-fn slow_queries_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            SlowQueriesView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert slow_queries TableDefinition to Arrow schema")
-        })
-        .clone()
-}
 
 #[derive(Debug)]
 struct SlowQueryLogEntry {
@@ -187,15 +176,11 @@ impl SlowQueriesView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::SlowQueries.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::SlowQueries,
             columns,
-            TableOptions::system(),
-            Some("Recent slow queries from the bounded slow-query JSONL log view".to_string()),
+            "Recent slow queries from the bounded slow-query JSONL log view",
         )
-        .expect("Failed to create system.slow_queries view definition")
     }
 
     pub fn new(logs_path: impl Into<PathBuf>) -> Self {
@@ -334,10 +319,10 @@ impl VirtualView for SlowQueriesView {
     }
 }
 
-pub type SlowQueriesTableProvider = ViewTableProvider<SlowQueriesView>;
+pub type SlowQueriesTableProvider = SystemViewProvider<SlowQueriesView>;
 
 pub fn create_slow_queries_provider(logs_path: impl Into<PathBuf>) -> SlowQueriesTableProvider {
-    ViewTableProvider::new(Arc::new(SlowQueriesView::new(logs_path)))
+    view_provider_with(logs_path.into(), SlowQueriesView::new)
 }
 
 #[cfg(test)]

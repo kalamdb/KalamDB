@@ -1763,6 +1763,10 @@ impl SqlExecutor {
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
     ) -> Result<bool, KalamDbError> {
+        if exec_ctx.transaction_id().is_some() {
+            return Ok(false);
+        }
+
         if self.active_request_transaction_id(exec_ctx)?.is_some() {
             return Ok(false);
         }

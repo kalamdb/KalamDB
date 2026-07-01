@@ -25,9 +25,11 @@ tokio = { workspace = true }
 [dev-dependencies]
 arrow = { workspace = true }
 async-trait = { workspace = true }
+kalamdb-backend = { path = "../../../backend/crates/kalamdb-backend" }
 kalamdb-commons = { workspace = true, default-features = false }
 kalamdb-pg = { path = "../../../backend/crates/kalamdb-pg", features = ["server"] }
 ntest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }
+uuid = { workspace = true }

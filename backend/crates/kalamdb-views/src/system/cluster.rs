@@ -21,7 +21,7 @@
 //!
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::{
@@ -38,8 +38,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
 };
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
@@ -50,17 +49,9 @@ use kalamdb_system::SystemTable;
 
 use crate::{error::RegistryError, view_base::VirtualView};
 
-/// Get the cluster schema (memoized)
-fn cluster_schema() -> SchemaRef {
-    static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
-    SCHEMA
-        .get_or_init(|| {
-            ClusterView::definition()
-                .to_arrow_schema()
-                .expect("Failed to convert cluster TableDefinition to Arrow schema")
-        })
-        .clone()
-}
+use super::common::system_view_definition;
+
+crate::memoized_view_schema!(cluster_schema, ClusterView);
 
 /// ClusterView - Displays live Raft cluster status
 ///
@@ -391,15 +382,11 @@ impl ClusterView {
             ),
         ];
 
-        TableDefinition::new(
-            NamespaceId::system(),
-            TableName::new(SystemTable::Cluster.table_name()),
-            TableType::System,
+        system_view_definition(
+            SystemTable::Cluster,
             columns,
-            TableOptions::system(),
-            Some("Live OpenRaft cluster status and metrics (read-only view)".to_string()),
+            "Live OpenRaft cluster status and metrics (read-only view)",
         )
-        .expect("Failed to create system.cluster view definition")
     }
 
     /// Create a new cluster view

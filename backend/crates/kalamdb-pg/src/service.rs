@@ -9,10 +9,7 @@ use kalamdb_auth::{
     UserRepository,
 };
 #[cfg(feature = "server")]
-use kalamdb_backend::{
-    manager::{BackendSessionError, BackendSessionManager},
-    session::BackendAuth,
-};
+use kalamdb_backend::manager::{BackendSessionError, BackendSessionManager};
 #[cfg(feature = "server")]
 use kalamdb_commons::models::{ConnectionInfo, Role, SessionOrigin, TransactionId, UserId};
 #[cfg(feature = "server")]
@@ -23,7 +20,7 @@ use tonic_prost::ProstCodec;
 #[cfg(feature = "server")]
 use crate::operation_executor::{self, OperationExecutor};
 #[cfg(feature = "server")]
-use crate::{BridgeAuth, LivePgTransaction, RemotePgSession, SessionRegistry};
+use crate::session_registry::{BridgeAuth, SessionRegistry};
 
 const PG_SERVICE_NAME: &str = "kalamdb.pg.PgService";
 
@@ -270,12 +267,6 @@ pub struct RollbackTransactionRequest {
 pub struct RollbackTransactionResponse {
     #[prost(string, tag = "1")]
     pub transaction_id: String,
-}
-
-#[cfg(feature = "server")]
-pub fn open_session_response_to_session(response: OpenSessionResponse) -> RemotePgSession {
-    RemotePgSession::new(response.session_id)
-        .with_current_schema(response.current_schema.as_deref())
 }
 
 pub mod pg_service_client {
@@ -884,7 +875,6 @@ pub struct KalamPgService {
     /// Optional bearer-token validation path for DBA/system PG bridge accounts.
     bearer_user_repo: Option<Arc<dyn UserRepository>>,
     session_registry: Arc<SessionRegistry>,
-    backend_session_manager: Option<Arc<BackendSessionManager>>,
     operation_executor: Option<Arc<dyn OperationExecutor>>,
 }
 
@@ -906,7 +896,6 @@ impl Default for KalamPgService {
             expected_auth_header: None,
             bearer_user_repo: None,
             session_registry: Arc::new(SessionRegistry::default()),
-            backend_session_manager: None,
             operation_executor: None,
         }
     }
@@ -924,7 +913,6 @@ impl KalamPgService {
             expected_auth_header,
             bearer_user_repo: None,
             session_registry: Arc::new(SessionRegistry::default()),
-            backend_session_manager: None,
             operation_executor: None,
         }
     }
@@ -953,8 +941,22 @@ impl KalamPgService {
     }
 
     pub fn with_backend_session_manager(mut self, manager: Arc<BackendSessionManager>) -> Self {
-        self.backend_session_manager = Some(manager);
+        self.session_registry = Arc::new(SessionRegistry::with_manager(manager));
         self
+    }
+
+    pub fn has_session(&self, session_id: &str) -> bool {
+        self.session_registry.get(session_id).is_some()
+    }
+
+    pub fn session_last_method(&self, session_id: &str) -> Option<String> {
+        self.session_registry
+            .get(session_id)
+            .and_then(|session| session.last_method().map(str::to_owned))
+    }
+
+    fn backend_manager(&self) -> Option<Arc<BackendSessionManager>> {
+        self.session_registry.manager()
     }
 
     pub fn set_operation_executor(&mut self, executor: Arc<dyn OperationExecutor>) {
@@ -983,15 +985,15 @@ impl KalamPgService {
             return Ok(());
         }
 
-        self.session_registry.validate_session(session_id).map(|_| ()).map_err(
-            |reason| match reason {
+        self.session_registry
+            .validate_session(session_id)
+            .map_err(|reason| match reason {
                 "session lease expired" => Status::unauthenticated(
                     "session lease expired – re-authenticate via open_session",
                 ),
                 "session not authenticated" => Status::unauthenticated("session not authenticated"),
                 _ => Status::unauthenticated("invalid or expired session"),
-            },
-        )
+            })
     }
 
     async fn authenticate_admin_metadata<T>(
@@ -1047,8 +1049,8 @@ impl KalamPgService {
         if self.mtls_enabled {
             kalamdb_server_auth::RpcCaller::require_pg_extension(request)?;
             return Ok(BridgeAuth {
-                user_id: "mtls-pg-bridge".to_string(),
-                role: "system".to_string(),
+                user_id: UserId::new("mtls-pg-bridge"),
+                role: Role::System,
                 auth_mode: "mtls".to_string(),
                 lease_expires_at_ms: now_ms + lease_ms,
             });
@@ -1066,8 +1068,8 @@ impl KalamPgService {
         if let Some(expected) = &self.expected_auth_header {
             if provided == expected.as_str() {
                 return Ok(BridgeAuth {
-                    user_id: "static-pg-bridge".to_string(),
-                    role: "system".to_string(),
+                    user_id: UserId::new("static-pg-bridge"),
+                    role: Role::System,
                     auth_mode: "static_header".to_string(),
                     lease_expires_at_ms: now_ms + lease_ms,
                 });
@@ -1083,8 +1085,8 @@ impl KalamPgService {
             .await?
         {
             return Ok(BridgeAuth {
-                user_id: auth_result.user.user_id.to_string(),
-                role: auth_result.user.role.to_string(),
+                user_id: auth_result.user.user_id,
+                role: auth_result.user.role,
                 auth_mode: format!("{:?}", auth_result.method).to_lowercase(),
                 lease_expires_at_ms: now_ms + lease_ms,
             });
@@ -1096,26 +1098,11 @@ impl KalamPgService {
         }
 
         Ok(BridgeAuth {
-            user_id: "anonymous".to_string(),
-            role: "system".to_string(),
+            user_id: UserId::anonymous(),
+            role: Role::System,
             auth_mode: "none".to_string(),
             lease_expires_at_ms: now_ms + lease_ms,
         })
-    }
-
-    pub fn session_registry(&self) -> Arc<SessionRegistry> {
-        Arc::clone(&self.session_registry)
-    }
-
-    fn backend_auth_from_bridge(&self, bridge_auth: &BridgeAuth) -> Result<BackendAuth, Status> {
-        let user_id = UserId::try_new(bridge_auth.user_id.clone())
-            .map_err(|error| Status::unauthenticated(error.to_string()))?;
-        Ok(BackendAuth::new(
-            user_id,
-            Role::from(bridge_auth.role.as_str()),
-            bridge_auth.auth_mode.clone(),
-            bridge_auth.lease_expires_at_ms,
-        ))
     }
 
     fn map_backend_session_error(error: BackendSessionError) -> Status {
@@ -1134,44 +1121,27 @@ impl KalamPgService {
     }
 
     async fn shared_begin_transaction(&self, session_id: &str) -> Result<TransactionId, Status> {
-        let Some(manager) = &self.backend_session_manager else {
-            if let Some(executor) = self.operation_executor.as_deref() {
-                if let Some(stale_transaction) = executor.active_transaction(session_id).await? {
-                    let stale_transaction_id = stale_transaction.transaction_id().clone();
-                    match executor.rollback_transaction(session_id, &stale_transaction_id).await {
-                        Ok(_) => {
-                            self.session_registry.clear_transaction_state_if_matches(
-                                session_id,
-                                Some(&stale_transaction_id),
-                            );
-                        },
-                        Err(status) if Self::is_terminal_transaction_status(&status) => {
-                            self.session_registry.clear_transaction_state_if_matches(
-                                session_id,
-                                Some(&stale_transaction_id),
-                            );
-                        },
-                        Err(status) => return Err(status),
-                    }
-                }
-                return match executor.begin_transaction(session_id).await? {
-                    Some(transaction_id) => self
-                        .session_registry
-                        .pin_transaction(session_id, &transaction_id)
-                        .map_err(Status::failed_precondition),
-                    None => self
-                        .session_registry
-                        .begin_transaction(session_id)
-                        .map_err(Status::failed_precondition),
-                };
-            }
-            return self
-                .session_registry
-                .begin_transaction(session_id)
-                .map_err(Status::failed_precondition);
+        if let Some(manager) = self.backend_manager() {
+            return manager.begin_block(session_id).await.map_err(Self::map_backend_session_error);
+        }
+
+        let Some(executor) = self.operation_executor.as_deref() else {
+            return Err(Status::unavailable("Operation executor not configured"));
         };
 
-        manager.begin_block(session_id).await.map_err(Self::map_backend_session_error)
+        if let Some(stale_transaction) = executor.active_transaction(session_id).await? {
+            let stale_transaction_id = stale_transaction.transaction_id().clone();
+            match executor.rollback_transaction(session_id, &stale_transaction_id).await {
+                Ok(_) => {},
+                Err(status) if Self::is_terminal_transaction_status(&status) => {},
+                Err(status) => return Err(status),
+            }
+        }
+
+        executor
+            .begin_transaction(session_id)
+            .await?
+            .ok_or_else(|| Status::failed_precondition("begin_transaction unavailable"))
     }
 
     async fn shared_commit_transaction(
@@ -1179,54 +1149,39 @@ impl KalamPgService {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<TransactionId, Status> {
-        let Some(manager) = &self.backend_session_manager else {
-            if let Some(executor) = self.operation_executor.as_deref() {
-                let finalized_id = executor
-                    .commit_transaction(session_id, transaction_id)
-                    .await
-                    .map_err(|status| {
-                        if Self::is_terminal_transaction_status(&status) {
-                            self.session_registry.clear_transaction_state_if_matches(
-                                session_id,
-                                Some(transaction_id),
-                            );
-                        }
-                        status
-                    })?
-                    .unwrap_or_else(|| transaction_id.clone());
-                self.session_registry
-                    .clear_transaction_state_if_matches(session_id, Some(&finalized_id))
-                    .ok_or_else(|| {
-                        Status::failed_precondition(format!("session '{}' not found", session_id))
-                    })?;
-                return Ok(finalized_id);
+        if let Some(manager) = self.backend_manager() {
+            let active_transaction_id = manager
+                .transaction_id(session_id)
+                .map_err(Self::map_backend_session_error)?
+                .ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "transaction '{}' not found",
+                        transaction_id
+                    ))
+                })?;
+            if active_transaction_id != *transaction_id {
+                return Err(Status::failed_precondition(format!(
+                    "transaction ID mismatch: expected '{}', got '{}'",
+                    active_transaction_id, transaction_id
+                )));
             }
-            return self
-                .session_registry
-                .commit_transaction(session_id, transaction_id)
-                .map_err(Status::failed_precondition);
-        };
 
-        let active_transaction_id = manager
-            .transaction_id(session_id)
-            .map_err(Self::map_backend_session_error)?
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("transaction '{}' not found", transaction_id))
-            })?;
-        if active_transaction_id != *transaction_id {
-            return Err(Status::failed_precondition(format!(
-                "transaction ID mismatch: expected '{}', got '{}'",
-                active_transaction_id, transaction_id
-            )));
+            manager
+                .commit_block(session_id)
+                .await
+                .map_err(Self::map_backend_session_error)?;
+            return Ok(transaction_id.clone());
         }
 
-        manager
-            .commit_block(session_id)
-            .await
-            .map_err(Self::map_backend_session_error)?;
-        self.session_registry
-            .clear_transaction_state_if_matches(session_id, Some(transaction_id));
-        Ok(transaction_id.clone())
+        let Some(executor) = self.operation_executor.as_deref() else {
+            return Err(Status::unavailable("Operation executor not configured"));
+        };
+
+        let finalized_id = executor
+            .commit_transaction(session_id, transaction_id)
+            .await?
+            .unwrap_or_else(|| transaction_id.clone());
+        Ok(finalized_id)
     }
 
     async fn shared_rollback_transaction(
@@ -1234,54 +1189,39 @@ impl KalamPgService {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<TransactionId, Status> {
-        let Some(manager) = &self.backend_session_manager else {
-            if let Some(executor) = self.operation_executor.as_deref() {
-                let finalized_id = executor
-                    .rollback_transaction(session_id, transaction_id)
-                    .await
-                    .map_err(|status| {
-                        if Self::is_terminal_transaction_status(&status) {
-                            self.session_registry.clear_transaction_state_if_matches(
-                                session_id,
-                                Some(transaction_id),
-                            );
-                        }
-                        status
-                    })?
-                    .unwrap_or_else(|| transaction_id.clone());
-                self.session_registry
-                    .clear_transaction_state_if_matches(session_id, Some(&finalized_id))
-                    .ok_or_else(|| {
-                        Status::failed_precondition(format!("session '{}' not found", session_id))
-                    })?;
-                return Ok(finalized_id);
+        if let Some(manager) = self.backend_manager() {
+            let active_transaction_id = manager
+                .transaction_id(session_id)
+                .map_err(Self::map_backend_session_error)?
+                .ok_or_else(|| {
+                    Status::failed_precondition(format!(
+                        "transaction '{}' not found",
+                        transaction_id
+                    ))
+                })?;
+            if active_transaction_id != *transaction_id {
+                return Err(Status::failed_precondition(format!(
+                    "transaction ID mismatch: expected '{}', got '{}'",
+                    active_transaction_id, transaction_id
+                )));
             }
-            return self
-                .session_registry
-                .rollback_transaction(session_id, transaction_id)
-                .map_err(Status::failed_precondition);
-        };
 
-        let active_transaction_id = manager
-            .transaction_id(session_id)
-            .map_err(Self::map_backend_session_error)?
-            .ok_or_else(|| {
-                Status::failed_precondition(format!("transaction '{}' not found", transaction_id))
-            })?;
-        if active_transaction_id != *transaction_id {
-            return Err(Status::failed_precondition(format!(
-                "transaction ID mismatch: expected '{}', got '{}'",
-                active_transaction_id, transaction_id
-            )));
+            manager
+                .rollback_block(session_id)
+                .await
+                .map_err(Self::map_backend_session_error)?;
+            return Ok(transaction_id.clone());
         }
 
-        manager
-            .rollback_block(session_id)
-            .await
-            .map_err(Self::map_backend_session_error)?;
-        self.session_registry
-            .clear_transaction_state_if_matches(session_id, Some(transaction_id));
-        Ok(transaction_id.clone())
+        let Some(executor) = self.operation_executor.as_deref() else {
+            return Err(Status::unavailable("Operation executor not configured"));
+        };
+
+        let finalized_id = executor
+            .rollback_transaction(session_id, transaction_id)
+            .await?
+            .unwrap_or_else(|| transaction_id.clone());
+        Ok(finalized_id)
     }
 
     fn is_terminal_transaction_status(status: &Status) -> bool {
@@ -1305,26 +1245,25 @@ impl KalamPgService {
             || message.contains("while it is rolled_back")
     }
 
-    pub fn snapshot_with_live_transactions<I>(&self, active_transactions: I) -> Vec<RemotePgSession>
-    where
-        I: IntoIterator<Item = LivePgTransaction>,
-    {
-        self.session_registry.snapshot_with_live_transactions(active_transactions)
-    }
-
-    fn close_ephemeral_idle_session_if_created(&self, session_id: &str, had_session: bool) {
+    async fn close_ephemeral_idle_session_if_created(&self, session_id: &str, had_session: bool) {
         if had_session {
             return;
         }
 
         let should_close = self
-            .session_registry
-            .get(session_id)
-            .map(|session| session.transaction_id().is_none())
-            .unwrap_or(false);
+            .backend_manager()
+            .as_ref()
+            .and_then(|manager| manager.has_open_block(session_id).ok())
+            .map(|has_block| !has_block)
+            .unwrap_or(true)
+            && self.session_registry.get(session_id).is_some();
 
         if should_close {
-            self.session_registry.close_session(session_id);
+            if let Some(manager) = self.backend_manager() {
+                let _ = manager.close_session(session_id).await;
+            } else {
+                self.session_registry.close_local_session(session_id);
+            }
         }
     }
 
@@ -1335,7 +1274,7 @@ impl KalamPgService {
         result: Result<T, Status>,
     ) -> Result<T, Status> {
         if let Err(status) = &result {
-            if let Some(manager) = &self.backend_session_manager {
+            if let Some(manager) = self.backend_manager() {
                 if Self::is_terminal_transaction_status(status) {
                     let _ = manager.rollback_block(session_id).await;
                 } else if status.code() == tonic::Code::FailedPrecondition {
@@ -1359,14 +1298,14 @@ impl KalamPgService {
         current_schema: Option<&str>,
         method: &str,
         request: &Request<T>,
-    ) -> RemotePgSession {
+    ) {
         let client_addr = request.remote_addr().map(|addr| addr.to_string());
         self.session_registry.open_or_get_with_context(
             session_id,
             current_schema,
             client_addr.as_deref(),
             Some(method),
-        )
+        );
     }
 }
 
@@ -1431,29 +1370,30 @@ impl PgService for KalamPgService {
             .map(str::trim)
             .filter(|value| !value.is_empty());
 
-        let session = self.session_registry.open_authenticated(
-            Some(request.session_id.as_str()),
-            current_schema,
-            remote_addr.as_deref(),
-            bridge_auth.clone(),
-        );
-        if let Some(manager) = &self.backend_session_manager {
-            if matches!(manager.transaction_id(session.session_id()), Ok(Some(_))) {
+        let session_id = request.session_id.trim();
+        if let Some(manager) = self.backend_manager() {
+            if !session_id.is_empty()
+                && manager
+                    .get_snapshot(session_id)
+                    .map(|snapshot| snapshot.origin == SessionOrigin::ExtensionBridge)
+                    .unwrap_or(false)
+            {
                 manager
-                    .close_session(session.session_id())
+                    .close_session(session_id)
                     .await
                     .map_err(Self::map_backend_session_error)?;
             }
-            manager
-                .open_session(
-                    SessionOrigin::ExtensionBridge,
-                    session.session_id().to_string(),
-                    self.backend_auth_from_bridge(&bridge_auth)?,
-                    session.current_schema().map(ToOwned::to_owned),
-                    remote_addr,
-                )
-                .map_err(Self::map_backend_session_error)?;
         }
+
+        let session = self
+            .session_registry
+            .open_authenticated(
+                Some(request.session_id.as_str()),
+                current_schema,
+                remote_addr.as_deref(),
+                bridge_auth,
+            )
+            .map_err(Self::map_backend_session_error)?;
 
         Ok(Response::new(OpenSessionResponse {
             session_id: session.session_id().to_string(),
@@ -1473,7 +1413,7 @@ impl PgService for KalamPgService {
         }
 
         // Allow close even for expired sessions so cleanup always works.
-        if let Some(manager) = &self.backend_session_manager {
+        if let Some(manager) = self.backend_manager() {
             match manager.close_session(session_id).await {
                 Ok(()) | Err(BackendSessionError::SessionNotFound(_)) => {},
                 Err(error) => return Err(Self::map_backend_session_error(error)),
@@ -1483,15 +1423,9 @@ impl PgService for KalamPgService {
                 let _ =
                     executor.rollback_transaction(session_id, transaction.transaction_id()).await;
             }
-        } else if let Some(transaction_id) = self
-            .session_registry
-            .get(session_id)
-            .and_then(|session| session.transaction_id_value().cloned())
-        {
-            let _ = self.session_registry.rollback_transaction(session_id, &transaction_id);
+            self.session_registry.close_local_session(session_id);
         }
 
-        self.session_registry.close_session(session_id);
         log::debug!("PG session closed: {}", session_id);
 
         Ok(Response::new(CloseSessionResponse {}))
@@ -1525,9 +1459,6 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Insert", &request);
-        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
-            self.session_registry.mark_transaction_writes(session_id.as_str());
-        }
         let inner = request.into_inner();
         log::debug!(
             "PG insert: {}.{} rows={}",
@@ -1555,9 +1486,6 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Update", &request);
-        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
-            self.session_registry.mark_transaction_writes(session_id.as_str());
-        }
         let inner = request.into_inner();
         log::debug!("PG update: {}.{}", inner.namespace, inner.table_name);
         let domain_req = operation_executor::update_request_from_rpc(&inner)?;
@@ -1580,9 +1508,6 @@ impl PgService for KalamPgService {
         let session_id = request.get_ref().session_id.trim().to_string();
         self.validate_session_handle(&session_id)?;
         self.record_session_activity(session_id.as_str(), None, "Delete", &request);
-        if self.operation_executor.is_none() && self.backend_session_manager.is_none() {
-            self.session_registry.mark_transaction_writes(session_id.as_str());
-        }
         let inner = request.into_inner();
         log::debug!("PG delete: {}.{}", inner.namespace, inner.table_name);
         let domain_req = operation_executor::delete_request_from_rpc(&inner)?;
@@ -1707,7 +1632,7 @@ impl PgService for KalamPgService {
         let statement_kind = sql.split_whitespace().next().unwrap_or("UNKNOWN");
         log::debug!("PG execute_sql: kind={}", statement_kind);
         let result = self.operation_executor()?.execute_sql(sql).await;
-        self.close_ephemeral_idle_session_if_created(session_id, had_session);
+        self.close_ephemeral_idle_session_if_created(session_id, had_session).await;
         let result = result?;
         Ok(Response::new(ExecuteSqlRpcResponse {
             success: true,
@@ -1739,7 +1664,7 @@ impl PgService for KalamPgService {
         let statement_kind = sql.split_whitespace().next().unwrap_or("UNKNOWN");
         log::debug!("PG execute_query: kind={}", statement_kind);
         let result = self.operation_executor()?.execute_query(sql).await;
-        self.close_ephemeral_idle_session_if_created(session_id, had_session);
+        self.close_ephemeral_idle_session_if_created(session_id, had_session).await;
         let (message, ipc_batches) = result?;
         Ok(Response::new(ExecuteQueryRpcResponse {
             success: true,

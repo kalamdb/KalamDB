@@ -100,6 +100,29 @@ cp "$SERVER_TEMPLATE" "$WORK_DIR/server.toml"
 
 perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g; s|port = [0-9]+|port = '"$(server_port)"'|g' "$WORK_DIR/server.toml"
 
+if [[ "${KALAMDB_ENABLE_PGWIRE:-false}" == "true" ]]; then
+    PGWIRE_HOST="${KALAMDB_PGWIRE_HOST:-127.0.0.1}"
+    PGWIRE_PORT="${KALAMDB_PGWIRE_PORT:-5432}"
+    PGWIRE_CATALOG_ENABLED="${KALAMDB_PGWIRE_CATALOG_ENABLED:-true}"
+    if grep -q '^\[postgres_wire\]' "$WORK_DIR/server.toml"; then
+        perl -0pi -e '
+            s/(\[postgres_wire\][\s\S]*?)enabled = false/${1}enabled = true/g;
+            s/(\[postgres_wire\][\s\S]*?)pg_catalog_enabled = false/${1}pg_catalog_enabled = '"$PGWIRE_CATALOG_ENABLED"'/g;
+            s/(\[postgres_wire\][\s\S]*?)host = "[^"]*"/${1}host = "'"$PGWIRE_HOST"'"/g;
+            s/(\[postgres_wire\][\s\S]*?)port = [0-9]+/${1}port = '"$PGWIRE_PORT"'/g;
+        ' "$WORK_DIR/server.toml"
+    else
+        cat >>"$WORK_DIR/server.toml" <<EOF
+
+[postgres_wire]
+enabled = true
+host = "$PGWIRE_HOST"
+port = $PGWIRE_PORT
+pg_catalog_enabled = $PGWIRE_CATALOG_ENABLED
+EOF
+    fi
+fi
+
 if [[ -n "$SERVER_BIN" ]]; then
     SERVER_CMD=("$SERVER_BIN" "$WORK_DIR/server.toml")
 else
@@ -117,6 +140,10 @@ SERVER_ENV=(
     "KALAMDB_SERVER_HOST=0.0.0.0"
     "KALAMDB_JWT_SECRET=$JWT_SECRET"
 )
+
+if [[ -n "${KALAMDB_ROOT_PASSWORD:-}" ]]; then
+    SERVER_ENV+=("KALAMDB_ROOT_PASSWORD=$KALAMDB_ROOT_PASSWORD")
+fi
 
 if [[ -n "$CLUSTER_RPC_ADDR" ]]; then
     SERVER_ENV+=(
