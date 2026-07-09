@@ -109,6 +109,151 @@ impl OutputFormatter {
             .filter(|value| !value.trim().is_empty())
     }
 
+    fn is_explain_plan_result(columns: &[String]) -> bool {
+        columns.len() == 2
+            && columns[0].eq_ignore_ascii_case("plan_type")
+            && columns[1].eq_ignore_ascii_case("plan")
+    }
+
+    /// Render DataFusion EXPLAIN output without the generic 32-char cap and with
+    /// multi-line plan cells expanded across table rows (psql-style).
+    fn format_explain_plan_table(
+        &self,
+        columns: &[String],
+        rows: &[Vec<kalam_client::KalamCellValue>],
+        result: &kalam_client::QueryResult,
+        exec_time_ms: f64,
+        as_user: Option<&str>,
+    ) -> Result<String> {
+        let terminal_width = Self::get_terminal_width();
+
+        let mut string_rows: Vec<[String; 2]> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let plan_type = row
+                .first()
+                .map(|v| self.format_json_value_with_type(v, result.schema.first().map(|f| &f.data_type)))
+                .unwrap_or_else(|| "NULL".to_string());
+            let plan = row
+                .get(1)
+                .map(|v| self.format_json_value_with_type(v, result.schema.get(1).map(|f| &f.data_type)))
+                .unwrap_or_else(|| "NULL".to_string());
+            string_rows.push([plan_type, plan]);
+        }
+
+        struct ExplainDisplayRow {
+            plan_type: String,
+            plan_line: String,
+        }
+
+        let mut display_rows: Vec<ExplainDisplayRow> = Vec::new();
+        for [plan_type, plan] in &string_rows {
+            let lines: Vec<&str> = if plan.is_empty() {
+                vec![""]
+            } else {
+                plan.split('\n').collect()
+            };
+            for (line_idx, line) in lines.iter().enumerate() {
+                display_rows.push(ExplainDisplayRow {
+                    plan_type: if line_idx == 0 {
+                        plan_type.clone()
+                    } else {
+                        String::new()
+                    },
+                    plan_line: (*line).to_string(),
+                });
+            }
+        }
+
+        let plan_type_header = &columns[0];
+        let mut plan_type_width = plan_type_header.len();
+        for row in &display_rows {
+            plan_type_width = plan_type_width.max(row.plan_type.len());
+        }
+
+        let border_padding = 7; // two columns: "│ " + " │" + separator between cols
+        let available_for_plan = terminal_width.saturating_sub(border_padding + plan_type_width);
+        let mut plan_width = display_rows
+            .iter()
+            .map(|row| row.plan_line.len())
+            .max()
+            .unwrap_or(columns[1].len());
+        plan_width = plan_width.max(columns[1].len());
+        if available_for_plan >= MIN_COLUMN_WIDTH {
+            plan_width = plan_width.min(available_for_plan);
+        }
+        plan_width = plan_width.max(MIN_COLUMN_WIDTH);
+
+        let col_widths = [plan_type_width, plan_width];
+        let mut output = String::new();
+
+        output.push('┌');
+        for (idx, width) in col_widths.iter().enumerate() {
+            output.push_str(&"─".repeat(width + 2));
+            output.push(if idx == col_widths.len() - 1 {
+                '┐'
+            } else {
+                '┬'
+            });
+        }
+        output.push('\n');
+
+        output.push('│');
+        for (i, col) in columns.iter().enumerate() {
+            output.push(' ');
+            output.push_str(&format!("{:width$}", col, width = col_widths[i]));
+            output.push(' ');
+            output.push('│');
+        }
+        output.push('\n');
+
+        output.push('├');
+        for (idx, width) in col_widths.iter().enumerate() {
+            output.push_str(&"─".repeat(width + 2));
+            output.push(if idx == col_widths.len() - 1 {
+                '┤'
+            } else {
+                '┼'
+            });
+        }
+        output.push('\n');
+
+        for row in &display_rows {
+            output.push('│');
+            output.push(' ');
+            output.push_str(&format!("{:width$}", row.plan_type, width = col_widths[0]));
+            output.push(' ');
+            output.push('│');
+            output.push(' ');
+            let plan_cell = if row.plan_line.len() <= col_widths[1] {
+                row.plan_line.clone()
+            } else {
+                Self::truncate_value(&row.plan_line, col_widths[1])
+            };
+            output.push_str(&format!("{:width$}", plan_cell, width = col_widths[1]));
+            output.push(' ');
+            output.push('│');
+            output.push('\n');
+        }
+
+        output.push('└');
+        for (idx, width) in col_widths.iter().enumerate() {
+            output.push_str(&"─".repeat(width + 2));
+            output.push(if idx == col_widths.len() - 1 {
+                '┘'
+            } else {
+                '┴'
+            });
+        }
+        output.push('\n');
+
+        let row_count = string_rows.len();
+        let row_label = if row_count == 1 { "row" } else { "rows" };
+        output.push_str(&format!("({} {})\n\n", row_count, row_label));
+        output.push_str(&Self::format_table_footer(exec_time_ms, as_user));
+
+        Ok(output)
+    }
+
     fn format_table_footer(exec_time_ms: f64, as_user: Option<&str>) -> String {
         let mut footer = String::new();
         if let Some(as_user) = as_user {
@@ -147,6 +292,16 @@ impl OutputFormatter {
         if let Some(ref rows) = result.rows {
             // Get column names from schema
             let columns: Vec<String> = result.column_names();
+
+            if Self::is_explain_plan_result(&columns) {
+                return self.format_explain_plan_table(
+                    &columns,
+                    rows,
+                    result,
+                    exec_time_ms,
+                    as_user,
+                );
+            }
 
             let terminal_width = Self::get_terminal_width();
 
@@ -630,6 +785,52 @@ mod tests {
 
         assert_eq!(formatter.raw_timestamp_millis(1735689600000000), 1735689600000);
         assert_eq!(formatter.raw_timestamp_millis(1735689600000000000), 1735689600000);
+    }
+
+    #[test]
+    fn test_format_explain_plan_expands_multiline_without_short_cap() {
+        let formatter = OutputFormatter::new(
+            OutputFormat::Table,
+            false,
+            TimestampFormatter::new(TimestampFormat::Iso8601),
+        );
+
+        let long_plan = "GlobalLimitExec: skip=0, fetch=3\n  FilterExec: user_id = test\n  DeferredBatchExec: hot_rows_scanned=12";
+        let response = QueryResponse {
+            status: ResponseStatus::Success,
+            results: vec![QueryResult {
+                schema: vec![
+                    SchemaField {
+                        name: "plan_type".to_string(),
+                        data_type: KalamDataType::Text,
+                        index: 0,
+                        flags: None,
+                    },
+                    SchemaField {
+                        name: "plan".to_string(),
+                        data_type: KalamDataType::Text,
+                        index: 1,
+                        flags: None,
+                    },
+                ],
+                rows: Some(vec![vec![
+                    json!("Plan with Metrics").into(),
+                    json!(long_plan).into(),
+                ]]),
+                named_rows: None,
+                row_count: 1,
+                message: None,
+                as_user: None,
+            }],
+            took: Some(1.0),
+            error: None,
+        };
+
+        let output = formatter.format_response(&response).unwrap();
+        assert!(output.contains("GlobalLimitExec: skip=0, fetch=3"));
+        assert!(output.contains("DeferredBatchExec: hot_rows_scanned=12"));
+        assert!(!output.contains("fetc..."));
+        assert!(output.contains("(1 row)"));
     }
 
     #[test]

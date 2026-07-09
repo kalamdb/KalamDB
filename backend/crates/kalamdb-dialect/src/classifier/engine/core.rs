@@ -713,7 +713,8 @@ impl SqlStatement {
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
             // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
-            // Note: DESCRIBE TABLE is handled above as KalamDB custom command
+            // Note: DESCRIBE TABLE is handled above as KalamDB custom command.
+            // execute_meta_command rewrites these to information_schema with Kalam types.
             ["DESCRIBE", next, ..] if *next != "TABLE" => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(

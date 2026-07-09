@@ -21,10 +21,14 @@ async-trait = { workspace = true }
 futures-util = { workspace = true }
 
 # Shared KalamDB row and metadata types used by MVCC merge helpers.
-kalamdb-commons = { workspace = true, features = ["conversions", "serialization"] }
+kalamdb-commons = { workspace = true, features = ["full"] }
 
 # Observability
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 
 [lib]
 name = "kalamdb_datafusion_sources"

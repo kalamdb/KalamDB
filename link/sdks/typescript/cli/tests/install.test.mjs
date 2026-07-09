@@ -12,26 +12,25 @@ import {
   rmSync,
 } from 'node:fs';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import * as tar from 'tar';
 
+const require = createRequire(import.meta.url);
+
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageJsonPath = path.join(packageDir, 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 const installScriptPath = path.join(packageDir, 'scripts', 'install.js');
-const fixtureVersion = '9.9.9-test.1';
+const fixtureVersion = packageJson.version;
 
 function resolveKalamBinaryForTests() {
-  const candidates = [
-    process.env.KALAM_TEST_BINARY,
-    path.join(packageDir, 'dist', process.platform === 'win32' ? 'kalam.exe' : 'kalam'),
-    path.join(packageDir, '../../../../target/debug/kalam'),
-    path.join(packageDir, '../../../../target/release/kalam'),
-  ].filter(Boolean);
+  const { localKalamBinaryCandidates } = require('../scripts/local-binary.js');
 
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+  return localKalamBinaryCandidates(packageDir).find((candidate) => existsSync(candidate)) ?? null;
 }
 
 test('install script bootstraps then delegates verification to kalam update', async (t) => {

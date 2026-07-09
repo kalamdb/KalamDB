@@ -15,6 +15,8 @@ use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait};
 
 use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
 
+const MAX_RECORDED_COLD_FILES: usize = 16;
+
 /// Planned selection for a single Parquet file
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowGroupSelection {
@@ -31,6 +33,15 @@ impl RowGroupSelection {
             row_groups,
         }
     }
+}
+
+/// Runtime stats for a cold Parquet scan.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParquetScanStats {
+    pub total_files: usize,
+    pub skipped_files: usize,
+    pub scanned_files: usize,
+    pub visited_files: Vec<String>,
 }
 
 /// Planner that produces pruning-aware selections from the manifest
@@ -110,7 +121,8 @@ impl ManifestAccessPlanner {
         schema: SchemaRef,
         schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
         columns: Option<&[String]>,
-    ) -> Result<(RecordBatch, (usize, usize, usize)), KalamDbError> {
+        record_visited_files: bool,
+    ) -> Result<(RecordBatch, ParquetScanStats), KalamDbError> {
         // Compute a projected schema when column projection is requested.
         // This is used for schema evolution and batch concatenation.
         let effective_schema = if let Some(cols) = columns {
@@ -174,7 +186,12 @@ impl ManifestAccessPlanner {
         if parquet_files.is_empty() {
             return Ok((
                 RecordBatch::new_empty(effective_schema),
-                (total_batches, skipped, scanned),
+                ParquetScanStats {
+                    total_files: total_batches,
+                    skipped_files: skipped,
+                    scanned_files: scanned,
+                    visited_files: Vec::new(),
+                },
             ));
         }
 
@@ -216,10 +233,14 @@ impl ManifestAccessPlanner {
             .collect();
         let stream_results = join_all(stream_futures).await;
         let mut opened_files = Vec::new();
+        let mut visited_files = Vec::new();
         let mut streams = Vec::new();
         for (parquet_file, result) in parquet_files.iter().zip(stream_results) {
             match result {
                 Ok(stream) => {
+                    if record_visited_files && visited_files.len() < MAX_RECORDED_COLD_FILES {
+                        visited_files.push(parquet_file.clone());
+                    }
                     opened_files.push(parquet_file.clone());
                     streams.push(stream);
                 },
@@ -278,7 +299,12 @@ impl ManifestAccessPlanner {
         if all_batches.is_empty() {
             return Ok((
                 RecordBatch::new_empty(effective_schema),
-                (total_batches, skipped, scanned),
+                ParquetScanStats {
+                    total_files: total_batches,
+                    skipped_files: skipped,
+                    scanned_files: scanned,
+                    visited_files,
+                },
             ));
         }
 
@@ -286,7 +312,15 @@ impl ManifestAccessPlanner {
         let combined = datafusion::arrow::compute::concat_batches(&effective_schema, &all_batches)
             .into_arrow_error_ctx("Failed to concatenate Parquet batches")?;
 
-        Ok((combined, (total_batches, skipped, scanned)))
+        Ok((
+            combined,
+            ParquetScanStats {
+                total_files: total_batches,
+                skipped_files: skipped,
+                scanned_files: scanned,
+                visited_files,
+            },
+        ))
     }
 
     /// Project a RecordBatch from an old schema version to the current schema
@@ -863,7 +897,7 @@ mod tests {
         };
 
         let planner = ManifestAccessPlanner::new();
-        let (combined, (total, skipped, scanned)) = planner
+        let (combined, stats) = planner
             .scan_parquet_files_async(
                 Some(&manifest),
                 storage_cached,
@@ -875,13 +909,18 @@ mod tests {
                 Arc::clone(&schema),
                 &schema_registry,
                 None,
+                true,
             )
             .await
             .expect("planner should not open manifest-pruned invalid parquet");
 
-        assert_eq!(total, 2);
-        assert_eq!(skipped, 1);
-        assert_eq!(scanned, 1);
+        assert_eq!(stats.total_files, 2);
+        assert_eq!(stats.skipped_files, 1);
+        assert_eq!(stats.scanned_files, 1);
+        assert_eq!(
+            stats.visited_files,
+            vec!["batch-in-range.parquet".to_string()]
+        );
         assert_eq!(combined.num_rows(), 2);
     }
 }

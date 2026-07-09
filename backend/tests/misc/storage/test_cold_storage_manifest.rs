@@ -20,7 +20,7 @@ use kalamdb_commons::{Role, UserId};
 use kalamdb_system::FileRef;
 use reqwest::multipart;
 
-use super::test_support::{fixtures, flush_helpers, TestServer};
+use super::test_support::{fixtures, flush_helpers, query_helpers, TestServer};
 
 async fn execute_sql_multipart_as_user(
     http: &super::test_support::http_server::HttpTestServer,
@@ -213,6 +213,23 @@ async fn test_user_table_cold_storage_uses_manifest() {
     let count = rows[0].get("cnt").map(parse_i64).unwrap();
     assert_eq!(count, 30, "Expected 30 rows total");
 
+    let explain_resp = server
+        .execute_sql(&format!(
+            "EXECUTE AS '{user}' ( EXPLAIN ANALYZE SELECT id, name, value FROM {ns}.items )",
+            user = user,
+            ns = ns,
+        ))
+        .await;
+    query_helpers::assert_explain_analyze_contains(
+        &explain_resp,
+        &[
+            "DeferredBatchExec: source=user_table_scan",
+            "storage_tiers=[hot=rocksdb,cold=parquet]",
+            "cold_files_scanned=1",
+        ],
+        "user table cold full scan after flush",
+    );
+
     println!("✅ User table cold storage query uses manifest cache successfully");
 }
 
@@ -303,6 +320,22 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     assert_eq!(rows[0].get("id").map(parse_i64).unwrap(), 20);
     assert_eq!(rows[0].get("price").map(parse_i64).unwrap(), 2000);
 
+    let explain_resp = server
+        .execute_sql(&format!(
+            "EXPLAIN ANALYZE SELECT id, name, price FROM {}.products",
+            ns
+        ))
+        .await;
+    query_helpers::assert_explain_analyze_contains(
+        &explain_resp,
+        &[
+            "DeferredBatchExec: source=shared_table_scan",
+            "storage_tiers=[hot=rocksdb,cold=parquet]",
+            "cold_files_scanned=1",
+        ],
+        "shared table cold full scan after flush",
+    );
+
     println!("✅ Shared table cold storage query uses manifest cache successfully");
 }
 
@@ -386,6 +419,20 @@ async fn test_manifest_tracks_multiple_flush_segments() {
     let rows = select_batch1.rows_as_maps();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("event_type").unwrap().as_str().unwrap(), "batch1");
+
+    let explain_batch1 = server
+        .execute_sql(
+            "EXECUTE AS 'multi_user' ( EXPLAIN ANALYZE SELECT id, event_type FROM multi_flush_ns.events )",
+        )
+        .await;
+    query_helpers::assert_explain_analyze_contains(
+        &explain_batch1,
+        &[
+            "DeferredBatchExec: source=user_table_scan",
+            "cold_files_scanned=2",
+        ],
+        "multi-segment full scan should read both flushed parquet files",
+    );
 
     let select_batch2 = server
         .execute_sql_as_user(

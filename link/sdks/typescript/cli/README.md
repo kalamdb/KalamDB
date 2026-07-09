@@ -25,4 +25,4 @@ kalam token create --name ci-prod
 kalam update
 ```
 
-Set `KALAM_CLI_VERSION` during install to download a specific release version, or `KALAM_SKIP_DOWNLOAD=1` to skip binary download for packaging workflows. Package validation also checks that every supported release asset exists and has a `SHA256SUMS` entry.
+Set `KALAM_CLI_VERSION` during install to download a specific release version, or `KALAM_SKIP_DOWNLOAD=1` to skip binary download for packaging workflows. When developing inside the KalamDB monorepo, postinstall also reuses a locally built `target/debug/kalam` (or `target/release/kalam`) before attempting a GitHub release download. Package validation also checks that every supported release asset exists and has a `SHA256SUMS` entry.

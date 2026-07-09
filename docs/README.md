@@ -33,7 +33,8 @@ Client SDK documentation.
 System architecture and design decisions.
 
 - **[decisions/](architecture/decisions/)** – Architecture Decision Records (ADRs)
-- **[manifest.md](architecture/manifest.md)** – Manifest file format
+- **[manifest.md](architecture/manifest.md)** – Manifest file format and flush architecture
+- **[hot-cold-storage-unification.md](architecture/hot-cold-storage-unification.md)** – Hot/cold tiers, DataFusion provider scan path, and MVCC merge
 - **[release-downloads.md](architecture/release-downloads.md)** – CLI update, installer, and managed local server release download flow
 - **[conversion-architecture.md](architecture/conversion-architecture.md)** – Data type conversion
 - **[pg-extension-grpc-connectivity.md](architecture/pg-extension-grpc-connectivity.md)** – PostgreSQL extension gRPC transport, session lifecycle, liveness, and improvement path

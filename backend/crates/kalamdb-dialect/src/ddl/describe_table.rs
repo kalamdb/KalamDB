@@ -32,6 +32,56 @@ impl DescribeTableStatement {
     /// - DESC TABLE table_name (shorthand)
     /// - DESCRIBE TABLE table_name HISTORY
     pub fn parse(sql: &str) -> DdlResult<Self> {
+        Self::parse_with_table_keyword(sql)
+    }
+
+    /// Parse DataFusion-style `DESCRIBE namespace.table` / `DESC table` (without `TABLE`).
+    pub fn parse_shorthand(sql: &str) -> DdlResult<Self> {
+        use crate::ddl::parsing;
+
+        let sql_trimmed = sql.trim().trim_end_matches(';');
+        let sql_upper = sql_trimmed.to_uppercase();
+
+        let prefix_len = if sql_upper.starts_with("DESCRIBE ") {
+            let remainder = sql_trimmed[9..].trim();
+            let first = remainder.split_whitespace().next().unwrap_or("").to_uppercase();
+            if first == "TABLE" || first == "NAMESPACE" {
+                return Err("Expected DESCRIBE <table> or DESCRIBE TABLE <table>".to_string());
+            }
+            9
+        } else if sql_upper.starts_with("DESC ") {
+            let remainder = sql_trimmed[5..].trim();
+            let first = remainder.split_whitespace().next().unwrap_or("").to_uppercase();
+            if first == "TABLE" {
+                return Err("Expected DESC <table> or DESC TABLE <table>".to_string());
+            }
+            5
+        } else {
+            return Err("Expected DESCRIBE or DESC".to_string());
+        };
+
+        let remainder = sql_trimmed[prefix_len..].trim();
+        let remainder_upper = remainder.to_uppercase();
+        let (table_ref, show_history) = if remainder_upper.ends_with(" HISTORY") {
+            (remainder[..remainder.len() - 8].trim(), true)
+        } else {
+            (remainder, false)
+        };
+
+        if table_ref.is_empty() {
+            return Err("Expected table name after DESCRIBE".to_string());
+        }
+
+        let (namespace, table) = parsing::parse_table_reference(table_ref)?;
+
+        Ok(Self {
+            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
+            table_name: TableName::new(&table),
+            show_history,
+        })
+    }
+
+    fn parse_with_table_keyword(sql: &str) -> DdlResult<Self> {
         use crate::ddl::parsing;
 
         let sql_trimmed = sql.trim().trim_end_matches(';');
@@ -70,6 +120,30 @@ impl DescribeTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_describe_shorthand() {
+        let stmt = DescribeTableStatement::parse_shorthand("DESCRIBE chat.messages").unwrap();
+        assert_eq!(stmt.namespace_id.unwrap().as_str(), "chat");
+        assert_eq!(stmt.table_name.as_str(), "messages");
+        assert!(!stmt.show_history);
+    }
+
+    #[test]
+    fn test_parse_desc_shorthand() {
+        let stmt = DescribeTableStatement::parse_shorthand("desc users").unwrap();
+        assert!(stmt.namespace_id.is_none());
+        assert_eq!(stmt.table_name.as_str(), "users");
+    }
+
+    #[test]
+    fn test_parse_describe_shorthand_history() {
+        let stmt =
+            DescribeTableStatement::parse_shorthand("DESCRIBE chat.messages HISTORY").unwrap();
+        assert_eq!(stmt.namespace_id.unwrap().as_str(), "chat");
+        assert_eq!(stmt.table_name.as_str(), "messages");
+        assert!(stmt.show_history);
+    }
 
     #[test]
     fn test_parse_describe_table() {

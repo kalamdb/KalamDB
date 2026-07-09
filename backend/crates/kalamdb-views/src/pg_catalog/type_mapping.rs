@@ -79,6 +79,46 @@ pub(crate) fn arrow_info_type_to_udt_name(data_type: &str) -> &'static str {
     }
 }
 
+/// Map Arrow physical type names to Kalam SQL type names for user-facing display.
+pub(crate) fn arrow_info_type_to_kalam_sql_name(data_type: &str) -> String {
+    match data_type {
+        "Boolean" => "BOOLEAN".to_string(),
+        "Int8" | "UInt8" | "Int16" | "UInt16" => "SMALLINT".to_string(),
+        "Int32" | "UInt32" => "INT".to_string(),
+        "Int64" | "UInt64" => "BIGINT".to_string(),
+        "Float32" => "FLOAT".to_string(),
+        "Float64" => "DOUBLE".to_string(),
+        arrow if arrow.starts_with("Timestamp") => "TIMESTAMP".to_string(),
+        arrow if arrow.starts_with("Date") && !arrow.starts_with("DateTime") => "DATE".to_string(),
+        arrow if arrow.starts_with("Time") => "TIME".to_string(),
+        arrow if arrow.starts_with("Decimal") => "DECIMAL".to_string(),
+        "Utf8" | "LargeUtf8" => "TEXT".to_string(),
+        "Binary" | "LargeBinary" | "FixedSizeBinary(_)" => "BYTES".to_string(),
+        arrow if arrow.starts_with("List(") => "JSON".to_string(),
+        _ => "TEXT".to_string(),
+    }
+}
+
+/// Map PostgreSQL `udt_name` to SQL `information_schema.columns.data_type` values.
+pub(crate) fn udt_name_to_info_schema_data_type(udt_name: &str) -> &'static str {
+    match udt_name {
+        "bool" => "boolean",
+        "int2" => "smallint",
+        "int4" => "integer",
+        "int8" => "bigint",
+        "float4" => "real",
+        "float8" => "double precision",
+        "timestamp" => "timestamp without time zone",
+        "date" => "date",
+        "time" => "time without time zone",
+        "numeric" => "numeric",
+        "json" => "json",
+        "uuid" => "uuid",
+        "bytea" => "bytea",
+        _ => "text",
+    }
+}
+
 /// PostgreSQL `format_type()` display name for a `pg_type.oid`.
 pub fn pg_format_type(oid: i64) -> &'static str {
     match oid {
@@ -117,5 +157,27 @@ pub(crate) fn pg_type_name(data_type: &KalamDataType) -> &'static str {
         KalamDataType::Uuid => "uuid",
         KalamDataType::Bytes => "bytea",
         KalamDataType::Text | KalamDataType::Embedding(_) | KalamDataType::File => "text",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrow_info_type_to_kalam_sql_name_maps_physical_types() {
+        assert_eq!(arrow_info_type_to_kalam_sql_name("Int64"), "BIGINT");
+        assert_eq!(arrow_info_type_to_kalam_sql_name("Utf8"), "TEXT");
+        assert_eq!(arrow_info_type_to_kalam_sql_name("Boolean"), "BOOLEAN");
+        assert_eq!(
+            arrow_info_type_to_kalam_sql_name("Timestamp(Microsecond, None)"),
+            "TIMESTAMP"
+        );
+    }
+
+    #[test]
+    fn udt_name_to_info_schema_data_type_maps_pg_names() {
+        assert_eq!(udt_name_to_info_schema_data_type("int8"), "bigint");
+        assert_eq!(udt_name_to_info_schema_data_type("text"), "text");
     }
 }

@@ -218,7 +218,7 @@ impl CLISession {
 
     fn build_describe_query(target: &str) -> Result<String> {
         let (namespace, table_name) = Self::parse_describe_target(target)?;
-        let columns = "table_schema AS namespace, table_name, column_name, data_type, \
+        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS data_type, \
                        is_nullable, column_default, ordinal_position AS position";
         let escaped_table = Self::escape_sql_literal(&table_name);
 

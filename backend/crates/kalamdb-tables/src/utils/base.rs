@@ -98,8 +98,8 @@ use kalamdb_commons::{
 use kalamdb_datafusion_sources::{
     exec::{
         count_resolved_from_metadata, finalize_deferred_batch, prefers_version,
-        resolve_latest_kvs_from_cold_batch, DeferredBatchExec, DeferredBatchSource, ParquetRowData,
-        VersionedRow,
+        resolve_latest_kvs_from_cold_batch, DeferredBatchExec, DeferredBatchOutput,
+        DeferredBatchSource, DeferredScanDiagnostics, ParquetRowData, VersionedRow,
     },
     provider::{
         combined_filter, pushdown_results_for_filters, remap_projection_indices, SourceProvider,
@@ -107,6 +107,7 @@ use kalamdb_datafusion_sources::{
     pruning::mvcc_filter_evaluation,
 };
 use kalamdb_filestore::registry::{ListResult, StorageCached};
+use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, Manifest, SchemaRegistry as SchemaRegistryTrait,
 };
@@ -117,12 +118,30 @@ use kalamdb_transactions::{
 
 // Re-export types moved to submodules
 pub use crate::utils::core::TableProviderCore;
-pub(crate) use crate::utils::parquet::scan_parquet_files_as_batch_async;
+pub(crate) use crate::utils::parquet::{
+    scan_parquet_files_as_batch_async, scan_parquet_files_as_result_async,
+    scan_parquet_files_with_stats_async, ParquetScanResult,
+};
 pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, inject_system_columns,
     resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
 };
 use crate::{error::KalamDbError, manifest::ManifestAccessPlanner, utils::unified_dml};
+
+pub struct MvccScanResult<K, V> {
+    pub rows: Vec<(K, V)>,
+    pub diagnostics: DeferredScanDiagnostics,
+}
+
+pub(crate) fn scan_diagnostics_enabled(state: &dyn Session) -> bool {
+    state
+        .config()
+        .options()
+        .extensions
+        .get::<ScanDiagnosticsContext>()
+        .map(ScanDiagnosticsContext::is_enabled)
+        .unwrap_or(false)
+}
 
 #[async_trait]
 pub trait DeferredMvccScanProvider<K: StorageKey, V>:
@@ -180,6 +199,31 @@ where
         cold_columns: Option<&[String]>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
+    async fn scan_kvs_with_diagnostics(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+    ) -> Result<MvccScanResult<K, V>, KalamDbError> {
+        let rows = self
+            .scan_kvs_with_context(
+                scan_context,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+            )
+            .await?;
+        Ok(MvccScanResult {
+            rows,
+            diagnostics: DeferredScanDiagnostics::default(),
+        })
+    }
+
     async fn scan_rows_with_context(
         &self,
         scan_context: &Self::ScanContext,
@@ -187,6 +231,30 @@ where
         filter: Option<&Expr>,
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
+        Ok(self
+            .scan_rows_output(scan_context, projection, filter, limit, false)
+            .await?
+            .batch)
+    }
+
+    async fn scan_rows_with_diagnostics(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+    ) -> Result<DeferredBatchOutput, KalamDbError> {
+        self.scan_rows_output(scan_context, projection, filter, limit, true).await
+    }
+
+    async fn scan_rows_output(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        limit: Option<usize>,
+        include_diagnostics: bool,
+    ) -> Result<DeferredBatchOutput, KalamDbError> {
         let schema = self.schema_ref();
         let pk_name = self.primary_key_field_name();
         let _scope_label = self.scan_scope_label(scan_context);
@@ -195,12 +263,13 @@ where
         if self.allow_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
                 let resolved = resolve_pk_point_lookup(self, scan_context, &pk_scalar).await?;
-                return rows_to_arrow_batch(
+                let batch = rows_to_arrow_batch(
                     &schema,
                     resolved.into_iter().collect(),
                     projection,
                     |_, _| {},
-                );
+                )?;
+                return Ok(DeferredBatchOutput::new(batch));
             }
         }
 
@@ -208,7 +277,7 @@ where
             && is_count_only_projection(projection, filter)
         {
             let count = self.count_rows_with_context(scan_context).await?;
-            return build_count_only_batch(count);
+            return Ok(DeferredBatchOutput::new(build_count_only_batch(count)?));
         }
 
         let (since_seq, _until_seq) = if let Some(expr) = filter {
@@ -219,8 +288,8 @@ where
 
         let keep_deleted = filter.map(filter_uses_deleted_column).unwrap_or(false);
         let cold_columns = compute_cold_columns(projection, &schema, pk_name);
-        let kvs = self
-            .scan_kvs_with_context(
+        let scan_result = if include_diagnostics {
+            self.scan_kvs_with_diagnostics(
                 scan_context,
                 filter,
                 since_seq,
@@ -228,7 +297,22 @@ where
                 keep_deleted,
                 cold_columns.as_deref(),
             )
-            .await?;
+            .await?
+        } else {
+            MvccScanResult {
+                rows: self
+                    .scan_kvs_with_context(
+                        scan_context,
+                        filter,
+                        since_seq,
+                        limit,
+                        keep_deleted,
+                        cold_columns.as_deref(),
+                    )
+                    .await?,
+                diagnostics: DeferredScanDiagnostics::default(),
+            }
+        };
 
         // log::trace!(
         //     "[MvccScan] scan_rows resolved {} row(s) for table={} scope={} subject={}",
@@ -238,7 +322,8 @@ where
         //     subject_user
         // );
 
-        rows_to_arrow_batch(&schema, kvs, projection, |_, _| {})
+        let batch = rows_to_arrow_batch(&schema, scan_result.rows, projection, |_, _| {})?;
+        Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
     }
 }
 
@@ -274,6 +359,60 @@ where
     }
 }
 
+impl<P, K, V> DeferredMvccScanSource<P, K, V>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: ScanRow + Send + Sync + 'static,
+{
+    async fn produce_output(
+        &self,
+        include_diagnostics: bool,
+    ) -> DataFusionResult<DeferredBatchOutput> {
+        let source_limit = if self.physical_filter.is_none() {
+            self.limit
+        } else {
+            None
+        };
+        let output = if include_diagnostics {
+            self.provider
+                .scan_rows_with_diagnostics(
+                    &self.scan_context,
+                    self.projection.as_ref(),
+                    self.filter.as_ref(),
+                    source_limit,
+                )
+                .await
+        } else {
+            self.provider
+                .scan_rows_with_context(
+                    &self.scan_context,
+                    self.projection.as_ref(),
+                    self.filter.as_ref(),
+                    source_limit,
+                )
+                .await
+                .map(DeferredBatchOutput::new)
+        }
+        .map_err(|error| {
+            DataFusionError::Execution(format!(
+                "{} failed: {}",
+                self.provider.scan_source_name(),
+                error
+            ))
+        })?;
+
+        let batch = finalize_deferred_batch(
+            output.batch,
+            self.physical_filter.as_ref(),
+            self.output_projection.as_deref(),
+            self.limit,
+            self.provider.scan_source_name(),
+        )?;
+        Ok(DeferredBatchOutput::new(batch).with_diagnostics(output.diagnostics))
+    }
+}
+
 #[async_trait]
 impl<P, K, V> DeferredBatchSource for DeferredMvccScanSource<P, K, V>
 where
@@ -285,36 +424,20 @@ where
         self.provider.scan_source_name()
     }
 
+    fn plan_details(&self) -> Option<&'static str> {
+        Some("storage_tiers=[hot=rocksdb,cold=parquet], mvcc=true")
+    }
+
     fn schema(&self) -> SchemaRef {
         Arc::clone(&self.output_schema)
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let source_limit = if self.physical_filter.is_none() {
-            self.limit
-        } else {
-            None
-        };
-        let batch = self
-            .provider
-            .scan_rows_with_context(
-                &self.scan_context,
-                self.projection.as_ref(),
-                self.filter.as_ref(),
-                source_limit,
-            )
-            .await
-            .map_err(|error| {
-                DataFusionError::Execution(format!("{} failed: {}", self.source_name(), error))
-            })?;
+        Ok(self.produce_output(false).await?.batch)
+    }
 
-        finalize_deferred_batch(
-            batch,
-            self.physical_filter.as_ref(),
-            self.output_projection.as_deref(),
-            self.limit,
-            self.source_name(),
-        )
+    async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
+        self.produce_output(true).await
     }
 }
 
@@ -686,20 +809,23 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             None
         };
         let scan_context = self.build_scan_context(state).map_err(kalam_error_to_datafusion)?;
+        let source = Arc::new(DeferredMvccScanSource::<Self, K, V> {
+            provider: self.clone(),
+            scan_context,
+            projection: effective_projection,
+            filter: source_filter,
+            physical_filter,
+            output_projection,
+            limit,
+            output_schema,
+            _marker: std::marker::PhantomData,
+        });
 
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(
-            DeferredMvccScanSource::<Self, K, V> {
-                provider: self.clone(),
-                scan_context,
-                projection: effective_projection,
-                filter: source_filter,
-                physical_filter,
-                output_projection,
-                limit,
-                output_schema,
-                _marker: std::marker::PhantomData,
-            },
-        ))))
+        if scan_diagnostics_enabled(state) {
+            Ok(Arc::new(DeferredBatchExec::new_with_scan_diagnostics(source)))
+        } else {
+            Ok(Arc::new(DeferredBatchExec::new(source)))
+        }
     }
 
     async fn base_scan_with_overlay(
@@ -1119,6 +1245,10 @@ pub(crate) struct ResolvedMvccScan<K, V> {
     pub rows: Vec<(K, V)>,
     pub hot_rows_scanned: usize,
     pub cold_rows_scanned: usize,
+    pub cold_files_total: usize,
+    pub cold_files_skipped: usize,
+    pub cold_files_scanned: usize,
+    pub cold_files: Vec<String>,
 }
 
 pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture, Build>(
@@ -1134,19 +1264,19 @@ where
     K: Clone,
     R: VersionedRow,
     HotFuture: Future<Output = Result<Vec<(K, R)>, KalamDbError>>,
-    ColdFuture: Future<Output = Result<RecordBatch, KalamDbError>>,
+    ColdFuture: Future<Output = Result<ParquetScanResult, KalamDbError>>,
     Build: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
 {
     let (hot_result, cold_result) = tokio::join!(hot_future, cold_future);
     let hot_rows = hot_result?;
     let hot_rows_scanned = hot_rows.len();
-    let parquet_batch = cold_result?;
-    let cold_rows_scanned = parquet_batch.num_rows();
+    let cold_result = cold_result?;
+    let cold_rows_scanned = cold_result.batch.num_rows();
 
     let mut rows = resolve_latest_kvs_from_cold_batch(
         pk_name,
         hot_rows,
-        &parquet_batch,
+        &cold_result.batch,
         keep_deleted,
         snapshot_commit_seq,
         build_cold_row,
@@ -1159,6 +1289,10 @@ where
         rows,
         hot_rows_scanned,
         cold_rows_scanned,
+        cold_files_total: cold_result.stats.total_files,
+        cold_files_skipped: cold_result.stats.skipped_files,
+        cold_files_scanned: cold_result.stats.scanned_files,
+        cold_files: cold_result.stats.visited_files,
     })
 }
 

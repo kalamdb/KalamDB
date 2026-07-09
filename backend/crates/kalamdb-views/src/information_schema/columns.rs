@@ -28,7 +28,9 @@ use kalamdb_datafusion_sources::{
 };
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::pg_catalog::type_mapping::arrow_info_type_to_udt_name;
+use crate::pg_catalog::type_mapping::{
+    arrow_info_type_to_kalam_sql_name, arrow_info_type_to_udt_name, udt_name_to_info_schema_data_type,
+};
 
 use super::catalog_metadata::{normalize_column_types, CatalogMetadataIndex};
 
@@ -219,9 +221,10 @@ fn normalize_columns_batch(
             }
         } else {
             let udt = arrow_info_type_to_udt_name(arrow_type);
-            data_types.append_value(udt);
+            let kalam = arrow_info_type_to_kalam_sql_name(arrow_type);
+            data_types.append_value(udt_name_to_info_schema_data_type(udt));
             udt_names.append_value(udt);
-            kdb_types.append_null();
+            kdb_types.append_value(kalam);
             kdb_namespace_ids.append_null();
             kdb_versions.append_null();
             kdb_column_ids.append_null();

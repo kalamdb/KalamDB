@@ -116,17 +116,32 @@ fn smoke_cli_describe_table_command() {
 
     // Query information_schema.columns (this is what \describe does)
     let result = execute_sql_as_root_via_client(&format!(
-        "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE \
+        "SELECT column_name, kdb_data_type AS data_type, is_nullable FROM information_schema.columns WHERE \
          table_schema = '{}' AND table_name = '{}' ORDER BY ordinal_position",
         namespace, table
     ))
     .expect("Failed to describe table");
 
-    // Verify columns are shown
+    // Verify columns are shown with Kalam SQL type names (not Arrow physical types)
     assert!(result.contains("id"), "Should show id column: {}", result);
     assert!(result.contains("name"), "Should show name column: {}", result);
     assert!(result.contains("age"), "Should show age column: {}", result);
     assert!(result.contains("active"), "Should show active column: {}", result);
+    assert!(
+        result.contains("BIGINT") || result.contains("bigint"),
+        "id should use Kalam BIGINT type, got: {}",
+        result
+    );
+    assert!(
+        result.contains("TEXT") || result.contains("text") || result.contains("VARCHAR"),
+        "name should use Kalam text type, got: {}",
+        result
+    );
+    assert!(
+        !result.contains("Int64") && !result.contains("Utf8"),
+        "Should not expose Arrow type names: {}",
+        result
+    );
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));

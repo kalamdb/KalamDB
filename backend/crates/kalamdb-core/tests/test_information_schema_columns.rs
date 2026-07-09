@@ -339,3 +339,39 @@ async fn test_dbeaver_column_metadata_query_with_bind_parameters() {
         .await
         .expect("parameterized dbeaver column metadata query should execute");
 }
+
+#[tokio::test]
+async fn test_information_schema_columns_fallback_kalam_types_for_arrow_names() {
+    let (app_ctx, _test_db) = create_test_app_context().await;
+    let session = app_ctx.base_session_context();
+
+    let sql = "SELECT column_name, data_type, kdb_data_type \
+               FROM information_schema.columns \
+               WHERE table_schema = 'system' AND table_name = 'jobs' AND column_name = 'status'";
+
+    let batches = session
+        .sql(sql)
+        .await
+        .expect("query should succeed")
+        .collect()
+        .await
+        .expect("collect should succeed");
+
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    let data_type = batch
+        .column_by_name("data_type")
+        .and_then(|array| array.as_any().downcast_ref::<datafusion::arrow::array::StringArray>())
+        .expect("data_type")
+        .value(0);
+    let kdb_data_type = batch
+        .column_by_name("kdb_data_type")
+        .and_then(|array| array.as_any().downcast_ref::<datafusion::arrow::array::StringArray>())
+        .expect("kdb_data_type")
+        .value(0);
+
+    assert_eq!(kdb_data_type, "TEXT");
+    assert!(!kdb_data_type.contains("Utf8"));
+    assert_ne!(data_type, "Utf8");
+}

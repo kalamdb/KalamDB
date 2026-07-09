@@ -33,6 +33,7 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
     NotLeaderError, TableType,
 };
+use kalamdb_datafusion_sources::exec::DeferredScanDiagnostics;
 use kalamdb_datafusion_sources::provider::{
     merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability, ScanDescriptor,
     SourceProvider,
@@ -301,6 +302,40 @@ impl SharedTableProvider {
         columns: Option<&[String]>,
     ) -> Result<RecordBatch, KalamDbError> {
         base::scan_parquet_files_as_batch_async(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            None,
+            self.schema_ref(),
+            filter,
+            columns,
+        )
+        .await
+    }
+
+    async fn scan_parquet_files_with_stats_async(
+        &self,
+        filter: Option<&Expr>,
+        columns: Option<&[String]>,
+    ) -> Result<base::ParquetScanResult, KalamDbError> {
+        base::scan_parquet_files_with_stats_async(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            None,
+            self.schema_ref(),
+            filter,
+            columns,
+        )
+        .await
+    }
+
+    async fn scan_parquet_files_as_result_async(
+        &self,
+        filter: Option<&Expr>,
+        columns: Option<&[String]>,
+    ) -> Result<base::ParquetScanResult, KalamDbError> {
+        base::scan_parquet_files_as_result_async(
             &self.core,
             self.core.table_id(),
             self.core.table_type(),
@@ -677,6 +712,27 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
             keep_deleted,
             cold_columns,
             scan_context.snapshot_commit_seq,
+        )
+        .await
+    }
+
+    async fn scan_kvs_with_diagnostics(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+    ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+            scan_context.snapshot_commit_seq,
+            true,
         )
         .await
     }
@@ -1264,25 +1320,41 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<u64>,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        self.scan_with_version_resolution_to_kvs_result_async(
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+            snapshot_commit_seq,
+            false,
+        )
+        .await
+        .map(|result| result.rows)
+    }
+
+    fn extract_row(row: &SharedTableRow) -> &Row {
+        &row.fields
+    }
+}
+
+impl SharedTableProvider {
+    async fn scan_with_version_resolution_to_kvs_result_async(
+        &self,
+        filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        snapshot_commit_seq: Option<u64>,
+        include_diagnostics: bool,
+    ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
-        // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
-        // IGNORE user_id parameter - scan ALL rows (hot storage)
-
-        // Construct start_key if since_seq is provided
-        let start_key = if let Some(seq) = since_seq {
-            // since_seq is exclusive, so start at seq + 1
-            Some(kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1))
-        } else {
-            None
-        };
-
-        // Calculate scan limit using common helper
+        let start_key = since_seq.map(|seq| kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1));
         let scan_limit = base::calculate_scan_limit(limit);
-
-        // Run hot storage (RocksDB) and cold storage (Parquet) scans concurrently
         let hot_future = async {
             self.store
                 .scan_typed_with_prefix_and_start_async(None, start_key.as_ref(), scan_limit)
@@ -1294,7 +1366,13 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                     ))
                 })
         };
-        let cold_future = self.scan_parquet_files_as_batch_async(filter, cold_columns);
+        let cold_future = async {
+            if include_diagnostics {
+                self.scan_parquet_files_with_stats_async(filter, cold_columns).await
+            } else {
+                self.scan_parquet_files_as_result_async(filter, cold_columns).await
+            }
+        };
         let pk_name = self.primary_key_field_name().to_string();
         let resolved = base::resolve_latest_scan_from_futures(
             &pk_name,
@@ -1317,11 +1395,23 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             "[SharedProvider] Version-resolved rows (post-tombstone filter): {}",
             resolved.rows.len()
         );
-        Ok(resolved.rows)
-    }
+        let diagnostics = if include_diagnostics {
+            DeferredScanDiagnostics {
+                hot_rows_scanned: Some(resolved.hot_rows_scanned),
+                cold_rows_scanned: Some(resolved.cold_rows_scanned),
+                cold_files_total: Some(resolved.cold_files_total),
+                cold_files_skipped: Some(resolved.cold_files_skipped),
+                cold_files_scanned: Some(resolved.cold_files_scanned),
+                cold_files: resolved.cold_files,
+            }
+        } else {
+            DeferredScanDiagnostics::default()
+        };
 
-    fn extract_row(row: &SharedTableRow) -> &Row {
-        &row.fields
+        Ok(base::MvccScanResult {
+            diagnostics,
+            rows: resolved.rows,
+        })
     }
 }
 

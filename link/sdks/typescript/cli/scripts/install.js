@@ -6,6 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const { bootstrapBinary } = require('./bootstrap');
+const { tryInstallFromLocalBinary } = require('./local-binary');
 const { installedBinaryPath, packageRootFromEnv } = require('./platforms');
 
 async function main() {
@@ -20,7 +21,7 @@ async function main() {
   const binaryPath = installedBinaryPath(packageRoot);
   const userAgent = `@kalamdb/cli/${packageJson.version}`;
 
-  if (!fs.existsSync(binaryPath)) {
+  if (!fs.existsSync(binaryPath) && !tryInstallFromLocalBinary(packageRoot)) {
     await bootstrapBinary(packageRoot, version, userAgent);
   }
 

@@ -19,6 +19,7 @@ use kalamdb_commons::{
     Role, SystemTable,
 };
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
+use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_system::Migration;
 use kalamdb_tables::{SharedTableProvider, UserTableProvider};
 use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
@@ -2210,6 +2211,54 @@ impl SqlExecutor {
         })
     }
 
+    /// Rewrite `DESCRIBE namespace.table` / `DESC table` to query `information_schema.columns`
+    /// with Kalam SQL type names instead of Arrow physical types.
+    fn rewrite_describe_shorthand(sql: &str, exec_ctx: &ExecutionContext) -> Option<String> {
+        use kalamdb_sql::ddl::DescribeTableStatement;
+
+        let stmt = DescribeTableStatement::parse_shorthand(sql).ok()?;
+        if stmt.show_history {
+            return None;
+        }
+
+        let namespace = stmt
+            .namespace_id
+            .unwrap_or_else(|| exec_ctx.default_namespace());
+
+        Some(format!(
+            "SELECT column_name, kdb_data_type AS data_type, is_nullable \
+             FROM information_schema.columns \
+             WHERE table_schema = {} AND table_name = {} \
+             ORDER BY ordinal_position",
+            Self::sql_string_literal(namespace.as_str()),
+            Self::sql_string_literal(stmt.table_name.as_str()),
+        ))
+    }
+
+    fn sql_string_literal(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+
+    fn is_explain_analyze(sql: &str) -> bool {
+        fn matches_explain_analyze(statement: &str) -> bool {
+            let mut words = statement.split_whitespace();
+            matches!(
+                (words.next(), words.next()),
+                (Some(explain), Some(analyze))
+                    if explain.eq_ignore_ascii_case("explain")
+                        && (analyze.eq_ignore_ascii_case("analyze")
+                            || analyze.eq_ignore_ascii_case("analyse"))
+            )
+        }
+
+        if matches_explain_analyze(sql) {
+            return true;
+        }
+
+        kalamdb_sql::execute_as::extract_inner_sql(sql)
+            .is_some_and(|inner| matches_explain_analyze(&inner))
+    }
+
     /// Execute DataFusion meta commands (EXPLAIN, SET, SHOW, etc.)
     ///
     /// These commands are passed directly to DataFusion without custom parsing.
@@ -2224,10 +2273,24 @@ impl SqlExecutor {
         sql: &str,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
-        let execution_sql: &str = &execution_sql;
+        let execution_sql = match Self::rewrite_describe_shorthand(sql, exec_ctx) {
+            Some(rewritten) => rewritten,
+            None => kalamdb_sql::rewrite_context_functions_for_datafusion(sql).to_string(),
+        };
+        let execution_sql = execution_sql.as_str();
         // Create per-request SessionContext with user_id injected
         let session = self.create_session_with_transaction_context(exec_ctx)?;
+        let session = if Self::is_explain_analyze(sql) {
+            let mut state = session.state();
+            state
+                .config_mut()
+                .options_mut()
+                .extensions
+                .insert(ScanDiagnosticsContext::enabled());
+            SessionContext::new_with_state(state)
+        } else {
+            session
+        };
 
         // Execute the command directly via DataFusion
         let df = match session.sql(execution_sql).await {
