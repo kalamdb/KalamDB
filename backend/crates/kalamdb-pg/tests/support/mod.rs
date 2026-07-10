@@ -40,6 +40,7 @@ pub fn unique_namespace(prefix: &str) -> NamespaceId {
 
 pub fn build_service(app_ctx: Arc<AppContext>) -> KalamPgService {
     KalamPgService::new(false, None)
+        .with_backend_session_manager(app_ctx.backend_session_manager())
         .with_operation_executor(Arc::new(OperationService::new(app_ctx)))
 }
 
@@ -198,7 +199,7 @@ pub async fn await_shared_leader(app_ctx: &Arc<AppContext>) {
 pub async fn open_session(service: &KalamPgService, _session_id: &str) -> String {
     service
         .open_session(request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id: _session_id.to_string(),
             current_schema: None,
         }))
         .await

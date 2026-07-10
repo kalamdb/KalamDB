@@ -239,6 +239,21 @@ impl SqlStatement {
         )
     }
 
+    /// Returns true when slow-query logging should consider this statement.
+    ///
+    /// Only DML (INSERT, UPDATE, DELETE) and read queries (SELECT) are tracked.
+    /// DDL and other commands (CREATE, ALTER, DROP, SHOW, etc.) are excluded because
+    /// they are expected to take longer or are not meaningful slow-query signals.
+    pub fn is_slow_query_trackable(&self) -> bool {
+        matches!(
+            self.kind,
+            SqlStatementKind::Select
+                | SqlStatementKind::Insert(_)
+                | SqlStatementKind::Update(_)
+                | SqlStatementKind::Delete(_)
+        )
+    }
+
     /// Check if this statement is a write operation (modifies data or schema)
     ///
     /// Returns true for INSERT, UPDATE, DELETE, DDL (CREATE/ALTER/DROP),

@@ -1,13 +1,13 @@
 {
-  "ai": "cursor-agent",
+  "ai": "codex",
   "ai_commands_dir": null,
   "ai_skills": true,
   "branch_numbering": "sequential",
   "context_file": ".cursor/rules/specify-rules.mdc",
   "here": true,
-  "integration": "cursor-agent",
+  "integration": "codex",
   "offline": false,
   "preset": null,
   "script": "sh",
-  "speckit_version": "0.8.18"
+  "speckit_version": "0.12.1.dev0"
 }

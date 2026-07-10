@@ -37,7 +37,10 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
 };
 use kalamdb_datafusion_sources::{
-    exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
+    exec::{
+        finalize_deferred_batch, DeferredBatchExec, DeferredBatchOutput, DeferredBatchSource,
+        DeferredScanDiagnostics,
+    },
     provider::{
         combined_filter, merged_projection_scan_descriptor, pushdown_results_for_filters,
         remap_projection_indices, FilterCapability, ScanDescriptor, SourceProvider,
@@ -50,7 +53,10 @@ use crate::{
     error_extensions::KalamDbResultExt,
     stream_tables::{StreamTableRow, StreamTableStore},
     utils::{
-        base::{extract_seq_bounds_from_filter, BaseTableProvider, TableProviderCore},
+        base::{
+            extract_seq_bounds_from_filter, scan_diagnostics_enabled, BaseTableProvider,
+            TableProviderCore,
+        },
         row_utils::extract_user_context,
     },
 };
@@ -100,17 +106,11 @@ impl std::fmt::Debug for StreamScanSource {
     }
 }
 
-#[async_trait]
-impl DeferredBatchSource for StreamScanSource {
-    fn source_name(&self) -> &'static str {
-        "stream_table_scan"
-    }
-
-    fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.output_schema)
-    }
-
-    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
+impl StreamScanSource {
+    async fn produce_output(
+        &self,
+        include_diagnostics: bool,
+    ) -> DataFusionResult<DeferredBatchOutput> {
         let since_seq = self
             .filter
             .as_ref()
@@ -142,6 +142,7 @@ impl DeferredBatchSource for StreamScanSource {
                     "failed to scan stream table hot storage: {error}",
                 ))
             })?;
+        let hot_rows_scanned = results.len();
 
         let batch = crate::utils::base::rows_to_arrow_batch(
             &self.core.schema_ref(),
@@ -158,13 +159,49 @@ impl DeferredBatchSource for StreamScanSource {
         )
         .map_err(|error| DataFusionError::Execution(error.to_string()))?;
 
-        finalize_deferred_batch(
+        let batch = finalize_deferred_batch(
             batch,
             self.physical_filter.as_ref(),
             self.output_projection.as_deref(),
             None,
             self.source_name(),
-        )
+        )?;
+
+        let mut output = DeferredBatchOutput::new(batch);
+        if include_diagnostics {
+            output = output.with_diagnostics(DeferredScanDiagnostics {
+                hot_rows_scanned: Some(hot_rows_scanned),
+                cold_rows_scanned: Some(0),
+                cold_files_total: Some(0),
+                cold_files_skipped: Some(0),
+                cold_files_scanned: Some(0),
+                cold_files: Vec::new(),
+            });
+        }
+        Ok(output)
+    }
+}
+
+#[async_trait]
+impl DeferredBatchSource for StreamScanSource {
+    fn source_name(&self) -> &'static str {
+        "stream_table_scan"
+    }
+
+    fn plan_details(&self) -> Option<&'static str> {
+        Some("storage_tiers=[hot=rocksdb], stream=true")
+    }
+
+    fn schema(&self) -> SchemaRef {
+        Arc::clone(&self.output_schema)
+    }
+
+    async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
+        Ok(self.produce_output(false).await?.batch)
+    }
+
+    async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
+        self.produce_output(true).await
     }
 }
 
@@ -614,7 +651,7 @@ impl TableProvider for StreamTableProvider {
             None
         };
 
-        Ok(Arc::new(DeferredBatchExec::new(Arc::new(StreamScanSource {
+        let source = Arc::new(StreamScanSource {
             core: Arc::clone(&self.core),
             store: Arc::clone(&self.store),
             ttl_seconds: self.ttl_seconds,
@@ -624,7 +661,13 @@ impl TableProvider for StreamTableProvider {
             physical_filter,
             output_projection,
             output_schema,
-        }))))
+        });
+
+        if scan_diagnostics_enabled(state) {
+            Ok(Arc::new(DeferredBatchExec::new_with_scan_diagnostics(source)))
+        } else {
+            Ok(Arc::new(DeferredBatchExec::new(source)))
+        }
     }
 
     fn supports_filters_pushdown(

@@ -566,6 +566,7 @@ async fn start_kalamdb_oidc_server(config: &OidcServerConfig) -> Result<KalamDbT
         .env("KALAMDB_CLUSTER_RPC_ADDR", format!("127.0.0.1:{rpc_port}"))
         .env("KALAMDB_CLUSTER_API_ADDR", format!("127.0.0.1:{api_port}"))
         .env("KALAMDB_DATA_DIR", data_dir.path())
+        .env("KALAMDB_ENABLE_PGWIRE", "false")
         .env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC", "200000")
         .env("KALAMDB_LOG_LEVEL", "warn")
         .env("KALAMDB_JWT_TRUSTED_ISSUERS", format!("kalamdb,{}", config.issuer))

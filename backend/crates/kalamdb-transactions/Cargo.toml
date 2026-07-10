@@ -11,12 +11,14 @@ keywords = ["kalamdb", "transactions", "query"]
 categories = ["database"]
 
 [dependencies]
+async-trait = { workspace = true }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-datafusion-sources = { workspace = true }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 datafusion = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

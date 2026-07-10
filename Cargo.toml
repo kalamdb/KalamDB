@@ -19,6 +19,7 @@ members = [
     "backend/crates/kalamdb-session",
     "backend/crates/kalamdb-session-datafusion",
     "backend/crates/kalamdb-transactions",
+    "backend/crates/kalamdb-backend",
     "backend/crates/kalamdb-datafusion-sources",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
@@ -43,6 +44,7 @@ members = [
     "backend/crates/kalamdb-raft",
     "backend/crates/kalamdb-views",
     "backend/crates/kalamdb-pg",
+    "backend/crates/kalamdb-postgres-wire",
     "backend/crates/kalamdb-server-auth",
     "backend",
     "cli",
@@ -50,6 +52,7 @@ members = [
     "cli/kalam-cli-e2e",
     "link/link-common",
     "link/sdks/rust",
+    "link/sdks/rust/examples/quickstart",
     "link/sdks/rust-e2e",
     "link/kalam-link-wasm",
     "link/kalam-consumer-wasm",
@@ -59,7 +62,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.5.4-rc.1"
+version = "0.5.5-rc.1"
 edition = "2021"
 rust-version = "1.92"
 authors = ["KalamDB Team"]
@@ -75,7 +78,7 @@ handlebars = "6.4.2"
 
 # Error handling
 thiserror = "2.0.18"
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 
 # Logging
 log = "0.4.33"
@@ -96,7 +99,7 @@ url = "2.5.8"
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
 
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
-aws-lc-rs = { version = "1.17.0", default-features = false }
+aws-lc-rs = { version = "1.17.1", default-features = false }
 rustls = { version = "0.23.41", default-features = false }
 quinn-proto = { version = "0.11.15", default-features = false }
 rustls-webpki = { version = "0.103.13", default-features = false }
@@ -124,12 +127,12 @@ sqlparser = { version = "0.62.0" }
 parquet = { version = "58.3.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
 # Web framework
-actix-web = { version = "4.13.0", features = ["http2"] }
+actix-web = { version = "4.14.0", features = ["http2"] }
 actix-ws = "0.4.0"
 actix-cors = "0.7"
 actix-rt = "2.10"
 actix-files = "0.6.10"
-actix-multipart = "0.7"
+actix-multipart = "0.8.0"
 
 # UUID generation
 uuid = { version = "1.23.4", features = ["v4", "v7", "serde"] }
@@ -150,7 +153,7 @@ dotenv = "0.15"
 
 # CLI tools
 clap = { version = "4.6.1", features = ["derive", "color"] }
-console = { version = "0.16.3", default-features = false, features = ["unicode-width"] }
+console = { version = "0.16.4", default-features = false, features = ["unicode-width"] }
 humantime = "2.3.0"
 rustyline = { version = "18.0.1" }
 shlex = "2.0.1"
@@ -193,13 +196,15 @@ kalam-client = { path = "link/sdks/rust", default-features = false }
 kalamdb-row-filter = { path = "backend/crates/kalamdb-row-filter" }
 kalamdb-transfer = { path = "backend/crates/kalamdb-transfer" }
 kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
+kalamdb-backend = { path = "backend/crates/kalamdb-backend" }
+kalamdb-postgres-wire = { path = "backend/crates/kalamdb-postgres-wire" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
 kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources" }
 cookie = "0.18"
 colored = "3.1.1"
 fern = "0.7"
-indicatif = "0.18.4"
+indicatif = "0.18.6"
 rpassword = "7.5.4"
 dirs = "6.0"
 term_size = "0.3"
@@ -214,6 +219,7 @@ async-trait = "0.1.89"
 once_cell = "1.21.4"
 regex = "1.12.4"
 dashmap = "6.2.1"
+pgwire = { version = "0.40.4", default-features = false, features = ["server-api-aws-lc-rs"] }
 bytes = "1.12.0"
 http-body = "1.0.1"
 http-body-util = "0.1.3"

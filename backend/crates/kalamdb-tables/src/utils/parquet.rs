@@ -7,7 +7,17 @@ use kalamdb_commons::{
     TableId,
 };
 
-use crate::{error::KalamDbError, manifest::ManifestAccessPlanner, utils::core::TableProviderCore};
+use crate::{
+    error::KalamDbError,
+    manifest::{ManifestAccessPlanner, ParquetScanStats},
+    utils::core::TableProviderCore,
+};
+
+#[derive(Debug)]
+pub(crate) struct ParquetScanResult {
+    pub batch: RecordBatch,
+    pub stats: ParquetScanStats,
+}
 
 /// Async helper for loading Parquet batches via ManifestAccessPlanner.
 ///
@@ -21,6 +31,53 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
     filter: Option<&Expr>,
     columns: Option<&[String]>,
 ) -> Result<RecordBatch, KalamDbError> {
+    Ok(scan_parquet_files_as_result_async(
+        core, table_id, table_type, user_id, schema, filter, columns,
+    )
+    .await?
+    .batch)
+}
+
+pub(crate) async fn scan_parquet_files_as_result_async(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    schema: SchemaRef,
+    filter: Option<&Expr>,
+    columns: Option<&[String]>,
+) -> Result<ParquetScanResult, KalamDbError> {
+    scan_parquet_files_internal_async(
+        core, table_id, table_type, user_id, schema, filter, columns, false,
+    )
+    .await
+}
+
+pub(crate) async fn scan_parquet_files_with_stats_async(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    schema: SchemaRef,
+    filter: Option<&Expr>,
+    columns: Option<&[String]>,
+) -> Result<ParquetScanResult, KalamDbError> {
+    scan_parquet_files_internal_async(
+        core, table_id, table_type, user_id, schema, filter, columns, true,
+    )
+    .await
+}
+
+async fn scan_parquet_files_internal_async(
+    core: &TableProviderCore,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    schema: SchemaRef,
+    filter: Option<&Expr>,
+    columns: Option<&[String]>,
+    record_visited_files: bool,
+) -> Result<ParquetScanResult, KalamDbError> {
     let scope_label = user_id
         .map(|uid| format!("user={}", uid.as_str()))
         .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
@@ -44,7 +101,10 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
                 table_id,
                 scope_label
             );
-            return Ok(RecordBatch::new_empty(schema));
+            return Ok(ParquetScanResult {
+                batch: RecordBatch::new_empty(schema),
+                stats: ParquetScanStats::default(),
+            });
         }
     }
 
@@ -155,7 +215,7 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
         _ => None,
     };
 
-    let (combined, (total_batches, skipped, scanned)) = planner
+    let (combined, stats) = planner
         .scan_parquet_files_async(
             manifest_entry.as_ref().map(|entry| &entry.manifest),
             storage_cached,
@@ -167,6 +227,7 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
             schema.clone(),
             core.services.schema_registry.as_ref(),
             columns,
+            record_visited_files,
         )
         .await?;
 
@@ -175,24 +236,27 @@ pub(crate) async fn scan_parquet_files_as_batch_async(
          rows={} use_degraded_mode={}",
         table_id,
         scope_label,
-        total_batches,
-        skipped,
-        scanned,
+        stats.total_files,
+        stats.skipped_files,
+        stats.scanned_files,
         combined.num_rows(),
         use_degraded_mode
     );
 
-    if total_batches > 0 {
+    if stats.total_files > 0 {
         log::trace!(
             "[Manifest Pruning] table={} {} batches_total={} skipped={} scanned={} rows={}",
             table_id,
             scope_label,
-            total_batches,
-            skipped,
-            scanned,
+            stats.total_files,
+            stats.skipped_files,
+            stats.scanned_files,
             combined.num_rows()
         );
     }
 
-    Ok(combined)
+    Ok(ParquetScanResult {
+        batch: combined,
+        stats,
+    })
 }

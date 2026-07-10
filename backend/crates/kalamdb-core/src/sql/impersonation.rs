@@ -79,7 +79,9 @@ impl SqlImpersonationService {
         actor_role: Role,
         target_user: &str,
     ) -> Result<UserId, KalamDbError> {
-        let target_user_id = UserId::from(target_user);
+        let target_user_id = UserId::try_new(target_user).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("invalid EXECUTE AS user id: {}", error))
+        })?;
         let target_role = self
             .app_context
             .system_tables()
@@ -104,7 +106,7 @@ impl SqlImpersonationService {
             "EXECUTE AS USER is not authorized: actor '{}' with role {:?} cannot target '{}' with role {:?}",
             actor_user_id.as_str(),
             actor_role,
-            target_user,
+            target_user_id.as_str(),
             target_role
         )))
     }

@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Compact realtime dashboard showing live SQL subscriptions with the KalamDB TypeScript SDK",
   "scripts": {
+    "kalam:dev": "kalam dev",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

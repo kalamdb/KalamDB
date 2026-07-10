@@ -32,7 +32,7 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -41,6 +41,8 @@ use kalam_client::{
     Result, UserId,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::fs_atomic::{self, FileReadPolicy, FileWriteOptions};
 
 mod path;
 
@@ -116,23 +118,13 @@ impl FileCredentialStore {
 
     /// Load credentials from disk into memory cache
     fn load_from_disk(&mut self) -> kalam_client::Result<()> {
-        if !self.file_path.exists() {
-            // No file yet, start with empty cache
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(&self.file_path, FileReadPolicy::LocalSecrets)
+                .map_err(map_credentials_read_error(&self.file_path))?
+        else {
             self.cache.clear();
             return Ok(());
-        }
-
-        let contents = fs::read_to_string(&self.file_path).map_err(|e| {
-            let msg = format!(
-                "\n╭─ Cannot Read Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: \
-                 {}\n│\n╰─ How to Fix:\n\nOption 1: Check file permissions\nOption 2: Delete and \
-                 re-authenticate\n───────────────────────────────────\ndel \"{}\"\nkalam login\n",
-                self.file_path.display(),
-                e,
-                self.file_path.display()
-            );
-            kalam_client::KalamLinkError::ConfigurationError(msg)
-        })?;
+        };
 
         let file: CredentialsFile = toml::from_str(&contents).map_err(|e| {
             // Extract just the core error message without all the TOML parser details
@@ -187,28 +179,18 @@ impl FileCredentialStore {
             })?;
         }
 
-        // Write file with secure permissions
-        fs::write(&self.file_path, contents).map_err(|e| {
+        fs_atomic::write_atomic(
+            &self.file_path,
+            contents.as_bytes(),
+            FileWriteOptions::SECRET_FILE,
+        )
+        .map_err(|e| {
             kalam_client::KalamLinkError::ConfigurationError(format!(
                 "Failed to write credentials file at '{}': {}",
                 self.file_path.display(),
                 e
             ))
         })?;
-
-        // Set file permissions to 0600 (owner read/write only) on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let permissions = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(&self.file_path, permissions).map_err(|e| {
-                kalam_client::KalamLinkError::ConfigurationError(format!(
-                    "Failed to set file permissions for '{}': {}",
-                    self.file_path.display(),
-                    e
-                ))
-            })?;
-        }
 
         Ok(())
     }
@@ -225,6 +207,22 @@ impl FileCredentialStore {
     ) -> kalam_client::Result<Option<Credentials>> {
         let instance = format!("kalam-{env_name}");
         self.get_credentials(&instance)
+    }
+}
+
+fn map_credentials_read_error(
+    path: &Path,
+) -> impl FnOnce(io::Error) -> kalam_client::KalamLinkError + '_ {
+    move |error| {
+        let msg = format!(
+            "\n╭─ Cannot Read Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: \
+             {}\n│\n╰─ How to Fix:\n\nOption 1: Check file permissions\nOption 2: Delete and \
+             re-authenticate\n───────────────────────────────────\ndel \"{}\"\nkalam login\n",
+            path.display(),
+            error,
+            path.display()
+        );
+        kalam_client::KalamLinkError::ConfigurationError(msg)
     }
 }
 

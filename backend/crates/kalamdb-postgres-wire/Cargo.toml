@@ -1,0 +1,36 @@
+[package]
+name = "kalamdb-postgres-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PostgreSQL wire protocol adapter for KalamDB"
+keywords = ["kalamdb", "postgres", "wire"]
+categories = ["database"]
+
+[dependencies]
+async-trait = { workspace = true }
+arrow = { workspace = true }
+futures-util = { workspace = true }
+kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-backend = { path = "../kalamdb-backend" }
+kalamdb-auth = { path = "../kalamdb-auth", default-features = false }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
+sqlparser = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+pgwire = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+kalamdb-system = { path = "../kalamdb-system" }
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-postgres = { workspace = true }
+
+[lib]
+name = "kalamdb_postgres_wire"
+path = "src/lib.rs"
+doctest = false

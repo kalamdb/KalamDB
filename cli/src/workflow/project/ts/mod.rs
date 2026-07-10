@@ -8,8 +8,8 @@ pub mod package_manager;
 pub mod templates;
 
 pub use init::{
-    apply_scaffold, install_dependencies, is_enabled, resolve_package_manager, resolve_template,
-    SCHEMA_TARGET_OUTPUT, SKIP_PACKAGE_INSTALL_ENV,
+    apply_scaffold, install_dependencies, is_enabled, resolve_package_manager, resolve_starter,
+    ProjectStarter, SCHEMA_TARGET_OUTPUT, SKIP_PACKAGE_INSTALL_ENV,
 };
 pub use package_manager::{
     default_package_manager, detect_installed_package_managers, detect_invoking_package_manager,

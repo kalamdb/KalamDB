@@ -4,14 +4,17 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use datafusion_common::ScalarValue;
 use kalamdb_auth::{create_and_sign_token, services::unified::init_auth_config};
+use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::record_batch_to_json_rows,
     models::{pg_operations::InsertRequest, rows::Row, KalamCellValue, TransactionId, UserId},
-    TableType,
+    Role as CommonsRole, TableType,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
-    app_context::AppContext, operations::service::OperationService, sql::context::ExecutionResult,
+    app_context::AppContext,
+    operations::service::OperationService,
+    sql::context::{ExecutionContext, ExecutionResult},
     transactions::ExecutionOwnerKey,
 };
 use kalamdb_pg::{
@@ -22,7 +25,7 @@ use kalamdb_raft::RaftExecutor;
 use kalamdb_system::{providers::storages::models::StorageMode, AuthType, Role, User};
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_shared_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
+    create_shared_table, execute_err, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
     request_transaction_coordinator, request_transaction_state, row, unique_namespace,
 };
 use tonic::Request;
@@ -124,7 +127,7 @@ async fn open_session(
     .expect("create bridge bearer token");
 
     let mut request = Request::new(OpenSessionRequest {
-        session_id: String::new(),
+        session_id: session_label.to_string(),
         current_schema: None,
     });
     request.metadata_mut().insert(
@@ -138,6 +141,62 @@ async fn open_session(
         .expect("open session succeeds")
         .into_inner()
         .session_id
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn system_sessions_lists_extension_and_wire_origins() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let executor_handle = app_ctx.executor();
+    let raft_executor = executor_handle
+        .as_any()
+        .downcast_ref::<RaftExecutor>()
+        .expect("raft executor available");
+    let pg_service = raft_executor.pg_service().expect("pg service is wired");
+
+    let extension_session_id = open_session(&app_ctx, &pg_service, "pg-777-feedface").await;
+    app_ctx
+        .backend_session_manager()
+        .open_session(
+            kalamdb_commons::models::SessionOrigin::WireProtocol,
+            "019dabfa-1538-7c23-8e61-de751d8c1c38",
+            BackendAuth::new(UserId::new("wire_user"), CommonsRole::User, "password", i64::MAX),
+            Some("public".to_string()),
+            Some("127.0.0.1:6543".to_string()),
+        )
+        .expect("open mock wire session");
+
+    let rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT session_id, origin, backend_pid, authenticated_user_id FROM system.sessions \
+             ORDER BY origin, session_id",
+        )
+        .await,
+    );
+
+    assert_eq!(rows.len(), 2);
+    let extension_row = rows
+        .iter()
+        .find(|row| string_field(row, "session_id") == extension_session_id)
+        .expect("extension row present");
+    assert_eq!(string_field(extension_row, "origin"), "extension_bridge");
+    assert_eq!(i64_field(extension_row, "backend_pid"), 777);
+    assert_eq!(
+        string_field(extension_row, "authenticated_user_id"),
+        "pg_777_feedface_bridge_dba"
+    );
+
+    let wire_row = rows
+        .iter()
+        .find(|row| string_field(row, "origin") == "wire_protocol")
+        .expect("wire row present");
+    assert_eq!(string_field(wire_row, "session_id"), "019dabfa-1538-7c23-8e61-de751d8c1c38");
+    assert_eq!(optional_string_field(wire_row, "backend_pid"), None);
+    assert_eq!(string_field(wire_row, "authenticated_user_id"), "wire_user");
 }
 
 async fn begin_transaction(service: &KalamPgService, session_id: &str) -> String {
@@ -254,6 +313,58 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
             .await,
     );
     assert!(cleared_rows.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn sql_request_transactions_do_not_create_session_rows() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let table_id =
+        create_shared_table(&app_ctx, &unique_namespace("system_sessions_sql_request"), "items")
+            .await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let request_ctx = request_exec_ctx(&app_ctx, "sessions-view-sql-request");
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+
+    execute_ok(&executor, &request_ctx, "BEGIN").await;
+    execute_ok(&executor, &request_ctx, &insert_sql(&table_id, 1, "committed")).await;
+    execute_ok(&executor, &request_ctx, "COMMIT").await;
+
+    execute_ok(&executor, &request_ctx, "BEGIN").await;
+    execute_ok(&executor, &request_ctx, &insert_sql(&table_id, 2, "rolled-back")).await;
+    execute_ok(&executor, &request_ctx, "ROLLBACK").await;
+
+    let session_rows = json_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT session_id FROM system.sessions ORDER BY session_id",
+        )
+        .await,
+    );
+    assert!(session_rows.is_empty());
+}
+
+#[tokio::test]
+#[ntest::timeout(10000)]
+async fn non_admin_cannot_read_system_sessions() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let user_ctx = ExecutionContext::new(
+        UserId::new("regular_sessions_user"),
+        CommonsRole::User,
+        app_ctx.base_session_context(),
+    );
+
+    let error = execute_err(&executor, &user_ctx, "SELECT session_id FROM system.sessions").await;
+
+    assert!(
+        error.contains("permission")
+            || error.contains("denied")
+            || error.contains("not authorized")
+            || error.contains("system"),
+        "expected system.sessions access denial, got: {error}"
+    );
 }
 
 #[tokio::test]

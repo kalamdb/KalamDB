@@ -18,6 +18,7 @@ pub mod config;
 pub mod credentials;
 pub mod error;
 pub mod formatter;
+pub mod fs_atomic;
 pub mod history;
 pub mod history_menu;
 pub mod output;

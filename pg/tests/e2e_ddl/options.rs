@@ -107,8 +107,8 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
 
     let metadata = env
         .kalamdb_sql(&format!(
-            "SELECT table_type, storage_id, options FROM system.tables WHERE namespace_id = \
-             '{ns}' AND table_name = '{table}'"
+            "SELECT kdb_table_type, kdb_storage_id, kdb_options FROM information_schema.tables \
+             WHERE kdb_namespace_id = '{ns}' AND table_name = '{table}'"
         ))
         .await;
 
@@ -119,7 +119,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
         .and_then(|rows| rows.first())
         .and_then(|row| row.as_array())
         .cloned()
-        .expect("system.tables metadata row");
+        .expect("information_schema.tables metadata row");
 
     let table_type = row.first().and_then(|value| value.as_str()).unwrap_or("");
     let storage_id = row.get(1).and_then(|value| value.as_str()).unwrap_or("");
@@ -132,7 +132,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
             && options.contains("Public")
             && options.contains("storage_id")
             && options.contains("local"),
-        "forwarded options should be persisted in system.tables.options: {options}"
+        "forwarded options should be persisted in information_schema.tables kdb_options: {options}"
     );
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))
@@ -166,8 +166,8 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
 
     let metadata = env
         .kalamdb_sql(&format!(
-            "SELECT table_type, options FROM system.tables WHERE namespace_id = '{ns}' AND \
-             table_name = '{table}'"
+            "SELECT kdb_table_type, kdb_options FROM information_schema.tables WHERE \
+             kdb_namespace_id = '{ns}' AND table_name = '{table}'"
         ))
         .await;
 
@@ -178,7 +178,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
         .and_then(|rows| rows.first())
         .and_then(|row| row.as_array())
         .cloned()
-        .expect("stream system.tables metadata row");
+        .expect("stream information_schema.tables metadata row");
 
     let table_type = row.first().and_then(|value| value.as_str()).unwrap_or("");
     let options = row.get(1).and_then(|value| value.as_str()).unwrap_or("");
@@ -186,7 +186,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_stream_ttl() {
     assert!(table_type.eq_ignore_ascii_case("stream"));
     assert!(
         options.contains("ttl_seconds") && options.contains("45"),
-        "stream TTL should be persisted in system.tables.options: {options}"
+        "stream TTL should be persisted in information_schema.tables kdb_options: {options}"
     );
 
     pg.batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {ns}.{table};"))

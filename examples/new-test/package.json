@@ -1,0 +1,25 @@
+{
+  "name": "kalamdb-summarizer-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Small worker-only example using runConsumer to enrich rows through a topic route",
+  "scripts": {
+    "start": "tsx src/agent.ts",
+    "test": "node --import tsx --test tests/summarizer.integration.test.ts",
+    "setup": "node setup.mjs"
+  },
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  }
+}

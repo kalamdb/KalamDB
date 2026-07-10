@@ -12,7 +12,8 @@ use kalamdb_commons::{
     },
     NamespaceId, TableType,
 };
-use kalamdb_pg::{LivePgTransaction, OperationExecutor};
+use kalamdb_backend::session::LiveSessionTransaction;
+use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::SessionUserContext;
 use kalamdb_transactions::{
     build_insert_staged_mutations, TransactionQueryContext, TransactionQueryExtension,
@@ -231,14 +232,14 @@ impl OperationExecutor for OperationService {
     async fn active_transaction(
         &self,
         session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, Status> {
+    ) -> Result<Option<LiveSessionTransaction>, Status> {
         let Some((transaction_id, handle)) =
             self.active_transaction_handle_for_session(Some(session_id))?
         else {
             return Ok(None);
         };
 
-        Ok(Some(LivePgTransaction::new(
+        Ok(Some(LiveSessionTransaction::new(
             session_id.to_string(),
             transaction_id,
             handle.state,

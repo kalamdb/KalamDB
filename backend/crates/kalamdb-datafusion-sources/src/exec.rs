@@ -23,7 +23,10 @@ use datafusion::{
     error::{DataFusionError, Result as DataFusionResult},
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::PhysicalExpr,
-    physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
+    physical_plan::{
+        metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
+        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+    },
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
@@ -598,6 +601,122 @@ impl<'a> ParquetBatchDecoder<'a> {
 /// shared substrate can share an `Arc<Schema>` instead of cloning it.
 pub type SharedSchema = Arc<arrow_schema::Schema>;
 
+const MAX_RECORDED_SCAN_FILES: usize = 16;
+
+/// Runtime diagnostics recorded by deferred scan sources.
+///
+/// Values are optional so sources only report measurements they can collect
+/// cheaply and accurately.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeferredScanDiagnostics {
+    pub hot_rows_scanned: Option<usize>,
+    pub cold_rows_scanned: Option<usize>,
+    pub cold_files_total: Option<usize>,
+    pub cold_files_skipped: Option<usize>,
+    pub cold_files_scanned: Option<usize>,
+    pub cold_files: Vec<String>,
+}
+
+/// A materialized deferred batch with optional scan diagnostics.
+#[derive(Debug)]
+pub struct DeferredBatchOutput {
+    pub batch: RecordBatch,
+    pub diagnostics: DeferredScanDiagnostics,
+}
+
+impl DeferredBatchOutput {
+    pub fn new(batch: RecordBatch) -> Self {
+        Self {
+            batch,
+            diagnostics: DeferredScanDiagnostics::default(),
+        }
+    }
+
+    pub fn with_diagnostics(mut self, diagnostics: DeferredScanDiagnostics) -> Self {
+        self.diagnostics = diagnostics;
+        self
+    }
+}
+
+#[derive(Clone)]
+struct DeferredBatchMetrics {
+    set: Arc<ExecutionPlanMetricsSet>,
+    output_rows: Count,
+    output_batches: Count,
+    hot_rows_scanned: Count,
+    cold_rows_scanned: Count,
+    cold_files_total: Count,
+    cold_files_skipped: Count,
+    cold_files_scanned: Count,
+}
+
+impl DeferredBatchMetrics {
+    fn new() -> Self {
+        let set = Arc::new(ExecutionPlanMetricsSet::new());
+        let output_rows = MetricBuilder::new(&set).global_counter("output_rows");
+        let output_batches = MetricBuilder::new(&set).global_counter("output_batches");
+        let hot_rows_scanned = MetricBuilder::new(&set).global_counter("hot_rows_scanned");
+        let cold_rows_scanned = MetricBuilder::new(&set).global_counter("cold_rows_scanned");
+        let cold_files_total = MetricBuilder::new(&set).global_counter("cold_files_total");
+        let cold_files_skipped = MetricBuilder::new(&set).global_counter("cold_files_skipped");
+        let cold_files_scanned = MetricBuilder::new(&set).global_counter("cold_files_scanned");
+
+        Self {
+            set,
+            output_rows,
+            output_batches,
+            hot_rows_scanned,
+            cold_rows_scanned,
+            cold_files_total,
+            cold_files_skipped,
+            cold_files_scanned,
+        }
+    }
+
+    fn record(&self, output: &DeferredBatchOutput) {
+        self.output_rows.add(output.batch.num_rows());
+        self.output_batches.add(1);
+
+        let diagnostics = &output.diagnostics;
+        if let Some(value) = diagnostics.hot_rows_scanned {
+            self.hot_rows_scanned.add(value);
+        }
+        if let Some(value) = diagnostics.cold_rows_scanned {
+            self.cold_rows_scanned.add(value);
+        }
+        if let Some(value) = diagnostics.cold_files_total {
+            self.cold_files_total.add(value);
+        }
+        if let Some(value) = diagnostics.cold_files_skipped {
+            self.cold_files_skipped.add(value);
+        }
+        if let Some(value) = diagnostics.cold_files_scanned {
+            self.cold_files_scanned.add(value);
+        }
+
+        let recorded_files = diagnostics.cold_files.len().min(MAX_RECORDED_SCAN_FILES);
+        for file in diagnostics.cold_files.iter().take(recorded_files) {
+            MetricBuilder::new(&self.set)
+                .with_new_label("file", file.clone())
+                .global_counter("cold_file_visited")
+                .add(1);
+        }
+
+        let truncated_by_source =
+            diagnostics.cold_files.len().saturating_sub(MAX_RECORDED_SCAN_FILES);
+        let truncated_by_scan_count = diagnostics
+            .cold_files_scanned
+            .unwrap_or(0)
+            .saturating_sub(recorded_files);
+        let truncated = truncated_by_source.max(truncated_by_scan_count);
+        if truncated > 0 {
+            MetricBuilder::new(&self.set)
+                .global_counter("cold_file_visited_truncated")
+                .add(truncated);
+        }
+    }
+}
+
 /// Deferred source that produces a single [`RecordBatch`] during
 /// [`ExecutionPlan::execute`] instead of doing source I/O during planning.
 ///
@@ -608,9 +727,17 @@ pub type SharedSchema = Arc<arrow_schema::Schema>;
 pub trait DeferredBatchSource: Send + Sync {
     fn source_name(&self) -> &'static str;
 
+    fn plan_details(&self) -> Option<&'static str> {
+        None
+    }
+
     fn schema(&self) -> SchemaRef;
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch>;
+
+    async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
+        Ok(DeferredBatchOutput::new(self.produce_batch().await?))
+    }
 }
 
 /// Shared execution node for one-shot sources that defer batch creation until
@@ -618,12 +745,26 @@ pub trait DeferredBatchSource: Send + Sync {
 pub struct DeferredBatchExec {
     source: Arc<dyn DeferredBatchSource>,
     properties: Arc<PlanProperties>,
+    metrics: Option<DeferredBatchMetrics>,
 }
 
 impl DeferredBatchExec {
     pub fn new(source: Arc<dyn DeferredBatchSource>) -> Self {
         let properties = Arc::new(single_partition_plan_properties(source.schema()));
-        Self { source, properties }
+        Self {
+            source,
+            properties,
+            metrics: None,
+        }
+    }
+
+    pub fn new_with_scan_diagnostics(source: Arc<dyn DeferredBatchSource>) -> Self {
+        let properties = Arc::new(single_partition_plan_properties(source.schema()));
+        Self {
+            source,
+            properties,
+            metrics: Some(DeferredBatchMetrics::new()),
+        }
     }
 }
 
@@ -639,9 +780,19 @@ impl DisplayAs for DeferredBatchExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match t {
             DisplayFormatType::Default | DisplayFormatType::Verbose => {
-                write!(f, "DeferredBatchExec: source={}", self.source.source_name())
+                write!(f, "DeferredBatchExec: source={}", self.source.source_name())?;
+                if let Some(details) = self.source.plan_details() {
+                    write!(f, ", {details}")?;
+                }
+                Ok(())
             },
-            DisplayFormatType::TreeRender => write!(f, "source={}", self.source.source_name()),
+            DisplayFormatType::TreeRender => {
+                write!(f, "source={}", self.source.source_name())?;
+                if let Some(details) = self.source.plan_details() {
+                    write!(f, ", {details}")?;
+                }
+                Ok(())
+            },
         }
     }
 }
@@ -684,6 +835,20 @@ impl ExecutionPlan for DeferredBatchExec {
 
         let source = Arc::clone(&self.source);
         let schema = source.schema();
-        Ok(one_shot_batch_stream(schema, async move { source.produce_batch().await }))
+        let metrics = self.metrics.clone();
+        Ok(one_shot_batch_stream(schema, async move {
+            match metrics {
+                Some(metrics) => {
+                    let output = source.produce_batch_with_diagnostics().await?;
+                    metrics.record(&output);
+                    Ok(output.batch)
+                },
+                None => source.produce_batch().await,
+            }
+        }))
+    }
+
+    fn metrics(&self) -> Option<MetricsSet> {
+        self.metrics.as_ref().map(|metrics| metrics.set.clone_inner())
     }
 }

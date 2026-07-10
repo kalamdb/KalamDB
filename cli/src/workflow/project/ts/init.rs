@@ -9,8 +9,8 @@ use crate::{
     workflow::{
         display_project_path,
         project::{
-            guidance::init_repository_templates_unavailable,
             prompts::prompt_select,
+            repository_examples::{self, RepositoryExample},
             scaffold,
             templates::{render_template_pairs_for_path, EmbeddedTemplate},
             ts::{
@@ -28,10 +28,19 @@ pub const SKIP_PACKAGE_INSTALL_ENV: &str = "KALAM_TEST_SKIP_PACKAGE_INSTALL";
 
 pub const SCHEMA_TARGET_OUTPUT: &str = "src/generated/kalam.ts";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TemplateSource {
-    Builtin,
-    Repository,
+#[derive(Debug, Clone, Copy)]
+pub enum ProjectStarter {
+    Embedded(&'static EmbeddedTemplate),
+    Repository(&'static RepositoryExample),
+}
+
+impl ProjectStarter {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Embedded(template) => template.id,
+            Self::Repository(example) => example.id,
+        }
+    }
 }
 
 pub fn is_enabled(languages: &[String]) -> bool {
@@ -57,62 +66,70 @@ pub fn resolve_package_manager(
     Ok(Some(manager))
 }
 
-pub fn resolve_template(
+pub fn resolve_starter(
     languages: &[String],
     template_id: Option<&str>,
     non_interactive: bool,
     color: bool,
-) -> Result<Option<&'static EmbeddedTemplate>> {
+) -> Result<Option<ProjectStarter>> {
     if !is_enabled(languages) {
         return Ok(None);
     }
 
     if let Some(template_id) = template_id.map(str::trim).filter(|value| !value.is_empty()) {
-        return templates::resolve(Some(template_id)).map(Some);
+        if let Ok(template) = templates::resolve(Some(template_id)) {
+            return Ok(Some(ProjectStarter::Embedded(template)));
+        }
+        if let Some(example) = repository_examples::find(template_id) {
+            return Ok(Some(ProjectStarter::Repository(example)));
+        }
+        return Err(CLIError::ConfigurationError(format!(
+            "unknown project template or example '{template_id}'"
+        )));
     }
 
     if non_interactive {
-        return templates::resolve(Some(DEFAULT_TEMPLATE)).map(Some);
+        return templates::resolve(Some(DEFAULT_TEMPLATE))
+            .map(ProjectStarter::Embedded)
+            .map(Some);
     }
 
-    let source_options = [
-        SelectOption::described("Built-in templates", "Use templates bundled with the CLI"),
-        SelectOption::disabled(
-            "From repository",
-            "Load a template from a local path (coming soon)",
-        ),
-    ];
-    let source_selected = prompt_select("Template source", &source_options, 0, color)?;
-    let source = match source_selected {
-        0 => TemplateSource::Builtin,
-        _ => TemplateSource::Repository,
-    };
-
-    if matches!(source, TemplateSource::Repository) {
-        return Err(CLIError::ConfigurationError(init_repository_templates_unavailable()));
-    }
-
-    let available = templates::available();
-    if available.is_empty() {
+    let embedded_templates = templates::available();
+    let repository_examples = repository_examples::available();
+    if embedded_templates.is_empty() && repository_examples.is_empty() {
         return Err(CLIError::ConfigurationError(init_no_templates()));
     }
 
-    let template_options: Vec<SelectOption<'_>> = available
-        .iter()
-        .map(|template| SelectOption::described(template.id, template.description))
-        .collect();
-    let default_index = available
+    let template_options = project_sample_options(&embedded_templates);
+    let default_index = embedded_templates
         .iter()
         .position(|template| template.id == DEFAULT_TEMPLATE)
         .unwrap_or(0);
     let selected = prompt_select("Project template", &template_options, default_index, color)?;
-    let template = available[selected];
+    let starter = if selected < embedded_templates.len() {
+        ProjectStarter::Embedded(embedded_templates[selected])
+    } else {
+        ProjectStarter::Repository(&repository_examples[selected - embedded_templates.len()])
+    };
     eprintln!(
         "{} {}",
         terminal_ui::prompt_label("Template:", color),
-        terminal_ui::style_value(template.id, color)
+        terminal_ui::style_value(starter.id(), color)
     );
-    Ok(Some(template))
+    Ok(Some(starter))
+}
+
+fn project_sample_options(available: &[&'static EmbeddedTemplate]) -> Vec<SelectOption<'static>> {
+    let mut options: Vec<SelectOption<'static>> = available
+        .iter()
+        .map(|template| SelectOption::described(template.id, template.description))
+        .collect();
+    options.extend(
+        repository_examples::available()
+            .iter()
+            .map(|example| SelectOption::described(example.id, example.description)),
+    );
+    options
 }
 
 pub fn install_dependencies<F>(
@@ -202,6 +219,10 @@ mod tests {
     use std::{fs, path::PathBuf};
     use tempfile::TempDir;
 
+    fn block_on_init<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new().expect("tokio runtime").block_on(future)
+    }
+
     #[test]
     fn init_typescript_project_requests_package_install() {
         let available = detect_installed_package_managers();
@@ -213,7 +234,7 @@ mod tests {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             let mut observed: Option<(PathBuf, PackageManager)> = None;
-            run_init_with_installer(
+            block_on_init(run_init_with_installer(
                 InitOptions {
                     name: Some("demo-ts".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -230,7 +251,7 @@ mod tests {
                     observed = Some((root.to_path_buf(), selected));
                     Ok(())
                 },
-            )
+            ))
             .expect("init should succeed");
 
             let (root, selected) =
@@ -255,7 +276,7 @@ mod tests {
         crate::workflow::test_support::without_test_env_var(SKIP_PACKAGE_INSTALL_ENV, || {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
-            run_init_with_installer(
+            block_on_init(run_init_with_installer(
                 InitOptions {
                     name: Some("demo-ts".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -269,7 +290,7 @@ mod tests {
                 },
                 &output,
                 |_, _| Ok(()),
-            )
+            ))
             .expect("init should succeed");
 
             let kalam_toml = fs::read_to_string(temp.path().join("kalam.toml")).unwrap();
@@ -293,7 +314,7 @@ mod tests {
             let temp = TempDir::new().unwrap();
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             let mut called = false;
-            run_init_with_installer(
+            block_on_init(run_init_with_installer(
                 InitOptions {
                     name: Some("demo-ts".into()),
                     schema_mode: Some(SchemaMode::Sql),
@@ -310,11 +331,46 @@ mod tests {
                     called = true;
                     Ok(())
                 },
-            )
+            ))
             .expect("init should succeed");
 
             assert!(!called, "install should be skipped when env var is set");
         });
+    }
+
+    #[test]
+    fn project_sample_options_use_embedded_template_metadata() {
+        let available = crate::workflow::project::ts::templates::available();
+        let options = project_sample_options(&available);
+        assert!(
+            options.iter().any(|option| option.label == "simple-live"
+                && option.description == Some("Live subscription starter with sample inserts")),
+            "expected simple-live sample option to come from embedded template metadata"
+        );
+    }
+
+    #[test]
+    fn project_sample_options_include_repository_examples() {
+        let available = crate::workflow::project::ts::templates::available();
+        let options = project_sample_options(&available);
+        assert!(
+            options.iter().any(|option| option.label == "chat-with-ai"
+                && option.description == Some("Topic-driven React chat with an agent worker")),
+            "expected chat-with-ai repository example to be offered during init"
+        );
+    }
+
+    #[test]
+    fn explicit_template_can_select_repository_example() {
+        let starter =
+            resolve_starter(&["typescript".to_string()], Some("chat-with-ai"), true, false)
+                .expect("starter should resolve")
+                .expect("starter should be selected");
+
+        assert!(matches!(
+            starter,
+            ProjectStarter::Repository(example) if example.id == "chat-with-ai"
+        ));
     }
 
     #[test]

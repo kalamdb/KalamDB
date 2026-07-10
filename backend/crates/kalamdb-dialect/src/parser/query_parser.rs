@@ -207,18 +207,17 @@ impl QueryParser {
     pub fn resolve_where_clause_placeholders(
         where_clause: &str,
         user_id: &kalamdb_commons::models::UserId,
-    ) -> String {
+    ) -> Result<String, QueryParseError> {
         let escaped_user_id = user_id.as_str().replace('\'', "''");
         let dialect = KalamDbDialect::default();
-        let Ok(mut expr) = parse_sql_expression(where_clause, &dialect) else {
-            return where_clause.to_string();
-        };
+        let mut expr = parse_sql_expression(where_clause, &dialect)
+            .map_err(|error| QueryParseError::ParseError(error.to_string()))?;
 
         let mut visitor = CurrentUserPlaceholderResolver {
             replacement: Expr::value(Value::SingleQuotedString(escaped_user_id)),
         };
         let _ = VisitMut::visit(&mut expr, &mut visitor);
-        expr.to_string()
+        Ok(expr.to_string())
     }
 
     /// Extract projection columns from a parsed Query AST
@@ -676,7 +675,8 @@ mod tests {
         let resolved = QueryParser::resolve_where_clause_placeholders(
             "owner_id = CURRENT_USER AND body = 'CURRENT_USER() literal'",
             &kalamdb_commons::models::UserId::from("user_1"),
-        );
+        )
+        .expect("placeholder resolution");
 
         assert_eq!(resolved, "owner_id = 'user_1' AND body = 'CURRENT_USER() literal'");
     }
@@ -824,7 +824,8 @@ mod tests {
         let resolved = QueryParser::resolve_where_clause_placeholders(
             "category = 'CURRENT_USER' AND owner_id = CURRENT_USER",
             &kalamdb_commons::models::UserId::from("eve"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'CURRENT_USER'"),
             "String literal must NOT be replaced; got: {resolved}"
@@ -850,7 +851,8 @@ mod tests {
         let resolved = QueryParser::resolve_where_clause_placeholders(
             "owner_id = CURRENT_USER AND delegate_id = CURRENT_USER",
             &kalamdb_commons::models::UserId::from("carol"),
-        );
+        )
+        .expect("placeholder resolution");
         assert_eq!(
             resolved.matches("'carol'").count(),
             2,
@@ -870,7 +872,8 @@ mod tests {
         let resolved = QueryParser::resolve_where_clause_placeholders(
             "owner_id = CURRENT_USER_ID()",
             &kalamdb_commons::models::UserId::from("frank"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'frank'"),
             "CURRENT_USER_ID() must be replaced; got: {resolved}"
@@ -882,18 +885,16 @@ mod tests {
     }
 
     #[test]
-    fn test_security_placeholder_unparseable_filter_returned_unchanged() {
-        // If the expression cannot be parsed (truncated / malformed), it is
-        // returned verbatim rather than partially rewritten.  Partial rewrites
-        // could corrupt semantics or leak partial user data in error messages.
+    fn test_security_placeholder_unparseable_filter_rejected() {
         let broken = "user_id = CURRENT_USER AND (";
-        let resolved = QueryParser::resolve_where_clause_placeholders(
+        let err = QueryParser::resolve_where_clause_placeholders(
             broken,
             &kalamdb_commons::models::UserId::from("grace"),
-        );
-        assert_eq!(
-            resolved, broken,
-            "Unparseable filter must be returned unchanged; got: {resolved}"
+        )
+        .expect_err("unparseable filter must be rejected");
+        assert!(
+            matches!(err, QueryParseError::ParseError(_)),
+            "Unparseable filter must fail parse; got: {err:?}"
         );
     }
 
@@ -904,7 +905,8 @@ mod tests {
         let resolved = QueryParser::resolve_where_clause_placeholders(
             "(owner_id = CURRENT_USER() OR shared = true) AND active = true",
             &kalamdb_commons::models::UserId::from("heidi"),
-        );
+        )
+        .expect("placeholder resolution");
         assert!(
             resolved.contains("'heidi'"),
             "CURRENT_USER() inside OR must be replaced; got: {resolved}"

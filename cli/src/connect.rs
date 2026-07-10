@@ -13,8 +13,7 @@ use kalam_client::{
 use url::Url;
 
 use kalam_cli::workflow::project::{
-    identifiers::preferred_user_label,
-    resolve::resolve_project_server_url_for_instance,
+    identifiers::preferred_user_label, resolve::resolve_project_server_url_for_instance,
 };
 
 use crate::args::Cli;
@@ -201,13 +200,16 @@ fn resolve_server_target(
         (Some(url), _) => (url, ServerUrlSource::CliUrl),
         (None, Some(host)) => (format!("http://{}:{}", host, cli.port), ServerUrlSource::HostPort),
         (None, None) => {
-            if let Some(url) =
-                resolve_project_server_url_for_instance(std::env::current_dir().unwrap_or_default().as_path(), &cli.instance)
-            {
+            if let Some(url) = resolve_project_server_url_for_instance(
+                std::env::current_dir().unwrap_or_default().as_path(),
+                &cli.instance,
+            ) {
                 (url, ServerUrlSource::ProjectConfig)
-            } else if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-            })? {
+            } else if let Some(creds) =
+                credential_store.get_credentials(&cli.instance).map_err(|e| {
+                    CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+                })?
+            {
                 let creds_url = creds.get_server_url();
                 if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
                     (creds_url.to_string(), ServerUrlSource::StoredCredentials)

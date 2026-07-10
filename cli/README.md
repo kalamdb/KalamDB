@@ -199,7 +199,7 @@ INFO:
 
 ```bash
 # Run a single SQL command and exit
-kalam --command "SELECT * FROM system.tables LIMIT 5"
+kalam --command "SELECT * FROM information_schema.tables LIMIT 5"
 
 # Run SQL from a file and exit
 kalam --file setup.sql
@@ -409,7 +409,7 @@ The CLI provides beautiful SQL syntax highlighting with:
 
 Press **TAB** to auto-complete:
 - SQL keywords (SELECT, INSERT, UPDATE, etc.)
-- Table names (loaded from `system.tables`)
+- Table names (loaded from `information_schema.tables`)
 - Column names (context-aware after table name)
 - SQL types (INT, TEXT, TIMESTAMP, etc.)
 - CLI commands (\help, \quit, etc.)

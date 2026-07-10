@@ -25,6 +25,12 @@ use kalamdb_core::sql::{
 use kalamdb_dba::initialize_dba_namespace;
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
+use kalamdb_postgres_wire::{
+    query::KalamQueryHandler,
+    server::{run_listener_until_shutdown, KalamWireHandlers, PostgresWireListenerConfig},
+    sql_exec::WireSqlExecutor,
+    startup::KalamStartupHandler,
+};
 use kalamdb_store::open_storage_backend;
 use kalamdb_system::providers::storages::models::StorageMode;
 use log::{debug, info, warn};
@@ -540,8 +546,14 @@ fn log_server_started(
     } else {
         crate::http_runtime::format_startup_ui_status_plain(config, ui_status)
     };
+    let pgwire_segment = if config.postgres_wire.enabled {
+        let pgwire_addr = format!("{}:{}", config.postgres_wire.host, config.postgres_wire.port);
+        format!(" | PostgreSQL wire on {pgwire_addr}")
+    } else {
+        String::new()
+    };
     let message = format!(
-        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr} | UI: {ui_segment})"
+        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | UI: {ui_segment})"
     );
 
     if crate::http_runtime::should_print_terminal_hyperlinks(config) {
@@ -553,6 +565,69 @@ fn log_server_started(
     }
 
     info!("{message}");
+}
+
+struct PostgresWireListenerHandle {
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl PostgresWireListenerHandle {
+    async fn shutdown(self) {
+        let _ = self.shutdown.send(());
+        if let Err(error) = self.task.await {
+            log::error!("PostgreSQL wire listener task join failed: {}", error);
+        }
+    }
+}
+
+fn spawn_postgres_wire_listener(
+    config: &ServerConfig,
+    components: &ApplicationComponents,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+) -> Option<PostgresWireListenerHandle> {
+    if !config.postgres_wire.enabled {
+        return None;
+    }
+
+    let listener_config = PostgresWireListenerConfig {
+        enabled: config.postgres_wire.enabled,
+        host: config.postgres_wire.host.clone(),
+        port: config.postgres_wire.port,
+        tls_enabled: config.postgres_wire.tls_enabled,
+        tls_cert_path: config.postgres_wire.tls_cert_path.clone(),
+        tls_key_path: config.postgres_wire.tls_key_path.clone(),
+    };
+    let session_manager = app_context.backend_session_manager();
+    let startup_handler = Arc::new(
+        KalamStartupHandler::new(session_manager.clone(), components.user_repo.clone())
+            .with_statement_limits(
+                config.postgres_wire.prepared_statement_limit,
+                config.postgres_wire.portal_limit,
+            ),
+    );
+    let wire_sql_executor = Arc::new(WireSqlExecutor::new(
+        app_context,
+        components.sql_executor.clone(),
+        session_manager,
+    ));
+    let query_handler = Arc::new(KalamQueryHandler::new(wire_sql_executor));
+    let handlers = Arc::new(KalamWireHandlers::new(startup_handler, query_handler));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+    let task = tokio::spawn(async move {
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        if let Err(error) = run_listener_until_shutdown(listener_config, handlers, shutdown).await {
+            log::error!("PostgreSQL wire listener stopped with error: {}", error);
+        }
+    });
+
+    Some(PostgresWireListenerHandle {
+        shutdown: shutdown_tx,
+        task,
+    })
 }
 
 /// Start the HTTP server and manage graceful shutdown.
@@ -611,6 +686,8 @@ pub async fn run(
     )?;
     let ui_status = http_runtime.ui_status();
     debug!("Admin UI: {} (at /ui)", ui_status);
+    let mut postgres_wire_listener =
+        spawn_postgres_wire_listener(config, &components, app_context.clone());
 
     let server = HttpServer::new(move || {
         let runtime = http_runtime.clone();
@@ -720,6 +797,9 @@ pub async fn run(
             if let Err(e) = result {
                 log::error!("Server task failed: {}", e);
             }
+            if let Some(listener) = postgres_wire_listener.take() {
+                listener.shutdown().await;
+            }
         }
         signal = async {
             match shutdown_signal {
@@ -751,6 +831,9 @@ pub async fn run(
 
             // Stop the HTTP server once live connections had a brief chance to close cleanly.
             server_handle.stop(false).await;
+            if let Some(listener) = postgres_wire_listener.take() {
+                listener.shutdown().await;
+            }
 
             info!(
                 "Waiting up to {}s for running jobs to complete...",

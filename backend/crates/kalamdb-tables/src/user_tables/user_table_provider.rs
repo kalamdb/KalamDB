@@ -33,6 +33,7 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
     StorageKey, TableType,
 };
+use kalamdb_datafusion_sources::exec::DeferredScanDiagnostics;
 use kalamdb_datafusion_sources::{
     exec::{resolve_latest_kvs_from_cold_batch, VersionedRow},
     provider::{
@@ -619,6 +620,42 @@ impl UserTableProvider {
         .await
     }
 
+    async fn scan_parquet_files_with_stats_async(
+        &self,
+        user_id: &UserId,
+        filter: Option<&Expr>,
+        columns: Option<&[String]>,
+    ) -> Result<base::ParquetScanResult, KalamDbError> {
+        base::scan_parquet_files_with_stats_async(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            Some(user_id),
+            self.schema_ref(),
+            filter,
+            columns,
+        )
+        .await
+    }
+
+    async fn scan_parquet_files_as_result_async(
+        &self,
+        user_id: &UserId,
+        filter: Option<&Expr>,
+        columns: Option<&[String]>,
+    ) -> Result<base::ParquetScanResult, KalamDbError> {
+        base::scan_parquet_files_as_result_async(
+            &self.core,
+            self.core.table_id(),
+            self.core.table_type(),
+            Some(user_id),
+            self.schema_ref(),
+            filter,
+            columns,
+        )
+        .await
+    }
+
     fn construct_mvcc_row_from_parquet_data(
         &self,
         user_id: &UserId,
@@ -640,7 +677,8 @@ impl UserTableProvider {
         keep_deleted: bool,
         snapshot_commit_seq: Option<u64>,
         fallback_user_id: Option<&UserId>,
-    ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        include_diagnostics: bool,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
         let table_id = self.core.table_id();
@@ -662,6 +700,7 @@ impl UserTableProvider {
         let mut hot_rows_by_user: HashMap<UserId, Vec<(UserTableRowId, UserTableRow)>> =
             HashMap::new();
         let mut user_ids = HashSet::new();
+        let hot_rows_scanned = hot_rows.len();
         for (row_id, row) in hot_rows {
             user_ids.insert(row.user_id.clone());
             hot_rows_by_user.entry(row.user_id.clone()).or_default().push((row_id, row));
@@ -677,16 +716,44 @@ impl UserTableProvider {
 
         let pk_name = self.primary_key_field_name().to_string();
         let mut result = Vec::new();
+        let mut diagnostics = if include_diagnostics {
+            DeferredScanDiagnostics {
+                hot_rows_scanned: Some(hot_rows_scanned),
+                cold_rows_scanned: Some(0),
+                cold_files_total: Some(0),
+                cold_files_skipped: Some(0),
+                cold_files_scanned: Some(0),
+                cold_files: Vec::new(),
+            }
+        } else {
+            DeferredScanDiagnostics::default()
+        };
 
         for user_id in user_ids {
-            // Use async version to avoid blocking the runtime
-            let parquet_batch =
-                self.scan_parquet_files_as_batch_async(&user_id, filter, None).await?;
+            let cold_result = if include_diagnostics {
+                self.scan_parquet_files_with_stats_async(&user_id, filter, None).await?
+            } else {
+                self.scan_parquet_files_as_result_async(&user_id, filter, None).await?
+            };
+            if include_diagnostics {
+                diagnostics.cold_rows_scanned =
+                    Some(diagnostics.cold_rows_scanned.unwrap_or(0) + cold_result.batch.num_rows());
+                diagnostics.cold_files_total = Some(
+                    diagnostics.cold_files_total.unwrap_or(0) + cold_result.stats.total_files,
+                );
+                diagnostics.cold_files_skipped = Some(
+                    diagnostics.cold_files_skipped.unwrap_or(0) + cold_result.stats.skipped_files,
+                );
+                diagnostics.cold_files_scanned = Some(
+                    diagnostics.cold_files_scanned.unwrap_or(0) + cold_result.stats.scanned_files,
+                );
+                diagnostics.cold_files.extend(cold_result.stats.visited_files);
+            }
             let hot_rows = hot_rows_by_user.remove(&user_id).unwrap_or_default();
             let resolved: Vec<(UserTableRowId, UserMvccRow)> = resolve_latest_kvs_from_cold_batch(
                 &pk_name,
                 hot_rows.into_iter().map(|(row_id, row)| (row_id, UserMvccRow(row))),
-                &parquet_batch,
+                &cold_result.batch,
                 keep_deleted,
                 snapshot_commit_seq,
                 |row_data| self.construct_mvcc_row_from_parquet_data(&user_id, row_data),
@@ -697,7 +764,10 @@ impl UserTableProvider {
 
         base::apply_limit(&mut result, limit);
 
-        Ok(result)
+        Ok(base::MvccScanResult {
+            rows: result,
+            diagnostics,
+        })
     }
 
     async fn collect_matching_rows_for_subject(
@@ -803,10 +873,46 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
                 keep_deleted,
                 scan_context.snapshot_commit_seq,
                 Some(user_id),
+                false,
+            )
+            .await
+            .map(|result| result.rows)
+        } else {
+            self.scan_with_version_resolution_to_kvs_async(
+                user_id,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns,
+                scan_context.snapshot_commit_seq,
+            )
+            .await
+        }
+    }
+
+    async fn scan_kvs_with_diagnostics(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+        since_seq: Option<SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
+        let user_id = &scan_context.user_id;
+        if scan_context.allow_all_users {
+            self.scan_all_users_with_version_resolution_async(
+                filter,
+                limit,
+                keep_deleted,
+                scan_context.snapshot_commit_seq,
+                Some(user_id),
+                true,
             )
             .await
         } else {
-            self.scan_with_version_resolution_to_kvs_async(
+            self.scan_with_version_resolution_to_kvs_with_diagnostics_async(
                 user_id,
                 filter,
                 since_seq,
@@ -1455,32 +1561,75 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         cold_columns: Option<&[String]>,
         snapshot_commit_seq: Option<u64>,
     ) -> Result<Vec<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        self.scan_with_version_resolution_to_kvs_result_async(
+            user_id,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+            snapshot_commit_seq,
+            false,
+        )
+        .await
+        .map(|result| result.rows)
+    }
+
+    fn extract_row(row: &UserTableRow) -> &Row {
+        &row.fields
+    }
+}
+
+impl UserTableProvider {
+    async fn scan_with_version_resolution_to_kvs_with_diagnostics_async(
+        &self,
+        user_id: &UserId,
+        filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        snapshot_commit_seq: Option<u64>,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
+        self.scan_with_version_resolution_to_kvs_result_async(
+            user_id,
+            filter,
+            since_seq,
+            limit,
+            keep_deleted,
+            cold_columns,
+            snapshot_commit_seq,
+            true,
+        )
+        .await
+    }
+
+    async fn scan_with_version_resolution_to_kvs_result_async(
+        &self,
+        user_id: &UserId,
+        filter: Option<&Expr>,
+        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        limit: Option<usize>,
+        keep_deleted: bool,
+        cold_columns: Option<&[String]>,
+        snapshot_commit_seq: Option<u64>,
+        include_diagnostics: bool,
+    ) -> Result<base::MvccScanResult<UserTableRowId, UserTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
         let table_id = self.core.table_id();
-
-        // Warn if no filter or limit - potential performance issue
         base::warn_if_unfiltered_scan(table_id, filter, limit, self.core.table_type());
 
-        // 1) Scan hot storage (RocksDB) scoped to the user using a storekey prefix.
         let user_prefix = UserTableRowId::user_prefix(user_id);
-
-        // Construct start_key if since_seq is provided
         let start_key_bytes = if let Some(seq) = since_seq {
-            // since_seq is exclusive, so start at seq + 1
             let start_seq = kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1);
             let key = UserTableRowId::new(user_id.clone(), start_seq);
             Some(key.storage_key())
         } else {
             None
         };
-
-        // Calculate scan limit using common helper.
-        // The scan is already prefix-scoped to user_id, so the 2× buffer inside
-        // calculate_scan_limit is sufficient (covers version duplicates + tombstones).
         let scan_limit = base::calculate_scan_limit(limit);
 
-        // Run hot storage (RocksDB) and cold storage (Parquet) scans concurrently
         let hot_future = async {
             self.store
                 .scan_with_raw_prefix_async(&user_prefix, start_key_bytes.as_deref(), scan_limit)
@@ -1497,7 +1646,15 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                         .collect::<Vec<_>>()
                 })
         };
-        let cold_future = self.scan_parquet_files_as_batch_async(user_id, filter, cold_columns);
+        let cold_future = async {
+            if include_diagnostics {
+                self.scan_parquet_files_with_stats_async(user_id, filter, cold_columns)
+                    .await
+            } else {
+                self.scan_parquet_files_as_result_async(user_id, filter, cold_columns)
+                    .await
+            }
+        };
         let pk_name = self.primary_key_field_name().to_string();
         let resolved = base::resolve_latest_scan_from_futures(
             &pk_name,
@@ -1510,44 +1667,35 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
         )
         .await?;
 
-        // log::trace!(
-        //     "[UserProvider] Hot scan: {} rows for user={} (table={})",
-        //     resolved.hot_rows_scanned,
-        //     user_id.as_str(),
-        //     table_id
-        // );
-
-        // if log::log_enabled!(log::Level::Trace) {
-        //     log::trace!(
-        //         "[UserProvider] Cold scan: {} Parquet rows (table={}; user={})",
-        //         resolved.cold_rows_scanned,
-        //         table_id,
-        //         user_id.as_str()
-        //     );
-        // }
-
-        let result: Vec<(UserTableRowId, UserTableRow)> =
+        let rows: Vec<(UserTableRowId, UserTableRow)> =
             resolved.rows.into_iter().map(|(row_id, row)| (row_id, row.0)).collect();
 
         if log::log_enabled!(log::Level::Trace) {
             log::trace!(
                 "[UserProvider] Final version-resolved (post-tombstone): {} rows (table={}; \
                  user={})",
-                result.len(),
+                rows.len(),
                 table_id,
                 user_id.as_str()
             );
         }
 
-        Ok(result)
+        let diagnostics = if include_diagnostics {
+            DeferredScanDiagnostics {
+                hot_rows_scanned: Some(resolved.hot_rows_scanned),
+                cold_rows_scanned: Some(resolved.cold_rows_scanned),
+                cold_files_total: Some(resolved.cold_files_total),
+                cold_files_skipped: Some(resolved.cold_files_skipped),
+                cold_files_scanned: Some(resolved.cold_files_scanned),
+                cold_files: resolved.cold_files,
+            }
+        } else {
+            DeferredScanDiagnostics::default()
+        };
+
+        Ok(base::MvccScanResult { rows, diagnostics })
     }
 
-    fn extract_row(row: &UserTableRow) -> &Row {
-        &row.fields
-    }
-}
-
-impl UserTableProvider {
     /// Count resolved rows without materializing full row data (single user).
     ///
     /// Used for COUNT(*) queries where projection is empty. Only decodes

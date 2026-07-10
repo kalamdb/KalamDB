@@ -10,6 +10,13 @@ fn parses_blank_guc_as_missing_user() {
 }
 
 #[test]
+fn rejects_invalid_kalam_user_id_guc() {
+    let err = SessionSettings::from_guc_values(Some("alice;drop"), None)
+        .expect_err("invalid kalam.user_id must be rejected");
+    assert!(err.to_string().contains("invalid kalam.user_id"), "unexpected error: {err}");
+}
+
+#[test]
 fn exposes_guc_name_and_user_id() {
     let settings =
         SessionSettings::from_guc_values(Some("u_session"), Some("tenant_app")).expect("parse guc");

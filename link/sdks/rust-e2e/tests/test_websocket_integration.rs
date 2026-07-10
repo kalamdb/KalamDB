@@ -758,9 +758,11 @@ async fn test_sql_system_tables() {
         client.execute_query("SELECT * FROM system.namespaces", None, None, None).await;
     assert!(namespaces.is_ok(), "Should query system.namespaces");
 
-    // Query system.tables
-    let tables = client.execute_query("SELECT * FROM system.tables", None, None, None).await;
-    assert!(tables.is_ok(), "Should query system.tables");
+    // Query information_schema.tables
+    let tables = client
+        .execute_query("SELECT * FROM information_schema.tables", None, None, None)
+        .await;
+    assert!(tables.is_ok(), "Should query information_schema.tables");
 }
 
 #[tokio::test]

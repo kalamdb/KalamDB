@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{CLIError, Result},
+    fs_atomic::{self, FileReadPolicy, FileWriteOptions},
     history::get_cli_home_dir,
     workflow::project::config::LoggingSection,
 };
@@ -268,13 +269,14 @@ impl CLIConfiguration {
     /// diagnostic commands that should report configuration state without changing it.
     pub fn load_existing(path: &Path) -> Result<Option<Self>> {
         let expanded_path = expand_config_path(path);
-        if !expanded_path.exists() {
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(&expanded_path, FileReadPolicy::LocalSecrets)
+                .map_err(|e| {
+                    CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
+                })?
+        else {
             return Ok(None);
-        }
-
-        let contents = std::fs::read_to_string(&expanded_path).map_err(|e| {
-            CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
-        })?;
+        };
 
         let config: CLIConfiguration = toml::from_str(&contents)?;
         Ok(Some(config))
@@ -287,13 +289,12 @@ impl CLIConfiguration {
         let expanded_path = expand_config_path(path);
         let path = &expanded_path;
 
-        if !path.exists() {
-            // Create default configuration
+        let Some(contents) =
+            fs_atomic::read_to_string_if_exists(path, FileReadPolicy::LocalSecrets).map_err(
+                |e| CLIError::ConfigurationError(format!("Failed to read config file: {}", e)),
+            )?
+        else {
             let default_config = Self::default();
-
-            // Try to save default config to disk
-            // If this fails (e.g., permissions), we'll still return the default config
-            // but log the warning
             if let Err(e) = default_config.save(path) {
                 eprintln!(
                     "Warning: Could not create default config file at {}: {}",
@@ -301,13 +302,8 @@ impl CLIConfiguration {
                     e
                 );
             }
-
             return Ok(default_config);
-        }
-
-        let contents = std::fs::read_to_string(path).map_err(|e| {
-            CLIError::ConfigurationError(format!("Failed to read config file: {}", e))
-        })?;
+        };
 
         let config: CLIConfiguration = toml::from_str(&contents)?;
         Ok(config)
@@ -325,7 +321,7 @@ impl CLIConfiguration {
         let contents = toml::to_string_pretty(self)
             .map_err(|e| CLIError::ConfigurationError(format!("Failed to serialize: {}", e)))?;
 
-        std::fs::write(path, contents)?;
+        fs_atomic::write_atomic(path, contents.as_bytes(), FileWriteOptions::DEFAULT)?;
         Ok(())
     }
 

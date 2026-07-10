@@ -9,7 +9,7 @@ namespace = "react_ai_chat"
 
 [schema]
 mode = "sql"
-path = "chat-app.sql"
+path = "kalam/schema.sql"
 watch = true
 languages = ["typescript"]
 

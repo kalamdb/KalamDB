@@ -111,6 +111,22 @@ pub fn default_client_disconnect_timeout() -> u64 {
     2 // 2 seconds for graceful disconnect
 }
 
+pub fn default_postgres_wire_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+pub fn default_postgres_wire_port() -> u16 {
+    5432
+}
+
+pub fn default_postgres_wire_prepared_statement_limit() -> usize {
+    1024
+}
+
+pub fn default_postgres_wire_portal_limit() -> usize {
+    1024
+}
+
 pub fn default_max_header_size() -> usize {
     16384 // 16KB - increased from default 8KB to support large JWT tokens
 }

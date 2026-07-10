@@ -5,6 +5,7 @@ pub mod identifiers;
 pub mod init;
 pub mod link;
 pub mod prompts;
+pub mod repository_examples;
 pub mod resolve;
 pub mod scaffold;
 pub mod scaffold_input;

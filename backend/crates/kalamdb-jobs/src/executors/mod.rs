@@ -15,9 +15,9 @@ pub mod registry;
 
 // Concrete executor implementations
 pub mod backup;
-pub(crate) mod database_transfer;
 pub mod cleanup;
 pub mod compact;
+pub(crate) mod database_transfer;
 pub mod flush;
 pub mod job_cleanup;
 pub mod manifest_eviction;

@@ -55,12 +55,17 @@ There are two distinct layers:
    A tonic `Channel` stored in `RemoteKalamClient`. This is the reusable gRPC client transport.
 
 2. Logical session
-   A server-side `SessionRegistry` entry keyed by a session id such as `pg-<pid>-<config-hash>`. This is what appears in `system.sessions`.
+   A server-side `BackendSessionManager` entry keyed by a session id such as `pg-<pid>-<config-hash>`. This is what appears in `system.sessions`.
 
 These are related, but they are not the same thing.
 
 - The transport is about getting bytes to the server.
-- The session is about tracking PostgreSQL backend identity, transaction state, and recent activity.
+- The shared backend session is about tracking PostgreSQL backend identity,
+  origin, transaction block state, cleanup, and recent activity.
+
+`kalamdb-pg::SessionRegistry` remains as a compatibility adapter for extension
+RPC authentication, leases, and legacy handle validation. It is not the durable
+transaction authority when `BackendSessionManager` is present.
 
 ## Lifecycle
 
@@ -108,7 +113,9 @@ This means the current design is:
 
 The extension registers `on_proc_exit` and attempts to send `CloseSession` for every cached remote state owned by that PostgreSQL backend process.
 
-On the server side, `CloseSession` clears transaction bookkeeping and removes the session from `SessionRegistry`.
+On the server side, `CloseSession` rolls back any active backend session block
+through `BackendSessionManager`, clears bridge compatibility state, and removes
+the row from `system.sessions`.
 
 ### 5. Failure cases
 
@@ -121,7 +128,10 @@ If the transport breaks mid-transaction, the next RPC usually discovers it and r
 
 The test suite includes proxy-failure cases that exercise exactly this behavior.
 
-Server-side transaction bookkeeping is reconciled when terminal transaction errors are detected, but session lifetime is still primarily driven by explicit `CloseSession`, not by an idle session sweeper.
+Server-side transaction bookkeeping is reconciled by the shared backend manager
+when terminal transaction state is detected. Session lifetime is driven by
+explicit `CloseSession` plus manager cleanup for stale idle sessions and
+disconnect paths.
 
 ## Is the Connection Always Open?
 
@@ -194,8 +204,9 @@ ORDER BY last_seen_at DESC;
 
 What this tells you:
 
-- whether the server still has a logical PG session entry
+- whether the server still has a logical extension or wire session entry
 - which PostgreSQL backend opened it
+- which origin opened it
 - the last RPC method seen
 - the last time the server observed activity
 
@@ -203,7 +214,9 @@ What this does not tell you:
 
 - whether the underlying TCP or HTTP/2 transport is still healthy right now
 
-`last_seen_at` is activity-based, not heartbeat-based. A stale session row can exist even if the network path has already gone bad and no new RPC has been attempted yet.
+`last_seen_at` is activity-based, not heartbeat-based. Cleanup can remove stale
+idle rows, but a fresh row still does not prove the underlying TCP or HTTP/2
+transport is healthy right now.
 
 ### Transaction-level verification
 
@@ -215,7 +228,7 @@ If you care about remote transaction state as well, also query `system.transacti
 - Separates logical session lifecycle from transaction lifecycle.
 - Cleans up on normal PostgreSQL backend exit.
 - Avoids blind retries for normal write paths, which is safer than duplicating writes.
-- Exposes server-side observability through `system.sessions`.
+- Exposes server-side observability through the shared `system.sessions` view.
 
 ## Current Gaps
 
@@ -223,9 +236,10 @@ If you care about remote transaction state as well, also query `system.transacti
 
 There is no configured HTTP/2 keepalive, TCP keepalive policy, or logical session heartbeat.
 
-### 2. No server-side idle session expiry
+### 2. Cleanup is activity-based
 
-Sessions are removed by `CloseSession` or special-case cleanup paths, not by a lease timeout.
+Server-side cleanup removes stale idle rows and rolls back active blocks on close
+or disconnect, but it is not a periodic wire-level heartbeat.
 
 ### 3. `system.sessions` is not a full liveness signal
 

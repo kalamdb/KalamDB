@@ -2,6 +2,7 @@
 name = "kalamdb-server"
 version = { workspace = true }
 edition = { workspace = true }
+autobenches = false
 authors = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
@@ -25,6 +26,7 @@ kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-system = { path = "crates/kalamdb-system" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
+kalamdb-postgres-wire = { path = "crates/kalamdb-postgres-wire" }
 
 
 # Password hashing
@@ -136,6 +138,10 @@ path = "tests/misc/test_misc.rs"
 name = "test_integration"
 path = "tests/integration_tests/test_integration.rs"
 
+[[test]]
+name = "pgwire_catalog"
+path = "tests/pgwire_catalog/test_client_catalog.rs"
+required-features = ["e2e-tests"]
 
 [build-dependencies]
 chrono = { workspace = true }
@@ -176,3 +182,4 @@ serial_test = { workspace = true }
 ntest = { workspace = true }
 sha2 = { workspace = true }
 testcontainers-modules = { workspace = true }
+tokio-postgres = { workspace = true }

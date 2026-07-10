@@ -22,8 +22,7 @@ const STORAGE_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const STORAGE_QUIESCENCE_POLL: Duration = Duration::from_millis(500);
 
 /// Jobs that write Parquet / manifest data and must finish before transfer.
-const STORAGE_QUIESCENCE_JOB_TYPES: [JobType; 2] =
-    [JobType::Flush, JobType::SegmentCompact];
+const STORAGE_QUIESCENCE_JOB_TYPES: [JobType; 2] = [JobType::Flush, JobType::SegmentCompact];
 
 fn is_active_job_status(status: JobStatus) -> bool {
     matches!(

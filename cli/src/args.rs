@@ -200,7 +200,7 @@ pub struct Cli {
     #[arg(long = "relaxed-timeouts", global = true)]
     pub relaxed_timeouts: bool,
 
-    /// Watch schema metadata and run a command when `system.tables` changes
+    /// Watch schema metadata and run a command when `information_schema.tables` changes
     #[arg(
         long = "watch-schema",
         conflicts_with_all = [

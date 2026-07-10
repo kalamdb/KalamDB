@@ -38,6 +38,7 @@ import {
   deleteRemoteFile,
   downloadFileBytes,
   fetchRemoteFileVersion,
+  fetchRemoteHash,
   guessMimeType,
   sha256Hex,
   upsertSyncFile,
@@ -141,7 +142,11 @@ export class FolderSyncApp {
   }
 
   private async startLocalPush(initialSync: InitialSyncTracker): Promise<void> {
+    // Apply offline deletions before the watcher uploads files still on disk.
+    await this.reconcileLocalDeletions(initialSync);
+
     if (this.watchEnabled) {
+      await this.pushAllLocalFiles(initialSync);
       this.folderWatcher = await watchSyncFolder(
         this.syncDir,
         {
@@ -155,15 +160,17 @@ export class FolderSyncApp {
         },
         {
           initialSync,
+          ignoreInitial: true,
           shouldSuppressEvent: (path) => this.ignoringPaths.has(path),
           taskQueue: this.syncQueue,
+          onLocalChange: (path) => {
+            this.localDirtyPaths.add(path);
+          },
         },
       );
     } else {
       await this.pushAllLocalFiles(initialSync);
     }
-
-    await this.reconcileLocalDeletions(initialSync);
   }
 
   async stop(): Promise<void> {
@@ -171,11 +178,11 @@ export class FolderSyncApp {
       await this.folderWatcher.close();
       this.folderWatcher = null;
     }
+    await this.syncQueue.waitIdle();
     if (this.liveUnsub) {
       await this.liveUnsub();
       this.liveUnsub = null;
     }
-    await this.syncQueue.waitIdle();
     await this.client.disconnect();
   }
 
@@ -198,7 +205,16 @@ export class FolderSyncApp {
     this.localDirtyPaths.add(relativePath);
 
     const { cachedHash, hasPending } = await readLocalSyncState(this.localDb, relativePath);
-    const bytes = await readSyncFileBytes(this.syncDir, relativePath);
+    let bytes: Uint8Array;
+    try {
+      bytes = await readSyncFileBytes(this.syncDir, relativePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        await this.deleteRemoteFile(relativePath, { log: false });
+        return;
+      }
+      throw error;
+    }
     const hash = sha256Hex(bytes);
 
     if (this.tombstones.shouldBlockLocalPush(relativePath, hash)) {
@@ -280,9 +296,16 @@ export class FolderSyncApp {
         initialSync.deleted += 1;
       }
 
+      this.markIgnoring(path);
       try {
         await this.deleteRemoteFile(path, { log: false });
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          await removeLocalRecord(this.localDb, path);
+          await clearPendingUpload(this.localDb, path);
+          this.remotePaths.delete(path);
+          continue;
+        }
         console.error(`[sync] failed to delete remote ${path}:`, error);
       }
     }
@@ -329,6 +352,20 @@ export class FolderSyncApp {
     }
 
     for (const row of rows) {
+      const relativePath = row.path;
+      if (!isSafeSyncPath(relativePath)) {
+        continue;
+      }
+
+      const { cachedHash } = await readLocalSyncState(this.localDb, relativePath);
+      if (cachedHash !== null) {
+        const localHash = await readSyncFileHash(this.syncDir, relativePath);
+        if (localHash === null || localHash !== cachedHash) {
+          // Offline delete or edit while sync was stopped; push/delete handles it.
+          continue;
+        }
+      }
+
       try {
         await this.pullRemoteRow(row, { skipLocalConflicts: true });
       } catch (error) {
@@ -366,6 +403,7 @@ export class FolderSyncApp {
       return;
     }
 
+    const { cachedHash } = await readLocalSyncState(this.localDb, relativePath);
     const localHash = await readSyncFileHash(this.syncDir, relativePath);
     if (localHash === remoteHash) {
       await recordSyncedFile(
@@ -374,6 +412,14 @@ export class FolderSyncApp {
         remoteHash,
         row.updated_at ?? row.created_at ?? new Date(),
       );
+      return;
+    }
+
+    // Local edits or deletions made while sync was stopped — push/delete wins.
+    if (localHash !== null && cachedHash !== null && localHash !== cachedHash) {
+      return;
+    }
+    if (localHash === null && cachedHash !== null) {
       return;
     }
 
@@ -429,8 +475,20 @@ export class FolderSyncApp {
 
     if (!isInitialLiveSnapshot) {
       for (const path of this.remotePaths) {
-        if (!nextPaths.has(path)) {
+        if (nextPaths.has(path)) {
+          continue;
+        }
+        if (this.localDirtyPaths.has(path) || this.ignoringPaths.has(path)) {
+          continue;
+        }
+        if (await fetchRemoteHash(this.kalamDb, path) !== null) {
+          // Live snapshot may lag behind a push that already landed on the server.
+          continue;
+        }
+        try {
           await this.removeLocalFile(path);
+        } catch (error) {
+          console.error(`[sync] failed to remove local ${path}:`, error);
         }
       }
     }

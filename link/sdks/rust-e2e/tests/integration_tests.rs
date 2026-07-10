@@ -721,9 +721,11 @@ async fn test_query_system_tables() {
     let _permit = acquire_test_permit().await;
 
     let client = create_client().unwrap();
-    let result = client.execute_query("SELECT * FROM system.tables", None, None, None).await;
+    let result = client
+        .execute_query("SELECT * FROM information_schema.tables", None, None, None)
+        .await;
 
-    assert!(result.is_ok(), "Should query system.tables");
+    assert!(result.is_ok(), "Should query information_schema.tables");
 }
 
 // =============================================================================

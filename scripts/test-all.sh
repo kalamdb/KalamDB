@@ -216,12 +216,14 @@ if $USE_NO_FAIL_FAST; then
     cargo nextest run \
         --workspace \
         --all-targets \
+        --filter-expr 'not kind(bench)' \
         --exclude "kalam-pg-extension" \
         --no-fail-fast
 else
     cargo nextest run \
         --workspace \
         --all-targets \
+        --filter-expr 'not kind(bench)' \
         --exclude "kalam-pg-extension"
 fi
 

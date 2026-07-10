@@ -4,7 +4,8 @@
 # an older Xenial image via CROSS_BASE_IMAGE, and apt.llvm.org no longer serves LLVM 16 for Xenial.
 FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main
 
-# Configure apt retries once so the llvm.sh installs inherit the same mirror resilience.
+# Ubuntu Noble (cross-rs :main) ships clang-16 in the default archive; apt.llvm.org
+# no longer publishes llvm-toolchain-noble-16.
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     printf 'Acquire::Retries "10";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' > /etc/apt/apt.conf.d/80-kalamdb-retries; \
@@ -12,22 +13,14 @@ RUN set -eux; \
     apt-get remove -y --purge llvm-10* libclang-10* clang-10* || true; \
     apt-get autoremove -y; \
     apt-get install --fix-missing -y --no-install-recommends \
-        wget \
-        lsb-release \
-        software-properties-common \
-        gnupg \
-        curl \
-        ca-certificates \
+        clang-16 \
+        libclang-16-dev \
+        llvm-16-dev \
         pkg-config; \
-    wget -nv https://apt.llvm.org/llvm.sh; \
-    chmod +x llvm.sh; \
-    ./llvm.sh 16 all; \
-    apt-get update; \
-    apt-get install --fix-missing -y --no-install-recommends libclang-16-dev llvm-16-dev; \
     update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100; \
     update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100; \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100; \
-    rm -rf llvm.sh /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*
 
 # Install GCC 10 aarch64 cross-compiler.
 # arm_sve.h was introduced in GCC 10; the base image ships GCC 9 (no arm_sve.h),

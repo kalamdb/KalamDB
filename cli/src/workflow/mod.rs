@@ -111,9 +111,9 @@ impl WorkflowContext {
     }
 }
 
-pub fn init_project(options: InitOptions, use_color: bool) -> Result<()> {
+pub async fn init_project(options: InitOptions, use_color: bool) -> Result<()> {
     let output = WorkflowOutput::new(use_color, WorkflowLoggingPolicy::disabled());
-    run_init(options, &output)
+    run_init(options, &output).await
 }
 
 pub fn generate_schema(ctx: &WorkflowContext, languages: Option<Vec<String>>) -> Result<()> {
@@ -245,7 +245,8 @@ pub async fn reset_database(ctx: &WorkflowContext, options: DbResetOptions) -> R
     let output = ctx.output();
     let had_local_server_data = ctx.config.local_server_dir(&ctx.project_root).exists();
     reset_local_dev_server_data(ctx, &output)?;
-    reset_remote_namespace_if_ready(ctx, &output, had_local_server_data, options.assume_yes).await?;
+    reset_remote_namespace_if_ready(ctx, &output, had_local_server_data, options.assume_yes)
+        .await?;
     Ok(())
 }
 

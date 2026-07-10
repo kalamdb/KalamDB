@@ -52,7 +52,8 @@ pub use services::{
     login_tracker::{LoginTracker, LoginTrackingConfig},
     session_tokens::{issue_auth_tokens, IssuedAuthTokens},
     unified::{
-        authenticate, extract_user_id_for_audit, resolve_refresh_token_user, AuthRequest,
-        AuthenticationResult,
+        authenticate, authenticate_wire_password, extract_user_id_for_audit,
+        resolve_refresh_token_user, AuthRequest, AuthenticationResult, WireAuthResult,
+        WirePasswordAuthRequest,
     },
 };

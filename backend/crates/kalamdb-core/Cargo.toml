@@ -28,6 +28,7 @@ kalamdb-auth = { path = "../kalamdb-auth", default-features = false, features = 
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-tables = { path = "../kalamdb-tables" }
 kalamdb-publisher = { path = "../kalamdb-publisher" }
+kalamdb-backend = { workspace = true }
 kalamdb-transactions = { path = "../kalamdb-transactions" }
 kalamdb-views = { path = "../kalamdb-views" }
 kalamdb-vector = { path = "../kalamdb-vector" }

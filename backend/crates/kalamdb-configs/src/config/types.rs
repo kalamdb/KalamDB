@@ -31,6 +31,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub websocket: WebSocketSettings,
     #[serde(default)]
+    pub postgres_wire: PostgresWireSettings,
+    #[serde(default)]
     pub rate_limit: RateLimitSettings,
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
@@ -812,6 +814,62 @@ impl Default for WebSocketSettings {
     }
 }
 
+/// PostgreSQL wire protocol listener settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostgresWireSettings {
+    /// Enable the PostgreSQL wire listener. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Listener bind host. Default: 127.0.0.1.
+    #[serde(default = "default_postgres_wire_host")]
+    pub host: String,
+
+    /// Listener bind port. Default: 5432.
+    #[serde(default = "default_postgres_wire_port")]
+    pub port: u16,
+
+    /// Enable TLS for the PostgreSQL wire listener. Default: false.
+    #[serde(default)]
+    pub tls_enabled: bool,
+
+    /// PEM certificate chain path for the PostgreSQL wire TLS listener.
+    #[serde(default)]
+    pub tls_cert_path: Option<String>,
+
+    /// PEM private key path for the PostgreSQL wire TLS listener.
+    #[serde(default)]
+    pub tls_key_path: Option<String>,
+
+    /// Enable pg_catalog compatibility setup when the wire dependency supports it.
+    #[serde(default)]
+    pub pg_catalog_enabled: bool,
+
+    /// Maximum prepared statements tracked per wire connection.
+    #[serde(default = "default_postgres_wire_prepared_statement_limit")]
+    pub prepared_statement_limit: usize,
+
+    /// Maximum portals tracked per wire connection.
+    #[serde(default = "default_postgres_wire_portal_limit")]
+    pub portal_limit: usize,
+}
+
+impl Default for PostgresWireSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_postgres_wire_host(),
+            port: default_postgres_wire_port(),
+            tls_enabled: false,
+            tls_cert_path: None,
+            tls_key_path: None,
+            pg_catalog_enabled: false,
+            prepared_statement_limit: default_postgres_wire_prepared_statement_limit(),
+            portal_limit: default_postgres_wire_portal_limit(),
+        }
+    }
+}
+
 /// User management cleanup settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserManagementSettings {
@@ -1268,6 +1326,7 @@ impl Default for ServerConfig {
             stream: StreamSettings::default(),
             topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
+            postgres_wire: PostgresWireSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             user_management: UserManagementSettings::default(),

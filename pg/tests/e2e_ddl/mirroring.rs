@@ -98,8 +98,9 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
 
     let columns = env
         .kalamdb_sql(&format!(
-            "SELECT column_name, default_value, nullable, primary_key FROM system.columns WHERE \
-             namespace_id = '{ns}' AND table_name = '{table}' ORDER BY ordinal"
+            "SELECT column_name, kdb_default_value, is_nullable, kdb_primary_key FROM \
+             information_schema.columns WHERE table_schema = '{ns}' AND table_name = '{table}' \
+             ORDER BY ordinal_position"
         ))
         .await;
     let rows = columns["results"]
@@ -124,18 +125,18 @@ async fn e2e_ddl_preserves_primary_key_not_null_and_defaults() {
 
     assert!(
         id_row.and_then(|row| row.as_array()).map(|columns| {
-            columns.get(2).and_then(|value| value.as_bool()) == Some(false)
+            columns.get(2).and_then(|value| value.as_str()) == Some("NO")
                 && columns.get(3).and_then(|value| value.as_bool()) == Some(true)
         }) == Some(true)
             && title_row
                 .and_then(|row| row.as_array())
-                .map(|columns| columns.get(2).and_then(|value| value.as_bool()) == Some(false))
+                .map(|columns| columns.get(2).and_then(|value| value.as_str()) == Some("NO"))
                 == Some(true)
             && created_row
                 .and_then(|row| row.as_array())
                 .map(|columns| columns.get(1).and_then(|value| value.as_str()) == Some("NOW()"))
                 == Some(true),
-        "system.columns should expose mirrored defaults and constrained columns: {}",
+        "information_schema.columns should expose mirrored defaults and constrained columns: {}",
         serde_json::to_string(&columns).unwrap_or_default()
     );
 

@@ -240,12 +240,12 @@ impl SystemTablesRegistry {
         self.cluster_groups.read().clone()
     }
 
-    /// Get the system.tables view provider (virtual table showing table metadata)
+    /// Deprecated. Use `information_schema.tables` (`kdb_*` columns).
     pub fn tables_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.tables.read().clone()
     }
 
-    /// Get the system.columns view provider (virtual table showing column metadata)
+    /// Deprecated. Use `information_schema.columns` (`kdb_*` columns).
     pub fn columns_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.columns.read().clone()
     }

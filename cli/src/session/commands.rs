@@ -2,6 +2,7 @@ use std::{future::Future, pin::Pin, time::Instant};
 
 use colored::Colorize;
 use kalam_client::SubscriptionConfig;
+use kalamdb_commons::models::UserId;
 
 use super::{CLISession, OutputFormat};
 use crate::{
@@ -103,8 +104,9 @@ impl CLISession {
             },
             Command::ListTables => {
                 self.execute(
-                    "SELECT namespace_id AS namespace, table_name, table_type FROM system.tables \
-                     ORDER BY namespace_id, table_name",
+                    "SELECT kdb_namespace_id AS namespace, table_name, kdb_table_type AS \
+                     table_type FROM information_schema.tables ORDER BY kdb_namespace_id, \
+                     table_name",
                 )
                 .await?;
             },
@@ -216,7 +218,7 @@ impl CLISession {
 
     fn build_describe_query(target: &str) -> Result<String> {
         let (namespace, table_name) = Self::parse_describe_target(target)?;
-        let columns = "table_schema AS namespace, table_name, column_name, data_type, \
+        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS data_type, \
                        is_nullable, column_default, ordinal_position AS position";
         let escaped_table = Self::escape_sql_literal(&table_name);
 
@@ -411,6 +413,10 @@ impl CLISession {
         if normalized.is_empty() {
             return Err(CLIError::ParseError("\\as requires a target user".to_string()));
         }
+
+        UserId::try_new(normalized).map_err(|error| {
+            CLIError::ParseError(format!("\\as target user is invalid: {}", error))
+        })?;
 
         Ok(normalized.to_string())
     }
@@ -731,9 +737,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_execute_as_query_escapes_user_literal() {
-        let query = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap();
-        assert_eq!(query, "EXECUTE AS 'o''brien' (SELECT 1)");
+    fn test_build_execute_as_query_rejects_invalid_user_id() {
+        let err = CLISession::build_execute_as_query("o'brien", "SELECT 1").unwrap_err();
+        assert!(
+            err.to_string().contains("invalid"),
+            "expected invalid user id error, got: {err}"
+        );
     }
 
     #[test]

@@ -75,18 +75,31 @@ fn start_recording_sql_server(
             } else if request_line.starts_with("POST /v1/api/sql") {
                 let payload: serde_json::Value =
                     serde_json::from_slice(body).expect("parse sql request body");
+                let sql = payload
+                    .get("sql")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 requests_handle.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql: payload
-                        .get("sql")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
+                    sql: sql.clone(),
                     namespace_id: payload
                         .get("namespace_id")
                         .and_then(|value| value.as_str())
                         .map(ToString::to_string),
                 });
-                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 33\r\nConnection: close\r\n\r\n{\"status\":\"success\",\"results\":[]}".to_vec()
+                let body = if sql.to_uppercase().contains("FROM SYSTEM.MIGRATIONS") {
+                    r#"{"status":"success","results":[{"schema":[],"rows":[],"row_count":0}]}"#
+                } else if sql.to_uppercase().contains("SYSTEM.MIGRATIONS") {
+                    r#"{"status":"success","results":[{"schema":[],"rows":[],"row_count":1}]}"#
+                } else {
+                    r#"{"status":"success","results":[]}"#
+                };
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .into_bytes()
             } else {
                 b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
             };

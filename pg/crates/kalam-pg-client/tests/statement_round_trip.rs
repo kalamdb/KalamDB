@@ -4,7 +4,7 @@
 //! a `RemoteKalamClient`, and exercises a full round-trip:
 //!     client → gRPC → KalamPgService → OperationExecutor → response → client
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, sync::Mutex, time::Duration};
 
 use arrow::{
     array::{Array, Int64Array, StringArray},
@@ -17,17 +17,29 @@ use kalam_pg_common::RemoteServerConfig;
 use kalamdb_commons::models::TransactionId;
 use kalamdb_pg::{
     DeleteRequest, InsertRequest, KalamPgService, MutationResult, OperationExecutor,
-    PgServiceServer, ScanRequest, ScanResult, UpdateRequest,
+    PgServiceServer, ScanRequest, ScanResult, TransactionState, UpdateRequest,
 };
+use kalamdb_backend::session::LiveSessionTransaction;
 use tokio::net::TcpListener;
 use tonic::{Code, Status};
+use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // Mock executor
 // ---------------------------------------------------------------------------
 
 /// A mock executor that returns predictable results for every operation.
-struct MockExecutor;
+struct MockExecutor {
+    active: Mutex<HashMap<String, TransactionId>>,
+}
+
+impl Default for MockExecutor {
+    fn default() -> Self {
+        Self {
+            active: Mutex::new(HashMap::new()),
+        }
+    }
+}
 
 #[async_trait]
 impl OperationExecutor for MockExecutor {
@@ -69,6 +81,80 @@ impl OperationExecutor for MockExecutor {
 
     async fn execute_query(&self, sql: &str) -> Result<(String, Vec<bytes::Bytes>), Status> {
         Ok((format!("executed: {sql}"), Vec::new()))
+    }
+
+    async fn active_transaction(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<LiveSessionTransaction>, Status> {
+        Ok(self
+            .active
+            .lock()
+            .expect("mock executor active tx")
+            .get(session_id)
+            .cloned()
+            .map(|transaction_id| {
+                LiveSessionTransaction::new(
+                    session_id.to_string(),
+                    transaction_id,
+                    TransactionState::OpenRead,
+                    false,
+                )
+            }))
+    }
+
+    async fn begin_transaction(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<TransactionId>, Status> {
+        let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
+        self.active
+            .lock()
+            .expect("mock executor begin active tx")
+            .insert(session_id.to_string(), transaction_id.clone());
+        Ok(Some(transaction_id))
+    }
+
+    async fn commit_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, Status> {
+        let mut active = self
+            .active
+            .lock()
+            .expect("mock executor commit active tx");
+        let Some(current) = active.get(session_id) else {
+            return Err(Status::failed_precondition("no active transaction"));
+        };
+        if current != transaction_id {
+            return Err(Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{current}', got '{transaction_id}'"
+            )));
+        }
+        active.remove(session_id);
+        Ok(Some(transaction_id.clone()))
+    }
+
+    async fn rollback_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, Status> {
+        let mut active = self
+            .active
+            .lock()
+            .expect("mock executor rollback active tx");
+        let Some(current) = active.get(session_id) else {
+            return Ok(Some(transaction_id.clone()));
+        };
+        if current != transaction_id {
+            return Err(Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{current}', got '{transaction_id}'"
+            )));
+        }
+        active.remove(session_id);
+        Ok(Some(transaction_id.clone()))
     }
 }
 
@@ -170,7 +256,7 @@ fn leader_api_port_for_rpc_port(leader_rpc_port: u16) -> u16 {
 
 async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
     let leader_rpc_port =
-        start_server_with_executor_on_ephemeral_port(host, Arc::new(MockExecutor)).await;
+        start_server_with_executor_on_ephemeral_port(host, Arc::new(MockExecutor::default())).await;
     let leader_api_port = leader_api_port_for_rpc_port(leader_rpc_port);
     let follower_rpc_port = start_server_with_executor_on_ephemeral_port(
         host,
@@ -186,7 +272,8 @@ async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
 
 async fn start_mock_server_and_client() -> RemoteKalamClient {
     let port =
-        start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor)).await;
+        start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor::default()))
+            .await;
     connect_to("127.0.0.1", port).await
 }
 

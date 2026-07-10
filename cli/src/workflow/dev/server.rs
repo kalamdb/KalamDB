@@ -345,10 +345,7 @@ pub fn prepare_local_server_launch(
 }
 
 /// Download and install the managed `kalamdb-server` release matching `version`.
-pub async fn install_managed_server_version(
-    version: &str,
-    show_progress: bool,
-) -> Result<PathBuf> {
+pub async fn install_managed_server_version(version: &str, show_progress: bool) -> Result<PathBuf> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .user_agent(format!("kalam-cli/{}", env!("CARGO_PKG_VERSION")))

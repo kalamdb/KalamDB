@@ -4,6 +4,7 @@ mod audit;
 mod bearer;
 mod password;
 mod types;
+mod wire;
 
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use once_cell::sync::Lazy;
 use password::authenticate_user_password;
 use tracing::Instrument;
 pub use types::{AuthMethod, AuthRequest, AuthenticationResult};
+pub use wire::{authenticate_wire_password, WireAuthResult, WirePasswordAuthRequest};
 
 use crate::{
     errors::error::AuthResult,

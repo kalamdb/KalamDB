@@ -3,22 +3,26 @@ use std::sync::{
     Arc, Mutex,
 };
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use kalamdb_auth::{
     create_and_sign_token, services::unified::init_auth_config, AuthError, AuthResult,
     UserRepository,
 };
+use kalamdb_backend::session::LiveSessionTransaction;
 use kalamdb_commons::models::TransactionId;
 use kalamdb_configs::AuthSettings;
 use kalamdb_pg::{
     BeginTransactionRequest, CloseSessionRequest, CommitTransactionRequest, DeleteRequest,
-    ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRequest, KalamPgService, LivePgTransaction,
-    MutationResult, OpenSessionRequest, OperationExecutor, PgService, PgServiceServer, PingRequest,
+    ExecuteQueryRpcRequest, ExecuteSqlRpcRequest, InsertRequest, KalamPgService, MutationResult,
+    OpenSessionRequest, OperationExecutor, PgService, PgServiceServer, PingRequest,
     RollbackTransactionRequest, ScanRequest, ScanResult, UpdateRequest,
 };
 use kalamdb_system::{providers::storages::models::StorageMode, AuthType, Role, User};
 use tonic::Request;
+use uuid::Uuid;
 
 const VALID_DBA_BASIC_AUTH: &str = "Basic cGdfYnJpZGdlX3VzZXI6c2VjcmV0LXBhc3M=";
 const TX_ID_RECORDING: &str = "01960f7b-3d15-7d6d-b26c-7e4db6f25f8d";
@@ -36,6 +40,7 @@ fn init_test_auth_settings() -> AuthSettings {
 
 fn service() -> KalamPgService {
     KalamPgService::new(false, None)
+        .with_operation_executor(Arc::new(LocalRegistryExecutor::default()))
 }
 
 fn plain_request<T>(payload: T) -> Request<T> {
@@ -132,6 +137,11 @@ impl UserRepository for StaticUserRepo {
 }
 
 #[derive(Default)]
+struct LocalRegistryExecutor {
+    active: Mutex<HashMap<String, TransactionId>>,
+}
+
+#[derive(Default)]
 struct RecordingExecutor {
     begin_calls: AtomicUsize,
     commit_calls: AtomicUsize,
@@ -164,6 +174,115 @@ struct CapturingSqlExecutor {
 }
 
 #[async_trait]
+impl OperationExecutor for LocalRegistryExecutor {
+    async fn execute_scan(&self, _request: ScanRequest) -> Result<ScanResult, tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+
+    async fn execute_insert(
+        &self,
+        _request: InsertRequest,
+    ) -> Result<MutationResult, tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+
+    async fn execute_update(
+        &self,
+        _request: UpdateRequest,
+    ) -> Result<MutationResult, tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+
+    async fn execute_delete(
+        &self,
+        _request: DeleteRequest,
+    ) -> Result<MutationResult, tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+
+    async fn active_transaction(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<LiveSessionTransaction>, tonic::Status> {
+        Ok(self
+            .active
+            .lock()
+            .expect("local registry executor active tx")
+            .get(session_id)
+            .cloned()
+            .map(|transaction_id| {
+                LiveSessionTransaction::new(
+                    session_id.to_string(),
+                    transaction_id,
+                    kalamdb_pg::TransactionState::OpenRead,
+                    false,
+                )
+            }))
+    }
+
+    async fn begin_transaction(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<TransactionId>, tonic::Status> {
+        let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
+        self.active
+            .lock()
+            .expect("local registry executor begin active tx")
+            .insert(session_id.to_string(), transaction_id.clone());
+        Ok(Some(transaction_id))
+    }
+
+    async fn commit_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, tonic::Status> {
+        let mut active = self.active.lock().expect("local registry executor commit active tx");
+        let Some(current) = active.get(session_id) else {
+            return Err(tonic::Status::failed_precondition("no active transaction"));
+        };
+        if current != transaction_id {
+            return Err(tonic::Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{}', got '{}'",
+                current, transaction_id
+            )));
+        }
+        active.remove(session_id);
+        Ok(Some(transaction_id.clone()))
+    }
+
+    async fn rollback_transaction(
+        &self,
+        session_id: &str,
+        transaction_id: &TransactionId,
+    ) -> Result<Option<TransactionId>, tonic::Status> {
+        let mut active = self.active.lock().expect("local registry executor rollback active tx");
+        let Some(current) = active.get(session_id) else {
+            return Ok(Some(transaction_id.clone()));
+        };
+        if current != transaction_id {
+            return Err(tonic::Status::failed_precondition(format!(
+                "transaction ID mismatch: expected '{}', got '{}'",
+                current, transaction_id
+            )));
+        }
+        active.remove(session_id);
+        Ok(Some(transaction_id.clone()))
+    }
+
+    async fn execute_sql(&self, _sql: &str) -> Result<String, tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+
+    async fn execute_query(
+        &self,
+        _sql: &str,
+    ) -> Result<(String, Vec<bytes::Bytes>), tonic::Status> {
+        Err(tonic::Status::unimplemented("not needed for this test"))
+    }
+}
+
+#[async_trait]
 impl OperationExecutor for RecordingExecutor {
     async fn execute_scan(&self, _request: ScanRequest) -> Result<ScanResult, tonic::Status> {
         Err(tonic::Status::unimplemented("not needed for this test"))
@@ -193,10 +312,10 @@ impl OperationExecutor for RecordingExecutor {
     async fn active_transaction(
         &self,
         session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, tonic::Status> {
+    ) -> Result<Option<LiveSessionTransaction>, tonic::Status> {
         Ok(self.active_tx.lock().expect("recording executor active tx").clone().map(
             |transaction_id| {
-                LivePgTransaction::new(
+                LiveSessionTransaction::new(
                     session_id.to_string(),
                     transaction_id,
                     kalamdb_pg::TransactionState::OpenRead,
@@ -281,14 +400,14 @@ impl OperationExecutor for BeginRollbackNotFoundExecutor {
     async fn active_transaction(
         &self,
         session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, tonic::Status> {
+    ) -> Result<Option<LiveSessionTransaction>, tonic::Status> {
         Ok(self
             .active_tx
             .lock()
             .expect("stale executor active tx")
             .clone()
             .map(|transaction_id| {
-                LivePgTransaction::new(
+                LiveSessionTransaction::new(
                     session_id.to_string(),
                     transaction_id,
                     kalamdb_pg::TransactionState::OpenRead,
@@ -376,10 +495,10 @@ impl OperationExecutor for CommitNotFoundExecutor {
     async fn active_transaction(
         &self,
         session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, tonic::Status> {
+    ) -> Result<Option<LiveSessionTransaction>, tonic::Status> {
         Ok(self.active_tx.lock().expect("commit-missing executor active tx").clone().map(
             |transaction_id| {
-                LivePgTransaction::new(
+                LiveSessionTransaction::new(
                     session_id.to_string(),
                     transaction_id,
                     kalamdb_pg::TransactionState::OpenRead,
@@ -463,14 +582,14 @@ impl OperationExecutor for RollbackCommittedExecutor {
     async fn active_transaction(
         &self,
         session_id: &str,
-    ) -> Result<Option<LivePgTransaction>, tonic::Status> {
+    ) -> Result<Option<LiveSessionTransaction>, tonic::Status> {
         Ok(self
             .active_tx
             .lock()
             .expect("rollback-committed executor active tx")
             .clone()
             .map(|transaction_id| {
-                LivePgTransaction::new(
+                LiveSessionTransaction::new(
                     session_id.to_string(),
                     transaction_id,
                     kalamdb_pg::TransactionState::OpenRead,
@@ -920,7 +1039,7 @@ async fn execute_sql_closes_ephemeral_idle_session() {
         .await
         .unwrap();
 
-    assert!(service.session_registry().get("pg-ephemeral-sql").is_none());
+    assert!(!service.has_session("pg-ephemeral-sql"));
 }
 
 #[tokio::test]
@@ -935,7 +1054,7 @@ async fn execute_query_closes_ephemeral_idle_session() {
         .await
         .unwrap();
 
-    assert!(service.session_registry().get("pg-ephemeral-query").is_none());
+    assert!(!service.has_session("pg-ephemeral-query"));
 }
 
 #[tokio::test]
@@ -960,11 +1079,7 @@ async fn execute_sql_keeps_preexisting_session_open() {
         .await
         .unwrap();
 
-    let session = service
-        .session_registry()
-        .get(&session_id)
-        .expect("preexisting session should remain open");
-    assert_eq!(session.last_method(), Some("ExecuteSql"));
+    assert_eq!(service.session_last_method(&session_id).as_deref(), Some("ExecuteSql"));
 }
 
 #[tokio::test]
@@ -989,11 +1104,7 @@ async fn execute_query_keeps_preexisting_session_open() {
         .await
         .unwrap();
 
-    let session = service
-        .session_registry()
-        .get(&session_id)
-        .expect("preexisting session should remain open");
-    assert_eq!(session.last_method(), Some("ExecuteQuery"));
+    assert_eq!(service.session_last_method(&session_id).as_deref(), Some("ExecuteQuery"));
 }
 
 #[tokio::test]
@@ -1058,14 +1169,12 @@ async fn transaction_rpcs_delegate_to_configured_operation_executor() {
         .unwrap();
     assert_eq!(executor.commit_calls.load(Ordering::Relaxed), 1);
 
-    let tx_id = service
+    service
         .begin_transaction(plain_request(BeginTransactionRequest {
             session_id: session_id.clone(),
         }))
         .await
-        .unwrap()
-        .into_inner()
-        .transaction_id;
+        .unwrap();
 
     service
         .rollback_transaction(plain_request(RollbackTransactionRequest {
@@ -1103,10 +1212,6 @@ async fn close_session_rolls_back_via_configured_operation_executor() {
     assert!(!tx_id.is_empty());
 
     service
-        .session_registry()
-        .clear_transaction_state_if_matches(&session_id, Some(&TransactionId::new(tx_id.clone())));
-
-    service
         .close_session(plain_request(CloseSessionRequest {
             session_id: session_id.clone(),
         }))
@@ -1139,10 +1244,6 @@ async fn begin_transaction_reclaims_stale_remote_transaction_via_executor() {
         .unwrap()
         .into_inner()
         .transaction_id;
-
-    service
-        .session_registry()
-        .clear_transaction_state_if_matches(&session_id, Some(&TransactionId::new(tx_id)));
 
     service
         .begin_transaction(plain_request(BeginTransactionRequest {
@@ -1190,9 +1291,7 @@ async fn begin_transaction_reconciles_local_state_when_stale_remote_tx_is_missin
 
     assert_eq!(first_tx, TX_ID_STALE);
     assert_eq!(replacement_tx, TX_ID_REPLACEMENT);
-
-    let session = service.session_registry().get(&session_id).expect("session remains open");
-    assert_eq!(session.transaction_id(), Some(TX_ID_REPLACEMENT));
+    assert!(service.has_session(&session_id));
 }
 
 #[tokio::test]
@@ -1227,10 +1326,7 @@ async fn commit_transaction_clears_local_state_when_remote_tx_is_already_gone() 
         .await
         .expect_err("remote missing transaction should still report an error");
     assert_eq!(err.code(), tonic::Code::FailedPrecondition);
-
-    let session = service.session_registry().get(&session_id).expect("session remains open");
-    assert_eq!(session.transaction_id(), None);
-    assert_eq!(session.transaction_state(), None);
+    assert!(service.has_session(&session_id));
 }
 
 #[tokio::test]
@@ -1265,7 +1361,7 @@ async fn close_session_succeeds_when_remote_tx_is_already_committed() {
         .await
         .expect("close_session should be best-effort for terminal remote tx state");
 
-    assert!(service.session_registry().get(&session_id).is_none());
+    assert!(!service.has_session(&session_id));
 }
 
 // ---------------------------------------------------------------------------

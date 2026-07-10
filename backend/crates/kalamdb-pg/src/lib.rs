@@ -20,7 +20,7 @@ pub use operation_executor::{
     UpdateRequest,
 };
 #[cfg(feature = "server")]
-pub use service::{open_session_response_to_session, KalamPgService, PgService, PgServiceServer};
+pub use service::{KalamPgService, PgService, PgServiceServer};
 pub use service::{
     BeginTransactionRequest, BeginTransactionResponse, CloseSessionRequest, CloseSessionResponse,
     CommitTransactionRequest, CommitTransactionResponse, DeleteRpcRequest, DeleteRpcResponse,
@@ -29,5 +29,3 @@ pub use service::{
     PingRequest, PingResponse, RollbackTransactionRequest, RollbackTransactionResponse,
     ScanFilterExpression, ScanRpcRequest, ScanRpcResponse, UpdateRpcRequest, UpdateRpcResponse,
 };
-#[cfg(feature = "server")]
-pub use session_registry::{BridgeAuth, LivePgTransaction, RemotePgSession, SessionRegistry};

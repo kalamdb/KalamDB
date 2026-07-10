@@ -125,6 +125,15 @@ pub async fn create_shared_table(
     namespace: &NamespaceId,
     table_name: &str,
 ) -> TableId {
+    create_shared_table_with_access(app_ctx, namespace, table_name, TableAccess::Public).await
+}
+
+pub async fn create_shared_table_with_access(
+    app_ctx: &Arc<AppContext>,
+    namespace: &NamespaceId,
+    table_name: &str,
+    access: TableAccess,
+) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
     let id_col = ColumnDefinition::new(
         1,
@@ -141,7 +150,7 @@ pub async fn create_shared_table(
 
     let mut table_options = TableOptions::shared();
     if let TableOptions::Shared(options) = &mut table_options {
-        options.access_level = Some(TableAccess::Public);
+        options.access_level = Some(access);
     }
 
     let mut table_def = TableDefinition::new(

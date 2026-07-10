@@ -1,8 +1,8 @@
 # Summarizer Agent
 
-This is the worker-only example in the set.
+Worker-only example for `@kalamdb/consumer`.
 
-It demonstrates the smallest useful `@kalamdb/consumer` `runConsumer()` flow:
+It demonstrates the smallest useful topic consumer flow:
 
 1. a row lands in `blog.blogs`
 2. KalamDB routes the change into `blog.summarizer`
@@ -12,23 +12,35 @@ It demonstrates the smallest useful `@kalamdb/consumer` `runConsumer()` flow:
 
 There is no model dependency here. The summarizer is deterministic so the example is easy to read and the test is stable.
 
-Use `change.data` as the blog row inside `onChange()`. This example routes changes from `blog.blogs`, which is a `SHARED` table in `setup.sql`, so `change.user` is expected to be `undefined` here.
+Use `change.data` as the blog row inside `onChange()`. This example routes changes from `blog.blogs`, which is a `SHARED` table, so `change.user` is expected to be `undefined`.
 
-## Quick start
+## Quick Start
 
-1. Make sure KalamDB is running on `http://127.0.0.1:2900`.
-2. Run `npm install`.
-3. Run `npm run setup`.
-4. Run `npm run start`.
+From this folder:
 
-## Test it
+```bash
+npm install
+kalam dev
+```
 
-Run `npm test`.
+`kalam dev` starts a local KalamDB server, applies `kalam/schema.sql`, keeps `kalam/migrations/` up to date, and runs the worker with `npm run start`.
+
+Default local credentials are `root` / `kalamdb123` at `http://127.0.0.1:2900`.
+
+## Files Worth Reading
+
+- `kalam.toml`: `kalam dev` project config.
+- `kalam/schema.sql`: schema, topic route, and one seed blog row.
+- `kalam/migrations/0001_init.sql`: initial migration checked into the repo.
+- `src/agent.ts`: full worker logic.
+- `tests/summarizer.integration.test.ts`: end-to-end verification.
+
+## Tests
+
+With a KalamDB server available:
+
+```bash
+npm test
+```
 
 The integration test starts the agent, inserts a blog row, and waits until the summary field is written back by the worker.
-
-## Files worth reading
-
-- `src/agent.ts`: full worker logic
-- `setup.sql`: schema and topic route
-- `tests/summarizer.integration.test.ts`: end-to-end verification

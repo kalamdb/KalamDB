@@ -28,7 +28,7 @@ const MAX_AGENT_EVENTS = agentEventsConfig.tableType === 'stream' ? 40 : 20;
 const canSortEventsBySeq = agentEventsConfig.systemColumns.includes('_seq');
 
 const ROOM = import.meta.env.VITE_CHAT_ROOM ?? 'main';
-const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USER ?? 'admin';
+const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USER ?? 'root';
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',

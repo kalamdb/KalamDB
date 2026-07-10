@@ -23,8 +23,8 @@ const FEED_SQL = [
 const client = createClient({
   url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:2900',
   authProvider: async () => Auth.basic(
-    import.meta.env.VITE_KALAMDB_USER ?? 'demo-user',
-    import.meta.env.VITE_KALAMDB_PASSWORD ?? 'demo123',
+    import.meta.env.VITE_KALAMDB_USER ?? 'root',
+    import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
   ),
   disableCompression: true,
 });

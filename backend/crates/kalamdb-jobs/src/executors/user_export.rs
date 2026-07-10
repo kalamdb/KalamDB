@@ -57,6 +57,9 @@ impl JobParams for UserExportParams {
         if self.user_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("user_id cannot be empty".to_string()));
         }
+        UserId::try_new(self.user_id.clone()).map_err(|error| {
+            KalamDbError::InvalidOperation(format!("invalid user_id: {}", error))
+        })?;
         if self.export_id.is_empty() {
             return Err(KalamDbError::InvalidOperation("export_id cannot be empty".to_string()));
         }

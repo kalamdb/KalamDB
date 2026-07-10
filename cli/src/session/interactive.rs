@@ -432,7 +432,8 @@ impl CLISession {
             let resp = self
                 .client
                 .execute_query(
-                    "SELECT table_name, namespace_id FROM system.tables",
+                    "SELECT table_name, kdb_namespace_id AS namespace_id FROM \
+                     information_schema.tables",
                     None,
                     None,
                     None,
@@ -443,7 +444,8 @@ impl CLISession {
         } else {
             self.client
                 .execute_query(
-                    "SELECT table_name, namespace_id FROM system.tables",
+                    "SELECT table_name, kdb_namespace_id AS namespace_id FROM \
+                     information_schema.tables",
                     None,
                     None,
                     None,

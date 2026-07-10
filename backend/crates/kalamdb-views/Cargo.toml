@@ -12,6 +12,8 @@ repository.workspace = true
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-raft = { path = "../kalamdb-raft" }
+kalamdb-session = { path = "../kalamdb-session" }
+kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-datafusion-sources = { workspace = true }
 
@@ -21,6 +23,8 @@ datafusion = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 
 # Serialization
 serde = { workspace = true }

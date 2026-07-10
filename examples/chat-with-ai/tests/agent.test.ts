@@ -6,7 +6,7 @@ import { createConsumerClient, runConsumer, type ConsumerClientLike } from '@kal
 import { buildReply } from '../src/agent.js';
 
 const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
-const user = process.env.KALAMDB_USER ?? 'admin';
+const user = process.env.KALAMDB_USER ?? 'root';
 const password = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
 
 type WorkerClient = ConsumerClientLike & {

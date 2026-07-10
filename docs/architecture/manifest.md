@@ -212,6 +212,9 @@ Only after the manifest swap succeeds are the superseded source files deleted.
 
 Reads and planning go through `ManifestService`, not direct storage metadata reads.
 
+For the full DataFusion provider scan path, MVCC merge algorithm, and PK fast paths, see
+[hot-cold-storage-unification.md](hot-cold-storage-unification.md).
+
 1. `ManifestAccessPlanner` requests the manifest for the relevant scope.
 2. Segment pruning evaluates query predicates against persisted column stats.
 3. DataFusion reads only the selected Parquet files.

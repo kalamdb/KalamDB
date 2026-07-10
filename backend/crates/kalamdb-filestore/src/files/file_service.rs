@@ -190,7 +190,7 @@ impl FileStorageService {
             .put(table_type, table_id, user_id, &relative_path, Bytes::from(content))
             .await?;
 
-        log::info!(
+        log::debug!(
             "Finalized file: table={}, storage={}, path={}, size={}, mime={}",
             table_id,
             storage_id,
@@ -216,7 +216,7 @@ impl FileStorageService {
         let storage = self.get_storage(storage_id)?;
         storage.delete(table_type, table_id, user_id, &relative_path).await?;
 
-        log::info!(
+        log::debug!(
             "Deleted file: table={}, storage={}, path={}",
             table_id,
             storage_id,

@@ -352,3 +352,85 @@ async fn test_functions_with_no_arguments() {
     assert_eq!(batches.len(), 1);
     assert_eq!(batches[0].num_rows(), 1);
 }
+
+#[tokio::test]
+async fn test_current_schema_returns_default_namespace() {
+    use kalamdb_sql::rewrite_context_functions_for_datafusion;
+
+    let auth_session = AuthSession::with_auth_details(
+        UserId::new("u_wire"),
+        Role::System,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
+    let result = session.sql(sql.as_ref()).await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let batches = result.unwrap().collect().await.unwrap();
+    let schema_col = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(schema_col.value(0), "default");
+}
+
+#[tokio::test]
+async fn test_current_schema_respects_execution_namespace() {
+    use kalamdb_commons::NamespaceId;
+    use kalamdb_sql::rewrite_context_functions_for_datafusion;
+
+    let exec_ctx = ExecutionContext::with_namespace(
+        UserId::new("u_wire"),
+        Role::System,
+        NamespaceId::new("tenant_app"),
+        create_test_session(),
+    )
+    .with_request_id("wire:test");
+
+    let session = exec_ctx.create_session_with_user();
+
+    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
+    let result = session.sql(sql.as_ref()).await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let batches = result.unwrap().collect().await.unwrap();
+    let schema_col = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(schema_col.value(0), "tenant_app");
+}
+
+#[tokio::test]
+async fn test_current_database_returns_catalog_name() {
+    use kalamdb_sql::rewrite_context_functions_for_datafusion;
+
+    let auth_session = AuthSession::with_auth_details(
+        UserId::new("u_wire"),
+        Role::System,
+        kalamdb_commons::models::ConnectionInfo::new(None),
+        kalamdb_session::AuthMethod::Bearer,
+    );
+
+    let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
+    let session = exec_ctx.create_session_with_user();
+
+    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_DATABASE() AS database");
+    let result = session.sql(sql.as_ref()).await;
+    assert!(result.is_ok(), "Query failed: {:?}", result.err());
+
+    let batches = result.unwrap().collect().await.unwrap();
+    let database_col = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<datafusion::arrow::array::StringArray>()
+        .unwrap();
+    assert_eq!(database_col.value(0), "kalam");
+}

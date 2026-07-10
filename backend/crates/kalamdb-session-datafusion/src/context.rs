@@ -79,3 +79,47 @@ impl ExtensionOptions for SessionUserContext {
 impl ConfigExtension for SessionUserContext {
     const PREFIX: &'static str = "kalamdb_user";
 }
+
+/// Session flag used to opt into scan-level diagnostics for `EXPLAIN ANALYZE`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ScanDiagnosticsContext {
+    enabled: bool,
+}
+
+impl ScanDiagnosticsContext {
+    #[inline]
+    pub fn enabled() -> Self {
+        Self { enabled: true }
+    }
+
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl ExtensionOptions for ScanDiagnosticsContext {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn cloned(&self) -> Box<dyn ExtensionOptions> {
+        Box::new(*self)
+    }
+
+    fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
+        Ok(())
+    }
+
+    fn entries(&self) -> Vec<ConfigEntry> {
+        vec![]
+    }
+}
+
+impl ConfigExtension for ScanDiagnosticsContext {
+    const PREFIX: &'static str = "kalamdb_scan_diagnostics";
+}

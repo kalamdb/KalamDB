@@ -73,6 +73,7 @@ impl fmt::Display for TransactionState {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TransactionOrigin {
     PgRpc,
+    PgWire,
     SqlBatch,
     Internal,
 }
@@ -81,6 +82,7 @@ impl TransactionOrigin {
     pub fn as_str(&self) -> &'static str {
         match self {
             TransactionOrigin::PgRpc => "PgRpc",
+            TransactionOrigin::PgWire => "PgWire",
             TransactionOrigin::SqlBatch => "SqlBatch",
             TransactionOrigin::Internal => "Internal",
         }
@@ -133,6 +135,7 @@ mod tests {
     #[test]
     fn transaction_origin_strings_match_spec_labels() {
         assert_eq!(TransactionOrigin::PgRpc.as_str(), "PgRpc");
+        assert_eq!(TransactionOrigin::PgWire.as_str(), "PgWire");
         assert_eq!(TransactionOrigin::SqlBatch.as_str(), "SqlBatch");
         assert_eq!(TransactionOrigin::Internal.as_str(), "Internal");
     }

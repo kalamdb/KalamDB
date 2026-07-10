@@ -174,7 +174,8 @@ Replacement is local and atomic where the platform supports atomic rename:
 `install.sh` is the bootstrap path for users that do not already have the CLI. It cannot reuse Rust
 code directly, so it mirrors the same security rules in shell:
 
-1. Re-exec under Bash when invoked through `sh`.
+1. Re-fetch and re-exec under Bash when invoked through `sh`/`dash` (piping to `sh` consumes
+   stdin before re-exec, so `bash -s` cannot be used safely).
 2. Parse `--version`, `--pre-release`, and environment settings.
 3. Detect platform.
 4. Require `curl`, archive tooling, and `sha256sum` or `shasum`.

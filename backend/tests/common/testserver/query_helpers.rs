@@ -128,3 +128,41 @@ pub fn get_i64_or_default(response: &QueryResponse, column_name: &str, default: 
 pub fn get_string_or_default(response: &QueryResponse, column_name: &str, default: &str) -> String {
     response.get_string(column_name).unwrap_or_else(|| default.to_string())
 }
+
+/// Concatenate `EXPLAIN` / `EXPLAIN ANALYZE` rows into a single plan transcript.
+pub fn explain_plan_text(response: &QueryResponse) -> String {
+    let mut lines = Vec::new();
+    let Some(result) = response.results.first() else {
+        return String::new();
+    };
+
+    for row in result.rows_as_maps() {
+        let plan_type = row
+            .get("plan_type")
+            .and_then(|value| value.as_text())
+            .unwrap_or_default();
+        let plan = row
+            .get("plan")
+            .and_then(|value| value.as_text())
+            .unwrap_or_default();
+        lines.push(format!("{plan_type} | {plan}"));
+    }
+
+    lines.join("\n")
+}
+
+/// Assert that an `EXPLAIN ANALYZE` response contains expected scan-target fragments.
+pub fn assert_explain_analyze_contains(
+    response: &QueryResponse,
+    expected_fragments: &[&str],
+    context: &str,
+) {
+    assert_query_success(response, context);
+    let plan_text = explain_plan_text(response);
+    for fragment in expected_fragments {
+        assert!(
+            plan_text.contains(fragment),
+            "{context}: expected '{fragment}' in EXPLAIN ANALYZE output:\n{plan_text}"
+        );
+    }
+}

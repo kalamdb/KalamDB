@@ -11,7 +11,7 @@ use datafusion::{
     arrow::{array::StringArray, datatypes::SchemaRef, record_batch::RecordBatch},
     datasource::TableProvider,
     execution::context::SessionContext,
-    physical_plan::collect,
+    physical_plan::{collect, displayable},
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
@@ -27,6 +27,7 @@ use kalamdb_commons::{
 };
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_filestore::StorageRegistry;
+use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend, StorageError};
 use kalamdb_system::{
@@ -47,8 +48,19 @@ use kalamdb_transactions::{
 };
 use tempfile::TempDir;
 
+mod explain_scan_helpers;
+
+use explain_scan_helpers::assert_explain_analyze_scan_targets;
+
 fn total_rows(batches: &[RecordBatch]) -> usize {
     batches.iter().map(|batch| batch.num_rows()).sum()
+}
+
+fn assert_metric(metrics_text: &str, expected: &str) {
+    assert!(
+        metrics_text.contains(expected),
+        "expected metric '{expected}' in metrics: {metrics_text}"
+    );
 }
 
 fn row(values: Vec<(&str, ScalarValue)>) -> Row {
@@ -308,6 +320,16 @@ fn session_with_user(user_id: &UserId) -> SessionContext {
     session_with_role(user_id, Role::Dba)
 }
 
+fn session_with_scan_diagnostics(user_id: &UserId) -> SessionContext {
+    let mut state = session_with_user(user_id).state().clone();
+    state
+        .config_mut()
+        .options_mut()
+        .extensions
+        .insert(ScanDiagnosticsContext::enabled());
+    SessionContext::new_with_state(state)
+}
+
 fn session_with_transaction(
     user_id: &UserId,
     tx_context: TransactionQueryContext,
@@ -518,7 +540,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             storage_mode: StreamTableStorageMode::Memory,
         },
     ));
-    let provider = StreamTableProvider::new(
+    let provider = Arc::new(StreamTableProvider::new(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -528,7 +550,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         )),
         Arc::clone(&store),
         Some(3_600),
-    );
+    ));
 
     let user_id = UserId::new("stream-owner");
     provider
@@ -542,14 +564,38 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         .await
         .expect("seed stream row");
 
-    let ctx = session_with_user(&user_id);
+    let ctx = session_with_scan_diagnostics(&user_id);
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build stream plan");
 
     assert!(plan.is::<DeferredBatchExec>());
+    let plan_text = displayable(plan.as_ref()).indent(false).to_string();
+    assert!(plan_text.contains("source=stream_table_scan"), "{plan_text}");
+    assert!(plan_text.contains("storage_tiers=[hot=rocksdb]"), "{plan_text}");
+    assert!(plan_text.contains("stream=true"), "{plan_text}");
 
-    let batches = collect(plan, state.task_ctx()).await.expect("collect stream plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx()).await.expect("collect stream plan");
     assert_eq!(total_rows(&batches), 1);
+    let metrics = plan.metrics().expect("stream scan metrics should be present").to_string();
+    assert_metric(&metrics, "output_rows=1");
+    assert_metric(&metrics, "hot_rows_scanned=1");
+    assert_metric(&metrics, "cold_rows_scanned=0");
+    assert_metric(&metrics, "cold_files_scanned=0");
+
+    ctx.register_table(table_id.table_name().as_str(), provider)
+        .expect("register stream provider for explain analyze");
+    assert_explain_analyze_scan_targets(
+        &ctx,
+        table_id.table_name().as_str(),
+        &[
+            "DeferredBatchExec: source=stream_table_scan",
+            "storage_tiers=[hot=rocksdb]",
+            "hot_rows_scanned=1",
+            "cold_files_scanned=0",
+        ],
+        "stream hot-only scan",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -559,7 +605,7 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(Arc::clone(&backend), &table_id, "id"));
-    let provider = UserTableProvider::new(
+    let provider = Arc::new(UserTableProvider::new(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -568,7 +614,7 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             HashMap::new(),
         )),
         Arc::clone(&store),
-    );
+    ));
 
     let user_id = UserId::new("user-owner");
     let seq = kalamdb_commons::ids::SeqId::from_i64(1);
@@ -588,14 +634,38 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         )
         .expect("seed user row");
 
-    let ctx = session_with_user(&user_id);
+    let ctx = session_with_scan_diagnostics(&user_id);
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build user plan");
 
     assert!(plan.is::<DeferredBatchExec>());
+    let plan_text = displayable(plan.as_ref()).indent(false).to_string();
+    assert!(plan_text.contains("source=user_table_scan"), "{plan_text}");
+    assert!(plan_text.contains("storage_tiers=[hot=rocksdb,cold=parquet]"), "{plan_text}");
+    assert!(plan_text.contains("mvcc=true"), "{plan_text}");
 
-    let batches = collect(plan, state.task_ctx()).await.expect("collect user plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx()).await.expect("collect user plan");
     assert_eq!(total_rows(&batches), 1);
+    let metrics = plan.metrics().expect("user scan metrics should be present").to_string();
+    assert_metric(&metrics, "output_rows=1");
+    assert_metric(&metrics, "hot_rows_scanned=1");
+    assert_metric(&metrics, "cold_rows_scanned=0");
+    assert_metric(&metrics, "cold_files_scanned=0");
+
+    ctx.register_table(table_id.table_name().as_str(), provider)
+        .expect("register user provider for explain analyze");
+    assert_explain_analyze_scan_targets(
+        &ctx,
+        table_id.table_name().as_str(),
+        &[
+            "DeferredBatchExec: source=user_table_scan",
+            "storage_tiers=[hot=rocksdb,cold=parquet]",
+            "hot_rows_scanned=1",
+            "cold_files_scanned=0",
+        ],
+        "user hot-only scan",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -816,7 +886,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let table_def = build_shared_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(Arc::clone(&backend), &table_id, "id"));
-    let provider = SharedTableProvider::new(
+    let provider = Arc::new(SharedTableProvider::new(
         Arc::new(TableProviderCore::new(
             table_def,
             Arc::clone(&services.services),
@@ -825,7 +895,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
             HashMap::new(),
         )),
         Arc::clone(&store),
-    );
+    ));
 
     let seq = kalamdb_commons::ids::SeqId::from_i64(1);
     store
@@ -844,14 +914,38 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         .expect("seed shared row");
 
     let user_id = UserId::new("shared-reader");
-    let ctx = session_with_user(&user_id);
+    let ctx = session_with_scan_diagnostics(&user_id);
     let state = ctx.state();
     let plan = provider.scan(&state, None, &[], None).await.expect("build shared plan");
 
     assert!(plan.is::<DeferredBatchExec>());
+    let plan_text = displayable(plan.as_ref()).indent(false).to_string();
+    assert!(plan_text.contains("source=shared_table_scan"), "{plan_text}");
+    assert!(plan_text.contains("storage_tiers=[hot=rocksdb,cold=parquet]"), "{plan_text}");
+    assert!(plan_text.contains("mvcc=true"), "{plan_text}");
 
-    let batches = collect(plan, state.task_ctx()).await.expect("collect shared plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx()).await.expect("collect shared plan");
     assert_eq!(total_rows(&batches), 1);
+    let metrics = plan.metrics().expect("shared scan metrics should be present").to_string();
+    assert_metric(&metrics, "output_rows=1");
+    assert_metric(&metrics, "hot_rows_scanned=1");
+    assert_metric(&metrics, "cold_rows_scanned=0");
+    assert_metric(&metrics, "cold_files_scanned=0");
+
+    ctx.register_table(table_id.table_name().as_str(), provider)
+        .expect("register shared provider for explain analyze");
+    assert_explain_analyze_scan_targets(
+        &ctx,
+        table_id.table_name().as_str(),
+        &[
+            "DeferredBatchExec: source=shared_table_scan",
+            "storage_tiers=[hot=rocksdb,cold=parquet]",
+            "hot_rows_scanned=1",
+            "cold_files_scanned=0",
+        ],
+        "shared hot-only scan",
+    )
+    .await;
 }
 
 #[tokio::test]

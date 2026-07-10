@@ -45,10 +45,7 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         println!("Download URL: {}", archive_url);
         println!("Install path: {}", current_exe.display());
         if should_install_managed_server(&target, args) {
-            println!(
-                "Managed server install path: {}",
-                managed_server_install_dir().display()
-            );
+            println!("Managed server install path: {}", managed_server_install_dir().display());
         }
         return Ok(true);
     }
@@ -155,13 +152,8 @@ async fn install_managed_server_after_cli_update(
     show_progress: bool,
 ) -> Result<()> {
     eprintln!("Downloading kalamdb-server {}", target.version());
-    let path =
-        install_managed_server_version(target.version().as_str(), show_progress).await?;
-    println!(
-        "Installed kalamdb-server {} to {}",
-        target.version(),
-        path.display()
-    );
+    let path = install_managed_server_version(target.version().as_str(), show_progress).await?;
+    println!("Installed kalamdb-server {} to {}", target.version(), path.display());
     Ok(())
 }
 
