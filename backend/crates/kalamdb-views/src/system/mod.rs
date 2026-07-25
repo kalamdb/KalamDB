@@ -37,6 +37,7 @@ pub mod transactions;
 
 pub use cluster::*;
 pub use cluster_groups::*;
+#[allow(deprecated)]
 pub use columns::*;
 pub use datatypes::*;
 pub use describe::*;
@@ -46,6 +47,7 @@ pub use sessions::*;
 pub use settings::*;
 pub use slow_queries::*;
 pub use stats::*;
+#[allow(deprecated)]
 pub use tables::*;
 pub use transactions::*;
 

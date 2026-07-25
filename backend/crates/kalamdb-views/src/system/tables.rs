@@ -13,6 +13,8 @@
 //!
 //! **DataFusion Pattern**: Implements VirtualView trait for consistent view behavior
 
+#![allow(deprecated)]
+
 use std::sync::Arc;
 
 use datafusion::arrow::{

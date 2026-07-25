@@ -18,8 +18,9 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
+#[allow(deprecated)]
+use kalamdb_views::{create_columns_provider, create_tables_provider};
 use kalamdb_views::{
-    create_columns_provider, create_tables_provider,
     cluster::create_cluster_provider,
     cluster_groups::create_cluster_groups_provider,
     datatypes::{DatatypesTableProvider, DatatypesView},
@@ -189,14 +190,14 @@ impl SystemSchemaProvider {
                 let provider = Arc::new(DatatypesTableProvider::new(datatypes_view));
                 provider as Arc<dyn TableProvider>
             },
+            #[allow(deprecated)]
             SystemTable::Tables => {
-                #[allow(deprecated)]
                 let provider =
                     Arc::new(create_tables_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>
             },
+            #[allow(deprecated)]
             SystemTable::Columns => {
-                #[allow(deprecated)]
                 let provider =
                     Arc::new(create_columns_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>

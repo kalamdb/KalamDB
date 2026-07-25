@@ -47,7 +47,7 @@ impl UlidFunction {
 
     /// Generate a single ULID
     fn generate_ulid(&self) -> String {
-        Ulid::new().to_string()
+        Ulid::generate().to_string()
     }
 }
 

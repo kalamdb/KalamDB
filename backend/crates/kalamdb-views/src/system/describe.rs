@@ -20,8 +20,8 @@ use datafusion::arrow::{
 };
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableId, TableName,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
+    TableId,
 };
 use kalamdb_system::SystemTable;
 
@@ -289,6 +289,10 @@ impl VirtualView for DescribeView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{
+        schemas::{TableOptions, TableType},
+        NamespaceId, TableName,
+    };
 
     #[test]
     fn test_describe_view_definition() {
