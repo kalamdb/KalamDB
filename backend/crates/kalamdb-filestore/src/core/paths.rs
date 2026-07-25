@@ -1,6 +1,10 @@
 use crate::error::{FilestoreError, Result};
 
 /// Parse a remote URL like `s3://bucket/prefix` into (bucket, prefix).
+#[cfg_attr(
+    not(any(feature = "cloud-aws", feature = "cloud-gcp", feature = "cloud-azure")),
+    allow(dead_code)
+)]
 pub(crate) fn parse_remote_url(url: &str, schemes: &[&str]) -> Result<(String, String)> {
     let trimmed = url.trim();
 

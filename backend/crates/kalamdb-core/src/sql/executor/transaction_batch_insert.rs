@@ -692,7 +692,7 @@ fn materialize_prepared_default(
             Ok(ScalarValue::Utf8(Some(Uuid::now_v7().to_string())))
         },
         PreparedDefaultValue::Volatile(VolatileDefaultFunction::Ulid) => {
-            Ok(ScalarValue::Utf8(Some(Ulid::new().to_string())))
+            Ok(ScalarValue::Utf8(Some(Ulid::generate().to_string())))
         },
     }
 }

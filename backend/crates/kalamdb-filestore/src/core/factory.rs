@@ -29,9 +29,9 @@ use object_store::azure::MicrosoftAzureBuilder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 #[cfg(any(feature = "cloud-aws", feature = "cloud-gcp", feature = "cloud-azure"))]
 use object_store::ClientOptions;
-use object_store::{
-    local::LocalFileSystem, path::Path as ObjectStorePath, prefix::PrefixStore, ObjectStore,
-};
+use object_store::{local::LocalFileSystem, ObjectStore};
+#[cfg(any(feature = "cloud-aws", feature = "cloud-gcp", feature = "cloud-azure"))]
+use object_store::{path::Path as ObjectStorePath, prefix::PrefixStore};
 
 #[cfg(any(feature = "cloud-aws", feature = "cloud-gcp", feature = "cloud-azure"))]
 use crate::core::paths::parse_remote_url;
@@ -247,6 +247,7 @@ fn build_azure(
 }
 
 /// Wrap a store with a PrefixStore if prefix is non-empty.
+#[cfg(any(feature = "cloud-aws", feature = "cloud-gcp", feature = "cloud-azure"))]
 fn wrap_with_prefix<T: ObjectStore + 'static>(
     store: T,
     prefix: &str,
