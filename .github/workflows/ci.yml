@@ -19,6 +19,8 @@ env:
   # CI has no pre-started dev server; e2e tests auto-start an ephemeral server per suite.
   KALAMDB_SERVER_TYPE: fresh
   KALAMDB_ROOT_PASSWORD: kalamdb123
+  # Durable fresh-server stdout/stderr for post-mortem debugging.
+  KALAMDB_AUTO_TEST_SERVER_LOG: ${{ github.workspace }}/ci-artifacts/fresh-server.log
 
 jobs:
   fmt:
@@ -191,6 +193,7 @@ jobs:
       - name: Run tests (nextest)
         id: nextest
         run: |
+          mkdir -p ci-artifacts
           cargo nextest run \
             --profile ci \
             --workspace \
@@ -198,6 +201,36 @@ jobs:
             --no-fail-fast \
             --failure-output immediate-final
         continue-on-error: true
+
+      - name: Collect fresh server log
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p ci-artifacts
+          LOG_PATH="${KALAMDB_AUTO_TEST_SERVER_LOG:-ci-artifacts/fresh-server.log}"
+          PRESERVED="${TMPDIR:-/tmp}/kalamdb_auto_test_server/last-server.log"
+
+          if [[ ! -s "$LOG_PATH" && -s "$PRESERVED" ]]; then
+            cp "$PRESERVED" "$LOG_PATH"
+          fi
+
+          if [[ -s "$LOG_PATH" ]]; then
+            echo "Fresh server log: $LOG_PATH ($(wc -c < "$LOG_PATH") bytes)"
+            echo "=== fresh-server.log (last 120 lines) ==="
+            tail -n 120 "$LOG_PATH" || true
+          else
+            echo "No fresh-server.log collected at $LOG_PATH"
+            ls -la "${TMPDIR:-/tmp}/kalamdb_auto_test_server" 2>/dev/null || true
+          fi
+
+      - name: Upload fresh server log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fresh-server-log
+          path: ci-artifacts/fresh-server.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Normalize JUnit suite durations for test-reporter
         if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
