@@ -831,9 +831,37 @@ mod cluster_common {
 
     /// Require cluster to be running (skip test if not available)
     pub fn require_cluster_running() -> bool {
-        let cluster_requested = std::env::var("KALAMDB_SERVER_TYPE")
-            .map(|value| value.trim().eq_ignore_ascii_case("cluster"))
-            .unwrap_or(false);
+        let server_type = std::env::var("KALAMDB_SERVER_TYPE")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase());
+        let cluster_requested = server_type.as_deref() == Some("cluster");
+
+        // Critical: do NOT call is_cluster_mode()/test_context() before this check.
+        // Under KALAMDB_SERVER_TYPE=fresh (main CI), test_context() auto-starts the
+        // shared single-node server and blocks on auth — which is exactly what cluster
+        // skip paths must avoid. Real cluster coverage lives in cli-cluster-e2e.
+        if !cluster_requested {
+            if matches!(server_type.as_deref(), Some("fresh") | Some("running")) {
+                println!(
+                    "\n  Skipping: KALAMDB_SERVER_TYPE={} (cluster tests require KALAMDB_SERVER_TYPE=cluster)\n",
+                    server_type.as_deref().unwrap_or("unknown")
+                );
+                return false;
+            }
+
+            let has_multi_node_urls = std::env::var("KALAMDB_CLUSTER_URLS")
+                .ok()
+                .map(|raw| {
+                    raw.split(',').map(str::trim).filter(|url| !url.is_empty()).count() > 1
+                })
+                .unwrap_or(false);
+            if !has_multi_node_urls {
+                println!(
+                    "\n  Skipping: single-node server detected (cluster tests require multi-node)\n"
+                );
+                return false;
+            }
+        }
 
         if !crate::common::is_cluster_mode() {
             if cluster_requested {
