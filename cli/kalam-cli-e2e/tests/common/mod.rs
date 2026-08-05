@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
     fs::OpenOptions,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -786,6 +786,7 @@ struct AutoTestServer {
     base_url: String,
     storage_dir: PathBuf,
     pid: u32,
+    log_path: PathBuf,
     child: Option<Child>,
 }
 
@@ -795,6 +796,7 @@ impl Drop for AutoTestServer {
             let _ = child.kill();
             let _ = child.wait();
         }
+        preserve_auto_test_server_log(&self.log_path);
     }
 }
 
@@ -803,6 +805,9 @@ struct SharedAutoTestServerState {
     base_url: String,
     storage_dir: PathBuf,
     pid: u32,
+    /// Path to the fresh-server stdout/stderr log (usually absolute).
+    #[serde(default)]
+    log_path: Option<PathBuf>,
 }
 
 fn auto_test_server_state_root() -> PathBuf {
@@ -823,6 +828,96 @@ fn auto_test_server_leases_dir() -> PathBuf {
 
 fn auto_test_server_lease_path(pid: u32) -> PathBuf {
     auto_test_server_leases_dir().join(pid.to_string())
+}
+
+/// Durable log path for CI/local post-mortems (`KALAMDB_AUTO_TEST_SERVER_LOG`).
+fn auto_test_server_log_export_path() -> Option<PathBuf> {
+    std::env::var("KALAMDB_AUTO_TEST_SERVER_LOG")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn auto_test_server_preserved_log_path() -> PathBuf {
+    auto_test_server_state_root().join("last-server.log")
+}
+
+fn auto_test_server_log_path_for_data_dir(data_path: &Path) -> PathBuf {
+    if let Some(export) = auto_test_server_log_export_path() {
+        if let Some(parent) = export.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        export
+    } else {
+        data_path.join("server.log")
+    }
+}
+
+fn preserve_auto_test_server_log(log_path: &Path) {
+    if !log_path.exists() {
+        return;
+    }
+
+    let _ = fs::create_dir_all(auto_test_server_state_root());
+    let preserved = auto_test_server_preserved_log_path();
+    if preserved != log_path {
+        let _ = fs::copy(log_path, &preserved);
+    }
+
+    if let Some(export) = auto_test_server_log_export_path() {
+        if export != log_path {
+            if let Some(parent) = export.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::copy(log_path, &export);
+        }
+    }
+}
+
+fn resolve_auto_test_server_log_for_dump() -> Option<PathBuf> {
+    if let Some(export) = auto_test_server_log_export_path() {
+        if export.exists() {
+            return Some(export);
+        }
+    }
+
+    if let Ok(Some(state)) = read_auto_test_server_state_locked() {
+        if let Some(log_path) = state.log_path {
+            if log_path.exists() {
+                return Some(log_path);
+            }
+        }
+        let in_data = state.storage_dir.join("server.log");
+        if in_data.exists() {
+            return Some(in_data);
+        }
+    }
+
+    let preserved = auto_test_server_preserved_log_path();
+    if preserved.exists() {
+        return Some(preserved);
+    }
+
+    None
+}
+
+fn dump_auto_test_server_log_tail(context: &str) {
+    let Some(log_path) = resolve_auto_test_server_log_for_dump() else {
+        eprintln!("[TEST] No fresh-server log available ({context})");
+        return;
+    };
+
+    let contents = fs::read_to_string(&log_path).unwrap_or_default();
+    let tail: Vec<&str> = contents.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+    eprintln!(
+        "[TEST] Fresh server log tail ({context}) from {} ({} lines):",
+        log_path.display(),
+        tail.len()
+    );
+    for line in tail {
+        eprintln!("  {line}");
+    }
 }
 
 fn create_auto_test_server_data_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -999,6 +1094,12 @@ fn shutdown_auto_test_server_locked(
     } else if pid_is_alive(state.pid) {
         terminate_auto_test_server_process(state.pid);
     }
+
+    let log_path = state
+        .log_path
+        .clone()
+        .unwrap_or_else(|| state.storage_dir.join("server.log"));
+    preserve_auto_test_server_log(&log_path);
 
     let _ = std::fs::remove_file(auto_test_server_state_file_path());
     let _ = std::fs::remove_dir_all(&state.storage_dir);
@@ -1236,6 +1337,7 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
                     base_url: server.base_url.clone(),
                     storage_dir: server.storage_dir.clone(),
                     pid: server.pid,
+                    log_path: Some(server.log_path.clone()),
                 };
                 write_auto_test_server_state_locked(&state)?;
                 shared_state = Some(state);
@@ -1420,8 +1522,16 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
 
     let config_path = workspace_root().join("backend").join("server.toml");
 
-    let log_path = data_path.join("server.log");
-    let log_file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let log_path = auto_test_server_log_path_for_data_dir(&data_path);
+    {
+        let mut banner = OpenOptions::new().create(true).append(true).open(&log_path)?;
+        writeln!(
+            banner,
+            "===== fresh test server start url={base_url} data={} =====",
+            data_path.display()
+        )?;
+    }
+    let log_file = OpenOptions::new().create(true).append(true).open(&log_path)?;
     let log_file_err = log_file.try_clone()?;
 
     let mut cmd = Command::new(server_bin);
@@ -1444,8 +1554,11 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     if !wait_for_url_reachable(&base_url, Duration::from_secs(30)) {
         let _ = child.kill();
         let _ = child.wait();
+        preserve_auto_test_server_log(&log_path);
         let _ = std::fs::remove_dir_all(&data_path);
-        let log_tail = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let log_tail = std::fs::read_to_string(&log_path).unwrap_or_else(|_| {
+            std::fs::read_to_string(auto_test_server_preserved_log_path()).unwrap_or_default()
+        });
         let log_tail = log_tail
             .lines()
             .rev()
@@ -1466,14 +1579,19 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     if let Err(err) = test_auth_manager().ensure_ready(&base_url).await {
         let _ = child.kill();
         let _ = child.wait();
+        preserve_auto_test_server_log(&log_path);
+        dump_auto_test_server_log_tail("fresh server auth setup failed");
         let _ = std::fs::remove_dir_all(&data_path);
         return Err(err);
     }
+
+    preserve_auto_test_server_log(&log_path);
 
     Ok(AutoTestServer {
         base_url: base_url.clone(),
         storage_dir: data_path,
         pid,
+        log_path,
         child: Some(child),
     })
 }
@@ -1595,15 +1713,18 @@ fn ensure_server_ready_sync(base_url: &str) {
         match rx.recv_timeout(Duration::from_secs(30)) {
             Ok(Ok(())) => {},
             Ok(Err(err)) => {
+                dump_auto_test_server_log_tail("auth ensure_ready failed");
                 panic!("Failed to prepare test authentication context for {}: {}", base_url, err)
             },
             Err(err) => {
+                dump_auto_test_server_log_tail("auth ensure_ready timed out");
                 panic!("Timed out preparing test authentication context for {}: {}", base_url, err)
             },
         }
     } else {
         if let Err(err) = get_shared_runtime().block_on(test_auth_manager().ensure_ready(base_url))
         {
+            dump_auto_test_server_log_tail("auth ensure_ready failed");
             panic!("Failed to prepare test authentication context for {}: {}", base_url, err);
         }
     }
@@ -1840,7 +1961,13 @@ pub fn test_context() -> &'static TestContext {
                         storage_dir.to_string_lossy().to_string(),
                     );
                     server_url = auto_url;
-                    eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
+                    eprintln!(
+                        "✅ [TEST] Auto-started fresh server at {} (log: {})",
+                        server_url,
+                        auto_test_server_log_export_path()
+                            .unwrap_or_else(|| storage_dir.join("server.log"))
+                            .display()
+                    );
                 } else {
                     panic!(
                         "\n\n╔══════════════════════════════════════════════════════════════════╗\\
@@ -1890,7 +2017,13 @@ pub fn test_context() -> &'static TestContext {
                             storage_dir.to_string_lossy().to_string(),
                         );
                         server_url = auto_url;
-                        eprintln!("✅ [TEST] Auto-started fresh server at {}", server_url);
+                        eprintln!(
+                            "✅ [TEST] Auto-started fresh server at {} (log: {})",
+                            server_url,
+                            auto_test_server_log_export_path()
+                                .unwrap_or_else(|| storage_dir.join("server.log"))
+                                .display()
+                        );
                     } else {
                         panic!(
                             "\n\n\

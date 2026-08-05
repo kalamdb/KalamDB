@@ -16,6 +16,7 @@ cli/kalam-link/pkg/
 # Log files
 /logs/
 *.log
+/ci-artifacts/
 
 # Configuration (keep example, ignore actual config)
 config.toml

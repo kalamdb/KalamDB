@@ -144,11 +144,17 @@ fn test_project_workflow_schema_command_help_surface() {
     }
 }
 
-fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
+fn scaffold_sql_project(temp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let project_dir = temp.path().join("schema-app");
+    let isolated_home = temp.path().join("home");
     fs::create_dir_all(&project_dir).expect("create project dir");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    // Schema gen uses a fake ORM client and must not bind credentials to the Fresh
+    // ephemeral URL — init still defaults the project to http://localhost:2900.
+    store_test_kalam_dev_credentials(&credentials_path);
 
-    let mut cmd = create_cli_command();
+    let mut cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     cmd.current_dir(&project_dir).args([
         "init",
         "--yes",
@@ -165,9 +171,8 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
         "init failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    login_kalam_dev_for_project(&project_dir);
 
-    project_dir
+    (project_dir, isolated_home, credentials_path)
 }
 
 fn write_fake_typescript_codegen_packages(project_dir: &std::path::Path) {
@@ -234,10 +239,10 @@ export function createClient(options) {
 #[test]
 fn test_project_workflow_schema_gen_from_sql() {
     let temp = TempDir::new().expect("temp dir");
-    let project_dir = scaffold_sql_project(&temp);
+    let (project_dir, isolated_home, credentials_path) = scaffold_sql_project(&temp);
     write_fake_typescript_codegen_packages(&project_dir);
 
-    let mut cmd = create_cli_command();
+    let mut cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     cmd.current_dir(&project_dir).args(["schema", "gen"]);
 
     let output = cmd.output().expect("schema gen");
