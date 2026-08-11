@@ -805,7 +805,7 @@ struct SharedAutoTestServerState {
     base_url: String,
     storage_dir: PathBuf,
     pid: u32,
-    /// Absolute path to the fresh-server stdout/stderr log.
+    /// Path to the fresh-server stdout/stderr log (usually absolute).
     #[serde(default)]
     log_path: Option<PathBuf>,
 }
