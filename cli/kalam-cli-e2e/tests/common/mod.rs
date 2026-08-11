@@ -1541,6 +1541,10 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
         .env("KALAMDB_CLUSTER_API_ADDR", format!("127.0.0.1:{}", api_port))
         .env("KALAMDB_DATA_DIR", data_path.to_string_lossy().into_owned())
         .env("KALAMDB_ENABLE_PGWIRE", "false")
+        // Shared Fresh servers load server.toml (OIDC→Dex). Dex is absent in CI;
+        // disable OIDC so login-options discovery cannot stall actix workers.
+        // Dedicated OIDC e2e tests re-enable OIDC on their own servers.
+        .env("KALAMDB_AUTH_OIDC_ENABLED", "false")
         .env("KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC", "200000")
         .env("KALAMDB_LOG_LEVEL", "warn")
         .arg(config_path)

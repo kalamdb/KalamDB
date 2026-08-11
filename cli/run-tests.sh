@@ -1598,7 +1598,7 @@ build_test_cmd() {
         fi
     fi
 
-    # nextest.toml already serializes the stateful kalam-cli / kalam-link
+    # .config/nextest.toml already serializes the stateful kalam-cli / kalam-link
     # packages. Do not force a global `-j 1` here, otherwise the entire
     # workspace becomes single-file even when only those packages need it.
     if [ -n "$TEST_JOBS" ]; then

@@ -1,7 +1,8 @@
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use kalamdb_commons::AuthType as KalamAuthType;
 use moka::future::Cache;
+use once_cell::sync::Lazy;
 use openidconnect::{
     core::{
         CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
@@ -17,6 +18,14 @@ use serde::{Deserialize, Serialize};
 use crate::providers::jwt_auth::JwtClaims;
 
 use super::{http::OidcHttpClient, OidcError};
+
+/// Negative cache so a down IdP does not re-block workers on every login-options call.
+static OIDC_DISCOVERY_FAILURES: Lazy<Cache<String, String>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(64)
+        .time_to_live(Duration::from_secs(30))
+        .build()
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OidcPublicMetadata {
@@ -230,7 +239,22 @@ pub(crate) async fn get_or_discover_oidc_client(
         return Ok(handle);
     }
 
-    let handle = Arc::new(OidcClientHandle::discover(&settings, http_client).await?);
+    if let Some(message) = OIDC_DISCOVERY_FAILURES.get(&cache_key).await {
+        return Err(OidcError::DiscoveryFailed(message));
+    }
+
+    let handle = match OidcClientHandle::discover(&settings, http_client).await {
+        Ok(handle) => Arc::new(handle),
+        Err(error) => {
+            let cached_message = match &error {
+                OidcError::DiscoveryFailed(message) => message.clone(),
+                other => other.to_string(),
+            };
+            OIDC_DISCOVERY_FAILURES.insert(cache_key, cached_message).await;
+            return Err(error);
+        },
+    };
+    OIDC_DISCOVERY_FAILURES.invalidate(&cache_key).await;
     cache.insert(cache_key, handle.clone()).await;
     Ok(handle)
 }
