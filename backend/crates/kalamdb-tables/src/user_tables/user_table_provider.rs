@@ -738,9 +738,8 @@ impl UserTableProvider {
             if include_diagnostics {
                 diagnostics.cold_rows_scanned =
                     Some(diagnostics.cold_rows_scanned.unwrap_or(0) + cold_result.batch.num_rows());
-                diagnostics.cold_files_total = Some(
-                    diagnostics.cold_files_total.unwrap_or(0) + cold_result.stats.total_files,
-                );
+                diagnostics.cold_files_total =
+                    Some(diagnostics.cold_files_total.unwrap_or(0) + cold_result.stats.total_files);
                 diagnostics.cold_files_skipped = Some(
                     diagnostics.cold_files_skipped.unwrap_or(0) + cold_result.stats.skipped_files,
                 );
@@ -832,20 +831,12 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
         Some(&scan_context.user_id)
     }
 
-    async fn scan_hot_pk_row(
+    async fn scan_latest_hot_pk_entry(
         &self,
         scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        self.find_by_pk(&scan_context.user_id, pk_value).await
-    }
-
-    async fn hot_pk_tombstoned(
-        &self,
-        scan_context: &Self::ScanContext,
-        pk_value: &ScalarValue,
-    ) -> Result<bool, KalamDbError> {
-        self.pk_tombstoned_in_hot(&scan_context.user_id, pk_value).await
+        self.latest_hot_pk_entry(&scan_context.user_id, pk_value).await
     }
 
     async fn count_rows_with_context(
@@ -1648,11 +1639,9 @@ impl UserTableProvider {
         };
         let cold_future = async {
             if include_diagnostics {
-                self.scan_parquet_files_with_stats_async(user_id, filter, cold_columns)
-                    .await
+                self.scan_parquet_files_with_stats_async(user_id, filter, cold_columns).await
             } else {
-                self.scan_parquet_files_as_result_async(user_id, filter, cold_columns)
-                    .await
+                self.scan_parquet_files_as_result_async(user_id, filter, cold_columns).await
             }
         };
         let pk_name = self.primary_key_field_name().to_string();

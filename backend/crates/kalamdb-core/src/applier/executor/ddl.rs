@@ -137,6 +137,7 @@ impl DdlExecutor {
 mod tests {
     use std::sync::Arc;
 
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         models::{
             datatypes::KalamDataType,
@@ -210,12 +211,35 @@ mod tests {
             app_ctx.base_session_context(),
         );
 
+        let point_get_sql = "SELECT id FROM test_ns.test_table WHERE id = $1";
         let _ = sql_executor
-            .execute("SELECT * FROM test_ns.test_table", &exec_ctx, vec![])
+            .execute(point_get_sql, &exec_ctx, vec![ScalarValue::Int64(Some(1))])
             .await
             .expect("SELECT failed");
+        let _ = sql_executor
+            .prepare_statement_metadata(point_get_sql, &exec_ctx)
+            .expect("repeated SELECT metadata prepare failed");
+        let _ = sql_executor
+            .execute(point_get_sql, &exec_ctx, vec![ScalarValue::Int64(Some(1))])
+            .await
+            .expect("cached point SELECT failed");
 
         assert!(sql_executor.plan_cache_len() > 0, "Expected plan cache to be populated");
+        assert_eq!(
+            sql_executor.prepared_statement_cache_len(),
+            1,
+            "Expected repeated SQL metadata to occupy one cache entry"
+        );
+        assert_eq!(
+            sql_executor.point_get_fast_path_hits(),
+            1,
+            "Expected the second point SELECT to bypass logical/physical replanning"
+        );
+        assert_eq!(
+            sql_executor.point_read_session_cache_len(),
+            1,
+            "Expected the point SELECT to cache one authenticated session state"
+        );
 
         // Now apply an ALTER TABLE via the applier path (simulates follower replication).
         let mut altered = table_def.clone();
@@ -239,6 +263,16 @@ mod tests {
             sql_executor.plan_cache_len(),
             0,
             "Expected plan cache to be cleared after ALTER TABLE applied via applier"
+        );
+        assert_eq!(
+            sql_executor.prepared_statement_cache_len(),
+            0,
+            "Expected prepared statement metadata to be cleared after ALTER TABLE"
+        );
+        assert_eq!(
+            sql_executor.point_read_session_cache_len(),
+            0,
+            "Expected point-read session states to be cleared after ALTER TABLE"
         );
     }
 }

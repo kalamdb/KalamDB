@@ -94,9 +94,8 @@ async fn deferred_batch_exec_displays_debug_scan_details() {
 #[tokio::test]
 async fn deferred_batch_exec_records_scan_diagnostics_as_metrics() {
     let ctx = SessionContext::new();
-    let exec = Arc::new(DeferredBatchExec::new_with_scan_diagnostics(Arc::new(
-        DiagnosticSource::new(),
-    )));
+    let exec =
+        Arc::new(DeferredBatchExec::new_with_scan_diagnostics(Arc::new(DiagnosticSource::new())));
     let plan: Arc<dyn ExecutionPlan> = exec.clone();
 
     let batches = collect(plan, ctx.task_ctx()).await.expect("collect diagnostic plan");
@@ -111,8 +110,14 @@ async fn deferred_batch_exec_records_scan_diagnostics_as_metrics() {
     assert!(metrics_text.contains("cold_files_total=3"), "{metrics_text}");
     assert!(metrics_text.contains("cold_files_skipped=1"), "{metrics_text}");
     assert!(metrics_text.contains("cold_files_scanned=2"), "{metrics_text}");
-    assert!(metrics_text.contains("cold_file_visited{file=batch-0001.parquet}=1"), "{metrics_text}");
-    assert!(metrics_text.contains("cold_file_visited{file=batch-0002.parquet}=1"), "{metrics_text}");
+    assert!(
+        metrics_text.contains("cold_file_visited{file=batch-0001.parquet}=1"),
+        "{metrics_text}"
+    );
+    assert!(
+        metrics_text.contains("cold_file_visited{file=batch-0002.parquet}=1"),
+        "{metrics_text}"
+    );
 }
 
 #[tokio::test]
@@ -127,6 +132,18 @@ async fn deferred_batch_exec_default_path_has_no_scan_diagnostics() {
     assert_eq!(batches.iter().map(|batch| batch.num_rows()).sum::<usize>(), 2);
 
     assert!(exec.metrics().is_none());
+    assert_eq!(diagnostic_calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn deferred_batch_exec_can_produce_its_single_batch_directly() {
+    let source = Arc::new(DiagnosticSource::new());
+    let diagnostic_calls = source.diagnostic_calls();
+    let exec = DeferredBatchExec::new(source);
+
+    let batch = exec.produce_batch_direct().await.expect("produce direct batch");
+
+    assert_eq!(batch.num_rows(), 2);
     assert_eq!(diagnostic_calls.load(Ordering::Relaxed), 0);
 }
 
@@ -170,7 +187,7 @@ impl TableProvider for DiagnosticTableProvider {
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(DeferredBatchExec::new_with_scan_diagnostics(
-            self.source.clone() as Arc<dyn DeferredBatchSource>,
+            self.source.clone() as Arc<dyn DeferredBatchSource>
         )))
     }
 }

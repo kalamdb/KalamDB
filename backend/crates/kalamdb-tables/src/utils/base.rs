@@ -172,17 +172,15 @@ where
 
     fn scan_cold_scope<'a>(&self, scan_context: &'a Self::ScanContext) -> Option<&'a UserId>;
 
-    async fn scan_hot_pk_row(
+    /// Return the newest hot-storage version, including tombstones.
+    ///
+    /// The resolver must inspect the deletion flag from this same lookup so a
+    /// point read does not repeat the RocksDB index seek and entity fetch.
+    async fn scan_latest_hot_pk_entry(
         &self,
         scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
     ) -> Result<Option<(K, V)>, KalamDbError>;
-
-    async fn hot_pk_tombstoned(
-        &self,
-        scan_context: &Self::ScanContext,
-        pk_value: &ScalarValue,
-    ) -> Result<bool, KalamDbError>;
 
     async fn count_rows_with_context(
         &self,
@@ -1104,6 +1102,10 @@ fn prefers_scan_row_pair<K, V: ScanRow>(candidate: &(K, V), current: &(K, V)) ->
     prefers_scan_row_version(&candidate.1, &current.1)
 }
 
+fn visible_hot_entry<K, V: ScanRow>(entry: Option<(K, V)>) -> Option<(K, V)> {
+    entry.filter(|(_, row)| !row.deleted_flag())
+}
+
 /// Resolve a single PK equality lookup by merging the latest hot and cold versions.
 async fn resolve_pk_point_lookup<P, K, V>(
     provider: &P,
@@ -1115,11 +1117,14 @@ where
     K: StorageKey + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    if provider.hot_pk_tombstoned(scan_context, pk_scalar).await? {
+    let latest_hot = provider.scan_latest_hot_pk_entry(scan_context, pk_scalar).await?;
+    if latest_hot.as_ref().is_some_and(|(_, row)| row.deleted_flag()) {
         return Ok(None);
     }
+    let hot = visible_hot_entry(latest_hot);
 
-    let hot = provider.scan_hot_pk_row(scan_context, pk_scalar).await?;
+    // Always merge cold storage. Manual `STORAGE FLUSH` can materialize Parquet
+    // even when the table has no configured FLUSH_POLICY.
     let cold =
         find_row_by_pk(provider, provider.scan_cold_scope(scan_context), &pk_scalar.to_string())
             .await?;
@@ -2075,6 +2080,54 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
 
     use super::*;
+
+    #[derive(Clone)]
+    struct TestScanRow {
+        row: Row,
+        deleted: bool,
+    }
+
+    impl ScanRow for TestScanRow {
+        fn row(&self) -> &Row {
+            &self.row
+        }
+
+        fn into_row(self) -> Row {
+            self.row
+        }
+
+        fn seq_value(&self) -> i64 {
+            1
+        }
+
+        fn commit_seq_value(&self) -> u64 {
+            1
+        }
+
+        fn deleted_flag(&self) -> bool {
+            self.deleted
+        }
+    }
+
+    #[test]
+    fn visible_hot_entry_hides_latest_tombstone() {
+        let tombstone = TestScanRow {
+            row: Row::from_vec(vec![]),
+            deleted: true,
+        };
+
+        assert!(visible_hot_entry(Some((1_u64, tombstone))).is_none());
+    }
+
+    #[test]
+    fn visible_hot_entry_keeps_latest_live_row() {
+        let live = TestScanRow {
+            row: Row::from_vec(vec![]),
+            deleted: false,
+        };
+
+        assert!(visible_hot_entry(Some((1_u64, live))).is_some());
+    }
 
     #[test]
     fn compute_metadata_only_cold_columns_returns_pk_and_mvcc_columns() {

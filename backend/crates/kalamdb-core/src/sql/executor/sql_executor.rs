@@ -9,7 +9,12 @@ use arrow::{
     datatypes::{Field, Schema, SchemaRef},
 };
 use datafusion::{
-    dataframe::DataFrame, datasource::MemTable, logical_expr::LogicalPlan, prelude::SessionContext,
+    common::tree_node::{Transformed, TransformedResult, TreeNode},
+    dataframe::DataFrame,
+    datasource::MemTable,
+    logical_expr::{Expr as DataFusionExpr, LogicalPlan},
+    physical_plan::collect,
+    prelude::SessionContext,
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
@@ -18,8 +23,9 @@ use kalamdb_commons::{
     schemas::TableType,
     Role, SystemTable,
 };
-use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
+use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
+use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
 use kalamdb_system::Migration;
 use kalamdb_tables::{SharedTableProvider, UserTableProvider};
 use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
@@ -29,7 +35,9 @@ use sqlparser::ast::{
 };
 use uuid::Uuid;
 
-use super::{PreparedExecutionStatement, SqlExecutor};
+use super::{
+    point_read_session_cache_key::PointReadSessionCacheKey, PreparedExecutionStatement, SqlExecutor,
+};
 use crate::{
     error::KalamDbError,
     sql::{
@@ -560,9 +568,19 @@ impl SqlExecutor {
         })
     }
 
-    fn logical_plan_has_limit(plan: &datafusion::logical_expr::LogicalPlan) -> bool {
-        matches!(plan, datafusion::logical_expr::LogicalPlan::Limit(_))
-            || plan.inputs().iter().any(|input| Self::logical_plan_has_limit(input))
+    /// True when the plan already encodes an explicit row bound.
+    ///
+    /// DataFusion often rewrites `ORDER BY ... LIMIT N` to `Sort { fetch: Some(N) }`
+    /// (and may push `LIMIT` into `TableScan.fetch`) without leaving a top-level
+    /// `Limit` node. Treat those fetch bounds as explicit so we do not also apply
+    /// `default_query_limit`.
+    fn logical_plan_has_limit(plan: &LogicalPlan) -> bool {
+        match plan {
+            LogicalPlan::Limit(_) => true,
+            LogicalPlan::Sort(sort) if sort.fetch.is_some() => true,
+            LogicalPlan::TableScan(scan) if scan.fetch.is_some() => true,
+            _ => plan.inputs().iter().any(|input| Self::logical_plan_has_limit(input)),
+        }
     }
 
     fn apply_select_limits(
@@ -1232,6 +1250,38 @@ impl SqlExecutor {
         Ok(SessionContext::new_with_state(state))
     }
 
+    fn point_read_session_state(
+        &self,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Arc<datafusion::execution::context::SessionState>, KalamDbError> {
+        let transaction_query_context = self.transaction_query_context_for_request(exec_ctx)?;
+        if transaction_query_context.is_none() {
+            let key = PointReadSessionCacheKey::new(
+                exec_ctx.user_id().clone(),
+                exec_ctx.user_role(),
+                exec_ctx.default_namespace(),
+                exec_ctx.read_context(),
+            );
+            if let Some(state) = self.point_read_session_cache.get(&key) {
+                return Ok(state);
+            }
+
+            let state = Arc::new(exec_ctx.build_user_session_state());
+            self.point_read_session_cache.insert(key, Arc::clone(&state));
+            return Ok(state);
+        }
+
+        let mut state = exec_ctx.build_user_session_state();
+        if let Some(transaction_query_context) = transaction_query_context {
+            state
+                .config_mut()
+                .options_mut()
+                .extensions
+                .insert(TransactionQueryExtension::new(transaction_query_context));
+        }
+        Ok(Arc::new(state))
+    }
+
     async fn execute_begin_transaction(
         &self,
         exec_ctx: &ExecutionContext,
@@ -1341,25 +1391,161 @@ impl SqlExecutor {
         app_context: std::sync::Arc<crate::app_context::AppContext>,
         handler_registry: Arc<HandlerRegistry>,
     ) -> Self {
+        let plan_max_entries = app_context.config().execution.sql_plan_cache_max_entries;
+        let plan_idle_ttl =
+            Duration::from_secs(app_context.config().execution.sql_plan_cache_ttl_seconds);
         let sql_cache_registry = Arc::new(SqlCacheRegistry::new(SqlCacheRegistryConfig::new(
-            app_context.config().execution.sql_plan_cache_max_entries,
-            Duration::from_secs(app_context.config().execution.sql_plan_cache_ttl_seconds),
+            plan_max_entries,
+            plan_idle_ttl,
         )));
+        let prepared_statement_cache = moka::sync::Cache::builder()
+            .max_capacity(plan_max_entries)
+            .time_to_idle(plan_idle_ttl)
+            .build();
+        let point_read_session_cache = moka::sync::Cache::builder()
+            .max_capacity(plan_max_entries.min(64))
+            .time_to_idle(plan_idle_ttl)
+            .build();
         Self {
             app_context,
             handler_registry,
             sql_cache_registry,
+            prepared_statement_cache,
+            point_read_session_cache,
+            #[cfg(test)]
+            point_get_fast_path_hits: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     /// Clear SQL caches that may become stale after DDL operations.
     pub fn clear_plan_cache(&self) {
         self.sql_cache_registry.clear();
+        self.prepared_statement_cache.invalidate_all();
+        self.point_read_session_cache.invalidate_all();
+        self.prepared_statement_cache.run_pending_tasks();
+        self.point_read_session_cache.run_pending_tasks();
     }
 
     /// Get current plan cache size (diagnostics/testing)
     pub fn plan_cache_len(&self) -> usize {
         self.sql_cache_registry.plan_cache().len()
+    }
+
+    /// Get current prepared-statement metadata cache size (diagnostics/testing).
+    pub fn prepared_statement_cache_len(&self) -> usize {
+        self.prepared_statement_cache.run_pending_tasks();
+        self.prepared_statement_cache.entry_count() as usize
+    }
+
+    #[cfg(test)]
+    pub fn point_read_session_cache_len(&self) -> usize {
+        self.point_read_session_cache.run_pending_tasks();
+        self.point_read_session_cache.entry_count() as usize
+    }
+
+    #[cfg(test)]
+    pub fn point_get_fast_path_hits(&self) -> u64 {
+        self.point_get_fast_path_hits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn optimized_plan_for_cache(
+        session: &SessionContext,
+        data_frame: &DataFrame,
+    ) -> Result<LogicalPlan, KalamDbError> {
+        session
+            .state()
+            .optimize(data_frame.logical_plan())
+            .map_err(Self::datafusion_to_execution_error)
+    }
+
+    fn unqualify_scan_filter(filter: DataFusionExpr) -> Result<DataFusionExpr, KalamDbError> {
+        filter
+            .transform_up(|expr| {
+                if let DataFusionExpr::Column(mut column) = expr {
+                    column.relation = None;
+                    Ok(Transformed::yes(DataFusionExpr::Column(column)))
+                } else {
+                    Ok(Transformed::no(expr))
+                }
+            })
+            .data()
+            .map_err(Self::datafusion_to_execution_error)
+    }
+
+    /// Execute a cached, optimized single-PK table scan without rebuilding a
+    /// DataFusion logical/physical plan. Provider `scan` still enforces access,
+    /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
+    async fn try_execute_cached_point_get(
+        &self,
+        plan: &LogicalPlan,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        let LogicalPlan::TableScan(scan) = plan else {
+            return Ok(None);
+        };
+
+        let namespace = scan
+            .table_name
+            .schema()
+            .map(NamespaceId::new)
+            .unwrap_or_else(|| exec_ctx.default_namespace());
+        let table_id = TableId::from_strings(namespace.as_str(), scan.table_name.table());
+        let Some(cached_table) = self.app_context.schema_registry().get(&table_id) else {
+            return Ok(None);
+        };
+        if !matches!(
+            cached_table.table.table_type,
+            TableType::User | TableType::Shared | TableType::Stream
+        ) {
+            return Ok(None);
+        }
+
+        let primary_keys = cached_table.table.get_primary_key_columns();
+        let [primary_key] = primary_keys.as_slice() else {
+            return Ok(None);
+        };
+        if !scan.filters.iter().any(|filter| {
+            kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key).is_some()
+        }) {
+            return Ok(None);
+        }
+
+        let Some(provider) = cached_table.get_provider() else {
+            return Ok(None);
+        };
+        let state = self.point_read_session_state(exec_ctx)?;
+        let limit = Some(scan.fetch.unwrap_or(1).min(1));
+        let filters = scan
+            .filters
+            .iter()
+            .cloned()
+            .map(Self::unqualify_scan_filter)
+            .collect::<Result<Vec<_>, _>>()?;
+        let physical_plan = provider
+            .scan(state.as_ref(), scan.projection.as_ref(), &filters, limit)
+            .await
+            .map_err(Self::datafusion_to_execution_error)?;
+        let schema = physical_plan.schema();
+        let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
+            vec![deferred
+                .produce_batch_direct()
+                .await
+                .map_err(Self::datafusion_to_execution_error)?]
+        } else {
+            collect(physical_plan, state.task_ctx())
+                .await
+                .map_err(Self::datafusion_to_execution_error)?
+        };
+        let row_count = batches.iter().map(|batch| batch.num_rows()).sum();
+
+        #[cfg(test)]
+        self.point_get_fast_path_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        Ok(Some(ExecutionResult::Rows {
+            batches,
+            row_count,
+            schema: Some(schema),
+        }))
     }
 
     /// Batch-execute multiple INSERT statements targeting the same table in an
@@ -1449,6 +1635,11 @@ impl SqlExecutor {
         role: Role,
         include_dml_ast: bool,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        let cache_key = (PlanCacheKey::new(default_namespace.clone(), role, sql), include_dml_ast);
+        if let Some(prepared) = self.prepared_statement_cache.get(&cache_key) {
+            return Ok(prepared);
+        }
+
         let classified = SqlStatement::classify_and_parse(sql, default_namespace, role)?;
         let (table_id, parsed_dml) = if include_dml_ast {
             Self::parse_dml_metadata(sql, classified.kind(), default_namespace.as_str())?
@@ -1464,14 +1655,16 @@ impl SqlExecutor {
 
         let track_slow_query = classified.is_slow_query_trackable();
 
-        Ok(PreparedExecutionStatement::new(
+        let prepared = PreparedExecutionStatement::new(
             sql.to_string(),
             table_id,
             table_type,
             Some(classified),
             track_slow_query,
             parsed_dml,
-        ))
+        );
+        self.prepared_statement_cache.insert(cache_key, prepared.clone());
+        Ok(prepared)
     }
 
     fn parse_dml_metadata(
@@ -2044,7 +2237,6 @@ impl SqlExecutor {
         // time.
         let cache_key =
             PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
-        let session = self.create_session_with_transaction_context(exec_ctx)?;
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             let executable_plan = if params.is_empty() {
@@ -2053,6 +2245,13 @@ impl SqlExecutor {
                 replace_placeholders_in_plan((*template_plan).clone(), &params)?
             };
 
+            if let Some(result) =
+                self.try_execute_cached_point_get(&executable_plan, exec_ctx).await?
+            {
+                return Ok(result);
+            }
+
+            let session = self.create_session_with_transaction_context(exec_ctx)?;
             match session.execute_logical_plan(executable_plan).await {
                 Ok(df) => df,
                 Err(e) => {
@@ -2088,7 +2287,7 @@ impl SqlExecutor {
                         },
                     };
 
-                    let template_plan = planned_df.logical_plan().clone();
+                    let template_plan = Self::optimized_plan_for_cache(&session, &planned_df)?;
                     self.sql_cache_registry
                         .plan_cache()
                         .insert(cache_key.clone(), template_plan.clone());
@@ -2118,6 +2317,7 @@ impl SqlExecutor {
                 },
             }
         } else {
+            let session = self.create_session_with_transaction_context(exec_ctx)?;
             let planned_df = match session.sql(execution_sql).await {
                 Ok(df) => df,
                 Err(e) => {
@@ -2153,7 +2353,7 @@ impl SqlExecutor {
             // the SELECT hot path because it can force full sorts on scans, filters, and Parquet
             // reads. Stable result order remains the caller's responsibility via explicit
             // ORDER BY.
-            let template_plan = planned_df.logical_plan().clone();
+            let template_plan = Self::optimized_plan_for_cache(&session, &planned_df)?;
             self.sql_cache_registry.plan_cache().insert(cache_key, template_plan.clone());
 
             let executable_plan = if params.is_empty() {
@@ -2221,9 +2421,7 @@ impl SqlExecutor {
             return None;
         }
 
-        let namespace = stmt
-            .namespace_id
-            .unwrap_or_else(|| exec_ctx.default_namespace());
+        let namespace = stmt.namespace_id.unwrap_or_else(|| exec_ctx.default_namespace());
 
         Some(format!(
             "SELECT column_name, kdb_data_type AS data_type, is_nullable \
@@ -2494,11 +2692,47 @@ impl SqlExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::common::DFSchema;
+    use datafusion::logical_expr::{EmptyRelation, Limit, Sort, SortExpr, lit};
+
+    fn empty_plan() -> LogicalPlan {
+        LogicalPlan::EmptyRelation(EmptyRelation {
+            produce_one_row: false,
+            schema: Arc::new(DFSchema::empty()),
+        })
+    }
 
     #[test]
     fn internal_namespace_hint_matches_qualified_system_and_dba_queries() {
         assert!(contains_internal_namespace_hint("SELECT * FROM system.stats LIMIT 100"));
         assert!(contains_internal_namespace_hint("select * from DBA.notifications"));
         assert!(!contains_internal_namespace_hint("SELECT * FROM default.events LIMIT 100"));
+    }
+
+    #[test]
+    fn logical_plan_has_limit_detects_sort_fetch_and_limit_nodes() {
+        let unlimited = empty_plan();
+        assert!(!SqlExecutor::logical_plan_has_limit(&unlimited));
+
+        let with_limit = LogicalPlan::Limit(Limit {
+            skip: None,
+            fetch: Some(Box::new(lit(5000_i64))),
+            input: Arc::new(empty_plan()),
+        });
+        assert!(SqlExecutor::logical_plan_has_limit(&with_limit));
+
+        let with_sort_fetch = LogicalPlan::Sort(Sort {
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
+            input: Arc::new(empty_plan()),
+            fetch: Some(5000),
+        });
+        assert!(SqlExecutor::logical_plan_has_limit(&with_sort_fetch));
+
+        let sort_without_fetch = LogicalPlan::Sort(Sort {
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
+            input: Arc::new(empty_plan()),
+            fetch: None,
+        });
+        assert!(!SqlExecutor::logical_plan_has_limit(&sort_without_fetch));
     }
 }

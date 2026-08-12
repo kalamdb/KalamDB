@@ -2,19 +2,21 @@ use actix_web::{error::ErrorInternalServerError, HttpResponse};
 use bytes::Bytes;
 use futures_util::stream;
 use kalamdb_commons::{
-    conversions::{mask_sensitive_rows_for_role, schema_fields_from_arrow_schema},
+    conversions::mask_sensitive_rows_for_role,
     models::{KalamCellValue, Role},
     schemas::SchemaField,
 };
 use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
+use std::sync::Arc;
 
-use super::converter::{resolve_arrow_schema, row_result_prefix, success_response_suffix};
+use super::converter::{resolve_arrow_schema, row_result_prefix_from_json, success_response_suffix};
+use super::schema_response_cache::cached_sql_schema;
 
 struct StreamingRowsState {
     prefix: Option<Bytes>,
     batches: std::vec::IntoIter<arrow::record_batch::RecordBatch>,
     suffix: Option<Bytes>,
-    schema_fields: Vec<SchemaField>,
+    schema_fields: std::sync::Arc<Vec<SchemaField>>,
     user_role: Option<Role>,
     row_separator_needed: bool,
 }
@@ -50,11 +52,9 @@ pub fn stream_sql_rows_response(
 ) -> Result<HttpResponse, actix_web::Error> {
     let arrow_schema = resolve_arrow_schema(&batches, schema)
         .ok_or_else(|| ErrorInternalServerError("Missing schema for row response"))?;
-    let schema_fields: Vec<SchemaField> = schema_fields_from_arrow_schema(&arrow_schema);
+    let cached = cached_sql_schema(&arrow_schema);
 
-    let prefix = row_result_prefix(&schema_fields)
-        .map(Bytes::from)
-        .map_err(ErrorInternalServerError)?;
+    let prefix = Bytes::from(row_result_prefix_from_json(&cached.schema_json));
     let suffix = Bytes::from(success_response_suffix(row_count, &as_user, took));
 
     let response_stream = stream::unfold(
@@ -62,7 +62,7 @@ pub fn stream_sql_rows_response(
             prefix: Some(prefix),
             batches: batches.into_iter(),
             suffix: Some(suffix),
-            schema_fields,
+            schema_fields: Arc::clone(&cached.fields),
             user_role,
             row_separator_needed: false,
         },

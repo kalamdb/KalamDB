@@ -112,6 +112,10 @@ impl ExecutionContext {
         self.auth_session.role()
     }
     #[inline]
+    pub(crate) fn read_context(&self) -> ReadContext {
+        self.auth_session.read_context()
+    }
+    #[inline]
     pub fn request_id(&self) -> Option<&str> {
         self.auth_session.request_id()
     }

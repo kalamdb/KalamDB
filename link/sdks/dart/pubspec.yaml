@@ -27,5 +27,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.16.0
+  # Keep build_runner on 2.15.0: newer releases require analyzer >=13, which is
+  # incompatible with freezed 3.2.5 (analyzer <11) on current Flutter/Dart.
+  build_runner: 2.15.0
   freezed: ^3.2.5
