@@ -1,6 +1,6 @@
 name: kalam_link
 description: KalamDB client SDK for Dart and Flutter — queries, live subscriptions, and authentication
-version: 0.5.5-rc.1
+version: 0.5.6-rc.0
 homepage: https://github.com/kalamdb/KalamDB
 repository: https://github.com/kalamdb/KalamDB
 
@@ -27,5 +27,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.15.0
+  # Keep build_runner on 2.15.0: newer releases require analyzer >=13, which is
+  # incompatible with freezed 3.2.5 (analyzer <11) on current Flutter/Dart.
+  build_runner: 2.15.0
   freezed: ^3.2.5

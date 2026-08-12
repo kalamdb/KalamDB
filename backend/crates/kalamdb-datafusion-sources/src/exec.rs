@@ -704,10 +704,8 @@ impl DeferredBatchMetrics {
 
         let truncated_by_source =
             diagnostics.cold_files.len().saturating_sub(MAX_RECORDED_SCAN_FILES);
-        let truncated_by_scan_count = diagnostics
-            .cold_files_scanned
-            .unwrap_or(0)
-            .saturating_sub(recorded_files);
+        let truncated_by_scan_count =
+            diagnostics.cold_files_scanned.unwrap_or(0).saturating_sub(recorded_files);
         let truncated = truncated_by_source.max(truncated_by_scan_count);
         if truncated > 0 {
             MetricBuilder::new(&self.set)
@@ -764,6 +762,19 @@ impl DeferredBatchExec {
             source,
             properties,
             metrics: Some(DeferredBatchMetrics::new()),
+        }
+    }
+
+    /// Produce this one-shot node's batch without constructing a DataFusion
+    /// task context and stream wrapper.
+    pub async fn produce_batch_direct(&self) -> DataFusionResult<RecordBatch> {
+        match &self.metrics {
+            Some(metrics) => {
+                let output = self.source.produce_batch_with_diagnostics().await?;
+                metrics.record(&output);
+                Ok(output.batch)
+            },
+            None => self.source.produce_batch().await,
         }
     }
 }

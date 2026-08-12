@@ -2,13 +2,14 @@
 
 use arrow::record_batch::RecordBatch;
 use kalamdb_commons::{
-    conversions::{mask_sensitive_rows_for_role, schema_fields_from_arrow_schema},
+    conversions::mask_sensitive_rows_for_role,
     models::Role,
     schemas::SchemaField,
 };
 use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
 
 use super::super::models::QueryResult;
+use super::schema_response_cache::cached_sql_schema;
 
 /// Convert Arrow RecordBatches to QueryResult
 pub fn record_batch_to_query_result(
@@ -21,7 +22,8 @@ pub fn record_batch_to_query_result(
         None => return Ok(QueryResult::with_message("Query executed successfully".to_string())),
     };
 
-    let schema_fields = schema_fields_from_arrow_schema(&arrow_schema);
+    let cached = cached_sql_schema(&arrow_schema);
+    let schema_fields = cached.fields.as_ref().clone();
 
     let mut rows = Vec::new();
     for batch in &batches {
@@ -51,11 +53,14 @@ pub fn resolve_arrow_schema(
 
 // NOTE: schema_fields_from_arrow_schema is re-exported from kalamdb_commons::conversions
 
+#[allow(dead_code)] // retained for non-streaming callers / tests
 pub fn row_result_prefix(schema_fields: &[SchemaField]) -> Result<String, serde_json::Error> {
-    Ok(format!(
-        "{{\"status\":\"success\",\"results\":[{{\"schema\":{},\"rows\":[",
-        serde_json::to_string(schema_fields)?
-    ))
+    Ok(row_result_prefix_from_json(&serde_json::to_string(schema_fields)?))
+}
+
+/// Build the streaming JSON prefix using already-serialized schema JSON.
+pub fn row_result_prefix_from_json(schema_json: &str) -> String {
+    format!("{{\"status\":\"success\",\"results\":[{{\"schema\":{schema_json},\"rows\":[")
 }
 
 pub fn success_response_suffix(row_count: usize, as_user: &str, took: f64) -> String {

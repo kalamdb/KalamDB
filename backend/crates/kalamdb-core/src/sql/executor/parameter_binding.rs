@@ -102,9 +102,8 @@ pub fn max_placeholder_index(sql: &str) -> usize {
                 index += 1;
             }
             if index > start {
-                if let Ok(number) = std::str::from_utf8(&bytes[start..index])
-                    .unwrap_or("")
-                    .parse::<usize>()
+                if let Ok(number) =
+                    std::str::from_utf8(&bytes[start..index]).unwrap_or("").parse::<usize>()
                 {
                     max = max.max(number);
                 }

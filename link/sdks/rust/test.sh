@@ -16,6 +16,10 @@ if [[ "${NO_SERVER:-}" == "true" ]]; then
   exit 0
 fi
 
+# Align with cli/run-tests.sh env naming for server-backed e2e.
+export KALAMDB_SERVER_URL="${KALAMDB_SERVER_URL:-${KALAMDB_URL:-http://localhost:2900}}"
+export KALAMDB_ROOT_PASSWORD="${KALAMDB_ROOT_PASSWORD:-${KALAMDB_PASSWORD:-kalamdb123}}"
+
 echo "==> integration Rust SDK tests (requires running server)"
 (cd "$REPO_ROOT" && cargo test -p kalam-client-e2e -- --include-ignored)
 

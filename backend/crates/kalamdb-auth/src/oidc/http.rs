@@ -10,7 +10,8 @@ pub(crate) struct OidcHttpClientConfig {
 impl Default for OidcHttpClientConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(10),
+            // Keep discovery bounded so a down IdP cannot stall actix workers.
+            timeout: Duration::from_secs(3),
         }
     }
 }
@@ -20,6 +21,7 @@ pub(crate) fn redirect_disabled_reqwest_client(
 ) -> Result<OidcHttpClient, openidconnect::reqwest::Error> {
     openidconnect::reqwest::ClientBuilder::new()
         .timeout(config.timeout)
+        .connect_timeout(Duration::from_secs(1))
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
 }

@@ -9,7 +9,7 @@ on:
       - 'scripts/download-release-server.sh'
       - 'scripts/resolve-latest-release-asset.py'
       - 'versions.json'
-      - 'nextest.toml'
+      - '.config/nextest.toml'
       - '.github/workflows/cli-cluster-e2e.yml'
   workflow_dispatch:
 

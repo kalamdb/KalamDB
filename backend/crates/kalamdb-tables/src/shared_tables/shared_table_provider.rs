@@ -672,20 +672,12 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         None
     }
 
-    async fn scan_hot_pk_row(
+    async fn scan_latest_hot_pk_entry(
         &self,
         _scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-        self.find_by_pk(pk_value).await
-    }
-
-    async fn hot_pk_tombstoned(
-        &self,
-        _scan_context: &Self::ScanContext,
-        pk_value: &ScalarValue,
-    ) -> Result<bool, KalamDbError> {
-        self.pk_tombstoned_in_hot(pk_value).await
+        self.latest_hot_pk_entry(pk_value).await
     }
 
     async fn count_rows_with_context(

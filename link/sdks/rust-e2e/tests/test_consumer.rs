@@ -17,12 +17,15 @@ use kalam_client::{
 };
 
 fn get_server_url() -> String {
-    std::env::var("KALAMDB_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string())
+    std::env::var("KALAMDB_SERVER_URL")
+        .or_else(|_| std::env::var("KALAMDB_URL"))
+        .unwrap_or_else(|_| "http://localhost:2900".to_string())
 }
 
 fn get_auth() -> AuthProvider {
-    let password =
-        std::env::var("KALAMDB_ROOT_PASSWORD").unwrap_or_else(|_| "admin123".to_string());
+    let password = std::env::var("KALAMDB_ROOT_PASSWORD")
+        .or_else(|_| std::env::var("KALAMDB_PASSWORD"))
+        .unwrap_or_else(|_| "kalamdb123".to_string());
     AuthProvider::system_user_auth(password)
 }
 

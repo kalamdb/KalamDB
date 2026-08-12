@@ -5,11 +5,13 @@
 //! - File cleanup after errors
 //! - Result conversion from Arrow to JSON
 //! - Sensitive data masking
+//! - Cached SQL response schema projections
 
 mod converter;
 mod executor;
 mod files;
 mod params;
+mod schema_response_cache;
 mod streaming;
 
 pub use executor::{

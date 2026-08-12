@@ -12,6 +12,7 @@ repository.workspace = true
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-datafusion-sources = { workspace = true }
 kalamdb-filestore = { path = "../kalamdb-filestore" }
 kalamdb-flush = { path = "../kalamdb-flush" }
 kalamdb-live = { path = "../kalamdb-live" }
@@ -46,6 +47,7 @@ sqlparser = { workspace = true }
 # Concurrent data structures
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+moka = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
