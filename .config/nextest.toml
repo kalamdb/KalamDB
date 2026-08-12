@@ -305,14 +305,19 @@ threads-required = 15
 # threads-required = 15
 
 [profile.ci]
+# Match GitHub-hosted runner capacity so the shared Fresh e2e server remains
+# responsive while workspace tests run alongside it.
+test-threads = 4
+
 # Store test results in JUnit format
 junit.path = "junit.xml"
 
 # Show output for failed tests immediately
 failure-output = "immediate-final"
 
-# Don't fail fast - run all tests
-fail-fast = false
+# Stop on the first unrecoverable failure instead of cascading against a dead
+# shared Fresh server for the remainder of the workspace suite.
+fail-fast = true
 
 # Retry flaky tests once
 retries = 1
