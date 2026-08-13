@@ -2,6 +2,7 @@
 
 mod audit;
 mod bearer;
+mod bearer_session_cache;
 mod password;
 mod types;
 mod wire;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 
 pub use audit::extract_user_id_for_audit;
 use bearer::authenticate_bearer;
+pub use bearer_session_cache::invalidate_bearer_sessions;
 use kalamdb_commons::{models::ConnectionInfo, Role};
 use once_cell::sync::Lazy;
 use password::authenticate_user_password;
@@ -54,6 +56,13 @@ pub async fn authenticate(
     connection_info: &kalamdb_commons::models::ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticationResult> {
+    if let Some(user) = try_cached_auth_request(&request, connection_info) {
+        return Ok(AuthenticationResult {
+            user,
+            method: AuthMethod::Bearer,
+        });
+    }
+
     let request_kind = match &request {
         AuthRequest::Header(_) => "header",
         AuthRequest::Credentials { .. } => "credentials",
@@ -133,6 +142,28 @@ fn record_authenticated_span(user: &AuthenticatedUser) {
     tracing::Span::current().record("user", user.user_id.as_str());
 }
 
+/// Return a cached bearer identity when `auth_header` is a previously verified token.
+pub fn try_cached_bearer_session(
+    auth_header: &str,
+    connection_info: &ConnectionInfo,
+) -> Option<AuthenticatedUser> {
+    let token = extract_bearer_token(auth_header).ok()?;
+    bearer_session_cache::lookup_cached_bearer_session(token, connection_info)
+}
+
+fn try_cached_auth_request(
+    request: &AuthRequest,
+    connection_info: &ConnectionInfo,
+) -> Option<AuthenticatedUser> {
+    match request {
+        AuthRequest::Header(header) => try_cached_bearer_session(header, connection_info),
+        AuthRequest::Jwt { token } => {
+            bearer_session_cache::lookup_cached_bearer_session(token, connection_info)
+        },
+        AuthRequest::Credentials { .. } => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::UserId;
@@ -144,6 +175,37 @@ mod tests {
         assert_eq!(format!("{:?}", AuthMethod::Basic), "Basic");
         assert_eq!(format!("{:?}", AuthMethod::Bearer), "Bearer");
         assert_eq!(format!("{:?}", AuthMethod::Direct), "Direct");
+    }
+
+    #[test]
+    fn try_cached_bearer_session_returns_stored_identity() {
+        use kalamdb_commons::{models::ConnectionInfo, AuthType, Role};
+
+        use crate::models::context::AuthenticatedUser;
+
+        bearer_session_cache::clear_bearer_session_cache();
+        let user = AuthenticatedUser::with_auth_type(
+            UserId::new("cache_header_user"),
+            Role::Dba,
+            AuthType::Password,
+            None,
+            None,
+            1,
+            2,
+            ConnectionInfo::new(Some("10.0.0.1".to_string())),
+        );
+        let exp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as usize)
+            .unwrap_or(0)
+            .saturating_add(3600);
+        bearer_session_cache::store_cached_bearer_session("header-token", &user, exp);
+
+        let cached = try_cached_bearer_session("Bearer header-token", &user.connection_info)
+            .expect("cache hit");
+        assert_eq!(cached.user_id.as_str(), "cache_header_user");
+        assert_eq!(cached.role, Role::Dba);
+        assert!(try_cached_bearer_session("Bearer missing", &user.connection_info).is_none());
     }
 
     #[test]

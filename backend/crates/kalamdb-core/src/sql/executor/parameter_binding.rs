@@ -5,7 +5,14 @@
 //! - DataFusion LogicalPlan placeholder replacement ($1, $2, ...)
 //! - ScalarValue type checking
 
-use datafusion::{common::ParamValues, logical_expr::LogicalPlan, scalar::ScalarValue};
+use datafusion::{
+    common::{
+        ParamValues,
+        tree_node::{Transformed, TransformedResult, TreeNode},
+    },
+    logical_expr::{Expr, LogicalPlan},
+    scalar::ScalarValue,
+};
 
 use crate::error::KalamDbError;
 
@@ -89,6 +96,47 @@ pub fn replace_placeholders_in_plan(
         })
 }
 
+fn placeholder_index(id: &str) -> Option<usize> {
+    let digits = id.strip_prefix('$').unwrap_or(id);
+    let index = digits.parse::<usize>().ok()?;
+    index.checked_sub(1)
+}
+
+/// Replace `$n` placeholders in a single expression. Used by the point-get fast
+/// path so a PK bind does not clone the full cached `LogicalPlan`.
+pub fn bind_placeholders_in_expr(expr: Expr, params: &[ScalarValue]) -> Result<Expr, KalamDbError> {
+    if params.is_empty() {
+        return Ok(expr);
+    }
+
+    let mut bind_error = None;
+    let bound = expr.transform_up(|node| {
+        let Expr::Placeholder(placeholder) = node else {
+            return Ok(Transformed::no(node));
+        };
+        let Some(index) = placeholder_index(&placeholder.id) else {
+            return Ok(Transformed::no(Expr::Placeholder(placeholder)));
+        };
+        let Some(value) = params.get(index) else {
+            bind_error = Some(KalamDbError::ParameterBindingError {
+                message: format!(
+                    "placeholder {} is out of range for {} parameters",
+                    placeholder.id,
+                    params.len()
+                ),
+            });
+            return Ok(Transformed::no(Expr::Placeholder(placeholder)));
+        };
+        Ok(Transformed::yes(Expr::Literal(value.clone(), None)))
+    });
+    if let Some(error) = bind_error {
+        return Err(error);
+    }
+    bound.data().map_err(|error| KalamDbError::ParameterBindingError {
+        message: error.to_string(),
+    })
+}
+
 /// Highest `$n` placeholder index in SQL (0 when none).
 pub fn max_placeholder_index(sql: &str) -> usize {
     let bytes = sql.as_bytes();
@@ -161,5 +209,24 @@ mod tests {
             ),
             2
         );
+    }
+
+    #[test]
+    fn bind_placeholders_in_expr_replaces_dollar_one() {
+        use datafusion::logical_expr::expr::Placeholder;
+
+        let expr = Expr::Placeholder(Placeholder::new_with_field("$1".to_string(), None));
+        let bound =
+            bind_placeholders_in_expr(expr, &[ScalarValue::Int64(Some(42))]).expect("bind $1");
+        assert_eq!(bound, Expr::Literal(ScalarValue::Int64(Some(42)), None));
+    }
+
+    #[test]
+    fn bind_placeholders_in_expr_out_of_range_errors() {
+        use datafusion::logical_expr::expr::Placeholder;
+
+        let expr = Expr::Placeholder(Placeholder::new_with_field("$2".to_string(), None));
+        let err = bind_placeholders_in_expr(expr, &[ScalarValue::Int64(Some(1))]).unwrap_err();
+        assert!(matches!(err, KalamDbError::ParameterBindingError { .. }));
     }
 }

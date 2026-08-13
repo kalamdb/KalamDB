@@ -34,13 +34,13 @@
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
-use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
 use crate::{
     errors::error::AuthError,
     helpers::ip_extractor::extract_client_ip_secure,
     repository::user_repo::UserRepository,
-    services::unified::{authenticate, AuthRequest},
+    services::unified::{authenticate, try_cached_bearer_session, AuthRequest},
 };
+use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
 
 /// Error type for authentication extraction.
 ///
@@ -294,11 +294,50 @@ impl From<AuthSessionExtractor> for kalamdb_session::AuthSession {
     }
 }
 
+fn request_id_from_headers(req: &HttpRequest) -> Option<Arc<str>> {
+    req.headers()
+        .get("X-Request-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(Arc::<str>::from)
+}
+
+fn session_from_authenticated_user(
+    user: crate::models::context::AuthenticatedUser,
+    connection_info: kalamdb_commons::models::ConnectionInfo,
+    request_id: Option<Arc<str>>,
+) -> AuthSessionExtractor {
+    let mut session = kalamdb_session::AuthSession::with_auth_details(
+        user.user_id,
+        user.role,
+        connection_info,
+        kalamdb_session::AuthMethod::Bearer,
+    );
+    if let Some(rid) = request_id {
+        session = session.with_request_id(rid);
+    }
+    AuthSessionExtractor(session)
+}
+
+fn try_extract_cached_bearer_session(req: &HttpRequest) -> Option<AuthSessionExtractor> {
+    let auth_header = req.headers().get("Authorization")?.to_str().ok()?;
+    let connection_info = extract_client_ip_secure(req);
+    let user = try_cached_bearer_session(auth_header, &connection_info)?;
+    Some(session_from_authenticated_user(
+        user,
+        connection_info,
+        request_id_from_headers(req),
+    ))
+}
+
 impl FromRequest for AuthSessionExtractor {
     type Error = AuthExtractError;
     type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        if let Some(extractor) = try_extract_cached_bearer_session(req) {
+            return Box::pin(std::future::ready(Ok(extractor)));
+        }
+
         let req = req.clone();
 
         Box::pin(async move {

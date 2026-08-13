@@ -39,6 +39,12 @@ on:
         required: false
         default: true
 
+      release_description:
+        description: "GitHub release notes (markdown). If set, used as the release body instead of auto-generated notes."
+        type: string
+        required: false
+        default: ""
+
       docker_push:
         description: "Push Docker images to Docker Hub and GitHub Container Registry"
         type: boolean
@@ -1769,13 +1775,31 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Prepare release notes
+        id: release_notes
+        env:
+          RELEASE_DESCRIPTION: ${{ github.event.inputs.release_description }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES_PATH="$RUNNER_TEMP/release-notes.md"
+          if [[ -n "${RELEASE_DESCRIPTION//[$' \t\r\n']}" ]]; then
+            printf '%s\n' "$RELEASE_DESCRIPTION" > "$NOTES_PATH"
+            echo "body_path=$NOTES_PATH" >> "$GITHUB_OUTPUT"
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "body_path=" >> "$GITHUB_OUTPUT"
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
           target_commitish: ${{ needs.sync_versions_manifest.outputs.commit_sha }}
           prerelease: ${{ steps.prerelease_flag.outputs.prerelease }}
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.body_path }}
+          generate_release_notes: ${{ steps.release_notes.outputs.generate }}
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz
             dist/${{ needs.read_version.outputs.version }}/*.zip

@@ -109,7 +109,8 @@ use kalamdb_datafusion_sources::{
 use kalamdb_filestore::registry::{ListResult, StorageCached};
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
 use kalamdb_system::{
-    ClusterCoordinator as ClusterCoordinatorTrait, Manifest, SchemaRegistry as SchemaRegistryTrait,
+    ClusterCoordinator as ClusterCoordinatorTrait, Manifest, ManifestCacheEntry,
+    SchemaRegistry as SchemaRegistryTrait,
 };
 use kalamdb_transactions::{
     extract_transaction_query_context, TransactionAccessError, TransactionOverlay,
@@ -1106,6 +1107,15 @@ fn visible_hot_entry<K, V: ScanRow>(entry: Option<(K, V)>) -> Option<(K, V)> {
     entry.filter(|(_, row)| !row.deleted_flag())
 }
 
+/// Cached empty manifests mean there is no Parquet to merge.
+///
+/// Missing or failed loads return `false` so we still scan cold (manual
+/// `STORAGE FLUSH` and degraded listings can have files without a cached empty
+/// manifest).
+fn cached_manifest_is_hot_only(entry: Option<&ManifestCacheEntry>) -> bool {
+    entry.is_some_and(|cached| cached.manifest.segments.is_empty())
+}
+
 /// Resolve a single PK equality lookup by merging the latest hot and cold versions.
 async fn resolve_pk_point_lookup<P, K, V>(
     provider: &P,
@@ -1123,8 +1133,22 @@ where
     }
     let hot = visible_hot_entry(latest_hot);
 
-    // Always merge cold storage. Manual `STORAGE FLUSH` can materialize Parquet
-    // even when the table has no configured FLUSH_POLICY.
+    let skip_cold = match provider
+        .core()
+        .services
+        .manifest_service
+        .get_or_load_async(provider.table_id(), provider.scan_cold_scope(scan_context))
+        .await
+    {
+        Ok(entry) => cached_manifest_is_hot_only(entry.as_deref()),
+        Err(_) => false,
+    };
+    if skip_cold {
+        return Ok(hot);
+    }
+
+    // Merge cold when the manifest has segments, is missing, or failed to load.
+    // Manual `STORAGE FLUSH` can materialize Parquet even without FLUSH_POLICY.
     let cold =
         find_row_by_pk(provider, provider.scan_cold_scope(scan_context), &pk_scalar.to_string())
             .await?;
@@ -2107,6 +2131,23 @@ mod tests {
         fn deleted_flag(&self) -> bool {
             self.deleted
         }
+    }
+
+    #[test]
+    fn cached_empty_manifest_is_hot_only() {
+        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("t"));
+        let entry = ManifestCacheEntry::new(
+            Manifest::new(table_id, None),
+            None,
+            0,
+            kalamdb_system::SyncState::InSync,
+        );
+        assert!(cached_manifest_is_hot_only(Some(&entry)));
+    }
+
+    #[test]
+    fn missing_manifest_is_not_hot_only() {
+        assert!(!cached_manifest_is_hot_only(None));
     }
 
     #[test]

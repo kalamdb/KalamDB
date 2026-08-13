@@ -11,22 +11,33 @@ use std::{
 };
 
 use arrow::datatypes::SchemaRef;
-use kalamdb_commons::{
-    conversions::schema_fields_from_arrow_schema, schemas::SchemaField,
-};
+use bytes::Bytes;
+use kalamdb_commons::{conversions::schema_fields_from_arrow_schema, schemas::SchemaField};
 use moka::sync::Cache;
+
+const ROW_RESULT_PREFIX_HEAD: &str = "{\"status\":\"success\",\"results\":[{\"schema\":";
+const ROW_RESULT_PREFIX_TAIL: &str = ",\"rows\":[";
 
 /// Cached API schema projection for a given Arrow schema shape.
 #[derive(Clone)]
 pub struct CachedSqlSchema {
     pub fields: Arc<Vec<SchemaField>>,
-    /// `serde_json` serialization of `fields` (the `"schema": [...]` array body).
-    pub schema_json: Arc<str>,
+    /// Prebuilt streaming/inline JSON prefix through `"rows":[`.
+    pub row_result_prefix: Bytes,
 }
 
-static SCHEMA_RESPONSE_CACHE: LazyLock<Cache<u64, Arc<CachedSqlSchema>>> = LazyLock::new(|| {
-    Cache::builder().max_capacity(512).build()
-});
+fn row_result_prefix_bytes(schema_json: &str) -> Bytes {
+    let mut prefix = String::with_capacity(
+        ROW_RESULT_PREFIX_HEAD.len() + schema_json.len() + ROW_RESULT_PREFIX_TAIL.len(),
+    );
+    prefix.push_str(ROW_RESULT_PREFIX_HEAD);
+    prefix.push_str(schema_json);
+    prefix.push_str(ROW_RESULT_PREFIX_TAIL);
+    Bytes::from(prefix)
+}
+
+static SCHEMA_RESPONSE_CACHE: LazyLock<Cache<u64, Arc<CachedSqlSchema>>> =
+    LazyLock::new(|| Cache::builder().max_capacity(512).build());
 
 fn schema_fingerprint(schema: &arrow::datatypes::Schema) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -57,7 +68,7 @@ pub fn cached_sql_schema(schema: &SchemaRef) -> Arc<CachedSqlSchema> {
     let schema_json = serde_json::to_string(&fields).unwrap_or_else(|_| "[]".to_string());
     let entry = Arc::new(CachedSqlSchema {
         fields: Arc::new(fields),
-        schema_json: Arc::from(schema_json),
+        row_result_prefix: row_result_prefix_bytes(&schema_json),
     });
     SCHEMA_RESPONSE_CACHE.insert(key, Arc::clone(&entry));
     entry
@@ -81,7 +92,10 @@ mod tests {
         let first = cached_sql_schema(&schema);
         let second = cached_sql_schema(&schema);
         assert!(Arc::ptr_eq(&first, &second));
-        assert!(first.schema_json.contains("\"id\""));
         assert_eq!(first.fields.len(), 2);
+        let prefix = std::str::from_utf8(&first.row_result_prefix).expect("utf8 prefix");
+        assert!(prefix.contains("\"id\""));
+        assert!(prefix.starts_with("{\"status\":\"success\""));
+        assert!(prefix.ends_with(",\"rows\":["));
     }
 }
