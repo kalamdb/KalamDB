@@ -1694,7 +1694,7 @@ jobs:
 
           cd "dist/$VERSION"
           shopt -s nullglob
-          release_assets=( *.tar.gz *.zip *.dll )
+          release_assets=( *.tar.gz *.zip )
 
           if [[ ${#release_assets[@]} -eq 0 ]]; then
             echo "No release artifacts found. Check server platform checkboxes." >&2
@@ -1793,6 +1793,8 @@ jobs:
           fi
 
       - name: Create GitHub Release
+        id: create_github_release
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.read_version.outputs.tag }}
@@ -1803,12 +1805,77 @@ jobs:
           files: |
             dist/${{ needs.read_version.outputs.version }}/*.tar.gz
             dist/${{ needs.read_version.outputs.version }}/*.zip
-            dist/${{ needs.read_version.outputs.version }}/*.dll
             dist/${{ needs.read_version.outputs.version }}/SHA256SUMS
             dist/${{ needs.read_version.outputs.version }}/LICENSE.txt
             dist/${{ needs.read_version.outputs.version }}/NOTICE
             dist/${{ needs.read_version.outputs.version }}/THIRD_PARTY_LICENSES.md
             versions.json
+
+      # Windows VC++ DLLs are zipped with the exe, then deleted, so a *.dll glob
+      # never matches. GitHub can also 500 / "Error creating policy" mid-upload
+      # and leave a half-published tag; finish remaining assets from this job.
+      - name: Retry remaining GitHub Release assets
+        if: ${{ steps.create_github_release.outcome == 'failure' && !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.read_version.outputs.tag }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
+          SHA="${{ needs.sync_versions_manifest.outputs.commit_sha }}"
+          PRERELEASE="${{ steps.prerelease_flag.outputs.prerelease }}"
+          NOTES_PATH="${{ steps.release_notes.outputs.body_path }}"
+
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            create_args=(--target "$SHA" --repo "$GITHUB_REPOSITORY")
+            if [[ "$PRERELEASE" == "true" ]]; then
+              create_args+=(--prerelease)
+            fi
+            if [[ -n "$NOTES_PATH" ]]; then
+              create_args+=(--notes-file "$NOTES_PATH")
+            else
+              create_args+=(--generate-notes)
+            fi
+            gh release create "$TAG" "${create_args[@]}"
+          fi
+
+          cd "dist/${VERSION}"
+          shopt -s nullglob
+          assets=( *.tar.gz *.zip SHA256SUMS LICENSE.txt NOTICE THIRD_PARTY_LICENSES.md )
+          if [[ ${#assets[@]} -eq 0 ]]; then
+            echo "No release artifacts found to upload." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${assets[@]}" "${GITHUB_WORKSPACE}/versions.json" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.read_version.outputs.tag }}"
+          VERSION="${{ needs.read_version.outputs.version }}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name] | sort | .[]')"
+          cd "dist/${VERSION}"
+          shopt -s nullglob
+          missing=0
+          for asset in *.tar.gz *.zip SHA256SUMS LICENSE.txt NOTICE THIRD_PARTY_LICENSES.md; do
+            if ! grep -Fxq "$asset" <<<"$published"; then
+              echo "Missing GitHub Release asset: $asset" >&2
+              missing=1
+            fi
+          done
+          if ! grep -Fxq "versions.json" <<<"$published"; then
+            echo "Missing GitHub Release asset: versions.json" >&2
+            missing=1
+          fi
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
 
   publish_npm_cli:
     name: Publish npm CLI
