@@ -53,7 +53,7 @@ pub use services::{
     session_tokens::{issue_auth_tokens, IssuedAuthTokens},
     unified::{
         authenticate, authenticate_wire_password, extract_user_id_for_audit,
-        resolve_refresh_token_user, AuthRequest, AuthenticationResult, WireAuthResult,
-        WirePasswordAuthRequest,
+        invalidate_bearer_sessions, resolve_refresh_token_user, try_cached_bearer_session,
+        AuthRequest, AuthenticationResult, WireAuthResult, WirePasswordAuthRequest,
     },
 };

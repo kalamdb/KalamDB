@@ -18,10 +18,10 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
-    models::{rows::row::Row, MigrationId, NamespaceId, TableId, TransactionId, UserId},
-    schemas::TableType,
     Role, SystemTable,
+    conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
+    models::{MigrationId, NamespaceId, TableId, TransactionId, UserId, rows::row::Row},
+    schemas::TableType,
 };
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
@@ -36,21 +36,23 @@ use sqlparser::ast::{
 use uuid::Uuid;
 
 use super::{
-    point_read_session_cache_key::PointReadSessionCacheKey, PreparedExecutionStatement, SqlExecutor,
+    PreparedExecutionStatement, SqlExecutor, point_read_session_cache_key::PointReadSessionCacheKey,
 };
 use crate::{
     error::KalamDbError,
     sql::{
+        ExecutionContext, ExecutionResult,
         executor::{
             handler_registry::HandlerRegistry,
-            parameter_binding::{replace_placeholders_in_plan, validate_params},
+            parameter_binding::{
+                bind_placeholders_in_expr, replace_placeholders_in_plan, validate_params,
+            },
             request_transaction_state::{
-                map_request_transaction_error, AppContextRequestTransactionCoordinator,
-                RequestTransactionState,
+                AppContextRequestTransactionCoordinator, RequestTransactionState,
+                map_request_transaction_error,
             },
         },
         plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig},
-        ExecutionContext, ExecutionResult,
     },
     transactions::CoordinatorAccessValidator,
 };
@@ -1475,9 +1477,13 @@ impl SqlExecutor {
     /// Execute a cached, optimized single-PK table scan without rebuilding a
     /// DataFusion logical/physical plan. Provider `scan` still enforces access,
     /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
+    ///
+    /// Placeholders are bound on the scan filters only — the cached template
+    /// plan is not cloned.
     async fn try_execute_cached_point_get(
         &self,
         plan: &LogicalPlan,
+        params: &[ScalarValue],
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
         let LogicalPlan::TableScan(scan) = plan else {
@@ -1504,7 +1510,16 @@ impl SqlExecutor {
         let [primary_key] = primary_keys.as_slice() else {
             return Ok(None);
         };
-        if !scan.filters.iter().any(|filter| {
+
+        let mut filters = Vec::with_capacity(scan.filters.len());
+        for filter in &scan.filters {
+            let bound = match bind_placeholders_in_expr(filter.clone(), params) {
+                Ok(expr) => expr,
+                Err(_) => return Ok(None),
+            };
+            filters.push(Self::unqualify_scan_filter(bound)?);
+        }
+        if !filters.iter().any(|filter| {
             kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key).is_some()
         }) {
             return Ok(None);
@@ -1515,22 +1530,18 @@ impl SqlExecutor {
         };
         let state = self.point_read_session_state(exec_ctx)?;
         let limit = Some(scan.fetch.unwrap_or(1).min(1));
-        let filters = scan
-            .filters
-            .iter()
-            .cloned()
-            .map(Self::unqualify_scan_filter)
-            .collect::<Result<Vec<_>, _>>()?;
         let physical_plan = provider
             .scan(state.as_ref(), scan.projection.as_ref(), &filters, limit)
             .await
             .map_err(Self::datafusion_to_execution_error)?;
         let schema = physical_plan.schema();
         let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
-            vec![deferred
-                .produce_batch_direct()
-                .await
-                .map_err(Self::datafusion_to_execution_error)?]
+            vec![
+                deferred
+                    .produce_batch_direct()
+                    .await
+                    .map_err(Self::datafusion_to_execution_error)?,
+            ]
         } else {
             collect(physical_plan, state.task_ctx())
                 .await
@@ -2239,17 +2250,18 @@ impl SqlExecutor {
             PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
+            if let Some(result) = self
+                .try_execute_cached_point_get(template_plan.as_ref(), &params, exec_ctx)
+                .await?
+            {
+                return Ok(result);
+            }
+
             let executable_plan = if params.is_empty() {
                 (*template_plan).clone()
             } else {
                 replace_placeholders_in_plan((*template_plan).clone(), &params)?
             };
-
-            if let Some(result) =
-                self.try_execute_cached_point_get(&executable_plan, exec_ctx).await?
-            {
-                return Ok(result);
-            }
 
             let session = self.create_session_with_transaction_context(exec_ctx)?;
             match session.execute_logical_plan(executable_plan).await {

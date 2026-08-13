@@ -78,35 +78,24 @@ async fn scan_parquet_files_internal_async(
     columns: Option<&[String]>,
     record_visited_files: bool,
 ) -> Result<ParquetScanResult, KalamDbError> {
-    let scope_label = user_id
-        .map(|uid| format!("user={}", uid.as_str()))
-        .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
-
-    let manifest_service = core.services.manifest_service.clone();
-    log::trace!(
-        "[PARQUET_SCAN_ASYNC] About to get_or_load manifest: table={} {}",
-        table_id,
-        scope_label
-    );
-    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
-    let mut manifest_entry = None;
-    let mut use_degraded_mode = false;
+    let cache_result = core.services.manifest_service.get_or_load_async(table_id, user_id).await;
 
     // Fast path: if manifest loaded successfully and has no segments,
     // skip the entire cold path (storage registry, planner, file I/O)
     if let Ok(Some(entry)) = &cache_result {
         if entry.manifest.segments.is_empty() {
-            log::trace!(
-                "[PARQUET_SCAN_ASYNC] Manifest empty, skipping cold path: table={} {}",
-                table_id,
-                scope_label
-            );
             return Ok(ParquetScanResult {
                 batch: RecordBatch::new_empty(schema),
                 stats: ParquetScanStats::default(),
             });
         }
     }
+
+    let scope_label = user_id
+        .map(|uid| format!("user={}", uid.as_str()))
+        .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
+    let mut manifest_entry = None;
+    let mut use_degraded_mode = false;
 
     match &cache_result {
         Ok(Some(entry)) => {
@@ -118,14 +107,16 @@ async fn scan_parquet_files_internal_async(
                 entry.sync_state
             );
             // Validate manifest using service
-            if let Err(e) = manifest_service.validate_manifest(&entry.manifest) {
+            if let Err(e) = core.services.manifest_service.validate_manifest(&entry.manifest) {
                 log::warn!(
                     "⚠️  [MANIFEST CORRUPTION] table={} {} error={} | Triggering rebuild",
                     table_id,
                     scope_label,
                     e
                 );
-                if let Err(mark_err) = manifest_service.mark_as_stale(table_id, user_id) {
+                if let Err(mark_err) =
+                    core.services.manifest_service.mark_as_stale(table_id, user_id)
+                {
                     log::warn!(
                         "⚠️  Failed to mark manifest as stale: table={} {} error={}",
                         table_id,

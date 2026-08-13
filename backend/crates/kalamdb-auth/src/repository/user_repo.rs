@@ -5,6 +5,7 @@ use kalamdb_system::{User, UsersTableProvider};
 use moka::sync::Cache;
 
 use crate::errors::error::AuthResult;
+use crate::services::unified::invalidate_bearer_sessions;
 
 /// Abstraction over user persistence for authentication flows.
 ///
@@ -56,6 +57,7 @@ impl CachedUsersRepo {
 
     pub fn invalidate_user(&self, user_id: &UserId) {
         self.cache.invalidate(user_id);
+        invalidate_bearer_sessions(user_id);
     }
 
     pub fn clear_cache(&self) {

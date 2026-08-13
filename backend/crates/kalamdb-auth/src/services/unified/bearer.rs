@@ -16,11 +16,17 @@ use crate::{
     repository::user_repo::UserRepository,
 };
 
+use super::bearer_session_cache::{lookup_cached_bearer_session, store_cached_bearer_session};
+
 pub(super) async fn authenticate_bearer(
     token: &str,
     connection_info: &ConnectionInfo,
     repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedUser> {
+    if let Some(cached) = lookup_cached_bearer_session(token, connection_info) {
+        return Ok(cached);
+    }
+
     let span = tracing::info_span!(
         "auth.bearer",
         token_len = token.len(),
@@ -88,6 +94,8 @@ pub(super) async fn authenticate_bearer(
         let role = user.role;
 
         tracing::trace!(user_id = %user.user_id, role = ?role, "Bearer authentication succeeded");
+
+        store_cached_bearer_session(token, &user, claims.exp);
 
         Ok(user)
     }
@@ -803,5 +811,67 @@ mod tests {
         assert_eq!(user.user_id, user_id);
         assert_eq!(user.role, Role::User);
         assert_eq!(user.auth_type, AuthType::Oidc);
+    }
+
+    fn bearer_cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn init_bearer_cache_jwt(secret: &str) {
+        jwt_config::init_jwt_config(secret, jwt_auth::KALAMDB_ISSUER, None, false, Role::User);
+        super::super::bearer_session_cache::clear_bearer_session_cache();
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_reuses_verified_session_without_second_user_lookup() {
+        let _guard = bearer_cache_test_lock();
+        let secret = "bearer-session-cache-test-secret-32ch";
+        init_bearer_cache_jwt(secret);
+
+        let user_id = UserId::new("bearer_cache_user");
+        let stored = test_user(user_id.clone(), Role::Dba, AuthType::Password);
+        let repo = Arc::new(CountingRepo::with_user(stored));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let (token, _) =
+            jwt_auth::create_and_sign_token(&user_id, &Role::Dba, None, Some(1), secret)
+                .expect("sign access token");
+
+        let first = authenticate_bearer(&token, &connection_info(), &repo_dyn)
+            .await
+            .expect("first bearer auth");
+        let second = authenticate_bearer(&token, &connection_info(), &repo_dyn)
+            .await
+            .expect("cached bearer auth");
+
+        assert_eq!(first.user_id, user_id);
+        assert_eq!(second.user_id, user_id);
+        assert_eq!(second.role, Role::Dba);
+        assert_eq!(repo.lookup_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_revalidates_after_user_session_invalidation() {
+        let _guard = bearer_cache_test_lock();
+        let secret = "bearer-session-cache-test-secret-32ch";
+        init_bearer_cache_jwt(secret);
+
+        let user_id = UserId::new("bearer_cache_invalidate");
+        let stored = test_user(user_id.clone(), Role::User, AuthType::Password);
+        let repo = Arc::new(CountingRepo::with_user(stored));
+        let repo_dyn: Arc<dyn UserRepository> = repo.clone();
+        let (token, _) =
+            jwt_auth::create_and_sign_token(&user_id, &Role::User, None, Some(1), secret)
+                .expect("sign access token");
+
+        authenticate_bearer(&token, &connection_info(), &repo_dyn)
+            .await
+            .expect("first bearer auth");
+        super::super::bearer_session_cache::invalidate_bearer_sessions(&user_id);
+        authenticate_bearer(&token, &connection_info(), &repo_dyn)
+            .await
+            .expect("bearer auth after invalidate");
+
+        assert_eq!(repo.lookup_count(), 2);
     }
 }
