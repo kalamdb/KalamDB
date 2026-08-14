@@ -26,7 +26,7 @@ pub use commit_sequence::{CommitSequenceSource, CommitSequenceTracker};
 pub use engine::{TransactionEngine, TransactionEngineError, TransactionEngineResult};
 pub use handle::TransactionHandle;
 pub use metrics::ActiveTransactionMetric;
-pub use overlay::{TransactionOverlay, TransactionOverlayEntry};
+pub use overlay::{ScopedPkKey, TransactionOverlay, TransactionOverlayEntry};
 pub use overlay_exec::TransactionOverlayExec;
 pub use owner::{ExecutionOwnerKey, TransactionOwnerParseError};
 pub use query_context::{TransactionMutationSink, TransactionOverlayView, TransactionQueryContext};

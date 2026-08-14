@@ -1,11 +1,12 @@
 //! Table-layer MVCC helpers that remain after moving shared winner-selection
 //! and Parquet decoding logic into `kalamdb-datafusion-sources`.
 
-use datafusion::{arrow::array::RecordBatch, error::DataFusionError, scalar::ScalarValue};
+use datafusion::{arrow::array::RecordBatch, error::DataFusionError};
 use kalamdb_commons::{ids::SeqId, serialization::row_codec::RowMetadata};
 use kalamdb_datafusion_sources::exec::{
     parquet_batch_to_metadata as shared_parquet_batch_to_metadata,
-    parquet_batch_to_rows as shared_parquet_batch_to_rows, VersionedRow,
+    parquet_batch_to_rows as shared_parquet_batch_to_rows, pk_bucket_key_from_row, PkBucketKey,
+    VersionedRow,
 };
 
 use crate::{error::KalamDbError, SharedTableRow};
@@ -21,6 +22,7 @@ mod tests {
         array::{BooleanArray, Int64Array, StringArray, UInt64Array},
         datatypes::{DataType, Field, Schema},
     };
+    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::constants::SystemColumnNames;
 
     use super::*;
@@ -187,6 +189,100 @@ mod tests {
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].1.value, "hot-visible");
     }
+
+    #[derive(Debug, Clone)]
+    struct TestIntPkRow {
+        seq: SeqId,
+        deleted: bool,
+        pk: i64,
+        value: String,
+    }
+
+    impl VersionedRow for TestIntPkRow {
+        fn seq_id(&self) -> SeqId {
+            self.seq
+        }
+
+        fn commit_seq(&self) -> u64 {
+            0
+        }
+
+        fn deleted(&self) -> bool {
+            self.deleted
+        }
+
+        fn pk_value(&self, _pk_name: &str) -> Option<String> {
+            Some(self.pk.to_string())
+        }
+
+        fn pk_bucket_key(&self, _pk_name: &str) -> PkBucketKey {
+            PkBucketKey::Int(self.pk)
+        }
+    }
+
+    #[test]
+    fn resolve_latest_kvs_from_cold_batch_merges_int64_primary_keys() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::DELETED, DataType::Boolean, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let cold_batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1, 2])),
+                Arc::new(Int64Array::from(vec![1, 3])),
+                Arc::new(BooleanArray::from(vec![false, false])),
+                Arc::new(StringArray::from(vec!["cold-1", "cold-2"])),
+            ],
+        )
+        .unwrap();
+
+        let hot_rows = vec![(
+            "hot-1".to_string(),
+            TestIntPkRow {
+                seq: SeqId::from_i64(2),
+                deleted: false,
+                pk: 1,
+                value: "hot-1".to_string(),
+            },
+        )];
+
+        let resolved = resolve_latest_kvs_from_cold_batch(
+            "id",
+            hot_rows,
+            &cold_batch,
+            false,
+            None,
+            |row_data| {
+                let pk = match row_data.fields.get("id").unwrap() {
+                    ScalarValue::Int64(Some(value)) => *value,
+                    value => panic!("expected Int64 pk, got {value:?}"),
+                };
+                let name = match row_data.fields.get("name").unwrap() {
+                    ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => {
+                        value.clone()
+                    },
+                    value => value.to_string(),
+                };
+                Ok((
+                    pk.to_string(),
+                    TestIntPkRow {
+                        seq: row_data.seq_id,
+                        deleted: false,
+                        pk,
+                        value: name,
+                    },
+                ))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|(_, row)| row.pk == 1 && row.value == "hot-1"));
+        assert!(resolved.iter().any(|(_, row)| row.pk == 2 && row.value == "cold-2"));
+    }
 }
 
 pub use kalamdb_datafusion_sources::exec::{
@@ -217,16 +313,14 @@ impl VersionedRow for SharedTableRow {
     }
 
     fn pk_value(&self, pk_name: &str) -> Option<String> {
-        self.fields.get(pk_name).and_then(|val| {
-            if val.is_null() {
-                None
-            } else {
-                match val {
-                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
-                    _ => Some(val.to_string()),
-                }
-            }
-        })
+        match self.pk_bucket_key(pk_name) {
+            PkBucketKey::Seq(_) => None,
+            key => Some(key.to_string()),
+        }
+    }
+
+    fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
+        pk_bucket_key_from_row(&self.fields, pk_name, self._seq)
     }
 }
 

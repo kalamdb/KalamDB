@@ -917,10 +917,7 @@ mod tests {
         assert_eq!(stats.total_files, 2);
         assert_eq!(stats.skipped_files, 1);
         assert_eq!(stats.scanned_files, 1);
-        assert_eq!(
-            stats.visited_files,
-            vec!["batch-in-range.parquet".to_string()]
-        );
+        assert_eq!(stats.visited_files, vec!["batch-in-range.parquet".to_string()]);
         assert_eq!(combined.num_rows(), 2);
     }
 }

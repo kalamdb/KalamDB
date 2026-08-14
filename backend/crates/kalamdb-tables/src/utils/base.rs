@@ -93,7 +93,7 @@ use kalamdb_commons::{
     },
     schemas::TableType,
     serialization::row_codec::RowMetadata,
-    NotLeaderError, StorageKey, TableId,
+    try_pk_bucket_key, NotLeaderError, StorageKey, TableId,
 };
 use kalamdb_datafusion_sources::{
     exec::{
@@ -1228,18 +1228,10 @@ where
 
         // Check if this row matches the PK value
         if let Some(row_pk) = row_data.fields.values.get(pk_name) {
-            let row_pk_str = match row_pk {
-                ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.clone(),
-                ScalarValue::Int64(Some(n)) => n.to_string(),
-                ScalarValue::Int32(Some(n)) => n.to_string(),
-                ScalarValue::Int16(Some(n)) => n.to_string(),
-                ScalarValue::UInt64(Some(n)) => n.to_string(),
-                ScalarValue::UInt32(Some(n)) => n.to_string(),
-                ScalarValue::Boolean(Some(b)) => b.to_string(),
-                _ => continue,
+            let Ok(row_pk_key) = try_pk_bucket_key(row_pk) else {
+                continue;
             };
-
-            if row_pk_str != pk_value {
+            if row_pk_key.to_string() != pk_value {
                 continue;
             }
 

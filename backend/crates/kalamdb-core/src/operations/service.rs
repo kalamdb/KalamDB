@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::prelude::SessionContext;
+use kalamdb_backend::session::LiveSessionTransaction;
 use kalamdb_commons::{
     models::{
         pg_operations::{
@@ -12,7 +13,6 @@ use kalamdb_commons::{
     },
     NamespaceId, TableType,
 };
-use kalamdb_backend::session::LiveSessionTransaction;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::SessionUserContext;
 use kalamdb_transactions::{

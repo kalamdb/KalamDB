@@ -18,8 +18,6 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
-#[allow(deprecated)]
-use kalamdb_views::{create_columns_provider, create_tables_provider};
 use kalamdb_views::{
     cluster::create_cluster_provider,
     cluster_groups::create_cluster_groups_provider,
@@ -34,6 +32,8 @@ use kalamdb_views::{
     transactions::{TransactionsTableProvider, TransactionsView},
     view_base::ViewTableProvider,
 };
+#[allow(deprecated)]
+use kalamdb_views::{create_columns_provider, create_tables_provider};
 use parking_lot::RwLock;
 
 use crate::schema_registry::SchemaRegistry;
@@ -192,14 +192,12 @@ impl SystemSchemaProvider {
             },
             #[allow(deprecated)]
             SystemTable::Tables => {
-                let provider =
-                    Arc::new(create_tables_provider(Arc::clone(&self.system_tables)));
+                let provider = Arc::new(create_tables_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>
             },
             #[allow(deprecated)]
             SystemTable::Columns => {
-                let provider =
-                    Arc::new(create_columns_provider(Arc::clone(&self.system_tables)));
+                let provider = Arc::new(create_columns_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::Describe => {

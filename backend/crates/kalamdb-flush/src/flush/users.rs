@@ -82,7 +82,7 @@ impl UserTableFlushJob {
     fn flush_user_versions(
         &self,
         user_id: &UserId,
-        latest_versions: HashMap<String, (Vec<u8>, UserTableRow, i64)>,
+        latest_versions: helpers::LatestVersions<UserTableRow>,
         keys_to_delete: Vec<Vec<u8>>,
         parquet_files: &mut Vec<String>,
         stats: &mut FlushDedupStats,
@@ -154,7 +154,7 @@ impl TableFlush for UserTableFlushJob {
         // UserTableRowId is ordered by (user_id, seq), so we only keep one user scope
         // in memory at a time while still resolving all versions for that user.
         let mut current_user: Option<UserId> = None;
-        let mut latest_versions: HashMap<String, (Vec<u8>, UserTableRow, i64)> = HashMap::new();
+        let mut latest_versions: helpers::LatestVersions<UserTableRow> = HashMap::new();
         let mut keys_to_delete: Vec<Vec<u8>> = Vec::with_capacity(1024);
         let mut stats = FlushDedupStats::default();
         let mut parquet_files: Vec<String> = Vec::new();

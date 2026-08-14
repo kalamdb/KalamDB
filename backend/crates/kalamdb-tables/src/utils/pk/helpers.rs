@@ -13,7 +13,10 @@ use std::collections::{HashMap, HashSet};
 use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
 use datafusion::scalar::ScalarValue;
 use futures_util::TryStreamExt;
-use kalamdb_commons::{constants::SystemColumnNames, models::TableId, schemas::TableType, UserId};
+use kalamdb_commons::{
+    constants::SystemColumnNames, models::TableId, schemas::TableType,
+    try_pk_bucket_key_from_array, try_pk_bucket_key_from_typed_string, PkBucketKey, UserId,
+};
 use kalamdb_filestore::{ParquetReadOptions, StorageCached};
 
 use crate::{
@@ -106,17 +109,30 @@ pub async fn first_existing_pk_in_parquet_file(
         },
     };
 
-    let mut versions: HashMap<String, (i64, bool)> = HashMap::with_capacity(pk_values.len());
+    let mut versions: HashMap<PkBucketKey, (i64, bool)> = HashMap::with_capacity(pk_values.len());
+    let mut wanted: Option<HashSet<PkBucketKey>> = None;
 
     while let Some(batch) =
         stream.try_next().await.into_kalamdb_error("Failed to read Parquet batch")?
     {
-        observe_pk_versions(&batch, pk_column, pk_values, &mut versions);
+        let pk_idx = batch.schema().index_of(pk_column).ok();
+        let Some(pk_i) = pk_idx else {
+            continue;
+        };
+        let wanted = wanted.get_or_insert_with(|| {
+            let schema = batch.schema();
+            let pk_type = schema.field(pk_i).data_type().clone();
+            pk_values
+                .iter()
+                .filter_map(|value| try_pk_bucket_key_from_typed_string(value, &pk_type).ok())
+                .collect()
+        });
+        observe_pk_versions(&batch, pk_i, wanted, &mut versions);
     }
 
     for (pk, (_, is_deleted)) in versions {
-        if !is_deleted && pk_values.contains(pk.as_str()) {
-            return Ok(Some(pk));
+        if !is_deleted {
+            return Ok(Some(pk.to_string()));
         }
     }
 
@@ -125,15 +141,13 @@ pub async fn first_existing_pk_in_parquet_file(
 
 fn observe_pk_versions(
     batch: &datafusion::arrow::record_batch::RecordBatch,
-    pk_column: &str,
-    pk_values: &HashSet<&str>,
-    versions: &mut HashMap<String, (i64, bool)>,
+    pk_i: usize,
+    wanted: &HashSet<PkBucketKey>,
+    versions: &mut HashMap<PkBucketKey, (i64, bool)>,
 ) {
-    let pk_idx = batch.schema().index_of(pk_column).ok();
     let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
     let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
-
-    let (Some(pk_i), Some(seq_i)) = (pk_idx, seq_idx) else {
+    let Some(seq_i) = seq_idx else {
         return;
     };
 
@@ -142,11 +156,11 @@ fn observe_pk_versions(
     let deleted_col = deleted_idx.map(|i| batch.column(i));
 
     for row_idx in 0..batch.num_rows() {
-        let Some(row_pk_str) = extract_pk_as_string(pk_col.as_ref(), row_idx) else {
+        let Some(row_pk) = try_pk_bucket_key_from_array(pk_col.as_ref(), row_idx) else {
             continue;
         };
 
-        if !pk_values.contains(row_pk_str.as_str()) {
+        if !wanted.contains(&row_pk) {
             continue;
         }
 
@@ -156,20 +170,19 @@ fn observe_pk_versions(
         let deleted =
             deleted_col.map(|col| extract_deleted(col.as_ref(), row_idx)).unwrap_or(false);
 
-        versions
-            .entry(row_pk_str)
-            .and_modify(|(max_seq, is_deleted)| {
+        match versions.entry(row_pk) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let (max_seq, is_deleted) = entry.get_mut();
                 if seq > *max_seq {
                     *max_seq = seq;
                     *is_deleted = deleted;
                 }
-            })
-            .or_insert((seq, deleted));
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((seq, deleted));
+            },
+        }
     }
-}
-
-fn extract_pk_as_string(col: &dyn Array, idx: usize) -> Option<String> {
-    crate::utils::pk_utils::extract_pk_as_string(col, idx)
 }
 
 fn extract_seq(col: &dyn Array, idx: usize) -> Option<i64> {

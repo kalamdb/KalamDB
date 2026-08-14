@@ -21,6 +21,7 @@ use log::{debug, warn};
 
 use super::{
     context::WsHandlerContext,
+    events::auth::spawn_upgrade_auth,
     protocol::{compression_enabled_from_query, parse_upgrade_auth, validate_origin},
     runtime::run_websocket,
 };
@@ -29,7 +30,9 @@ use crate::limiter::RateLimiter;
 /// GET /v1/ws - Establish WebSocket connection
 ///
 /// Accepts unauthenticated WebSocket connections.
-/// Authentication happens via post-connection Authenticate message (3-second timeout enforced).
+/// JWT can be supplied on the upgrade (`Authorization` or `kalamdb.jwt.*`
+/// subprotocol) so AuthSuccess can be sent without an extra round-trip.
+/// Otherwise authentication happens via a post-connection Authenticate message.
 /// Uses ConnectionsManager for consolidated connection state management.
 ///
 /// Security:
@@ -56,6 +59,7 @@ pub async fn websocket_handler(
 
     let compression_enabled = compression_enabled_from_query(&req);
     let pre_auth = parse_upgrade_auth(&req);
+    let echo_subprotocol = pre_auth.as_ref().and_then(|auth| auth.echo_subprotocol.clone());
 
     let connection_id = ConnectionId::new(uuid::Uuid::new_v4().simple().to_string());
     let client_ip = kalamdb_auth::extract_client_ip_secure(&req);
@@ -70,23 +74,50 @@ pub async fn websocket_handler(
     debug!(
         "New WebSocket connection: {} (pre_auth={})",
         connection_id,
-        if pre_auth.is_some() {
+        if pre_auth.as_ref().is_some_and(|auth| auth.echo_subprotocol.is_some()) {
+            "protocol"
+        } else if pre_auth.is_some() {
             "header"
         } else {
             "pending"
         }
     );
 
+    let pending_auth = pre_auth.map(|auth| {
+        spawn_upgrade_auth(
+            client_ip.clone(),
+            auth,
+            Arc::clone(rate_limiter.get_ref()),
+            Arc::clone(user_repo.get_ref()),
+        )
+    });
+
     let registration =
         match connection_registry.register_connection(connection_id.clone(), client_ip.clone()) {
             Some(reg) => reg,
             None => {
+                if let Some(pending) = pending_auth {
+                    pending.auth_task.abort();
+                }
                 warn!("Rejecting WebSocket during shutdown: {}", connection_id);
                 return Ok(HttpResponse::ServiceUnavailable().body("Server shutting down"));
             },
         };
 
-    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
+    let handshake = if let Some(ref protocol) = echo_subprotocol {
+        actix_ws::handle_with_protocols(&req, stream, &[protocol.as_str()])
+    } else {
+        actix_ws::handle(&req, stream)
+    };
+    let (response, session, msg_stream) = match handshake {
+        Ok(parts) => parts,
+        Err(error) => {
+            if let Some(pending) = pending_auth {
+                pending.auth_task.abort();
+            }
+            return Err(error);
+        },
+    };
 
     let handler_context = WsHandlerContext::new(
         Arc::clone(app_context.get_ref()),
@@ -99,7 +130,7 @@ pub async fn websocket_handler(
     );
 
     actix_web::rt::spawn(async move {
-        run_websocket(client_ip, session, msg_stream, registration, handler_context, pre_auth)
+        run_websocket(client_ip, session, msg_stream, registration, handler_context, pending_auth)
             .await;
     });
 

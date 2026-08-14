@@ -8,7 +8,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     io::{Error as IoError, ErrorKind},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 
@@ -19,7 +19,7 @@ use tokio::{
     time::Instant as TokioInstant,
 };
 use tokio_tungstenite::{
-    client_async_tls_with_config, connect_async,
+    client_async_tls_with_config,
     tungstenite::{
         error::{Error as WsError, UrlError},
         handshake::client::Response as WsResponse,
@@ -27,6 +27,8 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
+
+use super::happy_eyeballs::connect_tcp_happy_eyeballs;
 
 use super::{MAX_WS_BINARY_MESSAGE_BYTES, MAX_WS_DECOMPRESSED_MESSAGE_BYTES};
 use crate::{
@@ -105,6 +107,42 @@ pub(crate) fn resolve_ws_url(
     Ok(ws_url.to_string())
 }
 
+async fn connect_happy_eyeballs(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+) -> std::result::Result<(WebSocketStream, WsResponse), WsError> {
+    let host = request.uri().host().ok_or(WsError::Url(UrlError::NoHostName))?.to_owned();
+    let port = request
+        .uri()
+        .port_u16()
+        .or_else(|| match request.uri().scheme_str() {
+            Some("wss") => Some(443),
+            Some("ws") => Some(80),
+            _ => None,
+        })
+        .ok_or(WsError::Url(UrlError::UnsupportedUrlScheme))?;
+
+    let remote_addrs = resolve_remote_addrs(&host, port).await?;
+
+    log::debug!(
+        "[kalam-sdk] Happy Eyeballs connecting to {}:{} ({} addresses)",
+        host,
+        port,
+        remote_addrs.len()
+    );
+
+    let started = TokioInstant::now();
+    let stream = connect_tcp_happy_eyeballs(&remote_addrs).await.map_err(WsError::Io)?;
+    if let Ok(peer) = stream.peer_addr() {
+        log::debug!(
+            "[kalam-sdk] Happy Eyeballs TCP connected to {} in {:?}",
+            peer,
+            started.elapsed()
+        );
+    }
+
+    client_async_tls_with_config(request, stream, None, None).await
+}
+
 fn validate_ws_url(url: &Url, require_ws_scheme: bool, context: &str) -> Result<()> {
     if url.host_str().is_none() {
         return Err(KalamLinkError::ConfigurationError(format!("{} must include a host", context)));
@@ -143,7 +181,8 @@ fn validate_ws_url(url: &Url, require_ws_scheme: bool, context: &str) -> Result<
 
 /// Connect to a WebSocket endpoint, optionally binding to specific local addresses.
 ///
-/// When `local_bind_addresses` is empty, falls back to the default `connect_async`.
+/// When `local_bind_addresses` is empty, uses Happy Eyeballs so a broken IPv6
+/// route does not stall the first IPv4 attempt for a full TCP timeout.
 /// Otherwise iterates through the configured addresses (starting at a deterministic
 /// offset derived from `subscription_id`) to spread connections across interfaces.
 pub(crate) async fn connect_with_optional_local_bind(
@@ -152,7 +191,7 @@ pub(crate) async fn connect_with_optional_local_bind(
     subscription_id: &str,
 ) -> std::result::Result<(WebSocketStream, WsResponse), WsError> {
     if local_bind_addresses.is_empty() {
-        return connect_async(request).await;
+        return connect_happy_eyeballs(request).await;
     }
 
     let host = request.uri().host().ok_or(WsError::Url(UrlError::NoHostName))?;
@@ -166,14 +205,7 @@ pub(crate) async fn connect_with_optional_local_bind(
         })
         .ok_or(WsError::Url(UrlError::UnsupportedUrlScheme))?;
 
-    let remote_addrs: Vec<SocketAddr> =
-        lookup_host((host, port)).await.map_err(WsError::Io)?.collect();
-    if remote_addrs.is_empty() {
-        return Err(WsError::Io(IoError::new(
-            ErrorKind::AddrNotAvailable,
-            format!("No resolved addresses for {}:{}", host, port),
-        )));
-    }
+    let remote_addrs = resolve_remote_addrs(host, port).await?;
 
     let bind_ips = parse_local_bind_addresses(local_bind_addresses)?;
     if bind_ips.is_empty() {
@@ -212,6 +244,7 @@ pub(crate) async fn connect_with_optional_local_bind(
 
             match socket.connect(remote_addr).await {
                 Ok(stream) => {
+                    let _ = stream.set_nodelay(true);
                     return client_async_tls_with_config(request, stream, None, None).await;
                 },
                 Err(connect_err) => {
@@ -270,6 +303,42 @@ fn parse_local_bind_addresses(addresses: &[String]) -> std::result::Result<Vec<I
         }
     }
     Ok(parsed)
+}
+
+/// Skip getaddrinfo for IP literals and `localhost`.
+///
+/// `localhost` prefers IPv4 so a server bound only to `127.0.0.1` does not wait
+/// on a broken or unlistening `::1` route before connecting.
+pub(crate) fn static_connect_addrs(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(vec![SocketAddr::new(ip, port)]);
+    }
+    if host.eq_ignore_ascii_case("localhost") {
+        return Some(vec![
+            SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
+        ]);
+    }
+    None
+}
+
+async fn resolve_remote_addrs(
+    host: &str,
+    port: u16,
+) -> std::result::Result<Vec<SocketAddr>, WsError> {
+    if let Some(addrs) = static_connect_addrs(host, port) {
+        return Ok(addrs);
+    }
+
+    let remote_addrs: Vec<SocketAddr> =
+        lookup_host((host, port)).await.map_err(WsError::Io)?.collect();
+    if remote_addrs.is_empty() {
+        return Err(WsError::Io(IoError::new(
+            ErrorKind::AddrNotAvailable,
+            format!("No resolved addresses for {}:{}", host, port),
+        )));
+    }
+    Ok(remote_addrs)
 }
 
 // ── Auth Header Application ─────────────────────────────────────────────────
@@ -565,6 +634,8 @@ pub(crate) async fn send_client_message(
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
     use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::header::AUTHORIZATION};
 
     use super::*;
@@ -648,6 +719,31 @@ mod tests {
             .expect("jwt auth should be applied via Authorization header");
 
         assert_eq!(request.headers().get(AUTHORIZATION).unwrap(), "Bearer token-123");
+    }
+
+    #[test]
+    fn test_static_connect_addrs_prefers_ipv4_localhost() {
+        let addrs = static_connect_addrs("localhost", 3000).unwrap();
+        assert_eq!(
+            addrs,
+            vec![
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 3000)),
+                SocketAddr::from((Ipv6Addr::LOCALHOST, 3000)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_static_connect_addrs_parses_ip_literals() {
+        assert_eq!(
+            static_connect_addrs("127.0.0.1", 443).unwrap(),
+            vec![SocketAddr::from((Ipv4Addr::LOCALHOST, 443))]
+        );
+        assert_eq!(
+            static_connect_addrs("::1", 443).unwrap(),
+            vec![SocketAddr::from((Ipv6Addr::LOCALHOST, 443))]
+        );
+        assert!(static_connect_addrs("db.example.com", 443).is_none());
     }
 
     #[test]

@@ -8,9 +8,9 @@ use kalamdb_live::{ConnectionEvent, ConnectionRegistration};
 use log::{debug, error, warn};
 
 use super::{
-    context::{UpgradeAuth, WsHandlerContext},
+    context::{PendingUpgradeAuth, WsHandlerContext},
     events::{
-        auth::handle_upgrade_auth, cleanup::cleanup_connection, send_error, send_json,
+        auth::apply_pending_upgrade_auth, cleanup::cleanup_connection, send_error, send_json,
         send_wire_notification,
     },
     messages::{handle_binary_message, handle_text_message},
@@ -24,7 +24,7 @@ pub(super) async fn run_websocket(
     msg_stream: actix_ws::MessageStream,
     registration: ConnectionRegistration,
     handler_context: WsHandlerContext,
-    pre_auth: Option<UpgradeAuth>,
+    pending_auth: Option<PendingUpgradeAuth>,
 ) {
     record_activity_now();
     increment_websocket_sessions();
@@ -38,16 +38,12 @@ pub(super) async fn run_websocket(
         let mut session = session;
         let mut msg_stream = msg_stream;
 
-        if let Some(auth) = pre_auth {
+        if let Some(pending) = pending_auth {
             connection_state.mark_auth_started();
-            if handle_upgrade_auth(
+            if apply_pending_upgrade_auth(
                 &connection_state,
-                &client_ip,
-                auth.auth_request,
-                auth.protocol,
                 &mut session,
-                &handler_context.rate_limiter,
-                &handler_context.user_repo,
+                pending,
                 handler_context.compression_enabled,
             )
             .await

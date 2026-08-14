@@ -12,8 +12,7 @@ use kalamdb_core::sql::{context::ExecutionContext, ExecutionResult};
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, create_shared_table_with_access, execute_err, execute_ok,
-    execute_ok_with_params,
-    observer_exec_ctx, result_rows, unique_namespace,
+    execute_ok_with_params, observer_exec_ctx, result_rows, unique_namespace,
 };
 
 fn string_values(
@@ -96,10 +95,7 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
         )
         .await,
     );
-    assert_eq!(
-        string_values(&non_template_rows, "datname"),
-        vec!["kalam".to_string()]
-    );
+    assert_eq!(string_values(&non_template_rows, "datname"), vec!["kalam".to_string()]);
 
     let text_param_rows = result_rows(
         execute_ok_with_params(
@@ -110,10 +106,7 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
         )
         .await,
     );
-    assert_eq!(
-        string_values(&text_param_rows, "datname"),
-        vec!["kalam".to_string()]
-    );
+    assert_eq!(string_values(&text_param_rows, "datname"), vec!["kalam".to_string()]);
 
     let unqualified_param_rows = result_rows(
         execute_ok_with_params(
@@ -124,10 +117,7 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
         )
         .await,
     );
-    assert_eq!(
-        string_values(&unqualified_param_rows, "datname"),
-        vec!["kalam".to_string()]
-    );
+    assert_eq!(string_values(&unqualified_param_rows, "datname"), vec!["kalam".to_string()]);
 }
 
 #[tokio::test]
@@ -301,12 +291,7 @@ async fn pg_catalog_shim_beekeeper_bulk_table_columns_query() {
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
 
-    let result = execute_ok(
-        &executor,
-        &observer_ctx,
-        BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL,
-    )
-    .await;
+    let result = execute_ok(&executor, &observer_ctx, BEEKEEPER_LIST_TABLE_COLUMNS_BULK_SQL).await;
     let ExecutionResult::Rows { row_count, .. } = result else {
         panic!("expected rows from beekeeper bulk column metadata query");
     };
@@ -412,10 +397,7 @@ async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
         )
         .await,
     );
-    assert!(
-        matview_rows.is_empty(),
-        "user tables must not be exposed through pg_matviews"
-    );
+    assert!(matview_rows.is_empty(), "user tables must not be exposed through pg_matviews");
 }
 
 #[tokio::test]
@@ -451,7 +433,10 @@ async fn information_schema_views_lists_system_views_not_tables() {
         )
         .await,
     );
-    assert!(table_rows.is_empty(), "system.users is a table and must not be listed as a view");
+    assert!(
+        table_rows.is_empty(),
+        "system.users is a table and must not be listed as a view"
+    );
 }
 
 #[tokio::test]
@@ -550,7 +535,8 @@ async fn pg_catalog_shim_reports_conservative_postgres_version() {
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
 
-    let rows = result_rows(execute_ok(&executor, &observer_ctx, "SELECT version() AS version").await);
+    let rows =
+        result_rows(execute_ok(&executor, &observer_ctx, "SELECT version() AS version").await);
     let versions = string_values(&rows, "version");
     assert_eq!(versions, vec!["PostgreSQL 9.6.0 compatible KalamDB".to_string()]);
 }
@@ -621,7 +607,10 @@ async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
         )
         .await,
     );
-    assert!(!type_rows.is_empty(), "unqualified pg_type should resolve to pg_catalog.pg_type");
+    assert!(
+        !type_rows.is_empty(),
+        "unqualified pg_type should resolve to pg_catalog.pg_type"
+    );
 }
 
 #[tokio::test]

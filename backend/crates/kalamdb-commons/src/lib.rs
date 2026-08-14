@@ -80,8 +80,11 @@ pub use constants::{
 };
 #[cfg(feature = "conversions")]
 pub use conversions::{
-    as_f64, estimate_scalar_value_size, json_value_to_scalar_for_column, scalar_to_f64,
-    scalar_to_i64, scalar_to_json_for_column, scalar_to_pk_string, scalar_value_to_bytes,
+    as_f64, estimate_scalar_value_size, json_value_to_scalar_for_column, pk_bucket_key_from_array,
+    pk_bucket_key_from_row, pk_bucket_key_from_scalar, pk_bucket_key_from_typed_string,
+    scalar_to_f64, scalar_to_i64, scalar_to_json_for_column, scalar_to_pk_string,
+    scalar_value_to_bytes, try_pk_bucket_key, try_pk_bucket_key_from_array,
+    try_pk_bucket_key_from_typed_string, PkBucketKey,
 };
 pub use errors::{CommonError, NotLeaderError, Result};
 #[cfg(feature = "arrow-utils")]
@@ -144,4 +147,7 @@ pub use websocket_messages::{
     BatchControl, BatchStatus, ChangeTypeRaw, ServerMessage, SubscriptionOptions,
     SubscriptionRequest,
 };
-pub use websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
+pub use websocket_protocol::{
+    jwt_from_websocket_subprotocol, jwt_websocket_subprotocol, CompressionType, ProtocolOptions,
+    SerializationType, WS_JWT_SUBPROTOCOL_PREFIX,
+};

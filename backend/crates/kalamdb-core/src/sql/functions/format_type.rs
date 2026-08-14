@@ -5,7 +5,9 @@ use std::sync::Arc;
 use datafusion::{
     arrow::array::{ArrayRef, Int32Array, Int64Array, StringBuilder},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility},
+    logical_expr::{
+        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+    },
     scalar::ScalarValue,
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
@@ -62,9 +64,7 @@ impl ScalarUDFImpl for FormatTypeFunction {
 
 fn type_oid_array(value: &ColumnarValue, row_count: usize) -> DataFusionResult<Vec<i64>> {
     match value {
-        ColumnarValue::Scalar(ScalarValue::Int64(oid)) => {
-            Ok(vec![oid.unwrap_or(0); row_count])
-        },
+        ColumnarValue::Scalar(ScalarValue::Int64(oid)) => Ok(vec![oid.unwrap_or(0); row_count]),
         ColumnarValue::Scalar(ScalarValue::Int32(oid)) => {
             Ok(vec![oid.unwrap_or(0) as i64; row_count])
         },

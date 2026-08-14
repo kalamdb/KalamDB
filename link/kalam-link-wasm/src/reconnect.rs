@@ -12,7 +12,10 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
-    helpers::{create_promise, send_ws_message, ws_url_from_http_opts},
+    helpers::{
+        create_promise, jwt_uses_upgrade_auth, open_websocket, send_ws_message,
+        ws_url_from_http_opts,
+    },
     state::SubscriptionState,
     wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
@@ -32,6 +35,7 @@ pub(crate) async fn reconnect_internal_with_auth(
     auth: WasmAuthProvider,
     auth_provider_cb: Option<js_sys::Function>,
     disable_compression: bool,
+    protocol: ProtocolOptions,
 ) -> Result<WebSocket, JsValue> {
     // Resolve auth (dynamic provider takes precedence).
     let resolved_auth = resolve_auth_provider(auth_provider_cb, auth).await?;
@@ -43,9 +47,13 @@ pub(crate) async fn reconnect_internal_with_auth(
         ));
     }
 
-    let ws_url = ws_url_from_http_opts(&url, disable_compression)?;
-
-    let ws = WebSocket::new(&ws_url)?;
+    let ws_url = ws_url_from_http_opts(&url, disable_compression, protocol)?;
+    let jwt_token = match &resolved_auth {
+        WasmAuthProvider::Jwt { token } => Some(token.as_str()),
+        _ => None,
+    };
+    let uses_upgrade_auth = jwt_token.is_some_and(jwt_uses_upgrade_auth);
+    let ws = open_websocket(&ws_url, jwt_token)?;
 
     // Set binaryType to arraybuffer so binary messages come as ArrayBuffer, not Blob
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
@@ -55,7 +63,11 @@ pub(crate) async fn reconnect_internal_with_auth(
 
     // Check if auth is required
     let requires_auth = !matches!(resolved_auth, WasmAuthProvider::None);
-    let auth_message = resolved_auth.to_ws_auth_message(ProtocolOptions::default());
+    let auth_message = if uses_upgrade_auth {
+        None
+    } else {
+        resolved_auth.to_ws_auth_message(protocol)
+    };
     let ws_clone = ws.clone();
     let auth_resolve_for_anon = auth_resolve.clone();
 
@@ -65,8 +77,7 @@ pub(crate) async fn reconnect_internal_with_auth(
             if let Ok(json) = serde_json::to_string(&auth_msg) {
                 let _ = ws_clone.send_with_str(&json);
             }
-        } else {
-            // No auth needed (anonymous), resolve auth immediately
+        } else if !requires_auth {
             let _ = auth_resolve_for_anon.call0(&JsValue::NULL);
         }
         let _ = connect_resolve_clone.call0(&JsValue::NULL);
