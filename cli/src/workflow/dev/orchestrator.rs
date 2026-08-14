@@ -29,7 +29,11 @@ use crate::{
             apply::{apply_pending_migrations, ApplyMigrationOptions},
             create::update_draft_migration,
         },
-        project::{config::SchemaMode, guidance::dev_local_kalamdb_server_start_failed},
+        project::{
+            config::SchemaMode,
+            guidance::{dev_local_kalamdb_server_start_failed, dev_reusing_existing_local_server},
+            resolve::load_project_dotenv,
+        },
         schema::{generate_schema_artifacts, GenerateOptions},
         sql::{build_workflow_client, drop_namespace_if_exists},
         WorkflowContext,
@@ -244,7 +248,7 @@ async fn run_dev_session_inner(
 
     if ctx.config.dev.auto_start_db {
         if precheck.local_server_reused {
-            output.status(format!("using existing KalamDB server at {}", precheck.environment.url));
+            output.warn(dev_reusing_existing_local_server(&precheck.environment.url));
             output.progress_task(
                 "server",
                 ProgressTaskStatus::Succeeded,
@@ -307,7 +311,16 @@ async fn run_dev_session_inner(
     }
 
     if !ctx.config.dev.processes.is_empty() {
-        supervisor.spawn_all(&ctx.config.dev.processes, &registry, output).await?;
+        let process_env = load_project_dotenv(&ctx.project_root)?;
+        supervisor
+            .spawn_all(
+                &ctx.config.dev.processes,
+                &registry,
+                output,
+                &ctx.project_root,
+                &process_env,
+            )
+            .await?;
     }
 
     let watch_enabled = precheck.watch_enabled;

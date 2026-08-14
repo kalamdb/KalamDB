@@ -1,0 +1,181 @@
+# KalamDB comparison server — HOT STORAGE ONLY + bake-off tuned.
+#
+# Learned from benchv2/server.toml:
+# - Keep the same section layout, auth.local.bcrypt_cost=4, high rate limits,
+#   and actix performance ceilings (those are already good for load tests).
+# - Do NOT copy benchv2 RocksDB/DataFusion sizes. benchv2/server.toml is the
+#   low-memory profile (2 MiB block cache, 128 KiB hot memtables, DF 64 MiB /
+#   parallelism 2). That starves this point-lookup bake-off.
+#
+# Hot-only:
+# - flush.check_interval_seconds = 0
+# - comparison table is created without FLUSH_POLICY
+# - do not run STORAGE FLUSH during this benchmark
+#
+# Fairness: TrailBase/PocketBase drivers also do ONE HTTP create/get per row
+# (concurrency=16). Do not batch inserts unless TB/PB also batch.
+
+[server]
+host = "127.0.0.1"
+port = 2900
+workers = 0
+enable_http2 = true
+
+[storage]
+data_path = "./data"
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
+
+[storage.rocksdb]
+# Inverse of benchv2 low-mem profile: feed point lookups a real block cache.
+block_cache_size = 1073741824         # 1 GiB (host has 24 GiB)
+max_background_jobs = 8
+max_open_files = 8192
+sync_writes = false
+disable_wal = false
+compact_on_startup = false
+
+[storage.rocksdb.cf_profiles.system_meta]
+write_buffer_size = 8388608           # 8 MiB
+max_write_buffers = 3
+
+[storage.rocksdb.cf_profiles.system_index]
+write_buffer_size = 8388608           # 8 MiB
+max_write_buffers = 3
+
+[storage.rocksdb.cf_profiles.hot_data]
+write_buffer_size = 134217728         # 128 MiB (absorb 100k insert burst)
+max_write_buffers = 4
+
+[storage.rocksdb.cf_profiles.hot_index]
+write_buffer_size = 67108864          # 64 MiB
+max_write_buffers = 4
+
+[storage.rocksdb.cf_profiles.raft]
+write_buffer_size = 33554432          # 32 MiB
+max_write_buffers = 3
+
+[datafusion]
+# Point lookups return 1 row; keep DF overhead low (benchv2 idea), but give
+# enough memory so planning/execution never spills.
+memory_limit = 536870912              # 512 MiB
+query_parallelism = 2
+max_partitions = 1
+batch_size = 128
+
+[flush]
+default_row_limit = 100000000
+default_time_interval = 8640000
+flush_batch_size = 10000
+check_interval_seconds = 0
+
+[stream]
+default_ttl_seconds = 10
+default_max_buffer = 10000
+eviction_interval_seconds = 60
+
+[manifest_cache]
+eviction_interval_seconds = 300
+max_entries = 2000
+eviction_ttl_days = 7
+
+[limits]
+max_message_size = 1048576
+max_query_limit = 1000
+default_query_limit = 50
+
+[logging]
+level = "warn"
+logs_path = "./logs"
+log_to_console = false
+format = "json"
+slow_query_threshold_ms = 5000
+
+[logging.otlp]
+enabled = false
+endpoint = "http://127.0.0.1:4317"
+protocol = "grpc"
+service_name = "kalamdb-server"
+timeout_ms = 3000
+
+[performance]
+request_timeout = 30
+keepalive_timeout = 75
+max_connections = 20000000
+backlog = 4096
+worker_max_blocking_threads = 4000
+client_request_timeout = 10
+client_disconnect_timeout = 5
+max_header_size = 16384
+
+[rate_limit]
+max_queries_per_sec = 100000
+max_messages_per_sec = 10000
+max_subscriptions_per_user = 500000
+max_auth_requests_per_ip_per_sec = 200000
+max_connections_per_ip = 200000
+max_requests_per_ip_per_sec = 200000
+request_body_limit_bytes = 104857600
+ban_duration_seconds = 300
+enable_connection_protection = false
+cache_max_entries = 10000
+cache_ttl_seconds = 600
+
+[security]
+max_request_body_size = 10485760
+max_ws_message_size = 1048576
+strict_ws_origin_check = false
+
+[security.cors]
+allowed_origins = []
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+expose_headers = []
+allow_credentials = true
+max_age = 3600
+allow_private_network = false
+
+[websocket]
+client_timeout_secs = 120
+auth_timeout_secs = 15
+heartbeat_interval_secs = 30
+
+[auth]
+jwt_secret = "kalamdb-bench-local-2026-04-03-jwt-secret-32-plus"
+jwt_trusted_issuers = ""
+
+[auth.local]
+enabled = true
+bcrypt_cost = 4
+min_password_length = 8
+max_password_length = 72
+
+[auth.oidc]
+enabled = false
+auto_provision = false
+default_role = "user"
+
+[shutdown.flush]
+timeout = 300
+
+[jobs]
+max_concurrent = 10
+max_retries = 3
+retry_backoff_ms = 100
+wal_cleanup_interval_seconds = 300
+
+[execution]
+handler_timeout_seconds = 30
+max_parameters = 50
+max_parameter_size_bytes = 524288
+sql_plan_cache_max_entries = 4000
+sql_plan_cache_ttl_seconds = 7200
+
+[cluster]
+node_id = 1
+rpc_addr = "127.0.0.1:2910"
+api_addr = "127.0.0.1:2900"
+user_shards = 8
+shared_shards = 1
+max_snapshots_to_keep = 1
+replication_timeout_ms = 5000

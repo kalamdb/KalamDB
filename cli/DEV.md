@@ -502,7 +502,14 @@ The generated local server config uses:
 - default credentials `root` / `kalamdb123` in `kalam/server/server.toml`
 
 Scaffolded `.env` and `.env.example` files include `KALAM_USER=root` and
-`KALAM_PASSWORD=kalamdb123` for local mode.
+`KALAM_PASSWORD=kalamdb123` for local mode. `kalam dev` injects the project
+`.env` into `[dev.processes]` commands, and the TypeScript starter loads `.env`
+so `npm run dev` also sees `KALAM_PASSWORD`.
+
+If something is already listening on the project URL (for example another
+`kalamdb-server` or `cargo run`), `kalam dev` reuses that process and prints a
+warning instead of starting `kalam/server`. Stop the other server if you
+expected a fresh local instance for this project.
 
 #### Accessing the local server
 

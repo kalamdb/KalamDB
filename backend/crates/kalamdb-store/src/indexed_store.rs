@@ -978,14 +978,17 @@ where
 
     /// Async version of `get_latest_by_index_prefix()`.
     ///
-    /// Uses `spawn_blocking` to avoid blocking the async runtime.
+    /// Runs inline on the caller. This lookup is a reverse iterator with
+    /// `limit=1` plus one entity get (microseconds on a cache hit). Offloading
+    /// that to `spawn_blocking` costs more than the RocksDB work on the PK
+    /// point-read path.
+    #[allow(clippy::unused_async)]
     pub async fn get_latest_by_index_prefix_async(
         &self,
         index_idx: usize,
         prefix: Vec<u8>,
     ) -> Result<Option<(K, V)>> {
-        let store = self.clone();
-        run_blocking_result(move || store.get_latest_by_index_prefix(index_idx, &prefix)).await
+        self.get_latest_by_index_prefix(index_idx, &prefix)
     }
 
     /// Async version of `get()` from EntityStore.

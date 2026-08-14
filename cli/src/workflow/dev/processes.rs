@@ -42,12 +42,14 @@ impl ProcessSupervisor {
         commands: &HashMap<String, String>,
         registry: &ServiceLogRegistry,
         output: &WorkflowOutput,
+        working_dir: &Path,
+        extra_env: &HashMap<String, String>,
     ) -> Result<()> {
         for (name, command) in commands {
             if command.trim().is_empty() {
                 return Err(CLIError::ConfigurationError(dev_empty_process_command(name)));
             }
-            self.spawn_one(name, command, registry, output).await?;
+            self.spawn_one(name, command, registry, output, working_dir, extra_env).await?;
         }
         Ok(())
     }
@@ -58,10 +60,12 @@ impl ProcessSupervisor {
         command: &str,
         registry: &ServiceLogRegistry,
         output: &WorkflowOutput,
+        working_dir: &Path,
+        extra_env: &HashMap<String, String>,
     ) -> Result<()> {
         self.attach_managed_process(
             name,
-            spawn_shell_piped(command),
+            spawn_shell_piped(command, Some(working_dir), extra_env),
             SupervisedKillScope::Tree,
             crate::process::shell_command_program(),
             command,
@@ -225,11 +229,70 @@ fn spawn_log_reader(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, time::Duration};
+
     use super::*;
+    use crate::{
+        config::WorkflowLoggingPolicy,
+        output::WorkflowOutput,
+        workflow::project::resolve::load_project_dotenv,
+    };
 
     #[test]
     fn managed_pid_is_none_for_unknown_process() {
         let supervisor = ProcessSupervisor::new();
         assert!(supervisor.managed_pid("server").is_none());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(3000)]
+    async fn spawn_all_injects_project_dotenv_into_child_process() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let password = "dotenv-regression-secret";
+        fs::write(temp.path().join(".env"), format!("KALAM_PASSWORD={password}\n")).unwrap();
+        let captured = temp.path().join("captured-password.txt");
+        let command = if cfg!(windows) {
+            format!("echo %KALAM_PASSWORD%>{}", captured.display())
+        } else {
+            format!("printf '%s' \"$KALAM_PASSWORD\" > '{}'", captured.display())
+        };
+
+        let previous = std::env::var("KALAM_PASSWORD").ok();
+        std::env::remove_var("KALAM_PASSWORD");
+        let extra_env = load_project_dotenv(temp.path()).unwrap();
+
+        let mut registry = ServiceLogRegistry::new();
+        registry.register("app");
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        let mut supervisor = ProcessSupervisor::new();
+        let spawn_result = supervisor
+            .spawn_all(
+                &HashMap::from([("app".to_string(), command)]),
+                &registry,
+                &output,
+                temp.path(),
+                &extra_env,
+            )
+            .await;
+        match previous {
+            Some(value) => std::env::set_var("KALAM_PASSWORD", value),
+            None => std::env::remove_var("KALAM_PASSWORD"),
+        }
+        spawn_result.unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            if captured.is_file() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        supervisor.shutdown().await;
+
+        let contents = fs::read_to_string(&captured).unwrap_or_default();
+        assert!(
+            contents.contains(password),
+            "expected child process to receive KALAM_PASSWORD from project .env, got {contents:?}"
+        );
     }
 }
