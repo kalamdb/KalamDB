@@ -1476,18 +1476,36 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)
     }
 
+    /// Peel default ORDER BY wrappers only.
+    ///
+    /// Projection is the user-requested output schema. Dropping it makes
+    /// `SELECT file_ref WHERE path = $1` return `path` as the first column.
     fn unwrap_default_order_wrappers(plan: &LogicalPlan) -> &LogicalPlan {
         match plan {
             LogicalPlan::Sort(sort) => Self::unwrap_default_order_wrappers(sort.input.as_ref()),
             LogicalPlan::Limit(limit) => Self::unwrap_default_order_wrappers(limit.input.as_ref()),
-            LogicalPlan::Projection(projection) => {
-                Self::unwrap_default_order_wrappers(projection.input.as_ref())
-            },
-            LogicalPlan::SubqueryAlias(alias) => {
-                Self::unwrap_default_order_wrappers(alias.input.as_ref())
-            },
             other => other,
         }
+    }
+
+    fn project_point_get_batches(
+        batches: Vec<RecordBatch>,
+        source_schema: SchemaRef,
+        target_schema: SchemaRef,
+    ) -> Option<Vec<RecordBatch>> {
+        let mut indices = Vec::with_capacity(target_schema.fields().len());
+        for field in target_schema.fields() {
+            indices.push(source_schema.index_of(field.name()).ok()?);
+        }
+        if indices.len() == source_schema.fields().len()
+            && indices.iter().copied().eq(0..indices.len())
+        {
+            return Some(batches);
+        }
+        if batches.is_empty() {
+            return Some(vec![RecordBatch::new_empty(target_schema)]);
+        }
+        batches.into_iter().map(|batch| batch.project(&indices).ok()).collect()
     }
 
     /// Execute a cached, optimized single-PK table scan without rebuilding a
@@ -1502,8 +1520,17 @@ impl SqlExecutor {
         params: &[ScalarValue],
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
-        let LogicalPlan::TableScan(scan) = Self::unwrap_default_order_wrappers(plan) else {
-            return Ok(None);
+        let (scan, requested_schema) = match Self::unwrap_default_order_wrappers(plan) {
+            LogicalPlan::TableScan(scan) => (scan, None),
+            LogicalPlan::Projection(projection) => {
+                let LogicalPlan::TableScan(scan) =
+                    Self::unwrap_default_order_wrappers(projection.input.as_ref())
+                else {
+                    return Ok(None);
+                };
+                (scan, Some(Arc::new(projection.schema.as_arrow().clone())))
+            },
+            _ => return Ok(None),
         };
 
         let namespace = scan
@@ -1560,6 +1587,17 @@ impl SqlExecutor {
             collect(physical_plan, state.task_ctx())
                 .await
                 .map_err(Self::datafusion_to_execution_error)?
+        };
+        let (batches, schema) = if let Some(target_schema) = requested_schema {
+            let Some(projected) =
+                Self::project_point_get_batches(batches, schema, Arc::clone(&target_schema))
+            else {
+                return Ok(None);
+            };
+            let schema = projected.first().map(|batch| batch.schema()).unwrap_or(target_schema);
+            (projected, schema)
+        } else {
+            (batches, schema)
         };
         let row_count = batches.iter().map(|batch| batch.num_rows()).sum();
 
@@ -2757,5 +2795,144 @@ mod tests {
             fetch: None,
         });
         assert!(!SqlExecutor::logical_plan_has_limit(&sort_without_fetch));
+    }
+
+    #[test]
+    fn unwrap_default_order_wrappers_peels_sort_and_limit_only() {
+        let sorted = LogicalPlan::Sort(Sort {
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
+            input: Arc::new(empty_plan()),
+            fetch: None,
+        });
+        assert!(matches!(
+            SqlExecutor::unwrap_default_order_wrappers(&sorted),
+            LogicalPlan::EmptyRelation(_)
+        ));
+
+        let limited = LogicalPlan::Limit(Limit {
+            skip: None,
+            fetch: Some(Box::new(lit(1_i64))),
+            input: Arc::new(sorted),
+        });
+        assert!(matches!(
+            SqlExecutor::unwrap_default_order_wrappers(&limited),
+            LogicalPlan::EmptyRelation(_)
+        ));
+    }
+
+    #[test]
+    fn project_point_get_batches_selects_non_leading_columns_by_name() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![
+                Arc::new(StringArray::from(vec!["notes.md"])),
+                Arc::new(StringArray::from(vec!["sha-abc"])),
+            ],
+        )
+        .unwrap();
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            vec![batch],
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("projection should keep file_ref");
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].schema().fields().len(), 1);
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+        let values = projected[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(values.value(0), "sha-abc");
+    }
+
+    #[test]
+    fn project_point_get_batches_reorders_columns_by_name() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+            Field::new("body", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![
+                Arc::new(StringArray::from(vec!["notes.md"])),
+                Arc::new(StringArray::from(vec!["sha-abc"])),
+                Arc::new(StringArray::from(vec!["hello"])),
+            ],
+        )
+        .unwrap();
+        let target_schema = Arc::new(Schema::new(vec![
+            Field::new("file_ref", DataType::Utf8, true),
+            Field::new("path", DataType::Utf8, false),
+        ]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            vec![batch],
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("reordered projection");
+
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+        assert_eq!(projected[0].schema().field(1).name(), "path");
+        let file_ref = projected[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let path = projected[0].column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(file_ref.value(0), "sha-abc");
+        assert_eq!(path.value(0), "notes.md");
+    }
+
+    #[test]
+    fn project_point_get_batches_returns_none_for_unknown_column() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![Field::new("path", DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![Arc::new(StringArray::from(vec!["notes.md"]))],
+        )
+        .unwrap();
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        assert!(
+            SqlExecutor::project_point_get_batches(vec![batch], source_schema, target_schema)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn project_point_get_batches_preserves_empty_target_schema() {
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+        ]));
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            Vec::new(),
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("empty projection");
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].num_rows(), 0);
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
     }
 }

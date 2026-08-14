@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use datafusion::{
-    catalog::TableFunctionImpl, execution::context::SessionContext, logical_expr::Expr,
-    physical_plan::collect, scalar::ScalarValue,
+    catalog::{TableFunctionArgs, TableFunctionImpl},
+    execution::context::SessionContext,
+    logical_expr::Expr,
+    physical_plan::collect,
+    scalar::ScalarValue,
 };
 use kalamdb_commons::models::{ReadContext, Role, UserId};
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
@@ -39,17 +42,18 @@ fn session_with_user(user_id: &str) -> SessionContext {
 
 #[tokio::test]
 async fn vector_search_scan_uses_deferred_batch_exec_and_keeps_empty_results_stable() {
-    let provider = VectorSearchTableFunction::new(Arc::new(EmptyVectorRuntime))
-        .call(&[
-            Expr::Literal(ScalarValue::Utf8(Some("app.docs".to_string())), None),
-            Expr::Literal(ScalarValue::Utf8(Some("embedding".to_string())), None),
-            Expr::Literal(ScalarValue::Utf8(Some("[0.1, 0.2, 0.3]".to_string())), None),
-            Expr::Literal(ScalarValue::Int64(Some(5)), None),
-        ])
-        .expect("build vector provider");
-
     let ctx = session_with_user("vector-exec-model");
     let state = ctx.state();
+    let exprs = [
+        Expr::Literal(ScalarValue::Utf8(Some("app.docs".to_string())), None),
+        Expr::Literal(ScalarValue::Utf8(Some("embedding".to_string())), None),
+        Expr::Literal(ScalarValue::Utf8(Some("[0.1, 0.2, 0.3]".to_string())), None),
+        Expr::Literal(ScalarValue::Int64(Some(5)), None),
+    ];
+    let provider = VectorSearchTableFunction::new(Arc::new(EmptyVectorRuntime))
+        .call_with_args(TableFunctionArgs::new(&exprs, &state))
+        .expect("build vector provider");
+
     let plan = provider.scan(&state, None, &[], None).await.expect("build vector plan");
 
     assert!(plan.is::<DeferredBatchExec>());

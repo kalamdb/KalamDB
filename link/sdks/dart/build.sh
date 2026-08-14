@@ -18,6 +18,51 @@ ok()    { echo -e "${GREEN}✅ $*${NC}"; }
 warn()  { echo -e "${YELLOW}⚠️  $*${NC}"; }
 fail()  { echo -e "${RED}❌ $*${NC}" >&2; }
 
+# rustup's llvm-tools (llvm-objcopy / llvm-strip). Cargo's profile `strip`
+# setting does not apply to staticlib crate types.
+rust_llvm_bin() {
+  local name="$1"
+  local sysroot host path
+  sysroot="$(rustc --print sysroot)"
+  host="$(rustc -vV | awk '/^host:/{print $2}')"
+  path="$sysroot/lib/rustlib/$host/bin/$name"
+  if [[ -x "$path" ]]; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+  return 1
+}
+
+# GitHub warns on blobs over 50 MB. iOS ships a static archive, so the linker
+# never runs: fat LTO leaves tens of MB of LLVM bitcode, and DWARF from libstd
+# stays behind. Strip both from the committed .a (Apple dropped the bitcode
+# requirement in Xcode 14; Xcode will not LTO rustc bitcode anyway).
+shrink_ios_staticlib() {
+  local lib="$1"
+  local objcopy strip_llvm bytes
+
+  if objcopy="$(rust_llvm_bin llvm-objcopy)"; then
+    "$objcopy" --remove-section '__LLVM,__bitcode' --remove-section '__LLVM,__cmdline' "$lib"
+  else
+    warn "llvm-objcopy not found (rustup component add llvm-tools-preview); leaving LLVM bitcode in $lib"
+  fi
+
+  if strip_llvm="$(rust_llvm_bin llvm-strip)"; then
+    "$strip_llvm" --strip-debug "$lib"
+  fi
+
+  xcrun strip -S -x "$lib" 2>/dev/null || strip -S "$lib" 2>/dev/null || true
+
+  if stat -f%z "$lib" >/dev/null 2>&1; then
+    bytes="$(stat -f%z "$lib")"
+  else
+    bytes="$(stat -c%s "$lib")"
+  fi
+  if [[ "$bytes" -gt 52428800 ]]; then
+    warn "iOS staticlib is still over GitHub's 50 MB recommendation ($(du -sh "$lib" | cut -f1))"
+  fi
+}
+
 PLATFORMS=()
 ANDROID_ALL_ABIS=false
 
@@ -107,7 +152,26 @@ build_android() {
     return 1
   }
 
-  ok "Android: $(find "$jnilibs_dir" -name '*.so' | wc -l | tr -d ' ') .so files"
+  # Gradle packages every .so under jniLibs/. Remove historical names so they
+  # cannot ship in consuming app APKs.
+  find "$jnilibs_dir" -name '*.so' ! -name 'libkalam_link_dart.so' -delete
+
+  ok "Android: $(find "$jnilibs_dir" -name 'libkalam_link_dart.so' | wc -l | tr -d ' ') libkalam_link_dart.so files"
+}
+
+# iOS needs a staticlib, not a cdylib. Building only staticlib avoids a
+# full link (aws-lc's ___chkstk_darwin is resolved later by Xcode). Fat LTO
+# cannot DCE a .a; it only embeds bitcode, so turn it off for this target.
+build_ios_staticlib() {
+  local target="$1"
+  local ios_rustflags="-C embed-bitcode=no"
+  if [[ -n "${RUSTFLAGS:-}" ]]; then
+    ios_rustflags="${RUSTFLAGS} ${ios_rustflags}"
+  fi
+  (cd "$BRIDGE_DIR" && RUSTC_WRAPPER="" \
+    CARGO_PROFILE_RELEASE_DIST_LTO=off \
+    RUSTFLAGS="$ios_rustflags" \
+    cargo rustc --profile release-dist --target "$target" --crate-type staticlib)
 }
 
 build_ios() {
@@ -118,7 +182,7 @@ build_ios() {
   export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-16.0}"
   info "IPHONEOS_DEPLOYMENT_TARGET=$IPHONEOS_DEPLOYMENT_TARGET"
 
-  (cd "$BRIDGE_DIR" && RUSTC_WRAPPER="" cargo build --profile release-dist --target aarch64-apple-ios) || {
+  build_ios_staticlib aarch64-apple-ios || {
     fail "iOS aarch64 build failed"
     return 1
   }
@@ -127,7 +191,7 @@ build_ios() {
   mkdir -p "$ios_lib_dir"
 
   if rustup target list --installed | grep -q "aarch64-apple-ios-sim"; then
-    (cd "$BRIDGE_DIR" && RUSTC_WRAPPER="" cargo build --profile release-dist --target aarch64-apple-ios-sim) || {
+    build_ios_staticlib aarch64-apple-ios-sim || {
       warn "iOS simulator build failed — shipping device-only .a"
     }
     if [[ -f "$TARGET_DIR/aarch64-apple-ios-sim/release-dist/libkalam_link_dart.a" ]]; then
@@ -145,6 +209,7 @@ build_ios() {
     warn "Add it with: rustup target add aarch64-apple-ios-sim"
   fi
 
+  shrink_ios_staticlib "$ios_lib_dir/libkalam_link_dart.a"
   ok "iOS: $(du -sh "$ios_lib_dir/libkalam_link_dart.a" | cut -f1) static lib"
 }
 

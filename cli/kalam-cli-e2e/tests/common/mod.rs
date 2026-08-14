@@ -909,7 +909,8 @@ fn dump_auto_test_server_log_tail(context: &str) {
     };
 
     let contents = fs::read_to_string(&log_path).unwrap_or_default();
-    let tail: Vec<&str> = contents.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: Vec<&str> =
+        contents.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
     eprintln!(
         "[TEST] Fresh server log tail ({context}) from {} ({} lines):",
         log_path.display(),
@@ -1095,10 +1096,7 @@ fn shutdown_auto_test_server_locked(
         terminate_auto_test_server_process(state.pid);
     }
 
-    let log_path = state
-        .log_path
-        .clone()
-        .unwrap_or_else(|| state.storage_dir.join("server.log"));
+    let log_path = state.log_path.clone().unwrap_or_else(|| state.storage_dir.join("server.log"));
     preserve_auto_test_server_log(&log_path);
 
     let _ = std::fs::remove_file(auto_test_server_state_file_path());
@@ -4396,6 +4394,14 @@ pub fn execute_sql_as_root_via_client_with_params(
     params: Vec<serde_json::Value>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     execute_sql_via_client_as_with_params(default_username(), default_password(), sql, params)
+}
+
+/// Execute SQL as root with parameters, returning the raw QueryResponse JSON.
+pub fn execute_sql_as_root_via_client_json_with_params(
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    execute_sql_via_client_internal(default_username(), default_password(), sql, Some(params), true)
 }
 
 /// Execute SQL as root user via kalam-client returning JSON output
