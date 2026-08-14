@@ -1,0 +1,6 @@
+data/
+secrets/
+backups/
+uploads/
+wasm/
+metadata.textproto

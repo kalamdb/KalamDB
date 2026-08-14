@@ -1,0 +1,15 @@
+# Local runtime artifacts for comparison benchmarks
+bin/
+target/
+**/pb_data/
+setups/kalamdb/data/
+setups/kalamdb/logs/
+setups/trailbase/traildepot/data/
+setups/trailbase/traildepot/secrets/
+setups/trailbase/traildepot/backups/
+setups/trailbase/traildepot/uploads/
+setups/trailbase/traildepot/wasm/
+setups/trailbase/traildepot/metadata.textproto
+*.log
+*.tar.gz
+*.zip

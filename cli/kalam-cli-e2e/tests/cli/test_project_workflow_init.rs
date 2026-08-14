@@ -165,6 +165,8 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
         fs::read_to_string(project_dir.join("src/index.ts")).expect("read generated src/index.ts");
     assert!(index_ts.contains("createClient"));
     assert!(index_ts.contains("liveTable"));
+    assert!(index_ts.contains("dotenv/config"));
+    assert!(package_json.contains("\"dotenv\""));
     assert!(project_dir.join("tsconfig.json").is_file(), "tsconfig.json missing");
 }
 

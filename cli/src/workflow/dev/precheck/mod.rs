@@ -60,7 +60,10 @@ pub async fn run_dev_prechecks(
         let server_running = server_already_ready(&environment.url).await;
         let binary = ensure_local_server_binary(ctx.use_color, output, server_source).await?;
         if server_running {
-            output.status(format!("precheck: local server reachable at {}", environment.url));
+            output.warn(format!(
+                "precheck: local server already running at {} — kalam will reuse it instead of starting this project's local server",
+                environment.url
+            ));
             true
         } else {
             output.status(format!("precheck: local server binary ready at {}", binary.display()));

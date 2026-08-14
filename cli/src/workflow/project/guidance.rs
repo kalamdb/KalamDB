@@ -213,6 +213,12 @@ fn local_server_start_base_hints(server_program: &Path) -> Vec<String> {
     ]
 }
 
+pub fn dev_reusing_existing_local_server(url: &str) -> String {
+    format!(
+        "using existing KalamDB server at {url} (already running; this session did not start it). Stop that process if you expected kalam dev to launch a fresh local server for this project"
+    )
+}
+
 pub fn dev_local_kalamdb_server_start_failed(server_program: &Path, detail: &str) -> String {
     let hints = local_server_start_base_hints(server_program);
 
@@ -311,6 +317,15 @@ mod tests {
         assert!(message.contains("kalamdb-server was not found"));
         assert!(message.contains("KALAMDB_SERVER_BIN"));
         assert!(message.contains("How to fix:"));
+    }
+
+    #[test]
+    fn dev_reusing_existing_local_server_is_explicit() {
+        let message = dev_reusing_existing_local_server("http://localhost:2900");
+        assert!(message.contains("using existing KalamDB server at http://localhost:2900"));
+        assert!(message.contains("already running"));
+        assert!(message.contains("did not start it"));
+        assert!(message.contains("fresh local server"));
     }
 
     #[test]

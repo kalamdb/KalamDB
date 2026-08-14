@@ -415,6 +415,8 @@ mod tests {
         assert!(rendered_starter.contains("demo_app"));
         assert!(rendered_starter.contains("liveTable"));
         assert!(rendered_starter.contains("createClient"));
+        assert!(rendered_starter.contains("dotenv/config"));
+        assert!(rendered_package.contains("\"dotenv\""));
     }
 
     #[test]

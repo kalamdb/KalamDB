@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "drivers/kalamdb",
+    "drivers/trailbase",
+    "drivers/pocketbase",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+bytes = "1"
+crossbeam-queue = "0.3"
+lazy_static = "1.5"
+reqwest = { version = "0.12", default-features = false, features = ["http2", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+comparison_common = { path = "common" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

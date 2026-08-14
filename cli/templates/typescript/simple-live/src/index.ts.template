@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Auth, createClient } from '@kalamdb/client';
 import { liveTable } from '@kalamdb/orm';
 import { users } from './generated/kalam.js';

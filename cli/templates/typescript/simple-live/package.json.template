@@ -9,6 +9,7 @@
   "dependencies": {
     "@kalamdb/client": "latest",
     "@kalamdb/orm": "latest",
+    "dotenv": "^16.6.1",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {

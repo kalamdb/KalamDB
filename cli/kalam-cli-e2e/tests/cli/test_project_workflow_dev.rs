@@ -778,6 +778,61 @@ fn test_project_workflow_dev_stays_running_when_reusing_existing_local_server() 
         stderr.contains("using existing KalamDB server"),
         "expected reused local server status in dev output\nstderr: {stderr}"
     );
+    assert!(
+        stderr.contains("already running") || stderr.contains("WARN:"),
+        "expected reused local server to be a warning\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_project_workflow_dev_injects_dotenv_into_app_process() {
+    let temp = TempDir::new().expect("temp dir");
+    let isolated_home = temp.path().join("home");
+    fs::create_dir_all(isolated_home.join(".kalam")).expect("create isolated home");
+    let credentials_path = isolated_home.join(".kalam/credentials.toml");
+    store_test_dev_credentials(&credentials_path);
+    let (server_url, _requests, _server_handle) = start_recording_sql_server();
+    let project_dir = scaffold_dev_project(&temp, &isolated_home, &credentials_path, &server_url);
+
+    let password = "dotenv-regression-secret";
+    fs::write(
+        project_dir.join(".env"),
+        format!("KALAM_PROFILE=kalam-dev\nKALAM_PASSWORD={password}\n"),
+    )
+    .expect("write project .env");
+    add_dev_processes(
+        &project_dir,
+        HashMap::from([(
+            "app".into(),
+            format!(
+                "printf 'captured-password=%s\\n' \"$KALAM_PASSWORD\"; while true; do sleep 0.5; done"
+            ),
+        )]),
+    );
+
+    let mut cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);
+    cmd.current_dir(&project_dir).env_remove("KALAM_PASSWORD").arg("dev");
+
+    let mut child = cmd.spawn().expect("spawn kalam dev");
+    let timeout = Duration::from_secs(4);
+    let exit_status = child.wait_timeout(timeout).expect("wait with timeout");
+
+    if exit_status.is_some() {
+        let output = child.wait_with_output().expect("collect output");
+        panic!(
+            "kalam dev exited early while injecting .env\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let _ = child.kill();
+    let output = child.wait_with_output().expect("collect output");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("captured-password={password}")),
+        "expected kalam dev to inject project .env into [dev.processes]\nstderr: {stderr}"
+    );
 }
 
 #[test]

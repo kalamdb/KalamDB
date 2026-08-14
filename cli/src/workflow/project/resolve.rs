@@ -1,6 +1,6 @@
 //! Environment resolution for workflow commands.
 
-use std::{env, fs, path::Path};
+use std::{collections::HashMap, env, fs, path::Path};
 
 use kalam_client::CredentialStore;
 use kalamdb_commons::NamespaceId;
@@ -166,10 +166,15 @@ pub fn resolve_kalam_profile(project_root: &Path) -> Result<Option<String>> {
     read_project_env_value(project_root, ENV_VAR_KALAM_PROFILE)
 }
 
-fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<String>> {
+/// Load key/value pairs from the project `.env` file.
+///
+/// Existing process environment variables are not applied here; callers decide
+/// whether to inject values into child processes. Empty values are omitted.
+/// The first assignment for a key wins.
+pub fn load_project_dotenv(project_root: &Path) -> Result<HashMap<String, String>> {
     let env_path = project_root.join(PROJECT_ENV_FILE);
     if !env_path.is_file() {
-        return Ok(None);
+        return Ok(HashMap::new());
     }
 
     let contents = fs::read_to_string(&env_path).map_err(|error| {
@@ -178,7 +183,15 @@ fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<Strin
             env_path.display()
         ))
     })?;
+    Ok(parse_dotenv(&contents))
+}
 
+fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<String>> {
+    Ok(load_project_dotenv(project_root)?.get(key).cloned())
+}
+
+fn parse_dotenv(contents: &str) -> HashMap<String, String> {
+    let mut vars = HashMap::new();
     for raw_line in contents.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -189,18 +202,18 @@ fn read_project_env_value(project_root: &Path, key: &str) -> Result<Option<Strin
         let Some((candidate_key, candidate_value)) = line.split_once('=') else {
             continue;
         };
-        if candidate_key.trim() != key {
+        let key = candidate_key.trim();
+        if key.is_empty() || vars.contains_key(key) {
             continue;
         }
 
         let value = candidate_value.trim().trim_matches('"').trim_matches('\'').trim();
         if value.is_empty() {
-            return Ok(None);
+            continue;
         }
-        return Ok(Some(value.to_string()));
+        vars.insert(key.to_string(), value.to_string());
     }
-
-    Ok(None)
+    vars
 }
 
 #[cfg(test)]
@@ -317,5 +330,34 @@ output = "src/generated/kalam.ts"
 
         assert_eq!(profile.as_deref(), Some("shell-profile"));
         std::env::remove_var(ENV_VAR_KALAM_PROFILE);
+    }
+
+    #[test]
+    fn load_project_dotenv_parses_password_and_skips_empty_values() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join(".env"),
+            "# comment\n\
+             export KALAM_PASSWORD=kalamdb123\n\
+             KALAM_PASSWORD=ignored-second\n\
+             KALAM_USER=root\n\
+             EMPTY=\n\
+             QUOTED=\"quoted-value\"\n",
+        )
+        .unwrap();
+
+        let vars = load_project_dotenv(temp.path()).unwrap();
+
+        assert_eq!(vars.get("KALAM_PASSWORD").map(String::as_str), Some("kalamdb123"));
+        assert_eq!(vars.get("KALAM_USER").map(String::as_str), Some("root"));
+        assert_eq!(vars.get("QUOTED").map(String::as_str), Some("quoted-value"));
+        assert!(!vars.contains_key("EMPTY"));
+    }
+
+    #[test]
+    fn load_project_dotenv_returns_empty_when_file_missing() {
+        let temp = TempDir::new().unwrap();
+        let vars = load_project_dotenv(temp.path()).unwrap();
+        assert!(vars.is_empty());
     }
 }
