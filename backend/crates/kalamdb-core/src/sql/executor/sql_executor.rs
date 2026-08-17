@@ -18,10 +18,10 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    Role, SystemTable,
     conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
-    models::{MigrationId, NamespaceId, TableId, TransactionId, UserId, rows::row::Row},
+    models::{rows::row::Row, MigrationId, NamespaceId, TableId, TransactionId, UserId},
     schemas::TableType,
+    try_pk_bucket_key, PkBucketKey, Role, SystemTable,
 };
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
@@ -36,23 +36,24 @@ use sqlparser::ast::{
 use uuid::Uuid;
 
 use super::{
-    PreparedExecutionStatement, SqlExecutor, point_read_session_cache_key::PointReadSessionCacheKey,
+    point_read_session_cache_key::PointReadSessionCacheKey, PreparedExecutionStatement, SqlExecutor,
 };
 use crate::{
     error::KalamDbError,
     sql::{
-        ExecutionContext, ExecutionResult,
         executor::{
+            default_ordering::apply_default_order_by,
             handler_registry::HandlerRegistry,
             parameter_binding::{
                 bind_placeholders_in_expr, replace_placeholders_in_plan, validate_params,
             },
             request_transaction_state::{
-                AppContextRequestTransactionCoordinator, RequestTransactionState,
-                map_request_transaction_error,
+                map_request_transaction_error, AppContextRequestTransactionCoordinator,
+                RequestTransactionState,
             },
         },
         plan_cache::{PlanCacheKey, SqlCacheRegistry, SqlCacheRegistryConfig},
+        ExecutionContext, ExecutionResult,
     },
     transactions::CoordinatorAccessValidator,
 };
@@ -387,7 +388,7 @@ impl SqlExecutor {
 
         let mut mutations = Vec::with_capacity(on_conflict_rows.rows.len());
         let mut returned_rows = Vec::with_capacity(on_conflict_rows.rows.len());
-        let mut row_state_by_pk: HashMap<String, OnConflictExistingRow> =
+        let mut row_state_by_pk: HashMap<PkBucketKey, OnConflictExistingRow> =
             HashMap::with_capacity(on_conflict_rows.rows.len());
         for row in &on_conflict_rows.rows {
             let primary_key =
@@ -397,8 +398,9 @@ impl SqlExecutor {
                         on_conflict_rows.primary_key_column
                     ))
                 })?;
-            let primary_key_string = primary_key.to_string();
-            if !row_state_by_pk.contains_key(&primary_key_string) {
+            let pk_key = try_pk_bucket_key(primary_key).map_err(KalamDbError::InvalidOperation)?;
+            let primary_key_string = pk_key.to_string();
+            if !row_state_by_pk.contains_key(&pk_key) {
                 if let Some(existing_row) = self
                     .on_conflict_existing_row(
                         transaction_id,
@@ -410,11 +412,11 @@ impl SqlExecutor {
                     )
                     .await?
                 {
-                    row_state_by_pk.insert(primary_key_string.clone(), existing_row);
+                    row_state_by_pk.insert(pk_key.clone(), existing_row);
                 }
             }
 
-            let existing_row = row_state_by_pk.get(&primary_key_string);
+            let existing_row = row_state_by_pk.get(&pk_key);
             let mutation_user_id = existing_row
                 .as_ref()
                 .and_then(|existing| existing.mutation_user_id.clone())
@@ -441,7 +443,7 @@ impl SqlExecutor {
             mutations.push(staged.mutation);
             returned_rows.push(staged.returned_row);
             row_state_by_pk.insert(
-                primary_key_string,
+                pk_key,
                 OnConflictExistingRow {
                     row: returned_row,
                     mutation_user_id,
@@ -1450,14 +1452,14 @@ impl SqlExecutor {
         self.point_get_fast_path_hits.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn optimized_plan_for_cache(
+    async fn optimized_plan_for_cache(
+        &self,
         session: &SessionContext,
         data_frame: &DataFrame,
     ) -> Result<LogicalPlan, KalamDbError> {
-        session
-            .state()
-            .optimize(data_frame.logical_plan())
-            .map_err(Self::datafusion_to_execution_error)
+        let ordered =
+            apply_default_order_by(data_frame.logical_plan().clone(), &self.app_context).await?;
+        session.state().optimize(&ordered).map_err(Self::datafusion_to_execution_error)
     }
 
     fn unqualify_scan_filter(filter: DataFusionExpr) -> Result<DataFusionExpr, KalamDbError> {
@@ -1474,6 +1476,38 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)
     }
 
+    /// Peel default ORDER BY wrappers only.
+    ///
+    /// Projection is the user-requested output schema. Dropping it makes
+    /// `SELECT file_ref WHERE path = $1` return `path` as the first column.
+    fn unwrap_default_order_wrappers(plan: &LogicalPlan) -> &LogicalPlan {
+        match plan {
+            LogicalPlan::Sort(sort) => Self::unwrap_default_order_wrappers(sort.input.as_ref()),
+            LogicalPlan::Limit(limit) => Self::unwrap_default_order_wrappers(limit.input.as_ref()),
+            other => other,
+        }
+    }
+
+    fn project_point_get_batches(
+        batches: Vec<RecordBatch>,
+        source_schema: SchemaRef,
+        target_schema: SchemaRef,
+    ) -> Option<Vec<RecordBatch>> {
+        let mut indices = Vec::with_capacity(target_schema.fields().len());
+        for field in target_schema.fields() {
+            indices.push(source_schema.index_of(field.name()).ok()?);
+        }
+        if indices.len() == source_schema.fields().len()
+            && indices.iter().copied().eq(0..indices.len())
+        {
+            return Some(batches);
+        }
+        if batches.is_empty() {
+            return Some(vec![RecordBatch::new_empty(target_schema)]);
+        }
+        batches.into_iter().map(|batch| batch.project(&indices).ok()).collect()
+    }
+
     /// Execute a cached, optimized single-PK table scan without rebuilding a
     /// DataFusion logical/physical plan. Provider `scan` still enforces access,
     /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
@@ -1486,8 +1520,17 @@ impl SqlExecutor {
         params: &[ScalarValue],
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
-        let LogicalPlan::TableScan(scan) = plan else {
-            return Ok(None);
+        let (scan, requested_schema) = match Self::unwrap_default_order_wrappers(plan) {
+            LogicalPlan::TableScan(scan) => (scan, None),
+            LogicalPlan::Projection(projection) => {
+                let LogicalPlan::TableScan(scan) =
+                    Self::unwrap_default_order_wrappers(projection.input.as_ref())
+                else {
+                    return Ok(None);
+                };
+                (scan, Some(Arc::new(projection.schema.as_arrow().clone())))
+            },
+            _ => return Ok(None),
         };
 
         let namespace = scan
@@ -1536,16 +1579,25 @@ impl SqlExecutor {
             .map_err(Self::datafusion_to_execution_error)?;
         let schema = physical_plan.schema();
         let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
-            vec![
-                deferred
-                    .produce_batch_direct()
-                    .await
-                    .map_err(Self::datafusion_to_execution_error)?,
-            ]
+            vec![deferred
+                .produce_batch_direct()
+                .await
+                .map_err(Self::datafusion_to_execution_error)?]
         } else {
             collect(physical_plan, state.task_ctx())
                 .await
                 .map_err(Self::datafusion_to_execution_error)?
+        };
+        let (batches, schema) = if let Some(target_schema) = requested_schema {
+            let Some(projected) =
+                Self::project_point_get_batches(batches, schema, Arc::clone(&target_schema))
+            else {
+                return Ok(None);
+            };
+            let schema = projected.first().map(|batch| batch.schema()).unwrap_or(target_schema);
+            (projected, schema)
+        } else {
+            (batches, schema)
         };
         let row_count = batches.iter().map(|batch| batch.num_rows()).sum();
 
@@ -2299,7 +2351,8 @@ impl SqlExecutor {
                         },
                     };
 
-                    let template_plan = Self::optimized_plan_for_cache(&session, &planned_df)?;
+                    let template_plan =
+                        self.optimized_plan_for_cache(&session, &planned_df).await?;
                     self.sql_cache_registry
                         .plan_cache()
                         .insert(cache_key.clone(), template_plan.clone());
@@ -2361,11 +2414,7 @@ impl SqlExecutor {
                 },
             };
 
-            // Cache the user-requested plan exactly. Implicit ordering is intentionally avoided on
-            // the SELECT hot path because it can force full sorts on scans, filters, and Parquet
-            // reads. Stable result order remains the caller's responsibility via explicit
-            // ORDER BY.
-            let template_plan = Self::optimized_plan_for_cache(&session, &planned_df)?;
+            let template_plan = self.optimized_plan_for_cache(&session, &planned_df).await?;
             self.sql_cache_registry.plan_cache().insert(cache_key, template_plan.clone());
 
             let executable_plan = if params.is_empty() {
@@ -2705,7 +2754,7 @@ impl SqlExecutor {
 mod tests {
     use super::*;
     use datafusion::common::DFSchema;
-    use datafusion::logical_expr::{EmptyRelation, Limit, Sort, SortExpr, lit};
+    use datafusion::logical_expr::{lit, EmptyRelation, Limit, Sort, SortExpr};
 
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
@@ -2746,5 +2795,144 @@ mod tests {
             fetch: None,
         });
         assert!(!SqlExecutor::logical_plan_has_limit(&sort_without_fetch));
+    }
+
+    #[test]
+    fn unwrap_default_order_wrappers_peels_sort_and_limit_only() {
+        let sorted = LogicalPlan::Sort(Sort {
+            expr: vec![SortExpr::new(lit(1_i64), true, false)],
+            input: Arc::new(empty_plan()),
+            fetch: None,
+        });
+        assert!(matches!(
+            SqlExecutor::unwrap_default_order_wrappers(&sorted),
+            LogicalPlan::EmptyRelation(_)
+        ));
+
+        let limited = LogicalPlan::Limit(Limit {
+            skip: None,
+            fetch: Some(Box::new(lit(1_i64))),
+            input: Arc::new(sorted),
+        });
+        assert!(matches!(
+            SqlExecutor::unwrap_default_order_wrappers(&limited),
+            LogicalPlan::EmptyRelation(_)
+        ));
+    }
+
+    #[test]
+    fn project_point_get_batches_selects_non_leading_columns_by_name() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![
+                Arc::new(StringArray::from(vec!["notes.md"])),
+                Arc::new(StringArray::from(vec!["sha-abc"])),
+            ],
+        )
+        .unwrap();
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            vec![batch],
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("projection should keep file_ref");
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].schema().fields().len(), 1);
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+        let values = projected[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(values.value(0), "sha-abc");
+    }
+
+    #[test]
+    fn project_point_get_batches_reorders_columns_by_name() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+            Field::new("body", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![
+                Arc::new(StringArray::from(vec!["notes.md"])),
+                Arc::new(StringArray::from(vec!["sha-abc"])),
+                Arc::new(StringArray::from(vec!["hello"])),
+            ],
+        )
+        .unwrap();
+        let target_schema = Arc::new(Schema::new(vec![
+            Field::new("file_ref", DataType::Utf8, true),
+            Field::new("path", DataType::Utf8, false),
+        ]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            vec![batch],
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("reordered projection");
+
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+        assert_eq!(projected[0].schema().field(1).name(), "path");
+        let file_ref = projected[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let path = projected[0].column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(file_ref.value(0), "sha-abc");
+        assert_eq!(path.value(0), "notes.md");
+    }
+
+    #[test]
+    fn project_point_get_batches_returns_none_for_unknown_column() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![Field::new("path", DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&source_schema),
+            vec![Arc::new(StringArray::from(vec!["notes.md"]))],
+        )
+        .unwrap();
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        assert!(
+            SqlExecutor::project_point_get_batches(vec![batch], source_schema, target_schema)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn project_point_get_batches_preserves_empty_target_schema() {
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("path", DataType::Utf8, false),
+            Field::new("file_ref", DataType::Utf8, true),
+        ]));
+        let target_schema =
+            Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
+
+        let projected = SqlExecutor::project_point_get_batches(
+            Vec::new(),
+            source_schema,
+            Arc::clone(&target_schema),
+        )
+        .expect("empty projection");
+
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].num_rows(), 0);
+        assert_eq!(projected[0].schema().field(0).name(), "file_ref");
     }
 }

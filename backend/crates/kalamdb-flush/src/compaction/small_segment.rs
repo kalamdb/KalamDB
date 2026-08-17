@@ -9,12 +9,12 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use datafusion::scalar::ScalarValue;
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
-    arrow_utils::array_value_to_string,
     constants::SystemColumnNames,
+    ids::SeqId,
     models::rows::{choose_max_stored_scalar, choose_min_stored_scalar},
+    pk_bucket_key_from_array, PkBucketKey,
     schemas::{TableCompression, TableType},
     TableId, UserId,
 };
@@ -428,7 +428,7 @@ async fn collect_latest_versions(
     user_id: Option<&UserId>,
     primary_key_field: &str,
     segments: &[SegmentMetadata],
-) -> Result<HashMap<String, LatestVersion>> {
+) -> Result<HashMap<PkBucketKey, LatestVersion>> {
     let mut latest_versions = HashMap::new();
     let columns_to_read = [
         primary_key_field,
@@ -516,13 +516,13 @@ async fn find_deleted_keys_that_mask_older_cold_rows(
     user_id: Option<&UserId>,
     primary_key_field: &str,
     older_segments: &[SegmentMetadata],
-    latest_versions: &HashMap<String, LatestVersion>,
-) -> Result<HashSet<String>> {
+    latest_versions: &HashMap<PkBucketKey, LatestVersion>,
+) -> Result<HashSet<PkBucketKey>> {
     if older_segments.is_empty() {
         return Ok(HashSet::new());
     }
 
-    let deleted_keys: HashSet<String> = latest_versions
+    let deleted_keys: HashSet<PkBucketKey> = latest_versions
         .iter()
         .filter_map(|(pk_value, latest)| latest.deleted.then_some(pk_value.clone()))
         .collect();
@@ -607,8 +607,8 @@ async fn write_compacted_winners(
     user_id: Option<&UserId>,
     schema_context: &CompactionSchemaContext,
     selection: &SmallSegmentCompactionSelection,
-    latest_versions: &HashMap<String, LatestVersion>,
-    preserve_deleted_keys: &HashSet<String>,
+    latest_versions: &HashMap<PkBucketKey, LatestVersion>,
+    preserve_deleted_keys: &HashSet<PkBucketKey>,
 ) -> Result<Option<CompactedWriteResult>> {
     let expected_output_rows = latest_versions
         .iter()
@@ -732,9 +732,9 @@ async fn write_compacted_winners(
 fn filter_latest_live_rows(
     batch: RecordBatch,
     primary_key_field: &str,
-    latest_versions: &HashMap<String, LatestVersion>,
-    preserve_deleted_keys: &HashSet<String>,
-    emitted_keys: &mut HashSet<String>,
+    latest_versions: &HashMap<PkBucketKey, LatestVersion>,
+    preserve_deleted_keys: &HashSet<PkBucketKey>,
+    emitted_keys: &mut HashSet<PkBucketKey>,
 ) -> Result<Option<RecordBatch>> {
     let pk_idx = required_column_index(&batch, primary_key_field)?;
     let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
@@ -838,18 +838,17 @@ fn deleted_at(batch: &RecordBatch, deleted_idx: Option<usize>, row_idx: usize) -
         })
 }
 
-fn primary_key_at(batch: &RecordBatch, pk_idx: usize, row_idx: usize, seq: i64) -> Result<String> {
-    let pk_col = batch.column(pk_idx);
-    if pk_col.is_null(row_idx) {
-        return Ok(format!("_seq:{}", seq));
-    }
-    if let Some(value) = array_value_to_string(pk_col.as_ref(), row_idx) {
-        return Ok(value);
-    }
-
-    ScalarValue::try_from_array(pk_col.as_ref(), row_idx)
-        .map(|value| value.to_string())
-        .map_err(|error| FlushError::Other(error.to_string()))
+fn primary_key_at(
+    batch: &RecordBatch,
+    pk_idx: usize,
+    row_idx: usize,
+    seq: i64,
+) -> Result<PkBucketKey> {
+    Ok(pk_bucket_key_from_array(
+        batch.column(pk_idx).as_ref(),
+        row_idx,
+        SeqId::from_i64(seq),
+    ))
 }
 
 #[derive(Default)]

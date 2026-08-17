@@ -6,7 +6,7 @@
 //! ordering rule so the implementation cannot silently drift.
 
 use kalamdb_datafusion_sources::exec::{
-    select_latest_versions, version_ordering, SelectedVersion, VersionCandidate,
+    select_latest_versions, version_ordering, PkBucketKey, SelectedVersion, VersionCandidate,
 };
 
 #[test]
@@ -56,4 +56,62 @@ fn latest_version_selection_is_metadata_first_and_filters_deleted_winners() {
         SelectedVersion::Cold(payload) => assert_eq!(*payload, "cold-a"),
         SelectedVersion::Hot(payload) => panic!("expected cold winner, got {payload}"),
     }
+}
+
+#[test]
+fn integer_primary_keys_merge_without_stringifying() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            2,
+            2_u64,
+            false,
+            "hot-1",
+        )],
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            1,
+            1_u64,
+            false,
+            "cold-1",
+        )],
+        None,
+        false,
+    );
+
+    assert_eq!(winners.len(), 1);
+    match &winners[0] {
+        SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot-1"),
+        SelectedVersion::Cold(payload) => panic!("expected hot winner, got {payload}"),
+    }
+}
+
+#[test]
+fn seq_fallback_does_not_collide_with_text_seq_key() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new(
+            PkBucketKey::Seq(1),
+            1,
+            1_u64,
+            false,
+            "seq",
+        )],
+        vec![VersionCandidate::new(
+            PkBucketKey::Text("_seq:1".to_string()),
+            1,
+            2_u64,
+            false,
+            "text",
+        )],
+        None,
+        false,
+    );
+
+    assert_eq!(winners.len(), 2);
+}
+
+#[test]
+fn integer_bucket_key_does_not_equal_stringified_integer() {
+    assert_ne!(PkBucketKey::Int(1), PkBucketKey::Text("1".to_string()));
+    assert_ne!(PkBucketKey::Seq(1), PkBucketKey::Text("_seq:1".to_string()));
 }

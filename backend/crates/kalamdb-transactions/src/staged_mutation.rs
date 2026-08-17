@@ -3,7 +3,7 @@ use std::fmt;
 use datafusion::{arrow::array::Array, scalar::ScalarValue};
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
-    TableType,
+    try_pk_bucket_key, TableType,
 };
 use serde::{Deserialize, Serialize};
 
@@ -145,13 +145,17 @@ pub fn build_insert_staged_mutations(
                 }
             })?;
 
+            let primary_key = try_pk_bucket_key(primary_key)
+                .map(|key| key.to_string())
+                .unwrap_or_else(|_| primary_key.to_string());
+
             Ok(StagedMutation::new(
                 transaction_id.clone(),
                 table_id.clone(),
                 table_type,
                 user_id.clone(),
                 OperationKind::Insert,
-                primary_key.to_string(),
+                primary_key,
                 row,
                 false,
             ))

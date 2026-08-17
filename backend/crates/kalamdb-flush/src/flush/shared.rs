@@ -112,7 +112,7 @@ impl TableFlush for SharedTableFlushJob {
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
         // Map: pk_value -> (key_bytes, row, _seq)
-        let mut latest_versions: HashMap<String, (Vec<u8>, SharedTableRow, i64)> = HashMap::new();
+        let mut latest_versions: helpers::LatestVersions<SharedTableRow> = HashMap::new();
         // Track ALL keys to delete (including old versions)
         let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();
         let mut stats = FlushDedupStats::default();

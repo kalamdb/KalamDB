@@ -16,17 +16,67 @@
 
 use std::sync::Arc;
 
-use datafusion::logical_expr::{LogicalPlan, SortExpr};
+use datafusion::logical_expr::{LogicalPlan, Sort, SortExpr};
 use kalamdb_commons::{constants::SystemColumnNames, models::TableId};
 
 use crate::{app_context::AppContext, error::KalamDbError};
 
-/// Check if a LogicalPlan already has an ORDER BY clause at the top level
+/// True when the main query pipeline already has an explicit ORDER BY.
 ///
-/// This traverses up from the root to find if any Sort node exists.
-/// We only check the immediate children to avoid false positives from subqueries.
+/// Walks through Limit/Projection/alias wrappers so
+/// `SELECT * FROM t ORDER BY name LIMIT 10` is treated as already ordered.
 pub fn has_order_by(plan: &LogicalPlan) -> bool {
-    matches!(plan, LogicalPlan::Sort(_))
+    match plan {
+        LogicalPlan::Sort(_) => true,
+        LogicalPlan::Limit(_) | LogicalPlan::Projection(_) | LogicalPlan::SubqueryAlias(_) => {
+            plan.inputs().first().is_some_and(|input| has_order_by(input))
+        },
+        _ => false,
+    }
+}
+
+fn wrap_with_sort(plan: LogicalPlan, sort_exprs: Vec<SortExpr>) -> LogicalPlan {
+    LogicalPlan::Sort(Sort {
+        expr: sort_exprs,
+        input: Arc::new(plan),
+        fetch: None,
+    })
+}
+
+fn take_single_input(plan: LogicalPlan) -> Result<(LogicalPlan, LogicalPlan), KalamDbError> {
+    let mut inputs = plan.inputs().iter().map(|input| (*input).clone()).collect::<Vec<_>>();
+    if inputs.len() != 1 {
+        return Err(KalamDbError::Other(
+            "default order injection expected a single-input plan node".to_string(),
+        ));
+    }
+    Ok((plan, inputs.swap_remove(0)))
+}
+
+/// Insert default sort under Limit/Projection so `LIMIT` applies after ordering.
+///
+/// Wrapping a Limit node with Sort would only reorder an already-truncated
+/// (and therefore non-deterministic) subset of rows.
+fn inject_default_sort(
+    plan: LogicalPlan,
+    sort_exprs: &[SortExpr],
+) -> Result<LogicalPlan, KalamDbError> {
+    match &plan {
+        LogicalPlan::Sort(_) => Ok(plan),
+        LogicalPlan::Limit(_) | LogicalPlan::Projection(_) | LogicalPlan::SubqueryAlias(_) => {
+            let (parent, input) = take_single_input(plan)?;
+            let ordered_input = inject_default_sort(input, sort_exprs)?;
+            let exprs = parent.expressions();
+            parent.with_new_exprs(exprs, vec![ordered_input]).map_err(Into::into)
+        },
+        _ => {
+            if sort_columns_in_schema(sort_exprs, &plan) {
+                Ok(wrap_with_sort(plan, sort_exprs.to_vec()))
+            } else {
+                Ok(plan)
+            }
+        },
+    }
 }
 
 /// Extract table reference from a LogicalPlan
@@ -203,23 +253,17 @@ pub async fn apply_default_order_by(
         },
     };
 
-    // Skip if sort columns are not in the output schema
-    // This handles aggregate queries like SELECT COUNT(*) where original columns aren't available
-    if !sort_columns_in_schema(&sort_exprs, &plan) {
+    // Inject Sort under Limit/Projection so LIMIT sees ordered rows. Skip wrapping
+    // the root when the output schema dropped the sort columns (e.g. SELECT COUNT(*)).
+    let ordered_plan = inject_default_sort(plan, &sort_exprs)?;
+    if !has_order_by(&ordered_plan) {
         log::trace!(
             target: "sql::ordering",
-            "Sort columns not in output schema for {}, skipping default ORDER BY",
+            "Sort columns not available for {}, skipping default ORDER BY",
             table_id.full_name()
         );
-        return Ok(plan);
+        return Ok(ordered_plan);
     }
-
-    // Create Sort node wrapping the original plan
-    let sort_plan = LogicalPlan::Sort(datafusion::logical_expr::Sort {
-        expr: sort_exprs,
-        input: Arc::new(plan),
-        fetch: None, // No limit from ordering itself
-    });
 
     log::debug!(
         target: "sql::ordering",
@@ -227,31 +271,45 @@ pub async fn apply_default_order_by(
         table_id.full_name()
     );
 
-    Ok(sort_plan)
+    Ok(ordered_plan)
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_has_order_by_false_for_table_scan() {
-        // A simple TableScan plan should not have ORDER BY
-        use datafusion::prelude::*;
+    use super::*;
+    use datafusion::{
+        common::DFSchema,
+        logical_expr::{lit, EmptyRelation, Limit},
+    };
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            let ctx = SessionContext::new();
-            ctx.register_csv("test", "nonexistent.csv", CsvReadOptions::default())
-                .await
-                .ok();
-
-            // This would normally work with a real file, but we're just testing the structure
-            // For now, we'll test with a simpler approach
-        });
+    fn empty_plan() -> LogicalPlan {
+        LogicalPlan::EmptyRelation(EmptyRelation {
+            produce_one_row: false,
+            schema: Arc::new(DFSchema::empty()),
+        })
     }
 
     #[test]
-    fn test_extract_table_reference() {
-        // Test that we can extract table references from various plan types
-        // This is a unit test for the helper function
+    fn has_order_by_detects_sort_under_limit() {
+        let unordered = LogicalPlan::Limit(Limit {
+            skip: None,
+            fetch: Some(Box::new(lit(10_i64))),
+            input: Arc::new(empty_plan()),
+        });
+        assert!(!has_order_by(&unordered));
+
+        let ordered = LogicalPlan::Limit(Limit {
+            skip: None,
+            fetch: Some(Box::new(lit(10_i64))),
+            input: Arc::new(wrap_with_sort(
+                empty_plan(),
+                vec![SortExpr::new(lit(1_i64), true, false)],
+            )),
+        });
+        assert!(has_order_by(&ordered));
+        assert!(has_order_by(&wrap_with_sort(
+            empty_plan(),
+            vec![SortExpr::new(lit(1_i64), true, false)],
+        )));
     }
 }

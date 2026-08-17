@@ -19,7 +19,7 @@ use futures_util::TryStreamExt;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::json_rows_to_arrow_batch,
     models::{rows::Row, UserId},
-    TableId,
+    try_pk_bucket_key, try_pk_bucket_key_from_typed_string, PkBucketKey, TableId,
 };
 use kalamdb_datafusion_sources::{exec::projected_schema, stream::one_shot_batch_stream};
 
@@ -169,7 +169,7 @@ async fn merge_partitions_with_overlay(
 ) -> DataFusionResult<RecordBatch> {
     let input_schema = input.schema();
     let mut rows: Vec<Option<Row>> = Vec::new();
-    let mut row_index_by_pk: HashMap<String, usize> = HashMap::new();
+    let mut row_index_by_pk: HashMap<PkBucketKey, usize> = HashMap::new();
 
     for partition in 0..input.output_partitioning().partition_count() {
         let input_stream = input.execute(partition, Arc::clone(&context))?;
@@ -204,7 +204,7 @@ fn merge_batches_with_overlay(
     fetch: Option<usize>,
 ) -> DataFusionResult<RecordBatch> {
     let mut rows: Vec<Option<Row>> = Vec::new();
-    let mut row_index_by_pk: HashMap<String, usize> = HashMap::new();
+    let mut row_index_by_pk: HashMap<PkBucketKey, usize> = HashMap::new();
 
     for batch in batches {
         merge_batch_into_rows(&mut rows, &mut row_index_by_pk, batch, primary_key_column)?;
@@ -225,7 +225,7 @@ fn merge_batches_with_overlay(
 
 fn merge_batch_into_rows(
     rows: &mut Vec<Option<Row>>,
-    row_index_by_pk: &mut HashMap<String, usize>,
+    row_index_by_pk: &mut HashMap<PkBucketKey, usize>,
     batch: &RecordBatch,
     primary_key_column: &str,
 ) -> DataFusionResult<()> {
@@ -245,11 +245,11 @@ fn merge_batch_into_rows(
 fn finalize_overlay_rows(
     input_schema: &SchemaRef,
     table_id: &TableId,
-    _primary_key_column: &str,
+    primary_key_column: &str,
     overlay: &TransactionOverlay,
     overlay_user_scope: Option<&UserId>,
     mut rows: Vec<Option<Row>>,
-    mut row_index_by_pk: HashMap<String, usize>,
+    mut row_index_by_pk: HashMap<PkBucketKey, usize>,
     final_projection: Option<&Vec<usize>>,
     fetch: Option<usize>,
 ) -> DataFusionResult<RecordBatch> {
@@ -269,20 +269,28 @@ fn finalize_overlay_rows(
         .unwrap_or_default();
     overlay_entries.sort_by_key(|entry| entry.mutation_order);
 
+    let pk_data_type = input_schema
+        .field_with_name(primary_key_column)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?
+        .data_type()
+        .clone();
+
     for entry in overlay_entries {
+        let pk_key = try_pk_bucket_key_from_typed_string(&entry.primary_key, &pk_data_type)
+            .map_err(DataFusionError::Execution)?;
         if entry.is_deleted() {
-            if let Some(existing_index) = row_index_by_pk.remove(entry.primary_key.as_str()) {
+            if let Some(existing_index) = row_index_by_pk.remove(&pk_key) {
                 rows[existing_index] = None;
             }
             continue;
         }
 
-        if let Some(existing_index) = row_index_by_pk.get(entry.primary_key.as_str()).copied() {
+        if let Some(existing_index) = row_index_by_pk.get(&pk_key).copied() {
             if let Some(existing_row) = rows[existing_index].as_mut() {
                 merge_row(existing_row, &entry.payload);
             }
         } else {
-            row_index_by_pk.insert(entry.primary_key.clone(), rows.len());
+            row_index_by_pk.insert(pk_key, rows.len());
             rows.push(Some(entry.payload.clone()));
         }
     }
@@ -320,16 +328,13 @@ fn record_batch_to_rows(batch: &RecordBatch) -> DataFusionResult<Vec<Row>> {
     Ok(rows)
 }
 
-fn extract_primary_key(row: &Row, primary_key_column: &str) -> DataFusionResult<String> {
-    row.values
-        .get(primary_key_column)
-        .map(|value| value.to_string())
-        .ok_or_else(|| {
-            DataFusionError::Execution(format!(
-                "transaction overlay row is missing primary key column '{}'",
-                primary_key_column
-            ))
-        })
+fn extract_primary_key(row: &Row, primary_key_column: &str) -> DataFusionResult<PkBucketKey> {
+    let value = row.values.get(primary_key_column).ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "transaction overlay row is missing primary key column '{primary_key_column}'"
+        ))
+    })?;
+    try_pk_bucket_key(value).map_err(DataFusionError::Execution)
 }
 
 fn merge_row(base: &mut Row, overlay: &Row) {

@@ -14,8 +14,9 @@ use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::{
     helpers::{
-        create_promise, decode_ws_binary_payload, decode_ws_message, send_ws_message,
-        serialize_json_to_js_value, subscription_hash,
+        create_promise, decode_ws_binary_payload, decode_ws_message, jwt_uses_upgrade_auth,
+        open_websocket, send_ws_message, serialize_json_to_js_value, subscription_hash,
+        ws_url_from_http_opts,
     },
     reconnect::{self, reconnect_internal_with_auth, resubscribe_all},
     state::{
@@ -873,6 +874,7 @@ fn schedule_auto_reconnect(
                 reconnect_auth,
                 reconnect_auth_provider.borrow().clone(),
                 disable_compression,
+                reconnect_connection_options.borrow().protocol,
             )
             .await
             {
@@ -1484,7 +1486,8 @@ impl KalamClient {
 
         // Convert http(s) URL to ws(s) URL (no auth in URL)
         let disable_compression = self.connection_options.borrow().disable_compression;
-        let ws_url = match super::helpers::ws_url_from_http_opts(&self.url, disable_compression) {
+        let protocol_opts = self.connection_options.borrow().protocol;
+        let ws_url = match ws_url_from_http_opts(&self.url, disable_compression, protocol_opts) {
             Ok(url) => url,
             Err(error) => {
                 emit_runtime_js_error(
@@ -1498,8 +1501,13 @@ impl KalamClient {
             },
         };
 
-        // T063C: Implement proper WebSocket connection using web-sys::WebSocket
-        let ws = match WebSocket::new(&ws_url) {
+        let jwt_token = match &resolved_auth {
+            WasmAuthProvider::Jwt { token } => Some(token.as_str()),
+            _ => None,
+        };
+        let uses_upgrade_auth = jwt_token.is_some_and(jwt_uses_upgrade_auth);
+
+        let ws = match open_websocket(&ws_url, jwt_token) {
             Ok(ws) => ws,
             Err(error) => {
                 emit_runtime_js_error(
@@ -1524,23 +1532,25 @@ impl KalamClient {
 
         let (auth_promise, auth_resolve, auth_reject) = create_promise();
 
-        // Clone auth message for the onopen handler
-        let protocol_opts = self.connection_options.borrow().protocol.clone();
-        let auth_message = resolved_auth.to_ws_auth_message(protocol_opts);
+        let auth_message = if uses_upgrade_auth {
+            None
+        } else {
+            resolved_auth.to_ws_auth_message(protocol_opts)
+        };
         let ws_clone_for_auth = ws.clone();
         let auth_resolve_for_anon = auth_resolve.clone();
         let on_send_for_open = Rc::clone(&self.on_send_cb);
         let on_connect_for_open = Rc::clone(&self.on_connect_cb);
 
-        // Set up onopen handler to send authentication message
+        // Set up onopen handler. Header/subprotocol auth waits for AuthSuccess;
+        // message-auth sends Authenticate; anonymous resolves immediately.
         let connect_resolve_clone = connect_resolve.clone();
         let onopen_callback = Closure::wrap(Box::new(move || {
-            wasm_debug_log!("KalamClient: WebSocket connected, sending authentication...");
+            wasm_debug_log!("KalamClient: WebSocket connected");
 
-            // Send authentication message if we have one
             if let Some(auth_msg) = &auth_message {
+                wasm_debug_log!("KalamClient: Sending authentication message");
                 if let Ok(json) = serde_json::to_string(&auth_msg) {
-                    // Emit on_send for the auth message
                     if let Some(cb) = on_send_for_open.borrow().as_ref() {
                         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
                     }
@@ -1551,8 +1561,7 @@ impl KalamClient {
                         ));
                     }
                 }
-            } else {
-                // No auth needed (anonymous), resolve auth immediately and emit on_connect
+            } else if !requires_auth {
                 wasm_debug_log!("KalamClient: Anonymous connection, skipping authentication");
                 if let Some(cb) = on_connect_for_open.borrow().as_ref() {
                     let _ = cb.call0(&JsValue::NULL);

@@ -41,6 +41,8 @@ pub mod arrow_conversion;
 #[cfg(feature = "conversions")]
 pub mod arrow_json_conversion;
 #[cfg(feature = "conversions")]
+pub mod pk_bucket;
+#[cfg(feature = "conversions")]
 pub mod scalar_bytes;
 #[cfg(feature = "conversions")]
 pub mod scalar_json;
@@ -58,6 +60,12 @@ pub mod serde_row;
 // Re-export commonly used functions at the module root for convenience
 #[cfg(feature = "conversions")]
 pub use arrow_json_conversion::*;
+#[cfg(feature = "conversions")]
+pub use pk_bucket::{
+    pk_bucket_key_from_array, pk_bucket_key_from_row, pk_bucket_key_from_scalar,
+    pk_bucket_key_from_typed_string, try_pk_bucket_key, try_pk_bucket_key_from_array,
+    try_pk_bucket_key_from_typed_string, PkBucketKey,
+};
 #[cfg(feature = "conversions")]
 pub use scalar_bytes::scalar_value_to_bytes;
 #[cfg(feature = "conversions")]

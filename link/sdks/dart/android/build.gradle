@@ -48,4 +48,12 @@ android {
             jniLibs.srcDirs = ["src/main/jniLibs"]
         }
     }
+
+    // Older SDK names used to live in jniLibs/ and Gradle packages every .so
+    // it finds there. Keep only the current FRB bridge library in the APK.
+    packaging {
+        jniLibs {
+            excludes += ["**/libkalam_client.so", "**/libkalam_link.so"]
+        }
+    }
 }

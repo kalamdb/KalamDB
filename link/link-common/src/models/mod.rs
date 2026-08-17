@@ -34,8 +34,9 @@ pub use crate::auth::models::{
 // ── Connection models ────────────────────────────────────────────────────────
 #[cfg(feature = "client-core")]
 pub use crate::connection::models::{
-    ClientMessage, ClusterHealthResponse, ClusterNodeHealth, CompressionType, ConnectionOptions,
-    HealthCheckResponse, HttpVersion, ProtocolOptions, SerializationType, ServerMessage,
+    jwt_websocket_subprotocol, ClientMessage, ClusterHealthResponse, ClusterNodeHealth,
+    CompressionType, ConnectionOptions, HealthCheckResponse, HttpVersion, ProtocolOptions,
+    SerializationType, ServerMessage,
 };
 // ── Consumer models ──────────────────────────────────────────────────────────
 #[cfg(feature = "consumer")]

@@ -7,6 +7,7 @@ use arrow::{
 use datafusion_common::ScalarValue;
 
 use crate::{
+    conversions::pk_bucket_key_from_scalar,
     ids::SeqId,
     models::{
         rows::{Row, UserTableRow},
@@ -18,6 +19,7 @@ use crate::{
         schema::ROW_SCHEMA_VERSION, CodecKind,
     },
     storage::StorageError,
+    PkBucketKey,
 };
 
 type Result<T> = std::result::Result<T, StorageError>;
@@ -166,7 +168,7 @@ pub struct RowMetadata {
     pub seq: SeqId,
     pub commit_seq: u64,
     pub deleted: bool,
-    pub pk_value: Option<String>,
+    pub pk_bucket: PkBucketKey,
 }
 
 /// Decode only metadata (seq, deleted, pk_value) from a shared table row's serialized bytes.
@@ -182,36 +184,38 @@ pub fn decode_shared_table_row_metadata(bytes: &[u8], pk_name: &str) -> Result<R
             ))
         })?;
 
-    let pk_value = extract_pk_from_payload(payload.fields(), pk_name);
+    let seq = SeqId::new(payload.seq());
+    let pk_bucket = extract_pk_from_payload(payload.fields(), pk_name, seq);
 
     Ok(RowMetadata {
-        seq: SeqId::new(payload.seq()),
+        seq,
         commit_seq: payload.commit_seq(),
         deleted: payload.deleted(),
-        pk_value,
+        pk_bucket,
     })
 }
 
-/// Extract a single named field value from a FlatBuffers RowPayload without full deserialization.
+/// Extract a single named field as a typed PK bucket without full row deserialization.
 fn extract_pk_from_payload(
     fields: Option<fb_row::RowPayload<'_>>,
     pk_name: &str,
-) -> Option<String> {
-    let fields = fields?;
-    let columns = fields.columns()?;
+    seq: SeqId,
+) -> PkBucketKey {
+    let Some(fields) = fields else {
+        return PkBucketKey::Seq(seq.as_i64());
+    };
+    let Some(columns) = fields.columns() else {
+        return PkBucketKey::Seq(seq.as_i64());
+    };
     for col in columns.iter() {
-        if let Some(name) = col.name() {
-            if name == pk_name {
-                return col.value().and_then(|scalar| {
-                    decode_scalar_payload(scalar).ok().map(|sv| match &sv {
-                        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => s.clone(),
-                        _ => sv.to_string(),
-                    })
-                });
-            }
+        if col.name() == Some(pk_name) {
+            return match col.value().and_then(|scalar| decode_scalar_payload(scalar).ok()) {
+                Some(value) => pk_bucket_key_from_scalar(&value, seq),
+                None => PkBucketKey::Seq(seq.as_i64()),
+            };
         }
     }
-    None
+    PkBucketKey::Seq(seq.as_i64())
 }
 
 pub fn encode_system_table_row(row: &Row) -> Result<Vec<u8>> {

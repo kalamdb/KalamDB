@@ -43,7 +43,9 @@ impl ScalarUDFImpl for CurrentSchemaFunction {
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
         if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("KDB_CURRENT_SCHEMA() takes no arguments".to_string()));
+            return Err(DataFusionError::Plan(
+                "KDB_CURRENT_SCHEMA() takes no arguments".to_string(),
+            ));
         }
 
         let schema = args.config_options.catalog.default_schema.trim();
