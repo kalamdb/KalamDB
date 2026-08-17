@@ -143,3 +143,5 @@ cli/kalam.toml
 /examples/live-okf-context-sync/data3
 /examples/live-okf-context-sync/data5
 /specs/033-unified-backend-pgwire/validation
+/link/sdks/dart/.dart_tool
+rust-toolchain.toml
