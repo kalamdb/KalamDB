@@ -166,6 +166,22 @@ mod tests {
         stream
     }
 
+    async fn connect_with_jwt_subprotocol(
+        base_url: &str,
+        token: &str,
+        query: &str,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        let protocol = kalamdb_commons::jwt_websocket_subprotocol(token).unwrap();
+        let mut request = format!("{}{}", base_url, query).into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("Sec-WebSocket-Protocol", protocol.parse().unwrap());
+
+        let (stream, _) = connect_async(request).await.unwrap();
+        stream
+    }
+
     async fn expect_auth_success(
         stream: &mut tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -224,6 +240,16 @@ mod tests {
         assert_eq!(value["change_type"], "insert");
         assert_eq!(value["rows"][0]["body"], "hello");
 
+        let _ = stream.close(None).await;
+        ctx.server.stop(true).await;
+    }
+
+    #[actix_rt::test]
+    async fn websocket_handler_authenticates_from_jwt_subprotocol() {
+        let ctx = start_ws_test_server().await;
+        let mut stream =
+            connect_with_jwt_subprotocol(&ctx.base_url, &ctx.token, "?compress=false").await;
+        expect_auth_success(&mut stream).await;
         let _ = stream.close(None).await;
         ctx.server.stop(true).await;
     }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
@@ -7,12 +7,20 @@ use kalamdb_commons::{
 
 use crate::query_context::TransactionOverlayView;
 
-fn scoped_entry_key(user_id: Option<&UserId>, primary_key: &str) -> String {
-    match user_id {
-        Some(user_id) => {
-            format!("u{}:{}:{}", user_id.as_str().len(), user_id.as_str(), primary_key)
-        },
-        None => format!("s:{}", primary_key),
+/// Scope + PK identity for overlay and write-set maps without `format!` keys.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScopedPkKey {
+    pub user_id: Option<UserId>,
+    pub primary_key: String,
+}
+
+impl ScopedPkKey {
+    #[inline]
+    pub fn new(user_id: Option<&UserId>, primary_key: impl Into<String>) -> Self {
+        Self {
+            user_id: user_id.cloned(),
+            primary_key: primary_key.into(),
+        }
     }
 }
 
@@ -41,10 +49,10 @@ impl TransactionOverlayEntry {
 #[derive(Debug, Clone)]
 pub struct TransactionOverlay {
     pub transaction_id: TransactionId,
-    pub entries_by_table: HashMap<TableId, BTreeMap<String, TransactionOverlayEntry>>,
-    pub inserted_keys: HashMap<TableId, HashSet<String>>,
-    pub deleted_keys: HashMap<TableId, HashSet<String>>,
-    pub updated_keys: HashMap<TableId, HashSet<String>>,
+    pub entries_by_table: HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>,
+    pub inserted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub deleted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub updated_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
 }
 
 impl TransactionOverlay {
@@ -61,11 +69,8 @@ impl TransactionOverlay {
 
     pub fn apply_entry(&mut self, entry: TransactionOverlayEntry) {
         let table_id = entry.table_id.clone();
-        let primary_key = entry.primary_key.clone();
-        let user_id = entry.user_id.clone();
-        let entry_key = scoped_entry_key(user_id.as_ref(), primary_key.as_str());
-        let effective_entry =
-            self.merge_visible_entry(&table_id, user_id.as_ref(), primary_key.as_str(), entry);
+        let entry_key = ScopedPkKey::new(entry.user_id.as_ref(), entry.primary_key.clone());
+        let effective_entry = self.merge_visible_entry(&table_id, &entry_key, entry);
         let is_deleted = effective_entry.is_deleted();
         let operation_kind = effective_entry.operation_kind;
 
@@ -74,7 +79,7 @@ impl TransactionOverlay {
             .or_default()
             .insert(entry_key.clone(), effective_entry);
 
-        self.clear_key_membership(&table_id, entry_key.as_str());
+        self.clear_key_membership(&table_id, &entry_key);
 
         let target_map = if is_deleted {
             &mut self.deleted_keys
@@ -113,15 +118,15 @@ impl TransactionOverlay {
         user_id: Option<&UserId>,
         primary_key: &str,
     ) -> Option<&TransactionOverlayEntry> {
-        let entry_key = scoped_entry_key(user_id, primary_key);
-        self.entries_by_table.get(table_id)?.get(entry_key.as_str())
+        let entry_key = ScopedPkKey::new(user_id, primary_key);
+        self.entries_by_table.get(table_id)?.get(&entry_key)
     }
 
     #[inline]
     pub fn table_entries(
         &self,
         table_id: &TableId,
-    ) -> Option<&BTreeMap<String, TransactionOverlayEntry>> {
+    ) -> Option<&HashMap<ScopedPkKey, TransactionOverlayEntry>> {
         self.entries_by_table.get(table_id)
     }
 
@@ -144,7 +149,7 @@ impl TransactionOverlay {
         Some(overlay)
     }
 
-    fn clear_key_membership(&mut self, table_id: &TableId, entry_key: &str) {
+    fn clear_key_membership(&mut self, table_id: &TableId, entry_key: &ScopedPkKey) {
         for key_set in [
             &mut self.inserted_keys,
             &mut self.deleted_keys,
@@ -162,20 +167,17 @@ impl TransactionOverlay {
     fn merge_visible_entry(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-        primary_key: &str,
+        entry_key: &ScopedPkKey,
         mut next: TransactionOverlayEntry,
     ) -> TransactionOverlayEntry {
         if next.is_deleted() {
             return next;
         }
 
-        let entry_key = scoped_entry_key(user_id, primary_key);
-
         let Some(current) = self
             .entries_by_table
             .get(table_id)
-            .and_then(|entries| entries.get(entry_key.as_str()))
+            .and_then(|entries| entries.get(entry_key))
         else {
             return next;
         };

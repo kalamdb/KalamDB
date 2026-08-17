@@ -3,8 +3,7 @@
 //! This module implements `validate_primary_key()` and `extract_user_pk_value()`
 //! using the internal `Row` representation (`BTreeMap<String, ScalarValue>`).
 
-use datafusion::scalar::ScalarValue;
-use kalamdb_commons::models::rows::Row;
+use kalamdb_commons::{models::rows::Row, scalar_to_pk_string};
 
 use crate::error::KalamDbError;
 
@@ -17,7 +16,12 @@ pub fn extract_user_pk_value(fields: &Row, pk_column: &str) -> Result<String, Ka
         ))
     })?;
 
-    scalar_pk_to_string(pk_value, pk_column)
+    scalar_to_pk_string(pk_value).map_err(|_| {
+        KalamDbError::InvalidOperation(format!(
+            "Primary key column '{}' has unsupported or NULL value",
+            pk_column
+        ))
+    })
 }
 
 /// Validate primary key constraints on an INSERT payload
@@ -38,30 +42,11 @@ pub fn validate_primary_key(
     Ok(())
 }
 
-fn scalar_pk_to_string(value: &ScalarValue, column: &str) -> Result<String, KalamDbError> {
-    match value {
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Ok(s.clone()),
-        ScalarValue::Boolean(Some(b)) => Ok(b.to_string()),
-        ScalarValue::Int8(Some(v)) => Ok(v.to_string()),
-        ScalarValue::Int16(Some(v)) => Ok(v.to_string()),
-        ScalarValue::Int32(Some(v)) => Ok(v.to_string()),
-        ScalarValue::Int64(Some(v)) => Ok(v.to_string()),
-        ScalarValue::UInt8(Some(v)) => Ok(v.to_string()),
-        ScalarValue::UInt16(Some(v)) => Ok(v.to_string()),
-        ScalarValue::UInt32(Some(v)) => Ok(v.to_string()),
-        ScalarValue::UInt64(Some(v)) => Ok(v.to_string()),
-        ScalarValue::Float32(Some(v)) => Ok(v.to_string()),
-        ScalarValue::Float64(Some(v)) => Ok(v.to_string()),
-        _ => Err(KalamDbError::InvalidOperation(format!(
-            "Primary key column '{}' has unsupported or NULL value",
-            column
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashSet};
+
+    use datafusion::scalar::ScalarValue;
 
     use super::*;
 

@@ -9,6 +9,8 @@
 pub mod models;
 
 #[cfg(feature = "tokio-runtime")]
+mod happy_eyeballs;
+#[cfg(feature = "tokio-runtime")]
 pub mod shared;
 #[cfg(feature = "tokio-runtime")]
 pub mod websocket;

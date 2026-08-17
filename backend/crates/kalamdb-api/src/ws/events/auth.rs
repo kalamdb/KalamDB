@@ -22,7 +22,10 @@ use log::debug;
 use tracing::Instrument;
 
 use super::{send_auth_error, send_json};
-use crate::limiter::RateLimiter;
+use crate::{
+    limiter::RateLimiter,
+    ws::context::{PendingAuthError, PendingUpgradeAuth, UpgradeAuth},
+};
 
 /// Handle authentication message with any supported credentials type
 ///
@@ -71,39 +74,59 @@ pub async fn handle_authenticate(
     .await
 }
 
-/// Authenticate a request that was supplied during the HTTP upgrade.
-///
-/// This runs after the WebSocket upgrade has completed so the TCP/WebSocket
-/// handshake is not blocked on JWT validation or user lookup.
-pub async fn handle_upgrade_auth(
+/// Start JWT validation immediately so it overlaps the WebSocket upgrade.
+pub(in crate::ws) fn spawn_upgrade_auth(
+    client_ip: ConnectionInfo,
+    auth: UpgradeAuth,
+    rate_limiter: Arc<RateLimiter>,
+    user_repo: Arc<dyn UserRepository>,
+) -> PendingUpgradeAuth {
+    let auth_request = auth.auth_request;
+    PendingUpgradeAuth {
+        protocol: auth.protocol,
+        auth_task: tokio::spawn(async move {
+            if !rate_limiter.check_auth_rate(&client_ip) {
+                return Err(PendingAuthError::RateLimited);
+            }
+            authenticate(auth_request, &client_ip, &user_repo)
+                .await
+                .map_err(|_| PendingAuthError::InvalidCredentials)
+        }),
+    }
+}
+
+/// Complete upgrade authentication after the in-flight JWT check finishes.
+pub(in crate::ws) async fn apply_pending_upgrade_auth(
     connection_state: &SharedConnectionState,
-    client_ip: &ConnectionInfo,
-    auth_request: AuthRequest,
-    protocol: ProtocolOptions,
     session: &mut Session,
-    rate_limiter: &Arc<RateLimiter>,
-    user_repo: &Arc<dyn UserRepository>,
+    pending: PendingUpgradeAuth,
     compression: bool,
 ) -> Result<(), String> {
-    if !rate_limiter.check_auth_rate(client_ip) {
-        let _ = send_auth_error(
-            session.clone(),
-            "Too many authentication attempts. Please retry shortly.",
-        )
-        .await;
-        return Err("Auth rate limit exceeded".to_string());
+    match pending.auth_task.await {
+        Ok(Ok(result)) => {
+            complete_ws_auth(
+                connection_state,
+                result.user.user_id,
+                result.user.role,
+                pending.protocol,
+                session,
+                compression,
+            )
+            .await
+        },
+        Ok(Err(PendingAuthError::RateLimited)) => {
+            let _ = send_auth_error(
+                session.clone(),
+                "Too many authentication attempts. Please retry shortly.",
+            )
+            .await;
+            Err("Auth rate limit exceeded".to_string())
+        },
+        Ok(Err(PendingAuthError::InvalidCredentials)) | Err(_) => {
+            let _ = send_auth_error(session.clone(), "Invalid credentials").await;
+            Err("Authentication failed".to_string())
+        },
     }
-
-    authenticate_ws_request(
-        connection_state,
-        client_ip,
-        auth_request,
-        protocol,
-        session,
-        user_repo,
-        compression,
-    )
-    .await
 }
 
 /// Complete WebSocket authentication after a user has been validated.

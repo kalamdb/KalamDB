@@ -70,6 +70,7 @@ conversions = [
 	]
 serialization = [
 	"rows",
+	"conversions",
 	"dep:flatbuffers",
 	"dep:flexbuffers",
 	"dep:kalamdb-observability",

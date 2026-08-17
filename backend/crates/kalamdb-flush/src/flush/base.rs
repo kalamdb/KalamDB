@@ -274,7 +274,7 @@ pub mod helpers {
     };
     use kalamdb_commons::{
         constants::SystemColumnNames, conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-        models::rows::Row, next_storage_key_bytes,
+        ids::SeqId, models::rows::Row, next_storage_key_bytes, pk_bucket_key_from_row, PkBucketKey,
     };
     use kalamdb_tables::{SharedTableRow, UserTableRow};
 
@@ -282,7 +282,7 @@ pub mod helpers {
 
     use super::{FlushDedupStats, FlushTableMetadata};
 
-    pub type LatestVersions<R> = HashMap<String, (Vec<u8>, R, i64)>;
+    pub type LatestVersions<R> = HashMap<PkBucketKey, (Vec<u8>, R, i64)>;
 
     /// Row behavior shared by user/shared flush version resolution.
     pub trait FlushVersionRow {
@@ -400,25 +400,6 @@ pub mod helpers {
         metadata.schema_version
     }
 
-    /// Extract PK value from row fields with _seq fallback
-    ///
-    /// Returns the primary key value as string, or "_seq:<value>" if PK is null/missing.
-    pub fn extract_pk_value(fields: &Row, pk_field: &str, seq: i64) -> String {
-        match fields.get(pk_field) {
-            Some(v) if !v.is_null() => v.to_string(),
-            _ => format!("_seq:{}", seq),
-        }
-    }
-
-    /// Add system columns (_seq, _deleted) to a Row
-    pub fn add_system_columns(mut row: Row, seq: i64, deleted: bool) -> Row {
-        row.values
-            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
-        row.values
-            .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
-        row
-    }
-
     /// Track the latest hot-storage version for a primary key.
     #[inline]
     pub fn track_latest_version<R: FlushVersionRow>(
@@ -429,18 +410,31 @@ pub mod helpers {
         stats: &mut FlushDedupStats,
     ) {
         let seq = row.seq_i64();
-        let pk_value = extract_pk_value(row.fields(), pk_field, seq);
+        let pk_key = pk_bucket_key_from_row(row.fields(), pk_field, SeqId::from_i64(seq));
 
         if row.is_deleted() {
             stats.deleted_count += 1;
         }
 
-        match latest_versions.get(&pk_value) {
-            Some((_existing_key, _existing_row, existing_seq)) if seq <= *existing_seq => {},
-            _ => {
-                latest_versions.insert(pk_value, (key_bytes, row, seq));
+        match latest_versions.entry(pk_key) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if seq > entry.get().2 {
+                    entry.insert((key_bytes, row, seq));
+                }
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((key_bytes, row, seq));
             },
         }
+    }
+
+    /// Add system columns (_seq, _deleted) to a Row
+    pub fn add_system_columns(mut row: Row, seq: i64, deleted: bool) -> Row {
+        row.values
+            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
+        row.values
+            .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
+        row
     }
 
     /// Split latest hot versions into flushable rows and tombstones that must stay hot.

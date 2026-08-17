@@ -2,15 +2,10 @@ use std::collections::HashMap;
 
 use kalamdb_commons::models::{TableId, TransactionId, UserId};
 
-use crate::{StagedMutation, TransactionOverlay};
+use crate::{overlay::ScopedPkKey, StagedMutation, TransactionOverlay};
 
-fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> String {
-    match user_id {
-        Some(user_id) => {
-            format!("u{}:{}:{}", user_id.as_str().len(), user_id.as_str(), primary_key)
-        },
-        None => format!("s:{}", primary_key),
-    }
+fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> ScopedPkKey {
+    ScopedPkKey::new(user_id, primary_key)
 }
 
 /// Cold staged-write state allocated lazily on the first transaction write.
@@ -19,7 +14,7 @@ pub struct TransactionWriteSet {
     pub transaction_id: TransactionId,
     pub next_mutation_order: u64,
     pub ordered_mutations: Vec<StagedMutation>,
-    pub latest_by_table_key: HashMap<TableId, HashMap<String, usize>>,
+    pub latest_by_table_key: HashMap<TableId, HashMap<ScopedPkKey, usize>>,
     pub overlay_cache: HashMap<TableId, TransactionOverlay>,
     pub buffer_bytes: usize,
     pub savepoint_marks: Vec<u64>,
@@ -96,7 +91,7 @@ impl TransactionWriteSet {
         primary_key: &str,
     ) -> Option<&StagedMutation> {
         let table_key = scoped_table_key(user_id, primary_key);
-        let mutation_index = *self.latest_by_table_key.get(table_id)?.get(table_key.as_str())?;
+        let mutation_index = *self.latest_by_table_key.get(table_id)?.get(&table_key)?;
         self.ordered_mutations.get(mutation_index)
     }
 

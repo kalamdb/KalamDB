@@ -35,7 +35,7 @@ use kalamdb_commons::{
 };
 use kalamdb_datafusion_sources::exec::DeferredScanDiagnostics;
 use kalamdb_datafusion_sources::{
-    exec::{resolve_latest_kvs_from_cold_batch, VersionedRow},
+    exec::{pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, PkBucketKey, VersionedRow},
     provider::{
         merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
         ScanDescriptor, SourceProvider,
@@ -104,16 +104,14 @@ impl VersionedRow for UserMvccRow {
     }
 
     fn pk_value(&self, pk_name: &str) -> Option<String> {
-        self.0.fields.get(pk_name).and_then(|val| {
-            if val.is_null() {
-                None
-            } else {
-                match val {
-                    ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Some(s.clone()),
-                    _ => Some(val.to_string()),
-                }
-            }
-        })
+        match self.pk_bucket_key(pk_name) {
+            PkBucketKey::Seq(_) => None,
+            key => Some(key.to_string()),
+        }
+    }
+
+    fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
+        pk_bucket_key_from_row(&self.0.fields, pk_name, self.0._seq)
     }
 }
 
@@ -697,14 +695,13 @@ impl UserTableProvider {
                 ))
             })?;
 
-        let mut hot_rows_by_user: HashMap<UserId, Vec<(UserTableRowId, UserTableRow)>> =
-            HashMap::new();
-        let mut user_ids = HashSet::new();
         let hot_rows_scanned = hot_rows.len();
+        let mut hot_rows_by_user: HashMap<UserId, Vec<(UserTableRowId, UserTableRow)>> =
+            HashMap::with_capacity(hot_rows_scanned.min(64));
         for (row_id, row) in hot_rows {
-            user_ids.insert(row.user_id.clone());
             hot_rows_by_user.entry(row.user_id.clone()).or_default().push((row_id, row));
         }
+        let mut user_ids: HashSet<UserId> = hot_rows_by_user.keys().cloned().collect();
 
         if let Ok(scopes) = self.core.services.manifest_service.get_manifest_user_ids(table_id) {
             user_ids.extend(scopes);
@@ -1720,17 +1717,7 @@ impl UserTableProvider {
                     seq: row._seq,
                     commit_seq: row._commit_seq,
                     deleted: row._deleted,
-                    pk_value: row.fields.get(&pk_name_clone).and_then(|value| {
-                        if value.is_null() {
-                            None
-                        } else {
-                            match value {
-                                ScalarValue::Utf8(Some(text))
-                                | ScalarValue::LargeUtf8(Some(text)) => Some(text.clone()),
-                                other => Some(other.to_string()),
-                            }
-                        }
-                    }),
+                    pk_bucket: pk_bucket_key_from_row(&row.fields, &pk_name_clone, row._seq),
                 })
                 .collect();
 

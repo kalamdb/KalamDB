@@ -27,9 +27,10 @@ use kalamdb_configs::DataFusionSettings;
 
 use crate::sql::{
     functions::{
-        ColDescriptionFunction, CosineDistanceFunction, CurrentDatabaseFunction, CurrentRoleFunction,
-        CurrentSchemaFunction, CurrentUserFunction, FormatTypeFunction, PgBackendPidFunction,
-        PgGetExprFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
+        ColDescriptionFunction, CosineDistanceFunction, CurrentDatabaseFunction,
+        CurrentRoleFunction, CurrentSchemaFunction, CurrentUserFunction, FormatTypeFunction,
+        PgBackendPidFunction, PgGetExprFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
+        VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kalamdb_auth::{AuthRequest, UserRepository};
+use kalamdb_auth::{AuthRequest, AuthenticationResult, UserRepository};
 use kalamdb_commons::websocket::ProtocolOptions;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
@@ -10,6 +10,17 @@ use crate::limiter::RateLimiter;
 pub(super) struct UpgradeAuth {
     pub(super) auth_request: AuthRequest,
     pub(super) protocol: ProtocolOptions,
+    pub(super) echo_subprotocol: Option<String>,
+}
+
+pub(super) enum PendingAuthError {
+    RateLimited,
+    InvalidCredentials,
+}
+
+pub(super) struct PendingUpgradeAuth {
+    pub(super) protocol: ProtocolOptions,
+    pub(super) auth_task: tokio::task::JoinHandle<Result<AuthenticationResult, PendingAuthError>>,
 }
 
 #[derive(Clone)]

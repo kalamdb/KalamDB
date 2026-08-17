@@ -7,8 +7,8 @@
 
 use datafusion::{
     common::{
-        ParamValues,
         tree_node::{Transformed, TransformedResult, TreeNode},
+        ParamValues,
     },
     logical_expr::{Expr, LogicalPlan},
     scalar::ScalarValue,

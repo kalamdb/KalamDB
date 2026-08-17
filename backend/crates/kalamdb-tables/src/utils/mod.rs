@@ -13,7 +13,6 @@ pub mod datafusion_dml;
 pub mod dml_provider;
 pub mod parquet;
 pub mod pk; // Primary key utilities and existence checking
-pub mod pk_utils; // Shared PK extraction utilities
 pub mod row_utils;
 pub mod table_statistics;
 pub mod unified_dml; // Phase 13.6: Moved from tables/

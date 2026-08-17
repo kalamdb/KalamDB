@@ -143,19 +143,7 @@ pub fn parse_string_as_scalar(
 /// assert_eq!(scalar_to_pk_string(&str_value).unwrap(), "user123");
 /// ```
 pub fn scalar_to_pk_string(value: &ScalarValue) -> Result<String, String> {
-    match value {
-        ScalarValue::Int64(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Int32(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Int16(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Int8(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt64(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt32(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt16(Some(n)) => Ok(n.to_string()),
-        ScalarValue::UInt8(Some(n)) => Ok(n.to_string()),
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => Ok(s.clone()),
-        ScalarValue::Boolean(Some(b)) => Ok(b.to_string()),
-        _ => Err(format!("Unsupported primary key type: {:?}", value)),
-    }
+    super::pk_bucket::try_pk_bucket_key(value).map(|key| key.to_string())
 }
 
 #[cfg(test)]

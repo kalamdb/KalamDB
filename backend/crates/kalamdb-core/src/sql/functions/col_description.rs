@@ -5,7 +5,9 @@ use std::sync::Arc;
 use datafusion::{
     arrow::array::ArrayRef,
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility},
+    logical_expr::{
+        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+    },
 };
 use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 

@@ -285,6 +285,9 @@ strip = true          # Strip symbols from the binary
 
 # Custom profile for distribution builds (smallest possible binary)
 # Use with: cargo build --profile release-dist
+# Fat LTO helps cdylib/.so/.wasm (the linker runs). It inflates staticlib
+# (.a) artifacts with LLVM bitcode that Cargo cannot strip — iOS builds in
+# link/sdks/dart/build.sh disable LTO and strip bitcode/debug from the archive.
 [profile.release-dist]
 inherits = "release"
 opt-level = "z"       # Optimize for size (most aggressive)

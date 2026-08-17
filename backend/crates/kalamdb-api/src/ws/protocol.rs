@@ -1,7 +1,9 @@
-use actix_web::{HttpRequest, HttpResponse};
+use actix_web::{http::header, HttpRequest, HttpResponse};
 use actix_ws::ProtocolError;
 use kalamdb_auth::{extract_bearer_token, AuthRequest};
-use kalamdb_commons::websocket::{CompressionType, ProtocolOptions, SerializationType};
+use kalamdb_commons::websocket::{
+    jwt_from_websocket_subprotocol, CompressionType, ProtocolOptions, SerializationType,
+};
 
 use super::context::UpgradeAuth;
 
@@ -63,24 +65,40 @@ pub(super) fn validate_origin(
 }
 
 pub(super) fn parse_upgrade_auth(req: &HttpRequest) -> Option<UpgradeAuth> {
-    let Some(auth_header) = req.headers().get("Authorization") else {
-        return None;
-    };
+    let protocol = parse_protocol_from_query(req.query_string());
+    if let Some(token) = bearer_from_authorization(req) {
+        return Some(UpgradeAuth {
+            auth_request: AuthRequest::Jwt { token },
+            protocol,
+            echo_subprotocol: None,
+        });
+    }
 
-    let Ok(auth_str) = auth_header.to_str() else {
-        return None;
-    };
-
-    let Ok(token) = extract_bearer_token(auth_str) else {
-        return None;
-    };
-
-    Some(UpgradeAuth {
-        auth_request: AuthRequest::Jwt {
-            token: token.to_string(),
-        },
-        protocol: parse_protocol_from_query(req.query_string()),
+    jwt_from_sec_websocket_protocol(req).map(|(token, offered)| UpgradeAuth {
+        auth_request: AuthRequest::Jwt { token },
+        protocol,
+        echo_subprotocol: Some(offered),
     })
+}
+
+fn bearer_from_authorization(req: &HttpRequest) -> Option<String> {
+    let auth_header = req.headers().get("Authorization")?;
+    let auth_str = auth_header.to_str().ok()?;
+    extract_bearer_token(auth_str).ok().map(str::to_string)
+}
+
+fn jwt_from_sec_websocket_protocol(req: &HttpRequest) -> Option<(String, String)> {
+    for value in req.headers().get_all(header::SEC_WEBSOCKET_PROTOCOL) {
+        let Ok(offered) = value.to_str() else {
+            continue;
+        };
+        for protocol in offered.split(',').map(str::trim) {
+            if let Some(token) = jwt_from_websocket_subprotocol(protocol) {
+                return Some((token.to_string(), protocol.to_string()));
+            }
+        }
+    }
+    None
 }
 
 pub(super) fn is_expected_ws_disconnect(error: &ProtocolError) -> bool {
@@ -110,9 +128,13 @@ pub(super) fn is_expected_ws_disconnect(error: &ProtocolError) -> bool {
 mod tests {
     use std::sync::Arc;
 
-    use actix_web::{http::StatusCode, test::TestRequest};
+    use actix_web::{
+        http::{header, StatusCode},
+        test::TestRequest,
+    };
+    use kalamdb_auth::AuthRequest;
     use kalamdb_commons::{
-        websocket::{CompressionType, SerializationType},
+        websocket::{jwt_websocket_subprotocol, CompressionType, SerializationType},
         NodeId,
     };
     use kalamdb_configs::ServerConfig;
@@ -120,7 +142,7 @@ mod tests {
     use kalamdb_store::test_utils::InMemoryBackend;
     use uuid::Uuid;
 
-    use super::{parse_protocol_from_query, validate_origin};
+    use super::{parse_protocol_from_query, parse_upgrade_auth, validate_origin};
 
     fn test_app_context_with_origin_policy(
         cors_allowed_origins: Vec<String>,
@@ -185,6 +207,48 @@ mod tests {
         let proto = parse_protocol_from_query("serialization=avro&compression=lz4");
         assert_eq!(proto.serialization, SerializationType::Json);
         assert_eq!(proto.compression, CompressionType::Gzip);
+    }
+
+    #[test]
+    fn parse_upgrade_auth_reads_authorization_bearer() {
+        let request = TestRequest::default()
+            .insert_header(("Authorization", "Bearer header-token"))
+            .to_http_request();
+        let auth = parse_upgrade_auth(&request).expect("bearer header should authenticate");
+        match auth.auth_request {
+            AuthRequest::Jwt { token } => assert_eq!(token, "header-token"),
+            other => panic!("expected jwt, got {other:?}"),
+        }
+        assert!(auth.echo_subprotocol.is_none());
+    }
+
+    #[test]
+    fn parse_upgrade_auth_reads_jwt_subprotocol() {
+        let protocol = jwt_websocket_subprotocol("ws-token").unwrap();
+        let request = TestRequest::default()
+            .insert_header((header::SEC_WEBSOCKET_PROTOCOL, protocol.as_str()))
+            .to_http_request();
+        let auth = parse_upgrade_auth(&request).expect("jwt subprotocol should authenticate");
+        match auth.auth_request {
+            AuthRequest::Jwt { token } => assert_eq!(token, "ws-token"),
+            other => panic!("expected jwt, got {other:?}"),
+        }
+        assert_eq!(auth.echo_subprotocol.as_deref(), Some(protocol.as_str()));
+    }
+
+    #[test]
+    fn parse_upgrade_auth_prefers_authorization_over_subprotocol() {
+        let protocol = jwt_websocket_subprotocol("protocol-token").unwrap();
+        let request = TestRequest::default()
+            .insert_header(("Authorization", "Bearer header-token"))
+            .insert_header((header::SEC_WEBSOCKET_PROTOCOL, protocol.as_str()))
+            .to_http_request();
+        let auth = parse_upgrade_auth(&request).expect("authorization should win");
+        match auth.auth_request {
+            AuthRequest::Jwt { token } => assert_eq!(token, "header-token"),
+            other => panic!("expected jwt, got {other:?}"),
+        }
+        assert!(auth.echo_subprotocol.is_none());
     }
 
     #[actix_rt::test]

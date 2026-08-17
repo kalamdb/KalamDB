@@ -97,7 +97,10 @@ pub use crate::websocket_messages::{
     BatchControl, BatchStatus, ChangeTypeRaw as ChangeType, ClientMessage, ServerMessage,
     SubscriptionOptions, SubscriptionRequest,
 };
-pub use crate::websocket_protocol::{CompressionType, ProtocolOptions, SerializationType};
+pub use crate::websocket_protocol::{
+    jwt_from_websocket_subprotocol, jwt_websocket_subprotocol, CompressionType, ProtocolOptions,
+    SerializationType, WS_JWT_SUBPROTOCOL_PREFIX,
+};
 use crate::{
     models::{rows::Row, KalamCellValue, UserId},
     schemas::SchemaField,

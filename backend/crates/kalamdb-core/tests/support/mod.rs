@@ -301,6 +301,18 @@ pub async fn setup_shared_table(
     (app_ctx, executor, table_id, test_db)
 }
 
+pub async fn setup_user_table(
+    namespace_prefix: &str,
+    table_name: &str,
+) -> (Arc<AppContext>, SqlExecutor, TableId, TestDb) {
+    let (app_ctx, test_db) = create_cluster_app_context().await;
+
+    let namespace = unique_namespace(namespace_prefix);
+    let table_id = create_user_table(&app_ctx, &namespace, table_name).await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    (app_ctx, executor, table_id, test_db)
+}
+
 pub fn request_exec_ctx(app_ctx: &Arc<AppContext>, request_id: &str) -> ExecutionContext {
     ExecutionContext::new(UserId::from("sql-tx-user"), Role::Dba, app_ctx.base_session_context())
         .with_request_id(request_id.to_string())

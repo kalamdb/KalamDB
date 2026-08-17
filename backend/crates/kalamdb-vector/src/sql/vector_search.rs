@@ -10,7 +10,7 @@ use datafusion::{
         datatypes::{DataType, Field, Schema, SchemaRef},
         record_batch::RecordBatch,
     },
-    catalog::{Session, TableFunctionImpl},
+    catalog::{Session, TableFunctionArgs, TableFunctionImpl},
     common::{DFSchema, DataFusionError, Result},
     datasource::TableProvider,
     logical_expr::{Expr, TableProviderFilterPushDown, TableType as DataFusionTableType},
@@ -107,8 +107,8 @@ impl Default for VectorSearchTableFunction {
 }
 
 impl TableFunctionImpl for VectorSearchTableFunction {
-    fn call(&self, args: &[Expr]) -> Result<Arc<dyn TableProvider>> {
-        let parsed = parse_args(args)?;
+    fn call_with_args(&self, args: TableFunctionArgs) -> Result<Arc<dyn TableProvider>> {
+        let parsed = parse_args(args.exprs())?;
         Ok(Arc::new(VectorSearchTableProvider::new(Arc::clone(&self.runtime), parsed)))
     }
 }

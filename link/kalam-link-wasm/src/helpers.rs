@@ -6,15 +6,19 @@ use std::{
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Headers, MessageEvent, Request, RequestInit, RequestMode, Response};
+use web_sys::{Headers, MessageEvent, Request, RequestInit, RequestMode, Response, WebSocket};
 
 use super::wasm_debug_log;
-use link_common::{compression, models::SerializationType};
+use link_common::{
+    compression,
+    models::{jwt_websocket_subprotocol, CompressionType, ProtocolOptions, SerializationType},
+};
 
 #[inline]
 pub(crate) fn ws_url_from_http_opts(
     base_url: &str,
     disable_compression: bool,
+    protocol: ProtocolOptions,
 ) -> Result<String, JsValue> {
     let ws_url = if base_url.starts_with("https://") {
         base_url.replacen("https://", "wss://", 1)
@@ -23,13 +27,43 @@ pub(crate) fn ws_url_from_http_opts(
     } else {
         return Err(JsValue::from_str("Base URL must start with http:// or https://"));
     };
-    // Strip trailing slash before appending path
     let ws_url = ws_url.trim_end_matches('/');
-    if disable_compression {
-        Ok(format!("{}/v1/ws?compress=false", ws_url))
+    let mut url = if disable_compression {
+        format!("{}/v1/ws?compress=false", ws_url)
     } else {
-        Ok(format!("{}/v1/ws", ws_url))
+        format!("{}/v1/ws", ws_url)
+    };
+    append_protocol_query(&mut url, protocol);
+    Ok(url)
+}
+
+fn append_protocol_query(url: &mut String, protocol: ProtocolOptions) {
+    if protocol.serialization == SerializationType::MessagePack {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("serialization=msgpack");
     }
+    if protocol.compression == CompressionType::None {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("compression=none");
+    }
+}
+
+/// Open a browser WebSocket, carrying the JWT as a subprotocol when possible.
+///
+/// Browsers cannot set `Authorization` on `WebSocket`, so a `kalamdb.jwt.<token>`
+/// subprotocol lets the server authenticate during the HTTP upgrade.
+pub(crate) fn open_websocket(url: &str, jwt_token: Option<&str>) -> Result<WebSocket, JsValue> {
+    if let Some(token) = jwt_token {
+        if let Some(protocol) = jwt_websocket_subprotocol(token) {
+            let protocols = js_sys::Array::of1(&JsValue::from_str(&protocol));
+            return WebSocket::new_with_str_sequence(url, &protocols);
+        }
+    }
+    WebSocket::new(url)
+}
+
+pub(crate) fn jwt_uses_upgrade_auth(token: &str) -> bool {
+    jwt_websocket_subprotocol(token).is_some()
 }
 
 /// Hash a SQL string to produce a deterministic subscription ID suffix.
@@ -242,5 +276,44 @@ pub(crate) fn send_ws_message(
             })?;
             ws.send_with_u8_array(&bytes)
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ws_url_appends_protocol_query() {
+        let url = ws_url_from_http_opts(
+            "https://db.example.com/",
+            false,
+            ProtocolOptions {
+                serialization: SerializationType::MessagePack,
+                compression: CompressionType::None,
+            },
+        )
+        .expect("url");
+        assert_eq!(url, "wss://db.example.com/v1/ws?serialization=msgpack&compression=none");
+    }
+
+    #[test]
+    fn ws_url_keeps_compress_false_and_msgpack() {
+        let url = ws_url_from_http_opts(
+            "http://localhost:3000",
+            true,
+            ProtocolOptions {
+                serialization: SerializationType::MessagePack,
+                compression: CompressionType::Gzip,
+            },
+        )
+        .expect("url");
+        assert_eq!(url, "ws://localhost:3000/v1/ws?compress=false&serialization=msgpack");
+    }
+
+    #[test]
+    fn jwt_upgrade_auth_accepts_typical_tokens() {
+        assert!(jwt_uses_upgrade_auth("eyJhbGciOiJIUzI1NiJ9.e30.abc_def-012"));
+        assert!(!jwt_uses_upgrade_auth("abc=def"));
     }
 }
