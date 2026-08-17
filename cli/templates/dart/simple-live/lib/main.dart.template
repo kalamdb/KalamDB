@@ -1,0 +1,86 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:kalam_sync/kalam_sync.dart';
+
+import 'generated/kalam.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final kalam = await Kalam.open(
+    url: '{{server_url}}',
+    namespace: '{{namespace}}',
+    subject: 'dev-user',
+    authProvider: () async => Auth.basic(
+      const String.fromEnvironment('KALAM_USER', defaultValue: 'root'),
+      const String.fromEnvironment('KALAM_PASSWORD', defaultValue: 'kalamdb123'),
+    ),
+  );
+  runApp(KalamScope(kalam: kalam, child: UsersApp(kalam: kalam)));
+}
+
+final class UsersApp extends StatefulWidget {
+  const UsersApp({required this.kalam, super.key});
+
+  final Kalam kalam;
+
+  @override
+  State<UsersApp> createState() => _UsersAppState();
+}
+
+final class _UsersAppState extends State<UsersApp> {
+  late final KalamTableBinding<Users> users = widget.kalam.table(KalamTables.users);
+  KalamSyncSubscription? subscription;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.kalam
+        .subscribe(users.consumer(sql: 'SELECT * FROM users'))
+        .then((value) => subscription = value);
+  }
+
+  @override
+  void dispose() {
+    unawaited(subscription?.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('{{project_name}} users')),
+        body: StreamBuilder<List<KalamSyncedRow<Users>>>(
+          stream: users.watchWithSyncState(),
+          builder: (context, snapshot) => ListView(
+            children: [
+              for (final row in snapshot.data ?? const <KalamSyncedRow<Users>>[])
+                ListTile(
+                  title: Text(row.value.email),
+                  subtitle: Text('id ${row.value.id}'),
+                  trailing: Icon(
+                    row.isSynced ? Icons.cloud_done : Icons.cloud_upload,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            final id = DateTime.now().millisecondsSinceEpoch;
+            users.insert(
+              Users(
+                id: id,
+                email: 'user$id@example.com',
+                createdAt: DateTime.now().toUtc(),
+              ),
+              actionId: Kalam.id(),
+            );
+          },
+          child: const Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+}

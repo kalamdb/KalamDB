@@ -1,5 +1,6 @@
 pub mod config;
 pub mod connection_url;
+pub mod dart;
 pub mod guidance;
 pub mod identifiers;
 pub mod init;

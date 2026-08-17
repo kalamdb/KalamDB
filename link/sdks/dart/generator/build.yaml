@@ -1,0 +1,14 @@
+targets:
+  $default:
+    builders:
+      kalam_sync_generator:kalam_actions:
+        enabled: true
+
+builders:
+  kalam_actions:
+    import: "package:kalam_sync_generator/kalam_sync_generator.dart"
+    builder_factories: [kalamActionBuilder]
+    build_extensions: {".dart": [".kalam_actions.g.part"]}
+    auto_apply: dependents
+    build_to: cache
+    applies_builders: ["source_gen:combining_builder"]

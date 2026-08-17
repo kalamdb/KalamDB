@@ -102,8 +102,8 @@ ui/package-lock.json
 /target_cli_option_matrix
 /target_sec
 /target_cli_smoke_run
-/link/sdks/dart/build
-/link/sdks/dart/.dart_tool
+/link/sdks/dart/link/build
+/link/sdks/dart/link/.dart_tool
 /vendor
 /link/sdks/typescript/.wasm-cargo-home-test1
 /link/sdks/typescript/.wasm-cargo-home-test2

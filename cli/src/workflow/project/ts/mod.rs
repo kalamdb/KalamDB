@@ -1,6 +1,4 @@
 //! TypeScript SDK scaffolding for `kalam init` and related workflow commands.
-//!
-//! Dart and Rust SDK helpers will live in sibling modules (`dart/`, `rust/`) as they are added.
 
 pub mod guidance;
 pub mod init;

@@ -1,4 +1,4 @@
 rust_input: crate::api
 rust_root: .
-dart_output: ../sdks/dart/lib/src/generated
+dart_output: ../sdks/dart/link/lib/src/generated
 web: true

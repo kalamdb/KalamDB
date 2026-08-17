@@ -259,7 +259,7 @@ impl ConnectionGuard {
         if let Some(state) = self.ip_states.get(&ip) {
             state
                 .active_connections
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                     Some(value.saturating_sub(1))
                 })
                 .ok();

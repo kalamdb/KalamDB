@@ -30,6 +30,7 @@ pub(super) fn write_project_scaffold(
     server_mode: ServerMode,
     server_url: &str,
     typescript_template: Option<&EmbeddedTemplate>,
+    dart_template: Option<&EmbeddedTemplate>,
     output: &WorkflowOutput,
 ) -> Result<()> {
     scaffold::io_with_guidance("create project directory", root, fs::create_dir_all(root))?;
@@ -50,7 +51,24 @@ pub(super) fn write_project_scaffold(
             .map(|connection| connection.namespace.as_str())
             .unwrap_or("");
         apply_scaffold(root, template, &config.project.name, server_url, namespace, output)?;
-    } else if matches!(schema_mode, SchemaMode::Sql) {
+    }
+    if let Some(template) = dart_template {
+        let namespace = config
+            .connection
+            .get("dev")
+            .map(|connection| connection.namespace.as_str())
+            .unwrap_or("");
+        crate::workflow::project::dart::init::apply_dart_scaffold(
+            root,
+            template,
+            &config.project.name,
+            server_url,
+            namespace,
+            output,
+        )?;
+    }
+    if typescript_template.is_none() && dart_template.is_none() && matches!(schema_mode, SchemaMode::Sql)
+    {
         let schema_path = root.join("schema.sql");
         if !schema_path.exists() {
             scaffold::io_with_guidance(
@@ -102,6 +120,26 @@ pub(super) fn write_project_scaffold(
                 "created {}",
                 display_project_path(root, out_path.parent().unwrap_or(&out_path))
             ));
+        }
+    }
+
+    if config.schema.languages.iter().any(|language| language == "dart") {
+        if let Some(target) = config.schema.targets.get("dart") {
+            match crate::workflow::schema::load::load_schema_snapshot(root, config) {
+                Ok(snapshot) => {
+                    let dart_path = root.join(&target.output);
+                    crate::workflow::schema::dart::write_dart_schema(&dart_path, &snapshot)?;
+                    output.detail(format!(
+                        "generated {}",
+                        display_project_path(root, &dart_path)
+                    ));
+                },
+                Err(error) => {
+                    output.detail(format!(
+                        "skipped Dart schema generation during init: {error}"
+                    ));
+                },
+            }
         }
     }
 

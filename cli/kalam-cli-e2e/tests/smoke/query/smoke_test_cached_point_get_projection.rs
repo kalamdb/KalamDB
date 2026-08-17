@@ -254,4 +254,11 @@ fn smoke_test_cached_point_get_projection() {
         assert_eq!(names, vec!["payload"], "stream lookup {i}");
         assert_eq!(string_value(&rows[0], "payload"), "stream-alpha");
     }
+
+    let limited_sql = format!("SELECT file_ref FROM {files_table} WHERE path = $1 LIMIT 1");
+    for i in 0..3 {
+        let (names, rows) = query_rows(&limited_sql, path_param.clone());
+        assert_eq!(names, vec!["file_ref"], "LIMIT 1 lookup {i}");
+        assert_eq!(file_ref_sha256(&rows[0]), second_sha);
+    }
 }

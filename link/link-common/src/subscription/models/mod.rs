@@ -1,10 +1,12 @@
 //! Subscription models: wire protocol, domain events, and config types.
 
 pub mod change_event;
+pub mod subscription_ack_mode;
 pub mod subscription_config;
 pub mod subscription_info;
 
 pub use change_event::ChangeEvent;
+pub use subscription_ack_mode::SubscriptionAckMode;
 pub use kalamdb_commons::{
     BatchControl, BatchStatus, ChangeTypeRaw, SubscriptionOptions, SubscriptionRequest,
 };

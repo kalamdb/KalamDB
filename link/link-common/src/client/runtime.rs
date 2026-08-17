@@ -186,6 +186,7 @@ impl KalamLinkClient {
                 shared_control,
                 generation,
                 resume_from,
+                config.ack_mode,
                 &self.timeouts,
             ));
         }

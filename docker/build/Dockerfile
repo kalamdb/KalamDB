@@ -41,6 +41,8 @@ RUN set -eux; \
         wasm-pack --version
 
 ENV PATH=/usr/local/cargo/bin:$PATH
+ENV RUSTUP_TOOLCHAIN=1.92.0
+ENV CARGO_ENCODED_RUSTFLAGS=
 
 # Install wasm32 target for Rust
 RUN rustup target add wasm32-unknown-unknown

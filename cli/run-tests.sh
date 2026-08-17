@@ -1535,7 +1535,7 @@ run_supplementary_suites() {
 
     step "Running Dart SDK tests"
     (
-        cd "$REPO_ROOT/link/sdks/dart"
+        cd "$REPO_ROOT/link/sdks/dart/link"
         ./test.sh
     )
 

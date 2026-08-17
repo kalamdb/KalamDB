@@ -137,7 +137,7 @@ impl RateLimiter {
 
         if let Some(count) = self.user_subscription_counts.get(&user_key) {
             count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
                 .ok();
         }
     }

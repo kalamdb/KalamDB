@@ -28,6 +28,8 @@ ARG PGRX_VERSION
 
 ENV CARGO_BUILD_JOBS=1
 ENV CARGO_INCREMENTAL=0
+ENV RUSTUP_TOOLCHAIN=1.92.0
+ENV CARGO_ENCODED_RUSTFLAGS=
 # -Cpanic=unwind is required for pgrx #[pg_guard] to catch panics at FFI boundaries.
 # Without it, any panic in async/gRPC code causes SIGABRT (process abort).
 ENV RUSTFLAGS="-Cdebuginfo=0 -Cpanic=unwind"

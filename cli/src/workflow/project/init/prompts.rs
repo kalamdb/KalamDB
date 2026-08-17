@@ -83,7 +83,10 @@ pub(super) fn resolve_languages(options: &InitOptions, color: bool) -> Result<Ve
 
     let options_list = [
         SelectOption::described("TypeScript", "Generate src/generated/kalam.ts"),
-        SelectOption::described("Dart", "Generate lib/generated/kalam.dart"),
+        SelectOption::described(
+            "Dart / Flutter",
+            "Generate lib/generated/kalam.dart and scaffold a Flutter starter",
+        ),
     ];
     let selected =
         prompt_multi_select("Generated language targets", &options_list, &[true, false], color)?;
@@ -160,7 +163,7 @@ fn normalize_languages(languages: &[String]) -> Result<Vec<String>> {
     for language in languages {
         match language.trim().to_ascii_lowercase().as_str() {
             "typescript" | "ts" => normalized.push("typescript".into()),
-            "dart" => normalized.push("dart".into()),
+            "dart" | "flutter" => normalized.push("dart".into()),
             other => {
                 return Err(CLIError::ConfigurationError(init_unsupported_language(other)));
             },

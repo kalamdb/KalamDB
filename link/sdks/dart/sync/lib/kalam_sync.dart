@@ -1,0 +1,42 @@
+/// Local-first persistence, durable actions, and synchronization for KalamDB.
+library;
+
+export 'package:kalam_link/kalam_link.dart';
+
+export 'src/annotations/kalam_action.dart';
+export 'src/annotations/kalam_action_module.dart';
+export 'src/annotations/kalam_action_payload.dart';
+export 'src/actions/kalam_action_codec.dart';
+export 'src/actions/kalam_action_context.dart';
+export 'src/actions/kalam_action_definition.dart';
+export 'src/actions/kalam_dml_action.dart';
+export 'src/actions/kalam_action_registry.dart';
+export 'src/actions/kalam_action_runner.dart';
+export 'src/flutter/kalam_database_factory.dart';
+export 'src/flutter/kalam_scope.dart';
+export 'src/kalam.dart';
+export 'src/models/kalam_account_identity.dart';
+export 'src/models/kalam_action_status.dart';
+export 'src/models/kalam_action_draft.dart';
+export 'src/models/kalam_action_record.dart';
+export 'src/models/kalam_checkpoint.dart';
+export 'src/models/kalam_change.dart';
+export 'src/models/kalam_cached_row.dart';
+export 'src/models/kalam_dml_payload.dart';
+export 'src/models/kalam_optimistic_row.dart';
+export 'src/models/kalam_optimistic_mutation.dart';
+export 'src/models/kalam_row_sync_state.dart';
+export 'src/models/kalam_retry_policy.dart';
+export 'src/models/kalam_sync_mode.dart';
+export 'src/models/kalam_sync_state.dart';
+export 'src/models/kalam_synced_row.dart';
+export 'src/sync/kalam_event_consumer.dart';
+export 'src/sync/kalam_sync_coordinator.dart';
+export 'src/sync/kalam_sync_subscription.dart';
+export 'src/tables/kalam_replica_overlay.dart';
+export 'src/tables/kalam_table_binding.dart';
+export 'src/tables/kalam_table_spec.dart';
+export 'src/transport/kalam_link_transport.dart';
+export 'src/transport/kalam_remote_batch.dart';
+export 'src/transport/kalam_remote_change.dart';
+export 'src/transport/kalam_sync_transport.dart';

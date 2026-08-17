@@ -41,7 +41,7 @@ impl RocksDbInit {
         db_opts.create_missing_column_families(true);
         apply_db_settings(&mut db_opts, &self.settings);
 
-        let cache = Cache::new_lru_cache(self.settings.block_cache_size);
+        let cache = new_block_cache(self.settings.block_cache_size);
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
@@ -61,7 +61,7 @@ impl RocksDbInit {
         db_opts.create_missing_column_families(true);
         apply_db_settings(&mut db_opts, &self.settings);
 
-        let cache = Cache::new_lru_cache(self.settings.block_cache_size);
+        let cache = new_block_cache(self.settings.block_cache_size);
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
@@ -116,11 +116,20 @@ impl RocksDbInit {
     }
 }
 
+/// Shared block cache for all column families.
+///
+/// HyperClockCache is the RocksDB 11.8 recommended implementation for concurrent
+/// point lookups. `estimated_entry_charge = 0` selects the dynamically sized variant.
+pub(crate) fn new_block_cache(capacity: usize) -> Cache {
+    Cache::new_hyper_clock_cache(capacity, 0)
+}
+
 pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOptions {
     let mut block_opts = BlockBasedOptions::default();
     block_opts.set_block_cache(cache);
     block_opts.set_bloom_filter(10.0, false);
     block_opts.set_cache_index_and_filter_blocks(true);
+    block_opts.set_cache_index_and_filter_blocks_with_high_priority(true);
     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
     block_opts.set_pin_top_level_index_and_filter(true);
     block_opts.set_whole_key_filtering(true);

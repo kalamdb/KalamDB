@@ -11,7 +11,9 @@ This directory contains:
 - the publishable TypeScript CLI wrapper package in [sdks/typescript/cli](sdks/typescript/cli/README.md) as `@kalamdb/cli`
 - the publishable TypeScript app-facing package in [sdks/typescript/client](sdks/typescript/client/README.md) as `@kalamdb/client`
 - the publishable TypeScript worker package in [sdks/typescript/consumer](sdks/typescript/consumer/README.md) as `@kalamdb/consumer`
-- the publishable Dart/Flutter package in [sdks/dart](sdks/dart/README.md) as `kalam_link`
+- the publishable Dart/Flutter transport in [sdks/dart/link](sdks/dart/link/README.md) as `kalam_link`
+- the local-first Flutter runtime in [sdks/dart/sync](sdks/dart/sync/README.md) as `kalam_sync`
+- the action generator in [sdks/dart/generator](sdks/dart/generator/README.md) as `kalam_sync_generator`
 
 ## Canonical SDK Docs
 
@@ -20,7 +22,9 @@ Use the package-specific READMEs as the source of truth for public APIs:
 - TypeScript / JavaScript app client: [sdks/typescript/client/README.md](sdks/typescript/client/README.md)
 - TypeScript / JavaScript worker client: [sdks/typescript/consumer/README.md](sdks/typescript/consumer/README.md)
 - TypeScript / JavaScript CLI wrapper: [sdks/typescript/cli/README.md](sdks/typescript/cli/README.md)
-- Dart / Flutter SDK: [sdks/dart/README.md](sdks/dart/README.md)
+- Dart / Flutter transport: [sdks/dart/link/README.md](sdks/dart/link/README.md)
+- Dart / Flutter local-first sync: [sdks/dart/sync/README.md](sdks/dart/sync/README.md)
+- Dart action generation: [sdks/dart/generator/README.md](sdks/dart/generator/README.md)
 
 Older constructor-based examples, manual `connect()` walkthroughs, and raw WASM `KalamClient(...)` snippets are not accurate for the current SDKs.
 
@@ -67,7 +71,8 @@ Package-specific build, test, and publish instructions live with each SDK:
 - TypeScript / JavaScript app client: [sdks/typescript/client/README.md](sdks/typescript/client/README.md)
 - TypeScript / JavaScript worker client: [sdks/typescript/consumer/README.md](sdks/typescript/consumer/README.md)
 - TypeScript / JavaScript CLI wrapper: [sdks/typescript/cli/README.md](sdks/typescript/cli/README.md)
-- Dart / Flutter: [sdks/dart/README.md](sdks/dart/README.md)
+- Dart / Flutter transport: [sdks/dart/link/README.md](sdks/dart/link/README.md)
+- Dart / Flutter sync: [sdks/dart/sync/README.md](sdks/dart/sync/README.md)
 
 If you change the shared Rust implementation in `link-common` or the `kalam-link-wasm` entry crate, validate the affected SDK package afterward.
 

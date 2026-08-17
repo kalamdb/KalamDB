@@ -253,7 +253,7 @@ impl ConnectionsManager {
     fn release_connection_slot(&self) {
         if self
             .total_connections
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_sub(1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_sub(1))
             .is_err()
         {
             warn!("Connection count release requested while count was already zero");

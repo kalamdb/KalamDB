@@ -11,9 +11,9 @@ docs/plans/*.png
 **/target/
 **/.wasm-cargo-home/
 **/.wasm-target/
-link/sdks/dart/lib/src/generated/
-link/sdks/dart/build/
-link/sdks/dart/.dart_tool/
+link/sdks/dart/link/lib/src/generated/
+link/sdks/dart/link/build/
+link/sdks/dart/link/.dart_tool/
 
 # Runtime output.
 logs/

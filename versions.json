@@ -277,6 +277,16 @@
         "version": "0.5.6-rc.0",
         "compatible_core": "0.5.x",
         "protocol": "v1"
+      },
+      "kalam_sync": {
+        "version": "0.5.6-rc.0",
+        "compatible_core": "0.5.x",
+        "protocol": "v1"
+      },
+      "kalam_sync_generator": {
+        "version": "0.5.6-rc.0",
+        "compatible_core": "0.5.x",
+        "protocol": "v1"
       }
     }
   }

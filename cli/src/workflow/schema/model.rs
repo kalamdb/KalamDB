@@ -19,9 +19,21 @@ pub enum SchemaOrigin {
     Remote,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TableKind {
+    #[default]
+    Unspecified,
+    User,
+    Shared,
+    Stream,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableDefinition {
     pub name: String,
+    #[serde(default)]
+    pub kind: TableKind,
     pub columns: Vec<ColumnDefinition>,
 }
 
@@ -58,7 +70,7 @@ impl LanguageTarget {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "typescript" | "ts" => Some(Self::TypeScript),
-            "dart" => Some(Self::Dart),
+            "dart" | "flutter" => Some(Self::Dart),
             _ => None,
         }
     }
@@ -83,5 +95,6 @@ mod tests {
     fn parse_language_aliases() {
         assert_eq!(LanguageTarget::parse("ts"), Some(LanguageTarget::TypeScript));
         assert_eq!(LanguageTarget::parse("dart"), Some(LanguageTarget::Dart));
+        assert_eq!(LanguageTarget::parse("flutter"), Some(LanguageTarget::Dart));
     }
 }

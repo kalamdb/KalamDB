@@ -605,8 +605,9 @@ This creates:
 ```bash
 # Regenerate workflow artifacts
 # TypeScript uses @kalamdb/orm against the resolved server/namespace.
-# Dart currently writes a placeholder file.
+# Dart reads schema.sql and writes KalamTableSpec codecs to lib/generated/kalam.dart.
 kalam schema gen
+kalam schema gen --languages dart
 
 # Create a migration from the current schema
 kalam migration create add_profile

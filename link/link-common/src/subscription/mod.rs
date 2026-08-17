@@ -12,7 +12,10 @@ pub mod models;
 pub use live_rows_config::LiveRowsConfig;
 pub use live_rows_event::LiveRowsEvent;
 pub use live_rows_materializer::LiveRowsMaterializer;
-pub use models::{SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, SubscriptionRequest};
+pub use models::{
+    SubscriptionAckMode, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions,
+    SubscriptionRequest,
+};
 
 #[cfg(feature = "tokio-runtime")]
 mod live_rows_subscription;

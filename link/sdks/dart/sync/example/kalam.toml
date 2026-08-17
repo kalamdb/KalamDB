@@ -1,0 +1,16 @@
+[project]
+name = "kalam-sync-chat"
+default_env = "dev"
+
+[connection.dev]
+url = "http://localhost:2900"
+namespace = "chat"
+
+[schema]
+mode = "sql"
+path = "kalam/schema.sql"
+watch = false
+
+[dev]
+auto_start_db = true
+apply_schema = true
