@@ -1,6 +1,6 @@
 name: kalam_sync_generator
 description: Code generation for typed kalam_sync action payloads and queues.
-version: 0.5.6-rc.0
+version: 0.5.6-rc.1
 homepage: https://github.com/kalamdb/KalamDB
 repository: https://github.com/kalamdb/KalamDB
 
