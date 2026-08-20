@@ -1,0 +1,19 @@
+[package]
+name = "datafusion-functions-json"
+version = "0.55.0"
+edition = "2021"
+description = "JSON functions for DataFusion (KalamDB DataFusion 55 compatibility fork of 0.54.2)"
+readme = "README.md"
+license = "Apache-2.0"
+keywords = ["datafusion", "JSON", "SQL"]
+categories = ["database-implementations", "parsing"]
+repository = "https://github.com/datafusion-contrib/datafusion-functions-json/"
+rust-version = "1.88.0"
+publish = false
+
+[dependencies]
+datafusion = { version = "55.0.0", default-features = false, features = ["sql"] }
+jiter = "0.15.0"
+log = "0.4"
+paste = "1"
+serde_json = "1"

@@ -104,7 +104,9 @@ ui/package-lock.json
 /target_cli_smoke_run
 /link/sdks/dart/link/build
 /link/sdks/dart/link/.dart_tool
-/vendor
+/vendor/*
+!/vendor/datafusion-functions-json/
+!/vendor/datafusion-functions-json/**
 /link/sdks/typescript/.wasm-cargo-home-test1
 /link/sdks/typescript/.wasm-cargo-home-test2
 ts-sdk-repro/server.toml

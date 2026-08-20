@@ -3,7 +3,7 @@
 //! Uses sqlparser-rs for safe SQL parsing to prevent SQL injection attacks
 //! and ensure proper handling of edge cases.
 //!
-//! General SELECT queries are executed by DataFusion 54 and may use SQL lambda array
+//! General SELECT queries are executed by DataFusion 55 and may use SQL lambda array
 //! functions. Subscription and live-query validation in this module intentionally
 //! keeps a narrower surface.
 

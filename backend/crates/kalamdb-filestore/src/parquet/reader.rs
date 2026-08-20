@@ -7,9 +7,9 @@
 //!
 //! - **Column Projection**: Pushes a Parquet projection mask so unneeded column chunks are not
 //!   read or decoded
-//! - **Streaming I/O**: All reads use `ParquetObjectReader` — reads only the footer eagerly and
-//!   fetches column chunks on demand via range requests (remote) or file seeks (local). No
-//!   full-file downloads.
+//! - **Streaming I/O**: All reads use an `AsyncFileReader` over ObjectStore — reads only the
+//!   footer eagerly and fetches column chunks on demand via range requests (remote) or file
+//!   seeks (local). No full-file downloads.
 //!
 //! # Usage Tiers
 //!
@@ -17,21 +17,31 @@
 //! |----------|:-:|:-:|----------|
 //! | `parse_parquet_stream` | Optional | ✓ | General streaming read (recommended) |
 
-use std::{pin::Pin, sync::Arc};
+use std::{ops::Range, pin::Pin, sync::Arc};
 
 use arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::{
-    async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder},
-    ProjectionMask,
-};
+use bytes::Bytes;
 use futures_util::TryStreamExt;
-use object_store::{path::Path as ObjectPath, ObjectStore};
+use object_store::{
+    path::Path as ObjectPath, GetOptions, GetRange, ObjectStore, ObjectStoreExt,
+};
 use parquet::{
+    arrow::{
+        arrow_reader::ArrowReaderOptions,
+        async_reader::{AsyncFileReader, MetadataSuffixFetch, ParquetRecordBatchStreamBuilder},
+        ProjectionMask,
+    },
     basic::Type as ParquetPhysicalType,
     bloom_filter::Sbbf,
-    file::{metadata::ParquetMetaData, statistics::Statistics},
+    errors::ParquetError,
+    file::{
+        metadata::{ParquetMetaData, ParquetMetaDataReader},
+        statistics::Statistics,
+    },
     schema::types::SchemaDescriptor,
 };
+
+type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 use crate::error::{FilestoreError, Result};
 
@@ -108,6 +118,77 @@ struct PkBloomPruning {
     values: Vec<String>,
 }
 
+/// ObjectStore-backed [`AsyncFileReader`], matching the parquet 59 example that
+/// replaced deprecated [`parquet::arrow::async_reader::ParquetObjectReader`].
+#[derive(Clone, Debug)]
+struct ObjectStoreReader {
+    store: Arc<dyn ObjectStore>,
+    path: ObjectPath,
+}
+
+impl ObjectStoreReader {
+    fn new(store: Arc<dyn ObjectStore>, path: ObjectPath) -> Self {
+        Self { store, path }
+    }
+}
+
+fn to_parquet_err(error: object_store::Error) -> ParquetError {
+    ParquetError::External(Box::new(error))
+}
+
+impl AsyncFileReader for ObjectStoreReader {
+    fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
+        Box::pin(async move {
+            self.store
+                .get_range(&self.path, range)
+                .await
+                .map_err(to_parquet_err)
+        })
+    }
+
+    fn get_byte_ranges(
+        &mut self,
+        ranges: Vec<Range<u64>>,
+    ) -> BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
+        Box::pin(async move {
+            self.store
+                .get_ranges(&self.path, &ranges)
+                .await
+                .map_err(to_parquet_err)
+        })
+    }
+
+    fn get_metadata<'a>(
+        &'a mut self,
+        options: Option<&'a ArrowReaderOptions>,
+    ) -> BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>> {
+        Box::pin(async move {
+            let metadata = ParquetMetaDataReader::new()
+                .with_arrow_reader_options(options)
+                .load_via_suffix_and_finish(self)
+                .await?;
+            Ok(Arc::new(metadata))
+        })
+    }
+}
+
+impl MetadataSuffixFetch for &mut ObjectStoreReader {
+    fn fetch_suffix(&mut self, suffix: usize) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
+        let options = GetOptions {
+            range: Some(GetRange::Suffix(suffix as u64)),
+            ..Default::default()
+        };
+        Box::pin(async move {
+            let response = self
+                .store
+                .get_opts(&self.path, options)
+                .await
+                .map_err(to_parquet_err)?;
+            response.bytes().await.map_err(to_parquet_err)
+        })
+    }
+}
+
 /// Open an async streaming reader over a Parquet file via ObjectStore.
 ///
 /// Works for any backend (local filesystem, S3, GCS, Azure). Only reads the
@@ -132,7 +213,7 @@ pub async fn parse_parquet_stream_with_options(
     path: &ObjectPath,
     options: &ParquetReadOptions,
 ) -> Result<RecordBatchFileStream> {
-    let reader = ParquetObjectReader::new(store, path.clone());
+    let reader = ObjectStoreReader::new(store, path.clone());
     let mut builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
         .map_err(|e| FilestoreError::Parquet(e.to_string()))?;
@@ -257,7 +338,7 @@ fn seq_stats_overlap(stats: &Statistics, range: &SeqRangePruning) -> bool {
 }
 
 async fn prune_row_groups_by_pk_bloom(
-    builder: &mut ParquetRecordBatchStreamBuilder<ParquetObjectReader>,
+    builder: &mut ParquetRecordBatchStreamBuilder<ObjectStoreReader>,
     row_groups: &[usize],
     pruning: &PkBloomPruning,
 ) -> Result<Vec<usize>> {

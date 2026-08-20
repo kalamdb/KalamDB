@@ -176,7 +176,8 @@ fn writer_properties(
             let col_path: parquet::schema::types::ColumnPath = col.into();
             props_builder = props_builder.set_column_bloom_filter_enabled(col_path.clone(), true);
             props_builder = props_builder.set_column_bloom_filter_fpp(col_path.clone(), 0.01);
-            props_builder = props_builder.set_column_bloom_filter_ndv(col_path, bloom_ndv_estimate);
+            props_builder =
+                props_builder.set_column_bloom_filter_max_ndv(col_path, bloom_ndv_estimate);
         }
     }
 

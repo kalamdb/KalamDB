@@ -50,7 +50,7 @@ fn json_query_vector_coerce_types(
     Ok(arg_types.to_vec())
 }
 
-/// Dispatches `cosine_distance` to DataFusion 54 for array/array inputs and to the
+/// Dispatches `cosine_distance` to DataFusion 55 for array/array inputs and to the
 /// Kalam JSON-literal path when the query vector is a UTF-8 JSON string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct CosineDistanceFunction;

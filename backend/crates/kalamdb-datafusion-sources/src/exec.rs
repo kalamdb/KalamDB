@@ -1,4 +1,4 @@
-//! Shared [`ExecutionPlan`] scaffolding built on the DataFusion 54.x surface.
+//! Shared [`ExecutionPlan`] scaffolding built on the DataFusion 55.x surface.
 //!
 //! This module intentionally stays thin: it provides helpers that consumers
 //! embed inside their own `ExecutionPlan` implementations, instead of forcing a
@@ -23,12 +23,14 @@ use arrow::{
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::{
+    common::tree_node::TreeNodeRecursion,
     error::{DataFusionError, Result as DataFusionResult},
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::PhysicalExpr,
     physical_plan::{
         metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet},
-        DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+        ChildrenPropertiesMode, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+        ReplaceChildrenOptions,
     },
 };
 use kalamdb_commons::{
@@ -990,9 +992,17 @@ impl ExecutionPlan for DeferredBatchExec {
         Vec::new()
     }
 
-    fn with_new_children(
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+    ) -> DataFusionResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
+    }
+
+    fn replace_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
+        _options: ReplaceChildrenOptions,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if !children.is_empty() {
             return Err(DataFusionError::Execution(
@@ -1000,6 +1010,16 @@ impl ExecutionPlan for DeferredBatchExec {
             ));
         }
         Ok(self)
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.replace_children(
+            children,
+            ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
+        )
     }
 
     fn execute(

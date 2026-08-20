@@ -1,11 +1,11 @@
 //! General SQL query feature support for DataFusion-backed execution.
 //!
-//! KalamDB routes most SELECT statements directly to DataFusion 54, which provides
+//! KalamDB routes most SELECT statements directly to DataFusion 55, which provides
 //! SQL lambda array functions when the session uses the DuckDB SQL dialect
 //! (`datafusion.sql_parser.dialect = duckdb`). Subscription and live-query paths
 //! intentionally restrict the SQL surface and remain narrower.
 
-/// DataFusion 54 query features supported in general SQL execution.
+/// DataFusion 55 query features supported in general SQL execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneralQueryFeature {
     /// Lambda expressions such as `x -> x * 10` with `array_transform`, `array_filter`,

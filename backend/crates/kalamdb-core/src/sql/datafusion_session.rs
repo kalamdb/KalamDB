@@ -84,7 +84,7 @@ impl DataFusionSessionFactory {
             settings.batch_size
         );
 
-        // DuckDB dialect enables SQL lambda parsing (`x -> expr`) required by DataFusion 54
+        // DuckDB dialect enables SQL lambda parsing (`x -> expr`) required by DataFusion 55
         // higher-order array functions such as array_transform and array_filter.
         let config = SessionConfig::new()
             .set_str("datafusion.sql_parser.dialect", "duckdb")
@@ -180,14 +180,14 @@ impl DataFusionSessionFactory {
         // dialect rewrite layer converts operators to these UDFs before planning.
         datafusion_functions_json::register_all(ctx).expect("failed to register JSON functions");
 
-        // Ensure DataFusion 54 nested/lambda array functions and planners are registered
+        // Ensure DataFusion 55 nested/lambda array functions and planners are registered
         // for SQL like `array_transform(arr, x -> x * 2)`.
         datafusion::functions_nested::register_all(ctx)
             .expect("failed to register nested expression functions");
 
         // Register COSINE_DISTANCE(vector, query_vector) for ORDER BY similarity search syntax.
         // The dispatcher routes JSON query literals internally and delegates array/array
-        // inputs to DataFusion 54's native cosine_distance implementation.
+        // inputs to DataFusion 55's native cosine_distance implementation.
         ctx.register_udf(ScalarUDF::from(CosineDistanceFunction::new()));
 
         // Register vector search table function (TABLE(vector_search(...))).

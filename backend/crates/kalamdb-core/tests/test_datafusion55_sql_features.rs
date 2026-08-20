@@ -1,4 +1,4 @@
-//! Integration tests for DataFusion 54 SQL features used by KalamDB.
+//! Integration tests for DataFusion 55 SQL features used by KalamDB.
 
 use std::sync::Arc;
 

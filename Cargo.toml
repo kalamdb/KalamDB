@@ -64,7 +64,7 @@ exclude = ["benchv2"]
 [workspace.package]
 version = "0.5.6-rc.1"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.94"
 authors = ["KalamDB Team"]
 license = "Apache-2.0"
 repository = "https://github.com/kalamdb/KalamDB"
@@ -101,7 +101,7 @@ tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"]
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
 aws-lc-rs = { version = "1.18.0", default-features = false }
 rustls = { version = "0.23.43", default-features = false }
-quinn-proto = { version = "0.11.16", default-features = false }
+quinn-proto = { version = "0.11.17", default-features = false }
 rustls-webpki = { version = "0.103.14", default-features = false }
 
 # Time handling
@@ -112,26 +112,26 @@ chrono = { version = "0.4.45", features = ["serde"] }
 
 # Apache Arrow ecosystem
 # IMPORTANT: arrow, arrow-schema and parquet MUST match the version used by DataFusion.
-# DataFusion 52.3.0 resolves to Arrow 57.3.0; mixing in Arrow 58 pulls a second
+# DataFusion 55.0.0 resolves to Arrow 59.2.0; mixing Arrow families pulls a second
 # arrow_array crate into the graph and causes FixedSizeListArray type mismatches.
 # Upgrade DataFusion first before bumping Arrow/Parquet beyond this family.
-arrow = { version = "58.3.0", default-features = false }
-arrow-ipc = { version = "58.3.0", default-features = false }
-arrow-schema = { version = "58.3.0" }
-datafusion = { version = "54.1.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions"] }
-datafusion-datasource = { version = "54.1.0", default-features = false }
-datafusion-common = { version = "54.1.0", default-features = false }
-datafusion-expr = { version = "54.1.0" }
-datafusion-functions-json = { version = "0.54.2" }
+arrow = { version = "59.2.0", default-features = false }
+arrow-ipc = { version = "59.2.0", default-features = false }
+arrow-schema = { version = "59.2.0" }
+datafusion = { version = "55.0.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions"] }
+datafusion-datasource = { version = "55.0.0", default-features = false }
+datafusion-common = { version = "55.0.0", default-features = false }
+datafusion-expr = { version = "55.0.0" }
+datafusion-functions-json = { path = "vendor/datafusion-functions-json" }
 sqlparser = { version = "0.62.0" }
-parquet = { version = "58.3.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
+parquet = { version = "59.2.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
 # Web framework
 actix-web = { version = "4.14.1", features = ["http2"] }
 actix-ws = "0.4.0"
 actix-cors = "0.7"
 actix-rt = "2.10"
-actix-files = "0.6.10"
+actix-files = "0.7.0"
 actix-multipart = "0.8.0"
 
 # UUID generation
