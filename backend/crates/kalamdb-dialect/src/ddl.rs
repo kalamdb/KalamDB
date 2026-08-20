@@ -4,6 +4,10 @@
 //! so they can be reused without depending on `kalamdb-core`.
 
 pub mod parsing;
+pub mod policy_commands;
+
+#[cfg(test)]
+mod policy_commands_tests;
 
 pub mod alter_namespace;
 pub mod alter_table;
@@ -51,6 +55,10 @@ pub use job_commands::{parse_job_command, JobCommand};
 pub use kalamdb_commons::websocket::SubscriptionOptions;
 pub use kill_live_query::KillLiveQueryStatement;
 pub use manifest_commands::ShowManifestStatement;
+pub use policy_commands::{
+    AlterPolicyOperation, AlterPolicyStatement, CreatePolicyStatement, DropPolicyStatement,
+    PolicyCommand, PolicyTarget,
+};
 pub use restore_namespace::RestoreDatabaseStatement;
 pub use show_namespaces::ShowNamespacesStatement;
 pub use show_table_stats::ShowTableStatsStatement;

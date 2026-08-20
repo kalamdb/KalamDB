@@ -71,6 +71,7 @@ impl SqlStatement {
 
         // Admin users (DBA, System) can do anything - skip authorization checks
         let is_admin = is_admin_role(role);
+        let can_manage_policy = is_admin || role == Role::Service;
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
@@ -102,6 +103,39 @@ impl SqlStatement {
 
         // Check multi-word prefixes and parse DDL statements
         match word_refs.as_slice() {
+            ["CREATE", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    CreatePolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::CreatePolicy)
+                })
+            },
+            ["ALTER", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    AlterPolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::AlterPolicy)
+                })
+            },
+            ["DROP", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    DropPolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::DropPolicy)
+                })
+            },
             // Namespace operations - require admin
             ["CREATE", "NAMESPACE", ..] => {
                 if !is_admin {
@@ -858,6 +892,16 @@ impl SqlStatement {
                 // Users can only create/modify/drop tables they own
                 // Admin users can operate on any table (already returned above)
                 Ok(())
+            },
+
+            SqlStatementKind::CreatePolicy(_)
+            | SqlStatementKind::AlterPolicy(_)
+            | SqlStatementKind::DropPolicy(_) => {
+                if role == Role::Service {
+                    Ok(())
+                } else {
+                    Err("System, DBA, or Service role required for policy operations".to_string())
+                }
             },
 
             // SELECT, INSERT, UPDATE, DELETE - defer to table access control
