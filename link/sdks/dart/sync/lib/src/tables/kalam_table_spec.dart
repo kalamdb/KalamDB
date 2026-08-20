@@ -19,4 +19,19 @@ final class KalamTableSpec<T> {
   final String Function(T row) keyOf;
   final Map<String, Object?> Function(T row) encode;
   final T Function(Map<String, Object?> json) decode;
+
+  KalamTableSpec<T> copyWith({
+    KalamSyncMode? mode,
+    String? subscriptionId,
+  }) {
+    return KalamTableSpec(
+      tableId: tableId,
+      keyColumn: keyColumn,
+      mode: mode ?? this.mode,
+      keyOf: keyOf,
+      encode: encode,
+      decode: decode,
+      subscriptionId: subscriptionId ?? this.subscriptionId,
+    );
+  }
 }

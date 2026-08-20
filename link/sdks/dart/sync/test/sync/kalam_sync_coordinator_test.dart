@@ -8,7 +8,16 @@ import 'package:kalam_sync/kalam_sync.dart';
 final class FakeTransport implements KalamSyncTransport {
   final connections = StreamController<KalamTransportConnection>.broadcast();
   final streams = <String, StreamController<KalamRemoteBatch>>{};
-  final calls = <({String id, String sql, SeqId? from, int? batchSize})>[];
+  final calls =
+      <
+        ({
+          String id,
+          String sql,
+          SeqId? from,
+          int? batchSize,
+          List<Object?>? params,
+        })
+      >[];
   var pauseCount = 0;
   var resumeCount = 0;
   var ensureConnectedCount = 0;
@@ -25,8 +34,15 @@ final class FakeTransport implements KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
+    List<Object?>? params,
   }) {
-    calls.add((id: subscriptionId, sql: sql, from: from, batchSize: batchSize));
+    calls.add((
+      id: subscriptionId,
+      sql: sql,
+      from: from,
+      batchSize: batchSize,
+      params: params,
+    ));
     return streams
         .putIfAbsent(subscriptionId, StreamController.broadcast)
         .stream;
@@ -433,6 +449,49 @@ void main() {
     },
   );
 
+  test(
+    'unexpected disconnect reconnects while consumers are subscribed',
+    () async {
+      await coordinator.subscribe(
+        KalamEventConsumer(
+          id: 'messages',
+          sql: 'SELECT * FROM app.messages',
+          apply: (_) {},
+        ),
+      );
+      transport.connections.add(KalamTransportConnection.connected);
+      await Future<void>.delayed(Duration.zero);
+
+      final offline = coordinator.states.firstWhere(
+        (state) => state.phase == KalamSyncPhase.offline,
+      );
+      transport.connections.add(KalamTransportConnection.disconnected);
+      await offline;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        transport.ensureConnectedCount,
+        1,
+        reason: 'live consumers must reconnect after a socket drop',
+      );
+    },
+  );
+
+  test('paused sessions do not reconnect on transport disconnect', () async {
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM app.messages',
+        apply: (_) {},
+      ),
+    );
+    await coordinator.pause();
+    transport.connections.add(KalamTransportConnection.disconnected);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(transport.ensureConnectedCount, 0);
+  });
+
   test('pending actions wake the connection without a consumer', () async {
     final action = await store.enqueue(
       const KalamActionDraft(
@@ -451,6 +510,148 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(transport.ensureConnectedCount, 1);
+  });
+
+  test('forwards live bind params to the transport', () async {
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages WHERE conversation_id = \$1',
+        params: const ['conversation-1'],
+        apply: (_) {},
+      ),
+    );
+
+    expect(transport.calls.single.params, ['conversation-1']);
+  });
+
+  test('consume enqueues follow-up work with the checkpoint', () async {
+    final fetchCalls = <String>[];
+    final runner = KalamActionRunner(
+      accountKey: 'server/user-a',
+      store: store,
+      registry: KalamActionRegistry([
+        KalamActionDefinition<Map<String, Object?>>(
+          key: 'conversations.fetch',
+          codec: KalamActionCodec(
+            encode: (payload) => payload,
+            decode: (json) => json,
+          ),
+          execute: (_, payload) async {
+            fetchCalls.add(payload['id']! as String);
+          },
+        ),
+      ]),
+      clock: () => now,
+    );
+    final local = KalamSyncCoordinator(
+      accountKey: 'server/user-a',
+      store: store,
+      transport: transport,
+      actions: runner,
+    );
+    addTearDown(local.dispose);
+
+    final acknowledged = Completer<void>();
+    await local.subscribe(
+      KalamEventConsumer.consume(
+        id: 'mailbox',
+        sql: 'SELECT * FROM public.user_updates',
+        onEvent: (change, context) async {
+          await context.enqueue(
+            actionKey: 'conversations.fetch',
+            actionId: 'fetch-1',
+            payload: {'id': change.row['target_id']},
+          );
+        },
+      ),
+    );
+
+    transport.streams['mailbox']!.add(
+      KalamRemoteBatch(
+        changes: [
+          const KalamRemoteChange(
+            kind: KalamChangeKind.insert,
+            seq: SeqId(4),
+            row: {'id': 'conversation:c1', 'target_id': 'c1'},
+          ),
+        ],
+        checkpoint: const SeqId(4),
+        acknowledge: () async => acknowledged.complete(),
+      ),
+    );
+    await acknowledged.future;
+
+    expect(fetchCalls, isEmpty);
+    expect(
+      (await store.readAction('fetch-1'))?.status,
+      KalamActionStatus.queued,
+    );
+    expect(
+      (await store.readCheckpoint(
+        accountKey: 'server/user-a',
+        subscriptionId: 'mailbox',
+      ))?.seq,
+      const SeqId(4),
+    );
+
+    await runner.flush();
+    expect(fetchCalls, ['c1']);
+  });
+
+  test('an expired cursor rebases from a fresh snapshot', () async {
+    await store.applyAndCheckpoint(
+      accountKey: 'server/user-a',
+      subscriptionId: 'messages',
+      seq: const SeqId(41),
+      apply: () => null,
+    );
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages',
+        apply: (_) {},
+      ),
+    );
+    expect(transport.calls.single.from, const SeqId(41));
+
+    transport.streams['messages']!.addError(
+      const KalamSubscriptionException('CURSOR_EXPIRED', 'stale from'),
+    );
+    await _eventually(() => transport.calls.length == 2);
+    expect(transport.calls.last.from, isNull);
+    expect(
+      await store.readCheckpoint(
+        accountKey: 'server/user-a',
+        subscriptionId: 'messages',
+      ),
+      isNull,
+    );
+  });
+
+  test('resume cancels an in-flight pause before disconnect', () async {
+    final applyStarted = Completer<void>();
+    final releaseApply = Completer<void>();
+    await coordinator.subscribe(
+      KalamEventConsumer(
+        id: 'messages',
+        sql: 'SELECT * FROM public.messages',
+        apply: (_) async {
+          applyStarted.complete();
+          await releaseApply.future;
+        },
+      ),
+    );
+    transport.streams['messages']!.add(_batch([1]));
+    await applyStarted.future;
+
+    final pausing = coordinator.pause();
+    await coordinator.resume();
+    releaseApply.complete();
+    await pausing;
+
+    expect(transport.pauseCount, 0);
+    expect(coordinator.state.phase, isNot(KalamSyncPhase.paused));
   });
 }
 

@@ -65,11 +65,10 @@ final class _KalamScopeState extends State<KalamScope>
     switch (state) {
       case AppLifecycleState.resumed:
         unawaited(widget.kalam.resume());
-      case AppLifecycleState.inactive ||
-          AppLifecycleState.hidden ||
-          AppLifecycleState.paused ||
-          AppLifecycleState.detached:
+      case AppLifecycleState.hidden || AppLifecycleState.paused:
         unawaited(widget.kalam.pause());
+      case AppLifecycleState.inactive || AppLifecycleState.detached:
+        break;
     }
   }
 

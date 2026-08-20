@@ -49,9 +49,15 @@ pub fn load_from_sql_file(
 pub fn parse_sql_schema(sql: &str) -> Result<SchemaSnapshot> {
     let mut tables = BTreeMap::new();
     let normalized = normalize_sql(sql);
+    let statements = split_create_table_statements(&normalized);
+    // pg_kalam / Drizzle files mix ordinary Postgres tables with
+    // `USING kalamdb`. Native Kalam schema.sql files use plain
+    // `CREATE TABLE` and must still generate. Skip unspecified tables
+    // only when this file already contains at least one kalamdb table.
+    let skip_plain_postgres = statements.iter().any(|statement| uses_kalamdb(statement));
 
-    for statement in split_create_table_statements(&normalized) {
-        if let Some(table) = parse_create_table(&statement)? {
+    for statement in statements {
+        if let Some(table) = parse_create_table(&statement, skip_plain_postgres)? {
             tables.insert(table.name.clone(), table);
         }
     }
@@ -121,15 +127,27 @@ fn split_create_table_statements(sql: &str) -> Vec<String> {
     statements
 }
 
-fn parse_create_table(statement: &str) -> Result<Option<TableDefinition>> {
-    let Some((kind, rest)) = strip_create_table_prefix(statement) else {
+fn parse_create_table(
+    statement: &str,
+    skip_plain_postgres: bool,
+) -> Result<Option<TableDefinition>> {
+    let Some((mut kind, rest)) = strip_create_table_prefix(statement) else {
         return Ok(None);
     };
 
-    let (name, body) = parse_table_name_and_body(rest)?;
+    let (name, body, suffix) = parse_table_name_and_body(rest)?;
+    if let Some(kalam_kind) = parse_using_kalamdb_kind(&suffix) {
+        kind = kalam_kind;
+    } else if skip_plain_postgres && kind == TableKind::Unspecified {
+        return Ok(None);
+    }
     let columns = parse_columns(&body)?;
 
     Ok(Some(TableDefinition { name, kind, columns }))
+}
+
+fn uses_kalamdb(statement: &str) -> bool {
+    statement.to_ascii_uppercase().contains("USING KALAMDB")
 }
 
 fn strip_create_table_prefix(statement: &str) -> Option<(TableKind, &str)> {
@@ -158,7 +176,7 @@ fn strip_ascii_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
-fn parse_table_name_and_body(rest: &str) -> Result<(String, String)> {
+fn parse_table_name_and_body(rest: &str) -> Result<(String, String, String)> {
     let rest = rest.trim();
     let open_paren = rest
         .find('(')
@@ -170,11 +188,46 @@ fn parse_table_name_and_body(rest: &str) -> Result<(String, String)> {
     let name = name_part.trim_matches('"').trim_matches('`').trim_matches('\'').to_string();
     validate_parsed_table_name(&name)?;
 
-    let close_paren = rest
-        .rfind(')')
-        .ok_or_else(|| CLIError::ParseError("expected ')' closing column list".into()))?;
+    let close_paren = matching_paren_close(rest, open_paren).ok_or_else(|| {
+        CLIError::ParseError("expected ')' closing column list".into())
+    })?;
     let body = rest[open_paren + 1..close_paren].to_string();
-    Ok((name, body))
+    let suffix = rest[close_paren + 1..].trim().to_string();
+    Ok((name, body, suffix))
+}
+
+fn matching_paren_close(value: &str, open_paren: usize) -> Option<usize> {
+    let mut depth = 0u32;
+    for (offset, ch) in value[open_paren..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open_paren + offset);
+                }
+            },
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_using_kalamdb_kind(suffix: &str) -> Option<TableKind> {
+    let upper = suffix.to_ascii_uppercase();
+    if !upper.contains("USING KALAMDB") {
+        return None;
+    }
+    let normalized = upper.replace('"', "'").replace(' ', "");
+    if normalized.contains("TYPE='STREAM'") {
+        Some(TableKind::Stream)
+    } else if normalized.contains("TYPE='SHARED'") {
+        Some(TableKind::Shared)
+    } else if normalized.contains("TYPE='USER'") {
+        Some(TableKind::User)
+    } else {
+        Some(TableKind::Unspecified)
+    }
 }
 
 fn validate_parsed_table_name(name: &str) -> Result<()> {
@@ -325,5 +378,62 @@ CREATE STREAM TABLE app.events (
         let events = snapshot.tables.get("app.events").unwrap();
         assert_eq!(events.kind, TableKind::Stream);
         assert!(events.columns.iter().any(|column| column.name == "id" && column.primary_key));
+    }
+
+    #[test]
+    fn parse_mixed_drizzle_keeps_only_kalamdb_tables() {
+        let sql = r#"
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  content JSONB NOT NULL,
+  attachment FILE,
+  created TEXT NOT NULL
+) USING kalamdb WITH (
+  type = 'user',
+  flush_policy = 'rows:100000,interval:10800'
+);
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL,
+  params JSONB NOT NULL,
+  created TEXT NOT NULL
+) USING kalamdb WITH (type = 'user');
+"#;
+        let snapshot = parse_sql_schema(sql).unwrap();
+        assert_eq!(snapshot.tables.len(), 2);
+        assert!(snapshot.tables.contains_key("messages"));
+        assert!(snapshot.tables.contains_key("notifications"));
+        assert!(!snapshot.tables.contains_key("users"));
+        assert!(!snapshot.tables.contains_key("conversations"));
+        assert_eq!(snapshot.tables["messages"].kind, TableKind::User);
+    }
+
+    #[test]
+    fn parse_postgres_using_kalamdb_user_tables() {
+        let sql = r#"
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  content JSONB NOT NULL,
+  attachment FILE,
+  created TEXT NOT NULL
+) USING kalamdb WITH (
+  type = 'user',
+  flush_policy = 'rows:100000,interval:10800'
+);
+"#;
+        let snapshot = parse_sql_schema(sql).unwrap();
+        let messages = snapshot.tables.get("messages").unwrap();
+        assert_eq!(messages.kind, TableKind::User);
+        assert_eq!(messages.columns.len(), 4);
+        assert_eq!(messages.columns[1].sql_type, "JSONB");
+        assert_eq!(messages.columns[2].sql_type, "FILE");
+        assert!(messages.columns[2].nullable);
     }
 }

@@ -81,12 +81,17 @@ final class KalamTableBinding<T> {
   }
 
   /// Creates a durable consumer that starts only when a widget/service uses it.
-  KalamEventConsumer consumer({required String sql, int? batchSize}) {
+  KalamEventConsumer consumer({
+    required String sql,
+    int? batchSize,
+    List<Object?>? params,
+  }) {
     return KalamEventConsumer(
       id: spec.subscriptionId,
       sql: sql,
       apply: applyRemoteChange,
       batchSize: batchSize,
+      params: params,
     );
   }
 

@@ -9,6 +9,7 @@ final class KalamSyncState {
     this.failedActions = 0,
     this.lastSuccessfulSync,
     this.error,
+    this.errorCode,
   });
 
   final KalamSyncPhase phase;
@@ -16,8 +17,12 @@ final class KalamSyncState {
   final int failedActions;
   final DateTime? lastSuccessfulSync;
   final String? error;
+  final String? errorCode;
 
   bool get hasPendingWork => pendingActions > 0;
+
+  bool get isAuthError =>
+      errorCode == 'TOKEN_EXPIRED' || errorCode == 'UNAUTHORIZED';
 
   KalamSyncState copyWith({
     KalamSyncPhase? phase,
@@ -25,6 +30,7 @@ final class KalamSyncState {
     int? failedActions,
     DateTime? lastSuccessfulSync,
     String? error,
+    String? errorCode,
     bool clearError = false,
   }) {
     return KalamSyncState(
@@ -33,6 +39,7 @@ final class KalamSyncState {
       failedActions: failedActions ?? this.failedActions,
       lastSuccessfulSync: lastSuccessfulSync ?? this.lastSuccessfulSync,
       error: clearError ? null : error ?? this.error,
+      errorCode: clearError ? null : errorCode ?? this.errorCode,
     );
   }
 
@@ -43,7 +50,8 @@ final class KalamSyncState {
         other.pendingActions == pendingActions &&
         other.failedActions == failedActions &&
         other.lastSuccessfulSync == lastSuccessfulSync &&
-        other.error == error;
+        other.error == error &&
+        other.errorCode == errorCode;
   }
 
   @override
@@ -53,5 +61,6 @@ final class KalamSyncState {
     failedActions,
     lastSuccessfulSync,
     error,
+    errorCode,
   );
 }

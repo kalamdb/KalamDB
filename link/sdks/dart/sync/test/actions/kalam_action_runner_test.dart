@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/native.dart';
@@ -289,5 +290,47 @@ void main() {
       (await store.readAction('action-1'))?.status,
       KalamActionStatus.succeeded,
     );
+  });
+
+  test('unrelated ordering keys flush concurrently', () async {
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    final secondStarted = Completer<void>();
+    final runner = KalamActionRunner(
+      store: store,
+      accountKey: 'server/user-a',
+      registry: KalamActionRegistry([
+        definition(
+          execute: (_, payload) async {
+            if (payload.text == 'first') {
+              firstStarted.complete();
+              await releaseFirst.future;
+            } else {
+              secondStarted.complete();
+            }
+          },
+        ),
+      ]),
+      clock: () => now,
+    );
+
+    await runner.enqueue(
+      actionKey: 'messages.send',
+      actionId: 'a',
+      orderingKey: 'conversation-1',
+      payload: const SendMessage('first'),
+    );
+    await runner.enqueue(
+      actionKey: 'messages.send',
+      actionId: 'b',
+      orderingKey: 'conversation-2',
+      payload: const SendMessage('second'),
+    );
+
+    final flushing = runner.flush();
+    await firstStarted.future;
+    await secondStarted.future;
+    releaseFirst.complete();
+    expect(await flushing, 2);
   });
 }

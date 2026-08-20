@@ -99,9 +99,14 @@ final class KalamSyncStore {
   }
 
   /// Returns and marks the oldest eligible action as running.
+  ///
+  /// Actions whose [orderingKey] is in [blockedOrderingKeys] are skipped so
+  /// unrelated keys can flush concurrently. A null/empty ordering key shares
+  /// one bucket (`''`) and stays FIFO with other unordered work.
   Future<KalamActionRecord?> claimNextAction(
     DateTime now, {
     String? accountKey,
+    Set<String> blockedOrderingKeys = const {},
   }) {
     return database.transaction(() async {
       final query = database.select(database.kalamActions)
@@ -114,14 +119,20 @@ final class KalamSyncStore {
               ? eligible
               : eligible & row.accountKey.equals(accountKey);
         })
-        ..orderBy([(row) => OrderingTerm.asc(row.queuePosition)])
-        ..limit(1);
-      final stored = await query.getSingleOrNull();
+        ..orderBy([(row) => OrderingTerm.asc(row.queuePosition)]);
+      final candidates = await query.get();
+      StoredAction? stored;
+      for (final row in candidates) {
+        final key = row.orderingKey ?? '';
+        if (blockedOrderingKeys.contains(key)) continue;
+        stored = row;
+        break;
+      }
       if (stored == null) return null;
 
       await (database.update(
         database.kalamActions,
-      )..where((row) => row.id.equals(stored.id))).write(
+      )..where((row) => row.id.equals(stored!.id))).write(
         KalamActionsCompanion(
           status: Value(KalamActionStatus.running.name),
           attemptCount: Value(stored.attemptCount + 1),
@@ -428,6 +439,18 @@ final class KalamSyncStore {
           );
       return true;
     });
+  }
+
+  Future<void> deleteCheckpoint({
+    required String accountKey,
+    required String subscriptionId,
+  }) {
+    return (database.delete(database.kalamCheckpoints)..where(
+          (row) =>
+              row.accountKey.equals(accountKey) &
+              row.subscriptionId.equals(subscriptionId),
+        ))
+        .go();
   }
 
   KalamActionRecord _toActionRecord(StoredAction stored) {

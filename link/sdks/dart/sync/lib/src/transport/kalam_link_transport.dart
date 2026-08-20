@@ -9,35 +9,105 @@ import 'kalam_sync_transport.dart';
 
 /// Adapts the existing shared `kalam_link` socket to the sync engine.
 final class KalamLinkTransport implements KalamSyncTransport {
-  KalamLinkTransport._(this.client, this._connections, this._connection);
+  KalamLinkTransport._({
+    required String url,
+    required AuthProvider authProvider,
+    required Duration? keepaliveInterval,
+    KalamClient? client,
+    required StreamController<KalamTransportConnection> connections,
+    required KalamTransportConnection connection,
+  }) : _url = url,
+       _authProvider = authProvider,
+       _keepaliveInterval = keepaliveInterval,
+       _client = client,
+       _connections = connections,
+       _connection = connection;
 
-  final KalamClient client;
+  final String _url;
+  final AuthProvider _authProvider;
+  final Duration? _keepaliveInterval;
+  KalamClient? _client;
+  Future<KalamClient>? _connecting;
   final StreamController<KalamTransportConnection> _connections;
   KalamTransportConnection _connection;
+  var _disposed = false;
+  var _connectCount = 0;
+
+  /// Opens SQLite-side transport metadata without resolving auth or connecting.
+  factory KalamLinkTransport.deferred({
+    required String url,
+    AuthProvider authProvider = _anonymousAuth,
+    Duration? keepaliveInterval,
+  }) {
+    return KalamLinkTransport._(
+      url: url,
+      authProvider: authProvider,
+      keepaliveInterval: keepaliveInterval,
+      connections: StreamController<KalamTransportConnection>.broadcast(),
+      connection: KalamTransportConnection.disconnected,
+    );
+  }
 
   static Future<KalamLinkTransport> connect({
     required String url,
     AuthProvider authProvider = _anonymousAuth,
+    Duration? keepaliveInterval,
   }) async {
-    final connections = StreamController<KalamTransportConnection>.broadcast();
-    var current = KalamTransportConnection.disconnected;
-    void Function(KalamTransportConnection connection) emit = (connection) {
-      current = connection;
-      connections.add(connection);
-    };
-    final client = await KalamClient.connect(
+    final transport = KalamLinkTransport.deferred(
       url: url,
       authProvider: authProvider,
+      keepaliveInterval: keepaliveInterval,
+    );
+    await transport.ensureClient();
+    return transport;
+  }
+
+  KalamClient? get clientOrNull => _client;
+
+  KalamClient get client {
+    final client = _client;
+    if (client == null) {
+      throw StateError('KalamLinkTransport has not connected yet.');
+    }
+    return client;
+  }
+
+  int get connectCount => _connectCount;
+
+  Future<KalamClient> ensureClient() {
+    if (_disposed) {
+      throw StateError('KalamLinkTransport is disposed.');
+    }
+    final existing = _client;
+    if (existing != null) return Future.value(existing);
+    return _connecting ??= _connectClient().whenComplete(() {
+      _connecting = null;
+    });
+  }
+
+  Future<KalamClient> _connectClient() async {
+    _connectCount++;
+    final connections = _connections;
+    var current = _connection;
+    void Function(KalamTransportConnection connection) emit = (connection) {
+      current = connection;
+      if (!connections.isClosed) connections.add(connection);
+    };
+    final client = await KalamClient.connect(
+      url: _url,
+      authProvider: _authProvider,
       wsLazyConnect: true,
+      keepaliveInterval: _keepaliveInterval,
       connectionHandlers: ConnectionHandlers(
         onConnect: () => emit(KalamTransportConnection.connected),
         onDisconnect: (_) => emit(KalamTransportConnection.disconnected),
         onError: (_) => emit(KalamTransportConnection.disconnected),
       ),
     );
-    final transport = KalamLinkTransport._(client, connections, current);
-    emit = transport._emitConnection;
-    return transport;
+    _client = client;
+    _connection = current;
+    emit = _emitConnection;
+    return client;
   }
 
   @override
@@ -52,13 +122,16 @@ final class KalamLinkTransport implements KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
-  }) {
-    return client
+    List<Object?>? params,
+  }) async* {
+    final client = await ensureClient();
+    yield* client
         .liveEventsWithAck(
           sql,
           subscriptionId: subscriptionId,
           from: from,
           batchSize: batchSize,
+          params: params,
         )
         .map((delivery) {
           _emitConnection(KalamTransportConnection.connected);
@@ -72,6 +145,7 @@ final class KalamLinkTransport implements KalamSyncTransport {
 
   @override
   Future<void> ensureConnected() async {
+    final client = await ensureClient();
     if (!await client.isConnected) await client.reconnectWebSocket();
     if (await client.isConnected) {
       _emitConnection(KalamTransportConnection.connected);
@@ -80,12 +154,18 @@ final class KalamLinkTransport implements KalamSyncTransport {
 
   @override
   Future<void> pause() async {
+    final client = _client;
+    if (client == null) {
+      _emitConnection(KalamTransportConnection.disconnected);
+      return;
+    }
     await client.disconnectWebSocket();
     _emitConnection(KalamTransportConnection.disconnected);
   }
 
   @override
   Future<void> resume() async {
+    final client = await ensureClient();
     await client.reconnectWebSocket();
     if (await client.isConnected) {
       _emitConnection(KalamTransportConnection.connected);
@@ -94,7 +174,9 @@ final class KalamLinkTransport implements KalamSyncTransport {
 
   @override
   Future<void> dispose() async {
-    await client.dispose();
+    _disposed = true;
+    await _client?.dispose();
+    _client = null;
     await _connections.close();
   }
 
@@ -167,6 +249,11 @@ final class KalamSubscriptionException implements Exception {
 
   final String code;
   final String message;
+
+  bool get isExpiredCursor {
+    final haystack = '$code $message'.toLowerCase();
+    return haystack.contains('expired') || haystack.contains('stale');
+  }
 
   @override
   String toString() => 'KalamSubscriptionException($code): $message';

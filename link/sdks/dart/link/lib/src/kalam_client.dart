@@ -11,6 +11,7 @@ import 'seq_id.dart';
 import 'generated/api.dart' as bridge;
 import 'generated/models.dart' as gen;
 import 'generated/frb_generated.dart';
+import 'sql_params.dart';
 import 'subscription_stream.dart';
 
 /// Default [AuthProvider] used when no auth is specified — returns [NoAuth].
@@ -553,20 +554,22 @@ class KalamClient {
     int? lastRows,
     SeqId? from,
     String? subscriptionId,
+    List<dynamic>? params,
     void Function(LiveCheckpoint checkpoint)? onCheckpoint,
     void Function(SubscriptionError error)? onError,
   }) {
+    final boundSql = bindSqlParams(sql, params);
     final logicalSubscriptionId =
         _ensureSubscriptionId(subscriptionId, prefix: 'events');
     return runBridgeSubscriptionStream<bridge.DartLiveEventsSubscription,
         gen.DartChangeEvent, ChangeEvent>(
-      description: 'live events for: $sql',
+      description: 'live events for: $boundSql',
       prepare: _prepareSubscriptionConnect,
       open: () => bridge.dartLiveEventsSubscribe(
         client: _handle,
-        sql: sql,
+        sql: boundSql,
         config: _buildSubscriptionConfig(
-          sql: sql,
+          sql: boundSql,
           subscriptionId: logicalSubscriptionId,
           batchSize: batchSize,
           lastRows: lastRows,
@@ -596,19 +599,21 @@ class KalamClient {
     int? lastRows,
     SeqId? from,
     String? subscriptionId,
+    List<dynamic>? params,
     void Function(SubscriptionError error)? onError,
   }) {
+    final boundSql = bindSqlParams(sql, params);
     final logicalSubscriptionId =
         _ensureSubscriptionId(subscriptionId, prefix: 'events-ack');
     return runBridgeSubscriptionStream<bridge.DartLiveEventsSubscription,
         gen.DartChangeEvent, LiveEventDelivery>(
-      description: 'acknowledged live events for: $sql',
+      description: 'acknowledged live events for: $boundSql',
       prepare: _prepareSubscriptionConnect,
       open: () => bridge.dartLiveEventsSubscribe(
         client: _handle,
-        sql: sql,
+        sql: boundSql,
         config: _buildSubscriptionConfig(
-          sql: sql,
+          sql: boundSql,
           subscriptionId: logicalSubscriptionId,
           batchSize: batchSize,
           lastRows: lastRows,

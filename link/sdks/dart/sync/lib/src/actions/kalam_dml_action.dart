@@ -8,11 +8,15 @@ import 'kalam_action_definition.dart';
 
 const kalamDmlActionKey = 'kalam.dml';
 
-KalamActionDefinition<KalamDmlPayload> kalamDmlAction(KalamClient client) {
+KalamActionDefinition<KalamDmlPayload> kalamDmlAction(
+  Future<KalamClient> Function() client,
+) {
   return KalamActionDefinition(
     key: kalamDmlActionKey,
     codec: const KalamActionCodec(encode: _encodeDml, decode: _decodeDml),
-    execute: (context, payload) => _executeDml(client, context, payload),
+    execute: (context, payload) async {
+      await _executeDml(await client(), context, payload);
+    },
   );
 }
 

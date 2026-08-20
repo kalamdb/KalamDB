@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:kalam_link/kalam_link.dart';
+
 import '../models/kalam_action_draft.dart';
 import '../models/kalam_action_record.dart';
 import '../models/kalam_optimistic_row.dart';
@@ -18,12 +20,15 @@ final class KalamActionRunner {
     required this.registry,
     required this.accountKey,
     KalamActionClock? clock,
-  }) : _clock = clock ?? DateTime.now;
+    Future<KalamClient> Function()? resolveClient,
+  }) : _clock = clock ?? DateTime.now,
+       _resolveClient = resolveClient;
 
   final KalamSyncStore store;
   final KalamActionRegistry registry;
   final String accountKey;
   final KalamActionClock _clock;
+  final Future<KalamClient> Function()? _resolveClient;
   Future<int>? _activeFlush;
 
   Future<KalamActionRecord> enqueue({
@@ -64,14 +69,30 @@ final class KalamActionRunner {
   Future<int> _flush() async {
     var completed = 0;
     await store.recoverRunningActions(_clock(), accountKey: accountKey);
+    final inFlight = <String, Future<void>>{};
+
+    Future<void> launch(KalamActionRecord action) {
+      final key = action.orderingKey ?? '';
+      final future = _execute(action).whenComplete(() {
+        inFlight.remove(key);
+        completed++;
+      });
+      inFlight[key] = future;
+      return future;
+    }
+
     while (true) {
       final action = await store.claimNextAction(
         _clock(),
         accountKey: accountKey,
+        blockedOrderingKeys: inFlight.keys.toSet(),
       );
-      if (action == null) return completed;
-      await _execute(action);
-      completed++;
+      if (action == null) {
+        if (inFlight.isEmpty) return completed;
+        await Future.any(inFlight.values);
+        continue;
+      }
+      launch(action);
     }
   }
 
@@ -97,6 +118,7 @@ final class KalamActionRunner {
           accountKey: action.accountKey,
           attempt: action.attemptCount,
           store: store,
+          resolveClient: _resolveClient,
         ),
         decoded,
       );

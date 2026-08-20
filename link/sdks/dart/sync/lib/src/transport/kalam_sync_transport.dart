@@ -1,6 +1,7 @@
 import 'package:kalam_link/kalam_link.dart';
 
 import 'kalam_remote_batch.dart';
+import 'kalam_remote_change.dart';
 
 enum KalamTransportConnection { disconnected, connected }
 
@@ -13,6 +14,7 @@ abstract interface class KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
+    List<Object?>? params,
   });
 
   Future<void> ensureConnected();

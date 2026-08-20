@@ -16,6 +16,7 @@ final class _WrapperTransport implements KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
+    List<Object?>? params,
   }) => const Stream.empty();
 
   @override
@@ -54,5 +55,57 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('table() projects into caller-owned local storage', () async {
+    final database = KalamSyncDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final localRows = <Map<String, Object?>>[];
+    final kalam = Kalam.fromComponents(
+      identity: const KalamAccountIdentity(
+        serverUrl: 'http://localhost:2900',
+        subject: 'admin',
+        namespace: 'app',
+      ),
+      database: database,
+      transport: _WrapperTransport(),
+    );
+    addTearDown(kalam.dispose);
+
+    final messages = kalam.table(
+      KalamTableSpec<Map<String, Object?>>(
+        tableId: 'public.messages',
+        keyColumn: 'id',
+        mode: KalamSyncMode.replicaOnly,
+        keyOf: (row) => row['id']! as String,
+        encode: (row) => row,
+        decode: (json) => json,
+      ),
+      watchLocal: () async* {
+        yield List.of(localRows);
+      },
+      upsertLocal: (row) async {
+        localRows
+          ..removeWhere((existing) => existing['id'] == row['id'])
+          ..add(row);
+      },
+      deleteLocal: (rowKey) async {
+        localRows.removeWhere((row) => row['id'] == rowKey);
+      },
+    );
+
+    await messages.applyServerChange(
+      const KalamChange(
+        kind: KalamChangeKind.insert,
+        rowKey: 'message-1',
+        row: {'id': 'message-1', 'text': 'projected'},
+        seq: SeqId(1),
+      ),
+    );
+
+    expect(localRows, [
+      {'id': 'message-1', 'text': 'projected'},
+    ]);
+    expect(await database.select(database.kalamCachedRows).get(), isEmpty);
   });
 }

@@ -213,7 +213,7 @@ fn dart_type_for_sql(sql_type: &str) -> &'static str {
         "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" => "double",
         "BOOLEAN" | "BOOL" => "bool",
         "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" | "DATE" | "TIME" => "DateTime",
-        "JSON" | "JSONB" => "Map<String, Object?>",
+        "JSON" | "JSONB" | "FILE" => "Map<String, Object?>",
         "BYTES" | "BYTEA" | "BLOB" | "BINARY" => "String",
         "EMBEDDING" => "List<double>",
         _ => "String",
@@ -450,6 +450,25 @@ CREATE STREAM TABLE app.message_events (
         assert!(source.contains("static final messageEvents = KalamTableSpec<MessageEvents>("));
         assert!(source.contains("mode: KalamSyncMode.replicaOnly"));
         assert!(source.contains("Map<String, Object?>? payload"));
+    }
+
+    #[test]
+    fn file_and_jsonb_columns_use_map_codecs() {
+        let snapshot = parse_sql_schema(
+            r#"
+CREATE TABLE IF NOT EXISTS public.messages (
+  id TEXT PRIMARY KEY,
+  content JSONB NOT NULL,
+  attachment FILE
+) USING kalamdb WITH (type = 'user');
+"#,
+        )
+        .unwrap();
+        let source = generate_dart_source(&snapshot);
+        assert!(source.contains("tableId: 'public.messages'"));
+        assert!(source.contains("Map<String, Object?> content"));
+        assert!(source.contains("Map<String, Object?>? attachment"));
+        assert!(source.contains("mode: KalamSyncMode.bidirectional"));
     }
 
     #[test]

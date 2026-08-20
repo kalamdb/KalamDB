@@ -86,8 +86,8 @@ class ConversationState extends State<Conversation> {
     }
     kalam
         .subscribe(messages.consumer(
-          sql: "SELECT * FROM app.messages "
-              "WHERE conversation_id = '$conversationId'",
+          sql: 'SELECT * FROM app.messages WHERE conversation_id = \$1',
+          params: [conversationId],
         ))
         .then((value) {
           if (mounted) {
@@ -106,10 +106,22 @@ class ConversationState extends State<Conversation> {
 }
 ```
 
-`liveEvents` does not currently accept bind parameters, so validate any value
-before placing it in a subscription query. The example permits only a narrow
-identifier alphabet; generated query helpers should apply the server type's
-exact validation rule.
+`liveEvents` / `liveEventsWithAck` accept the same `params` list as `query()`.
+
+Headless catch-up uses that same live query (`from:` the committed checkpoint,
+`batchSize:` the row limit) and disconnects when the bound is hit:
+
+```dart
+final result = await Kalam.catchUp(
+  url: serverUrl,
+  subject: userId,
+  namespace: 'public',
+  authProvider: () async => Auth.jwt(await tokens.freshAccessToken()),
+  consumers: [messages.consumer(sql: 'SELECT * FROM public.messages')],
+  rowLimit: 100,
+  timeout: const Duration(seconds: 30),
+);
+```
 
 ## Backend-authoritative messages with offline actions
 
@@ -151,6 +163,7 @@ class ChatActions {
       },
       encode: (value) => value,
       decode: (value) => value == true,
+    );
     );
     await context.step<bool>(
       'deliver',
@@ -204,6 +217,24 @@ For multi-endpoint workflows, use `context.step(...)`. A completed named step
 is persisted and reused after retry or process restart. Every remote endpoint
 must still honor the supplied idempotency key because a response can be lost
 after the server commits.
+
+Multipart `FILE("placeholder")` uploads use the same step machinery:
+
+```dart
+await context.queryWithFiles(
+  'upload',
+  sql: r"INSERT INTO app.messages (id, attachment) VALUES ($1, FILE('file'))",
+  files: [
+    KalamFileUpload(
+      placeholder: 'file',
+      filename: 'photo.jpg',
+      data: bytes,
+      mime: 'image/jpeg',
+    ),
+  ],
+  params: [messageId],
+);
+```
 
 ## Generation boundary
 

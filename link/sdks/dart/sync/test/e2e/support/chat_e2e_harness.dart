@@ -41,6 +41,7 @@ final class CountingTransport implements KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
+    List<Object?>? params,
   }) {
     return delegate
         .subscribe(
@@ -48,6 +49,7 @@ final class CountingTransport implements KalamSyncTransport {
           subscriptionId: subscriptionId,
           from: from,
           batchSize: batchSize,
+          params: params,
         )
         .map((batch) {
           if (batch.checkpoint != null) {

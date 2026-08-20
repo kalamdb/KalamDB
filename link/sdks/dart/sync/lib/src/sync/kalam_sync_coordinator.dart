@@ -5,8 +5,10 @@ import '../models/kalam_action_status.dart';
 import '../models/kalam_action_record.dart';
 import '../models/kalam_sync_state.dart';
 import '../store/kalam_sync_store.dart';
+import '../transport/kalam_link_transport.dart';
 import '../transport/kalam_remote_batch.dart';
 import '../transport/kalam_sync_transport.dart';
+import 'kalam_consume_context.dart';
 import 'kalam_event_consumer.dart';
 import 'kalam_sync_subscription.dart';
 
@@ -17,6 +19,7 @@ final class KalamSyncCoordinator {
     required this.store,
     required this.transport,
     required this.actions,
+    this.pauseIdleTimeout = const Duration(seconds: 5),
   }) {
     _connectionSubscription = transport.connectionStates
         .asyncMap(_handleConnection)
@@ -28,6 +31,7 @@ final class KalamSyncCoordinator {
   final KalamSyncStore store;
   final KalamSyncTransport transport;
   final KalamActionRunner actions;
+  final Duration pauseIdleTimeout;
   final Map<String, _ActiveConsumer> _consumers = {};
   final StreamController<KalamSyncState> _states = StreamController.broadcast();
   StreamSubscription<void>? _connectionSubscription;
@@ -39,6 +43,8 @@ final class KalamSyncCoordinator {
   bool _disposed = false;
   bool _flushInProgress = false;
   bool _connectInProgress = false;
+  int _inFlightApplies = 0;
+  int _lifecycleGeneration = 0;
 
   KalamSyncState get state => _state;
   Stream<KalamSyncState> get states async* {
@@ -63,23 +69,30 @@ final class KalamSyncCoordinator {
 
   Future<void> pause() async {
     if (_paused || _disposed) return;
+    final generation = ++_lifecycleGeneration;
     _paused = true;
+    _emit(_state.copyWith(phase: KalamSyncPhase.paused, clearError: true));
+    await _waitForIdle(generation);
+    if (generation != _lifecycleGeneration || _disposed || !_paused) return;
     for (final active in _consumers.values) {
       await active.subscription?.cancel();
       active.subscription = null;
     }
+    if (generation != _lifecycleGeneration || _disposed || !_paused) return;
     await transport.pause();
-    _emit(_state.copyWith(phase: KalamSyncPhase.paused, clearError: true));
   }
 
   Future<void> resume() async {
     _ensureOpen();
+    final generation = ++_lifecycleGeneration;
     if (!_paused) return;
     _paused = false;
     await transport.resume();
+    if (generation != _lifecycleGeneration || _disposed || _paused) return;
     for (final active in _consumers.values) {
       await _open(active);
     }
+    if (generation != _lifecycleGeneration || _disposed || _paused) return;
     _emit(
       _state.copyWith(
         phase: _connected ? KalamSyncPhase.catchingUp : KalamSyncPhase.offline,
@@ -91,6 +104,7 @@ final class KalamSyncCoordinator {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _lifecycleGeneration++;
     for (final active in _consumers.values) {
       await active.subscription?.cancel();
     }
@@ -99,6 +113,15 @@ final class KalamSyncCoordinator {
     await _actionSubscription?.cancel();
     _retryTimer?.cancel();
     await _states.close();
+  }
+
+  Future<void> _waitForIdle(int generation) async {
+    final deadline = DateTime.now().add(pauseIdleTimeout);
+    while ((_flushInProgress || _inFlightApplies > 0) &&
+        DateTime.now().isBefore(deadline)) {
+      if (generation != _lifecycleGeneration || _disposed || !_paused) return;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
   }
 
   Future<void> _open(_ActiveConsumer active) async {
@@ -120,6 +143,7 @@ final class KalamSyncCoordinator {
           subscriptionId: active.consumer.id,
           from: checkpoint?.seq,
           batchSize: active.consumer.batchSize,
+          params: active.consumer.params,
         )
         .asyncMap((batch) => _applyBatch(active.consumer, batch))
         .listen(
@@ -136,7 +160,7 @@ final class KalamSyncCoordinator {
           },
           onError: (Object error, StackTrace stackTrace) {
             if (active.generation == generation) active.subscription = null;
-            _onError(error, stackTrace);
+            unawaited(_handleSubscribeError(active, error, stackTrace));
           },
           onDone: () {
             if (active.generation == generation) active.subscription = null;
@@ -145,37 +169,64 @@ final class KalamSyncCoordinator {
         );
   }
 
+  Future<void> _handleSubscribeError(
+    _ActiveConsumer active,
+    Object error,
+    StackTrace stackTrace,
+  ) async {
+    if (_disposed || active.isCancelled) return;
+    if (error is KalamSubscriptionException &&
+        error.isExpiredCursor &&
+        !active.rebootstrapAttempted &&
+        !_paused) {
+      active.rebootstrapAttempted = true;
+      await store.deleteCheckpoint(
+        accountKey: accountKey,
+        subscriptionId: active.consumer.id,
+      );
+      await _open(active);
+      return;
+    }
+    _onError(error, stackTrace);
+  }
+
   Future<void> _applyBatch(
     KalamEventConsumer consumer,
     KalamRemoteBatch batch,
   ) async {
-    final checkpoint = batch.checkpoint;
-    if (checkpoint == null) {
-      await batch.acknowledge();
-      return;
-    }
+    _inFlightApplies++;
+    try {
+      final checkpoint = batch.checkpoint;
+      if (checkpoint == null) {
+        await batch.acknowledge();
+        return;
+      }
 
-    final committed = await store.readCheckpoint(
-      accountKey: accountKey,
-      subscriptionId: consumer.id,
-    );
-    final changes = batch.changes.toList(growable: false)
-      ..sort((first, second) => first.seq.compareTo(second.seq));
-    await store.applyAndCheckpoint(
-      accountKey: accountKey,
-      subscriptionId: consumer.id,
-      seq: checkpoint,
-      apply: () async {
-        var appliedThrough = committed?.seq;
-        for (final change in changes) {
-          if (appliedThrough != null && change.seq <= appliedThrough) continue;
-          await consumer.apply(change);
-          appliedThrough = change.seq;
-        }
-        return null;
-      },
-    );
-    await batch.acknowledge();
+      final committed = await store.readCheckpoint(
+        accountKey: accountKey,
+        subscriptionId: consumer.id,
+      );
+      final changes = batch.changes.toList(growable: false)
+        ..sort((first, second) => first.seq.compareTo(second.seq));
+      final context = KalamConsumeContext(actions: actions);
+      await store.applyAndCheckpoint(
+        accountKey: accountKey,
+        subscriptionId: consumer.id,
+        seq: checkpoint,
+        apply: () async {
+          var appliedThrough = committed?.seq;
+          for (final change in changes) {
+            if (appliedThrough != null && change.seq <= appliedThrough) continue;
+            await consumer.handle(change, context);
+            appliedThrough = change.seq;
+          }
+          return null;
+        },
+      );
+      await batch.acknowledge();
+    } finally {
+      _inFlightApplies--;
+    }
   }
 
   Future<void> _handleConnection(KalamTransportConnection connection) async {
@@ -187,6 +238,9 @@ final class KalamSyncCoordinator {
         active.subscription = null;
       }
       _emit(_state.copyWith(phase: KalamSyncPhase.offline));
+      if (_consumers.isNotEmpty) {
+        unawaited(_ensureConnected());
+      }
       return;
     }
     for (final active in _consumers.values) {
@@ -274,9 +328,22 @@ final class KalamSyncCoordinator {
 
   void _onError(Object error, [StackTrace? _]) {
     if (_disposed) return;
+    final code = _errorCode(error);
     _emit(
-      _state.copyWith(phase: KalamSyncPhase.error, error: error.toString()),
+      _state.copyWith(
+        phase: KalamSyncPhase.error,
+        error: error.toString(),
+        errorCode: code,
+      ),
     );
+  }
+
+  String? _errorCode(Object error) {
+    if (error is KalamSubscriptionException) return error.code;
+    final text = error.toString();
+    if (text.contains('TOKEN_EXPIRED')) return 'TOKEN_EXPIRED';
+    if (text.contains('UNAUTHORIZED')) return 'UNAUTHORIZED';
+    return null;
   }
 
   void _emit(KalamSyncState next) {
@@ -297,6 +364,7 @@ final class _ActiveConsumer {
   StreamSubscription<dynamic>? subscription;
   int generation = 0;
   bool cancelled = false;
+  bool rebootstrapAttempted = false;
 
   bool get isCancelled => cancelled;
 }

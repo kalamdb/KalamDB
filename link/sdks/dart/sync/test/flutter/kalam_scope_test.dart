@@ -25,6 +25,7 @@ final class ScopeTransport implements KalamSyncTransport {
     required String subscriptionId,
     SeqId? from,
     int? batchSize,
+    List<Object?>? params,
   }) => const Stream.empty();
 
   @override
@@ -70,6 +71,18 @@ void main() {
     );
 
     expect(found, same(kalam));
+  });
+
+  testWidgets('does not pause while the app is only inactive', (tester) async {
+    await tester.pumpWidget(KalamScope(kalam: kalam, child: const SizedBox()));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(transport.pauseCount, 0);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(transport.pauseCount, 1);
   });
 
   testWidgets('reads the session during widget initialization', (tester) async {
