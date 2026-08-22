@@ -48,6 +48,7 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -140,6 +141,7 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -248,6 +250,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await

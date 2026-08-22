@@ -31,7 +31,7 @@ where
     K: Clone + AsRef<[u8]> + Send + Sync,
     F: Fn(&T) -> K + Send + Sync,
 {
-    func: F,
+    func:       F,
     _phantom_t: std::marker::PhantomData<T>,
     _phantom_k: std::marker::PhantomData<K>,
 }

@@ -219,12 +219,12 @@ where
     K: StorageKey,
     V: KSerializable + 'static,
 {
-    backend: Arc<dyn StorageBackend>,
-    partition: String,
-    main_partition: Partition,
-    indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+    backend:          Arc<dyn StorageBackend>,
+    partition:        String,
+    main_partition:   Partition,
+    indexes:          Vec<Arc<dyn IndexDefinition<K, V>>>,
     index_partitions: Vec<Partition>,
-    _marker: std::marker::PhantomData<(K, V)>,
+    _marker:          std::marker::PhantomData<(K, V)>,
 }
 
 impl<K, V> IndexedEntityStore<K, V>
@@ -252,8 +252,7 @@ where
     pub fn new(
         backend: Arc<dyn StorageBackend>,
         partition: impl Into<String>,
-        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
-    ) -> Self {
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>) -> Self {
         let partition_str = partition.into();
 
         // Ensure main partition exists
@@ -392,8 +391,8 @@ where
                 let index_value = index.index_value(key, entity);
                 operations.push(Operation::Put {
                     partition: index_partition.clone(),
-                    key: index_key,
-                    value: index_value,
+                    key:       index_key,
+                    value:     index_value,
                 });
             }
         }
@@ -462,8 +461,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key: index_key,
-                        value: index_value,
+                        key:       index_key,
+                        value:     index_value,
                     });
                 }
             }
@@ -491,8 +490,7 @@ where
     pub fn insert_batch_preencoded(
         &self,
         entries: &[(K, V)],
-        encoded_values: Vec<Vec<u8>>,
-    ) -> Result<()> {
+        encoded_values: Vec<Vec<u8>>) -> Result<()> {
         let _span = kalamdb_observability::kdb_debug_span_entered!(
             "store.insert_batch_preencoded",
             count = entries.len()
@@ -520,8 +518,8 @@ where
                     let index_value = index.index_value(key, entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key: index_key,
-                        value: index_value,
+                        key:       index_key,
+                        value:     index_value,
                     });
                 }
             }
@@ -584,7 +582,7 @@ where
                 if let Some(old_key) = old_index_key {
                     operations.push(Operation::Delete {
                         partition: index_partition.clone(),
-                        key: old_key,
+                        key:       old_key,
                     });
                 }
 
@@ -592,8 +590,8 @@ where
                     let index_value = index.index_value(key, new_entity);
                     operations.push(Operation::Put {
                         partition: index_partition.clone(),
-                        key: idx_key,
-                        value: index_value,
+                        key:       idx_key,
+                        value:     index_value,
                     });
                 }
             }
@@ -635,7 +633,7 @@ where
             if let Some(index_key) = index.extract_key(key, entity) {
                 operations.push(Operation::Delete {
                     partition: index_partition.clone(),
-                    key: index_key,
+                    key:       index_key,
                 });
             }
         }
@@ -667,7 +665,7 @@ where
             // Main entity delete is always needed
             operations.push(Operation::Delete {
                 partition: self.main_partition.clone(),
-                key: key.storage_key(),
+                key:       key.storage_key(),
             });
 
             // Index cleanup requires fetching the entity to extract index keys
@@ -679,7 +677,7 @@ where
                         if let Some(index_key) = index.extract_key(key, &entity) {
                             operations.push(Operation::Delete {
                                 partition: index_partition.clone(),
-                                key: index_key,
+                                key:       index_key,
                             });
                         }
                     }
@@ -716,8 +714,7 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<Vec<(K, V)>> {
+        limit: Option<usize>) -> Result<Vec<(K, V)>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -747,8 +744,7 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<EntityIterator<'_, K, V>> {
+        limit: Option<usize>) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -791,8 +787,7 @@ where
     pub fn get_latest_by_index_prefix(
         &self,
         index_idx: usize,
-        prefix: &[u8],
-    ) -> Result<Option<(K, V)>> {
+        prefix: &[u8]) -> Result<Option<(K, V)>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -849,8 +844,7 @@ where
         index_idx: usize,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<IndexRawTypedIterator<'_, K>> {
+        limit: Option<usize>) -> Result<IndexRawTypedIterator<'_, K>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -874,8 +868,7 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<IndexKeyIterator<'_, K>> {
+        limit: Option<usize>) -> Result<IndexKeyIterator<'_, K>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -920,12 +913,12 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            backend: Arc::clone(&self.backend),
-            partition: self.partition.clone(),
-            main_partition: self.main_partition.clone(),
-            indexes: self.indexes.clone(),
+            backend:          Arc::clone(&self.backend),
+            partition:        self.partition.clone(),
+            main_partition:   self.main_partition.clone(),
+            indexes:          self.indexes.clone(),
             index_partitions: self.index_partitions.clone(),
-            _marker: std::marker::PhantomData,
+            _marker:          std::marker::PhantomData,
         }
     }
 }
@@ -970,8 +963,7 @@ where
         &self,
         index_idx: usize,
         prefix: Option<Vec<u8>>,
-        limit: Option<usize>,
-    ) -> Result<Vec<(K, V)>> {
+        limit: Option<usize>) -> Result<Vec<(K, V)>> {
         let store = self.clone();
         run_blocking_result(move || store.scan_by_index(index_idx, prefix.as_deref(), limit)).await
     }
@@ -986,8 +978,7 @@ where
     pub async fn get_latest_by_index_prefix_async(
         &self,
         index_idx: usize,
-        prefix: Vec<u8>,
-    ) -> Result<Option<(K, V)>> {
+        prefix: Vec<u8>) -> Result<Option<(K, V)>> {
         self.get_latest_by_index_prefix(index_idx, &prefix)
     }
 
@@ -1006,8 +997,7 @@ where
         &self,
         limit: Option<usize>,
         prefix: Option<K>,
-        start_key: Option<K>,
-    ) -> Result<Vec<(Vec<u8>, V)>> {
+        start_key: Option<K>) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         run_blocking_result(move || {
             let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;

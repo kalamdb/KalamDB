@@ -16,9 +16,8 @@ use kalamdb_commons::{schemas::TableDefinition, SystemTable};
 use kalamdb_system::LiveQuery;
 use parking_lot::RwLock;
 
-use crate::view_base::VirtualView;
-
 use super::common::SystemViewProvider;
+use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(live_schema_for_live, @ LiveView::definition_for(SystemTable::Live));
 
@@ -34,7 +33,7 @@ pub type LiveSnapshotCallback = Arc<dyn Fn() -> Vec<LiveQuery> + Send + Sync>;
 
 /// Virtual view that snapshots active subscriptions from memory.
 pub struct LiveView {
-    system_table: SystemTable,
+    system_table:      SystemTable,
     snapshot_callback: Arc<RwLock<Option<LiveSnapshotCallback>>>,
 }
 
@@ -64,8 +63,7 @@ impl LiveView {
             SystemTable::Live => {
                 let mut definition = LiveQuery::definition();
                 definition.table_comment = Some(
-                    "Active in-memory live subscriptions (computed on each query)".to_string(),
-                );
+                    "Active in-memory live subscriptions (computed on each query)".to_string());
                 definition
             },
             _ => unreachable!("LiveView only supports system.live"),
@@ -145,8 +143,7 @@ impl VirtualView for LiveView {
                 Arc::new(changes.finish()) as ArrayRef,
                 Arc::new(node_ids.finish()) as ArrayRef,
                 Arc::new(last_ping_ats.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| {
             crate::error::RegistryError::Other(format!("Failed to build live view batch: {}", e))
         })

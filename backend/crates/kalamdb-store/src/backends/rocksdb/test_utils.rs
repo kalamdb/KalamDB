@@ -15,7 +15,7 @@ use crate::storage_trait::StorageBackend;
 /// Test database wrapper that automatically cleans up on drop.
 pub struct TestDb {
     /// RocksDB instance
-    pub db: Arc<DB>,
+    pub db:   Arc<DB>,
     /// Temporary directory (kept alive for the duration of the test)
     #[allow(dead_code)]
     temp_dir: TempDir,

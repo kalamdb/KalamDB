@@ -11,8 +11,9 @@ use kalamdb_commons::{
         rows::Row,
         OperationKind, ReadContext, Role, TransactionId, TransactionOrigin, UserId,
     },
-    NamespaceId, TableType,
+    NamespaceId, PolicyCommand, TableId, TableType,
 };
+use kalamdb_tables::SharedTableProvider;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::SessionUserContext;
 use kalamdb_transactions::{
@@ -70,15 +71,45 @@ impl OperationService {
         SessionContext::new_with_state(state)
     }
 
-    /// Determine the appropriate role for a scan based on the table type.
+    /// Bind the typed-path role from table type.
     ///
-    /// User/Stream tables use `Role::User` to enforce RLS (row-level security).
-    /// Shared tables use `Role::Service` to allow access to Restricted/Private tables.
+    /// User/Stream tables use `Role::User`. Shared tables use `Role::Service`,
+    /// which is still subject to FORCE RLS (PUBLIC policies include Service).
     fn role_for_table_type(table_type: TableType) -> Role {
         match table_type {
             TableType::User | TableType::Stream => Role::User,
             _ => Role::Service,
         }
+    }
+
+    /// Evaluate INSERT WITH CHECK before any overlay is staged.
+    ///
+    /// Typed shared writes fail closed without a principal or a matching policy.
+    /// UPDATE/DELETE stay rejected on this path until they carry old/new rows.
+    async fn authorize_typed_shared_insert(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        rows: &[Row],
+    ) -> Result<(), Status> {
+        let user_id = user_id.ok_or_else(|| {
+            Status::permission_denied(
+                "typed shared-table writes require an authenticated principal and WITH CHECK \
+                 policy; use SQL",
+            )
+        })?;
+        let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
+            Status::not_found(format!("shared table {table_id} not found"))
+        })?;
+        let shared = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                Status::failed_precondition(format!("{table_id} is not a shared table"))
+            })?;
+        shared
+            .check_rows_authorized(user_id, Role::Service, PolicyCommand::Insert, true, rows, None)
+            .await
+            .map_err(|error| Status::permission_denied(error.to_string()))
     }
 
     fn active_transaction_for_session(
@@ -285,6 +316,11 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_scan(&self, request: ScanRequest) -> Result<ScanResult, Status> {
+        if request.table_type == TableType::Shared && request.user_id.is_none() {
+            return Err(Status::unauthenticated(
+                "shared-table scans require an authenticated principal",
+            ));
+        }
         let role = Self::role_for_table_type(request.table_type);
         // Non-transactional scans pay only the idle-session lookup above. The
         // transaction query extension is attached only when a live transaction exists.
@@ -309,6 +345,14 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_insert(&self, request: InsertRequest) -> Result<MutationResult, Status> {
+        if request.table_type == TableType::Shared {
+            self.authorize_typed_shared_insert(
+                &request.table_id,
+                request.user_id.as_ref(),
+                &request.rows,
+            )
+            .await?;
+        }
         // Autocommit requests pay only the owner-key lookup here; we do not allocate
         // transaction overlays or staged write buffers unless an explicit transaction is active.
         if let Some(transaction_id) =
@@ -344,6 +388,12 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_update(&self, request: UpdateRequest) -> Result<MutationResult, Status> {
+        if request.table_type == TableType::Shared {
+            return Err(Status::permission_denied(
+                "typed shared-table writes are disabled until the caller supplies an RLS-complete \
+                 role context; use SQL",
+            ));
+        }
         // Preserve the autocommit fast path: one presence check, then go straight to the applier.
         if let Some(transaction_id) =
             self.active_transaction_for_session(request.session_id.as_deref())?
@@ -388,6 +438,12 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_delete(&self, request: DeleteRequest) -> Result<MutationResult, Status> {
+        if request.table_type == TableType::Shared {
+            return Err(Status::permission_denied(
+                "typed shared-table writes are disabled until the caller supplies an RLS-complete \
+                 role context; use SQL",
+            ));
+        }
         // Preserve the autocommit fast path: avoid transaction-specific allocations when absent.
         if let Some(transaction_id) =
             self.active_transaction_for_session(request.session_id.as_deref())?
@@ -566,13 +622,13 @@ mod tests {
     async fn scan_nonexistent_table_returns_not_found() {
         let (_app_ctx, svc) = setup();
         let req = ScanRequest {
-            table_id: TableId::new(NamespaceId::new("no_ns"), TableName::new("no_table")),
+            table_id:   TableId::new(NamespaceId::new("no_ns"), TableName::new("no_table")),
             table_type: TableType::Shared,
             session_id: None,
-            columns: vec![],
-            limit: None,
-            user_id: None,
-            filters: vec![],
+            columns:    vec![],
+            limit:      None,
+            user_id:    Some(UserId::new("service")),
+            filters:    vec![],
         };
         let err = svc.execute_scan(req).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
@@ -591,7 +647,7 @@ mod tests {
                 session_id: None,
                 columns: vec![],
                 limit: None,
-                user_id: None,
+                user_id: Some(UserId::new("service")),
                 filters: vec![],
             })
             .await
@@ -627,7 +683,7 @@ mod tests {
                 session_id: None,
                 columns: vec![],
                 limit: None,
-                user_id: None,
+                user_id: Some(UserId::new("service")),
                 filters: vec![],
             })
             .await
@@ -665,7 +721,7 @@ mod tests {
                 session_id: None,
                 columns: vec!["name".to_string()],
                 limit: None,
-                user_id: None,
+                user_id: Some(UserId::new("service")),
                 filters: vec![],
             })
             .await
@@ -687,7 +743,7 @@ mod tests {
                 session_id: None,
                 columns: vec!["nonexistent_col".to_string()],
                 limit: None,
-                user_id: None,
+                user_id: Some(UserId::new("service")),
                 filters: vec![],
             })
             .await
@@ -725,7 +781,7 @@ mod tests {
                 session_id: None,
                 columns: vec![],
                 limit: Some(2),
-                user_id: None,
+                user_id: Some(UserId::new("service")),
                 filters: vec![],
             })
             .await
@@ -743,11 +799,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id: TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                rows: vec![empty_row()],
-                user_id: None,
+                rows:       vec![empty_row()],
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -759,12 +815,12 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id: TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                updates: vec![empty_row()],
-                pk_value: "some_pk".to_string(),
-                user_id: None,
+                updates:    vec![empty_row()],
+                pk_value:   "some_pk".to_string(),
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -776,11 +832,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id: TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
-                pk_value: "some_pk".to_string(),
-                user_id: None,
+                pk_value:   "some_pk".to_string(),
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -796,11 +852,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id: TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                rows: vec![empty_row()],
-                user_id: None,
+                rows:       vec![empty_row()],
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -813,12 +869,12 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id: TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                updates: vec![empty_row()],
-                pk_value: "pk".to_string(),
-                user_id: None,
+                updates:    vec![empty_row()],
+                pk_value:   "pk".to_string(),
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -830,11 +886,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id: TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
-                pk_value: "pk".to_string(),
-                user_id: None,
+                pk_value:   "pk".to_string(),
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -846,11 +902,11 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id: TableId::new(NamespaceId::new("default"), TableName::new("events")),
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("events")),
                 table_type: TableType::Stream,
                 session_id: None,
-                rows: vec![empty_row()],
-                user_id: None,
+                rows:       vec![empty_row()],
+                user_id:    None,
             })
             .await
             .unwrap_err();
@@ -859,7 +915,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_with_active_pg_transaction_stages_into_coordinator() {
+    async fn shared_insert_with_active_pg_transaction_fails_closed() {
         let (app_ctx, svc) = setup();
         let session_id = "pg-321-deadbeef";
         let transaction_id = app_ctx
@@ -875,28 +931,105 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(42)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some("staged item".to_string())));
 
-        let result = svc
+        let error = svc
             .execute_insert(InsertRequest {
-                table_id: TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
-                user_id: None,
-                rows: vec![Row::new(values)],
+                user_id:    None,
+                rows:       vec![Row::new(values)],
             })
             .await
-            .expect("insert should stage successfully");
+            .expect_err("shared typed write must not bypass RLS");
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
 
-        assert_eq!(result.affected_rows, 1);
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_none(),
+            "rejected typed shared writes must not stage an overlay"
+        );
+    }
 
-        let overlay = app_ctx
+    #[tokio::test]
+    async fn shared_insert_with_public_policy_stages_overlay() {
+        let (app_ctx, svc) = setup();
+        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("policy_items"));
+        let id_col = ColumnDefinition::new(
+            1,
+            "id".to_string(),
+            1,
+            KalamDataType::BigInt,
+            false,
+            true,
+            false,
+            kalamdb_commons::schemas::ColumnDefault::None,
+            None,
+        );
+        let name_col = ColumnDefinition::simple(2, "name", 2, KalamDataType::Text);
+        let mut table_def = TableDefinition::new(
+            table_id.namespace_id().clone(),
+            table_id.table_name().clone(),
+            TableType::Shared,
+            vec![id_col, name_col],
+            TableOptions::shared(),
+            None,
+        )
+        .expect("shared table definition");
+        app_ctx
+            .system_columns_service()
+            .add_system_columns(&mut table_def)
+            .expect("system columns");
+        app_ctx.schema_registry().register_table(table_def).expect("register shared table");
+
+        app_ctx
+            .system_tables()
+            .table_policies()
+            .create_policy(kalamdb_commons::TablePolicy::new(
+                kalamdb_commons::PolicyId::new(table_id.clone(), "public_all").expect("policy id"),
+                table_id.clone(),
+                "public_all",
+                PolicyCommand::All,
+                vec![kalamdb_commons::PolicyTarget::Public],
+                Some("true".to_string()),
+                Some("true".to_string()),
+                Some(kalamdb_commons::PolicyProgram::RowLocal {
+                    expr: kalamdb_commons::BoundExprShape::Literal(true),
+                }),
+                Some(kalamdb_commons::PolicyProgram::RowLocal {
+                    expr: kalamdb_commons::BoundExprShape::Literal(true),
+                }),
+                0,
+                1,
+            ))
+            .await
+            .expect("create public ALL policy");
+
+        let session_id = "pg-322-cafef00d";
+        let transaction_id = app_ctx
             .transaction_coordinator()
-            .get_overlay(&transaction_id)
-            .expect("overlay should exist after staging");
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("items"));
-        let entry = overlay
-            .latest_visible_entry(&table_id, "42")
-            .expect("latest staged row should be visible in overlay");
-        assert_eq!(entry.operation_kind, OperationKind::Insert);
-        assert!(!entry.tombstone);
+            .begin(
+                crate::transactions::ExecutionOwnerKey::from_pg_session_id(session_id).unwrap(),
+                session_id.to_string().into(),
+                kalamdb_commons::models::TransactionOrigin::PgRpc,
+            )
+            .unwrap();
+
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
+        values.insert("name".to_string(), ScalarValue::Utf8(Some("granted".to_string())));
+
+        svc.execute_insert(InsertRequest {
+            table_id,
+            table_type: TableType::Shared,
+            session_id: Some(session_id.to_string()),
+            user_id:    Some(UserId::new("policy-writer")),
+            rows:       vec![Row::new(values)],
+        })
+        .await
+        .expect("WITH CHECK true must allow typed shared insert");
+
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_some(),
+            "authorized typed shared insert must stage an overlay"
+        );
     }
 }

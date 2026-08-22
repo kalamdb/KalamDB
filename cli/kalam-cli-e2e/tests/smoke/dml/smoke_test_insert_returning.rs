@@ -31,10 +31,11 @@ fn smoke_insert_returning_seq_single_row() {
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL,
             value INT
-        ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')"#,
+        ) WITH (TYPE='SHARED')"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
+    grant_public_shared_table_access(&full);
 
     // 2) INSERT row
     let ins_sql = format!("INSERT INTO {} (name, value) VALUES ('test_item', 42)", full);
@@ -76,10 +77,11 @@ fn smoke_insert_returning_seq_multi_row() {
         r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR NOT NULL
-        ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')"#,
+        ) WITH (TYPE='SHARED')"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
+    grant_public_shared_table_access(&full);
 
     // 2) Multi-row INSERT (RETURNING is not supported in all code paths)
     let ins_sql = format!("INSERT INTO {} (name) VALUES ('row1'), ('row2'), ('row3')", full);
@@ -122,10 +124,11 @@ fn smoke_insert_returning_star() {
         r#"CREATE TABLE {} (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             title VARCHAR NOT NULL
-        ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')"#,
+        ) WITH (TYPE='SHARED')"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
+    grant_public_shared_table_access(&full);
 
     // 2) INSERT row
     let ins_sql = format!("INSERT INTO {} (title) VALUES ('hello_world')", full);

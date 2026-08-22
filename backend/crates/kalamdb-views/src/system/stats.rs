@@ -26,9 +26,8 @@ use kalamdb_commons::{
 use kalamdb_system::SystemTable;
 use parking_lot::RwLock;
 
-use crate::view_base::VirtualView;
-
 use super::common::{system_view_definition, SystemViewProvider};
+use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(stats_schema, StatsView);
 
@@ -76,8 +75,7 @@ impl StatsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Name of the runtime metric".to_string()),
-            ),
+                Some("Name of the runtime metric".to_string())),
             ColumnDefinition::new(
                 2,
                 "metric_value",
@@ -87,15 +85,13 @@ impl StatsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current value of the metric".to_string()),
-            ),
+                Some("Current value of the metric".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Stats,
             columns,
-            "Runtime metrics and statistics (computed on each query)",
-        )
+            "Runtime metrics and statistics (computed on each query)")
     }
 
     /// Create a new stats view without a callback (placeholder mode)
@@ -166,8 +162,7 @@ impl VirtualView for StatsView {
             vec![
                 Arc::new(names.finish()) as ArrayRef,
                 Arc::new(values.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| {
             crate::error::RegistryError::Other(format!("Failed to build stats batch: {}", e))
         })

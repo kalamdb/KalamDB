@@ -72,6 +72,15 @@ enum PayloadCacheKey {
     Projection(Arc<Vec<String>>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum VisibleChange {
+    Insert,
+    Update,
+    Delete,
+    /// RLS visibility lost on UPDATE: wire DELETE with identity-only old_values.
+    Revoke,
+}
+
 impl PayloadCacheKey {
     #[inline]
     fn from_projections(projections: &Option<Arc<Vec<String>>>) -> Self {
@@ -137,6 +146,25 @@ fn project_row(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Result<RowD
     Ok(map)
 }
 
+fn project_delete_identity(row: &Row, pk_columns: &[String]) -> Result<RowData, LiveError> {
+    let mut map = HashMap::new();
+    for (column, value) in &row.values {
+        if !column.starts_with('_')
+            && !pk_columns.iter().any(|pk| pk.eq_ignore_ascii_case(column))
+        {
+            continue;
+        }
+        if column == SystemColumnNames::COMMIT_SEQ {
+            continue;
+        }
+        map.insert(
+            column.clone(),
+            scalar_value_to_json(value)
+                .map_err(|error| LiveError::SerializationError(error.to_string()))?);
+    }
+    Ok(map)
+}
+
 /// Compute UPDATE delta rows from old/new Row data.
 /// `new_map` contains all non-null projected columns + PK + `_seq`.
 /// `old_map` contains only changed columns + PK + `_seq`.
@@ -144,8 +172,7 @@ fn project_update_delta(
     old_row: &Row,
     new_row: &Row,
     pk_columns: &[String],
-    projections: &Option<Arc<Vec<String>>>,
-) -> Result<(RowData, RowData), LiveError> {
+    projections: &Option<Arc<Vec<String>>>) -> Result<(RowData, RowData), LiveError> {
     let mut new_map = HashMap::new();
     let mut old_map = HashMap::new();
 
@@ -156,15 +183,13 @@ fn project_update_delta(
             new_map.insert(
                 key.to_string(),
                 scalar_value_to_json(sv)
-                    .map_err(|e| LiveError::SerializationError(e.to_string()))?,
-            );
+                    .map_err(|e| LiveError::SerializationError(e.to_string()))?);
         }
         if let Some(sv) = old_row.values.get(key) {
             old_map.insert(
                 key.to_string(),
                 scalar_value_to_json(sv)
-                    .map_err(|e| LiveError::SerializationError(e.to_string()))?,
-            );
+                    .map_err(|e| LiveError::SerializationError(e.to_string()))?);
         }
     }
 
@@ -187,8 +212,7 @@ fn project_update_delta(
                 new_map.insert(
                     col.to_string(),
                     scalar_value_to_json(nv)
-                        .map_err(|e| LiveError::SerializationError(e.to_string()))?,
-                );
+                        .map_err(|e| LiveError::SerializationError(e.to_string()))?);
             }
         }
         let changed = match (old_sv, new_sv) {
@@ -201,8 +225,7 @@ fn project_update_delta(
                 old_map.insert(
                     col.to_string(),
                     scalar_value_to_json(ov)
-                        .map_err(|e| LiveError::SerializationError(e.to_string()))?,
-                );
+                        .map_err(|e| LiveError::SerializationError(e.to_string()))?);
             }
         }
     }
@@ -216,32 +239,83 @@ fn project_update_delta(
 /// JSON and MessagePack bytes are then cached lazily inside `SharedChangePayload`,
 /// so notification fanout only needs to group by projection requirements here.
 fn build_shared_payload(
-    change_type: &ChangeType,
+    change: VisibleChange,
     new_row: &Row,
     old_row: Option<&Row>,
     pk_columns: &[String],
-    projections: &Option<Arc<Vec<String>>>,
-) -> Result<SharedChangePayload, LiveError> {
-    match change_type {
-        ChangeType::Insert => Ok(SharedChangePayload::new(
+    projections: &Option<Arc<Vec<String>>>) -> Result<SharedChangePayload, LiveError> {
+    match change {
+        VisibleChange::Insert => Ok(SharedChangePayload::new(
             kalamdb_commons::websocket::ChangeType::Insert,
             Some(vec![project_row(new_row, projections)?]),
-            None,
-        )),
-        ChangeType::Update => {
+            None)),
+        VisibleChange::Update => {
             let (new_rd, old_rd) =
                 project_update_delta(old_row.unwrap_or(new_row), new_row, pk_columns, projections)?;
             Ok(SharedChangePayload::new(
                 kalamdb_commons::websocket::ChangeType::Update,
                 Some(vec![new_rd]),
-                Some(vec![old_rd]),
-            ))
+                Some(vec![old_rd])))
         },
-        ChangeType::Delete => Ok(SharedChangePayload::new(
+        VisibleChange::Delete => Ok(SharedChangePayload::new(
             kalamdb_commons::websocket::ChangeType::Delete,
             None,
-            Some(vec![project_row(new_row, projections)?]),
-        )),
+            Some(vec![project_row(new_row, projections)?]))),
+        VisibleChange::Revoke => Ok(SharedChangePayload::new(
+            kalamdb_commons::websocket::ChangeType::Delete,
+            None,
+            Some(vec![project_delete_identity(new_row, pk_columns)?]))),
+    }
+}
+
+fn row_is_visible(handle: &SubscriptionHandle, row: &Row) -> bool {
+    if let Some(authorization) = &handle.authorization {
+        if !authorization.authorizes(row) {
+            return false;
+        }
+    }
+    match &handle.filter_expr {
+        Some(filter) => filter.matches(row).unwrap_or_else(|error| {
+            log::error!(
+                "Filter error for subscription_id={}: {}",
+                handle.subscription_id,
+                error
+            );
+            false
+        }),
+        None => true,
+    }
+}
+
+fn visible_change<'a>(
+    handle: &SubscriptionHandle,
+    change_type: &ChangeType,
+    new_row: &'a Row,
+    old_row: Option<&'a Row>) -> Option<(VisibleChange, &'a Row, Option<&'a Row>)> {
+    match change_type {
+        ChangeType::Insert => row_is_visible(handle, new_row)
+            .then_some((VisibleChange::Insert, new_row, None)),
+        ChangeType::Delete => row_is_visible(handle, new_row)
+            .then_some((VisibleChange::Delete, new_row, None)),
+        ChangeType::Update => {
+            let old_row = old_row.unwrap_or(new_row);
+            match (
+                row_is_visible(handle, old_row),
+                row_is_visible(handle, new_row)) {
+                (false, false) => None,
+                (false, true) => Some((VisibleChange::Insert, new_row, None)),
+                (true, true) => Some((VisibleChange::Update, new_row, Some(old_row))),
+                (true, false) => Some((VisibleChange::Revoke, old_row, None)),
+            }
+        },
+    }
+}
+
+fn as_visible_change(change_type: &ChangeType) -> VisibleChange {
+    match change_type {
+        ChangeType::Insert => VisibleChange::Insert,
+        ChangeType::Update => VisibleChange::Update,
+        ChangeType::Delete => VisibleChange::Delete,
     }
 }
 
@@ -253,8 +327,7 @@ fn try_deliver(
     notification: Arc<WireNotification>,
     seq_value: Option<SeqId>,
     commit_seq: Option<u64>,
-    delivery_timestamp_ms: u64,
-) -> bool {
+    delivery_timestamp_ms: u64) -> bool {
     if let Some(flow_control) = handle.flow_control.as_ref() {
         if !flow_control.is_initial_complete() {
             if let Some(snapshot_commit_seq) = flow_control.snapshot_end_commit_seq() {
@@ -371,8 +444,7 @@ impl NotificationService {
     async fn run_worker(
         service: Arc<Self>,
         mut rx: mpsc::Receiver<NotificationTask>,
-        worker_idx: usize,
-    ) {
+        worker_idx: usize) {
         while let Some(task) = rx.recv().await {
             service.process_notification(task, worker_idx).await;
         }
@@ -416,8 +488,7 @@ impl NotificationService {
         &self,
         user_id: Option<UserId>,
         table_id: TableId,
-        notification: ChangeNotification,
-    ) {
+        notification: ChangeNotification) {
         let worker_idx = self.worker_index(user_id.as_ref(), &table_id);
         let task = NotificationTask {
             user_id,
@@ -435,8 +506,7 @@ impl NotificationService {
                      notification",
                     worker_idx,
                     task.table_id,
-                    owner_scope,
-                );
+                    owner_scope);
             }
         }
     }
@@ -471,8 +541,7 @@ impl NotificationService {
     async fn dispatch_to_subscribers(
         table_id: &TableId,
         change_notification: ChangeNotification,
-        all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>,
-    ) -> Result<usize, LiveError> {
+        all_handles: Arc<dashmap::DashMap<LiveQueryId, SubscriptionHandle>>) -> Result<usize, LiveError> {
         let handle_count = all_handles.len();
         if handle_count == 0 {
             return Ok(0);
@@ -499,8 +568,7 @@ impl NotificationService {
                 &pk_columns,
                 seq_value,
                 commit_seq,
-                delivery_timestamp_ms,
-            );
+                delivery_timestamp_ms);
         }
 
         // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
@@ -515,8 +583,7 @@ impl NotificationService {
                 &pk_columns,
                 seq_value,
                 commit_seq,
-                delivery_timestamp_ms,
-            );
+                delivery_timestamp_ms);
         }
 
         // Large fan-out: spawn a task per chunk so the tokio runtime can
@@ -551,8 +618,7 @@ impl NotificationService {
                     &pk_columns,
                     seq_value,
                     commit_seq,
-                    delivery_timestamp_ms,
-                ) {
+                    delivery_timestamp_ms) {
                     Ok(count) => count,
                     Err(e) => {
                         log::error!("Notification dispatch error for table {}: {}", table_id, e);
@@ -578,8 +644,7 @@ impl NotificationService {
                     &pk_columns,
                     seq_value,
                     commit_seq,
-                    delivery_timestamp_ms,
-                ) {
+                    delivery_timestamp_ms) {
                     Ok(count) => count,
                     Err(e) => {
                         log::error!("Notification dispatch error for table {}: {}", table_id, e);
@@ -614,14 +679,17 @@ fn dispatch_chunk(
     pk_columns: &[String],
     seq_value: Option<SeqId>,
     commit_seq: Option<u64>,
-    delivery_timestamp_ms: u64,
-) -> Result<usize, LiveError> {
+    delivery_timestamp_ms: u64) -> Result<usize, LiveError> {
     if handles
         .iter()
-        .all(|handle| handle.filter_expr.is_none() && handle.projections.is_none())
+        .all(|handle| {
+            handle.authorization.is_none()
+                && handle.filter_expr.is_none()
+                && handle.projections.is_none()
+        })
     {
         let payload =
-            Arc::new(build_shared_payload(change_type, new_row, old_row, pk_columns, &None)?);
+            Arc::new(build_shared_payload(as_visible_change(change_type), new_row, old_row, pk_columns, &None)?);
         let mut count = 0usize;
 
         for handle in handles {
@@ -639,39 +707,30 @@ fn dispatch_chunk(
     }
 
     // Cache: projection requirements → shared payload (built once per projection group).
-    let mut cache: HashMap<PayloadCacheKey, Arc<SharedChangePayload>> = HashMap::new();
+    let mut cache: HashMap<(PayloadCacheKey, VisibleChange), Arc<SharedChangePayload>> =
+        HashMap::new();
     let mut count = 0usize;
 
     for handle in handles {
-        // Filter check (operates on ScalarValue — no serialization)
-        if let Some(ref filter_expr) = handle.filter_expr {
-            match filter_expr.matches(new_row) {
-                Ok(true) => {},
-                Ok(false) => continue,
-                Err(e) => {
-                    log::error!(
-                        "Filter error for subscription_id={}: {}",
-                        handle.subscription_id,
-                        e
-                    );
-                    continue;
-                },
-            }
-        }
+        let Some((visible_change, payload_row, payload_old_row)) =
+            visible_change(&handle, change_type, new_row, old_row)
+        else {
+            continue;
+        };
 
         let proj_key = PayloadCacheKey::from_projections(&handle.projections);
+        let cache_key = (proj_key, visible_change);
 
-        let payload = if let Some(cached) = cache.get(&proj_key) {
+        let payload = if let Some(cached) = cache.get(&cache_key) {
             Arc::clone(cached)
         } else {
             let p = Arc::new(build_shared_payload(
-                change_type,
-                new_row,
-                old_row,
+                visible_change,
+                payload_row,
+                payload_old_row,
                 pk_columns,
-                &handle.projections,
-            )?);
-            cache.insert(proj_key, Arc::clone(&p));
+                &handle.projections)?);
+            cache.insert(cache_key, Arc::clone(&p));
             p
         };
 
@@ -697,26 +756,19 @@ fn dispatch_one(
     pk_columns: &[String],
     seq_value: Option<SeqId>,
     commit_seq: Option<u64>,
-    delivery_timestamp_ms: u64,
-) -> Result<usize, LiveError> {
-    if let Some(ref filter_expr) = handle.filter_expr {
-        match filter_expr.matches(new_row) {
-            Ok(true) => {},
-            Ok(false) => return Ok(0),
-            Err(e) => {
-                log::error!("Filter error for subscription_id={}: {}", handle.subscription_id, e);
-                return Ok(0);
-            },
-        }
-    }
+    delivery_timestamp_ms: u64) -> Result<usize, LiveError> {
+    let Some((visible_change, payload_row, payload_old_row)) =
+        visible_change(&handle, change_type, new_row, old_row)
+    else {
+        return Ok(0);
+    };
 
     let payload = Arc::new(build_shared_payload(
-        change_type,
-        new_row,
-        old_row,
+        visible_change,
+        payload_row,
+        payload_old_row,
         pk_columns,
-        &handle.projections,
-    )?);
+        &handle.projections)?);
     let notification = Arc::new(WireNotification {
         subscription_id: Arc::clone(&handle.subscription_id),
         payload,
@@ -727,8 +779,7 @@ fn dispatch_one(
         notification,
         seq_value,
         commit_seq,
-        delivery_timestamp_ms,
-    )))
+        delivery_timestamp_ms)))
 }
 
 impl NotificationServiceTrait for NotificationService {
@@ -747,8 +798,7 @@ impl NotificationServiceTrait for NotificationService {
         &self,
         user_id: Option<UserId>,
         table_id: TableId,
-        notification: ChangeNotification,
-    ) {
+        notification: ChangeNotification) {
         self.notify_async(user_id, table_id, notification);
     }
 }
@@ -770,6 +820,18 @@ mod tests {
         MAX_SUBSCRIPTIONS_PER_CONNECTION, NOTIFICATION_CHANNEL_CAPACITY,
     };
 
+    #[derive(Debug)]
+    struct BodyAuthorization(&'static str);
+
+    impl crate::traits::LiveAuthorization for BodyAuthorization {
+        fn authorizes(&self, row: &Row) -> bool {
+            matches!(
+                row.values.get("body"),
+                Some(ScalarValue::Utf8(Some(value))) if value == self.0
+            )
+        }
+    }
+
     fn make_table_id(ns: &str, table: &str) -> TableId {
         TableId::new(NamespaceId::from(ns), TableName::from(table))
     }
@@ -787,13 +849,13 @@ mod tests {
         tx: crate::models::NotificationSender,
         flow_control: Arc<SubscriptionFlowControl>,
         filter_expr: Option<&str>,
-        projections: Option<Vec<&str>>,
-    ) -> SubscriptionHandle {
+        projections: Option<Vec<&str>>) -> SubscriptionHandle {
         SubscriptionHandle {
             subscription_id: Arc::from(subscription_id),
             filter_expr: filter_expr
                 .map(|sql| parse_where_clause(sql).expect("filter should parse"))
                 .map(Arc::new),
+            authorization: None,
             projections: projections.map(|cols| {
                 Arc::new(cols.into_iter().map(std::string::ToString::to_string).collect())
             }),
@@ -802,8 +864,7 @@ mod tests {
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM shared.events",
                 None,
-                1,
-            )),
+                1)),
         }
     }
 
@@ -813,8 +874,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(30),
             Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
         let service = NotificationService::new(Arc::clone(&registry));
 
         let table_id = make_table_id("shared", "events");
@@ -832,9 +892,7 @@ mod tests {
                 tx_ok,
                 Arc::clone(&flow_ok),
                 Some("id >= 10"),
-                Some(vec!["id"]),
-            ),
-        );
+                Some(vec!["id"])));
 
         let (tx_skip, mut rx_skip) = mpsc::channel(8);
         let flow_skip = Arc::new(SubscriptionFlowControl::new());
@@ -848,9 +906,7 @@ mod tests {
                 tx_skip,
                 Arc::clone(&flow_skip),
                 Some("id >= 100"),
-                None,
-            ),
-        );
+                None));
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
         service.notify_async(None, table_id, change);
@@ -894,17 +950,14 @@ mod tests {
                 LiveQueryId::new(
                     UserId::new(format!("user_{}", index)),
                     connection_id.clone(),
-                    subscription_id.clone(),
-                ),
-                make_shared_handle(&subscription_id, tx.clone(), flow, None, None),
-            );
+                    subscription_id.clone()),
+                make_shared_handle(&subscription_id, tx.clone(), flow, None, None));
         }
 
         let delivered = NotificationService::dispatch_to_subscribers(
             &table_id,
             ChangeNotification::insert(table_id.clone(), make_row(1, "probe", 1)),
-            subscriptions,
-        )
+            subscriptions)
         .await
         .expect("fanout should succeed");
 
@@ -924,8 +977,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(30),
             Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
         let service = NotificationService::new(Arc::clone(&registry));
 
         let user_id = UserId::new("user-proj");
@@ -942,8 +994,7 @@ mod tests {
             &conn_id,
             live_id,
             table_id.clone(),
-            make_shared_handle("sub_user", tx, flow, None, Some(vec!["id"])),
-        );
+            make_shared_handle("sub_user", tx, flow, None, Some(vec!["id"])));
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
         service.notify_async(Some(user_id), table_id, change);
@@ -971,8 +1022,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(30),
             Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
         let service = NotificationService::new(Arc::clone(&registry));
 
         let user_id = UserId::new("user-proj-upper");
@@ -989,8 +1039,7 @@ mod tests {
             &conn_id,
             live_id,
             table_id.clone(),
-            make_shared_handle("sub_upper", tx, flow, None, Some(vec!["ID"])),
-        );
+            make_shared_handle("sub_upper", tx, flow, None, Some(vec!["ID"])));
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(42, "hello", 42));
         service.notify_async(Some(user_id), table_id, change);
@@ -1014,8 +1063,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(30),
             Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
         let service = NotificationService::new(Arc::clone(&registry));
 
         let table_id = make_table_id("shared", "logs");
@@ -1029,8 +1077,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u3"), conn_id.clone(), "sub_buffer".to_string()),
             table_id.clone(),
-            make_shared_handle("sub_buffer", tx, Arc::clone(&flow), None, None),
-        );
+            make_shared_handle("sub_buffer", tx, Arc::clone(&flow), None, None));
 
         // seq=11 is newer than snapshot end seq=10, should be buffered (not sent yet)
         let change = ChangeNotification::insert(table_id, make_row(7, "buffer-me", 11));
@@ -1049,8 +1096,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(30),
             Duration::from_secs(10),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
         let service = NotificationService::new(Arc::clone(&registry));
 
         let table_id = make_table_id("shared", "alerts");
@@ -1064,8 +1110,7 @@ mod tests {
             &conn_id,
             LiveQueryId::new(UserId::new("u4"), conn_id.clone(), "sub_async".to_string()),
             table_id.clone(),
-            make_shared_handle("sub_async", tx, flow, None, None),
-        );
+            make_shared_handle("sub_async", tx, flow, None, None));
 
         let change = ChangeNotification::insert(table_id.clone(), make_row(1, "async", 1));
         service.notify_async(None, table_id.clone(), change);
@@ -1103,8 +1148,7 @@ mod tests {
             &[],
             Some(SeqId::from(9)),
             None,
-            epoch_millis(),
-        )
+            epoch_millis())
         .expect("dispatch succeeds");
         assert_eq!(delivered, 2);
 
@@ -1123,6 +1167,72 @@ mod tests {
     }
 
     #[test]
+    fn rls_update_visibility_loss_emits_identity_only_delete() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.mark_initial_complete();
+        let mut handle = make_shared_handle(
+            "sub_rls_transition",
+            tx,
+            flow,
+            None,
+            Some(vec!["id", "body"]));
+        handle.authorization = Some(Arc::new(BodyAuthorization("allowed")));
+
+        let old_row = make_row(7, "allowed", 10);
+        let new_row = make_row(7, "denied", 11);
+        let delivered = dispatch_one(
+            handle,
+            &new_row,
+            Some(&old_row),
+            &ChangeType::Update,
+            &["id".to_string()],
+            Some(SeqId::from(11)),
+            None,
+            epoch_millis())
+        .unwrap();
+        assert_eq!(delivered, 1);
+
+        let notification = rx.try_recv().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&notification.to_json()).unwrap();
+        assert_eq!(json["change_type"], "delete");
+        let old_values = json["old_values"].as_array().unwrap();
+        assert_eq!(old_values.len(), 1);
+        assert!(old_values[0].get("id").is_some());
+        assert!(old_values[0].get(SystemColumnNames::SEQ).is_some());
+        assert!(old_values[0].get("body").is_none());
+    }
+
+    #[test]
+    fn sql_delete_includes_projected_row_columns() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let flow = Arc::new(SubscriptionFlowControl::new());
+        flow.mark_initial_complete();
+        let handle = make_shared_handle("sub_sql_delete", tx, flow, None, None);
+
+        let deleted = make_row(2, "item_2", 20);
+        let delivered = dispatch_one(
+            handle,
+            &deleted,
+            None,
+            &ChangeType::Delete,
+            &["id".to_string()],
+            Some(SeqId::from(20)),
+            None,
+            epoch_millis())
+        .unwrap();
+        assert_eq!(delivered, 1);
+
+        let notification = rx.try_recv().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&notification.to_json()).unwrap();
+        assert_eq!(json["change_type"], "delete");
+        let old_values = json["old_values"].as_array().unwrap();
+        assert_eq!(old_values.len(), 1);
+        assert_eq!(old_values[0]["body"], "item_2");
+        assert!(old_values[0].get("id").is_some());
+    }
+
+    #[test]
     fn dispatch_chunk_separates_distinct_projection_groups() {
         let (tx_id, mut rx_id) = mpsc::channel(8);
         let flow_id = Arc::new(SubscriptionFlowControl::new());
@@ -1138,8 +1248,7 @@ mod tests {
             tx_body,
             Arc::clone(&flow_body),
             None,
-            Some(vec!["body"]),
-        );
+            Some(vec!["body"]));
 
         let row = make_row(17, "separate", 17);
         let delivered = dispatch_chunk(
@@ -1150,8 +1259,7 @@ mod tests {
             &[],
             Some(SeqId::from(17)),
             None,
-            epoch_millis(),
-        )
+            epoch_millis())
         .expect("dispatch succeeds");
         assert_eq!(delivered, 2);
 

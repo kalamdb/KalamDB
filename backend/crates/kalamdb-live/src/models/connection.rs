@@ -86,6 +86,8 @@ pub struct SubscriptionHandle {
     pub subscription_id: Arc<str>,
     /// Shared compiled filter expression (Arc for zero-copy across indices)
     pub filter_expr: Option<Arc<RowFilter>>,
+    /// Shared-table RLS evaluator bound to this subscription's principal.
+    pub authorization: Option<Arc<dyn crate::traits::LiveAuthorization>>,
     /// Column projections for filtering notification payload (None = all columns)
     pub projections: Option<Arc<Vec<String>>>,
     /// Shared notification channel
@@ -193,8 +195,7 @@ impl SubscriptionFlowControl {
     pub fn set_snapshot_boundaries(
         &self,
         snapshot_end_seq: Option<SeqId>,
-        snapshot_end_commit_seq: Option<u64>,
-    ) {
+        snapshot_end_commit_seq: Option<u64>) {
         if let Some(seq) = snapshot_end_seq {
             self.snapshot_end_seq.store(seq.as_i64(), Ordering::Release);
             self.has_snapshot.store(true, Ordering::Release);
@@ -252,8 +253,7 @@ impl SubscriptionFlowControl {
         &self,
         notification: Arc<WireNotification>,
         seq: Option<SeqId>,
-        commit_seq: Option<u64>,
-    ) {
+        commit_seq: Option<u64>) {
         let mut buffer = self.buffer.lock();
         if buffer.len() >= MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION {
             buffer.pop_front();
@@ -377,8 +377,7 @@ impl ConnectionState {
         connection_id: ConnectionId,
         client_ip: ConnectionInfo,
         notification_tx: NotificationSender,
-        event_tx: EventSender,
-    ) -> Self {
+        event_tx: EventSender) -> Self {
         Self {
             connection_id,
             client_ip,
@@ -517,8 +516,7 @@ impl ConnectionState {
     pub fn remove_subscription_with_fallback<F>(
         &self,
         primary_key: &str,
-        fallback_fn: F,
-    ) -> Option<(Arc<str>, SubscriptionState)>
+        fallback_fn: F) -> Option<(Arc<str>, SubscriptionState)>
     where
         F: FnOnce() -> Option<String>,
     {
@@ -568,8 +566,7 @@ impl ConnectionState {
         &self,
         subscription_id: &str,
         snapshot_end_seq: Option<SeqId>,
-        snapshot_end_commit_seq: Option<u64>,
-    ) {
+        snapshot_end_commit_seq: Option<u64>) {
         if let Some(sub) = self.subscriptions.write().get_mut(subscription_id) {
             if let Some(initial_load) = sub.initial_load.as_mut() {
                 initial_load.snapshot_end_seq = snapshot_end_seq;
@@ -593,8 +590,7 @@ impl ConnectionState {
                     sub.initial_load
                         .as_ref()
                         .map(|initial_load| Arc::clone(&initial_load.flow_control)),
-                    Arc::clone(&sub.runtime_metadata),
-                ),
+                    Arc::clone(&sub.runtime_metadata)),
                 None => return 0,
             }
         };
@@ -669,8 +665,7 @@ mod tests {
             flow_control.buffer_notification(
                 make_notification("sub-1"),
                 Some(SeqId::from(seq)),
-                None,
-            );
+                None);
         }
 
         let buffered = flow_control.drain_buffered_notifications();
@@ -694,18 +689,15 @@ mod tests {
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
             Some(SeqId::from(9)),
-            None,
-        );
+            None);
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
             Some(SeqId::from(3)),
-            None,
-        );
+            None);
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
             Some(SeqId::from(6)),
-            None,
-        );
+            None);
 
         let buffered = flow_control.drain_buffered_notifications();
         let seqs: Vec<_> = buffered
@@ -721,20 +713,17 @@ mod tests {
         let first = SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.events",
             Some(r#"{"batch_size":100}"#),
-            1,
-        );
+            1);
         let second = SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.events",
             Some(r#"{"batch_size":100}"#),
-            2,
-        );
+            2);
 
         assert_eq!(first.query(), second.query());
         assert_eq!(first.options_json(), second.options_json());
         assert!(!Arc::ptr_eq(&first.query, &second.query));
         assert!(!Arc::ptr_eq(
             first.options_json.as_ref().expect("options should exist"),
-            second.options_json.as_ref().expect("options should exist"),
-        ));
+            second.options_json.as_ref().expect("options should exist")));
     }
 }

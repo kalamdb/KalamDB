@@ -22,8 +22,7 @@ pub enum TableType {
     User,
 
     /// Shared tables accessible across all users
-    /// Options: `SharedTableOptions` (access_level, enable_cache, cache_ttl_seconds, compression,
-    /// enable_replication)
+    /// Options: `SharedTableOptions` (storage_id, flush_policy, compression)
     Shared,
 
     /// Event stream tables with TTL-based eviction

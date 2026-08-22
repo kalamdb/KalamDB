@@ -2,12 +2,15 @@ mod support;
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::pg_operations::InsertRequest, TableType};
+use kalamdb_commons::{
+    models::{pg_operations::InsertRequest, UserId},
+    TableType,
+};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
 use support::{
-    create_cluster_app_context_with_config, create_executor, create_shared_table,
+    create_cluster_app_context_with_config, create_executor, create_shared_table_with_public_policy,
     observer_exec_ctx, row, select_names, unique_namespace,
 };
 
@@ -18,12 +21,17 @@ async fn transaction_buffer_limit_aborts_transaction_and_rejects_follow_up_write
     config.max_transaction_buffer_bytes = 256;
 
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
-    let table_id =
-        create_shared_table(&app_ctx, &unique_namespace("tx_buffer_limit"), "items").await;
+    let table_id = create_shared_table_with_public_policy(
+        &app_ctx,
+        &unique_namespace("tx_buffer_limit"),
+        "items",
+    )
+    .await;
     let service = OperationService::new(Arc::clone(&app_ctx));
     let executor = create_executor(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let session_id = "pg-1002-abcd";
+    let user_id = UserId::new("tx-buffer-user");
     let oversized_name = "x".repeat(1024);
 
     let transaction_id = service
@@ -34,11 +42,11 @@ async fn transaction_buffer_limit_aborts_transaction_and_rejects_follow_up_write
 
     let limit_error = service
         .execute_insert(InsertRequest {
-            table_id: table_id.clone(),
+            table_id:   table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id: None,
-            rows: vec![row(1, &oversized_name)],
+            user_id:    Some(user_id.clone()),
+            rows:       vec![row(1, &oversized_name)],
         })
         .await
         .expect_err("oversized write should fail");
@@ -47,11 +55,11 @@ async fn transaction_buffer_limit_aborts_transaction_and_rejects_follow_up_write
 
     let follow_up_error = service
         .execute_insert(InsertRequest {
-            table_id: table_id.clone(),
+            table_id:   table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id: None,
-            rows: vec![row(2, "still-blocked")],
+            user_id:    Some(user_id.clone()),
+            rows:       vec![row(2, "still-blocked")],
         })
         .await
         .expect_err("aborted transaction should keep rejecting writes");

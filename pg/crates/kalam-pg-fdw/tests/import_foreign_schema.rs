@@ -6,7 +6,7 @@ use kalamdb_commons::{
         schemas::{ColumnDefinition, SharedTableOptions, TableDefinition, TableOptions},
         NamespaceId, TableName,
     },
-    TableAccess, TableType,
+    TableType,
 };
 
 #[test]
@@ -20,8 +20,7 @@ fn import_sql_includes_virtual_columns_for_user_tables() {
             ColumnDefinition::simple(2, "body", 2, KalamDataType::Text),
         ],
         TableOptions::user(),
-        None,
-    )
+        None)
     .expect("user table");
 
     let sql = create_foreign_table_sql("kalam_server", "chat", &table).expect("import sql");
@@ -43,11 +42,9 @@ fn import_sql_skips_user_id_for_shared_tables() {
         TableType::Shared,
         vec![ColumnDefinition::simple(1, "body", 1, KalamDataType::Text)],
         TableOptions::Shared(SharedTableOptions {
-            access_level: Some(TableAccess::Public),
             ..Default::default()
         }),
-        None,
-    )
+        None)
     .expect("shared table");
 
     let sql = create_foreign_table_sql("kalam_server", "chat", &table).expect("import sql");

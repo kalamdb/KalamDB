@@ -19,6 +19,7 @@ pub mod manifest;
 pub mod migrations;
 pub mod namespaces;
 pub mod storages;
+pub mod table_policies;
 pub mod tables;
 pub mod topic_offsets;
 pub mod topics;
@@ -36,6 +37,7 @@ pub use manifest::{manifest_table_definition, InMemoryChecker, ManifestTableProv
 pub use migrations::MigrationsTableProvider;
 pub use namespaces::NamespacesTableProvider;
 pub use storages::StoragesTableProvider;
+pub use table_policies::TablePoliciesTableProvider;
 pub use tables::{schemas_table_definition, SchemasTableProvider};
 pub use topic_offsets::TopicOffsetsTableProvider;
 pub use topics::TopicsTableProvider;

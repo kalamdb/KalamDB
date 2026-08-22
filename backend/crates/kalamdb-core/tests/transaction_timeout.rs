@@ -2,12 +2,15 @@ mod support;
 
 use std::{sync::Arc, time::Duration};
 
-use kalamdb_commons::{models::pg_operations::InsertRequest, TableType};
+use kalamdb_commons::{
+    models::{pg_operations::InsertRequest, UserId},
+    TableType,
+};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
 use support::{
-    create_cluster_app_context_with_config, create_executor, create_shared_table,
+    create_cluster_app_context_with_config, create_executor, create_shared_table_with_public_policy,
     observer_exec_ctx, row, select_names, unique_namespace,
 };
 
@@ -18,11 +21,17 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
     config.transaction_timeout_secs = 1;
 
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
-    let table_id = create_shared_table(&app_ctx, &unique_namespace("tx_timeout"), "items").await;
+    let table_id = create_shared_table_with_public_policy(
+        &app_ctx,
+        &unique_namespace("tx_timeout"),
+        "items",
+    )
+    .await;
     let service = OperationService::new(Arc::clone(&app_ctx));
     let executor = create_executor(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let session_id = "pg-1001-abcd";
+    let user_id = UserId::new("tx-timeout-user");
 
     let transaction_id = service
         .begin_transaction(session_id)
@@ -32,11 +41,11 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
 
     service
         .execute_insert(InsertRequest {
-            table_id: table_id.clone(),
+            table_id:   table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id: None,
-            rows: vec![row(1, "pending")],
+            user_id:    Some(user_id.clone()),
+            rows:       vec![row(1, "pending")],
         })
         .await
         .expect("initial staged write succeeds");
@@ -45,11 +54,11 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
 
     let timeout_error = service
         .execute_insert(InsertRequest {
-            table_id: table_id.clone(),
+            table_id:   table_id.clone(),
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id: None,
-            rows: vec![row(2, "late")],
+            user_id:    Some(user_id.clone()),
+            rows:       vec![row(2, "late")],
         })
         .await
         .expect_err("follow-up write should fail after timeout");

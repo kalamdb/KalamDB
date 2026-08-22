@@ -1,5 +1,6 @@
 pub mod helpers;
 pub mod namespace;
+pub mod policy;
 pub mod storage;
 pub mod table;
 pub mod view;
@@ -16,8 +17,10 @@ use kalamdb_handlers_support::register_typed_handler;
 use kalamdb_sql::{
     classifier::SqlStatementKind,
     ddl::{
-        AlterTableStatement, CreateTableStatement, CreateViewStatement, DescribeTableStatement,
-        DropTableStatement, ShowTableStatsStatement, ShowTablesStatement,
+        AlterPolicyOperation, AlterPolicyStatement, AlterTableStatement, CreatePolicyStatement,
+        CreateTableStatement, CreateViewStatement, DescribeTableStatement, DropPolicyStatement,
+        DropTableStatement, PolicyCommand, PolicyTarget, ShowTableStatsStatement,
+        ShowTablesStatement,
     },
 };
 
@@ -29,8 +32,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             if_not_exists: false,
         }),
         namespace::CreateNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::CreateNamespace,
-    );
+        SqlStatementKind::CreateNamespace);
 
     register_typed_handler!(
         registry,
@@ -39,8 +41,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             options: HashMap::new(),
         }),
         namespace::AlterNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::AlterNamespace,
-    );
+        SqlStatementKind::AlterNamespace);
 
     register_typed_handler!(
         registry,
@@ -50,15 +51,13 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             cascade: false,
         }),
         namespace::DropNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::DropNamespace,
-    );
+        SqlStatementKind::DropNamespace);
 
     register_typed_handler!(
         registry,
         SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
         namespace::ShowNamespacesHandler::new(app_context.clone()),
-        SqlStatementKind::ShowNamespaces,
-    );
+        SqlStatementKind::ShowNamespaces);
 
     register_typed_handler!(
         registry,
@@ -66,8 +65,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             namespace: NamespaceId::new("_placeholder"),
         }),
         namespace::UseNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::UseNamespace,
-    );
+        SqlStatementKind::UseNamespace);
 
     register_typed_handler!(
         registry,
@@ -83,8 +81,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             config_json: None,
         }),
         storage::CreateStorageHandler::new(app_context.clone()),
-        SqlStatementKind::CreateStorage,
-    );
+        SqlStatementKind::CreateStorage);
 
     register_typed_handler!(
         registry,
@@ -97,8 +94,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             config_json: None,
         }),
         storage::AlterStorageHandler::new(app_context.clone()),
-        SqlStatementKind::AlterStorage,
-    );
+        SqlStatementKind::AlterStorage);
 
     register_typed_handler!(
         registry,
@@ -107,15 +103,13 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             if_exists: false,
         }),
         storage::DropStorageHandler::new(app_context.clone()),
-        SqlStatementKind::DropStorage,
-    );
+        SqlStatementKind::DropStorage);
 
     register_typed_handler!(
         registry,
         SqlStatementKind::ShowStorages(kalamdb_sql::ddl::ShowStoragesStatement),
         storage::ShowStoragesHandler::new(app_context.clone()),
-        SqlStatementKind::ShowStorages,
-    );
+        SqlStatementKind::ShowStorages);
 
     register_typed_handler!(
         registry,
@@ -124,8 +118,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             extended: false,
         }),
         storage::CheckStorageHandler::new(app_context.clone()),
-        SqlStatementKind::CheckStorage,
-    );
+        SqlStatementKind::CheckStorage);
 
     register_typed_handler!(
         registry,
@@ -145,11 +138,9 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             eviction_strategy: None,
             max_stream_size_bytes: None,
             if_not_exists: false,
-            access_level: None,
         }),
         table::CreateTableHandler::new(app_context.clone()),
-        SqlStatementKind::CreateTable,
-    );
+        SqlStatementKind::CreateTable);
 
     register_typed_handler!(
         registry,
@@ -163,8 +154,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             original_sql: String::new(),
         }),
         view::CreateViewHandler::new(app_context.clone()),
-        SqlStatementKind::CreateView,
-    );
+        SqlStatementKind::CreateView);
 
     register_typed_handler!(
         registry,
@@ -176,8 +166,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             },
         }),
         table::AlterTableHandler::new(app_context.clone()),
-        SqlStatementKind::AlterTable,
-    );
+        SqlStatementKind::AlterTable);
 
     register_typed_handler!(
         registry,
@@ -188,15 +177,51 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             if_exists: false,
         }),
         table::DropTableHandler::new(app_context.clone()),
-        SqlStatementKind::DropTable,
-    );
+        SqlStatementKind::DropTable);
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::CreatePolicy(CreatePolicyStatement {
+            policy_name: "_placeholder".to_string(),
+            table_id: kalamdb_commons::TableId::from_strings("_placeholder", "_placeholder"),
+            command: PolicyCommand::All,
+            targets: vec![PolicyTarget::Public],
+            using_sql: None,
+            with_check_sql: None,
+            original_sql: String::new(),
+        }),
+        policy::CreatePolicyHandler::new(app_context.clone()),
+        SqlStatementKind::CreatePolicy);
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::AlterPolicy(AlterPolicyStatement {
+            policy_name: "_placeholder".to_string(),
+            table_id: kalamdb_commons::TableId::from_strings("_placeholder", "_placeholder"),
+            operation: AlterPolicyOperation::Apply {
+                targets: None,
+                using_sql: None,
+                with_check_sql: None,
+            },
+        }),
+        policy::AlterPolicyHandler::new(app_context.clone()),
+        SqlStatementKind::AlterPolicy);
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::DropPolicy(DropPolicyStatement {
+            policy_name: "_placeholder".to_string(),
+            table_id: kalamdb_commons::TableId::from_strings("_placeholder", "_placeholder"),
+            if_exists: false,
+        }),
+        policy::DropPolicyHandler::new(app_context.clone()),
+        SqlStatementKind::DropPolicy);
 
     register_typed_handler!(
         registry,
         SqlStatementKind::ShowTables(ShowTablesStatement { namespace_id: None }),
         table::ShowTablesHandler::new(app_context.clone()),
-        SqlStatementKind::ShowTables,
-    );
+        SqlStatementKind::ShowTables);
 
     register_typed_handler!(
         registry,
@@ -206,8 +231,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             show_history: false,
         }),
         table::DescribeTableHandler::new(app_context.clone()),
-        SqlStatementKind::DescribeTable,
-    );
+        SqlStatementKind::DescribeTable);
 
     register_typed_handler!(
         registry,
@@ -216,6 +240,5 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             table_name: TableName::new("_placeholder"),
         }),
         table::ShowStatsHandler::new(app_context),
-        SqlStatementKind::ShowStats,
-    );
+        SqlStatementKind::ShowStats);
 }

@@ -116,7 +116,9 @@ pub struct UserTableOptions {
 pub struct SharedTableOptions {
     pub storage_id: StorageId,
 
-    /// Access level (public, restricted)
+    /// Deprecated catalog field. Shared-table authorization is FORCE RLS; this
+    /// value is ignored and omitted from new writes.
+    #[serde(default, skip_serializing)]
     pub access_level: Option<TableAccess>,
 
     pub flush_policy: Option<FlushPolicy>,
@@ -363,7 +365,7 @@ impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
             storage_id: StorageId::default(),
-            access_level: Some(TableAccess::Private),
+            access_level: None,
             flush_policy: None,
             compression: default_compression(),
         }
@@ -405,7 +407,7 @@ mod tests {
     #[test]
     fn test_shared_table_options_default() {
         let opts = SharedTableOptions::default();
-        assert_eq!(opts.access_level, Some(TableAccess::Private));
+        assert!(opts.access_level.is_none());
         assert!(opts.flush_policy.is_none());
         assert_eq!(opts.compression, TableCompression::Snappy);
     }

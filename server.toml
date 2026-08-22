@@ -54,7 +54,9 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Block cache size for reads in bytes (default: 2MB)
+# Tiny shared HyperClockCache (default: 2MB). Set memory_mode = "auto"
+# to size cache and memtables from host RAM, still clamped.
+# memory_mode = "compact"
 block_cache_size = 2097152
 
 max_background_jobs = 4

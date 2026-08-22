@@ -68,7 +68,6 @@ CREATE SHARED TABLE IF NOT EXISTS case29_shared_orders (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   STORAGE_ID = 'case29_storage_a',
-  ACCESS_LEVEL = 'PUBLIC',
   FLUSH_POLICY = 'rows:30,interval:15',
   COMPRESSION = 'zstd'
 );
@@ -89,7 +88,7 @@ USE sql_file_case_29_b;
 CREATE TABLE IF NOT EXISTS case29_other (
   id BIGINT PRIMARY KEY,
   body TEXT NOT NULL
-) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC');
+) WITH (TYPE = 'SHARED');
 USE sql_file_case_29_a;
 
 EXECUTE AS 'case29_user' (

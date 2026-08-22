@@ -43,6 +43,7 @@ pub mod common;
 pub mod error;
 pub mod error_extensions;
 pub mod manifest;
+pub mod rls;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod topics;
@@ -51,6 +52,7 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};
+pub use rls::BoundLiveAuthorization;
 // Re-export table stores
 pub use kalamdb_commons::models::StreamTableRow;
 pub use kalamdb_commons::models::UserTableRow;

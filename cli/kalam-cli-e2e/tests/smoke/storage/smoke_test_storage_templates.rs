@@ -262,6 +262,7 @@ fn smoke_storage_custom_templates() {
                 )"
     );
     execute_sql_as_root_via_client(&create_shared_table_sql).expect("create shared table");
+    grant_public_shared_table_access(&table_shared_full);
     assert_table_storage(&namespace_shared, &shared_table, &storage_id);
 
     insert_rows_as_root(&table_shared_full, 50);

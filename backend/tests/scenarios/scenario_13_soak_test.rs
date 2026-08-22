@@ -23,8 +23,6 @@ use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(180);
-
 /// Main soak test with mixed workload
 #[tokio::test]
 async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
@@ -72,6 +70,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE config table");
+    grant_shared_catalog_read(server, &format!("{}.config", ns)).await?;
 
     // =========================================================
     // Metrics tracking

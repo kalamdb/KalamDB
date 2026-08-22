@@ -5,8 +5,16 @@ const env = (globalThis as { process?: { env?: Record<string, string | undefined
   .process?.env;
 const uiPort = Number(env?.KALAMDB_UI_PLAYWRIGHT_PORT ?? 4175);
 const uiOrigin = `http://127.0.0.1:${uiPort}`;
-const backendOrigin = env?.KALAMDB_E2E_BACKEND_URL ?? env?.VITE_API_URL ?? "http://localhost:2900";
+const backendOrigin = (
+  env?.KALAMDB_E2E_BACKEND_URL
+  ?? env?.VITE_API_URL
+  ?? env?.KALAMDB_SERVER_URL
+  ?? env?.KALAMDB_URL
+  ?? env?.KALAM_URL
+  ?? "http://127.0.0.1:2900"
+).replace("://localhost", "://127.0.0.1");
 const inviteTtlMs = 7 * 24 * 60 * 60 * 1000;
+const backendRequestTimeoutMs = 8_000;
 
 type AuthUser = {
   id: string;
@@ -46,7 +54,9 @@ function inviteUserId(email: string): string {
 
 async function backendAvailable(page: Page): Promise<boolean> {
   try {
-    const response = await page.request.get(`${backendOrigin}/v1/api/auth/status`);
+    const response = await page.request.get(`${backendOrigin}/v1/api/auth/status`, {
+      timeout: backendRequestTimeoutMs,
+    });
     return response.ok();
   } catch {
     return false;
@@ -64,7 +74,9 @@ async function dexAvailable(page: Page): Promise<boolean> {
 
 async function oidcLoginAvailable(page: Page): Promise<boolean> {
   try {
-    const response = await page.request.get(`${backendOrigin}/v1/api/auth/login-options`);
+    const response = await page.request.get(`${backendOrigin}/v1/api/auth/login-options`, {
+      timeout: backendRequestTimeoutMs,
+    });
     if (!response.ok()) {
       return false;
     }
@@ -98,6 +110,7 @@ async function loginAdmin(page: Page): Promise<string | null> {
   for (const credentials of candidates) {
     const response = await page.request.post(`${backendOrigin}/v1/api/auth/login`, {
       data: credentials,
+      timeout: backendRequestTimeoutMs,
     });
     if (!response.ok()) {
       continue;
@@ -134,6 +147,7 @@ async function executeAdminSql(page: Page, token: string, sql: string, ignoreErr
     headers: {
       Authorization: `Bearer ${token}`,
     },
+    timeout: backendRequestTimeoutMs,
   });
 
   if (ignoreError) {

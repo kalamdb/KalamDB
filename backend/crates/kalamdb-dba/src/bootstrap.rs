@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TableId, TableName};
-use kalamdb_core::app_context::AppContext;
+use kalamdb_commons::{
+    models::{NamespaceId, TableId, TableName},
+    PolicyCommand, PolicyId, PolicyTarget, TablePolicy,
+};
+use kalamdb_core::{app_context::AppContext, error::KalamDbError, rls::PolicyCompiler};
 use kalamdb_system::Namespace;
 
 use crate::{
@@ -46,8 +49,7 @@ fn ensure_namespace_exists(app_context: &AppContext) -> Result<()> {
 
 fn ensure_table_exists(
     app_context: &AppContext,
-    table_def: kalamdb_commons::schemas::TableDefinition,
-) -> Result<()> {
+    table_def: kalamdb_commons::schemas::TableDefinition) -> Result<()> {
     let table_id = TableId::new(table_def.namespace_id.clone(), table_def.table_name.clone());
     let tables_provider = app_context.system_tables().tables();
     let schema_registry = app_context.schema_registry();
@@ -67,5 +69,32 @@ fn ensure_table_exists(
         },
     }
 
+    Ok(())
+}
+
+pub async fn ensure_dba_notification_policies(app_context: Arc<AppContext>) -> Result<()> {
+    let table_id = TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("notifications"));
+    let table = app_context.schema_registry().get_table_if_exists(&table_id)?.ok_or_else(|| {
+        KalamDbError::InvalidOperation("dba.notifications was not bootstrapped".to_string())
+    })?;
+    let program = PolicyCompiler::new(app_context.schema_registry())
+        .compile(&table, "true")
+        .map_err(KalamDbError::InvalidOperation)?;
+    let policy_id = PolicyId::new(table_id.clone(), "dba_notifications_select")
+        .map_err(KalamDbError::InvalidOperation)?;
+    let policy = TablePolicy::new(
+        policy_id,
+        table_id,
+        "dba_notifications_select",
+        PolicyCommand::Select,
+        vec![PolicyTarget::Public],
+        Some("true".to_string()),
+        None,
+        Some(program),
+        None,
+        0,
+        u64::from(table.schema_version),
+    );
+    app_context.system_tables().table_policies().ensure_policy(policy).await?;
     Ok(())
 }

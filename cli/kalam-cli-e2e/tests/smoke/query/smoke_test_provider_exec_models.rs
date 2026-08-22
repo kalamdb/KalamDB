@@ -20,11 +20,11 @@ fn smoke_test_provider_exec_models() {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
         .expect("CREATE NAMESPACE should succeed");
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED', ACCESS_LEVEL = \
-         'PUBLIC')",
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')",
         full_shared_table
     ))
     .expect("CREATE SHARED TABLE should succeed");
+    grant_public_select_shared_table(&full_shared_table);
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (event_id TEXT PRIMARY KEY, payload TEXT) WITH (TYPE = 'STREAM', \
          TTL_SECONDS = 60)",
@@ -40,8 +40,7 @@ fn smoke_test_provider_exec_models() {
                 "logical_plan | TableScan: system.users",
                 "physical_plan | CooperativeExec",
                 "DeferredBatchExec: source=indexed_system_scan",
-            ],
-        ),
+            ]),
         (
             "view provider",
             "EXPLAIN SELECT * FROM system.datatypes".to_string(),
@@ -49,8 +48,7 @@ fn smoke_test_provider_exec_models() {
                 "logical_plan | TableScan: system.datatypes",
                 "physical_plan | CooperativeExec",
                 "DeferredBatchExec: source=view_scan",
-            ],
-        ),
+            ]),
         (
             "shared provider",
             format!("EXPLAIN SELECT * FROM {}", full_shared_table),
@@ -58,8 +56,7 @@ fn smoke_test_provider_exec_models() {
                 "logical_plan | TableScan: ",
                 "physical_plan | CooperativeExec",
                 "DeferredBatchExec: source=shared_table_scan",
-            ],
-        ),
+            ]),
         (
             "stream provider",
             format!("EXPLAIN SELECT * FROM {}", full_stream_table),
@@ -67,8 +64,7 @@ fn smoke_test_provider_exec_models() {
                 "logical_plan | TableScan: ",
                 "physical_plan | CooperativeExec",
                 "DeferredBatchExec: source=stream_table_scan",
-            ],
-        ),
+            ]),
     ];
 
     for (label, sql, expected_fragments) in explain_queries {

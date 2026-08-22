@@ -80,7 +80,6 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Receive DELETE notification
-    let mut delete_received = false;
     let timeout = tokio::time::sleep(Duration::from_secs(5));
     tokio::pin!(timeout);
 
@@ -89,11 +88,10 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
             event = subscription.next() => {
                 match event {
                     Some(Ok(ChangeEvent::Delete { old_rows, .. })) => {
-                        delete_received = true;
                         assert!(!old_rows.is_empty());
                         let old_row = &old_rows[0];
                         assert_eq!(old_row.get("id").and_then(|v| v.as_str()), Some("rec2"));
-                        break;
+                        return Ok(());
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => panic!("Error receiving delete: {:?}", e),
@@ -103,7 +101,4 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
             _ = &mut timeout => panic!("Timed out waiting for delete"),
         }
     }
-
-    assert!(delete_received, "Should have received DELETE notification");
-    Ok(())
 }

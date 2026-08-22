@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::NamespaceId, Role, TableId};
 use sqlparser::ast::{ObjectName, Owner, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 
@@ -8,15 +8,12 @@ mod alter_policy_statement;
 mod alter_policy_operation;
 mod create_policy_statement;
 mod drop_policy_statement;
-mod policy_command;
-mod policy_target;
 
 pub use alter_policy_operation::AlterPolicyOperation;
 pub use alter_policy_statement::AlterPolicyStatement;
 pub use create_policy_statement::CreatePolicyStatement;
 pub use drop_policy_statement::DropPolicyStatement;
-pub use policy_command::PolicyCommand;
-pub use policy_target::PolicyTarget;
+pub use kalamdb_commons::{PolicyCommand, PolicyTarget};
 
 fn parse_one(sql: &str) -> DdlResult<Statement> {
     let dialect = PostgreSqlDialect {};
@@ -50,6 +47,16 @@ fn parse_targets(owners: Option<Vec<Owner>>) -> DdlResult<Vec<PolicyTarget>> {
     owners
         .unwrap_or_else(|| vec![Owner::Ident(sqlparser::ast::Ident::new("PUBLIC"))])
         .into_iter()
-        .map(PolicyTarget::try_from)
+        .map(|owner| {
+            let Owner::Ident(identifier) = owner else {
+                return Err(format!("unsupported policy target '{owner}'"));
+            };
+            if identifier.value.eq_ignore_ascii_case("PUBLIC") {
+                return Ok(PolicyTarget::Public);
+            }
+            Role::from_str_opt(&identifier.value)
+                .map(PolicyTarget::Role)
+                .ok_or_else(|| format!("unsupported policy target '{}'", identifier.value))
+        })
         .collect()
 }

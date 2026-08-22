@@ -121,7 +121,6 @@ async fn wait_for_vector_query_contains(
                     return Ok(ids);
                 }
                 last_ids = ids;
-                last_error = None;
             },
             Ok(response) => {
                 last_error = Some(format!("{:?}", response.error));

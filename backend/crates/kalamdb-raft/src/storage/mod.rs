@@ -1,11 +1,12 @@
 //! Raft Storage Layer
 //!
-//! This module provides the storage implementation for openraft,
-//! using in-memory storage with the `RaftStorage` v1 API.
+//! This module provides the storage implementation for openraft using native
+//! `RaftLogStorage` + `RaftStateMachine` (storage-v2). Log IO and state-machine
+//! apply can run concurrently; they are not serialized behind OpenRaft's Adaptor lock.
 //!
 //! ## Components
 //!
-//! - [`KalamRaftStorage`]: Combined Raft storage implementing `RaftStorage` trait
+//! - [`KalamRaftStorage`]: Combined storage implementing OpenRaft v2 log + state-machine traits
 //! - [`KalamTypeConfig`]: OpenRaft type configuration for KalamDB
 //! - [`KalamNode`]: Node information for cluster membership
 

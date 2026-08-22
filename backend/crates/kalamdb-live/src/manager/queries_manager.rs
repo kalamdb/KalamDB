@@ -31,7 +31,7 @@ use crate::{
     manager::ConnectionsManager,
     models::{SharedConnectionState, SubscriptionResult},
     subscription::SubscriptionService,
-    traits::{LiveApplyBarrier, LiveSchemaLookup},
+    traits::{LiveApplyBarrier, LiveAuthorization, LiveAuthorizationBinder, LiveSchemaLookup},
 };
 
 /// Live query manager
@@ -41,6 +41,7 @@ pub struct LiveQueryManager {
     initial_data_fetcher: Arc<InitialDataFetcher>,
     schema_lookup: Arc<dyn LiveSchemaLookup>,
     apply_barrier: OnceCell<Arc<dyn LiveApplyBarrier>>,
+    authorization_binder: OnceCell<Arc<dyn LiveAuthorizationBinder>>,
     node_id: NodeId,
 
     // Delegated services
@@ -51,8 +52,7 @@ impl LiveQueryManager {
     fn validate_table_subscription_permission(
         user_role: Role,
         table_def: &TableDefinition,
-        table_id: &TableId,
-    ) -> Result<(), LiveError> {
+        table_id: &TableId) -> Result<(), LiveError> {
         let is_admin = matches!(user_role, Role::Dba | Role::System);
         match table_def.table_type {
             kalamdb_commons::TableType::User => {
@@ -68,18 +68,15 @@ impl LiveQueryManager {
                 )))
             },
             kalamdb_commons::TableType::Shared => {
-                // SHARED tables require access-level check:
-                // - Public: any authenticated user can subscribe
-                // - Private/Restricted: only DBA/System/Service roles
-                let access_level =
-                    kalamdb_session::permissions::shared_table_access_level(table_def);
-                if kalamdb_session::permissions::can_access_shared_table(access_level, user_role) {
+                // Shared tables are FORCE-RLS. Authentication admits the
+                // subscription to policy binding; ACCESS_LEVEL is not an
+                // authorization mechanism.
+                if !matches!(user_role, Role::Anonymous) {
                     Ok(())
                 } else {
                     Err(LiveError::PermissionDenied(format!(
-                        "Cannot subscribe to shared table '{}': access level '{}' requires \
-                         elevated privileges.",
-                        table_id, access_level
+                        "Cannot subscribe to shared table '{}': authentication is required.",
+                        table_id
                     )))
                 }
             },
@@ -97,8 +94,7 @@ impl LiveQueryManager {
 
     pub(crate) fn build_subscription_schema(
         table_def: &TableDefinition,
-        projections: Option<&[String]>,
-    ) -> Vec<SchemaField> {
+        projections: Option<&[String]>) -> Vec<SchemaField> {
         if let Some(proj_cols) = projections {
             proj_cols
                 .iter()
@@ -130,8 +126,7 @@ impl LiveQueryManager {
     /// bootstrap ordering.
     pub fn new(
         schema_lookup: Arc<dyn LiveSchemaLookup>,
-        registry: Arc<ConnectionsManager>,
-    ) -> Self {
+        registry: Arc<ConnectionsManager>) -> Self {
         let node_id = *registry.node_id();
         let subscription_service = Arc::new(SubscriptionService::new(registry.clone()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(Arc::clone(&schema_lookup)));
@@ -141,6 +136,7 @@ impl LiveQueryManager {
             initial_data_fetcher,
             schema_lookup,
             apply_barrier: OnceCell::new(),
+            authorization_binder: OnceCell::new(),
             node_id,
             subscription_service,
         }
@@ -155,6 +151,12 @@ impl LiveQueryManager {
     pub fn set_apply_barrier(&self, barrier: Arc<dyn LiveApplyBarrier>) {
         if self.apply_barrier.set(barrier).is_err() {
             log::warn!("LiveApplyBarrier already initialized in LiveQueryManager");
+        }
+    }
+
+    pub fn set_authorization_binder(&self, binder: Arc<dyn LiveAuthorizationBinder>) {
+        if self.authorization_binder.set(binder).is_err() {
+            log::warn!("LiveAuthorizationBinder already initialized in LiveQueryManager");
         }
     }
 
@@ -179,22 +181,22 @@ impl LiveQueryManager {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<RowFilter>,
+        authorization: Option<Arc<dyn LiveAuthorization>>,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,
-        table_type: kalamdb_commons::TableType,
-    ) -> Result<LiveQueryId, LiveError> {
+        table_type: kalamdb_commons::TableType) -> Result<LiveQueryId, LiveError> {
         self.subscription_service
             .register_subscription(
                 connection_state,
                 request,
                 table_id,
                 filter_expr,
+                authorization,
                 projections,
                 batch_size,
                 enable_initial_load,
-                table_type,
-            )
+                table_type)
             .await
     }
 
@@ -212,8 +214,7 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         request: &SubscriptionRequest,
-        initial_data_options: Option<InitialDataOptions>,
-    ) -> Result<SubscriptionResult, LiveError> {
+        initial_data_options: Option<InitialDataOptions>) -> Result<SubscriptionResult, LiveError> {
         // Get user_id from connection state
         let (user_id, user_role) = {
             let user_id = connection_state.user_id().cloned().ok_or_else(|| {
@@ -221,8 +222,7 @@ impl LiveQueryManager {
             })?;
             let user_role = connection_state.user_role().ok_or_else(|| {
                 LiveError::InvalidOperation(
-                    "Connection authenticated without role context".to_string(),
-                )
+                    "Connection authenticated without role context".to_string())
             })?;
             (user_id, user_role)
         };
@@ -251,7 +251,7 @@ impl LiveQueryManager {
         // Permission check
         // - USER tables: Accessible to any authenticated user (RLS filters data to their rows)
         // - SYSTEM tables: Accessible only to DBA/System roles
-        // - SHARED tables: Access-level gated (public OK, private/restricted require elevated role)
+        // - SHARED tables: authenticated here, then bound to FORCE-RLS below
         Self::validate_table_subscription_permission(user_role, &table_def, &table_id)?;
 
         if initial_data_options.is_some() {
@@ -272,6 +272,18 @@ impl LiveQueryManager {
         // Compile row-local filter from WHERE clause once for live change fanout.
         let where_clause = parsed_query.where_clause.clone();
         let filter_expr = Self::compile_subscription_filter(where_clause.as_deref(), &user_id)?;
+        let authorization = if table_def.table_type == kalamdb_commons::TableType::Shared
+            && !matches!(user_role, Role::Dba | Role::System)
+        {
+            let binder = self.authorization_binder.get().ok_or_else(|| {
+                LiveError::PermissionDenied(
+                    "Shared-table live RLS binder is unavailable; subscription fails closed"
+                        .to_string())
+            })?;
+            Some(binder.bind(&table_id, &user_id, user_role).await?)
+        } else {
+            None
+        };
 
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
         let projections = parsed_query.projections.clone();
@@ -283,11 +295,11 @@ impl LiveQueryManager {
                 request,
                 table_id.clone(),
                 filter_expr,
+                authorization,
                 projections.clone(),
                 batch_size,
                 initial_data_options.is_some(),
-                table_def.table_type,
-            )
+                table_def.table_type)
             .await?;
 
         // Fetch initial data if requested.
@@ -308,8 +320,7 @@ impl LiveQueryManager {
                             &table_id,
                             table_def.table_type,
                             &fetch_options,
-                            where_clause.as_deref(),
-                        )
+                            where_clause.as_deref())
                         .await?
                         .unwrap_or_else(|| SeqId::from(0))
                 };
@@ -324,8 +335,7 @@ impl LiveQueryManager {
                             &table_id,
                             table_def.table_type,
                             &fetch_options,
-                            where_clause.as_deref(),
-                        )
+                            where_clause.as_deref())
                         .await?
                 };
 
@@ -335,8 +345,7 @@ impl LiveQueryManager {
                     connection_state,
                     &request.id,
                     Some(snapshot_seq),
-                    snapshot_commit_seq,
-                );
+                    snapshot_commit_seq);
 
                 self.initial_data_fetcher
                     .fetch_initial_data(
@@ -346,8 +355,7 @@ impl LiveQueryManager {
                         table_def.table_type,
                         fetch_options,
                         where_clause.as_deref(),
-                        projections.as_deref(),
-                    )
+                        projections.as_deref())
                     .await
             }
             .await;
@@ -396,8 +404,7 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        since_seq: Option<SeqId>,
-    ) -> Result<InitialDataResult, LiveError> {
+        since_seq: Option<SeqId>) -> Result<InitialDataResult, LiveError> {
         // Get subscription state from connection
         let sub_state = connection_state.get_subscription(subscription_id).ok_or_else(|| {
             LiveError::NotFound(format!("Subscription not found: {}", subscription_id))
@@ -431,8 +438,7 @@ impl LiveQueryManager {
         let fetch_options = InitialDataOptions::batch(
             since_seq,
             initial_load.snapshot_end_seq,
-            initial_load.batch_size,
-        )
+            initial_load.batch_size)
         .with_commit_range(None, initial_load.snapshot_end_commit_seq);
 
         self.initial_data_fetcher
@@ -443,8 +449,7 @@ impl LiveQueryManager {
                 table_def.table_type,
                 fetch_options,
                 where_clause?.as_deref(),
-                projections_ref,
-            )
+                projections_ref)
             .await
     }
 
@@ -452,8 +457,7 @@ impl LiveQueryManager {
     pub async fn unregister_connection(
         &self,
         user_id: &UserId,
-        connection_id: &ConnectionId,
-    ) -> Result<Vec<LiveQueryId>, LiveError> {
+        connection_id: &ConnectionId) -> Result<Vec<LiveQueryId>, LiveError> {
         self.subscription_service.unregister_connection(user_id, connection_id).await
     }
 
@@ -462,8 +466,7 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        live_id: &LiveQueryId,
-    ) -> Result<(), LiveError> {
+        live_id: &LiveQueryId) -> Result<(), LiveError> {
         self.subscription_service
             .unregister_subscription(connection_state, subscription_id, live_id)
             .await
@@ -475,8 +478,7 @@ impl LiveQueryManager {
     /// from the LiveQueryId. Used by KILL LIVE QUERY command.
     pub async fn unregister_subscription_by_id(
         &self,
-        live_id: &LiveQueryId,
-    ) -> Result<(), LiveError> {
+        live_id: &LiveQueryId) -> Result<(), LiveError> {
         // Get connection from registry
         let connection_state =
             self.registry.get_connection(&live_id.connection_id).ok_or_else(|| {
@@ -498,8 +500,7 @@ impl LiveQueryManager {
 
     fn compile_subscription_filter(
         where_clause: Option<&str>,
-        user_id: &UserId,
-    ) -> Result<Option<RowFilter>, LiveError> {
+        user_id: &UserId) -> Result<Option<RowFilter>, LiveError> {
         where_clause
             .map(|where_clause| {
                 let resolved =
@@ -522,7 +523,7 @@ mod tests {
             table_options::{SharedTableOptions, SystemTableOptions, TableCompression},
             TableDefinition, TableOptions,
         },
-        Role, TableAccess, TableType,
+        Role, TableType,
     };
 
     use super::LiveQueryManager;
@@ -536,7 +537,7 @@ mod tests {
         TableId::new(NamespaceId::from("shared"), TableName::from("events"))
     }
 
-    fn shared_table_def(access: TableAccess) -> TableDefinition {
+    fn shared_table_def() -> TableDefinition {
         TableDefinition {
             namespace_id: NamespaceId::from("shared"),
             table_name: TableName::from("events"),
@@ -546,7 +547,7 @@ mod tests {
             next_column_id: 1,
             table_options: TableOptions::Shared(SharedTableOptions {
                 storage_id: kalamdb_commons::StorageId::from("default"),
-                access_level: Some(access),
+                access_level: None,
                 flush_policy: None,
                 compression: TableCompression::Snappy,
             }),
@@ -577,33 +578,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_permission_allows_public_shared_for_user_role() {
-        let def = shared_table_def(TableAccess::Public);
+    fn test_validate_permission_allows_shared_for_user_role() {
+        let def = shared_table_def();
         let result =
             LiveQueryManager::validate_table_subscription_permission(Role::User, &def, &table_id());
         assert!(
             result.is_ok(),
-            "public shared table subscriptions should be allowed for regular users"
+            "shared-table subscriptions are admitted for authenticated users; RLS filters events"
         );
     }
 
     #[test]
-    fn test_validate_permission_denies_private_shared_for_user_role() {
-        let def = shared_table_def(TableAccess::Private);
-        let result =
-            LiveQueryManager::validate_table_subscription_permission(Role::User, &def, &table_id());
-        assert!(
-            matches!(result, Err(LiveError::PermissionDenied(_))),
-            "private shared table subscriptions should be denied for regular users"
-        );
-    }
-
-    #[test]
-    fn test_validate_permission_allows_private_shared_for_dba() {
-        let def = shared_table_def(TableAccess::Private);
+    fn test_validate_permission_allows_shared_for_dba() {
+        let def = shared_table_def();
         let result =
             LiveQueryManager::validate_table_subscription_permission(Role::Dba, &def, &table_id());
-        assert!(result.is_ok(), "private shared table subscriptions should be allowed for DBA");
+        assert!(result.is_ok(), "shared table subscriptions should be allowed for DBA");
     }
 
     #[test]
@@ -633,8 +623,7 @@ mod tests {
     fn compile_subscription_filter_compiles_once_for_supported_where_clause() {
         let filter = LiveQueryManager::compile_subscription_filter(
             Some("user_id = CURRENT_USER() AND status IN ('active', 'queued')"),
-            &test_user_id(),
-        )
+            &test_user_id())
         .expect("supported WHERE should compile");
         assert!(filter.is_some());
     }
@@ -661,8 +650,7 @@ mod tests {
     fn compile_subscription_filter_rejects_unsupported_where_clause() {
         let result = LiveQueryManager::compile_subscription_filter(
             Some("status IN (SELECT status FROM shared.allowed_statuses)"),
-            &test_user_id(),
-        );
+            &test_user_id());
         assert!(matches!(result, Err(LiveError::InvalidOperation(_))));
     }
 }

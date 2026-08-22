@@ -118,15 +118,13 @@ impl ConnectionsManager {
         node_id: NodeId,
         client_timeout: Duration,
         auth_timeout: Duration,
-        heartbeat_interval: Duration,
-    ) -> Arc<Self> {
+        heartbeat_interval: Duration) -> Arc<Self> {
         Self::with_max_connections(
             node_id,
             client_timeout,
             auth_timeout,
             heartbeat_interval,
-            Self::DEFAULT_MAX_CONNECTIONS,
-        )
+            Self::DEFAULT_MAX_CONNECTIONS)
     }
 
     /// Create a new connections manager with a custom max connections limit
@@ -135,8 +133,7 @@ impl ConnectionsManager {
         client_timeout: Duration,
         auth_timeout: Duration,
         heartbeat_interval: Duration,
-        max_connections: usize,
-    ) -> Arc<Self> {
+        max_connections: usize) -> Arc<Self> {
         let shutdown_token = CancellationToken::new();
 
         let registry = Arc::new(Self {
@@ -186,8 +183,7 @@ impl ConnectionsManager {
     pub fn register_connection(
         &self,
         connection_id: ConnectionId,
-        client_ip: ConnectionInfo,
-    ) -> Option<ConnectionRegistration> {
+        client_ip: ConnectionInfo) -> Option<ConnectionRegistration> {
         if self.is_shutting_down.load(Ordering::Acquire) {
             warn!("Rejecting new connection during shutdown: {}", connection_id);
             return None;
@@ -239,8 +235,7 @@ impl ConnectionsManager {
                 current,
                 current + 1,
                 Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
+                Ordering::Acquire) {
                 Ok(_) => {
                     self.peak_connections.fetch_max(current + 1, Ordering::AcqRel);
                     return true;
@@ -332,8 +327,7 @@ impl ConnectionsManager {
         connection_id: &ConnectionId,
         live_id: LiveQueryId,
         table_id: TableId,
-        handle: SubscriptionHandle,
-    ) {
+        handle: SubscriptionHandle) {
         log::debug!(
             "ConnectionsManager::index_subscription: user={}, table={}, live_id={}",
             user_id,
@@ -366,8 +360,7 @@ impl ConnectionsManager {
         connection_id: &ConnectionId,
         live_id: LiveQueryId,
         table_id: TableId,
-        handle: SubscriptionHandle,
-    ) {
+        handle: SubscriptionHandle) {
         log::debug!(
             "ConnectionsManager::index_shared_subscription: table={}, live_id={}",
             table_id,
@@ -396,8 +389,7 @@ impl ConnectionsManager {
         &self,
         user_id: &UserId,
         live_id: &LiveQueryId,
-        table_id: &TableId,
-    ) {
+        table_id: &TableId) {
         // Remove from user_table_subscriptions index
         let key = (user_id.clone(), table_id.clone());
         if let Some(handles) = self.user_table_subscriptions.get(&key) {
@@ -449,8 +441,7 @@ impl ConnectionsManager {
     pub fn get_subscriptions_for_table(
         &self,
         user_id: &UserId,
-        table_id: &TableId,
-    ) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
+        table_id: &TableId) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
         self.user_table_subscriptions
             .get(&(user_id.clone(), table_id.clone()))
             .map(|handles| Arc::clone(handles.value()))
@@ -463,8 +454,7 @@ impl ConnectionsManager {
     #[inline]
     pub fn get_shared_subscriptions_for_table(
         &self,
-        table_id: &TableId,
-    ) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
+        table_id: &TableId) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
         self.shared_table_subscriptions
             .get(table_id)
             .map(|handles| Arc::clone(handles.value()))
@@ -479,8 +469,7 @@ impl ConnectionsManager {
     pub fn notify_connections_for_user(
         &self,
         user_id: &UserId,
-        notification: WireNotification,
-    ) -> bool {
+        notification: WireNotification) -> bool {
         let notification = Arc::new(notification);
         let mut sent = false;
 
@@ -717,8 +706,7 @@ mod tests {
     fn notify_shared_table_for_test(
         registry: &ConnectionsManager,
         table_id: &TableId,
-        notification: WireNotification,
-    ) {
+        notification: WireNotification) {
         let handles = registry.get_shared_subscriptions_for_table(table_id);
         let notification = Arc::new(notification);
         for handle in handles.iter() {
@@ -735,8 +723,7 @@ mod tests {
         registry: &ConnectionsManager,
         user_id: &UserId,
         table_id: &TableId,
-        notification: WireNotification,
-    ) {
+        notification: WireNotification) {
         let handles = registry.get_subscriptions_for_table(user_id, table_id);
         let notification = Arc::new(notification);
         for handle in handles.iter() {
@@ -754,8 +741,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(10),
             Duration::from_secs(3),
-            Duration::from_secs(5),
-        )
+            Duration::from_secs(5))
     }
 
     #[tokio::test]
@@ -765,8 +751,7 @@ mod tests {
 
         let reg = registry.register_connection(
             conn_id.clone(),
-            ConnectionInfo::new(Some("127.0.0.1".to_string())),
-        );
+            ConnectionInfo::new(Some("127.0.0.1".to_string())));
         assert!(reg.is_some());
         assert_eq!(registry.connection_count(), 1);
         assert_eq!(registry.peak_connection_count(), 1);
@@ -867,8 +852,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_millis(100), // client_timeout
             Duration::from_secs(60),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
 
         let conn_id = ConnectionId::new("alive_conn");
         let mut reg = registry
@@ -905,8 +889,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(60),   // client_timeout (long)
             Duration::from_millis(50), // auth_timeout (short)
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
 
         let conn_id = ConnectionId::new("noauth");
         let mut reg = registry
@@ -933,8 +916,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_millis(50),
             Duration::from_secs(60),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
 
         let conn_id = ConnectionId::new("full_chan");
         let reg = registry
@@ -972,8 +954,7 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(60),
             Duration::from_secs(60),
-            Duration::from_secs(5),
-        );
+            Duration::from_secs(5));
 
         let conn_id = ConnectionId::new("shutdown_now");
         let reg = registry
@@ -1000,8 +981,7 @@ mod tests {
 
     /// Helper: create a SubscriptionHandle with pre-completed flow control
     fn create_test_handle(
-        notification_tx: tokio::sync::mpsc::Sender<Arc<WireNotification>>,
-    ) -> SubscriptionHandle {
+        notification_tx: tokio::sync::mpsc::Sender<Arc<WireNotification>>) -> SubscriptionHandle {
         let flow_control = Arc::new(SubscriptionFlowControl::new());
         flow_control.mark_initial_complete();
         let runtime_metadata =
@@ -1009,6 +989,7 @@ mod tests {
         SubscriptionHandle {
             subscription_id: Arc::from("test-subscription"),
             filter_expr: None,
+            authorization: None,
             projections: None,
             notification_tx,
             flow_control: Some(flow_control),
@@ -1027,8 +1008,7 @@ mod tests {
             payload: Arc::new(SharedChangePayload::new(
                 kalamdb_commons::websocket::ChangeType::Insert,
                 Some(vec![]),
-                None,
-            )),
+                None)),
         }
     }
 
@@ -1108,10 +1088,8 @@ mod tests {
                     runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                         "SELECT * FROM shared.orders",
                         None,
-                        1,
-                    )),
-                },
-            );
+                        1)),
+                });
         }
 
         let (tx, _rx) = mpsc::channel(64);
@@ -1119,8 +1097,7 @@ mod tests {
             &conn_id,
             live_id.clone(),
             table_id.clone(),
-            create_test_handle(tx),
-        );
+            create_test_handle(tx));
 
         assert_eq!(registry.subscription_count(), 1);
         assert!(registry.has_shared_subscriptions(&table_id));
@@ -1254,8 +1231,7 @@ mod tests {
                         &conn_id,
                         live_id,
                         table_id,
-                        create_test_handle(tx),
-                    );
+                        create_test_handle(tx));
                     rx
                 })
             })
@@ -1302,8 +1278,7 @@ mod tests {
             &conn_id,
             shared_live_id,
             shared_table.clone(),
-            create_test_handle(tx1),
-        );
+            create_test_handle(tx1));
 
         // Add a user subscription
         let user_live_id =
@@ -1314,8 +1289,7 @@ mod tests {
             &conn_id,
             user_live_id,
             user_table.clone(),
-            create_test_handle(tx2),
-        );
+            create_test_handle(tx2));
 
         assert_eq!(registry.subscription_count(), 2);
 

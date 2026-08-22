@@ -21,8 +21,6 @@ use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main dashboards scenario test
 #[tokio::test]
 async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
@@ -45,29 +43,27 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                         name TEXT NOT NULL,
                         price DOUBLE NOT NULL,
                         features TEXT
-                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
+                    ) WITH (TYPE = 'SHARED')"#,
             ns
         ))
         .await?;
     assert_success(&resp, "CREATE plans table");
 
-    // Seed shared plans
-    let client = server.link_client("root");
-    for (id, name, price) in [(1, "Free", 0.0), (2, "Pro", 9.99), (3, "Enterprise", 99.99)] {
-        let resp = client
-            .execute_query(
-                &format!(
-                    "INSERT INTO {}.plans (id, name, price, features) VALUES ({}, '{}', {}, \
-                     'features for {}')",
-                    ns, id, name, price, name
-                ),
-                None,
-                None,
-                None,
+    // Seed shared plans before catalog SELECT policy (System/DBA bypass is not required).
+    let plan_inserts: Vec<String> = [(1, "Free", 0.0), (2, "Pro", 9.99), (3, "Enterprise", 99.99)]
+        .into_iter()
+        .map(|(id, name, price)| {
+            format!(
+                "INSERT INTO {}.plans (id, name, price, features) VALUES ({}, '{}', {}, \
+                 'features for {}')",
+                ns, id, name, price, name
             )
-            .await?;
-        assert!(resp.success(), "Insert plan {}", name);
-    }
+        })
+        .collect();
+    let plan_insert_refs: Vec<&str> = plan_inserts.iter().map(String::as_str).collect();
+    seed_shared_catalog_rows(server, &format!("{}.plans", ns), &plan_insert_refs).await?;
+
+    let client = server.link_client("root");
 
     // =========================================================
     // Step 3: Create USER tables
@@ -117,8 +113,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "User1 insert activity {}", i);
     }
@@ -133,8 +128,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "User2 insert activity {}", i);
     }
@@ -170,25 +164,19 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     assert_eq!(u2_count, 5, "User2 should see 5 activities");
 
     // =========================================================
-    // Step 7: Test RBAC - normal user cannot write to restricted shared table
+    // Step 7: Catalog RLS - subjects can read plans, not write them
     // =========================================================
-    let _ = user1_client
-        .execute_query(
-            &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns),
-            None,
-            None,
-            None,
-        )
-        .await;
-    // This should fail for normal users writing to SHARED tables
-    // (depending on RBAC implementation - may succeed if shared tables are writable by all)
-    // We just verify the table wasn't corrupted
+    assert_shared_write_denied(
+        &user1_client,
+        &format!("INSERT INTO {}.plans (id, name, price) VALUES (99, 'Hacker Plan', 0)", ns),
+        "user INSERT into catalog plans",
+    )
+    .await?;
     let resp = client
         .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.plans", ns), None, None, None)
         .await?;
     let plan_count: i64 = resp.get_i64("cnt").unwrap_or(0);
-    // Should still be 3 (if user write was blocked) or 4 (if allowed)
-    assert!(plan_count >= 3, "Plans table should have at least 3 rows");
+    assert_eq!(plan_count, 3, "denied user INSERT must not add a plan");
 
     // =========================================================
     // Step 8: Schema Evolution - ADD COLUMN
@@ -208,8 +196,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         // This might succeed or fail depending on implementation
         if resp.success() {
@@ -219,8 +206,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                     &format!("SELECT * FROM {}.activity WHERE id = 1", ns),
                     None,
                     None,
-                    None,
-                )
+                    None)
                 .await?;
             assert!(resp.success(), "Old rows should still be readable after schema change");
         }
@@ -263,23 +249,21 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
             r#"CREATE TABLE {}.system_config (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL
-                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
+                    ) WITH (TYPE = 'SHARED')"#,
             ns
         ))
         .await?;
     assert_success(&resp, "CREATE system_config table");
 
-    // Admin writes config
-    let admin_client = server.link_client("root");
-    let resp = admin_client
-        .execute_query(
-            &format!("INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')", ns),
-            None,
-            None,
-            None,
-        )
+    grant_shared_catalog_read(server, &format!("{}.system_config", ns)).await?;
+
+    let resp = server
+        .execute_sql(&format!(
+            "INSERT INTO {}.system_config (key, value) VALUES ('max_users', '1000')",
+            ns
+        ))
         .await?;
-    assert!(resp.success(), "Admin should write to shared table");
+    assert_success(&resp, "DBA should write to shared table");
 
     // Regular user can read with unique name to avoid parallel test interference
     let username = format!("{}_regular_user", ns);
@@ -289,6 +273,13 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
         .await?;
     assert!(resp.success(), "User should read shared table");
     assert!(!resp.rows().is_empty(), "Should see config data");
+
+    assert_shared_write_denied(
+        &user_client,
+        &format!("INSERT INTO {}.system_config (key, value) VALUES ('pwned', '1')", ns),
+        "user INSERT into system_config",
+    )
+    .await?;
 
     // Cleanup
     let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
@@ -331,8 +322,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Insert event {}", i);
     }
@@ -360,8 +350,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         // Accept either success or error (column might not be immediately available)
 
@@ -371,8 +360,7 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Old data should be readable after schema change");
         assert_eq!(resp.rows().len(), 5, "Should still have 5 old events");

@@ -14,7 +14,9 @@ use kalamdb_system::SystemTablesRegistry;
 use crate::{
     error::RegistryError,
     pg_catalog::{
-        stable_oid, type_mapping::{pg_type_name, pg_type_oid}, visible_table_definitions, PgCatalogView,
+        stable_oid,
+        type_mapping::{pg_type_name, pg_type_oid},
+        visible_table_definitions, PgCatalogView,
     },
 };
 
@@ -85,8 +87,7 @@ impl PgCatalogView for PgTypeView {
                 Arc::new(typnames.finish()) as ArrayRef,
                 Arc::new(typnamespaces.finish()) as ArrayRef,
                 Arc::new(typrelids.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|error| RegistryError::Other(format!("failed to build pg_type: {error}")))
     }
 }

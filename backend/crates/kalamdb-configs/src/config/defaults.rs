@@ -438,7 +438,9 @@ pub fn default_websocket_heartbeat_interval() -> Option<u64> {
     Some(5)
 }
 
-// RocksDB defaults (MEMORY OPTIMIZED)
+// RocksDB defaults stay tiny so a few tables and low traffic do not reserve
+// large memtables or cache. Raise the numbers, or set memory_mode = "auto",
+// when the deployment actually needs more.
 pub fn default_rocksdb_system_meta_write_buffer_size() -> usize {
     32 * 1024 // 32KB: low-write system metadata and compatibility partitions
 }
@@ -515,8 +517,7 @@ pub fn default_rocksdb_raft_profile() -> crate::config::types::RocksDbCfProfileS
 }
 
 pub fn default_rocksdb_block_cache_size() -> usize {
-    2 * 1024 * 1024 // 2MB shared across all CFs (down from 4MB)
-                    // Sufficient for point-lookup workloads; most hot blocks stay cached.
+    2 * 1024 * 1024 // 2MB shared across all CFs
 }
 
 pub fn default_rocksdb_max_background_jobs() -> i32 {
@@ -528,7 +529,7 @@ pub fn default_rocksdb_sync_writes() -> bool {
 }
 
 pub fn default_rocksdb_max_open_files() -> i32 {
-    512 // Reasonable default that stays under typical OS limits
+    512 // Stays under typical OS limits on small hosts
 }
 
 pub fn default_rocksdb_compact_on_startup() -> bool {

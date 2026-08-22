@@ -125,6 +125,12 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --nocapture              Pass through test stdout/stderr (--no-capture)"
     echo "  -h, --help               Show this help message"
     echo ""
+    echo "Docker helpers (full runs start Dex/MinIO via docker/utils):"
+    echo "  KALAMDB_SKIP_DOCKER_DEX=true     Skip Dex; OIDC tests may skip"
+    echo "  KALAMDB_SKIP_DOCKER_MINIO=true   Skip MinIO; S3 storage tests may fail"
+    echo "  KALAMDB_DOCKER_PROBE_TIMEOUT_SECS=5"
+    echo "  KALAMDB_DOCKER_UP_TIMEOUT_SECS=45"
+    echo ""
     echo "Examples:"
     echo "  $0 --test smoke --nocapture"
     echo "  $0 --url http://localhost:3000 --password mypass"
@@ -392,9 +398,13 @@ if not cluster_urls:
 
 payloads = []
 failed_urls = []
+target_key = target_url.rstrip("/")
 for url in cluster_urls:
     try:
-        payload = fetch_health(url)
+        if url.rstrip("/") == target_key:
+            payload = target_payload
+        else:
+            payload = fetch_health(url)
     except (OSError, URLError, TimeoutError, json.JSONDecodeError):
         failed_urls.append(url)
         continue
@@ -545,6 +555,14 @@ fi
     echo "================================================"
 echo ""
 
+# Prefer IPv4 loopback. `localhost` can hang on IPv6 (::1) when the server
+# only listens on IPv4.
+case "$SERVER_URL" in
+    *://localhost:*|*://localhost/*|*://localhost)
+        SERVER_URL="${SERVER_URL//localhost/127.0.0.1}"
+        ;;
+esac
+
 preflight_running_server
 
 # Clear shared JWT caches so a restarted running server/cluster does not reuse
@@ -584,10 +602,18 @@ export KALAM_URL="${KALAM_URL:-$KALAMDB_URL}"
 export KALAM_USER="${KALAM_USER:-$KALAMDB_USER}"
 export KALAM_PASS="${KALAM_PASS:-$KALAMDB_PASSWORD}"
 
-# Ensure nextest is available
-if ! cargo nextest --version >/dev/null 2>&1; then
-    echo "Error: cargo-nextest is not installed."
-    echo "Install it with: cargo install cargo-nextest"
+# cargo-nextest 0.9.122 and older look for build-script `output` next to OUT_DIR
+# using Cargo's pre-1.88 layout. Nightly Cargo 1.100 stores those files under
+# `target/debug/build/<crate>/<hash>/`, which floods the suite with:
+#   warning: could not find build script output file at .../kalamdb-api/<hash>/output
+# 0.9.131+ reads rustc-env from Cargo JSON instead.
+NEXTEST_MIN_VERSION="0.9.131"
+nextest_version="$(cargo nextest --version | awk '{ print $2; exit }')"
+if ! printf '%s\n%s\n' "$NEXTEST_MIN_VERSION" "$nextest_version" | sort -V -C; then
+    echo "Error: cargo-nextest $nextest_version is too old for this Cargo toolchain."
+    echo "Need >= $NEXTEST_MIN_VERSION (0.9.131 added Cargo's hashed build-dir layout)."
+    echo "Upgrade with: cargo install cargo-nextest --locked"
+    echo "Or: curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C \"\${CARGO_HOME:-\$HOME/.cargo}/bin\""
     exit 1
 fi
 
@@ -801,15 +827,20 @@ running_server_supports_s3_storage() {
         return 1
     fi
 
+    if ! curl -sf --max-time 1 --ipv4 "http://127.0.0.1:9120/minio/health/live" >/dev/null 2>&1; then
+        rm -rf "$auth_tmp_dir"
+        return 1
+    fi
+
     config_json='{"type":"s3","region":"us-east-1","endpoint":"http://127.0.0.1:9120","allow_http":true,"access_key_id":"minioadmin","secret_access_key":"minioadmin"}'
-    status=$(curl -sS -o "$sql_body" -w '%{http_code}' \
+    status=$(curl -sS --max-time 5 -o "$sql_body" -w '%{http_code}' \
         -H 'Content-Type: application/json' \
         -H "Authorization: Bearer $token" \
         -d "{\"sql\":\"CREATE STORAGE ${probe_id} TYPE 's3' NAME 'probe' BASE_DIRECTORY 's3://kalamdb-test/probe/' CONFIG '${config_json}'\"}" \
-        "${base_url%/}/v1/api/sql")
+        "${base_url%/}/v1/api/sql") || status="000"
 
     if [ "$status" = "200" ]; then
-        curl -sS -o /dev/null \
+        curl -sS --max-time 5 -o /dev/null \
             -H 'Content-Type: application/json' \
             -H "Authorization: Bearer $token" \
             -d "{\"sql\":\"DROP STORAGE ${probe_id}\"}" \
@@ -846,21 +877,68 @@ maybe_warn_for_missing_s3_on_running_server() {
     echo ""
 }
 
+# `docker` / `docker compose` block forever when Docker Desktop is stopped.
+# Bound every daemon call so a full test run continues instead of hanging.
+run_with_timeout() {
+    local seconds="$1"
+    shift
+    python3 -c '
+import subprocess, sys
+timeout = float(sys.argv[1])
+cmd = sys.argv[2:]
+try:
+    completed = subprocess.run(cmd, timeout=timeout)
+    raise SystemExit(completed.returncode)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+' "$seconds" "$@"
+}
+
+docker_daemon_reachable() {
+    if [ -n "${DOCKER_DAEMON_REACHABLE:-}" ]; then
+        [ "$DOCKER_DAEMON_REACHABLE" = "1" ]
+        return
+    fi
+
+    local seconds="${KALAMDB_DOCKER_PROBE_TIMEOUT_SECS:-5}"
+    if run_with_timeout "$seconds" docker info >/dev/null 2>&1; then
+        DOCKER_DAEMON_REACHABLE=1
+        return 0
+    fi
+
+    DOCKER_DAEMON_REACHABLE=0
+    return 1
+}
+
+ensure_docker_compose_service() {
+    local service="$1"
+    local warn="$2"
+    local up_secs="${KALAMDB_DOCKER_UP_TIMEOUT_SECS:-45}"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker is not available; $warn" >&2
+        return 0
+    fi
+
+    if ! docker_daemon_reachable; then
+        echo "Warning: Docker daemon did not respond within ${KALAMDB_DOCKER_PROBE_TIMEOUT_SECS:-5}s; $warn" >&2
+        echo "Start Docker Desktop, or set KALAMDB_SKIP_DOCKER_DEX=true / KALAMDB_SKIP_DOCKER_MINIO=true." >&2
+        return 0
+    fi
+
+    (
+        cd "$REPO_ROOT/docker/utils"
+        run_with_timeout "$up_secs" docker compose up -d --force-recreate "$service"
+    ) || echo "Warning: could not start docker/utils ${service} within ${up_secs}s; $warn" >&2
+}
+
 ensure_dex_for_oidc_tests() {
     if ! should_start_dex_for_oidc_tests; then
         return 0
     fi
 
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "Warning: Docker is not available; Dex-backed OIDC tests may skip." >&2
-        return 0
-    fi
-
     step "Starting shared Dex for OIDC tests"
-    (
-        cd "$REPO_ROOT/docker/utils"
-        docker compose up -d --force-recreate dex
-    ) || echo "Warning: could not start docker/utils Dex; Dex-backed OIDC tests may skip." >&2
+    ensure_docker_compose_service dex "Dex-backed OIDC tests may skip."
 }
 
 should_start_minio_for_storage_tests() {
@@ -900,16 +978,8 @@ ensure_minio_for_storage_tests() {
         return 0
     fi
 
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "Warning: Docker is not available; MinIO-backed storage tests may fail." >&2
-        return 0
-    fi
-
     step "Starting shared MinIO for storage tests"
-    (
-        cd "$REPO_ROOT/docker/utils"
-        docker compose up -d --force-recreate minio
-    ) || echo "Warning: could not start docker/utils MinIO; MinIO-backed storage tests may fail." >&2
+    ensure_docker_compose_service minio "MinIO-backed storage tests may fail."
 }
 
 npm_install_dir() {
@@ -949,8 +1019,8 @@ run_npm_suite() {
 }
 
 supplementary_server_responding() {
-    curl -sf "$KALAMDB_SERVER_URL/health" > /dev/null 2>&1 \
-        || curl -sf "$KALAMDB_SERVER_URL/v1/api/healthcheck" > /dev/null 2>&1
+    curl -sf --max-time 3 --ipv4 "$KALAMDB_SERVER_URL/health" > /dev/null 2>&1 \
+        || curl -sf --max-time 3 --ipv4 "$KALAMDB_SERVER_URL/v1/api/healthcheck" > /dev/null 2>&1
 }
 
 allocate_free_local_port() {
@@ -1263,10 +1333,10 @@ supplementary_try_login() {
     local body_file="$3"
     local status
 
-    status=$(curl -sS -o "$body_file" -w '%{http_code}' \
+    status=$(curl -sS --max-time 5 --ipv4 -o "$body_file" -w '%{http_code}' \
         -H 'Content-Type: application/json' \
         -d "{\"user\":\"$user\",\"password\":\"$password\"}" \
-        "$KALAMDB_SERVER_URL/v1/api/auth/login")
+        "$KALAMDB_SERVER_URL/v1/api/auth/login") || status="000"
     [[ "$status" == "200" ]]
 }
 
@@ -1306,7 +1376,7 @@ validate_running_server_credentials_if_needed() {
     admin_login_body="$auth_tmp_dir/admin-login.json"
     root_login_body="$auth_tmp_dir/root-login.json"
 
-    if curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
+    if curl -fsS --max-time 5 --ipv4 "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
         if grep -Eq '"needs_setup"[[:space:]]*:[[:space:]]*true' "$status_body"; then
             rm -rf "$auth_tmp_dir"
             return 0
@@ -1361,7 +1431,7 @@ setup_supplementary_auth_if_needed() {
     user_check_body="$auth_tmp_dir/user-check.json"
     user_sql_body="$auth_tmp_dir/user-sql.json"
 
-    if curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
+    if curl -fsS --max-time 5 --ipv4 "$KALAMDB_SERVER_URL/v1/api/auth/status" > "$status_body" 2>/dev/null; then
         if grep -Eq '"needs_setup"[[:space:]]*:[[:space:]]*true' "$status_body"; then
             curl -fsS "$KALAMDB_SERVER_URL/v1/api/auth/setup" \
                 -H "Content-Type: application/json" \
@@ -1527,11 +1597,13 @@ run_supplementary_suites() {
             npm run test
     )
     run_npm_suite "ui" "Running admin UI tests" "test:ci"
-    run_npm_suite \
-        "ui" \
-        "Running admin UI Playwright tests" \
-        "test:e2e" \
-        "test:e2e:install"
+    KALAMDB_E2E_BACKEND_URL="${KALAMDB_E2E_BACKEND_URL:-$KALAMDB_SERVER_URL}" \
+        VITE_API_URL="${VITE_API_URL:-$KALAMDB_SERVER_URL}" \
+        run_npm_suite \
+            "ui" \
+            "Running admin UI Playwright tests" \
+            "test:e2e" \
+            "test:e2e:install"
 
     step "Running Dart SDK tests"
     (
@@ -1542,7 +1614,10 @@ run_supplementary_suites() {
     step "Running Rust SDK tests"
     (
         cd "$REPO_ROOT/link/sdks/rust"
-        ./test.sh
+        # Use an isolated auto-started server. The shared supplementary process can
+        # be exhausted after the earlier TypeScript/UI suites.
+        env -u KALAMDB_SERVER_URL -u KALAMDB_URL -u KALAM_URL -u KALAMDB_TEST_URL \
+            ./test.sh
     )
 }
 
@@ -1625,6 +1700,9 @@ run_single_test() {
     local test_filter="$1"
     build_test_cmd "$test_filter"
     echo "Executing: ${TEST_CMD[*]}"
+    if [ ${#PACKAGE_FILTERS[@]} -eq 0 ] && [ -z "$TEST_FILTER" ] && [ -z "$TEST_TARGET" ]; then
+        echo "Note: a full workspace nextest compile can stay silent for several minutes."
+    fi
     echo ""
     if [ "$SERVER_TYPE" = "fresh" ]; then
         env -u KALAMDB_SERVER_URL -u KALAMDB_CLUSTER_URLS "${TEST_CMD[@]}"

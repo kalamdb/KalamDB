@@ -1236,7 +1236,7 @@ async fn begin_transaction_reclaims_stale_remote_transaction_via_executor() {
         .into_inner()
         .session_id;
 
-    let tx_id = service
+    let _tx_id = service
         .begin_transaction(plain_request(BeginTransactionRequest {
             session_id: session_id.clone(),
         }))

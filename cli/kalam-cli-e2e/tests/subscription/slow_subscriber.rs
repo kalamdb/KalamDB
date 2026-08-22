@@ -34,8 +34,7 @@ const DRAIN_IDLE_GRACE: Duration = Duration::from_secs(3);
 
 fn slow_client(
     receive_secs: u64,
-    initial_data_secs: u64,
-) -> Result<kalam_client::KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
+    initial_data_secs: u64) -> Result<kalam_client::KalamLinkClient, Box<dyn std::error::Error + Send + Sync>> {
     client_for_user_on_url_with_timeouts(
         &leader_or_server_url(),
         default_username(),
@@ -47,8 +46,7 @@ fn slow_client(
             .subscribe_timeout_secs(15)
             .auth_timeout_secs(10)
             .initial_data_timeout(Duration::from_secs(initial_data_secs))
-            .build(),
-    )
+            .build())
 }
 
 /// Collect up to `max_events` events from a subscription with an artificial
@@ -64,8 +62,7 @@ async fn drain_with_delay(
     sub: &mut kalam_client::SubscriptionManager,
     max_events: usize,
     per_event_delay: Duration,
-    wall_timeout: Duration,
-) -> (Vec<String>, bool) {
+    wall_timeout: Duration) -> (Vec<String>, bool) {
     let mut events = Vec::new();
     let mut hit_error = false;
     let deadline = tokio::time::Instant::now() + wall_timeout;
@@ -167,8 +164,7 @@ fn subscription_slow_consumer_initial_data() {
             &mut sub,
             (total_rows + 5) as usize,
             Duration::from_millis(30), // ~3G processing delay per event
-            Duration::from_secs(120),
-        )
+            Duration::from_secs(120))
         .await
     });
 
@@ -251,8 +247,7 @@ fn subscription_3g_like_high_latency() {
             &mut sub,
             15,
             Duration::from_millis(100), // 100ms per event – slow 3G consumer
-            Duration::from_secs(15),
-        )
+            Duration::from_secs(15))
         .await;
 
         let joined = evs.join("\n");
@@ -338,8 +333,7 @@ fn subscription_slow_consumer_concurrent_writes() {
             &mut sub,
             (n_writes + 2) as usize,
             Duration::from_millis(20), // 20ms delay per event
-            Duration::from_secs(90),
-        )
+            Duration::from_secs(90))
         .await;
 
         let insert_events =
@@ -496,8 +490,7 @@ fn subscription_timeout_graceful_then_reconnect() {
             &leader_or_server_url(),
             default_username(),
             default_password(),
-            tight_timeouts,
-        )
+            tight_timeouts)
         .expect("tight client");
 
         // This might succeed quickly or fail — either is acceptable
@@ -507,8 +500,7 @@ fn subscription_timeout_graceful_then_reconnect() {
                     &mut sub,
                     50,
                     Duration::from_millis(0),
-                    Duration::from_secs(5),
-                )
+                    Duration::from_secs(5))
                 .await;
                 println!(
                     "[TEST] tight-timeout phase collected {} events (timeout may have fired)",
@@ -531,8 +523,7 @@ fn subscription_timeout_graceful_then_reconnect() {
             &mut sub_normal,
             40,
             Duration::from_millis(0),
-            Duration::from_secs(15),
-        )
+            Duration::from_secs(15))
         .await;
 
         assert!(
@@ -586,8 +577,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'SHARED', ACCESS_LEVEL = \
-         'PUBLIC')",
+        "CREATE TABLE {} (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'SHARED')",
         full
     ))
     .expect("create shared table");
@@ -643,8 +633,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
                             &mut sub,
                             10,
                             Duration::from_millis(40),
-                            Duration::from_secs(30),
-                        )
+                            Duration::from_secs(30))
                         .await;
 
                         // Wait until every subscriber has finished its initial drain so the
@@ -658,8 +647,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
                             &mut sub,
                             5,
                             Duration::from_millis(40),
-                            Duration::from_secs(60),
-                        )
+                            Duration::from_secs(60))
                         .await;
 
                         let all_evs = [init_evs, live_evs].concat();
@@ -764,8 +752,7 @@ fn subscription_large_initial_data_slow_batch_consumer() {
             &mut sub,
             (total + 10) as usize,
             Duration::from_millis(50),
-            Duration::from_secs(180),
-        )
+            Duration::from_secs(180))
         .await
     });
 
@@ -989,8 +976,7 @@ fn subscription_burst_then_slow_catchup() {
             &mut sub,
             (burst_size + 2) as usize,
             Duration::from_millis(25),
-            Duration::from_secs(120),
-        )
+            Duration::from_secs(120))
         .await;
 
         let burst_evs = evs.iter().filter(|e| e.contains("Insert") || e.contains("burst_")).count();

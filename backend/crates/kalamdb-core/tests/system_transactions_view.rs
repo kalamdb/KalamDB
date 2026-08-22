@@ -25,8 +25,9 @@ use kalamdb_raft::RaftExecutor;
 use kalamdb_system::{providers::storages::models::StorageMode, AuthType, Role, User};
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_shared_table, execute_err, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
-    request_transaction_coordinator, request_transaction_state, row, unique_namespace,
+    create_shared_table, create_user_table, execute_err, execute_ok, insert_sql, observer_exec_ctx,
+    request_exec_ctx, request_transaction_coordinator, request_transaction_state, row,
+    unique_namespace,
 };
 use tonic::Request;
 
@@ -61,9 +62,10 @@ fn optional_string_field(row: &HashMap<String, KalamCellValue>, field: &str) -> 
     row.get(field).and_then(|value| value.as_str()).map(ToString::to_string)
 }
 
-fn shared_insert_request(
+fn user_insert_request(
     table_id: &kalamdb_commons::TableId,
     session_id: &str,
+    user_id: &str,
     id: i64,
     name: &str,
 ) -> InsertRpcRequest {
@@ -74,12 +76,12 @@ fn shared_insert_request(
     .expect("serialize typed row");
 
     InsertRpcRequest {
-        namespace: table_id.namespace_id().to_string(),
+        namespace:  table_id.namespace_id().to_string(),
         table_name: table_id.table_name().to_string(),
-        table_type: "shared".to_string(),
+        table_type: "user".to_string(),
         session_id: session_id.to_string(),
-        user_id: None,
-        rows_json: vec![row_json],
+        user_id:    Some(user_id.to_string()),
+        rows_json:  vec![row_json],
     }
 }
 
@@ -92,24 +94,25 @@ async fn open_session(
 
     let bridge_user_id = UserId::new(format!("{}_bridge_dba", session_label.replace('-', "_")));
     let bridge_user = User {
-        user_id: bridge_user_id.clone(),
-        password_hash: "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu".to_string(),
-        role: Role::Dba,
-        name: None,
-        email: Some(format!("{}@example.com", bridge_user_id.as_str())),
-        auth_type: AuthType::Password,
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: None,
+        user_id:               bridge_user_id.clone(),
+        password_hash:         "$2b$12$unusedhashunusedhashunusedhashunusedhashunusedhashu"
+            .to_string(),
+        role:                  Role::Dba,
+        name:                  None,
+        email:                 Some(format!("{}@example.com", bridge_user_id.as_str())),
+        auth_type:             AuthType::Password,
+        auth_data:             None,
+        storage_mode:          StorageMode::Table,
+        storage_id:            None,
         failed_login_attempts: 0,
-        locked_until: None,
-        last_login_at: None,
-        created_at: 0,
-        updated_at: 0,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        invited_by: None,
+        locked_until:          None,
+        last_login_at:         None,
+        created_at:            0,
+        updated_at:            0,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        invited_by:            None,
     };
     app_ctx
         .system_tables()
@@ -127,7 +130,7 @@ async fn open_session(
     .expect("create bridge bearer token");
 
     let mut request = Request::new(OpenSessionRequest {
-        session_id: session_label.to_string(),
+        session_id:     session_label.to_string(),
         current_schema: None,
     });
     request.metadata_mut().insert(
@@ -213,7 +216,7 @@ async fn begin_transaction(service: &KalamPgService, session_id: &str) -> String
 async fn rollback_transaction(service: &KalamPgService, session_id: &str, transaction_id: &str) {
     service
         .rollback_transaction(Request::new(RollbackTransactionRequest {
-            session_id: session_id.to_string(),
+            session_id:     session_id.to_string(),
             transaction_id: transaction_id.to_string(),
         }))
         .await
@@ -225,7 +228,7 @@ async fn rollback_transaction(service: &KalamPgService, session_id: &str, transa
 async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions_remain_pg_only() {
     let (app_ctx, _test_db) = create_cluster_app_context().await;
     let table_id =
-        create_shared_table(&app_ctx, &unique_namespace("system_transactions"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("system_transactions"), "items").await;
     let executor = create_executor(Arc::clone(&app_ctx));
     let operation_service = OperationService::new(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -240,13 +243,14 @@ async fn system_transactions_shows_active_pg_and_sql_transactions_while_sessions
     let session_id = open_session(&app_ctx, &pg_service, "pg-4101-abcd1234").await;
     let pg_transaction_id = begin_transaction(&pg_service, &session_id).await;
 
+    let pg_user_id = UserId::new("pg-txn-view-user");
     operation_service
         .execute_insert(InsertRequest {
-            table_id: table_id.clone(),
-            table_type: TableType::Shared,
+            table_id:   table_id.clone(),
+            table_type: TableType::User,
             session_id: Some(session_id.to_string()),
-            user_id: None,
-            rows: vec![row(1, "from-pg")],
+            user_id:    Some(pg_user_id),
+            rows:       vec![row(1, "from-pg")],
         })
         .await
         .expect("pg-origin write stages successfully");
@@ -494,7 +498,7 @@ async fn pg_timeout_after_write_clears_sessions_and_transactions_views() {
 
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let table_id =
-        create_shared_table(&app_ctx, &unique_namespace("pg_timeout_write"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("pg_timeout_write"), "items").await;
     let executor = create_executor(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let executor_handle = app_ctx.executor();
@@ -508,7 +512,13 @@ async fn pg_timeout_after_write_clears_sessions_and_transactions_views() {
     let transaction_id = begin_transaction(&pg_service, &session_id).await;
 
     pg_service
-        .insert(Request::new(shared_insert_request(&table_id, &session_id, 1, "pending")))
+        .insert(Request::new(user_insert_request(
+            &table_id,
+            &session_id,
+            "pg-timeout-write-user",
+            1,
+            "pending",
+        )))
         .await
         .expect("initial staged write succeeds");
 
@@ -552,7 +562,13 @@ async fn pg_timeout_after_write_clears_sessions_and_transactions_views() {
     tokio::time::sleep(Duration::from_millis(2200)).await;
 
     let timeout_error = pg_service
-        .insert(Request::new(shared_insert_request(&table_id, &session_id, 2, "late")))
+        .insert(Request::new(user_insert_request(
+            &table_id,
+            &session_id,
+            "pg-timeout-write-user",
+            2,
+            "late",
+        )))
         .await
         .expect_err("follow-up write should fail after timeout");
     assert_eq!(timeout_error.code(), tonic::Code::FailedPrecondition);
@@ -646,14 +662,14 @@ async fn pg_timeout_after_read_clears_sessions_and_transactions_views() {
 
     let timeout_error = pg_service
         .scan(Request::new(ScanRpcRequest {
-            namespace: table_id.namespace_id().to_string(),
+            namespace:  table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id: None,
-            columns: vec![],
-            filters: vec![],
-            limit: None,
+            user_id:    Some("pg-timeout-read-user".to_string()),
+            columns:    vec![],
+            filters:    vec![],
+            limit:      None,
         }))
         .await
         .expect_err("scan should fail after timeout");

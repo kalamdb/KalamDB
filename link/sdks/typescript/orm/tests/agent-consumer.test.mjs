@@ -39,7 +39,18 @@ function sqlLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-async function waitFor(condition, timeoutMs = 20_000, intervalMs = 100) {
+async function execSql(client, sql) {
+  const response = await client.query(sql);
+  if (response.status === 'error' || response.error) {
+    const message = response.error?.details
+      ? `${response.error.message}: ${response.error.details}`
+      : response.error?.message ?? JSON.stringify(response);
+    throw new Error(message);
+  }
+  return response;
+}
+
+async function waitFor(condition, timeoutMs = 30_000, intervalMs = 100) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await condition();
@@ -76,26 +87,32 @@ before(async () => {
   });
   workerDb = drizzle(kalamDriver(workerClient));
 
-  await adminClient.query(`CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
-  await adminClient.query(`
-    CREATE TABLE ${inboxTableName} (
+  await execSql(adminClient, `CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
+  await execSql(
+    adminClient,
+    `
+    CREATE STREAM TABLE ${inboxTableName} (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       bucket TEXT NOT NULL,
       body TEXT NOT NULL
-    )
-  `);
-  await adminClient.query(`
-    CREATE TABLE ${processedTableName} (
+    ) WITH (TTL_SECONDS = 3600)
+  `,
+  );
+  await execSql(
+    adminClient,
+    `
+    CREATE USER TABLE ${processedTableName} (
       id TEXT PRIMARY KEY,
       source_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       bucket TEXT NOT NULL,
       summary TEXT NOT NULL
-    ) WITH (TYPE = 'USER')
-  `);
-  await adminClient.query(`CREATE TOPIC ${topicName}`);
-  await adminClient.query(`ALTER TOPIC ${topicName} ADD SOURCE ${inboxTableName} ON INSERT`);
+    )
+  `,
+  );
+  await execSql(adminClient, `CREATE TOPIC ${topicName}`);
+  await execSql(adminClient, `ALTER TOPIC ${topicName} ADD SOURCE ${inboxTableName} ON INSERT`);
   await waitForTopicRoute();
 });
 
@@ -155,8 +172,8 @@ describe('ORM with @kalamdb/consumer runConsumer', () => {
     });
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await adminClient.query([
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await execSql(adminClient, [
         `INSERT INTO ${inboxTableName} (id, kind, bucket, body) VALUES`,
         `('skip-kind', 'ignore', ${sqlLiteral(targetBucket)}, 'ignore me'),`,
         `('skip-bucket', 'summarize', 'other-bucket', 'wrong bucket'),`,

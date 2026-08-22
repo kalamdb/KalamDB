@@ -1,5 +1,5 @@
 use kalamdb_commons::{models::NamespaceId, TableId};
-use sqlparser::ast::{CreatePolicy, CreatePolicyType, Statement};
+use sqlparser::ast::{CreatePolicy, CreatePolicyCommand, CreatePolicyType, Statement};
 
 use super::{parse_one, parse_targets, resolve_table_id, PolicyCommand, PolicyTarget};
 use crate::ddl::DdlResult;
@@ -35,7 +35,13 @@ impl CreatePolicyStatement {
             return Err("RESTRICTIVE policies are not supported".to_string());
         }
 
-        let command = PolicyCommand::from(command);
+        let command = match command {
+            None | Some(CreatePolicyCommand::All) => PolicyCommand::All,
+            Some(CreatePolicyCommand::Select) => PolicyCommand::Select,
+            Some(CreatePolicyCommand::Insert) => PolicyCommand::Insert,
+            Some(CreatePolicyCommand::Update) => PolicyCommand::Update,
+            Some(CreatePolicyCommand::Delete) => PolicyCommand::Delete,
+        };
         if command == PolicyCommand::Insert && using.is_some() {
             return Err("INSERT policies cannot define USING".to_string());
         }

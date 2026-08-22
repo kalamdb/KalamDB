@@ -14,7 +14,9 @@ import { sleep, waitForLocalFileAbsent, waitForLocalFiles } from '../src/helpers
 import {
   aliceConnection,
   deletePaths,
+  ensureOkfSchema,
   login,
+  ROOT_PASSWORD,
   RUN_INTEGRATION,
   serverHealthy,
   stopSyncApp,
@@ -23,8 +25,22 @@ import {
 
 const integration = { skip: !RUN_INTEGRATION };
 
-test('integration: update overwrites remote file content', integration, async () => {
+/** Schema + demo users before the first scenario (files run in parallel with sync.integration). */
+async function ensureReady(): Promise<boolean> {
   if (!(await serverHealthy())) {
+    return false;
+  }
+  const root = await login('root', ROOT_PASSWORD);
+  try {
+    await ensureOkfSchema(root);
+  } finally {
+    await root.client.disconnect();
+  }
+  return true;
+}
+
+test('integration: update overwrites remote file content', integration, async () => {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -56,7 +72,7 @@ test('integration: update overwrites remote file content', integration, async ()
 });
 
 test('integration: second client receives files pushed by the first', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -91,7 +107,7 @@ test('integration: second client receives files pushed by the first', integratio
 });
 
 test('integration: pending upload queue retries after simulated failure', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -135,7 +151,7 @@ test('integration: pending upload queue retries after simulated failure', integr
 });
 
 test('integration: pushLocalFile skips unchanged files', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -167,7 +183,7 @@ test('integration: pushLocalFile skips unchanged files', integration, async () =
 });
 
 test('integration: remote delete removes local copy', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -195,7 +211,7 @@ test('integration: remote delete removes local copy', integration, async () => {
 });
 
 test('integration: local changes while sync stopped are pushed on restart', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -245,7 +261,7 @@ test('integration: local changes while sync stopped are pushed on restart', inte
 });
 
 test('integration: .index is never included in uploads', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 
@@ -277,7 +293,7 @@ test('integration: .index is never included in uploads', integration, async () =
 });
 
 test('integration: local edit while sync is running is pushed to server', integration, async () => {
-  if (!(await serverHealthy())) {
+  if (!(await ensureReady())) {
     return;
   }
 

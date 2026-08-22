@@ -132,11 +132,11 @@ pub struct ClusterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerConfig {
     /// Peer's unique node ID (must be >= 1)
-    pub node_id: u64,
+    pub node_id:         u64,
     /// Peer's RPC address for Raft communication (e.g., "10.0.0.2:2910")
-    pub rpc_addr: String,
+    pub rpc_addr:        String,
     /// Peer's API address for client requests (e.g., "10.0.0.2:2900")
-    pub api_addr: String,
+    pub api_addr:        String,
     /// Optional TLS server name override for this peer's RPC endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rpc_server_name: Option<String>,
@@ -240,13 +240,11 @@ impl ClusterConfig {
             validate_advertised_address(
                 &format!("cluster.peers(node_id={}).rpc_addr", peer.node_id),
                 &peer.rpc_addr,
-                true,
-            )?;
+                true)?;
             validate_advertised_address(
                 &format!("cluster.peers(node_id={}).api_addr", peer.node_id),
                 &peer.api_addr,
-                true,
-            )?;
+                true)?;
         }
 
         // Check election timeout > heartbeat
@@ -290,8 +288,7 @@ impl ClusterConfig {
 fn validate_advertised_address(
     field_name: &str,
     value: &str,
-    has_peers: bool,
-) -> Result<(), String> {
+    has_peers: bool) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{} cannot be empty", field_name));
@@ -321,9 +318,9 @@ mod tests {
             rpc_addr: "127.0.0.1:2910".to_string(),
             api_addr: "127.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
-                node_id: 2,
-                rpc_addr: "127.0.0.2:2910".to_string(),
-                api_addr: "127.0.0.2:2900".to_string(),
+                node_id:         2,
+                rpc_addr:        "127.0.0.2:2910".to_string(),
+                api_addr:        "127.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             user_shards: 12,

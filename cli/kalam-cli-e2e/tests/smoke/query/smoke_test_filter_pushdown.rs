@@ -30,8 +30,7 @@ fn query_rows(sql: &str) -> Vec<HashMap<String, Value>> {
 fn scalar_string(row: &HashMap<String, Value>, column: &str) -> String {
     let value = extract_typed_value(
         row.get(column)
-            .unwrap_or_else(|| panic!("expected column '{}' in row {:?}", column, row)),
-    );
+            .unwrap_or_else(|| panic!("expected column '{}' in row {:?}", column, row)));
     match value {
         Value::String(text) => text,
         other => panic!("expected '{}' to be string-like, got {:?}", column, other),
@@ -67,11 +66,11 @@ fn smoke_test_filter_pushdown() {
     ))
     .expect("CREATE USER should succeed");
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED', ACCESS_LEVEL = \
-         'PUBLIC')",
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')",
         full_shared_table
     ))
     .expect("CREATE SHARED TABLE should succeed");
+    grant_public_select_shared_table(&full_shared_table);
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (event_id TEXT PRIMARY KEY, payload TEXT) WITH (TYPE = 'STREAM', \
          TTL_SECONDS = 60)",

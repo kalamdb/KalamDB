@@ -77,11 +77,11 @@ pub struct ViewTableProvider<V: VirtualView> {
 }
 
 struct ViewScanSource<V: VirtualView> {
-    view: Arc<V>,
+    view:            Arc<V>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
 }
 
 impl<V: VirtualView> std::fmt::Debug for ViewScanSource<V> {
@@ -118,8 +118,7 @@ impl<V: VirtualView + 'static> DeferredBatchSource for ViewScanSource<V> {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -150,8 +149,7 @@ impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
         state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let base_schema = self.view.schema();
         let output_schema = match projection {
             Some(indices) => base_schema
@@ -178,8 +176,7 @@ impl<V: VirtualView + 'static> TableProvider for ViewTableProvider<V> {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
     }
 }

@@ -86,6 +86,11 @@ connect_timeout_secs = 10
 
 
 [storage.rocksdb]
+# compact (default): tiny cache and memtables for a few tables and low traffic.
+# auto: size cache and memtables from host RAM at open, still clamped
+# (cache 2MB–256MB, hot_data memtable 128KB–64MB).
+# memory_mode = "compact"
+
 # Block cache size for reads in bytes (default: 2MB)
 # IMPORTANT: This cache is SHARED across ALL column families
 # Adding more column families does NOT increase memory proportionally

@@ -19,31 +19,31 @@ pub(crate) type ColumnKey = (String, String, String);
 
 #[derive(Debug, Clone)]
 pub(crate) struct KdbTableMetadata {
-    pub namespace_id: String,
-    pub kalam_table_type: String,
-    pub storage_id: Option<String>,
-    pub version: i64,
-    pub options: Option<String>,
-    pub comment: Option<String>,
+    pub namespace_id:      String,
+    pub kalam_table_type:  String,
+    pub storage_id:        Option<String>,
+    pub version:           i64,
+    pub options:           Option<String>,
+    pub comment:           Option<String>,
     pub updated_at_micros: i64,
     pub created_at_micros: i64,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct KdbColumnMetadata {
-    pub namespace_id: String,
-    pub version: i64,
-    pub column_id: i64,
-    pub comment: Option<String>,
-    pub default_value: Option<String>,
-    pub primary_key: bool,
+    pub namespace_id:    String,
+    pub version:         i64,
+    pub column_id:       i64,
+    pub comment:         Option<String>,
+    pub default_value:   Option<String>,
+    pub primary_key:     bool,
     pub primary_key_pos: Option<i64>,
-    pub data_type: KalamDataType,
+    pub data_type:       KalamDataType,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CatalogMetadataIndex {
-    tables: HashMap<TableKey, KdbTableMetadata>,
+    tables:  HashMap<TableKey, KdbTableMetadata>,
     columns: HashMap<ColumnKey, KdbColumnMetadata>,
 }
 
@@ -76,29 +76,24 @@ impl CatalogMetadataIndex {
         &self,
         table_schema: &str,
         table_name: &str,
-        column_name: &str,
-    ) -> Option<&KdbColumnMetadata> {
+        column_name: &str) -> Option<&KdbColumnMetadata> {
         self.columns.get(&(
             table_schema.to_string(),
             table_name.to_string(),
-            column_name.to_string(),
-        ))
+            column_name.to_string()))
     }
 
     fn insert_table(&mut self, table: &TableDefinition) {
         let schema = table.namespace_id.as_str().to_string();
         let name = table.table_name.as_str().to_string();
 
-        self.tables.insert(
-            (schema.clone(), name.clone()),
-            kdb_table_metadata_from_definition(table),
-        );
+        self.tables
+            .insert((schema.clone(), name.clone()), kdb_table_metadata_from_definition(table));
 
         for column in &table.columns {
             self.columns.insert(
                 (schema.clone(), name.clone(), column.column_name.clone()),
-                kdb_column_metadata_from_definition(table, column),
-            );
+                kdb_column_metadata_from_definition(table, column));
         }
     }
 }
@@ -124,17 +119,16 @@ pub(crate) fn kdb_table_metadata_from_definition(def: &TableDefinition) -> KdbTa
 
 pub(crate) fn kdb_column_metadata_from_definition(
     table: &TableDefinition,
-    column: &ColumnDefinition,
-) -> KdbColumnMetadata {
+    column: &ColumnDefinition) -> KdbColumnMetadata {
     KdbColumnMetadata {
-        namespace_id: table.namespace_id.as_str().to_string(),
-        version: table.schema_version as i64,
-        column_id: column.column_id as i64,
-        comment: column.column_comment.clone(),
-        default_value: format_column_default(&column.default_value),
-        primary_key: column.is_primary_key,
+        namespace_id:    table.namespace_id.as_str().to_string(),
+        version:         table.schema_version as i64,
+        column_id:       column.column_id as i64,
+        comment:         column.column_comment.clone(),
+        default_value:   format_column_default(&column.default_value),
+        primary_key:     column.is_primary_key,
         primary_key_pos: primary_key_position(table, column),
-        data_type: column.data_type.clone(),
+        data_type:       column.data_type.clone(),
     }
 }
 
@@ -143,11 +137,8 @@ fn primary_key_position(table: &TableDefinition, column: &ColumnDefinition) -> O
         return None;
     }
 
-    let mut primary_keys = table
-        .columns
-        .iter()
-        .filter(|col| col.is_primary_key)
-        .collect::<Vec<_>>();
+    let mut primary_keys =
+        table.columns.iter().filter(|col| col.is_primary_key).collect::<Vec<_>>();
     primary_keys.sort_by_key(|col| col.ordinal_position);
 
     primary_keys
@@ -164,11 +155,11 @@ fn format_column_default(default_value: &ColumnDefault) -> Option<String> {
 }
 
 pub(crate) struct NormalizedColumnTypes {
-    pub data_type: &'static str,
-    pub udt_name: &'static str,
-    pub kdb_data_type: String,
-    pub numeric_precision: Option<u64>,
-    pub numeric_scale: Option<u64>,
+    pub data_type:          &'static str,
+    pub udt_name:           &'static str,
+    pub kdb_data_type:      String,
+    pub numeric_precision:  Option<u64>,
+    pub numeric_scale:      Option<u64>,
     pub datetime_precision: Option<u64>,
 }
 

@@ -48,37 +48,37 @@ impl RaftTypeConfig for KalamTypeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct KalamNode {
     /// gRPC address for Raft communication (e.g., "127.0.0.1:2910")
-    pub rpc_addr: String,
+    pub rpc_addr:  String,
     /// HTTP address for client requests (e.g., "127.0.0.1:2900")
-    pub api_addr: String,
+    pub api_addr:  String,
     /// Machine hostname (e.g., "node-1.kalamdb.local")
     #[serde(default)]
-    pub hostname: Option<String>,
+    pub hostname:  Option<String>,
     /// KalamDB version (e.g., "0.1.0")
     #[serde(default)]
-    pub version: Option<String>,
+    pub version:   Option<String>,
     /// Total system memory in megabytes
     #[serde(default)]
     pub memory_mb: Option<u64>,
     /// Operating system (e.g., "linux", "macos", "windows")
     #[serde(default)]
-    pub os: Option<String>,
+    pub os:        Option<String>,
     /// CPU architecture (e.g., "x86_64", "aarch64")
     #[serde(default)]
-    pub arch: Option<String>,
+    pub arch:      Option<String>,
 }
 
 impl KalamNode {
     /// Create a new KalamNode with the given addresses
     pub fn new(rpc_addr: impl Into<String>, api_addr: impl Into<String>) -> Self {
         Self {
-            rpc_addr: rpc_addr.into(),
-            api_addr: api_addr.into(),
-            hostname: None,
-            version: None,
+            rpc_addr:  rpc_addr.into(),
+            api_addr:  api_addr.into(),
+            hostname:  None,
+            version:   None,
             memory_mb: None,
-            os: None,
-            arch: None,
+            os:        None,
+            arch:      None,
         }
     }
 
@@ -106,13 +106,13 @@ impl KalamNode {
     /// Create a new KalamNode with auto-detected system metadata
     pub fn with_auto_metadata(rpc_addr: impl Into<String>, api_addr: impl Into<String>) -> Self {
         Self {
-            rpc_addr: rpc_addr.into(),
-            api_addr: api_addr.into(),
-            hostname: Self::detect_hostname(),
-            version: Some(SERVER_VERSION.to_string()),
+            rpc_addr:  rpc_addr.into(),
+            api_addr:  api_addr.into(),
+            hostname:  Self::detect_hostname(),
+            version:   Some(SERVER_VERSION.to_string()),
             memory_mb: Self::detect_memory_mb(),
-            os: Some(std::env::consts::OS.to_string()),
-            arch: Some(std::env::consts::ARCH.to_string()),
+            os:        Some(std::env::consts::OS.to_string()),
+            arch:      Some(std::env::consts::ARCH.to_string()),
         }
     }
 

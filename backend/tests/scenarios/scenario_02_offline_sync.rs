@@ -23,14 +23,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
 use kalam_client::models::ChangeEvent;
 use kalamdb_commons::Role;
 use tokio::time::sleep;
 
 use super::helpers::*;
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Main offline sync scenario - tests 10 parallel users syncing
 #[tokio::test]
@@ -130,7 +127,6 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
 
                 // Wait for ACK
                 let mut got_ack = false;
-                let mut batch_count = 0;
                 let mut total_rows = 0;
                 let mut seen_ids = HashSet::new();
 
@@ -147,7 +143,6 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
                             batch_control,
                             ..
                         }))) => {
-                            batch_count += 1;
                             for row in &rows {
                                 total_rows += 1;
                                 if let Some(id_val) = row.get("id") {

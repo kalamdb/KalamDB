@@ -6,8 +6,7 @@
 
 use kalamdb_commons::{
     models::{Role, TableId, UserId},
-    schemas::{TableDefinition, TableOptions, TableType},
-    TableAccess,
+    schemas::TableType,
 };
 
 use crate::error::SessionError;
@@ -30,7 +29,7 @@ pub fn can_access_system_table(role: Role) -> bool {
 /// - **System role**: can access ALL table types
 /// - **Dba role**: can access ALL table types
 /// - **Service role**: can access USER/SHARED/STREAM tables
-/// - **User role**: can access USER/STREAM tables
+/// - **User role**: can access USER/SHARED/STREAM tables (shared tables are FORCE RLS)
 #[inline]
 pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
     match role {
@@ -38,7 +37,7 @@ pub fn can_access_table_type(role: Role, table_type: TableType) -> bool {
         Role::Service => {
             matches!(table_type, TableType::Shared | TableType::Stream | TableType::User)
         },
-        Role::User => matches!(table_type, TableType::User | TableType::Stream),
+        Role::User => matches!(table_type, TableType::User | TableType::Shared | TableType::Stream),
         Role::Anonymous => false,
     }
 }
@@ -157,8 +156,7 @@ pub fn can_write_user_table(role: Role) -> bool {
 /// Check user table write access using table identity.
 pub fn check_user_table_write_access_level(
     role: Role,
-    table_id: &TableId,
-) -> Result<(), SessionError> {
+    table_id: &TableId) -> Result<(), SessionError> {
     if can_write_user_table(role) {
         Ok(())
     } else {
@@ -180,8 +178,7 @@ pub fn can_write_stream_table(role: Role) -> bool {
 /// Check stream table write access using table identity.
 pub fn check_stream_table_write_access_level(
     role: Role,
-    table_id: &TableId,
-) -> Result<(), SessionError> {
+    table_id: &TableId) -> Result<(), SessionError> {
     check_user_table_write_access_level(role, table_id)
 }
 
@@ -224,56 +221,34 @@ pub fn can_impersonate_target_user(
     actor_user_id: &UserId,
     actor_role: Role,
     target_user_id: &UserId,
-    target_role: Role,
-) -> bool {
+    target_role: Role) -> bool {
     actor_user_id == target_user_id || can_impersonate_role(actor_role, target_role)
 }
 
-/// Determine the access level for a shared table definition.
+/// Check if a role can open a shared table. Row visibility is FORCE RLS.
 #[inline]
-pub fn shared_table_access_level(def: &TableDefinition) -> TableAccess {
-    match &def.table_options {
-        TableOptions::Shared(opts) => opts.access_level.unwrap_or(TableAccess::Private),
-        _ => TableAccess::Private,
-    }
+pub fn can_access_shared_table(role: Role) -> bool {
+    !matches!(role, Role::Anonymous)
 }
 
-/// Check if a role can access (read) a shared table.
+/// Check if a role can attempt shared-table writes. WITH CHECK still applies.
 #[inline]
-pub fn can_access_shared_table(access_level: TableAccess, role: Role) -> bool {
-    match access_level {
-        TableAccess::Dba => matches!(role, Role::System | Role::Dba),
-        TableAccess::Restricted => matches!(role, Role::System | Role::Dba | Role::Service),
-        TableAccess::Private => matches!(role, Role::System | Role::Dba | Role::Service),
-        TableAccess::Public => true, // All authenticated users can read public tables
-    }
+pub fn can_write_shared_table(role: Role) -> bool {
+    !matches!(role, Role::Anonymous)
 }
 
-/// Check if a role can write (INSERT/UPDATE/DELETE) a shared table.
-#[inline]
-pub fn can_write_shared_table(access_level: TableAccess, role: Role) -> bool {
-    match access_level {
-        TableAccess::Dba => matches!(role, Role::System | Role::Dba),
-        TableAccess::Restricted => matches!(role, Role::System | Role::Dba | Role::Service),
-        TableAccess::Private => matches!(role, Role::System | Role::Dba | Role::Service),
-        TableAccess::Public => matches!(role, Role::System | Role::Dba | Role::Service),
-    }
-}
-
-/// Check shared table write access using table identity and access level.
+/// Check shared table write access using table identity.
 pub fn check_shared_table_write_access_level(
     role: Role,
-    access_level: TableAccess,
-    table_id: &TableId,
-) -> Result<(), SessionError> {
-    if can_write_shared_table(access_level, role) {
+    table_id: &TableId) -> Result<(), SessionError> {
+    if can_write_shared_table(role) {
         Ok(())
     } else {
         Err(SessionError::AccessDenied {
             namespace_id: table_id.namespace_id().clone(),
             table_name: table_id.table_name().clone(),
             role,
-            reason: format!("Shared table write denied (access_level={:?})", access_level),
+            reason: "Anonymous shared-table writes are denied".to_string(),
         })
     }
 }
@@ -346,23 +321,18 @@ mod tests {
     }
 
     #[test]
-    fn test_dba_shared_access_level_is_dba_only() {
-        assert!(can_access_shared_table(TableAccess::Dba, Role::Dba));
-        assert!(can_access_shared_table(TableAccess::Dba, Role::System));
-        assert!(!can_access_shared_table(TableAccess::Dba, Role::Service));
-        assert!(!can_access_shared_table(TableAccess::Dba, Role::User));
+    fn test_authenticated_roles_can_open_shared_tables() {
+        assert!(can_access_shared_table(Role::Dba));
+        assert!(can_access_shared_table(Role::System));
+        assert!(can_access_shared_table(Role::Service));
+        assert!(can_access_shared_table(Role::User));
+        assert!(!can_access_shared_table(Role::Anonymous));
 
-        assert!(can_write_shared_table(TableAccess::Dba, Role::Dba));
-        assert!(can_write_shared_table(TableAccess::Dba, Role::System));
-        assert!(!can_write_shared_table(TableAccess::Dba, Role::Service));
-    }
-
-    #[test]
-    fn test_public_shared_write_access_allows_admin_and_service_only() {
-        assert!(can_write_shared_table(TableAccess::Public, Role::System));
-        assert!(can_write_shared_table(TableAccess::Public, Role::Dba));
-        assert!(can_write_shared_table(TableAccess::Public, Role::Service));
-        assert!(!can_write_shared_table(TableAccess::Public, Role::User));
+        assert!(can_write_shared_table(Role::Dba));
+        assert!(can_write_shared_table(Role::System));
+        assert!(can_write_shared_table(Role::Service));
+        assert!(can_write_shared_table(Role::User));
+        assert!(!can_write_shared_table(Role::Anonymous));
     }
 
     #[test]

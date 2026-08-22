@@ -35,6 +35,7 @@ datafusion-datasource = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
+dashmap = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

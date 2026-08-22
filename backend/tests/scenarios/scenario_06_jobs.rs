@@ -17,8 +17,6 @@ use tokio::time::sleep;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main jobs scenario test
 #[tokio::test]
 async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {

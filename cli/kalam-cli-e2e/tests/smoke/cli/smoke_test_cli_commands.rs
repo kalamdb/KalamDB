@@ -63,6 +63,7 @@ fn smoke_cli_list_tables_command() {
         full_table
     ))
     .expect("Failed to create table");
+    grant_public_select_shared_table(&full_table);
 
     // Query information_schema.tables with a narrow filter (this is what \dt uses internally).
     let result = execute_sql_as_root_via_client(&format!(
@@ -113,6 +114,7 @@ fn smoke_cli_describe_table_command() {
         full_table
     ))
     .expect("Failed to create table");
+    grant_public_select_shared_table(&full_table);
 
     // Query information_schema.columns (this is what \describe does)
     let result = execute_sql_as_root_via_client(&format!(
@@ -197,6 +199,7 @@ fn smoke_cli_sql_execution() {
         full_table
     ));
     assert!(result.is_ok(), "CREATE TABLE should succeed: {:?}", result);
+    grant_public_shared_table_access(&full_table);
 
     // Test INSERT
     let result = execute_sql_as_root_via_client(&format!(
@@ -354,6 +357,7 @@ fn smoke_cli_flush_command() {
         full_table
     ))
     .expect("Failed to create table");
+    grant_public_shared_table_access(&full_table);
 
     // Insert some data
     execute_sql_as_root_via_client(&format!(
@@ -476,6 +480,7 @@ fn smoke_cli_namespace_management() {
         full_table
     ))
     .expect("CREATE TABLE should succeed");
+    grant_public_select_shared_table(&full_table);
 
     // Test DROP NAMESPACE
     let result = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));

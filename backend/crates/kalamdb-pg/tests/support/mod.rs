@@ -14,7 +14,8 @@ use kalamdb_commons::{
         KalamCellValue, NamespaceId, TableId, TableName, TransactionId,
     },
     schemas::ColumnDefault,
-    TableAccess, TableType,
+    BoundExprShape, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, TableAccess, TablePolicy,
+    TableType,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -90,6 +91,41 @@ pub async fn create_shared_table(
     table_id
 }
 
+pub async fn grant_public_all_policy(app_ctx: &Arc<AppContext>, table_id: &TableId) {
+    let policy_name = format!("{}_public", table_id.table_name());
+    let always = PolicyProgram::RowLocal {
+        expr: BoundExprShape::Literal(true),
+    };
+    app_ctx
+        .system_tables()
+        .table_policies()
+        .create_policy(TablePolicy::new(
+            PolicyId::new(table_id.clone(), &policy_name).expect("policy id"),
+            table_id.clone(),
+            policy_name,
+            PolicyCommand::All,
+            vec![PolicyTarget::Public],
+            Some("true".to_string()),
+            Some("true".to_string()),
+            Some(always.clone()),
+            Some(always),
+            0,
+            1,
+        ))
+        .await
+        .unwrap_or_else(|error| panic!("grant public ALL on {table_id}: {error}"));
+}
+
+pub async fn create_shared_table_with_public_policy(
+    app_ctx: &Arc<AppContext>,
+    namespace: &NamespaceId,
+    table_name: &str,
+) -> TableId {
+    let table_id = create_shared_table(app_ctx, namespace, table_name).await;
+    grant_public_all_policy(app_ctx, &table_id).await;
+    table_id
+}
+
 pub async fn create_user_table(
     app_ctx: &Arc<AppContext>,
     namespace: &NamespaceId,
@@ -140,6 +176,34 @@ pub async fn new_service_with_tables(
     let mut table_ids = Vec::with_capacity(table_names.len());
     for table_name in table_names {
         table_ids.push(create_shared_table(&app_ctx, &namespace, table_name).await);
+    }
+    let service = build_service(Arc::clone(&app_ctx));
+    (app_ctx, service, namespace, table_ids)
+}
+
+pub async fn new_service_with_policy_shared_tables(
+    namespace_prefix: &str,
+    table_names: &[&str],
+) -> (Arc<AppContext>, KalamPgService, NamespaceId, Vec<TableId>) {
+    let app_ctx = test_app_context_simple();
+    let namespace = unique_namespace(namespace_prefix);
+    let mut table_ids = Vec::with_capacity(table_names.len());
+    for table_name in table_names {
+        table_ids.push(create_shared_table_with_public_policy(&app_ctx, &namespace, table_name).await);
+    }
+    let service = build_service(Arc::clone(&app_ctx));
+    (app_ctx, service, namespace, table_ids)
+}
+
+pub async fn new_service_with_user_tables(
+    namespace_prefix: &str,
+    table_names: &[&str],
+) -> (Arc<AppContext>, KalamPgService, NamespaceId, Vec<TableId>) {
+    let app_ctx = test_app_context_simple();
+    let namespace = unique_namespace(namespace_prefix);
+    let mut table_ids = Vec::with_capacity(table_names.len());
+    for table_name in table_names {
+        table_ids.push(create_user_table(&app_ctx, &namespace, table_name).await);
     }
     let service = build_service(Arc::clone(&app_ctx));
     (app_ctx, service, namespace, table_ids)
@@ -199,7 +263,7 @@ pub async fn await_shared_leader(app_ctx: &Arc<AppContext>) {
 pub async fn open_session(service: &KalamPgService, _session_id: &str) -> String {
     service
         .open_session(request(OpenSessionRequest {
-            session_id: _session_id.to_string(),
+            session_id:     _session_id.to_string(),
             current_schema: None,
         }))
         .await
@@ -226,7 +290,7 @@ pub async fn commit_transaction(
 ) -> String {
     service
         .commit_transaction(request(CommitTransactionRequest {
-            session_id: session_id.to_string(),
+            session_id:     session_id.to_string(),
             transaction_id: transaction_id.to_string(),
         }))
         .await
@@ -242,7 +306,7 @@ pub async fn rollback_transaction(
 ) -> String {
     service
         .rollback_transaction(request(RollbackTransactionRequest {
-            session_id: session_id.to_string(),
+            session_id:     session_id.to_string(),
             transaction_id: transaction_id.to_string(),
         }))
         .await
@@ -264,6 +328,7 @@ pub async fn insert_shared_row(
     service: &KalamPgService,
     table_id: &TableId,
     session_id: &str,
+    user_id: &str,
     id: i64,
     name: &str,
 ) {
@@ -275,15 +340,15 @@ pub async fn insert_shared_row(
 
     service
         .insert(request(InsertRpcRequest {
-            namespace: table_id.namespace_id().to_string(),
+            namespace:  table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id: None,
-            rows_json: vec![row_json],
+            user_id:    Some(user_id.to_string()),
+            rows_json:  vec![row_json],
         }))
         .await
-        .expect("insert row");
+        .expect("insert shared row");
 }
 
 pub async fn scan_shared_rows(
@@ -293,14 +358,14 @@ pub async fn scan_shared_rows(
 ) -> Vec<HashMap<String, KalamCellValue>> {
     let response = service
         .scan(request(ScanRpcRequest {
-            namespace: table_id.namespace_id().to_string(),
+            namespace:  table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id: None,
-            columns: vec![],
-            filters: vec![],
-            limit: None,
+            user_id:    Some("pg-shared-scan".to_string()),
+            columns:    vec![],
+            filters:    vec![],
+            limit:      None,
         }))
         .await
         .expect("scan rows")
@@ -325,12 +390,12 @@ pub async fn insert_user_row(
 
     service
         .insert(request(InsertRpcRequest {
-            namespace: table_id.namespace_id().to_string(),
+            namespace:  table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "user".to_string(),
             session_id: session_id.to_string(),
-            user_id: Some(user_id.to_string()),
-            rows_json: vec![row_json],
+            user_id:    Some(user_id.to_string()),
+            rows_json:  vec![row_json],
         }))
         .await
         .expect("insert user row");
@@ -344,14 +409,14 @@ pub async fn scan_user_rows(
 ) -> Vec<HashMap<String, KalamCellValue>> {
     let response = service
         .scan(request(ScanRpcRequest {
-            namespace: table_id.namespace_id().to_string(),
+            namespace:  table_id.namespace_id().to_string(),
             table_name: table_id.table_name().to_string(),
             table_type: "user".to_string(),
             session_id: session_id.to_string(),
-            user_id: Some(user_id.to_string()),
-            columns: vec![],
-            filters: vec![],
-            limit: None,
+            user_id:    Some(user_id.to_string()),
+            columns:    vec![],
+            filters:    vec![],
+            limit:      None,
         }))
         .await
         .expect("scan user rows")

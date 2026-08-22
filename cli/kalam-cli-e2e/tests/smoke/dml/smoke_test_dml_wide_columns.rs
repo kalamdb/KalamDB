@@ -172,6 +172,7 @@ fn smoke_shared_table_dml_wide_columns() {
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
+    grant_public_shared_table_access(&full);
 
     run_dml_sequence(&full, true);
 

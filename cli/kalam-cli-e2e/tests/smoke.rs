@@ -179,3 +179,5 @@ mod smoke_test_system_tables_extended;
 mod smoke_test_rpc_auth;
 #[path = "smoke/security/smoke_test_security_access.rs"]
 mod smoke_test_security_access;
+#[path = "smoke/security/smoke_test_shared_table_rls.rs"]
+mod smoke_test_shared_table_rls;

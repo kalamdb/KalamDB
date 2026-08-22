@@ -24,13 +24,10 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
 use kalam_client::models::ResponseStatus;
 use kalamdb_commons::Role;
 
 use super::helpers::*;
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Main shopping cart parallel test
 #[tokio::test]

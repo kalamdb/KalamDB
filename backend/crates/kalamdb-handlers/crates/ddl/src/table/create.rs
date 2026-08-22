@@ -28,8 +28,7 @@ impl CreateTableHandler {
 
     async fn maybe_existing_if_not_exists_message(
         &self,
-        statement: &CreateTableStatement,
-    ) -> Result<Option<String>, KalamDbError> {
+        statement: &CreateTableStatement) -> Result<Option<String>, KalamDbError> {
         if !statement.if_not_exists {
             return Ok(None);
         }
@@ -59,8 +58,7 @@ impl CreateTableHandler {
 
     fn resolve_table_type(
         statement: &CreateTableStatement,
-        context: &ExecutionContext,
-    ) -> TableType {
+        context: &ExecutionContext) -> TableType {
         use kalamdb_session::can_downgrade_shared_to_user;
 
         if statement.table_type == TableType::Shared
@@ -79,8 +77,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         &self,
         statement: CreateTableStatement,
         _params: Vec<ScalarValue>,
-        context: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use crate::helpers::{audit, table_creation};
 
         let mut statement = statement;
@@ -135,8 +132,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
             "TABLE",
             &table_id.full_name(),
             Some(format!("Type: {}", table_type)),
-            None,
-        );
+            None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Success { message })
@@ -145,8 +141,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
     async fn check_authorization(
         &self,
         statement: &CreateTableStatement,
-        context: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
+        context: &ExecutionContext) -> Result<(), KalamDbError> {
         use crate::helpers::guards::block_anonymous_write;
 
         // T050: Block anonymous users from DDL operations
@@ -195,17 +190,18 @@ mod tests {
         // Check if "local" storage exists, create if not
         if storages_provider.get_storage_by_id(&storage_id).unwrap().is_none() {
             let storage = Storage {
-                storage_id: storage_id.clone(),
-                storage_name: "Local Storage".to_string(),
-                description: Some("Default local storage".to_string()),
-                storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
-                base_directory: "/tmp/kalamdb_test".to_string(),
-                credentials: None,
-                config_json: None,
+                storage_id:             storage_id.clone(),
+                storage_name:           "Local Storage".to_string(),
+                description:            Some("Default local storage".to_string()),
+                storage_type:
+                    kalamdb_system::providers::storages::models::StorageType::Filesystem,
+                base_directory:         "/tmp/kalamdb_test".to_string(),
+                credentials:            None,
+                config_json:            None,
                 shared_tables_template: "shared/{namespace}/{table}".to_string(),
-                user_tables_template: "user/{namespace}/{table}/{userId}".to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                user_tables_template:   "user/{namespace}/{table}/{userId}".to_string(),
+                created_at:             chrono::Utc::now().timestamp_millis(),
+                updated_at:             chrono::Utc::now().timestamp_millis(),
             };
             storages_provider.create_storage(storage).unwrap();
         }
@@ -238,7 +234,6 @@ mod tests {
             eviction_strategy: None,
             max_stream_size_bytes: None,
             if_not_exists: false,
-            access_level: None,
         }
     }
 
@@ -250,10 +245,10 @@ mod tests {
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name: "default".to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                options: None,
-                table_count: 0,
+                name:         "default".to_string(),
+                created_at:   chrono::Utc::now().timestamp_millis(),
+                options:      None,
+                table_count:  0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }
@@ -269,8 +264,7 @@ mod tests {
             app_ctx.clone(),
             &stmt,
             ctx.user_id(),
-            ctx.user_role(),
-        )
+            ctx.user_role())
         .unwrap();
         app_ctx.schema_registry().register_table(table_def).unwrap();
 
@@ -343,10 +337,10 @@ mod tests {
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name: "default".to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                options: None,
-                table_count: 0,
+                name:         "default".to_string(),
+                created_at:   chrono::Utc::now().timestamp_millis(),
+                options:      None,
+                table_count:  0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }
@@ -377,10 +371,10 @@ mod tests {
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
-                name: "default".to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                options: None,
-                table_count: 0,
+                name:         "default".to_string(),
+                created_at:   chrono::Utc::now().timestamp_millis(),
+                options:      None,
+                table_count:  0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }

@@ -1752,7 +1752,11 @@ export class KalamDBClient {
       this.log(LogLevel.Warn, 'connection', `Failed to clean up replaced WASM client: ${error}`);
     } finally {
       if (typeof previousClient.free === 'function') {
-        previousClient.free();
+        try {
+          previousClient.free();
+        } catch (error) {
+          this.log(LogLevel.Warn, 'connection', `Failed to free replaced WASM client: ${error}`);
+        }
       }
     }
   }

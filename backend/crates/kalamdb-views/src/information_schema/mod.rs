@@ -3,16 +3,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use columns::ExtendedInformationSchemaColumnsProvider;
 use datafusion::{
     catalog::{information_schema::InformationSchemaProvider, CatalogProviderList, SchemaProvider},
     datasource::TableProvider,
     error::Result as DataFusionResult,
     logical_expr::TableType,
 };
-
 use kalamdb_system::SystemTablesRegistry;
-
-use columns::ExtendedInformationSchemaColumnsProvider;
 use parameters::ExtendedInformationSchemaParametersProvider;
 use tables::ExtendedInformationSchemaTablesProvider;
 use views::InformationSchemaViewsProvider;
@@ -28,33 +26,29 @@ pub mod views;
 /// and serves an extended `columns` view with SQL/PG types from `KalamDataType`.
 #[derive(Debug)]
 pub struct KalamInformationSchemaProvider {
-    inner: InformationSchemaProvider,
-    columns: Arc<dyn TableProvider>,
-    tables: Arc<ExtendedInformationSchemaTablesProvider>,
+    inner:      InformationSchemaProvider,
+    columns:    Arc<dyn TableProvider>,
+    tables:     Arc<ExtendedInformationSchemaTablesProvider>,
     parameters: Arc<dyn TableProvider>,
-    views: Arc<dyn TableProvider>,
+    views:      Arc<dyn TableProvider>,
 }
 
 impl KalamInformationSchemaProvider {
     pub fn new(
         catalog_list: Arc<dyn CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>,
-    ) -> Self {
+        system_tables: Arc<SystemTablesRegistry>) -> Self {
         let tables = Arc::new(ExtendedInformationSchemaTablesProvider::new(
             Arc::clone(&catalog_list),
-            Arc::clone(&system_tables),
-        ));
+            Arc::clone(&system_tables)));
         Self {
-            inner: InformationSchemaProvider::new(Arc::clone(&catalog_list)),
-            columns: Arc::new(ExtendedInformationSchemaColumnsProvider::new(
+            inner:      InformationSchemaProvider::new(Arc::clone(&catalog_list)),
+            columns:    Arc::new(ExtendedInformationSchemaColumnsProvider::new(
                 Arc::clone(&catalog_list),
-                system_tables,
-            )),
-            tables: Arc::clone(&tables),
+                system_tables)),
+            tables:     Arc::clone(&tables),
             parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(Arc::clone(
-                &catalog_list,
-            ))),
-            views: Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
+                &catalog_list))),
+            views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
         }
     }
 }

@@ -14,8 +14,6 @@ use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main multi-storage routing test
 #[tokio::test]
 async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
@@ -80,8 +78,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Insert hot_data {}", i);
     }
@@ -96,8 +93,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Insert cold_data {}", i);
     }
@@ -189,8 +185,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
                 &format!("INSERT INTO {}.constrained (id, data) VALUES ({}, 'data_{}')", ns, i, i),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Insert row {}", i);
     }
@@ -247,7 +242,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
             r#"CREATE TABLE {}.shared_table (
                         id BIGINT PRIMARY KEY,
                         config TEXT
-                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
+                    ) WITH (TYPE = 'SHARED')"#,
             ns
         ))
         .await?;
@@ -270,7 +265,6 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
     let user2_name = format!("{}_storage_user2", ns);
     let user1_client = create_user_and_client(server, &user1_name, &Role::User).await?;
     let user2_client = create_user_and_client(server, &user2_name, &Role::User).await?;
-    let admin_client = server.link_client("root");
 
     // Insert USER data (per-user isolation)
     for i in 1..=10 {
@@ -282,8 +276,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         if !resp.success() {
             eprintln!("DEBUG: User1 insert {} FAILED: {:?}", i, resp.error);
@@ -300,27 +293,22 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "User2 insert {}", i);
     }
 
-    // Insert SHARED data (visible to all)
-    for i in 1..=10 {
-        let resp = admin_client
-            .execute_query(
-                &format!(
-                    "INSERT INTO {}.shared_table (id, config) VALUES ({}, 'config_{}')",
-                    ns, i, i
-                ),
-                None,
-                None,
-                None,
+    // Insert SHARED data before catalog SELECT policy.
+    let shared_inserts: Vec<String> = (1..=10)
+        .map(|i| {
+            format!(
+                "INSERT INTO {}.shared_table (id, config) VALUES ({}, 'config_{}')",
+                ns, i, i
             )
-            .await?;
-        assert!(resp.success(), "Admin insert shared {}", i);
-    }
+        })
+        .collect();
+    let shared_insert_refs: Vec<&str> = shared_inserts.iter().map(String::as_str).collect();
+    seed_shared_catalog_rows(server, &format!("{}.shared_table", ns), &shared_insert_refs).await?;
 
     // Insert STREAM data
     for i in 1..=10 {
@@ -332,16 +320,14 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Insert stream event {}", i);
     }
 
-    // Flush all tables
+    // Flush USER and SHARED tables (STREAM tables do not support STORAGE FLUSH).
     let _ = server.execute_sql(&format!("STORAGE FLUSH TABLE {}.user_table", ns)).await;
     let _ = server.execute_sql(&format!("STORAGE FLUSH TABLE {}.shared_table", ns)).await;
-    let _ = server.execute_sql(&format!("STORAGE FLUSH TABLE {}.stream_table", ns)).await;
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -375,8 +361,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
             &format!("SELECT COUNT(*) as cnt FROM {}.shared_table", ns),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     let shared_count = resp
         .rows_as_maps()
@@ -385,6 +370,13 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
         .and_then(|v| json_to_i64(v))
         .unwrap_or(0);
     assert_eq!(shared_count, 10, "Shared table should have 10 rows");
+
+    assert_shared_write_denied(
+        &user1_client,
+        &format!("INSERT INTO {}.shared_table (id, config) VALUES (99, 'pwned')", ns),
+        "user INSERT into catalog shared_table",
+    )
+    .await?;
 
     // Cleanup
     let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;

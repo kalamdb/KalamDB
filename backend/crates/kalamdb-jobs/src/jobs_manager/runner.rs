@@ -396,16 +396,34 @@ impl JobsManager {
                         }
                         let app_ctx = self.get_attached_app_context();
                         let backend = app_ctx.storage_backend();
-                        match tokio::task::spawn_blocking(move || backend.flush_all_memtables()).await {
-                            Ok(Ok(())) => {
+                        // Bound the flush so a stalled RocksDB flush cannot pin the
+                        // job loop (and process exit) indefinitely during shutdown.
+                        const WAL_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+                        match tokio::time::timeout(
+                            WAL_FLUSH_TIMEOUT,
+                            tokio::task::spawn_blocking(move || backend.flush_all_memtables()),
+                        )
+                        .await
+                        {
+                            Ok(Ok(Ok(()))) => {
                                 log::debug!("WAL cleanup: flushed all memtables");
                             },
-                            Ok(Err(e)) => {
+                            Ok(Ok(Err(e))) => {
                                 log::warn!("WAL cleanup flush_all_memtables failed: {}", e);
                             },
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 log::warn!("WAL cleanup task join failed: {}", e);
                             },
+                            Err(_) => {
+                                log::warn!(
+                                    "WAL cleanup flush_all_memtables timed out after {:?}",
+                                    WAL_FLUSH_TIMEOUT
+                                );
+                            },
+                        }
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
                         }
                         continue;
                     }
@@ -562,6 +580,11 @@ impl JobsManager {
                 },
             }
         }
+
+        // Stop in-flight job tasks so they cannot keep AppContext/storage alive
+        // after the loop exits (process exit waits on the Tokio blocking pool).
+        join_set.abort_all();
+        while join_set.join_next().await.is_some() {}
 
         Ok(())
     }

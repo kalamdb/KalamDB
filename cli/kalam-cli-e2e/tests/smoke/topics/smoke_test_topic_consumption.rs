@@ -468,6 +468,7 @@ async fn test_topic_consume_insert_events() {
         namespace, table
     ))
     .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // Insert test data
@@ -533,6 +534,7 @@ async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, body TEXT)", full_table)).await;
+    common::grant_public_shared_table_access(&full_table);
     create_topic_with_sources(&topic, &full_table, &["INSERT"]).await;
 
     for id in 0..2 {
@@ -590,6 +592,7 @@ async fn test_topic_consume_update_events() {
         namespace, table
     ))
     .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT", "UPDATE"])
         .await;
 
@@ -668,6 +671,7 @@ async fn test_topic_consume_delete_events() {
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT)", namespace, table))
         .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT", "DELETE"])
         .await;
 
@@ -739,6 +743,7 @@ async fn test_topic_consume_mixed_operations() {
         namespace, table
     ))
     .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(
         &topic,
         &format!("{}.{}", namespace, table),
@@ -805,6 +810,7 @@ async fn test_topic_consume_offset_persistence() {
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT)", namespace, table))
         .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // First consumer: consume and commit first batch
@@ -946,6 +952,7 @@ async fn test_topic_consume_from_earliest() {
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
         .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     for i in 1..=4 {
@@ -994,6 +1001,7 @@ async fn test_topic_consume_from_latest() {
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
         .await;
+    common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
     create_topic_with_sources(&topic, &format!("{}.{}", namespace, table), &["INSERT"]).await;
 
     // Insert old messages
@@ -1143,6 +1151,7 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
 
         execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
         execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table_id)).await;
+        common::grant_public_shared_table_access(&table_id);
         create_topic_with_sources(&topic, &table_id, &["INSERT"]).await;
 
         let backlog_count = 32i64;

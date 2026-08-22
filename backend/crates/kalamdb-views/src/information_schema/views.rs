@@ -40,10 +40,7 @@ fn views_schema() -> SchemaRef {
 }
 
 fn is_information_schema_view_type(table_type: &str) -> bool {
-    matches!(
-        table_type.to_ascii_uppercase().as_str(),
-        "VIEW" | "LOCAL TEMPORARY VIEW"
-    )
+    matches!(table_type.to_ascii_uppercase().as_str(), "VIEW" | "LOCAL TEMPORARY VIEW")
 }
 
 fn constant_string_column(row_count: usize, value: &str) -> StringArray {
@@ -68,9 +65,9 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
     }
 
     let schema = tables_batch.schema();
-    let table_type_idx = schema
-        .index_of("table_type")
-        .map_err(|error| DataFusionError::Plan(format!("information_schema.tables missing table_type: {error}")))?;
+    let table_type_idx = schema.index_of("table_type").map_err(|error| {
+        DataFusionError::Plan(format!("information_schema.tables missing table_type: {error}"))
+    })?;
     let table_type_array = tables_batch
         .column(table_type_idx)
         .as_any()
@@ -78,8 +75,8 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
         .ok_or_else(|| DataFusionError::Plan("table_type column must be Utf8".to_string()))?;
 
     let mask = arrow::array::BooleanArray::from_iter(
-        (0..tables_batch.num_rows()).map(|row| is_information_schema_view_type(table_type_array.value(row))),
-    );
+        (0..tables_batch.num_rows())
+            .map(|row| is_information_schema_view_type(table_type_array.value(row))));
     let filtered = filter_record_batch(tables_batch, &mask)
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
 
@@ -112,8 +109,7 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
             Arc::new(constant_string_column(row_count, "NO")),
             Arc::new(constant_string_column(row_count, "NO")),
             Arc::new(constant_string_column(row_count, "NO")),
-        ],
-    )
+        ])
     .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
 
@@ -121,7 +117,7 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
 #[derive(Debug)]
 pub struct InformationSchemaViewsProvider {
     inner_tables: Arc<dyn TableProvider>,
-    schema: SchemaRef,
+    schema:       SchemaRef,
 }
 
 impl InformationSchemaViewsProvider {
@@ -136,21 +132,20 @@ impl InformationSchemaViewsProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<RecordBatch> {
+        limit: Option<usize>) -> DataFusionResult<RecordBatch> {
         let tables_batch = collect_inner_batch(&self.inner_tables, state, filters, limit).await?;
         tables_to_views_batch(&tables_batch)
     }
 }
 
 struct ViewsScanSource {
-    provider: Arc<InformationSchemaViewsProvider>,
-    session_state: SessionState,
+    provider:        Arc<InformationSchemaViewsProvider>,
+    session_state:   SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
+    filters:         Vec<Expr>,
 }
 
 #[async_trait]
@@ -174,8 +169,7 @@ impl DeferredBatchSource for ViewsScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -194,8 +188,7 @@ impl TableProvider for InformationSchemaViewsProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -221,7 +214,7 @@ impl TableProvider for InformationSchemaViewsProvider {
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ViewsScanSource {
             provider: Arc::new(InformationSchemaViewsProvider {
                 inner_tables: Arc::clone(&self.inner_tables),
-                schema: Arc::clone(&self.schema),
+                schema:       Arc::clone(&self.schema),
             }),
             session_state,
             physical_filter,
@@ -234,8 +227,7 @@ impl TableProvider for InformationSchemaViewsProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner_tables.supports_filters_pushdown(filters)
     }
 }

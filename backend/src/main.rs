@@ -440,8 +440,12 @@ async fn async_main(config: ServerConfig) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{alloc::Layout, hint::black_box, time::Instant};
+    use std::alloc::Layout;
 
+    #[cfg(feature = "mimalloc")]
+    use std::{hint::black_box, time::Instant};
+
+    #[cfg(feature = "mimalloc")]
     use kalamdb_observability::{collect_runtime_metrics, force_allocator_collection};
 
     use super::{parse_startup_command, StartupCommand};

@@ -13,10 +13,7 @@
 //! **Schema Caching**: Memoized via `OnceLock`
 //! **Schema**: TableDefinition provides consistent metadata for views
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use datafusion::arrow::{
     array::{ArrayRef, Int64Builder, StringBuilder},
@@ -29,9 +26,8 @@ use kalamdb_commons::{
 };
 use kalamdb_system::SystemTable;
 
+use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
 use crate::{error::RegistryError, view_base::VirtualView};
-
-use super::common::{system_view_definition, SystemViewProvider, view_provider_with};
 
 crate::memoized_view_schema!(server_logs_schema, ServerLogsView);
 
@@ -39,11 +35,11 @@ crate::memoized_view_schema!(server_logs_schema, ServerLogsView);
 #[derive(Debug)]
 struct JsonLogEntry {
     timestamp: String,
-    level: String,
-    thread: Option<String>,
-    target: Option<String>,
-    line: Option<i64>,
-    message: String,
+    level:     String,
+    thread:    Option<String>,
+    target:    Option<String>,
+    line:      Option<i64>,
+    message:   String,
 }
 
 /// Raw JSON log entry structure.
@@ -53,13 +49,13 @@ struct JsonLogEntry {
 #[derive(Debug, serde::Deserialize)]
 struct RawJsonLogEntry {
     timestamp: Option<String>,
-    level: Option<String>,
+    level:     Option<String>,
     #[serde(alias = "threadName")]
-    thread: Option<String>,
-    target: Option<String>,
-    line: Option<i64>,
-    message: Option<String>,
-    fields: Option<RawJsonLogFields>,
+    thread:    Option<String>,
+    target:    Option<String>,
+    line:      Option<i64>,
+    message:   Option<String>,
+    fields:    Option<RawJsonLogFields>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -71,11 +67,11 @@ impl RawJsonLogEntry {
     fn into_entry(self) -> Option<JsonLogEntry> {
         Some(JsonLogEntry {
             timestamp: self.timestamp?,
-            level: self.level?,
-            thread: self.thread,
-            target: self.target,
-            line: self.line,
-            message: self.message.or_else(|| self.fields.and_then(|fields| fields.message))?,
+            level:     self.level?,
+            thread:    self.thread,
+            target:    self.target,
+            line:      self.line,
+            message:   self.message.or_else(|| self.fields.and_then(|fields| fields.message))?,
         })
     }
 }
@@ -107,8 +103,7 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log entry timestamp (ISO 8601 format)".to_string()),
-            ),
+                Some("Log entry timestamp (ISO 8601 format)".to_string())),
             ColumnDefinition::new(
                 2,
                 "level",
@@ -118,8 +113,7 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string()),
-            ),
+                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string())),
             ColumnDefinition::new(
                 3,
                 "thread",
@@ -129,8 +123,7 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Thread name that generated the log".to_string()),
-            ),
+                Some("Thread name that generated the log".to_string())),
             ColumnDefinition::new(
                 4,
                 "target",
@@ -140,8 +133,7 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Module or target that generated the log".to_string()),
-            ),
+                Some("Module or target that generated the log".to_string())),
             ColumnDefinition::new(
                 5,
                 "line",
@@ -151,8 +143,7 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Source code line number".to_string()),
-            ),
+                Some("Source code line number".to_string())),
             ColumnDefinition::new(
                 6,
                 "message",
@@ -162,15 +153,13 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log message content".to_string()),
-            ),
+                Some("Log message content".to_string())),
         ];
 
         system_view_definition(
             SystemTable::ServerLogs,
             columns,
-            "Server log entries from JSON log files (read-only view)",
-        )
+            "Server log entries from JSON log files (read-only view)")
     }
 
     /// Create a new server logs view
@@ -282,8 +271,7 @@ impl VirtualView for ServerLogsView {
                 Arc::new(targets.finish()) as ArrayRef,
                 Arc::new(lines.finish()) as ArrayRef,
                 Arc::new(messages.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| RegistryError::Other(format!("Failed to build server_logs batch: {}", e)))
     }
 }

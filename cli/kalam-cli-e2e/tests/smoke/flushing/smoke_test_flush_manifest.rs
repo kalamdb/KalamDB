@@ -27,8 +27,7 @@ fn flush_table_and_wait(full_table: &str, timeout: Duration) {
 fn wait_for_single_compacted_parquet(
     namespace: &str,
     table: &str,
-    timeout: Duration,
-) -> FlushStorageVerificationResult {
+    timeout: Duration) -> FlushStorageVerificationResult {
     let start = Instant::now();
 
     loop {
@@ -176,8 +175,7 @@ fn smoke_test_user_table_flush_manifest() {
         &namespace,
         &table,
         true, // is_user_table
-        "USER table flush manifest test",
-    );
+        "USER table flush manifest test");
 
     println!("✅ Verified manifest.json and parquet files exist after flush");
 }
@@ -217,12 +215,12 @@ fn smoke_test_shared_table_flush_manifest() {
         ) WITH (
             TYPE = 'SHARED',
             STORAGE_ID = 'local',
-            FLUSH_POLICY = 'rows:100',
-            ACCESS_LEVEL = 'PUBLIC'
+            FLUSH_POLICY = 'rows:100'
         )"#,
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_shared_table_access(&full_table);
 
     println!("✅ Created SHARED table with FLUSH_POLICY='rows:100'");
 
@@ -256,8 +254,7 @@ fn smoke_test_shared_table_flush_manifest() {
         &namespace,
         &table,
         false, // is_user_table (SHARED)
-        "SHARED table flush manifest test",
-    );
+        "SHARED table flush manifest test");
 
     println!("✅ Verified manifest.json exists for shared table");
 }
@@ -301,6 +298,7 @@ fn smoke_test_manifest_updated_on_second_flush() {
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
+    grant_public_shared_table_access(&full_table);
 
     // First flush cycle
     println!("📝 First flush: Inserting 15 rows...");
@@ -431,12 +429,12 @@ fn smoke_test_post_flush_compaction_rewrites_small_segments() {
         ) WITH (
             TYPE = 'SHARED',
             STORAGE_ID = 'local',
-            ACCESS_LEVEL = 'PUBLIC',
             FLUSH_POLICY = 'rows:100'
         )"#,
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_shared_table_access(&full_table);
 
     execute_sql_as_root_via_client(&format!(
         "INSERT INTO {} (id, payload) VALUES (1, 'first-version')",

@@ -10,7 +10,7 @@ use arrow::datatypes::Schema as ArrowSchema;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use kalamdb_commons::{
-    models::{ReadContext, TableId, UserId},
+    models::{rows::Row, ReadContext, TableId, UserId},
     schemas::TableDefinition,
     Role, TableType,
 };
@@ -29,8 +29,7 @@ pub trait LiveApplyBarrier: Send + Sync {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        user_id: &UserId,
-    ) -> Result<(), LiveError>;
+        user_id: &UserId) -> Result<(), LiveError>;
 }
 
 /// Schema operations needed by the live subsystem.
@@ -43,6 +42,21 @@ pub trait LiveSchemaLookup: Send + Sync {
 
     /// Get memoized Arrow schema for a table.
     fn get_arrow_schema(&self, table_id: &TableId) -> Result<Arc<ArrowSchema>, LiveError>;
+}
+
+/// Synchronous subscription-bound evaluator used in the fan-out hot path.
+pub trait LiveAuthorization: std::fmt::Debug + Send + Sync {
+    fn authorizes(&self, row: &Row) -> bool;
+}
+
+/// Binds shared-table RLS once when a subscription is created.
+#[async_trait]
+pub trait LiveAuthorizationBinder: Send + Sync {
+    async fn bind(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role) -> Result<Arc<dyn LiveAuthorization>, LiveError>;
 }
 
 /// SQL execution needed by the live subsystem (initial data, snapshot boundary).
@@ -60,6 +74,5 @@ pub trait LiveSqlExecutor: Send + Sync {
         sql: &str,
         user_id: UserId,
         role: Role,
-        read_context: ReadContext,
-    ) -> Result<Vec<RecordBatch>, LiveError>;
+        read_context: ReadContext) -> Result<Vec<RecordBatch>, LiveError>;
 }

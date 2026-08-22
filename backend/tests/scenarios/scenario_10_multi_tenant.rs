@@ -13,11 +13,10 @@ use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main multi-tenant scenario test
 #[tokio::test]
 async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
+    let _guard = crate::test_support::http_server::acquire_test_lock().await;
     let server = crate::test_support::http_server::get_global_server().await;
     // =========================================================
     // Step 1: Create multiple tenant namespaces
@@ -71,33 +70,34 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
                         flag_name TEXT PRIMARY KEY,
                         enabled BOOLEAN NOT NULL,
                         description TEXT
-                    ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC')"#,
+                    ) WITH (TYPE = 'SHARED')"#,
             global
         ))
         .await?;
     assert_success(&resp, "CREATE global.feature_flags");
 
-    // Seed feature flags
-    let admin_client = server.link_client("root");
-    for (flag, enabled) in [
+    // Seed feature flags before catalog SELECT policy.
+    let flag_inserts: Vec<String> = [
         ("dark_mode", true),
         ("beta_features", false),
         ("analytics", true),
-    ] {
-        let resp = admin_client
-            .execute_query(
-                &format!(
-                    "INSERT INTO {}.feature_flags (flag_name, enabled, description) VALUES ('{}', \
-                     {}, 'Flag: {}')",
-                    global, flag, enabled, flag
-                ),
-                None,
-                None,
-                None,
-            )
-            .await?;
-        assert!(resp.success(), "Insert flag {}", flag);
-    }
+    ]
+    .into_iter()
+    .map(|(flag, enabled)| {
+        format!(
+            "INSERT INTO {}.feature_flags (flag_name, enabled, description) VALUES ('{}', {}, \
+             'Flag: {}')",
+            global, flag, enabled, flag
+        )
+    })
+    .collect();
+    let flag_insert_refs: Vec<&str> = flag_inserts.iter().map(String::as_str).collect();
+    seed_shared_catalog_rows(
+        server,
+        &format!("{}.feature_flags", global),
+        &flag_insert_refs,
+    )
+    .await?;
 
     // =========================================================
     // Step 4: Tenant A inserts their data
@@ -118,8 +118,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Tenant A insert order {}", i);
     }
@@ -141,8 +140,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None,
-            )
+                None)
             .await?;
         assert!(resp.success(), "Tenant B insert order {}", i);
     }
@@ -190,8 +188,7 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
             &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Tenant A read shared flags");
     assert_eq!(resp.rows_as_maps().len(), 3, "Should see 3 flags");
@@ -201,11 +198,21 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
             &format!("SELECT * FROM {}.feature_flags ORDER BY flag_name", global),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Tenant B read shared flags");
     assert_eq!(resp.rows_as_maps().len(), 3, "Should see 3 flags");
+
+    assert_shared_write_denied(
+        &tenant_a_client,
+        &format!(
+            "INSERT INTO {}.feature_flags (flag_name, enabled, description) VALUES ('pwned', true, \
+             'no')",
+            global
+        ),
+        "tenant INSERT into global feature flags",
+    )
+    .await?;
 
     // =========================================================
     // Step 8: Cross-tenant table access should be blocked (if enforced)
@@ -292,8 +299,7 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
             &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_a')", ns_a),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Insert to ns_a");
 
@@ -303,8 +309,7 @@ async fn test_scenario_10_subscription_namespace_isolation() -> anyhow::Result<(
             &format!("INSERT INTO {}.events (id, data) VALUES (1, 'event_b')", ns_b),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Insert to ns_b");
 
@@ -373,8 +378,7 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
             &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS1 User')", ns1),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Insert to ns1.users");
 
@@ -383,8 +387,7 @@ async fn test_scenario_10_same_table_name_different_namespaces() -> anyhow::Resu
             &format!("INSERT INTO {}.users (id, name) VALUES (1, 'NS2 User')", ns2),
             None,
             None,
-            None,
-        )
+            None)
         .await?;
     assert!(resp.success(), "Insert to ns2.users");
 

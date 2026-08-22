@@ -31,7 +31,7 @@ before(async () => {
       id BIGINT PRIMARY KEY,
       name TEXT NOT NULL,
       age BIGINT
-    ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')
+    ) WITH (TYPE='SHARED')
   `);
 });
 

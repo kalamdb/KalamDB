@@ -64,7 +64,6 @@ CREATE SHARED TABLE IF NOT EXISTS case28_shared_events (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   STORAGE_ID = 'case28_storage',
-  ACCESS_LEVEL = 'PUBLIC',
   FLUSH_POLICY = 'rows:40,interval:20',
   COMPRESSION = 'zstd'
 );

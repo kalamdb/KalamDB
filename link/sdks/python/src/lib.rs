@@ -244,7 +244,7 @@ fn to_py_err(err: KalamLinkError) -> PyErr {
 }
 
 /// Typed FILE column reference (mirrors the Rust [`FileRef`] model).
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 struct PyFileRef {
     inner: FileRef,
@@ -349,7 +349,7 @@ impl From<FileRef> for PyFileRef {
 }
 
 /// Multipart upload payload for SQL `FILE("placeholder")` expressions.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 struct PyFileUpload {
     placeholder: String,
@@ -730,7 +730,7 @@ impl KalamClient {
                 continue;
             }
 
-            let tuple = value.downcast::<pyo3::types::PyTuple>().map_err(|_| {
+            let tuple = value.cast::<pyo3::types::PyTuple>().map_err(|_| {
                 KalamConfigError::new_err(format!(
                     "files['{placeholder}'] must be a FileUpload or a tuple of (filename, bytes[, mime])"
                 ))
@@ -1496,21 +1496,6 @@ fn py_to_query_param(value: &Bound<'_, PyAny>) -> PyResult<QueryParam> {
     Ok(from_json_value(py_to_json_value(value)?))
 }
 
-/// Convert a Python list of values into Vec<serde_json::Value> for parameterized queries.
-fn py_params_to_json(
-    params: Option<Bound<'_, pyo3::types::PyList>>,
-) -> PyResult<Option<Vec<serde_json::Value>>> {
-    let Some(list) = params else {
-        return Ok(None);
-    };
-
-    let mut out = Vec::with_capacity(list.len());
-    for item in list.iter() {
-        out.push(py_to_json_value(&item)?);
-    }
-    Ok(Some(out))
-}
-
 /// Convert a single Python value into a serde_json::Value.
 fn py_to_json_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     if value.is_none() {
@@ -1530,14 +1515,14 @@ fn py_to_json_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     if let Ok(s) = value.extract::<String>() {
         return Ok(serde_json::Value::String(s));
     }
-    if let Ok(list) = value.downcast::<pyo3::types::PyList>() {
+    if let Ok(list) = value.cast::<pyo3::types::PyList>() {
         let mut arr = Vec::with_capacity(list.len());
         for item in list.iter() {
             arr.push(py_to_json_value(&item)?);
         }
         return Ok(serde_json::Value::Array(arr));
     }
-    if let Ok(dict) = value.downcast::<pyo3::types::PyDict>() {
+    if let Ok(dict) = value.cast::<pyo3::types::PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;

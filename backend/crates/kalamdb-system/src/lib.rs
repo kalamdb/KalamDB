@@ -82,7 +82,7 @@ pub use providers::{
 pub use providers::{
     AuditLogsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
     ManifestTableProvider, MigrationsTableProvider, NamespacesTableProvider, SchemasTableProvider,
-    StoragesTableProvider, UsersTableProvider,
+    StoragesTableProvider, TablePoliciesTableProvider, UsersTableProvider,
 };
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;

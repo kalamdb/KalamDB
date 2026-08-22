@@ -85,8 +85,10 @@ impl ServerConfig {
     /// - KALAMDB_AUTH_OIDC_CLIENT_ID: Override auth.oidc.client_id
     /// - KALAMDB_AUTH_OIDC_CLIENT_SECRET: Override auth.oidc.client_secret
     /// - KALAMDB_AUTH_OIDC_SCOPES: Override auth.oidc.scopes
-    /// - KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT: Override auth.oidc.device_authorization_endpoint
-    /// - KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED: Override auth.oidc.broker_device_flow_enabled
+    /// - KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT: Override
+    ///   auth.oidc.device_authorization_endpoint
+    /// - KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED: Override
+    ///   auth.oidc.broker_device_flow_enabled
     /// - KALAMDB_AUTH_OIDC_AUTO_PROVISION: Override auth.oidc.auto_provision
     /// - KALAMDB_AUTH_OIDC_DEFAULT_ROLE: Override auth.oidc.default_role
     /// - KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS: Override security.cors.allowed_origins with a
@@ -94,8 +96,8 @@ impl ServerConfig {
     /// - KALAMDB_SECURITY_TRUSTED_PROXY_RANGES: Override security.trusted_proxy_ranges
     /// - KALAMDB_RATE_LIMIT_AUTH_REQUESTS_PER_IP_PER_SEC: Override
     ///   rate_limit.max_auth_requests_per_ip_per_sec
-    /// - KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS: Override topics.visibility_timeout_secs
-    ///   (alias: KALAMDB_VISIBILITY_TIMEOUT_SECS)
+    /// - KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS: Override topics.visibility_timeout_secs (alias:
+    ///   KALAMDB_VISIBILITY_TIMEOUT_SECS)
     /// - KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS: Override topics.default_retention_seconds
     /// - KALAMDB_TOPIC_DEFAULT_RETENTION_MAX_BYTES: Override topics.default_retention_max_bytes
     /// - KALAMDB_TOPIC_RETENTION_CHECK_INTERVAL_SECONDS: Override
@@ -170,8 +172,7 @@ impl ServerConfig {
     fn apply_topic_env_overrides(&mut self) -> Result<()> {
         if let Some(timeout) = parse_env_with_alias(
             "KALAMDB_TOPIC_VISIBILITY_TIMEOUT_SECS",
-            "KALAMDB_VISIBILITY_TIMEOUT_SECS",
-        )? {
+            "KALAMDB_VISIBILITY_TIMEOUT_SECS")? {
             self.topics.visibility_timeout_secs = timeout;
         }
         if let Some(seconds) = parse_env("KALAMDB_TOPIC_DEFAULT_RETENTION_SECONDS")? {
@@ -499,8 +500,7 @@ mod tests {
         let _guard = acquire_env_lock();
         env::set_var(
             "KALAMDB_SECURITY_CORS_ALLOWED_ORIGINS",
-            "http://localhost:5173, https://admin.example.com",
-        );
+            "http://localhost:5173, https://admin.example.com");
 
         let mut config = ServerConfig::default();
         config.apply_env_overrides().unwrap();
@@ -528,8 +528,7 @@ mod tests {
         env::set_var("KALAMDB_AUTH_OIDC_SCOPES", "openid,email");
         env::set_var(
             "KALAMDB_AUTH_OIDC_DEVICE_AUTHORIZATION_ENDPOINT",
-            "https://idp.example.com/device",
-        );
+            "https://idp.example.com/device");
         env::set_var("KALAMDB_AUTH_OIDC_BROKER_DEVICE_FLOW_ENABLED", "true");
         env::set_var("KALAMDB_AUTH_OIDC_AUTO_PROVISION", "true");
         env::set_var("KALAMDB_AUTH_OIDC_DEFAULT_ROLE", "dba");

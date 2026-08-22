@@ -265,6 +265,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_shared_table_access(&full_table_name);
 
     println!("✅ Created SHARED table with INT PRIMARY KEY");
 

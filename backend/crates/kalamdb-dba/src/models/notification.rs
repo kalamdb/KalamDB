@@ -11,7 +11,6 @@ use crate::models::DBA_NAMESPACE;
     name = "notifications",
     namespace = "dba",
     table_type = "shared",
-    access_level = "public",
     comment = "Bootstrap-managed shared DBA notifications"
 )]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -8,9 +8,11 @@ use kalamdb_pg::{
 };
 use ntest::timeout;
 use support::{
-    begin_transaction, insert_shared_row, new_service_with_tables, open_session,
-    parse_transaction_id, request, scan_shared_rows,
+    begin_transaction, insert_user_row, new_service_with_user_tables, open_session,
+    parse_transaction_id, request, scan_user_rows,
 };
+
+const USER_ID: &str = "pg-tx-user";
 
 fn visible_names(
     rows: Vec<std::collections::HashMap<String, kalamdb_commons::models::KalamCellValue>>,
@@ -27,7 +29,7 @@ fn visible_names(
 #[timeout(15000)]
 async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
     let (app_ctx, service, _namespace, table_ids) =
-        new_service_with_tables("pg_tx_race_commit_rb", &["items"]).await;
+        new_service_with_user_tables("pg_tx_race_commit_rb", &["items"]).await;
     let service = Arc::new(service);
     let session_id = "pg-8201-deadbeef";
     let observer_session = "pg-8202-deadbeef";
@@ -42,8 +44,15 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
     for iteration in 0..12 {
         let transaction_id = begin_transaction(&service, session_id).await;
         let row_name = format!("pg-race-{iteration}");
-        insert_shared_row(&service, &table_ids[0], session_id, (iteration + 1) as i64, &row_name)
-            .await;
+        insert_user_row(
+            &service,
+            &table_ids[0],
+            session_id,
+            USER_ID,
+            (iteration + 1) as i64,
+            &row_name,
+        )
+        .await;
 
         let commit_service = Arc::clone(&service);
         let rollback_service = Arc::clone(&service);
@@ -54,7 +63,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
             async move {
                 commit_service
                     .commit_transaction(request(CommitTransactionRequest {
-                        session_id: session_id.to_string(),
+                        session_id:     session_id.to_string(),
                         transaction_id: commit_tx,
                     }))
                     .await
@@ -62,7 +71,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
             async move {
                 rollback_service
                     .rollback_transaction(request(RollbackTransactionRequest {
-                        session_id: session_id.to_string(),
+                        session_id:     session_id.to_string(),
                         transaction_id: rollback_tx,
                     }))
                     .await
@@ -98,7 +107,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
 
     committed_names.sort();
     assert_eq!(
-        visible_names(scan_shared_rows(&service, &table_ids[0], observer_session).await),
+        visible_names(scan_user_rows(&service, &table_ids[0], observer_session, USER_ID).await),
         committed_names
     );
 }
@@ -107,7 +116,7 @@ async fn pg_commit_vs_rollback_repeats_without_leaking_state() {
 #[timeout(15000)]
 async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
     let (app_ctx, service, _namespace, table_ids) =
-        new_service_with_tables("pg_tx_race_close", &["items"]).await;
+        new_service_with_user_tables("pg_tx_race_close", &["items"]).await;
     let service = Arc::new(service);
     let session_id = "pg-8301-feedface";
     let observer_session = "pg-8302-feedface";
@@ -123,8 +132,15 @@ async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
 
         let transaction_id = begin_transaction(&service, session_id).await;
         let row_name = format!("pg-close-race-{iteration}");
-        insert_shared_row(&service, &table_ids[0], session_id, (iteration + 1) as i64, &row_name)
-            .await;
+        insert_user_row(
+            &service,
+            &table_ids[0],
+            session_id,
+            USER_ID,
+            (iteration + 1) as i64,
+            &row_name,
+        )
+        .await;
 
         let commit_service = Arc::clone(&service);
         let close_service = Arc::clone(&service);
@@ -134,7 +150,7 @@ async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
             async move {
                 commit_service
                     .commit_transaction(request(CommitTransactionRequest {
-                        session_id: session_id.to_string(),
+                        session_id:     session_id.to_string(),
                         transaction_id: commit_tx,
                     }))
                     .await
@@ -174,7 +190,7 @@ async fn pg_commit_vs_close_session_repeats_without_leaking_state() {
 
     committed_names.sort();
     assert_eq!(
-        visible_names(scan_shared_rows(&service, &table_ids[0], observer_session).await),
+        visible_names(scan_user_rows(&service, &table_ids[0], observer_session, USER_ID).await),
         committed_names
     );
 }

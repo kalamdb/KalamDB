@@ -47,6 +47,7 @@ pub mod manifest;
 pub mod metrics;
 pub mod operations;
 pub mod providers;
+pub mod rls;
 pub mod schema_registry;
 pub mod slow_query_logger;
 pub mod sql;

@@ -22,6 +22,7 @@ fn make_shared_handle(
     SubscriptionHandle {
         subscription_id: Arc::from(subscription_id),
         filter_expr: None,
+        authorization: None,
         projections: None,
         notification_tx: tx,
         flow_control: Some(flow_control),

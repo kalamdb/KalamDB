@@ -65,7 +65,6 @@ function tablePropertyMap(
     props.set("COMPRESSION", quoteLiteral(options.compression));
   } else if (draft.tableType === "shared") {
     props.set("STORAGE_ID", quoteLiteral(options.storageId.trim()));
-    props.set("ACCESS_LEVEL", quoteLiteral(upperOption(options.accessLevel)));
     const flushPolicy = flushPolicySql(draft);
     if (flushPolicy) props.set("FLUSH_POLICY", quoteLiteral(flushPolicy));
     else if (includeFlushNull) props.set("FLUSH_POLICY", "NULL");

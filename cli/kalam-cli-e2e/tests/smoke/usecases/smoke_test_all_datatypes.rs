@@ -76,6 +76,7 @@ fn smoke_all_datatypes_user_shared_stream() {
         shared_full, all_columns
     );
     execute_sql_as_root_via_http(&create_shared_sql).expect("create shared table should succeed");
+    grant_public_shared_table_access(&shared_full);
 
     // 3) Create STREAM table (same columns but requires TTL clause)
     let create_stream_sql = format!(

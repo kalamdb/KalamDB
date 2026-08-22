@@ -19,7 +19,7 @@ async fn connect_multiplexes_live_subscriptions() {
     client
         .execute_query(
             &format!(
-                "CREATE TABLE IF NOT EXISTS {table} (
+                "CREATE USER TABLE IF NOT EXISTS {table} (
                     id TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 )"

@@ -14,7 +14,7 @@ use kalamdb_commons::{
     models::{
         pg_operations::{InsertRequest, ScanRequest},
         rows::Row,
-        NamespaceId, NodeId, StorageId, TableId, TableName,
+        NamespaceId, NodeId, StorageId, TableId, TableName, UserId,
     },
     TableType,
 };
@@ -25,7 +25,7 @@ use kalamdb_store::{test_utils::TestDb, StorageBackend};
 use kalamdb_system::{
     providers::storages::models::StorageType, Storage, StoragePartition, SystemTable,
 };
-use support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
+use support::{create_cluster_app_context, create_user_table, row, unique_namespace};
 
 const VALID_IDLE_SESSION_ID: &str = "pg-7101-deadbeef";
 // 15% tolerance: the two code paths are functionally identical so a real
@@ -78,7 +78,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AllocationSample {
     allocations: u64,
-    bytes: u64,
+    bytes:       u64,
 }
 
 impl AllocationSample {
@@ -112,8 +112,8 @@ fn assert_allocation_samples_compatible(
     assert!(
         allocations_delta <= COVERAGE_ALLOC_DELTA_TOLERANCE
             && bytes_delta <= COVERAGE_ALLOC_BYTES_TOLERANCE,
-        "{label}: expected={expected:?} actual={actual:?} \
-         allocations_delta={allocations_delta} bytes_delta={bytes_delta}"
+        "{label}: expected={expected:?} actual={actual:?} allocations_delta={allocations_delta} \
+         bytes_delta={bytes_delta}"
     );
 }
 
@@ -130,7 +130,7 @@ impl AllocationGuard {
     fn sample(&self) -> AllocationSample {
         AllocationSample {
             allocations: ALLOCATION_COUNT.load(Ordering::SeqCst),
-            bytes: ALLOCATION_BYTES.load(Ordering::SeqCst),
+            bytes:       ALLOCATION_BYTES.load(Ordering::SeqCst),
         }
     }
 }
@@ -202,43 +202,45 @@ fn create_simple_app_context() -> (Arc<AppContext>, TestDb) {
     (app_ctx, test_db)
 }
 
-fn make_shared_insert_request(
+const AUTOCOMMIT_USER: &str = "autocommit-user";
+
+fn make_user_insert_request(
     table_id: &TableId,
     session_id: Option<&str>,
     id: i64,
 ) -> InsertRequest {
     InsertRequest {
-        table_id: table_id.clone(),
-        table_type: TableType::Shared,
+        table_id:   table_id.clone(),
+        table_type: TableType::User,
         session_id: session_id.map(str::to_string),
-        user_id: None,
-        rows: vec![row(id, &format!("name_{id}"))],
+        user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
+        rows:       vec![row(id, &format!("name_{id}"))],
     }
 }
 
 fn make_system_insert_request(session_id: Option<&str>) -> InsertRequest {
     InsertRequest {
-        table_id: TableId::new(NamespaceId::new("system"), TableName::new("users")),
+        table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
         table_type: TableType::System,
         session_id: session_id.map(str::to_string),
-        user_id: None,
-        rows: vec![empty_row()],
+        user_id:    None,
+        rows:       vec![empty_row()],
     }
 }
 
 fn make_scan_request(table_id: &TableId, session_id: Option<&str>) -> ScanRequest {
     ScanRequest {
-        table_id: table_id.clone(),
-        table_type: TableType::Shared,
+        table_id:   table_id.clone(),
+        table_type: TableType::User,
         session_id: session_id.map(str::to_string),
-        columns: vec![],
-        limit: None,
-        user_id: None,
-        filters: vec![],
+        columns:    vec![],
+        limit:      None,
+        user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
+        filters:    vec![],
     }
 }
 
-async fn seed_shared_table(
+async fn seed_user_table(
     service: &OperationService,
     table_id: &TableId,
     start_id: i64,
@@ -255,11 +257,11 @@ async fn seed_shared_table(
 
         service
             .execute_insert(InsertRequest {
-                table_id: table_id.clone(),
-                table_type: TableType::Shared,
+                table_id:   table_id.clone(),
+                table_type: TableType::User,
                 session_id: None,
-                user_id: None,
-                rows: chunk_rows,
+                user_id:    Some(UserId::new(AUTOCOMMIT_USER)),
+                rows:       chunk_rows,
             })
             .await
             .expect("seed insert succeeds");
@@ -274,7 +276,7 @@ async fn measure_insert_round(
     ops: usize,
 ) -> u128 {
     let requests = (0..ops)
-        .map(|offset| make_shared_insert_request(table_id, session_id, start_id + offset as i64))
+        .map(|offset| make_user_insert_request(table_id, session_id, start_id + offset as i64))
         .collect::<Vec<_>>();
     let start = Instant::now();
     for request in requests {
@@ -390,7 +392,7 @@ async fn idle_autocommit_transaction_checks_add_no_extra_allocations() {
     let (app_ctx, _test_db) = create_simple_app_context();
     let service = OperationService::new(Arc::clone(&app_ctx));
     let scan_table =
-        create_shared_table(&app_ctx, &unique_namespace("autocommit_alloc"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("autocommit_alloc"), "items").await;
 
     service
         .execute_scan(make_scan_request(&scan_table, None))
@@ -444,11 +446,11 @@ async fn autocommit_read_write_latency_regression_stays_within_five_percent() {
     let service = OperationService::new(Arc::clone(&app_ctx));
 
     let write_table =
-        create_shared_table(&app_ctx, &unique_namespace("autocommit_write"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("autocommit_write"), "items").await;
     let read_table =
-        create_shared_table(&app_ctx, &unique_namespace("autocommit_read"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("autocommit_read"), "items").await;
 
-    seed_shared_table(&service, &read_table, 10_000, READ_SEED_ROWS).await;
+    seed_user_table(&service, &read_table, 10_000, READ_SEED_ROWS).await;
 
     let _ = measure_insert_round(&service, &write_table, None, 100_000, 4).await;
     let _ =
@@ -545,8 +547,8 @@ async fn autocommit_read_write_latency_regression_stays_within_five_percent() {
     let read_ratio = median_ratio(&read_baseline_samples, &read_candidate_samples);
 
     println!(
-        "autocommit perf regression medians: write baseline={}ns candidate={}ns ratio={:.3}, \
-         read baseline={}ns candidate={}ns ratio={:.3}",
+        "autocommit perf regression medians: write baseline={}ns candidate={}ns ratio={:.3}, read \
+         baseline={}ns candidate={}ns ratio={:.3}",
         write_baseline_ns,
         write_candidate_ns,
         write_ratio,

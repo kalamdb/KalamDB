@@ -6,7 +6,7 @@ use std::{
 use arrow::datatypes::{Field, Schema};
 use kalamdb_commons::{
     conversions::with_kalam_data_type_metadata,
-    models::{datatypes::ToArrowType, NamespaceId, StorageId, TableAccess, TableName},
+    models::{datatypes::ToArrowType, NamespaceId, StorageId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 use once_cell::sync::Lazy;
@@ -31,6 +31,7 @@ static USING_ACCESS_METHOD_RE: Lazy<Regex> =
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &str) -> Result<Self, String> {
+        crate::ddl::reject_access_level_sql(sql)?;
         let (mut normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
 
         // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
@@ -116,7 +117,6 @@ impl CreateTableStatement {
                 let mut compression = None;
                 let mut eviction_strategy = None;
                 let mut max_stream_size_bytes = None;
-                let mut access_level = None;
 
                 // Handle options (was with_options)
                 let options_vec = match table_options {
@@ -237,19 +237,7 @@ impl CreateTableStatement {
                                 ttl_seconds = Some(seconds);
                             },
                             "ACCESS_LEVEL" => {
-                                access_level = match value_str.to_uppercase().as_str() {
-                                    "PUBLIC" => Some(TableAccess::Public),
-                                    "PRIVATE" => Some(TableAccess::Private),
-                                    "RESTRICTED" => Some(TableAccess::Restricted),
-                                    "DBA" => Some(TableAccess::Dba),
-                                    _ => {
-                                        return Err(format!(
-                                            "Invalid ACCESS_LEVEL '{}'. Supported: PUBLIC, \
-                                             PRIVATE, RESTRICTED, DBA",
-                                            value_str
-                                        ))
-                                    },
-                                };
+                                return Err(crate::ddl::ACCESS_LEVEL_UNSUPPORTED.to_string());
                             },
                             "COMPRESSION" => {
                                 compression = Some(parse_compression_option(&value_str)?);
@@ -275,9 +263,6 @@ impl CreateTableStatement {
                 }
                 if table_type != TableType::Stream && ttl_seconds.is_some() {
                     return Err("TTL_SECONDS is only supported for STREAM tables".to_string());
-                }
-                if table_type != TableType::Shared && access_level.is_some() {
-                    return Err("ACCESS_LEVEL is only supported for SHARED tables".to_string());
                 }
                 if table_type == TableType::Stream && storage_id.is_some() {
                     return Err(
@@ -480,7 +465,6 @@ impl CreateTableStatement {
                     eviction_strategy,
                     max_stream_size_bytes,
                     if_not_exists,
-                    access_level,
                 })
             },
             _ => Err("Not a CREATE TABLE statement".to_string()),
@@ -703,11 +687,19 @@ CREATE TABLE sales.events (
         assert!(err.contains("TTL_SECONDS is only supported for STREAM tables"));
 
         let err = CreateTableStatement::parse(
-            "CREATE TABLE sales.bad_stream (id TEXT) WITH (TYPE='STREAM', TTL_SECONDS=60, ACCESS_LEVEL='PUBLIC')",
+            "CREATE TABLE sales.bad_shared (id TEXT) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')",
             DEFAULT_NS,
         )
         .unwrap_err();
-        assert!(err.contains("ACCESS_LEVEL is only supported for SHARED tables"));
+        assert!(err.contains("ACCESS_LEVEL is not supported"));
+        assert!(err.contains("CREATE POLICY"));
+
+        let err = CreateTableStatement::parse(
+            "CREATE SHARED TABLE sales.legacy (id TEXT) ACCESS LEVEL private",
+            DEFAULT_NS,
+        )
+        .unwrap_err();
+        assert!(err.contains("ACCESS_LEVEL is not supported"));
     }
 
     #[test]

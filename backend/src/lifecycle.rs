@@ -22,7 +22,7 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::initialize_dba_namespace;
+use kalamdb_dba::{ensure_dba_notification_policies, initialize_dba_namespace};
 use kalamdb_jobs::AppContextJobsExt;
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_postgres_wire::{
@@ -81,8 +81,7 @@ enum ShutdownSignal {
 
 async fn select_shutdown_signal<CtrlCFut, SigTermFut>(
     ctrl_c: CtrlCFut,
-    sigterm: SigTermFut,
-) -> std::io::Result<ShutdownSignal>
+    sigterm: SigTermFut) -> std::io::Result<ShutdownSignal>
 where
     CtrlCFut: Future<Output = std::io::Result<()>>,
     SigTermFut: Future<Output = std::io::Result<()>>,
@@ -113,8 +112,7 @@ fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
                 sigterm.recv().await.ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
-                        "SIGTERM signal stream closed unexpectedly",
-                    )
+                        "SIGTERM signal stream closed unexpectedly")
                 })
             })
             .await
@@ -153,14 +151,12 @@ impl RootSpanBuilder for KalamDbRootSpanBuilder {
             http.route = %path,
             http.status_code = tracing::field::Empty,
             otel.kind = "server",
-            otel.status_code = tracing::field::Empty,
-        )
+            otel.status_code = tracing::field::Empty)
     }
 
     fn on_request_end<B: actix_web::body::MessageBody>(
         span: tracing::Span,
-        outcome: &Result<actix_web::dev::ServiceResponse<B>, actix_web::Error>,
-    ) {
+        outcome: &Result<actix_web::dev::ServiceResponse<B>, actix_web::Error>) {
         match outcome {
             Ok(response) => {
                 let status = response.status().as_u16();
@@ -183,11 +179,11 @@ impl RootSpanBuilder for KalamDbRootSpanBuilder {
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
 pub struct ApplicationComponents {
-    pub session_factory: Arc<DataFusionSessionFactory>,
-    pub sql_executor: Arc<SqlExecutor>,
-    pub rate_limiter: Arc<RateLimiter>,
-    pub live_query_manager: Arc<LiveQueryManager>,
-    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
+    pub session_factory:     Arc<DataFusionSessionFactory>,
+    pub sql_executor:        Arc<SqlExecutor>,
+    pub rate_limiter:        Arc<RateLimiter>,
+    pub live_query_manager:  Arc<LiveQueryManager>,
+    pub user_repo:           Arc<dyn kalamdb_auth::UserRepository>,
     pub connection_registry: Arc<ConnectionsManager>,
 }
 
@@ -195,8 +191,7 @@ pub struct ApplicationComponents {
 pub async fn prepare_components(
     config: &ServerConfig,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
-    use_root_password_env: bool,
-) -> Result<ApplicationComponents> {
+    use_root_password_env: bool) -> Result<ApplicationComponents> {
     let prepare_start = std::time::Instant::now();
 
     let live_query_manager = app_context.live_query_manager();
@@ -210,8 +205,7 @@ pub async fn prepare_components(
     kalamdb_handlers::register_all_handlers(
         &handler_registry,
         app_context.clone(),
-        config.auth.local.enforce_password_complexity,
-    );
+        config.auth.local.enforce_password_complexity);
 
     let sql_executor = Arc::new(SqlExecutor::new(app_context.clone(), handler_registry));
 
@@ -226,6 +220,7 @@ pub async fn prepare_components(
 
     let dba_start = std::time::Instant::now();
     initialize_dba_namespace(app_context.clone())?;
+    ensure_dba_notification_policies(app_context.clone()).await?;
     debug!(
         "Startup: DBA namespace initialized in {:.2}ms",
         dba_start.elapsed().as_secs_f64() * 1000.0
@@ -257,8 +252,7 @@ pub async fn prepare_components(
     create_default_system_user(
         users_provider_for_init.clone(),
         config.auth.root_password.clone(),
-        use_root_password_env,
-    )
+        use_root_password_env)
     .await?;
 
     info!(
@@ -278,8 +272,7 @@ pub async fn prepare_components(
 
 /// Initialize the storage backend, DataFusion, services, rate limiter, and flush scheduler.
 pub async fn bootstrap(
-    config: &ServerConfig,
-) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     // Initialize the storage backend
     let phase_start = std::time::Instant::now();
     let db_path = config.storage.rocksdb_dir();
@@ -444,8 +437,7 @@ pub async fn bootstrap(
 
 async fn bootstrap_isolated_inner(
     config: &ServerConfig,
-    initialize_cluster: bool,
-) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    initialize_cluster: bool) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
 
     // Initialize the storage backend
@@ -473,8 +465,7 @@ async fn bootstrap_isolated_inner(
         backend.clone(),
         node_id,
         config.storage.storage_dir().to_string_lossy().into_owned(),
-        config.clone(),
-    );
+        config.clone());
 
     // Start Raft (same as bootstrap)
     app_context
@@ -517,8 +508,7 @@ async fn bootstrap_isolated_inner(
 ///
 /// **Warning**: Only use this in tests! Production code should use `bootstrap()`.
 pub async fn bootstrap_isolated(
-    config: &ServerConfig,
-) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     bootstrap_isolated_inner(config, true).await
 }
 
@@ -529,8 +519,7 @@ pub async fn bootstrap_isolated(
 /// must start their RPC and HTTP surfaces before the initial leader adds them to
 /// cluster membership.
 pub async fn bootstrap_isolated_without_cluster_init(
-    config: &ServerConfig,
-) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     bootstrap_isolated_inner(config, false).await
 }
 
@@ -539,8 +528,7 @@ fn log_server_started(
     elapsed_ms: f64,
     http_version: &str,
     bind_addr: &str,
-    ui_status: &str,
-) {
+    ui_status: &str) {
     let ui_segment = if crate::http_runtime::should_print_terminal_hyperlinks(config) {
         crate::http_runtime::format_startup_ui_status_with_links(config, ui_status)
     } else {
@@ -553,7 +541,8 @@ fn log_server_started(
         String::new()
     };
     let message = format!(
-        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | UI: {ui_segment})"
+        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | \
+         UI: {ui_segment})"
     );
 
     if crate::http_runtime::should_print_terminal_hyperlinks(config) {
@@ -569,7 +558,7 @@ fn log_server_started(
 
 struct PostgresWireListenerHandle {
     shutdown: tokio::sync::oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<()>,
+    task:     tokio::task::JoinHandle<()>,
 }
 
 impl PostgresWireListenerHandle {
@@ -584,33 +573,29 @@ impl PostgresWireListenerHandle {
 fn spawn_postgres_wire_listener(
     config: &ServerConfig,
     components: &ApplicationComponents,
-    app_context: Arc<kalamdb_core::app_context::AppContext>,
-) -> Option<PostgresWireListenerHandle> {
+    app_context: Arc<kalamdb_core::app_context::AppContext>) -> Option<PostgresWireListenerHandle> {
     if !config.postgres_wire.enabled {
         return None;
     }
 
     let listener_config = PostgresWireListenerConfig {
-        enabled: config.postgres_wire.enabled,
-        host: config.postgres_wire.host.clone(),
-        port: config.postgres_wire.port,
-        tls_enabled: config.postgres_wire.tls_enabled,
+        enabled:       config.postgres_wire.enabled,
+        host:          config.postgres_wire.host.clone(),
+        port:          config.postgres_wire.port,
+        tls_enabled:   config.postgres_wire.tls_enabled,
         tls_cert_path: config.postgres_wire.tls_cert_path.clone(),
-        tls_key_path: config.postgres_wire.tls_key_path.clone(),
+        tls_key_path:  config.postgres_wire.tls_key_path.clone(),
     };
     let session_manager = app_context.backend_session_manager();
     let startup_handler = Arc::new(
         KalamStartupHandler::new(session_manager.clone(), components.user_repo.clone())
             .with_statement_limits(
                 config.postgres_wire.prepared_statement_limit,
-                config.postgres_wire.portal_limit,
-            ),
-    );
+                config.postgres_wire.portal_limit));
     let wire_sql_executor = Arc::new(WireSqlExecutor::new(
         app_context,
         components.sql_executor.clone(),
-        session_manager,
-    ));
+        session_manager));
     let query_handler = Arc::new(KalamQueryHandler::new(wire_sql_executor));
     let handlers = Arc::new(KalamWireHandlers::new(startup_handler, query_handler));
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -635,8 +620,7 @@ pub async fn run(
     config: &ServerConfig,
     components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
-    main_start: std::time::Instant,
-) -> Result<()> {
+    main_start: std::time::Instant) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     debug!("Starting HTTP server on {}", bind_addr);
     debug!("Endpoints: POST /v1/api/sql, GET /v1/ws");
@@ -682,8 +666,7 @@ pub async fn run(
         config,
         &components,
         app_context.clone(),
-        AuthRuntimeMode::AlreadyConfigured,
-    )?;
+        AuthRuntimeMode::AlreadyConfigured)?;
     let ui_status = http_runtime.ui_status();
     debug!("Admin UI: {} (at /ui)", ui_status);
     let mut postgres_wire_listener =
@@ -723,8 +706,7 @@ pub async fn run(
                 kalamdb_api::routes::configure_ui_routes(
                     cfg,
                     &path,
-                    runtime_config.clone(),
-                );
+                    runtime_config.clone());
             });
         }
 
@@ -736,8 +718,7 @@ pub async fn run(
                 kalamdb_api::routes::configure_ui_routes(
                     cfg,
                     &path,
-                    runtime_config.clone(),
-                );
+                    runtime_config.clone());
             });
         }
 
@@ -766,8 +747,7 @@ pub async fn run(
         main_start.elapsed().as_secs_f64() * 1000.0,
         http_version,
         &bind_addr,
-        ui_status,
-    );
+        ui_status);
 
     let server = server
     .workers(effective_workers(config.server.workers))
@@ -775,8 +755,7 @@ pub async fn run(
     .max_connections(config.performance.max_connections)
     // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
     .worker_max_blocking_threads(effective_max_blocking_threads(
-        config.performance.worker_max_blocking_threads,
-    ))
+        config.performance.worker_max_blocking_threads))
     // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
     // Connections stay open for reuse, reducing TCP handshake overhead
     .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
@@ -901,11 +880,11 @@ pub async fn run(
 /// route registration, app_data wiring, auth config, rate limiting, etc.) but binds
 /// to an ephemeral port and provides an explicit shutdown handle.
 pub struct RunningTestHttpServer {
-    pub base_url: String,
-    pub bind_addr: SocketAddr,
+    pub base_url:    String,
+    pub bind_addr:   SocketAddr,
     pub app_context: Arc<kalamdb_core::app_context::AppContext>,
-    server_handle: actix_web::dev::ServerHandle,
-    server_task: tokio::task::JoinHandle<std::io::Result<()>>,
+    server_handle:   actix_web::dev::ServerHandle,
+    server_task:     tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
 impl RunningTestHttpServer {
@@ -941,8 +920,7 @@ impl RunningTestHttpServer {
 pub async fn run_for_tests(
     config: &ServerConfig,
     components: ApplicationComponents,
-    app_context: Arc<kalamdb_core::app_context::AppContext>,
-) -> Result<RunningTestHttpServer> {
+    app_context: Arc<kalamdb_core::app_context::AppContext>) -> Result<RunningTestHttpServer> {
     let bind_ip = if config.server.host.is_empty() {
         "127.0.0.1"
     } else {
@@ -956,8 +934,7 @@ pub async fn run_for_tests(
         config,
         &components,
         app_context.clone(),
-        AuthRuntimeMode::Configure,
-    )?;
+        AuthRuntimeMode::Configure)?;
 
     let server = HttpServer::new(move || {
         let runtime = http_runtime.clone();
@@ -1008,15 +985,12 @@ pub async fn run_for_tests(
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
         .worker_max_blocking_threads(effective_max_blocking_threads(
-            config.performance.worker_max_blocking_threads,
-        ))
+            config.performance.worker_max_blocking_threads))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
-            config.performance.client_request_timeout,
-        ))
+            config.performance.client_request_timeout))
         .client_disconnect_timeout(std::time::Duration::from_secs(
-            config.performance.client_disconnect_timeout,
-        ))
+            config.performance.client_disconnect_timeout))
         .run();
 
     let server_handle = server.handle();
@@ -1036,16 +1010,14 @@ pub async fn run_for_tests(
 pub async fn run_detached(
     config: &ServerConfig,
     components: ApplicationComponents,
-    app_context: Arc<kalamdb_core::app_context::AppContext>,
-) -> Result<RunningTestHttpServer> {
+    app_context: Arc<kalamdb_core::app_context::AppContext>) -> Result<RunningTestHttpServer> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
 
     let http_runtime = HttpRuntimeState::new(
         config,
         &components,
         app_context.clone(),
-        AuthRuntimeMode::Configure,
-    )?;
+        AuthRuntimeMode::Configure)?;
 
     let server = HttpServer::new(move || {
         let runtime = http_runtime.clone();
@@ -1101,15 +1073,12 @@ pub async fn run_detached(
         .workers(effective_workers(config.server.workers))
         .max_connections(config.performance.max_connections)
         .worker_max_blocking_threads(effective_max_blocking_threads(
-            config.performance.worker_max_blocking_threads,
-        ))
+            config.performance.worker_max_blocking_threads))
         .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
         .client_request_timeout(std::time::Duration::from_secs(
-            config.performance.client_request_timeout,
-        ))
+            config.performance.client_request_timeout))
         .client_disconnect_timeout(std::time::Duration::from_secs(
-            config.performance.client_disconnect_timeout,
-        ))
+            config.performance.client_disconnect_timeout))
         .run();
 
     let server_handle = server.handle();
@@ -1148,8 +1117,7 @@ pub async fn run_detached(
 async fn create_default_system_user(
     users_provider: Arc<kalamdb_system::UsersTableProvider>,
     config_root_password: Option<String>,
-    use_root_password_env: bool,
-) -> Result<()> {
+    use_root_password_env: bool) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_system::User;
 
@@ -1305,8 +1273,7 @@ mod tests {
         let signal = runtime
             .block_on(select_shutdown_signal(
                 ready::<std::io::Result<()>>(Ok(())),
-                pending::<std::io::Result<()>>(),
-            ))
+                pending::<std::io::Result<()>>()))
             .expect("ctrl+c future should succeed");
 
         assert_eq!(signal, ShutdownSignal::CtrlC);
@@ -1318,8 +1285,7 @@ mod tests {
         let signal = runtime
             .block_on(select_shutdown_signal(
                 pending::<std::io::Result<()>>(),
-                ready::<std::io::Result<()>>(Ok(())),
-            ))
+                ready::<std::io::Result<()>>(Ok(()))))
             .expect("sigterm future should succeed");
 
         assert_eq!(signal, ShutdownSignal::SigTerm);

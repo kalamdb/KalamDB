@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use arrow::datatypes::Schema;
 use kalamdb_commons::{
-    models::{NamespaceId, StorageId, TableAccess, TableName},
+    models::{NamespaceId, StorageId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 
@@ -39,7 +39,4 @@ pub struct CreateTableStatement {
     pub max_stream_size_bytes: Option<u64>,
     /// If true, don't error if table already exists
     pub if_not_exists: bool,
-    /// Access level for SHARED tables (public, private, restricted)
-    /// Defaults to private. Only applicable to SHARED tables.
-    pub access_level: Option<TableAccess>,
 }

@@ -37,6 +37,6 @@ pub use permissions::{
     can_impersonate_target_user, can_impersonate_user, can_manage_users, can_read_all_users,
     can_write_shared_table, can_write_stream_table, can_write_user_table,
     check_shared_table_write_access_level, check_stream_table_write_access_level,
-    check_user_table_write_access_level, is_admin_role, is_system_role, shared_table_access_level,
+    check_user_table_write_access_level, is_admin_role, is_system_role,
 };
 pub use user_context::UserContext;

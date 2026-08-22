@@ -1,4 +1,4 @@
--- SHARED table: access level + storage/flush/compression + DML and topic routing.
+-- SHARED table: storage/flush/compression + DML and topic routing.
 
 DROP NAMESPACE IF EXISTS sql_file_case_23 CASCADE;
 
@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS case23_shared_feed (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   TYPE = 'SHARED',
-  ACCESS_LEVEL = 'PUBLIC',
   STORAGE_ID = 'local',
   FLUSH_POLICY = 'rows:90,interval:40',
   COMPRESSION = 'zstd'
@@ -42,9 +41,7 @@ ALTER TABLE case23_shared_feed ALTER COLUMN scope SET DEFAULT 'global';
 ALTER TABLE case23_shared_feed ALTER COLUMN scope DROP DEFAULT;
 ALTER TABLE case23_shared_feed DROP COLUMN scope;
 
-ALTER TABLE case23_shared_feed SET ACCESS LEVEL RESTRICTED;
 ALTER TABLE case23_shared_feed SET TBLPROPERTIES (
-  ACCESS_LEVEL = 'PRIVATE',
   STORAGE_ID = 'local',
   FLUSH_POLICY = 'rows:30,interval:15',
   COMPRESSION = 'snappy'

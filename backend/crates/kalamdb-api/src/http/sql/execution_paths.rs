@@ -61,8 +61,7 @@ fn is_permission_error_message(message: &str) -> bool {
             "not authorized",
             "forbidden",
             "insufficient privileges",
-        ],
-    )
+        ])
 }
 
 #[inline]
@@ -159,14 +158,12 @@ fn build_sql_error_response(
     details: Option<&str>,
     took: f64,
     is_admin: bool,
-    preserve_message: bool,
-) -> HttpResponse {
+    preserve_message: bool) -> HttpResponse {
     let payload = if preserve_message {
         if is_admin {
             details.map_or_else(
                 || SqlResponse::error(code, message, took),
-                |detail| SqlResponse::error_with_details(code, message, detail, took),
-            )
+                |detail| SqlResponse::error_with_details(code, message, detail, took))
         } else {
             SqlResponse::error(code, message, took)
         }
@@ -191,8 +188,7 @@ fn push_or_accumulate_batch_result(
     total_inserted: &mut usize,
     total_updated: &mut usize,
     total_deleted: &mut usize,
-    results: &mut Vec<QueryResult>,
-) {
+    results: &mut Vec<QueryResult>) {
     if is_batch {
         if let Some(message) = result.message.as_deref() {
             if message.contains("Inserted") {
@@ -216,8 +212,7 @@ fn push_or_accumulate_batch_result(
 fn statement_mutates_meta(
     statement: &PreparedApiExecutionStatement,
     app_context: &AppContext,
-    routing_user_id: &kalamdb_commons::models::UserId,
-) -> bool {
+    routing_user_id: &kalamdb_commons::models::UserId) -> bool {
     let target_group = prepared_statement_target_group(statement, app_context, routing_user_id);
     if target_group != Some(GroupId::Meta) {
         return false;
@@ -261,8 +256,7 @@ async fn forward_batch_statement_to_group(
     app_context: &AppContext,
     request_id: Option<&str>,
     start_time: Instant,
-    retry_metadata_lag: bool,
-) -> Result<SqlResponse, HttpResponse> {
+    retry_metadata_lag: bool) -> Result<SqlResponse, HttpResponse> {
     const MAX_ATTEMPTS: u32 = 5;
     const INITIAL_BACKOFF_MS: u64 = 5;
 
@@ -279,8 +273,7 @@ async fn forward_batch_statement_to_group(
             &request,
             app_context,
             request_id,
-            start_time,
-        )
+            start_time)
         .await?;
 
         let status =
@@ -292,8 +285,7 @@ async fn forward_batch_statement_to_group(
                 HttpResponse::BadGateway().json(SqlResponse::error(
                     ErrorCode::ForwardFailed,
                     &format!("Failed to decode forwarded SQL response: {}", err),
-                    took_ms(start_time),
-                ))
+                    took_ms(start_time)))
             });
         }
 
@@ -313,8 +305,7 @@ async fn forward_batch_statement_to_group(
     Err(HttpResponse::GatewayTimeout().json(SqlResponse::error(
         ErrorCode::ForwardFailed,
         "Timed out waiting for forwarded SQL metadata visibility",
-        took_ms(start_time),
-    )))
+        took_ms(start_time))))
 }
 
 fn build_statement_error_response(
@@ -322,8 +313,7 @@ fn build_statement_error_response(
     statement_index: usize,
     sql: &str,
     took: f64,
-    is_admin: bool,
-) -> HttpResponse {
+    is_admin: bool) -> HttpResponse {
     if let Some(kalamdb_err) = err.downcast_ref::<KalamDbError>() {
         let (status, code, preserve_message) = classify_sql_error(kalamdb_err);
         let message = kalamdb_err.statement_failure_message(statement_index);
@@ -334,8 +324,7 @@ fn build_statement_error_response(
             Some(sql),
             took,
             is_admin,
-            preserve_message,
-        );
+            preserve_message);
     }
 
     let err_msg = err.to_string();
@@ -348,8 +337,7 @@ fn build_statement_error_response(
             Some(sql),
             took,
             is_admin,
-            true,
-        );
+            true);
     }
 
     let message = format!("Statement {statement_index} failed: {err_msg}");
@@ -360,8 +348,7 @@ fn build_statement_error_response(
         Some(sql),
         took,
         is_admin,
-        false,
-    )
+        false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -378,15 +365,13 @@ pub(super) async fn execute_file_upload_path(
     _default_namespace: &NamespaceId,
     params: Vec<ScalarValue>,
     schema_registry: &SchemaRegistry,
-    start_time: Instant,
-) -> HttpResponse {
+    start_time: Instant) -> HttpResponse {
     if !is_multipart {
         return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
             ErrorCode::InvalidInput,
             "FILE placeholders require multipart/form-data",
             took_ms(start_time),
-            exec_ctx.is_admin(),
-        ));
+            exec_ctx.is_admin()));
     }
 
     if prepared_statements.len() != 1 {
@@ -394,8 +379,7 @@ pub(super) async fn execute_file_upload_path(
             ErrorCode::InvalidInput,
             "File uploads require a single SQL statement",
             took_ms(start_time),
-            exec_ctx.is_admin(),
-        ));
+            exec_ctx.is_admin()));
     }
 
     let stmt = &prepared_statements[0];
@@ -420,8 +404,7 @@ pub(super) async fn execute_file_upload_path(
                 "Could not determine target table from SQL. Use fully qualified table name \
                  (namespace.table).",
                 took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
+                exec_ctx.is_admin()));
         },
     };
 
@@ -432,8 +415,7 @@ pub(super) async fn execute_file_upload_path(
                 ErrorCode::TableNotFound,
                 &format!("Table '{}' not found", table_id),
                 took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
+                exec_ctx.is_admin()));
         },
     };
 
@@ -449,8 +431,7 @@ pub(super) async fn execute_file_upload_path(
                 table_id
             ),
             took_ms(start_time),
-            exec_ctx.is_admin(),
-        ));
+            exec_ctx.is_admin()));
     }
 
     let user_id = match table_type {
@@ -461,8 +442,7 @@ pub(super) async fn execute_file_upload_path(
                 ErrorCode::InvalidInput,
                 "File uploads are not supported for stream or system tables",
                 took_ms(start_time),
-                exec_ctx.is_admin(),
-            ));
+                exec_ctx.is_admin()));
         },
     };
 
@@ -488,8 +468,7 @@ pub(super) async fn execute_file_upload_path(
             &table_id,
             user_id.as_ref(),
             &mut subfolder_state,
-            None,
-        )
+            None)
         .await
         {
             Ok(refs) => refs,
@@ -498,8 +477,7 @@ pub(super) async fn execute_file_upload_path(
                     e.code,
                     &e.message,
                     took_ms(start_time),
-                    exec_ctx.is_admin(),
-                ));
+                    exec_ctx.is_admin()));
             },
         }
     };
@@ -510,8 +488,7 @@ pub(super) async fn execute_file_upload_path(
         sql_executor,
         &modified_sql,
         exec_ctx,
-        start_time,
-    ) {
+        start_time) {
         Ok(metadata) => metadata,
         Err(resp) => return resp,
     };
@@ -525,8 +502,7 @@ pub(super) async fn execute_file_upload_path(
         sql_executor,
         exec_ctx,
         execute_as_user,
-        params,
-    )
+        params)
     .await
     {
         Ok(result) => {
@@ -544,16 +520,14 @@ pub(super) async fn execute_file_upload_path(
                 table_type,
                 &table_id,
                 user_id.as_ref(),
-                app_context,
-            )
+                app_context)
             .await;
             build_statement_error_response(
                 err.as_ref(),
                 1,
                 &modified_sql,
                 took_ms(start_time),
-                exec_ctx.is_admin(),
-            )
+                exec_ctx.is_admin())
         },
     }
 }
@@ -569,16 +543,14 @@ pub(super) async fn execute_batch_path(
     params: Vec<ScalarValue>,
     http_req: &HttpRequest,
     req_for_forward: &QueryRequest,
-    start_time: Instant,
-) -> HttpResponse {
+    start_time: Instant) -> HttpResponse {
     let is_batch = prepared_statements.len() > 1;
     let stmt_count = prepared_statements.len();
     let route_statements_individually = should_route_batch_statements_individually(
         prepared_statements,
         &req_for_forward.params,
         app_context.as_ref(),
-        exec_ctx.user_id(),
-    );
+        exec_ctx.user_id());
     let mut results = Vec::with_capacity(stmt_count);
     let mut total_inserted = 0usize;
     let mut total_updated = 0usize;
@@ -589,8 +561,7 @@ pub(super) async fn execute_batch_path(
         AppContextRequestTransactionCoordinator::new(app_context.as_ref());
     let mut request_transaction_guard = RequestTransactionBatchGuard::from_request_id(
         exec_ctx.request_id(),
-        &request_transaction_coordinator,
-    );
+        &request_transaction_coordinator);
     let mut statement_exec_ctx = exec_ctx.clone();
 
     let mut idx = 0;
@@ -625,8 +596,9 @@ pub(super) async fn execute_batch_path(
                     match sql_executor.try_batch_insert_in_transaction(
                         &batch_stmts,
                         exec_ctx,
-                        transaction_id,
-                    ) {
+                        transaction_id)
+                    .await
+                    {
                         Ok(Some(results)) => {
                             let batch_rows: usize = results.iter().map(|r| r.affected_rows()).sum();
                             let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
@@ -635,8 +607,7 @@ pub(super) async fn execute_batch_path(
                                 "✅ Batch INSERT ({} stmts, {} rows) | took={:.3}ms",
                                 batch_len,
                                 batch_rows,
-                                batch_ms,
-                            );
+                                batch_ms);
                             total_inserted += batch_rows;
                             idx = batch_end;
                             request_transaction_guard.sync(&request_transaction_coordinator);
@@ -651,8 +622,7 @@ pub(super) async fn execute_batch_path(
                                 idx + 1,
                                 &prepared_statements[idx].prepared_statement.sql,
                                 took_ms(start_time),
-                                exec_ctx.is_admin(),
-                            );
+                                exec_ctx.is_admin());
                         },
                     }
                 }
@@ -669,8 +639,7 @@ pub(super) async fn execute_batch_path(
                     return build_kalamdb_error_response(
                         &err,
                         took_ms(start_time),
-                        statement_exec_ctx.is_admin(),
-                    );
+                        statement_exec_ctx.is_admin());
                 },
             };
 
@@ -688,8 +657,7 @@ pub(super) async fn execute_batch_path(
                         table_id
                     ),
                     took_ms(start_time),
-                    statement_exec_ctx.is_admin(),
-                ));
+                    statement_exec_ctx.is_admin()));
             }
         }
 
@@ -709,8 +677,7 @@ pub(super) async fn execute_batch_path(
                         app_context.as_ref(),
                         statement_exec_ctx.request_id(),
                         start_time,
-                        meta_changed_in_batch,
-                    )
+                        meta_changed_in_batch)
                     .await
                     {
                         Ok(forwarded_response) => {
@@ -721,8 +688,7 @@ pub(super) async fn execute_batch_path(
                                     &mut total_inserted,
                                     &mut total_updated,
                                     &mut total_deleted,
-                                    &mut results,
-                                );
+                                    &mut results);
                             }
 
                             if statement_mutates_meta(stmt, app_context.as_ref(), routing_user_id) {
@@ -772,8 +738,7 @@ pub(super) async fn execute_batch_path(
             sql_executor,
             &statement_exec_ctx,
             execute_as_user.clone(),
-            stmt_params,
-        )
+            stmt_params)
         .await
         {
             Ok(exec_result) => {
@@ -783,8 +748,7 @@ pub(super) async fn execute_batch_path(
 
                 let safe_sql = if log::log_enabled!(log::Level::Debug) {
                     Some(kalamdb_commons::helpers::security::redact_sensitive_sql(
-                        &stmt.prepared_statement.sql,
-                    ))
+                        &stmt.prepared_statement.sql))
                 } else {
                     None
                 };
@@ -809,8 +773,7 @@ pub(super) async fn execute_batch_path(
                     stmt.prepared_statement
                         .table_type
                         .unwrap_or(kalamdb_core::schema_registry::TableType::User),
-                    stmt.prepared_statement.table_id.as_ref().map(|id| id.table_name().clone()),
-                );
+                    stmt.prepared_statement.table_id.as_ref().map(|id| id.table_name().clone()));
 
                 if !is_batch {
                     if let kalamdb_core::sql::ExecutionResult::Rows {
@@ -830,8 +793,7 @@ pub(super) async fn execute_batch_path(
                             effective_role,
                             effective_username,
                             row_count,
-                            took_ms(start_time),
-                        ) {
+                            took_ms(start_time)) {
                             Ok(response) => response,
                             Err(err) => {
                                 let _ = request_transaction_guard
@@ -841,9 +803,7 @@ pub(super) async fn execute_batch_path(
                                         ErrorCode::InternalError,
                                         &format!("Failed to stream SQL response: {}", err),
                                         took_ms(start_time),
-                                        statement_exec_ctx.is_admin(),
-                                    ),
-                                )
+                                        statement_exec_ctx.is_admin()))
                             },
                         };
                     }
@@ -864,9 +824,7 @@ pub(super) async fn execute_batch_path(
                                 ErrorCode::InternalError,
                                 &format!("Failed to serialize SQL result: {}", err),
                                 took_ms(start_time),
-                                statement_exec_ctx.is_admin(),
-                            ),
-                        );
+                                statement_exec_ctx.is_admin()));
                     },
                 };
 
@@ -880,8 +838,7 @@ pub(super) async fn execute_batch_path(
                     &mut total_inserted,
                     &mut total_updated,
                     &mut total_deleted,
-                    &mut results,
-                );
+                    &mut results);
 
                 if let Some(classified) = stmt.prepared_statement.classified_statement.as_ref() {
                     if let SqlStatementKind::UseNamespace(use_namespace) = classified.kind() {
@@ -902,8 +859,7 @@ pub(super) async fn execute_batch_path(
                         req_for_forward,
                         app_context,
                         statement_exec_ctx.request_id(),
-                        start_time,
-                    )
+                        start_time)
                     .await
                     {
                         return response;
@@ -915,8 +871,7 @@ pub(super) async fn execute_batch_path(
                     idx + 1,
                     &stmt.prepared_statement.sql,
                     took_ms(start_time),
-                    statement_exec_ctx.is_admin(),
-                );
+                    statement_exec_ctx.is_admin());
             },
         }
 
@@ -934,28 +889,22 @@ pub(super) async fn execute_batch_path(
             results.push(
                 QueryResult::with_affected_rows(
                     total_inserted,
-                    Some(format!("Inserted {} row(s)", total_inserted)),
-                )
-                .with_as_user(authorized_username.to_string()),
-            );
+                    Some(format!("Inserted {} row(s)", total_inserted)))
+                .with_as_user(authorized_username.to_string()));
         }
         if total_updated > 0 {
             results.push(
                 QueryResult::with_affected_rows(
                     total_updated,
-                    Some(format!("Updated {} row(s)", total_updated)),
-                )
-                .with_as_user(authorized_username.to_string()),
-            );
+                    Some(format!("Updated {} row(s)", total_updated)))
+                .with_as_user(authorized_username.to_string()));
         }
         if total_deleted > 0 {
             results.push(
                 QueryResult::with_affected_rows(
                     total_deleted,
-                    Some(format!("Deleted {} row(s)", total_deleted)),
-                )
-                .with_as_user(authorized_username.to_string()),
-            );
+                    Some(format!("Deleted {} row(s)", total_deleted)))
+                .with_as_user(authorized_username.to_string()));
         }
     }
 

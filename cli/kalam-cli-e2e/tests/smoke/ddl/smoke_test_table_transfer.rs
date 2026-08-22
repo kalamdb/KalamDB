@@ -222,6 +222,8 @@ fn smoke_table_export_import_shared_via_api_and_show_export() {
         target_fqn
     ))
     .expect("create target table");
+    grant_public_shared_table_access(&source_fqn);
+    grant_public_shared_table_access(&target_fqn);
 
     wait_for_table_ready(&source_fqn, Duration::from_secs(5)).expect("source table ready");
     wait_for_table_ready(&target_fqn, Duration::from_secs(5)).expect("target table ready");

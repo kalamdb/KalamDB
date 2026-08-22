@@ -210,6 +210,7 @@ fn smoke_test_shared_table_flush() {
     );
 
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_shared_table_access(&full_table_name);
 
     println!("✅ Created SHARED table with FLUSH ROWS {}", FLUSH_POLICY_ROWS);
 

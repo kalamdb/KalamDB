@@ -1,7 +1,7 @@
 # Shared-table RLS Implementation Plan
 
 **Date:** 2026-08-20  
-**Status:** Ready for implementation (not started)  
+**Status:** ACCESS_LEVEL removed; FORCE RLS default-deny is in place. Security matrix, live grant/revoke fail-closed, ON CONFLICT reject, and CLI e2e coverage are in. Remaining work is strategy/EXPLAIN metrics, covering indexes, and performance benches — not ACCESS_LEVEL.  
 **Cursor plan:** `.cursor/plans/shared_table_rls_6ffd6f10.plan.md`
 
 **Goal:** PostgreSQL-shaped shared-table RLS compiled to an authorization IR, then executed with the cheapest safe strategy — PointGuard/MultiGuard, DataFusion 55 LeftSemi/HashJoin, or a generation-aware authorization cache. RLS never runs policy SQL per row or per live event. Identity is bound after the user-independent plan cache. Mutable-column RLS applies only after MVCC winner selection.
@@ -23,7 +23,7 @@
 7. One evaluator for INSERT/UPDATE/DELETE/ON CONFLICT/RETURNING/batch/transaction paths; reject unsupported write paths rather than bypass
 8. Cache `Arc<AuthorizationSet>` by policy+principal+dependency generation; commit-ordered invalidation; fail closed on stale positive auth
 9. Bind evaluator at subscribe; 0 SQL/0 DF in fan-out; PointGuard for equality subscriptions; inverted auth index optional; old/new visibility transitions
-10. Idempotent ACCESS_LEVEL to `_kdb_migrated_*` policies; remove shared ACCESS_LEVEL from DDL/options/cache/macros
+10. ACCESS_LEVEL is not SQL. CREATE/ALTER reject it. FORCE RLS default-deny; grants via CREATE POLICY only
 11. Deny User/Service raw shared file download; audit ON CONFLICT, exports, ingestion, maintenance, backup
 12. EXPLAIN strategy (PointGuard vs DF semi-join); DF/Kalam metrics; missing-index warnings; never print another principal's keys
 13. Security matrix, MVCC winner vs RLS, PointGuard, plan-cache isolation, live grant/revoke e2e, ON CONFLICT; DF EXPLAIN fixtures; performance benchmarks
@@ -61,7 +61,7 @@ Kalam `SessionConfig` does **not** override the hash-join IN thresholds; DF 55 d
 
 ### KalamDB (reuse / extend)
 
-- `backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs`: no row RLS; `user_id` ignored; ACCESS_LEVEL gate only.
+- [`SharedTableProvider`](backend/crates/kalamdb-tables/src/shared_tables/shared_table_provider.rs): FORCE RLS after MVCC winners; System/DBA bypass; User/Service default-deny without `CREATE POLICY`.
 - `backend/crates/kalamdb-datafusion-sources/src/lib.rs`: shared `ExecutionPlan` scaffolding, pruning descriptors, deferred MVCC exec.
 - `backend/crates/kalamdb-datafusion-sources/src/pruning.rs` `mvcc_filter_evaluation`: **exact** filters run on **resolved winners**; **inexact** pre-winner pruning is only PK equality, `_seq` bounds, `_deleted`. Mutable `group_id IN (...)` is **not** in that inexact set today — keep it that way.
 - `backend/crates/kalamdb-tables/src/utils/base.rs` `compute_metadata_only_cold_columns` / `compute_cold_columns`: already metadata-first / projection-aware cold reads.
@@ -345,13 +345,9 @@ Catch-up is the SQL/provider path (same RLS), never a weaker copy.
 
 ## ACCESS_LEVEL, files, catalog
 
-Idempotent migration:
-
-- PUBLIC → `_kdb_migrated_public_read` FOR SELECT TO user USING (true); `_kdb_migrated_service_all` FOR ALL TO service USING/CHECK (true)
-- PRIVATE / RESTRICTED / missing → `_kdb_migrated_service_all` only
-- DBA → no policies
-
-New tables default-deny.
+`ACCESS_LEVEL` is not a table option. CREATE/ALTER TABLE reject it. Shared tables are
+FORCE RLS default-deny until `CREATE POLICY`. Catalog JSON may still deserialize a
+legacy `access_level` field and ignore it.
 
 Raw shared Parquet: System/DBA only. User/Service denied even with SELECT policies.
 
@@ -418,7 +414,7 @@ Metrics: compiled/auth-set hit/miss, rebuild_ms, invalidations, live checks, ind
 - Membership grant/revoke while connected (fail closed; no historical backfill on grant)
 - ON CONFLICT hidden PK; batch WITH CHECK atomicity
 - Raw download deny for User/Service
-- **CLI e2e:** sibling of `cli/kalam-cli-e2e/tests/smoke/subscription/smoke_test_shared_table_subscription.rs`
+- **CLI e2e:** `cli/kalam-cli-e2e/tests/smoke/security/smoke_test_shared_table_rls.rs` (ACCESS_LEVEL reject, default-deny, CREATE POLICY, plan-cache isolation, ON CONFLICT reject, live grant/revoke fail-closed, raw download deny)
 
 Benchmarks (drive thresholds; do not guess): no-RLS baseline, row-local, PointGuard cache/index, MultiGuard, DF LeftSemi, small vs large build side, auth cache hit/miss, hot vs hot+cold vs parquet-heavy, live fan-out. Cardinalities 1,5,25,100,150,500,1k,10k; tables 100k/1M/10M. Record planning, auth, scan, rows scanned/materialized, bytes, row groups pruned, CPU, allocs, peak mem, P50/P95/P99 vs no RLS.
 

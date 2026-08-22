@@ -72,6 +72,7 @@ fn seed_backup_fixture_data(prefix: &str) -> (String, String, String) {
         table_fqn
     ))
     .expect("create fixture table");
+    grant_public_shared_table_access(&table_fqn);
     wait_for_table_ready(&table_fqn, Duration::from_secs(5)).expect("fixture table ready");
 
     for index in 1..=8 {

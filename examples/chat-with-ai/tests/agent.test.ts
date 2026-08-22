@@ -213,6 +213,7 @@ test('two agents in the same group avoid duplicates and fail over to the standby
   });
 
   const agentATask = startAgent('agent-a', agentAClient, controllerA.signal);
+  await new Promise((resolve) => setTimeout(resolve, 250));
   const agentBTask = startAgent('agent-b', agentBClient, controllerB.signal);
 
   try {

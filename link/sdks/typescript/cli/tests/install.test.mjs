@@ -29,8 +29,14 @@ const fixtureVersion = packageJson.version;
 
 function resolveKalamBinaryForTests() {
   const { localKalamBinaryCandidates } = require('../scripts/local-binary.js');
+  const { installedBinaryPath } = require('../scripts/platforms.js');
+  const installed = installedBinaryPath(packageDir);
 
-  return localKalamBinaryCandidates(packageDir).find((candidate) => existsSync(candidate)) ?? null;
+  return (
+    localKalamBinaryCandidates(packageDir).find(
+      (candidate) => candidate !== installed && existsSync(candidate),
+    ) ?? null
+  );
 }
 
 test('install script bootstraps then delegates verification to kalam update', async (t) => {
@@ -89,6 +95,7 @@ test('install script bootstraps then delegates verification to kalam update', as
       KALAM_CLI_PACKAGE_ROOT: installRoot,
       KALAM_CLI_RELEASE_BASE_URL: baseUrl,
       KALAM_CLI_VERSION: fixtureVersion,
+      KALAM_SKIP_MANAGED_SERVER_UPDATE: '1',
       NO_PROXY: '127.0.0.1,localhost,::1',
       no_proxy: '127.0.0.1,localhost,::1',
     },
@@ -166,6 +173,7 @@ test('install script delegates to kalam update when a binary already exists', as
       KALAM_CLI_PACKAGE_ROOT: installRoot,
       KALAM_CLI_VERSION: fixtureVersion,
       KALAM_CLI_RELEASE_BASE_URL: baseUrl,
+      KALAM_SKIP_MANAGED_SERVER_UPDATE: '1',
       NO_PROXY: '127.0.0.1,localhost,::1',
       no_proxy: '127.0.0.1,localhost,::1',
     },

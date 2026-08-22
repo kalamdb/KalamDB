@@ -11,7 +11,7 @@ use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 
 #[derive(Debug)]
 pub struct EmptyPgCatalogView {
-    name: &'static str,
+    name:   &'static str,
     schema: SchemaRef,
 }
 

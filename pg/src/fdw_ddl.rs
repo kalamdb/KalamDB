@@ -54,8 +54,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
     params: pg_sys::ParamListInfo,
     query_env: *mut pg_sys::QueryEnvironment,
     dest: *mut pg_sys::DestReceiver,
-    qc: *mut pg_sys::QueryCompletion,
-) {
+    qc: *mut pg_sys::QueryCompletion) {
     let utility_stmt = (*pstmt).utilityStmt;
     if utility_stmt.is_null() {
         call_prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
@@ -80,8 +79,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                     params,
                     query_env,
                     dest,
-                    qc,
-                );
+                    qc);
             }
         },
         pg_sys::NodeTag::T_CreateForeignTableStmt => {
@@ -120,8 +118,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                         params,
                         query_env,
                         dest,
-                        qc,
-                    );
+                        qc);
                 } else {
                     let statement_sql = extract_statement_sql(pstmt, query_string);
                     let mirrored_clause = extract_alter_operation_clause(&statement_sql);
@@ -134,8 +131,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                         params,
                         query_env,
                         dest,
-                        qc,
-                    );
+                        qc);
                     handle_alter_foreign_table(alter_stmt, mirrored_clause);
                 }
             } else {
@@ -147,8 +143,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                     params,
                     query_env,
                     dest,
-                    qc,
-                );
+                    qc);
             }
         },
         pg_sys::NodeTag::T_DropStmt => {
@@ -164,8 +159,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                     params,
                     query_env,
                     dest,
-                    qc,
-                );
+                    qc);
                 handle_drop_foreign_tables(&drop_targets);
             } else {
                 call_prev(
@@ -176,8 +170,7 @@ unsafe extern "C-unwind" fn kalam_process_utility(
                     params,
                     query_env,
                     dest,
-                    qc,
-                );
+                    qc);
             }
         },
         pg_sys::NodeTag::T_TransactionStmt => {
@@ -230,8 +223,7 @@ fn call_prev(
     params: pg_sys::ParamListInfo,
     query_env: *mut pg_sys::QueryEnvironment,
     dest: *mut pg_sys::DestReceiver,
-    qc: *mut pg_sys::QueryCompletion,
-) {
+    qc: *mut pg_sys::QueryCompletion) {
     unsafe {
         if let Some(prev) = PREV_PROCESS_UTILITY {
             prev(pstmt, query_string, read_only_tree, context, params, query_env, dest, qc);
@@ -244,8 +236,7 @@ fn call_prev(
                 params,
                 query_env,
                 dest,
-                qc,
-            );
+                qc);
         }
     }
 }
@@ -263,8 +254,7 @@ unsafe fn report_sql_error(message: &str) -> ! {
         fn errfinish(
             filename: *const std::os::raw::c_char,
             lineno: std::os::raw::c_int,
-            funcname: *const std::os::raw::c_char,
-        );
+            funcname: *const std::os::raw::c_char);
     }
 
     if errstart(PgLogLevel::ERROR as _, DOMAIN) {
@@ -306,8 +296,7 @@ unsafe fn handle_create_table_using_kalamdb(stmt: *mut pg_sys::CreateStmt, state
         pg_sys::AccessShareLock as i32,
         pg_sys::RVROption::RVR_MISSING_OK as u32,
         None,
-        std::ptr::null_mut(),
-    );
+        std::ptr::null_mut());
     if relid != pg_sys::InvalidOid {
         if if_not_exists {
             return;
@@ -439,8 +428,7 @@ unsafe fn handle_create_table_using_kalamdb(stmt: *mut pg_sys::CreateStmt, state
 
 unsafe fn handle_create_foreign_table(
     stmt: *mut pg_sys::CreateForeignTableStmt,
-    statement_sql: &str,
-) {
+    statement_sql: &str) {
     // Only handle tables belonging to our FDW (check server → fdw name)
     let server_name = read_cstr((*stmt).servername);
     if !is_kalam_server(&server_name) {
@@ -487,7 +475,7 @@ unsafe fn handle_create_foreign_table(
     let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
 
     // Collect any extra KalamDB-specific options from the FDW table options
-    // (e.g. storage_id, flush_policy, access_level, etc.)
+    // (e.g. storage_id, flush_policy, compression, etc.)
     let kalam_options = match ft_options
         .iter()
         .filter(|(k, _)| *k != "table_type" && *k != "namespace" && *k != "table")
@@ -540,8 +528,7 @@ unsafe fn handle_create_foreign_table(
 
 unsafe fn handle_alter_foreign_table(
     stmt: *mut pg_sys::AlterTableStmt,
-    mirrored_clause: Result<String, KalamPgError>,
-) {
+    mirrored_clause: Result<String, KalamPgError>) {
     // Resolve the table OID from the RangeVar
     let rel = (*stmt).relation;
     if rel.is_null() {
@@ -553,8 +540,7 @@ unsafe fn handle_alter_foreign_table(
         pg_sys::AccessShareLock as i32,
         pg_sys::RVROption::RVR_MISSING_OK as u32,
         None,
-        std::ptr::null_mut(),
-    );
+        std::ptr::null_mut());
     if relid == pg_sys::InvalidOid {
         return;
     }
@@ -678,8 +664,7 @@ unsafe fn collect_drop_targets(drop_stmt: *mut pg_sys::DropStmt) -> Vec<DropTarg
             pg_sys::AccessShareLock as i32,
             flags,
             None,
-            std::ptr::null_mut(),
-        );
+            std::ptr::null_mut());
         if relid == pg_sys::InvalidOid {
             continue;
         }
@@ -781,8 +766,7 @@ fn read_cstr(ptr: *const std::ffi::c_char) -> String {
 
 fn extract_statement_sql(
     pstmt: *mut pg_sys::PlannedStmt,
-    query_string: *const std::ffi::c_char,
-) -> String {
+    query_string: *const std::ffi::c_char) -> String {
     let full_sql = read_cstr(query_string);
     if pstmt.is_null() || full_sql.is_empty() {
         return full_sql;
@@ -810,8 +794,7 @@ fn extract_statement_sql(
 fn extract_remote_column_definitions(statement_sql: &str) -> Result<Vec<String>, KalamPgError> {
     let (open_idx, close_idx) = find_column_list_bounds(statement_sql).ok_or_else(|| {
         KalamPgError::Validation(
-            "could not locate CREATE FOREIGN TABLE column definitions".to_string(),
-        )
+            "could not locate CREATE FOREIGN TABLE column definitions".to_string())
     })?;
 
     let block = &statement_sql[open_idx + 1..close_idx];
@@ -860,8 +843,7 @@ fn extract_alter_operation_clause(statement_sql: &str) -> Result<String, KalamPg
     let clause = sql[index..].trim();
     if clause.is_empty() {
         Err(KalamPgError::Validation(
-            "could not locate ALTER TABLE operation clause".to_string(),
-        ))
+            "could not locate ALTER TABLE operation clause".to_string()))
     } else {
         Ok(clause.to_string())
     }
@@ -1302,8 +1284,7 @@ fn namespace_exists(namespace: &str) -> bool {
 }
 
 unsafe fn resolve_relation_identity_from_range_var(
-    rv: *mut pg_sys::RangeVar,
-) -> Option<(String, String)> {
+    rv: *mut pg_sys::RangeVar) -> Option<(String, String)> {
     if rv.is_null() {
         return None;
     }
@@ -1313,8 +1294,7 @@ unsafe fn resolve_relation_identity_from_range_var(
         pg_sys::AccessShareLock as i32,
         pg_sys::RVROption::RVR_MISSING_OK as u32,
         None,
-        std::ptr::null_mut(),
-    );
+        std::ptr::null_mut());
     if relid == pg_sys::InvalidOid {
         return None;
     }
@@ -1519,8 +1499,7 @@ mod tests {
     fn split_top_level_sql_list_handles_nested_parentheses() {
         let entries = split_top_level_sql_list(
             "id BIGINT DEFAULT SNOWFLAKE_ID(), amount NUMERIC(10, 2), created TIMESTAMP DEFAULT \
-             NOW()",
-        );
+             NOW()");
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[1], "amount NUMERIC(10, 2)");
     }
@@ -1544,14 +1523,12 @@ mod tests {
     #[test]
     fn extract_alter_operation_clause_preserves_default_and_not_null() {
         let clause = extract_alter_operation_clause(
-            "ALTER FOREIGN TABLE app.items ALTER COLUMN title SET DEFAULT 'pending';",
-        )
+            "ALTER FOREIGN TABLE app.items ALTER COLUMN title SET DEFAULT 'pending';")
         .expect("extract alter clause");
         assert_eq!(clause, "ALTER COLUMN title SET DEFAULT 'pending'");
 
         let clause = extract_alter_operation_clause(
-            "ALTER FOREIGN TABLE app.items ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';",
-        )
+            "ALTER FOREIGN TABLE app.items ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';")
         .expect("extract add-column clause");
         assert_eq!(clause, "ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
     }

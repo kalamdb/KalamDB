@@ -140,12 +140,10 @@ fn validate_user_management(config: &ServerConfig) -> anyhow::Result<()> {
 fn validate_topics(config: &ServerConfig) -> anyhow::Result<()> {
     ensure_positive_i64(
         config.topics.default_retention_seconds,
-        "topics.default_retention_seconds",
-    )?;
+        "topics.default_retention_seconds")?;
     ensure_positive_i64(
         config.topics.default_retention_max_bytes,
-        "topics.default_retention_max_bytes",
-    )?;
+        "topics.default_retention_max_bytes")?;
     ensure_non_zero_usize(config.topics.retention_batch_size, "topics.retention_batch_size")?;
     Ok(())
 }
@@ -159,8 +157,8 @@ fn validate_security(config: &ServerConfig) -> anyhow::Result<()> {
         && !has_configured_origin_policy(&config.security.cors.allowed_origins)
     {
         return Err(anyhow::anyhow!(
-            "Non-localhost HTTP exposure requires security.cors.allowed_origins to be \
-             configured (empty is not allowed)"
+            "Non-localhost HTTP exposure requires security.cors.allowed_origins to be configured \
+             (empty is not allowed)"
         ));
     }
 
@@ -198,7 +196,9 @@ fn reject_legacy_oauth_config(content: &str) -> anyhow::Result<()> {
 
     if value.get("oauth").is_some() {
         return Err(anyhow::anyhow!(
-            "legacy [oauth] and [oauth.providers.*] configuration is no longer supported; use [auth.oidc] for the single external OpenID Connect provider and [auth.local] for username/password login"
+            "legacy [oauth] and [oauth.providers.*] configuration is no longer supported; use \
+             [auth.oidc] for the single external OpenID Connect provider and [auth.local] for \
+             username/password login"
         ));
     }
 
@@ -339,9 +339,9 @@ mod tests {
             rpc_addr: "127.0.0.1:2910".to_string(),
             api_addr: "127.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
-                node_id: 2,
-                rpc_addr: "127.0.0.2:2910".to_string(),
-                api_addr: "127.0.0.2:2900".to_string(),
+                node_id:         2,
+                rpc_addr:        "127.0.0.2:2910".to_string(),
+                api_addr:        "127.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             user_shards: 8,
@@ -381,8 +381,7 @@ mod tests {
             broker_device_flow_enabled = true
             auto_provision = true
             default_role = "dba"
-            "#,
-        )
+            "#)
         .expect("auth settings should parse");
 
         assert!(!auth.local.enabled);
@@ -417,9 +416,7 @@ mod tests {
             "oauth".to_string(),
             toml::Value::Table(toml::map::Map::from_iter([(
                 "enabled".to_string(),
-                toml::Value::Boolean(true),
-            )])),
-        );
+                toml::Value::Boolean(true))])));
         let content = toml::to_string(&value).unwrap();
 
         let err = ServerConfig::from_toml_str(&content)
@@ -589,9 +586,9 @@ mod tests {
             rpc_addr: "10.0.0.1:2910".to_string(),
             api_addr: "http://10.0.0.1:2900".to_string(),
             peers: vec![PeerConfig {
-                node_id: 2,
-                rpc_addr: "10.0.0.2:2910".to_string(),
-                api_addr: "http://10.0.0.2:2900".to_string(),
+                node_id:         2,
+                rpc_addr:        "10.0.0.2:2910".to_string(),
+                api_addr:        "http://10.0.0.2:2900".to_string(),
                 rpc_server_name: None,
             }],
             ..local_cluster_config()

@@ -15,10 +15,14 @@ use kalamdb_commons::{
 };
 use kalamdb_live::{
     error::LiveError,
-    traits::{LiveApplyBarrier, LiveSchemaLookup, LiveSqlExecutor},
+    traits::{
+        LiveApplyBarrier, LiveAuthorization, LiveAuthorizationBinder, LiveSchemaLookup,
+        LiveSqlExecutor,
+    },
 };
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_sharding::ShardRouter;
+use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider};
 
 use crate::{
     app_context::AppContext,
@@ -52,6 +56,54 @@ impl LiveSchemaLookup for SchemaRegistryLookup {
     }
 }
 
+#[derive(Debug)]
+struct TableLiveAuthorization {
+    bound: BoundLiveAuthorization,
+}
+
+impl LiveAuthorization for TableLiveAuthorization {
+    fn authorizes(&self, row: &kalamdb_commons::models::rows::Row) -> bool {
+        self.bound.authorizes(row)
+    }
+}
+
+pub struct LiveAuthorizationBinderAdapter {
+    app_context: Arc<AppContext>,
+}
+
+impl LiveAuthorizationBinderAdapter {
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self { app_context }
+    }
+}
+
+#[async_trait]
+impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
+    async fn bind(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role) -> Result<Arc<dyn LiveAuthorization>, LiveError> {
+        let provider = self
+            .app_context
+            .schema_registry()
+            .get_provider(table_id)
+            .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
+        let provider = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                LiveError::InvalidOperation(format!(
+                    "Shared-table RLS provider unavailable for {table_id}"
+                ))
+            })?;
+        let bound = provider
+            .bind_live_authorization(user_id, role)
+            .await
+            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?;
+        Ok(Arc::new(TableLiveAuthorization { bound }))
+    }
+}
+
 /// Adapts [`SqlExecutor`] to the [`LiveSqlExecutor`] trait.
 pub struct SqlExecutorAdapter {
     executor: Arc<SqlExecutor>,
@@ -74,8 +126,7 @@ impl LiveSqlExecutor for SqlExecutorAdapter {
         sql: &str,
         user_id: UserId,
         role: Role,
-        read_context: ReadContext,
-    ) -> Result<Vec<RecordBatch>, LiveError> {
+        read_context: ReadContext) -> Result<Vec<RecordBatch>, LiveError> {
         let exec_ctx = ExecutionContext::new(user_id, role, Arc::clone(&self.base_session_context))
             .with_read_context(read_context);
 
@@ -127,8 +178,7 @@ impl LiveApplyBarrier for RaftApplyBarrierAdapter {
         &self,
         _table_id: &TableId,
         table_type: TableType,
-        user_id: &UserId,
-    ) -> Result<(), LiveError> {
+        user_id: &UserId) -> Result<(), LiveError> {
         let Some(group_id) = self.table_group(table_type, user_id) else {
             return Ok(());
         };

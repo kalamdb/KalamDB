@@ -47,9 +47,8 @@ use kalamdb_datafusion_sources::{
 use kalamdb_raft::{ClusterInfo, CommandExecutor, RaftExecutor, ServerStateExt};
 use kalamdb_system::SystemTable;
 
-use crate::{error::RegistryError, view_base::VirtualView};
-
 use super::common::system_view_definition;
+use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(cluster_schema, ClusterView);
 
@@ -112,8 +111,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Cluster identifier".to_string()),
-            ),
+                Some("Cluster identifier".to_string())),
             ColumnDefinition::new(
                 2,
                 "node_id",
@@ -123,8 +121,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Node ID within the cluster".to_string()),
-            ),
+                Some("Node ID within the cluster".to_string())),
             ColumnDefinition::new(
                 3,
                 "role",
@@ -134,8 +131,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Node role (leader, follower, learner, candidate)".to_string()),
-            ),
+                Some("Node role (leader, follower, learner, candidate)".to_string())),
             ColumnDefinition::new(
                 4,
                 "status",
@@ -145,8 +141,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Node status".to_string()),
-            ),
+                Some("Node status".to_string())),
             ColumnDefinition::new(
                 5,
                 "rpc_addr",
@@ -156,8 +151,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("RPC address for Raft communication".to_string()),
-            ),
+                Some("RPC address for Raft communication".to_string())),
             ColumnDefinition::new(
                 6,
                 "api_addr",
@@ -167,8 +161,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("API address for client requests".to_string()),
-            ),
+                Some("API address for client requests".to_string())),
             ColumnDefinition::new(
                 7,
                 "is_self",
@@ -178,8 +171,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether this is the current node".to_string()),
-            ),
+                Some("Whether this is the current node".to_string())),
             ColumnDefinition::new(
                 8,
                 "is_leader",
@@ -189,8 +181,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether this node is the leader".to_string()),
-            ),
+                Some("Whether this node is the leader".to_string())),
             ColumnDefinition::new(
                 9,
                 "groups_leading",
@@ -200,8 +191,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Number of Raft groups this node leads".to_string()),
-            ),
+                Some("Number of Raft groups this node leads".to_string())),
             ColumnDefinition::new(
                 10,
                 "total_groups",
@@ -211,8 +201,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Total number of Raft groups".to_string()),
-            ),
+                Some("Total number of Raft groups".to_string())),
             // OpenRaft metrics (nullable - may not be available for all nodes)
             ColumnDefinition::new(
                 11,
@@ -223,8 +212,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current Raft term".to_string()),
-            ),
+                Some("Current Raft term".to_string())),
             ColumnDefinition::new(
                 12,
                 "last_applied_log",
@@ -234,8 +222,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last applied log index".to_string()),
-            ),
+                Some("Last applied log index".to_string())),
             ColumnDefinition::new(
                 13,
                 "leader_last_log_index",
@@ -245,8 +232,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Leader's last log index".to_string()),
-            ),
+                Some("Leader's last log index".to_string())),
             ColumnDefinition::new(
                 14,
                 "snapshot_index",
@@ -256,8 +242,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last snapshot index".to_string()),
-            ),
+                Some("Last snapshot index".to_string())),
             ColumnDefinition::new(
                 15,
                 "catchup_progress_pct",
@@ -267,8 +252,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Catchup progress percentage (0-100)".to_string()),
-            ),
+                Some("Catchup progress percentage (0-100)".to_string())),
             ColumnDefinition::new(
                 16,
                 "replication_lag",
@@ -278,8 +262,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Replication lag (entries behind leader)".to_string()),
-            ),
+                Some("Replication lag (entries behind leader)".to_string())),
             // Node metadata (replicated via OpenRaft membership)
             ColumnDefinition::new(
                 17,
@@ -290,8 +273,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Machine hostname".to_string()),
-            ),
+                Some("Machine hostname".to_string())),
             ColumnDefinition::new(
                 18,
                 "version",
@@ -301,8 +283,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("KalamDB version".to_string()),
-            ),
+                Some("KalamDB version".to_string())),
             ColumnDefinition::new(
                 19,
                 "memory_mb",
@@ -312,8 +293,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Total system memory in MB".to_string()),
-            ),
+                Some("Total system memory in MB".to_string())),
             ColumnDefinition::new(
                 20,
                 "memory_usage_mb",
@@ -323,8 +303,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current KalamDB process memory usage in MB".to_string()),
-            ),
+                Some("Current KalamDB process memory usage in MB".to_string())),
             ColumnDefinition::new(
                 21,
                 "cpu_usage_percent",
@@ -334,8 +313,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current KalamDB process CPU usage percentage".to_string()),
-            ),
+                Some("Current KalamDB process CPU usage percentage".to_string())),
             ColumnDefinition::new(
                 22,
                 "uptime_seconds",
@@ -345,8 +323,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("KalamDB server uptime in seconds".to_string()),
-            ),
+                Some("KalamDB server uptime in seconds".to_string())),
             ColumnDefinition::new(
                 23,
                 "uptime_human",
@@ -356,8 +333,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("KalamDB server uptime in compact human-readable form".to_string()),
-            ),
+                Some("KalamDB server uptime in compact human-readable form".to_string())),
             ColumnDefinition::new(
                 24,
                 "os",
@@ -367,8 +343,7 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Operating system".to_string()),
-            ),
+                Some("Operating system".to_string())),
             ColumnDefinition::new(
                 25,
                 "arch",
@@ -378,15 +353,13 @@ impl ClusterView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("CPU architecture".to_string()),
-            ),
+                Some("CPU architecture".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Cluster,
             columns,
-            "Live OpenRaft cluster status and metrics (read-only view)",
-        )
+            "Live OpenRaft cluster status and metrics (read-only view)")
     }
 
     /// Create a new cluster view
@@ -512,8 +485,7 @@ impl VirtualView for ClusterView {
                 Arc::new(StringArray::from(uptime_humans)) as ArrayRef,
                 Arc::new(StringArray::from(oses)) as ArrayRef,
                 Arc::new(StringArray::from(archs)) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster batch: {}", e)))
     }
 }
@@ -524,11 +496,11 @@ pub struct ClusterTableProvider {
 }
 
 struct ClusterScanSource {
-    view: Arc<ClusterView>,
+    view:            Arc<ClusterView>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
 }
 
 impl std::fmt::Debug for ClusterScanSource {
@@ -567,8 +539,7 @@ impl DeferredBatchSource for ClusterScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -593,8 +564,7 @@ impl datafusion::datasource::TableProvider for ClusterTableProvider {
         state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> datafusion::error::Result<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
+        limit: Option<usize>) -> datafusion::error::Result<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
         let base_schema = self.view.schema();
         let output_schema = match projection {
             Some(indices) => base_schema.project(indices).map(Arc::new).map_err(|error| {
@@ -620,8 +590,7 @@ impl datafusion::datasource::TableProvider for ClusterTableProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> datafusion::error::Result<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> datafusion::error::Result<Vec<TableProviderFilterPushDown>> {
         Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
     }
 }

@@ -105,13 +105,11 @@ impl SchemaRegistry {
             table_cache_counter: AtomicU64::new(0),
             table_cache_max_entries: std::cmp::max(
                 1,
-                std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES),
-            ),
+                std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES)),
             version_cache: DashMap::with_capacity(std::cmp::min(VERSION_CACHE_MAX_ENTRIES, 64)),
             version_cache_access: DashMap::with_capacity(std::cmp::min(
                 VERSION_CACHE_MAX_ENTRIES,
-                64,
-            )),
+                64)),
             version_cache_counter: AtomicU64::new(0),
             base_session_context: OnceLock::new(),
         }
@@ -133,8 +131,7 @@ impl SchemaRegistry {
     }
 
     fn system_schema_reconcile_marker(
-        expected_defs: &[Arc<TableDefinition>],
-    ) -> Result<Vec<u8>, KalamDbError> {
+        expected_defs: &[Arc<TableDefinition>]) -> Result<Vec<u8>, KalamDbError> {
         let defs: Vec<&TableDefinition> = expected_defs.iter().map(Arc::as_ref).collect();
         let mut marker = b"system-schema-reconcile-marker:v1\0".to_vec();
         let serialized = serde_json::to_vec(&defs).map_err(|e| {
@@ -258,8 +255,7 @@ impl SchemaRegistry {
     }
 
     fn reconcile_system_table_definitions(
-        &self,
-    ) -> Result<SystemSchemaReconcileStats, KalamDbError> {
+        &self) -> Result<SystemSchemaReconcileStats, KalamDbError> {
         let system_tables = self.app_context().system_tables();
         let tables_provider = system_tables.tables();
         let expected_defs = system_tables.expected_system_table_definitions();
@@ -319,8 +315,7 @@ impl SchemaRegistry {
                     let upgraded = Self::build_reconciled_definition(&current, expected);
 
                     tables_provider.put_versioned_schema(&table_id, &upgraded).into_kalamdb_error(
-                        "Failed to persist upgraded system schema definition",
-                    )?;
+                        "Failed to persist upgraded system schema definition")?;
                     stats.upgraded += 1;
                     log::info!(
                         "[SchemaRegistry] upgraded system schema {} from version {} to {}",
@@ -366,8 +361,7 @@ impl SchemaRegistry {
 
     fn build_reconciled_definition(
         current: &TableDefinition,
-        expected: &TableDefinition,
-    ) -> TableDefinition {
+        expected: &TableDefinition) -> TableDefinition {
         let mut upgraded = expected.clone();
         upgraded.schema_version = current.schema_version.saturating_add(1);
         upgraded.created_at = current.created_at;
@@ -377,8 +371,7 @@ impl SchemaRegistry {
 
     fn validate_schema_evolution(
         current: &TableDefinition,
-        expected: &TableDefinition,
-    ) -> Result<(), KalamDbError> {
+        expected: &TableDefinition) -> Result<(), KalamDbError> {
         if current.namespace_id != expected.namespace_id
             || current.table_name != expected.table_name
         {
@@ -533,8 +526,7 @@ impl SchemaRegistry {
                 KalamDataType::Decimal {
                     precision: new_precision,
                     scale: new_scale,
-                },
-            ) => new_precision >= old_precision && new_scale == old_scale,
+                }) => new_precision >= old_precision && new_scale == old_scale,
             _ => false,
         }
     }
@@ -601,8 +593,7 @@ impl SchemaRegistry {
 
     fn load_cached_table(
         &self,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<CachedTableData>>, KalamDbError> {
+        table_id: &TableId) -> Result<Option<Arc<CachedTableData>>, KalamDbError> {
         let app_ctx = self.app_context();
         let tables_provider = app_ctx.system_tables().tables();
 
@@ -612,8 +603,7 @@ impl SchemaRegistry {
                 let data = Arc::new(CachedTableData::from_table_definition(
                     app_ctx.as_ref(),
                     table_id,
-                    table_arc,
-                )?);
+                    table_arc)?);
                 self.insert_cached(table_id.clone(), Arc::clone(&data));
                 Ok(Some(data))
             },
@@ -750,8 +740,7 @@ impl SchemaRegistry {
     fn build_default_expr(
         &self,
         default_value: &ColumnDefault,
-        scalar_functions: &HashMap<String, Arc<datafusion::logical_expr::ScalarUDF>>,
-    ) -> Option<Expr> {
+        scalar_functions: &HashMap<String, Arc<datafusion::logical_expr::ScalarUDF>>) -> Option<Expr> {
         match default_value {
             ColumnDefault::None => None,
             ColumnDefault::Literal(json) => Some(Expr::Literal(json_value_to_scalar(json), None)),
@@ -766,8 +755,7 @@ impl SchemaRegistry {
 
     fn lookup_scalar_function(
         scalar_functions: &HashMap<String, Arc<datafusion::logical_expr::ScalarUDF>>,
-        name: &str,
-    ) -> Option<Arc<datafusion::logical_expr::ScalarUDF>> {
+        name: &str) -> Option<Arc<datafusion::logical_expr::ScalarUDF>> {
         if let Some(udf) = scalar_functions.get(name) {
             return Some(Arc::clone(udf));
         }
@@ -784,8 +772,7 @@ impl SchemaRegistry {
     /// Internal helper to create a KalamTableProvider based on table definition
     fn create_table_provider(
         &self,
-        table_def: &TableDefinition,
-    ) -> Result<Arc<dyn kalamdb_tables::KalamTableProvider>, KalamDbError> {
+        table_def: &TableDefinition) -> Result<Arc<dyn kalamdb_tables::KalamTableProvider>, KalamDbError> {
         use kalamdb_commons::schemas::TableOptions;
         use kalamdb_sharding::ShardRouter;
         use kalamdb_tables::{
@@ -839,8 +826,8 @@ impl SchemaRegistry {
                 as Arc<dyn NotificationService<Notification = ChangeNotification>>,
             app_ctx.clone(),
             app_ctx.commit_sequence_tracker(),
-            Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>),
-        ));
+            Some(app_ctx.topic_publisher() as Arc<dyn kalamdb_system::TopicPublisher>))
+        .with_table_policies(app_ctx.system_tables().table_policies()));
 
         // Get Arrow schema from registry (cached at core level)
         let arrow_schema = tables_schema_registry.get_arrow_schema(&table_id).map_err(|e| {
@@ -858,16 +845,14 @@ impl SchemaRegistry {
                 let user_table_store = Arc::new(new_indexed_user_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
-                    &pk_field,
-                ));
+                    &pk_field));
 
                 let core = Arc::new(TableProviderCore::new(
                     table_def_arc,
                     services,
                     pk_field,
                     arrow_schema,
-                    column_defaults,
-                ));
+                    column_defaults));
 
                 let provider = Arc::new(UserTableProvider::new(core, user_table_store));
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
@@ -876,16 +861,14 @@ impl SchemaRegistry {
                 let shared_store = Arc::new(new_indexed_shared_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
-                    &pk_field,
-                ));
+                    &pk_field));
 
                 let core = Arc::new(TableProviderCore::new(
                     table_def_arc,
                     services,
                     pk_field,
                     arrow_schema,
-                    column_defaults,
-                ));
+                    column_defaults));
 
                 let provider = Arc::new(SharedTableProvider::new(core, shared_store));
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
@@ -910,16 +893,14 @@ impl SchemaRegistry {
                         shard_router: ShardRouter::default_config(),
                         ttl_seconds: Some(ttl_seconds),
                         storage_mode: kalamdb_tables::StreamTableStorageMode::File,
-                    },
-                ));
+                    }));
 
                 let core = Arc::new(TableProviderCore::new(
                     table_def_arc,
                     services,
                     pk_field,
                     arrow_schema,
-                    column_defaults,
-                ));
+                    column_defaults));
 
                 let provider =
                     Arc::new(StreamTableProvider::new(core, stream_store, Some(ttl_seconds)));
@@ -1064,8 +1045,7 @@ impl SchemaRegistry {
     pub fn insert_provider(
         &self,
         table_id: TableId,
-        provider: Arc<dyn TableProvider + Send + Sync>,
-    ) -> Result<(), KalamDbError> {
+        provider: Arc<dyn TableProvider + Send + Sync>) -> Result<(), KalamDbError> {
         log::debug!("[SchemaRegistry] Inserting provider for table {}", table_id);
 
         // Store in CachedTableData (as system provider — no DML support)
@@ -1114,8 +1094,7 @@ impl SchemaRegistry {
     fn register_with_datafusion(
         &self,
         table_id: &TableId,
-        provider: Arc<dyn TableProvider + Send + Sync>,
-    ) -> Result<(), KalamDbError> {
+        provider: Arc<dyn TableProvider + Send + Sync>) -> Result<(), KalamDbError> {
         if let Some(base_session) = self.base_session_context.get() {
             // Use constant catalog name "kalam"
             let catalog = base_session.catalog("kalam").ok_or_else(|| {
@@ -1260,8 +1239,7 @@ impl SchemaRegistry {
     /// ```
     pub fn get_table_if_exists(
         &self,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        table_id: &TableId) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
         let app_ctx = self.app_context();
         // Fast path: check cache
         if let Some(cached) = self.get_cached(table_id) {
@@ -1276,8 +1254,7 @@ impl SchemaRegistry {
                 let data = CachedTableData::from_table_definition(
                     app_ctx.as_ref(),
                     table_id,
-                    table_arc.clone(),
-                )?;
+                    table_arc.clone())?;
                 self.insert_cached(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             },
@@ -1291,8 +1268,7 @@ impl SchemaRegistry {
     /// This async version uses spawn_blocking to prevent runtime starvation.
     pub async fn get_table_if_exists_async(
         &self,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        table_id: &TableId) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
         let app_ctx = self.app_context();
         // Fast path: check cache
         if let Some(cached) = self.get_cached(table_id) {
@@ -1308,8 +1284,7 @@ impl SchemaRegistry {
                 let data = CachedTableData::from_table_definition(
                     app_ctx.as_ref(),
                     table_id,
-                    table_arc.clone(),
-                )?;
+                    table_arc.clone())?;
                 self.insert_cached(table_id.clone(), Arc::new(data));
                 Ok(Some(table_arc))
             },
@@ -1325,8 +1300,7 @@ impl SchemaRegistry {
     /// **Performance**: First call ~75μs (computation), subsequent calls ~1.5μs (cached)
     pub fn get_arrow_schema(
         &self,
-        table_id: &TableId,
-    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        table_id: &TableId) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
         // Fast path: check cache
         if let Some(cached) = self.get(table_id) {
             return cached.arrow_schema();
@@ -1365,8 +1339,7 @@ impl SchemaRegistry {
     pub fn get_arrow_schema_for_version(
         &self,
         table_id: &TableId,
-        schema_version: u32,
-    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        schema_version: u32) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
         let app_ctx = self.app_context();
         let version_id = TableVersionId::versioned(table_id.clone(), schema_version);
 
@@ -1413,16 +1386,14 @@ impl SchemaRegistryTrait for SchemaRegistry {
 
     fn get_table_if_exists(
         &self,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<TableDefinition>>, Self::Error> {
+        table_id: &TableId) -> Result<Option<Arc<TableDefinition>>, Self::Error> {
         self.get_table_if_exists(table_id)
     }
 
     fn get_arrow_schema_for_version(
         &self,
         table_id: &TableId,
-        schema_version: u32,
-    ) -> Result<SchemaRef, Self::Error> {
+        schema_version: u32) -> Result<SchemaRef, Self::Error> {
         self.get_arrow_schema_for_version(table_id, schema_version)
     }
 
@@ -1465,12 +1436,10 @@ mod tests {
                     false,
                     false,
                     ColumnDefault::None,
-                    None,
-                ),
+                    None),
             ],
             TableOptions::system(),
-            None,
-        )
+            None)
         .expect("failed to build test table definition")
     }
 
@@ -1499,8 +1468,7 @@ mod tests {
                 false,
                 false,
                 ColumnDefault::None,
-                None,
-            ))
+                None))
             .expect("failed to add test column");
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
@@ -1521,8 +1489,7 @@ mod tests {
                 false,
                 false,
                 ColumnDefault::None,
-                None,
-            ))
+                None))
             .expect("failed to add test column");
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
@@ -1577,8 +1544,7 @@ mod tests {
                 false,
                 false,
                 ColumnDefault::None,
-                None,
-            ))
+                None))
             .expect("failed to add column");
 
         let upgraded = SchemaRegistry::build_reconciled_definition(&current, &expected);

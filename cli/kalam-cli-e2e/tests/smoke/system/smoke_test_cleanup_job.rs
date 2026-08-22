@@ -73,6 +73,7 @@ fn smoke_cleanup_job_completes() {
         full_table
     ))
     .expect("create table");
+    grant_public_shared_table_access(&full_table);
 
     execute_sql_as_root_via_cli(&format!(
         "INSERT INTO {} (id, value) VALUES (1, 'cleanup')",
