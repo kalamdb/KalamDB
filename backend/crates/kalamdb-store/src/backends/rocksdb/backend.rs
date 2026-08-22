@@ -47,6 +47,36 @@ fn prefix_scan_readopts(prefix: Vec<u8>) -> rocksdb::ReadOptions {
     readopts
 }
 
+/// Flush options that wait for completion but do not block forever on write-stall.
+///
+/// rust-rocksdb only exposes `set_wait`. With RocksDB's default
+/// `allow_write_stall=false`, `FlushMemTable` calls
+/// `WaitUntilFlushWouldNotStallWrites`, which can wait indefinitely on `bg_cv_`
+/// when L0 / compaction pressure never clears. That left timed-out Tokio
+/// `spawn_blocking` WAL cleanup threads alive and blocked process exit.
+///
+/// RocksDB C++ `FlushOptions` layout is `{ bool wait; bool allow_write_stall; }`
+/// inside `rocksdb_flushoptions_t`. Set the second field via the inner pointer.
+fn flush_options_allow_write_stall() -> rocksdb::FlushOptions {
+    let mut flush_opts = rocksdb::FlushOptions::default();
+    flush_opts.set_wait(true);
+
+    debug_assert_eq!(
+        std::mem::size_of::<rocksdb::FlushOptions>(),
+        std::mem::size_of::<*mut ()>(),
+        "FlushOptions must be a single raw pointer for allow_write_stall poke"
+    );
+    // SAFETY: FlushOptions is `{ inner: *mut rocksdb_flushoptions_t }`; the C++
+    // wrapper stores `FlushOptions { wait, allow_write_stall }` at offset 0.
+    unsafe {
+        let inner = *(std::ptr::from_ref(&flush_opts) as *const *mut u8);
+        assert!(!inner.is_null(), "FlushOptions inner pointer is null");
+        *inner.add(std::mem::size_of::<bool>()) = 1;
+    }
+
+    flush_opts
+}
+
 /// RocksDB implementation of the StorageBackend trait.
 pub struct RocksDBBackend {
     db: Arc<DB>,
@@ -566,8 +596,7 @@ impl StorageBackend for RocksDBBackend {
             .map_err(|e| StorageError::Other(format!("lock poisoned: {}", e)))?
             .clone();
 
-        let mut flush_opts = rocksdb::FlushOptions::default();
-        flush_opts.set_wait(true);
+        let flush_opts = flush_options_allow_write_stall();
 
         for cf_name in &names {
             if let Some(cf) = self.db.cf_handle(cf_name) {

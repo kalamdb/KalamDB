@@ -328,7 +328,11 @@ fn main() -> Result<()> {
         .build()
         .expect("Failed to build tokio runtime");
 
-    runtime.block_on(async_main(config))
+    let result = runtime.block_on(async_main(config));
+    // Do not wait forever on orphaned blocking work (e.g. a RocksDB flush that
+    // timed out in the job loop but is still running on the blocking pool).
+    runtime.shutdown_background();
+    result
 }
 
 async fn async_main(config: ServerConfig) -> Result<()> {

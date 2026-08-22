@@ -161,9 +161,9 @@ dependencies = [
 
 [[package]]
 name = "actix-rt"
-version = "2.11.0"
+version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92589714878ca59a7626ea19734f0e07a6a875197eec751bb5d3f99e64998c63"
+checksum = "c25da0441692de4ad67950cb7ed6c9ce4b669a6609525e547566c2e1ab4d695c"
 dependencies = [
  "actix-macros",
  "futures-core",
@@ -209,9 +209,9 @@ dependencies = [
 
 [[package]]
 name = "actix-web"
-version = "4.14.1"
+version = "4.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58356675d8c86d2e720480645a0316808471a62d0073f6a3b98810a5e0ca0e73"
+checksum = "bbacab3593b6b4f7be815076fc52d60a83c873426824675417e2abdd229e2e36"
 dependencies = [
  "actix-codec",
  "actix-http",
@@ -4287,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-cli"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4328,7 +4328,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-cli-e2e"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -4371,14 +4371,14 @@ dependencies = [
 
 [[package]]
 name = "kalam-client"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "link-common",
 ]
 
 [[package]]
 name = "kalam-client-e2e"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalam-client",
  "kalamdb-configs",
@@ -4393,7 +4393,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-consumer-wasm"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "js-sys",
  "link-common",
@@ -4406,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-link-dart"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "flutter_rust_bridge",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-link-wasm"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "js-sys",
@@ -4436,7 +4436,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-api"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4448,7 +4448,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-client"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
@@ -4470,7 +4470,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-common"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "datafusion-common",
  "serde",
@@ -4479,7 +4479,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-extension"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4512,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-fdw"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "datafusion-common",
  "kalam-pg-api",
@@ -4523,7 +4523,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-pg-types"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalam-pg-common",
  "kalamdb-commons",
@@ -4531,7 +4531,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-schema-diff"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "sqlparser",
  "tempfile",
@@ -4540,7 +4540,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-api"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "actix-files",
  "actix-multipart",
@@ -4586,7 +4586,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-auth"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -4616,7 +4616,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-backend"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "async-trait",
  "dashmap 6.2.1",
@@ -4630,7 +4630,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-commons"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -4658,7 +4658,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-configs"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "ipnet",
@@ -4669,7 +4669,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-core"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -4726,7 +4726,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-datafusion-sources"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -4741,7 +4741,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-dba"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "datafusion",
@@ -4759,7 +4759,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-dialect"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -4777,7 +4777,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-filestore"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "bytes",
@@ -4809,7 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-flush"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4837,7 +4837,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalamdb-commons",
  "kalamdb-core",
@@ -4852,7 +4852,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-admin"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -4872,7 +4872,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-ddl"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -4896,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-stream"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -4912,7 +4912,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-support"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "datafusion",
@@ -4929,7 +4929,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-handlers-user"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "kalamdb-auth",
@@ -4945,7 +4945,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-jobs"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4977,7 +4977,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-live"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5003,7 +5003,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-macros"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5012,7 +5012,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-observability"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "cc",
  "chrono",
@@ -5026,7 +5026,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-pg"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
@@ -5054,7 +5054,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-plan-cache"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "datafusion",
  "kalamdb-commons",
@@ -5063,7 +5063,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-postgres-wire"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5084,7 +5084,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-publisher"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -5103,7 +5103,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-python"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalam-client",
  "pyo3",
@@ -5115,7 +5115,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-raft"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5150,7 +5150,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-row-filter"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "datafusion-common",
  "kalamdb-commons",
@@ -5161,7 +5161,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-server"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5222,7 +5222,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-server-auth"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "log",
  "rcgen",
@@ -5232,14 +5232,14 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-session"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalamdb-commons",
 ]
 
 [[package]]
 name = "kalamdb-session-datafusion"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5251,7 +5251,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-sharding"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "kalamdb-commons",
  "kalamdb-configs",
@@ -5260,7 +5260,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-store"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5283,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-streams"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -5297,7 +5297,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-system"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5321,7 +5321,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-tables"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5356,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-transactions"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "async-trait",
  "datafusion",
@@ -5372,7 +5372,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-transfer"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -5389,7 +5389,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-vector"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5411,7 +5411,7 @@ dependencies = [
 
 [[package]]
 name = "kalamdb-views"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -5629,7 +5629,7 @@ dependencies = [
 
 [[package]]
 name = "link-common"
-version = "0.5.6-rc.1"
+version = "0.6.0-rc.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -5703,9 +5703,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lru-slab"
@@ -6803,9 +6803,9 @@ dependencies = [
 
 [[package]]
 name = "pgwire"
-version = "0.40.6"
+version = "0.40.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7154faf1b495aeef5cd19904dc1ec99a8377eb3f833056f3d135c945a8f020fe"
+checksum = "8265901ede50d0879fe401c6fe282e7e4ff83ae10a48c1f8e4f89b92f7d5f604"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -9553,9 +9553,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.24.1"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cefc03fd367c0c6d4305de1b312cf00248c4114f4a0418ce6a6af769e3b0bd9"
+checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",

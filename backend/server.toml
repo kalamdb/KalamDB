@@ -185,7 +185,7 @@ default_query_limit = 50
 
 [logging]
 # Log level: error, warn, info, debug, trace (default: info)
-level = "debug"
+level = "info"
 
 # Directory for all log files (default: "./logs")
 # Server will create app.log, slow.jsonl, and other log files in this directory

@@ -1,8 +1,11 @@
-# Hint bindgen towards Command Line Tools libclang on macOS hosts
+# Hint bindgen towards Command Line Tools libclang on macOS hosts.
+# Allow linker_messages: Apple ld warns when __eh_frame exceeds 16MB (large
+# Rust bins); rustc surfaces it as warn(linker_messages) on every large link.
 [target.aarch64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
     "-Z", "threads=8",
+    "-A", "linker_messages",
 ]
 
 [target.aarch64-apple-darwin.env]
@@ -14,6 +17,7 @@ DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 rustflags = [
     "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
     "-Z", "threads=8",
+    "-A", "linker_messages",
 ]
 
 [target.x86_64-apple-darwin.env]

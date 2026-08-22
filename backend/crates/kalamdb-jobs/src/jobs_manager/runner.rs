@@ -283,6 +283,9 @@ impl JobsManager {
             None
         };
         let wal_cleanup_enabled = wal_cleanup_interval.is_some();
+        // Prevent overlapping full-DB flushes: a timed-out flush keeps running on
+        // the blocking pool, and a second flush worsens RocksDB stall waits.
+        let wal_flush_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Leadership checks are only useful in cluster mode. In standalone mode this node is
         // always the leader, so avoid a permanent 1s idle wake-up.
@@ -394,14 +397,23 @@ impl JobsManager {
                             log::info!("Shutdown signal received, stopping job loop");
                             break;
                         }
+                        if wal_flush_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                            log::debug!("WAL cleanup skipped: previous flush still in flight");
+                            continue;
+                        }
                         let app_ctx = self.get_attached_app_context();
                         let backend = app_ctx.storage_backend();
-                        // Bound the flush so a stalled RocksDB flush cannot pin the
-                        // job loop (and process exit) indefinitely during shutdown.
+                        let in_flight = Arc::clone(&wal_flush_in_flight);
+                        // Bound the wait so the job loop can keep polling shutdown.
+                        // The blocking flush itself must not hang (see allow_write_stall).
                         const WAL_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
                         match tokio::time::timeout(
                             WAL_FLUSH_TIMEOUT,
-                            tokio::task::spawn_blocking(move || backend.flush_all_memtables()),
+                            tokio::task::spawn_blocking(move || {
+                                let result = backend.flush_all_memtables();
+                                in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+                                result
+                            }),
                         )
                         .await
                         {
@@ -412,9 +424,14 @@ impl JobsManager {
                                 log::warn!("WAL cleanup flush_all_memtables failed: {}", e);
                             },
                             Ok(Err(e)) => {
+                                // spawn_blocking join failed before the closure ran its
+                                // in_flight clear — release the gate.
+                                wal_flush_in_flight
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
                                 log::warn!("WAL cleanup task join failed: {}", e);
                             },
                             Err(_) => {
+                                // Leave in_flight=true until the blocking thread finishes.
                                 log::warn!(
                                     "WAL cleanup flush_all_memtables timed out after {:?}",
                                     WAL_FLUSH_TIMEOUT
