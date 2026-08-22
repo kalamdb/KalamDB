@@ -67,7 +67,8 @@ pub use models::{
     HealthCheckResponse, HttpVersion, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest,
     QueryResponse, QueryResult, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
     SetupUserInfo, SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
-    SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
+    SubscriptionAckMode, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions,
+    UploadProgress,
 };
 #[cfg(feature = "client-core")]
 pub use query::models::QueryParam;

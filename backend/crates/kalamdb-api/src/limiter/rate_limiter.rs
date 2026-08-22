@@ -136,6 +136,7 @@ impl RateLimiter {
         let user_key: Arc<str> = Arc::from(user_id.as_str());
 
         if let Some(count) = self.user_subscription_counts.get(&user_key) {
+            #[allow(deprecated)]
             count
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
                 .ok();

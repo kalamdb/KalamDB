@@ -429,6 +429,7 @@ mod tests {
             batch_size: None,
             last_rows: None,
             from: None,
+            explicit_ack: false,
         };
         let native = cfg.into_native();
         assert_eq!(native.sql, "SELECT * FROM t");
@@ -444,6 +445,7 @@ mod tests {
             batch_size: Some(500),
             last_rows: Some(10),
             from: Some(42),
+            explicit_ack: false,
         };
         let native = cfg.into_native();
         assert_eq!(native.id, "my-sub-1");
@@ -462,6 +464,7 @@ mod tests {
             batch_size: None,
             last_rows: None,
             from: Some(12345),
+            explicit_ack: false,
         };
         let native = cfg.into_native();
         assert_eq!(native.sql, "SELECT * FROM events");
@@ -469,6 +472,23 @@ mod tests {
         assert!(opts.batch_size.is_none());
         assert!(opts.last_rows.is_none());
         assert_eq!(opts.from.unwrap().as_i64(), 12345);
+    }
+
+    #[test]
+    fn subscription_config_enables_explicit_acknowledgement() {
+        let cfg = DartSubscriptionConfig {
+            sql: "SELECT * FROM events".into(),
+            id: Some("durable-events".into()),
+            batch_size: Some(250),
+            last_rows: None,
+            from: Some(41),
+            explicit_ack: true,
+        };
+
+        let native = cfg.into_native();
+
+        assert_eq!(native.ack_mode, kalam_client::SubscriptionAckMode::Explicit);
+        assert_eq!(native.options.unwrap().from.unwrap().as_i64(), 41);
     }
 
     // -----------------------------------------------------------------------

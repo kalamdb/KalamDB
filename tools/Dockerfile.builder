@@ -32,6 +32,8 @@ RUN git clone https://github.com/tpoechtrager/osxcross.git && \
 
 ENV PATH="/opt/osxcross/target/bin:$PATH"
 ENV LD_LIBRARY_PATH="/opt/osxcross/target/lib:$LD_LIBRARY_PATH"
+ENV RUSTUP_TOOLCHAIN=1.92.0
+ENV CARGO_ENCODED_RUSTFLAGS=
 
 # Add Rust targets
 RUN rustup target add \

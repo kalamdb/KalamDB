@@ -2,6 +2,7 @@
 [target.aarch64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
+    "-Z", "threads=8",
 ]
 
 [target.aarch64-apple-darwin.env]
@@ -10,7 +11,10 @@ DYLD_FALLBACK_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib"]
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib",
+    "-Z", "threads=8",
+]
 
 [target.x86_64-apple-darwin.env]
 LIBCLANG_PATH = "/Library/Developer/CommandLineTools/usr/lib"
@@ -31,16 +35,19 @@ rustflags = []
 rustflags = [
     "-C", "target-feature=+crt-static",
     "-C", "link-args=-static -static-libgcc -static-libstdc++",
+    "-Z", "threads=8",
 ]
 
 # --- Windows (MSVC) ---
 [target.x86_64-pc-windows-msvc]
-# Usually no special flags are needed, but you can add linker hints if needed
-rustflags = []
+rustflags = ["-Z", "threads=8"]
 
 [build]
 incremental = true
-# Parallel compilation will use default (all available cores)
+rustflags = ["-Z", "threads=8"]
+
+# Cranelift is not the default codegen backend. It drops aws-lc-sys C symbols
+# (`__aws_lc_0_41_0_*`) when linking kalamdb-server on aarch64-apple-darwin.
 
 # Use sparse registry protocol for faster dependency resolution
 [registries.crates-io]

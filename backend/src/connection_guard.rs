@@ -257,6 +257,7 @@ impl ConnectionGuard {
         }
 
         if let Some(state) = self.ip_states.get(&ip) {
+            #[allow(deprecated)]
             state
                 .active_connections
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {

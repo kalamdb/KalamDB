@@ -114,7 +114,9 @@ RUST_SDK_DIR = ROOT / "link" / "sdks" / "rust"
 RUST_SDK_CARGO = ROOT / "link" / "sdks" / "rust" / "Cargo.toml"
 PYTHON_PYPROJECT = ROOT / "link" / "sdks" / "python" / "pyproject.toml"
 PYTHON_CARGO = ROOT / "link" / "sdks" / "python" / "Cargo.toml"
-DART_PUBSPEC = ROOT / "link" / "sdks" / "dart" / "pubspec.yaml"
+DART_LINK_PUBSPEC = ROOT / "link" / "sdks" / "dart" / "link" / "pubspec.yaml"
+DART_SYNC_PUBSPEC = ROOT / "link" / "sdks" / "dart" / "sync" / "pubspec.yaml"
+DART_GENERATOR_PUBSPEC = ROOT / "link" / "sdks" / "dart" / "generator" / "pubspec.yaml"
 TS_CLIENT_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "client" / "package.json"
 TS_CONSUMER_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "consumer" / "package.json"
 TS_ORM_PACKAGE = ROOT / "link" / "sdks" / "typescript" / "orm" / "package.json"
@@ -358,7 +360,14 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
             "link/sdks/python/Cargo.toml and link/sdks/python/pyproject.toml must use the same version"
         )
 
-    dart_name, dart_version = read_pubspec_name_and_version(DART_PUBSPEC)
+    dart_packages = dict(
+        read_pubspec_name_and_version(path)
+        for path in (
+            DART_LINK_PUBSPEC,
+            DART_SYNC_PUBSPEC,
+            DART_GENERATOR_PUBSPEC,
+        )
+    )
     cli_npm_package = get_package_json(CLI_NPM_PACKAGE)
     if cli_npm_package.get("version") != core_version:
         raise VersionError(
@@ -448,7 +457,8 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
                 )
             },
             "dart": {
-                dart_name: build_package_entry(dart_version, compatible_core)
+                name: build_package_entry(version, compatible_core)
+                for name, version in dart_packages.items()
             },
         },
     }

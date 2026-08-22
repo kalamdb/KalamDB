@@ -12,7 +12,7 @@ use crate::{
     error::Result,
     models::ChangeEvent,
     seq_tracking,
-    subscription::{buffer_event, event_progress},
+    subscription::{buffer_event, event_progress, SubscriptionAckMode},
     timeouts::KalamLinkTimeouts,
     SeqId,
 };
@@ -54,6 +54,9 @@ pub struct SubscriptionManager {
     is_loading: bool,
     /// Original `from` cursor used to open this subscription, if any.
     resume_from: Option<SeqId>,
+    /// Highest progress delivered to the consumer, acknowledged or not.
+    delivered_seq_id: Option<SeqId>,
+    ack_mode: SubscriptionAckMode,
     timeouts: KalamLinkTimeouts,
     closed: bool,
 }
@@ -68,6 +71,7 @@ impl SubscriptionManager {
         shared_control: SharedSubscriptionControl,
         generation: u64,
         resume_from: Option<SeqId>,
+        ack_mode: SubscriptionAckMode,
         timeouts: &KalamLinkTimeouts,
     ) -> Self {
         Self {
@@ -79,6 +83,8 @@ impl SubscriptionManager {
             buffered_changes: Vec::new(),
             is_loading: true,
             resume_from,
+            delivered_seq_id: resume_from,
+            ack_mode,
             timeouts: timeouts.clone(),
             closed: false,
         }
@@ -105,6 +111,12 @@ impl SubscriptionManager {
             .await;
     }
 
+    fn record_delivery(&mut self, event: &ChangeEvent) {
+        if let Some(progress) = event_progress(event) {
+            seq_tracking::advance_seq(&mut self.delivered_seq_id, progress.seq_id);
+        }
+    }
+
     /// Buffer incoming events: hold live changes while initial data is loading,
     /// then flush them in order once the snapshot is complete.
     fn apply_buffering(&mut self, event: ChangeEvent) {
@@ -124,7 +136,10 @@ impl SubscriptionManager {
         loop {
             // 1. Drain local event queue first
             if let Some(event) = self.event_queue.pop_front() {
-                self.report_shared_progress(&event).await;
+                self.record_delivery(&event);
+                if self.ack_mode == SubscriptionAckMode::Automatic {
+                    self.report_shared_progress(&event).await;
+                }
                 return Some(Ok(event));
             }
 
@@ -146,6 +161,28 @@ impl SubscriptionManager {
                 },
             }
         }
+    }
+
+    /// Advance explicit subscription progress after durable consumer work commits.
+    pub async fn acknowledge(&mut self, seq_id: SeqId) -> Result<()> {
+        if self.ack_mode != SubscriptionAckMode::Explicit {
+            return Err(crate::error::KalamLinkError::ConfigurationError(
+                "explicit acknowledgement is not enabled for this subscription".to_string(),
+            ));
+        }
+        if self.delivered_seq_id.is_none_or(|delivered| seq_id > delivered) {
+            return Err(crate::error::KalamLinkError::ConfigurationError(format!(
+                "sequence {seq_id} was not delivered to this subscription"
+            )));
+        }
+
+        seq_tracking::advance_seq(&mut self.resume_from, seq_id);
+        if let Some(shared_control) = self.shared_control.as_ref() {
+            shared_control
+                .progress(self.subscription_id.clone(), self.generation, seq_id, true)
+                .await;
+        }
+        Ok(())
     }
 
     /// Get the subscription ID assigned by the server
@@ -191,6 +228,7 @@ impl Drop for SubscriptionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::subscription::SubscriptionAckMode;
 
     /// Create a minimal `SubscriptionManager` with no live shared connection
     /// for testing state-flag logic without a network dependency.
@@ -204,6 +242,7 @@ mod tests {
             SharedSubscriptionControl::test_control(),
             0,
             None,
+            SubscriptionAckMode::Automatic,
             &KalamLinkTimeouts::default(),
         );
         subscription.is_loading = false;
@@ -289,6 +328,42 @@ mod tests {
 
         assert!(sub.event_queue.is_empty());
         assert!(sub.buffered_changes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_explicit_ack_does_not_advance_resume_before_acknowledgement() {
+        let mut sub = make_test_sub();
+        sub.ack_mode = SubscriptionAckMode::Explicit;
+        sub.event_queue.push_back(ChangeEvent::Insert {
+            subscription_id: "unit-test-id".to_string(),
+            rows: vec![{
+                let mut row = std::collections::HashMap::new();
+                row.insert("id".to_string(), crate::models::KalamCellValue::text("one"));
+                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row
+            }],
+        });
+
+        let event = sub.next().await.expect("event").expect("valid event");
+        assert!(matches!(event, ChangeEvent::Insert { .. }));
+        assert_eq!(sub.resume_from, None, "delivery must not acknowledge progress");
+
+        sub.acknowledge(SeqId::from_i64(10)).await.expect("acknowledge");
+        assert_eq!(sub.resume_from, Some(SeqId::from_i64(10)));
+    }
+
+    #[tokio::test]
+    async fn test_explicit_ack_rejects_sequence_that_was_not_delivered() {
+        let mut sub = make_test_sub();
+        sub.ack_mode = SubscriptionAckMode::Explicit;
+
+        let error = sub
+            .acknowledge(SeqId::from_i64(11))
+            .await
+            .expect_err("undelivered sequence must fail");
+
+        assert!(error.to_string().contains("not delivered"));
+        assert_eq!(sub.resume_from, None);
     }
 
     #[tokio::test]

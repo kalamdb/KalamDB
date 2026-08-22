@@ -5,13 +5,13 @@ use std::{
 
 use datafusion::{
     arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
-    common::Result as DataFusionResult,
+    common::{tree_node::TreeNodeRecursion, Result as DataFusionResult},
     error::DataFusionError,
     execution::{SendableRecordBatchStream, TaskContext},
-    physical_expr::EquivalenceProperties,
+    physical_expr::{EquivalenceProperties, PhysicalExpr},
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
-        PlanProperties,
+        ChildrenPropertiesMode, DisplayAs, DisplayFormatType, ExecutionPlan,
+        ExecutionPlanProperties, Partitioning, PlanProperties, ReplaceChildrenOptions,
     },
     scalar::ScalarValue,
 };
@@ -105,20 +105,50 @@ impl ExecutionPlan for TransactionOverlayExec {
         vec![false]
     }
 
-    fn with_new_children(
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+    ) -> DataFusionResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
+    }
+
+    fn replace_children(
         self: Arc<Self>,
         mut children: Vec<Arc<dyn ExecutionPlan>>,
+        options: ReplaceChildrenOptions,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let input = children.swap_remove(0);
-        Ok(Arc::new(Self::try_new(
-            input,
-            self.table_id.clone(),
-            Arc::clone(&self.primary_key_column),
-            self.overlay.clone(),
-            self.user_scope.clone(),
-            self.final_projection.clone(),
-            self.fetch,
-        )?))
+        if children.len() != 1 {
+            return Err(DataFusionError::Internal(
+                "TransactionOverlayExec expects exactly one child".to_string(),
+            ));
+        }
+
+        match options.children_properties {
+            ChildrenPropertiesMode::Keep => {
+                let mut plan = Self::clone(&*self);
+                plan.input = children.swap_remove(0);
+                Ok(Arc::new(plan))
+            },
+            ChildrenPropertiesMode::Recompute => Ok(Arc::new(Self::try_new(
+                children.swap_remove(0),
+                self.table_id.clone(),
+                Arc::clone(&self.primary_key_column),
+                self.overlay.clone(),
+                self.user_scope.clone(),
+                self.final_projection.clone(),
+                self.fetch,
+            )?)),
+        }
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.replace_children(
+            children,
+            ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
+        )
     }
 
     fn execute(
@@ -578,9 +608,17 @@ mod tests {
                 Vec::new()
             }
 
-            fn with_new_children(
+            fn apply_expressions(
+                &self,
+                _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
+            ) -> DataFusionResult<TreeNodeRecursion> {
+                Ok(TreeNodeRecursion::Continue)
+            }
+
+            fn replace_children(
                 self: Arc<Self>,
                 children: Vec<Arc<dyn ExecutionPlan>>,
+                _options: ReplaceChildrenOptions,
             ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
                 if !children.is_empty() {
                     return Err(DataFusionError::Execution(
@@ -588,6 +626,16 @@ mod tests {
                     ));
                 }
                 Ok(self)
+            }
+
+            fn with_new_children(
+                self: Arc<Self>,
+                children: Vec<Arc<dyn ExecutionPlan>>,
+            ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+                self.replace_children(
+                    children,
+                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
+                )
             }
 
             fn execute(

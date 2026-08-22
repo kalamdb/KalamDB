@@ -10,7 +10,7 @@
 # Build from repo root:
 #   docker build -f pg/docker/Dockerfile -t pg-kalam:latest .
 
-ARG RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm
+ARG RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.94-bookworm
 ARG POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:16-bookworm
 ARG PG_MAJOR=16
 ARG PG_EXTENSION_FLAVOR=pg16
@@ -28,6 +28,8 @@ ARG PGRX_VERSION
 
 ENV CARGO_BUILD_JOBS=1
 ENV CARGO_INCREMENTAL=0
+ENV RUSTUP_TOOLCHAIN=1.94.0
+ENV CARGO_ENCODED_RUSTFLAGS=
 # -Cpanic=unwind is required for pgrx #[pg_guard] to catch panics at FFI boundaries.
 # Without it, any panic in async/gRPC code causes SIGABRT (process abort).
 ENV RUSTFLAGS="-Cdebuginfo=0 -Cpanic=unwind"

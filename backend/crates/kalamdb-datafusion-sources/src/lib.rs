@@ -11,7 +11,7 @@
 //!
 //! - [`provider`]: scan descriptors, capability matrix, and thin `TableProvider`-adjacent traits.
 //! - [`exec`]: shared [`ExecutionPlan`][datafusion::physical_plan::ExecutionPlan] scaffolding built
-//!   on the DataFusion 54.x surface.
+//!   on the DataFusion 55.x surface.
 //! - [`stream`]: [`SendableRecordBatchStream`][datafusion::execution::SendableRecordBatchStream]
 //!   adapters that preserve Arrow buffer sharing where possible.
 //! - [`pruning`]: filter, projection, limit, and pruning descriptors reused by every source family.

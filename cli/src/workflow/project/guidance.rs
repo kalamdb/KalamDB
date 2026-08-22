@@ -95,7 +95,7 @@ pub fn init_unsupported_language(language: &str) -> String {
          kalam init --yes --languages typescript\n\
          kalam init --yes --languages typescript,dart",
         bullet_list(&[
-            "Use typescript and/or dart",
+            "Use typescript and/or dart (flutter is accepted as an alias for dart)",
             "Aliases: ts is accepted for typescript",
         ])
     )

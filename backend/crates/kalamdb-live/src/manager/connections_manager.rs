@@ -251,6 +251,7 @@ impl ConnectionsManager {
     }
 
     fn release_connection_slot(&self) {
+        #[allow(deprecated)]
         if self
             .total_connections
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_sub(1))

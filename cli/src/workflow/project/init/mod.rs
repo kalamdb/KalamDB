@@ -19,6 +19,7 @@ use crate::{
         guidance::{
             init_config_validation_failed, init_project_already_exists, init_stage_context,
         },
+        dart::{self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND, SCHEMA_TARGET_OUTPUT as DART_SCHEMA_TARGET_OUTPUT},
         identifiers::{normalize_namespace_name, parse_namespace_id},
         prompts::print_workflow_banner,
         repository_examples,
@@ -79,6 +80,16 @@ where
     let languages = prompts::resolve_languages(&options, output.use_color)?;
     let starter =
         resolve_starter(&languages, options.template.as_deref(), options.yes, output.use_color)?;
+    let dart_template = if crate::workflow::project::ts::is_enabled(&languages) {
+        dart::resolve_starter(&languages, None, true, output.use_color)?
+    } else {
+        dart::resolve_starter(
+            &languages,
+            options.template.as_deref(),
+            options.yes,
+            output.use_color,
+        )?
+    };
     let package_manager =
         resolve_package_manager(&languages, options.package_manager, options.yes, output)?;
     if let Some(ProjectStarter::Repository(example)) = starter {
@@ -119,11 +130,21 @@ where
         server_mode,
         &server_url,
         typescript_template,
+        dart_template,
         output,
     )
     .map_err(|error| map_init_stage_error("writing project files", error))?;
     install_dependencies(&options.cwd, package_manager, output, &mut installer)
         .map_err(|error| map_init_stage_error("installing JavaScript dependencies", error))?;
+    if dart::is_enabled(&languages) {
+        let package_name = config
+            .connection
+            .get("dev")
+            .map(|connection| connection.namespace.as_str().to_string())
+            .unwrap_or_else(|| normalize_namespace_name(&name));
+        dart::maybe_bootstrap_flutter_project(&options.cwd, &package_name, output)
+            .map_err(|error| map_init_stage_error("bootstrapping Flutter project", error))?;
+    }
     output.status(format!("initialized KalamDB project '{name}'"));
     Ok(())
 }
@@ -162,7 +183,7 @@ fn build_config(
     for language in languages {
         let output = match language.as_str() {
             "typescript" => SCHEMA_TARGET_OUTPUT,
-            "dart" => "lib/generated/kalam.dart",
+            "dart" => DART_SCHEMA_TARGET_OUTPUT,
             _ => continue,
         };
         targets.insert(
@@ -200,9 +221,13 @@ fn build_config(
         },
         dev: DevSection {
             auto_start_db: matches!(server_mode, ServerMode::Local),
-            processes: package_manager
-                .map(|manager| HashMap::from([("app".into(), manager.dev_run_command().into())]))
-                .unwrap_or_default(),
+            processes: if let Some(manager) = package_manager {
+                HashMap::from([("app".into(), manager.dev_run_command().into())])
+            } else if languages.iter().any(|language| language == "dart") {
+                HashMap::from([("app".into(), DART_DEV_COMMAND.into())])
+            } else {
+                HashMap::new()
+            },
             ..DevSection::default()
         },
         logging: LoggingSection::default(),
@@ -313,11 +338,20 @@ mod tests {
 
             let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
             assert!(!kalam_toml.contains("package_manager"));
-            assert!(kalam_toml.contains("# [dev.processes]"));
-            assert!(!kalam_toml.contains("\n[dev.processes]\n"));
+            assert!(kalam_toml.contains("[dev.processes]"));
+            assert!(kalam_toml.contains("app = \"flutter run\""));
 
             let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
             assert!(config.project.package_manager.is_none());
+            assert_eq!(config.dev.processes.get("app").map(String::as_str), Some("flutter run"));
+
+            assert!(temp.path().join("pubspec.yaml").is_file());
+            assert!(temp.path().join("lib/main.dart").is_file());
+            assert!(temp.path().join("schema.sql").is_file());
+            let generated = fs::read_to_string(temp.path().join("lib/generated/kalam.dart")).unwrap();
+            assert!(generated.contains("KalamTableSpec<Users>"));
+            assert!(generated.contains("tableId: 'users'"));
+            assert!(!generated.to_lowercase().contains("placeholder"));
         });
     }
 

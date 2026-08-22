@@ -150,7 +150,7 @@ fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
 /// `CURRENT_USER_ID()` is an alias for `CURRENT_USER()` (both return the user id).
 ///
 /// PostgreSQL JSON operators (`->`, `->>`, `?`) are rewritten to `json_get_json`,
-/// `json_as_text`, and `json_contains` before DataFusion planning. DataFusion 54 uses
+/// `json_as_text`, and `json_contains` before DataFusion planning. DataFusion 55 uses
 /// the DuckDB SQL dialect for lambda array functions, and DuckDB parses bare `->` as
 /// lambda syntax instead of JSON extraction.
 ///

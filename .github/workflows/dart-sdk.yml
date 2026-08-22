@@ -34,7 +34,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: "1.92.0"
+  RUST_VERSION: "1.94.0"
+  CARGO_ENCODED_RUSTFLAGS: ""
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -185,7 +186,7 @@ jobs:
         id: run_tests
         continue-on-error: true
         shell: bash
-        working-directory: link/sdks/dart
+        working-directory: link/sdks/dart/link
         env:
           KALAMDB_URL: "http://localhost:2900"
           KALAMDB_USER: "admin"
@@ -196,6 +197,33 @@ jobs:
         run: |
           set -euo pipefail
           bash ./test.sh
+
+      - name: Run Kalam Sync tests
+        id: run_sync_tests
+        continue-on-error: true
+        shell: bash
+        working-directory: link/sdks/dart/sync
+        env:
+          KALAM_INTEGRATION_TEST: "1"
+          KALAMDB_URL: "http://localhost:2900"
+          KALAMDB_USER: "admin"
+          KALAMDB_PASSWORD: "kalamdb123"
+        run: |
+          set -euo pipefail
+          flutter analyze
+          flutter test
+
+      - name: Run Kalam Sync generator tests
+        id: run_generator_tests
+        continue-on-error: true
+        shell: bash
+        working-directory: link/sdks/dart/generator
+        run: |
+          set -euo pipefail
+          flutter pub run build_runner build
+          flutter analyze
+          dart test
+          flutter test flutter_test/generated_action_runtime_e2e_test.dart
 
       - name: Parse Dart SDK test counts
         if: always()
@@ -301,10 +329,10 @@ jobs:
           if-no-files-found: ignore
 
       - name: Fail if Dart SDK tests failed
-        if: always() && steps.run_tests.outcome != 'success'
+        if: ${{ always() && (steps.run_tests.outcome != 'success' || steps.run_sync_tests.outcome != 'success' || steps.run_generator_tests.outcome != 'success') }}
         shell: bash
         run: |
-          echo "Dart SDK tests failed" >&2
+          echo "One or more Dart package test suites failed" >&2
           exit 1
 
   update_badge:
@@ -392,7 +420,7 @@ jobs:
 
       - name: Publish Dart package
         shell: bash
-        working-directory: link/sdks/dart
+        working-directory: link/sdks/dart/link
         run: |
           set -euo pipefail
           chmod +x ./publish.sh

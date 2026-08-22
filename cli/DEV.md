@@ -31,7 +31,8 @@ The workflow surface exists and is usable, but some parts are intentionally v1-l
 - `kalam dev` can manage a local KalamDB server when `dev.auto_start_db = true`, or connect to
   an existing server when it is `false`.
 - `kalam schema gen` delegates TypeScript generation to `@kalamdb/orm` against the resolved
-  KalamDB environment and writes a Dart placeholder until a dedicated Dart generator exists.
+  KalamDB environment. Dart generation reads local `schema.sql` and writes `KalamTableSpec`
+  row codecs to `lib/generated/kalam.dart` (no live server required).
 - `kalam migration create` creates ordered SQL migration files using the current schema diff helper.
 - `kalam migration status` and `kalam db migrate` use local file-based migration state.
 - `kalam deploy` performs guardrails, applies pending local migrations, runs a lightweight rollout
@@ -190,7 +191,7 @@ When run in a TTY without `--yes`, `kalam init` asks:
 1. Project name
 2. Schema mode
 3. Language targets
-4. Project template when TypeScript is selected
+4. Project template (TypeScript and/or Dart/Flutter `simple-live`)
 5. Package manager when TypeScript is selected and more than one manager is available
 6. Server mode
 7. Server URL when server mode is `remote`
@@ -210,14 +211,15 @@ Schema mode is a single-choice menu:
 Language targets are a multi-select menu:
 
 - `TypeScript`
-- `Dart`
+- `Dart / Flutter`
 
 The project template menu includes two starter sources:
 
-- embedded TypeScript templates compiled into the CLI from `cli/templates/typescript/*`
+- embedded templates compiled into the CLI from `cli/templates/typescript/*` and `cli/templates/dart/*`
 - repository examples downloaded from `examples/*` in the KalamDB GitHub repository
 
-- `simple-live` - live subscription starter with sample inserts
+- `simple-live` (TypeScript) - live subscription starter with sample inserts
+- `simple-live` (Dart / Flutter) - `kalam_sync` starter with `lib/main.dart` and generated table specs
 - `live-okf-context-sync` - OKF folder sync with live FILE columns
 - `realtime-ops-feed` - small browser app with live SQL subscriptions
 - `chat-with-ai` - topic-driven React chat with an agent worker
@@ -237,7 +239,7 @@ Server mode is a single-choice menu:
 
 - `--name <NAME>`: project name
 - `--schema-mode <sql|remote>`: active schema source mode
-- `--languages <LIST>`: comma-separated language list, currently `typescript` and/or `dart`
+- `--languages <LIST>`: comma-separated language list (`typescript`, `dart`; `ts` and `flutter` are aliases)
 - `--template <ID>`: embedded template or repository example id
 - `--server-mode <local|remote>`: local server management mode for `kalam dev`
 - `--server-url <URL>`: server URL for the scaffolded `dev` environment
@@ -303,9 +305,8 @@ Generates enabled language artifacts for the resolved workflow environment.
 
 Current behavior:
 
-- `typescript` is generated through `@kalamdb/orm`
-- generation targets the resolved `url` + `namespace` from `kalam.toml` / env overrides
-- `dart` currently writes a placeholder file only
+- `typescript` is generated through `@kalamdb/orm` against the resolved `url` + `namespace`
+- `dart` is generated locally from `schema.sql` into `KalamTableSpec` row codecs (no server required)
 
 #### Options
 
@@ -318,6 +319,7 @@ Current behavior:
 ```bash
 kalam schema gen
 kalam schema gen --languages typescript
+kalam schema gen --languages dart
 ```
 
 ### `kalam schema pull`

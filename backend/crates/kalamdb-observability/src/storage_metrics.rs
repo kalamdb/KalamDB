@@ -187,6 +187,7 @@ pub fn decrement_manifest_cache_rocksdb_entries(delta: usize) {
     }
 
     let decrement = delta as u64;
+    #[allow(deprecated)]
     let _ = MANIFEST_CACHE_ROCKSDB_ENTRIES.fetch_update(
         Ordering::AcqRel,
         Ordering::Acquire,

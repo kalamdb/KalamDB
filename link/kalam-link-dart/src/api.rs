@@ -748,6 +748,16 @@ pub async fn dart_live_events_next(
     }
 }
 
+/// Acknowledge progress after the consumer durably commits an event.
+pub async fn dart_live_events_ack(
+    subscription: &DartLiveEventsSubscription,
+    seq_id: i64,
+) -> anyhow::Result<()> {
+    let mut sub = subscription.inner.lock().await;
+    sub.acknowledge(kalam_client::SeqId::from_i64(seq_id)).await?;
+    Ok(())
+}
+
 /// Close a subscription and release server-side resources.
 pub async fn dart_live_events_close(
     subscription: &DartLiveEventsSubscription,

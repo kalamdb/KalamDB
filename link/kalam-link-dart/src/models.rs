@@ -473,6 +473,8 @@ pub struct DartSubscriptionConfig {
     /// Resume from a specific sequence ID.
     /// When set, the server only sends changes after this seq_id.
     pub from: Option<i64>,
+    /// Require explicit consumer acknowledgement before reconnect progress advances.
+    pub explicit_ack: bool,
 }
 
 impl DartSubscriptionConfig {
@@ -487,6 +489,11 @@ impl DartSubscriptionConfig {
                 auto_fetch_batches: None,
             }),
             ws_url: None,
+            ack_mode: if self.explicit_ack {
+                kalam_client::SubscriptionAckMode::Explicit
+            } else {
+                kalam_client::SubscriptionAckMode::Automatic
+            },
         }
     }
 }

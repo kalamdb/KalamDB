@@ -10,7 +10,9 @@ ROOT_CARGO="$ROOT_DIR/Cargo.toml"
 VERSIONS_SCRIPT="$ROOT_DIR/scripts/versions.py"
 PYTHON_PYPROJECT="$SDKS_DIR/python/pyproject.toml"
 PYTHON_CARGO="$SDKS_DIR/python/Cargo.toml"
-DART_PUBSPEC="$SDKS_DIR/dart/pubspec.yaml"
+DART_LINK_PUBSPEC="$SDKS_DIR/dart/link/pubspec.yaml"
+DART_SYNC_PUBSPEC="$SDKS_DIR/dart/sync/pubspec.yaml"
+DART_GENERATOR_PUBSPEC="$SDKS_DIR/dart/generator/pubspec.yaml"
 
 RUST_PUBLISH_MODE=""
 RUST_PUBLISH_VERSION_OVERRIDE=""
@@ -186,7 +188,9 @@ TS_PACKAGE_JSON_FILES=(
   "$TS_DIR/react/package.json"
 )
 
-for file in "$ROOT_CARGO" "$VERSIONS_SCRIPT" "$PYTHON_PYPROJECT" "$PYTHON_CARGO" "$DART_PUBSPEC" "${TS_PACKAGE_JSON_FILES[@]}"; do
+for file in "$ROOT_CARGO" "$VERSIONS_SCRIPT" "$PYTHON_PYPROJECT" "$PYTHON_CARGO" \
+  "$DART_LINK_PUBSPEC" "$DART_SYNC_PUBSPEC" "$DART_GENERATOR_PUBSPEC" \
+  "${TS_PACKAGE_JSON_FILES[@]}"; do
   if [[ ! -f "$file" ]]; then
     echo "Missing required file: $file" >&2
     exit 1
@@ -216,14 +220,16 @@ ROOT_VERSION="${VERSION_INFO_RAW%%$'\n'*}"
 INTERNAL_RANGE="${VERSION_INFO_RAW#*$'\n'}"
 
 echo "Syncing SDK package versions to root Cargo workspace version $ROOT_VERSION"
-echo "Using TypeScript internal peer dependency range $INTERNAL_RANGE"
+echo "Using SDK internal dependency range $INTERNAL_RANGE"
 
 python3 - \
   "$ROOT_VERSION" \
   "$INTERNAL_RANGE" \
   "$ROOT_DIR" \
     "${PUBLISH_SCOPE_OVERRIDE:-}" \
-  "$DART_PUBSPEC" \
+  "$DART_LINK_PUBSPEC" \
+  "$DART_SYNC_PUBSPEC" \
+  "$DART_GENERATOR_PUBSPEC" \
   "$PYTHON_PYPROJECT" \
   "${TS_PACKAGE_JSON_FILES[@]}" <<'PY'
 import json
@@ -235,9 +241,11 @@ root_version = sys.argv[1]
 internal_range = sys.argv[2]
 root_dir = Path(sys.argv[3])
 typescript_scope_override = sys.argv[4].strip()
-dart_pubspec = Path(sys.argv[5])
-python_pyproject = Path(sys.argv[6])
-typescript_packages = [Path(value) for value in sys.argv[7:]]
+dart_link_pubspec = Path(sys.argv[5])
+dart_sync_pubspec = Path(sys.argv[6])
+dart_generator_pubspec = Path(sys.argv[7])
+python_pyproject = Path(sys.argv[8])
+typescript_packages = [Path(value) for value in sys.argv[9:]]
 internal_packages = {
     "@kalamdb/client",
     "@kalamdb/consumer",
@@ -268,6 +276,18 @@ def update_yaml_version(path: Path, new_version: str) -> None:
         raise SystemExit(f"Failed to update version in {display(path)}")
     path.write_text(updated, encoding="utf-8")
     print(f"Updated {display(path)}: version -> {new_version}")
+
+
+def update_yaml_dependency(path: Path, dependency: str, new_range: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    pattern = rf'(?m)^(\s{{2}}{re.escape(dependency)}:)\s*.+$'
+    updated, count = re.subn(pattern, rf'\1 "{new_range}"', text, count=1)
+    if count != 1:
+        raise SystemExit(
+            f"Failed to update {dependency} dependency in {display(path)}"
+        )
+    path.write_text(updated, encoding="utf-8")
+    print(f"Updated {display(path)}: {dependency} -> {new_range}")
 
 
 def update_toml_section_version(path: Path, section_name: str, new_version: str) -> None:
@@ -309,7 +329,15 @@ for package_path in typescript_packages:
     package_path.write_text(f"{json.dumps(package_data, indent=2)}\n", encoding="utf-8")
     print(f"Updated {rendered_package_name} ({display(package_path)}): version -> {root_version}")
 
-update_yaml_version(dart_pubspec, root_version)
+for dart_pubspec in (
+    dart_link_pubspec,
+    dart_sync_pubspec,
+    dart_generator_pubspec,
+):
+    update_yaml_version(dart_pubspec, root_version)
+
+update_yaml_dependency(dart_sync_pubspec, "kalam_link", internal_range)
+update_yaml_dependency(dart_generator_pubspec, "kalam_sync", internal_range)
 update_toml_section_version(python_pyproject, "project", root_version)
 PY
 

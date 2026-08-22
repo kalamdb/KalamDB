@@ -50,6 +50,6 @@ pub use crate::query::models::{
 // ── Subscription models ──────────────────────────────────────────────────────
 #[cfg(feature = "client-core")]
 pub use crate::subscription::models::{
-    BatchControl, BatchStatus, ChangeEvent, ChangeTypeRaw, SubscriptionConfig, SubscriptionInfo,
-    SubscriptionOptions, SubscriptionRequest,
+    BatchControl, BatchStatus, ChangeEvent, ChangeTypeRaw, SubscriptionAckMode,
+    SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, SubscriptionRequest,
 };

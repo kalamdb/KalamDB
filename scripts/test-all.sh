@@ -253,8 +253,23 @@ run_npm_test "ui" "Running admin UI tests"
 
 step "Running Dart SDK tests"
 (
-    cd "$ROOT_DIR/link/sdks/dart"
+    cd "$ROOT_DIR/link/sdks/dart/link"
     ./test.sh
+)
+
+step "Running Kalam Sync tests"
+(
+    cd "$ROOT_DIR/link/sdks/dart/sync"
+    flutter analyze
+    flutter test
+)
+
+step "Running Kalam Sync generator tests"
+(
+    cd "$ROOT_DIR/link/sdks/dart/generator"
+    flutter pub run build_runner build
+    flutter analyze
+    dart test
 )
 
 echo

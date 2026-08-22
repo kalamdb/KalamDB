@@ -264,6 +264,16 @@ async fn cached_point_get_keeps_file_ref_select_list_after_update() {
         .await,
     );
     assert_eq!(file_ref_sha256(&literal_cached[0]), second_sha);
+
+    let limited = format!("SELECT file_ref FROM {qualified} WHERE path = $1 LIMIT 1");
+    for i in 0..3 {
+        let rows = result_rows(
+            execute_ok_with_params(&executor, &exec_ctx, &limited, path_param.clone()).await,
+        );
+        assert_eq!(rows.len(), 1, "LIMIT 1 lookup {i}");
+        assert_single_column(&rows[0], "file_ref");
+        assert_eq!(file_ref_sha256(&rows[0]), second_sha);
+    }
 }
 
 #[tokio::test]

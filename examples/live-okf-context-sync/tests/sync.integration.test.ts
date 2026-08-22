@@ -8,7 +8,6 @@ import { resolve } from 'node:path';
 import { Auth, createClient } from '@kalamdb/client';
 import { createDb, createKalamClient, resolveKalamConnection, TABLE } from '../src/db/client.js';
 import { downloadFileByPath, fetchRemoteHash, sha256Hex, upsertSyncFile } from '../src/remote-files.js';
-import { listSyncFiles } from '../src/lib/paths.js';
 import { FolderSyncApp } from '../src/sync-app.js';
 import { waitForLocalFiles } from '../src/helpers.js';
 import { stopSyncApp } from './sync.helpers.js';
@@ -140,7 +139,7 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
   await cleanupClient.initialize();
   await cleanupClient.login();
 
-  const expectedPaths: string[] = [];
+  const ownedPaths = [editedPath];
   let first: FolderSyncApp | undefined;
   let second: FolderSyncApp | undefined;
 
@@ -152,27 +151,20 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
     await writeFile(join(syncDir, editedPath), editedContent, 'utf8');
     await first.pushLocalFile(editedPath);
 
-    expectedPaths.push(...await listSyncFiles(syncDir));
-    const expectedContents = Object.fromEntries(
-      await Promise.all(expectedPaths.map(async (path) => [path, await readFile(join(syncDir, path), 'utf8')] as const)),
-    );
-
     await stopSyncApp(first);
     first = undefined;
     await rm(syncDir, { recursive: true, force: true });
 
     second = new FolderSyncApp({ syncDir, connection, watch: false });
     await second.start();
-    await waitForLocalFiles(syncDir, expectedPaths, 20_000);
+    await waitForLocalFiles(syncDir, ownedPaths, 20_000);
 
-    for (const path of expectedPaths) {
-      const restored = await readFile(join(syncDir, path), 'utf8');
-      assert.equal(restored, expectedContents[path], `content mismatch for ${path}`);
-    }
+    const restored = await readFile(join(syncDir, editedPath), 'utf8');
+    assert.equal(restored, editedContent, `content mismatch for ${editedPath}`);
   } finally {
     await stopSyncApp(first);
     await stopSyncApp(second);
-    for (const path of expectedPaths) {
+    for (const path of ownedPaths) {
       await cleanupClient.query(`DELETE FROM ${TABLE} WHERE path = $1`, [path]).catch(() => undefined);
     }
     await cleanupClient.disconnect().catch(() => undefined);

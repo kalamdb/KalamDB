@@ -11,7 +11,7 @@ on:
       - 'link/sdks/rust/Cargo.toml'
       - 'link/sdks/rust/**'
       - 'link/sdks/typescript/**/package.json'
-      - 'link/sdks/dart/pubspec.yaml'
+      - 'link/sdks/dart/**/pubspec.yaml'
       - 'link/sdks/python/pyproject.toml'
       - 'link/sdks/python/Cargo.toml'
       - 'versions.json'

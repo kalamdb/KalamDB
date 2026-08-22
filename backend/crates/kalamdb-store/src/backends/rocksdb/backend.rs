@@ -11,7 +11,7 @@ use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, Writ
 
 use super::{
     cf_tuning::apply_cf_settings,
-    init::create_block_options_with_cache,
+    init::{create_block_options_with_cache, new_block_cache},
     keyspace::{
         decode_logical_partition_registry_key, logical_partition_registry_key,
         logical_partition_registry_prefix, next_prefix_bound, partition_key_prefix,
@@ -77,7 +77,7 @@ impl RocksDBBackend {
     /// Creates a new RocksDB backend with the given database handle.
     pub fn new(db: Arc<DB>) -> Self {
         let settings = RocksDbSettings::default();
-        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        let block_cache = new_block_cache(settings.block_cache_size);
         Self::new_internal(db, false, false, settings, block_cache)
     }
 
@@ -88,7 +88,7 @@ impl RocksDBBackend {
         disable_wal: bool,
         settings: RocksDbSettings,
     ) -> Self {
-        let block_cache = Cache::new_lru_cache(settings.block_cache_size);
+        let block_cache = new_block_cache(settings.block_cache_size);
         Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
 

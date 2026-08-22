@@ -14,7 +14,7 @@ pub struct InitArgs {
     #[arg(long = "schema-mode", value_enum)]
     pub schema_mode: Option<SchemaModeArg>,
 
-    /// Comma-separated generated language targets (typescript,dart)
+    /// Comma-separated generated language targets (typescript, dart/flutter)
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
 
@@ -184,7 +184,7 @@ pub enum SchemaCommand {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct SchemaGenerateArgs {
-    /// Limit generation to specific language targets
+    /// Limit generation to specific language targets (typescript, dart/flutter)
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
 }

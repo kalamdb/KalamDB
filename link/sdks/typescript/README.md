@@ -33,7 +33,7 @@ bash link/sdks/sync-versions.sh
 That script:
 
 - sets all five TypeScript package `version` fields to the root Cargo workspace version,
-- updates `link/sdks/dart/pubspec.yaml` to the same version,
+- updates all `link/sdks/dart/*/pubspec.yaml` package versions,
 - updates `link/sdks/python/pyproject.toml` and `link/sdks/python/Cargo.toml` to the same version,
 - updates the internal peer dependency floors to the current cohort range,
 - regenerates `versions.json` through `python3 scripts/versions.py sync --write`, and

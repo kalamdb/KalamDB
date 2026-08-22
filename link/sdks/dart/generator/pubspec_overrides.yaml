@@ -1,0 +1,7 @@
+dependency_overrides:
+  kalam_link:
+    path: ../link
+  kalam_sync:
+    path: ../sync
+  kalam_sync_generator_example:
+    path: example

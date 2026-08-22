@@ -1,0 +1,122 @@
+use std::sync::Arc;
+
+use datafusion::arrow::array::{ArrayRef, Int64Array, Int64Builder};
+use datafusion::arrow::datatypes::DataType;
+use datafusion::common::{Result as DataFusionResult, ScalarValue};
+use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use jiter::{NumberInt, Peek};
+
+use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
+use crate::common_macros::make_udf_function;
+
+make_udf_function!(
+    JsonGetInt,
+    json_get_int,
+    json_data path,
+    r#"Get an integer value from a JSON string by its "path""#
+);
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub(super) struct JsonGetInt {
+    signature: Signature,
+    aliases: [String; 1],
+}
+
+impl Default for JsonGetInt {
+    fn default() -> Self {
+        Self {
+            signature: Signature::variadic_any(Volatility::Immutable),
+            aliases: ["json_get_int".to_string()],
+        }
+    }
+}
+
+impl ScalarUDFImpl for JsonGetInt {
+    fn name(&self) -> &str {
+        self.aliases[0].as_str()
+    }
+
+    fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    fn return_type(&self, arg_types: &[DataType]) -> DataFusionResult<DataType> {
+        return_type_check(arg_types, self.name(), DataType::Int64)
+    }
+
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
+        invoke::<Int64Array>(&args.args, jiter_json_get_int)
+    }
+
+    fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
+
+    fn placement(
+        &self,
+        args: &[datafusion::logical_expr::ExpressionPlacement],
+    ) -> datafusion::logical_expr::ExpressionPlacement {
+        // If the first argument is a column and the remaining arguments are literals (a path)
+        // then we can push this UDF down to the leaf nodes.
+        if args.len() >= 2
+            && matches!(args[0], datafusion::logical_expr::ExpressionPlacement::Column)
+            && args[1..]
+                .iter()
+                .all(|arg| matches!(arg, datafusion::logical_expr::ExpressionPlacement::Literal))
+        {
+            datafusion::logical_expr::ExpressionPlacement::MoveTowardsLeafNodes
+        } else {
+            datafusion::logical_expr::ExpressionPlacement::KeepInPlace
+        }
+    }
+}
+
+impl InvokeResult for Int64Array {
+    type Item = i64;
+
+    type Builder = Int64Builder;
+
+    // Cheaper to return an int array rather than dict-encoded ints
+    const ACCEPT_DICT_RETURN: bool = false;
+
+    fn builder(capacity: usize) -> Self::Builder {
+        Int64Builder::with_capacity(capacity)
+    }
+
+    fn append_value(builder: &mut Self::Builder, value: Option<Self::Item>) {
+        builder.append_option(value);
+    }
+
+    fn finish(mut builder: Self::Builder) -> DataFusionResult<ArrayRef> {
+        Ok(Arc::new(builder.finish()))
+    }
+
+    fn scalar(value: Option<Self::Item>) -> ScalarValue {
+        ScalarValue::Int64(value)
+    }
+}
+
+fn jiter_json_get_int(json_data: Option<&str>, path: &[JsonPath]) -> Result<i64, GetError> {
+    if let Some((mut jiter, peek)) = jiter_json_find(json_data, path) {
+        match peek {
+            Peek::String => {
+                let s = jiter.known_str()?;
+                s.parse::<i64>().map_err(|_| GetError)
+            }
+            Peek::Null
+            | Peek::True
+            | Peek::False
+            | Peek::Minus
+            | Peek::Infinity
+            | Peek::NaN
+            | Peek::Array
+            | Peek::Object => get_err!(),
+            _ => match jiter.known_int(peek)? {
+                NumberInt::Int(i) => Ok(i),
+                NumberInt::BigInt(_) => get_err!(),
+            },
+        }
+    } else {
+        get_err!()
+    }
+}

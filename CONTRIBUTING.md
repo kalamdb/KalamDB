@@ -260,13 +260,17 @@ find . -name package.json -not -path '*/node_modules/*'
 
 ## 6. Compile and Test the Dart SDK
 
-The Dart and Flutter SDK lives in `link/sdks/dart/`.
+The Dart and Flutter packages live under `link/sdks/dart/`:
 
-Do not edit `link/sdks/dart/lib/src/generated/` by hand. Those files are generated.
+- `link/` publishes `kalam_link`;
+- `sync/` publishes `kalam_sync`;
+- `generator/` publishes `kalam_sync_generator`.
+
+Do not edit `link/sdks/dart/link/lib/src/generated/` by hand. Those files are generated.
 
 ### Build the SDK and native artifacts
 
-From `link/sdks/dart/`:
+From `link/sdks/dart/link/`:
 
 ```bash
 ./build.sh
@@ -298,7 +302,7 @@ FRB_GENERATE=always ./build.sh
 The supported wrapper is:
 
 ```bash
-cd link/sdks/dart
+cd link/sdks/dart/link
 ./test.sh
 ```
 
@@ -316,7 +320,7 @@ Start the backend first when you want the e2e part to run:
 cd backend
 cargo run
 
-cd ../link/sdks/dart
+cd ../link/sdks/dart/link
 ./test.sh
 ```
 
@@ -340,7 +344,9 @@ Examples:
 - PG extension change: `./pg/test.sh`
 - Admin UI change: `cd ui && npm run build && npm test`
 - TypeScript SDK change: `cd link/sdks/typescript/client && ./test.sh`
-- Dart SDK change: `cd link/sdks/dart && ./test.sh`
+- Dart transport change: `cd link/sdks/dart/link && ./test.sh`
+- Dart sync change: `cd link/sdks/dart/sync && flutter analyze && flutter test`
+- Dart generator change: `cd link/sdks/dart/generator && flutter analyze && dart test`
 
 For cross-cutting changes, use the repo-wide sweep after starting the backend server:
 

@@ -1,0 +1,7 @@
+name: kalam_sync_chat_backend
+description: Demo REST engine that writes chat rows into KalamDB user tables.
+publish_to: none
+version: 0.5.6-rc.0
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"

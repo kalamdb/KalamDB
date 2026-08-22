@@ -33,7 +33,9 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - `cli/`: CLI and smoke tests.
 - `link/`: SDK bridge workspace.
 - `link/sdks/typescript/`: TypeScript SDK.
-- `link/sdks/dart/`: Dart SDK. `link/sdks/dart/lib/src/generated` is generated; regenerate via `link/sdks/dart/build.sh`.
+- `link/sdks/dart/link/`: `kalam_link` Dart transport SDK. `lib/src/generated` is generated; regenerate via its `build.sh`.
+- `link/sdks/dart/sync/`: `kalam_sync` Flutter local-first runtime.
+- `link/sdks/dart/generator/`: `kalam_sync_generator` action generator.
 - `link/kalam-link-dart/`: Rust bridge for Dart.
 - `pg/`: PostgreSQL extension.
 - `benchv2/`: benchmarks.
@@ -62,6 +64,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 
 ## Build And Test
 
+- Local check/test/run stays on the default dev profile. No `--release` unless packaging.
 - Batch compile feedback. For multi-file changes, finish an edit batch, then run one check and capture output, for example `cargo check > batch_compile_output.txt 2>&1`.
 - When there are multiple compiler errors, fix them from one captured output file instead of repeatedly running `cargo check`.
 - Use `cargo nextest run` for tests unless explicitly told otherwise.
@@ -77,7 +80,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - Backend run: `cd backend && cargo run --bin kalamdb-server`
 - Backend fast check (local dev, no S3/mimalloc/tracing): `cargo check -p kalamdb-server`
 - Backend prod-like build: `cargo build -p kalamdb-server --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws`
-- CLI build: `cd cli && cargo build --release`
+- CLI build: `cd cli && cargo build`
 - CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
 - Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
 - Rust SDK (fast iteration): `cargo check -p kalam-client --features native-sdk,consumer,healthcheck`.

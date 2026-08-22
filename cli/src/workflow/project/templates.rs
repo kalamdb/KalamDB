@@ -91,7 +91,7 @@ fn template_string_escape_for_path(project_path: &str) -> TemplateStringEscape {
     if project_path.ends_with(".json") {
         return TemplateStringEscape::DoubleQuoted;
     }
-    if project_path.ends_with(".ts") || project_path.ends_with(".tsx") {
+    if project_path.ends_with(".ts") || project_path.ends_with(".tsx") || project_path.ends_with(".dart") {
         return TemplateStringEscape::JsSingleQuoted;
     }
     TemplateStringEscape::None
@@ -294,17 +294,17 @@ mod tests {
             false,
             true,
             true,
-            None,
+            Some("flutter run"),
         );
         assert!(!dart_only.contains("[schema.targets.typescript]"));
         assert!(dart_only.contains("[schema.targets.dart]"));
-        assert!(dart_only.contains("# [dev.processes]"));
-        assert!(dart_only.contains("# app = \"npm run dev\""));
-        assert!(!dart_only.contains("\n[dev.processes]\n"));
+        assert!(dart_only.contains("[dev.processes]"));
+        assert!(dart_only.contains("app = \"flutter run\""));
+        assert!(!dart_only.contains("# [dev.processes]"));
         let parsed = KalamProjectConfig::parse(&dart_only).expect("parse dart kalam.toml");
         assert!(!parsed.schema.targets.contains_key("typescript"));
         assert!(parsed.schema.targets.contains_key("dart"));
-        assert!(parsed.dev.processes.is_empty());
+        assert_eq!(parsed.dev.processes.get("app").map(String::as_str), Some("flutter run"));
 
         let both = render_scaffold_kalam_toml(
             kalam_toml,
