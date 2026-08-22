@@ -260,7 +260,7 @@ Useful variants:
 ./pg/docker/build-fast.sh --runtime
 ./pg/docker/build-fast.sh --rebuild-base
 PG_MAJOR=17 PG_EXTENSION_FLAVOR=pg17 ./pg/docker/build-fast.sh --compile
-RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm \
+RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.94-bookworm \
 POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:17-bookworm \
 PG_MAJOR=17 PG_EXTENSION_FLAVOR=pg17 \
 ./pg/docker/build-fast.sh
@@ -288,7 +288,7 @@ docker build \
   --build-arg PG_MAJOR=17 \
   --build-arg PG_EXTENSION_FLAVOR=pg17 \
   --build-arg PGRX_VERSION=0.18.0 \
-  --build-arg RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-bookworm \
+  --build-arg RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.94-bookworm \
   --build-arg POSTGRES_BASE_IMAGE=public.ecr.aws/docker/library/postgres:17-bookworm \
   -f pg/docker/Dockerfile \
   -t pg-kalam:latest .

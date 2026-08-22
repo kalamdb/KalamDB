@@ -19,7 +19,7 @@ IMAGE_DESCRIPTION_FILE="$REPO_ROOT/pg/docker/image-description.txt"
 OCI_IMAGE_DESCRIPTION="$(tr '\n' ' ' < "$IMAGE_DESCRIPTION_FILE" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
 PG_MAJOR="${PG_MAJOR:-16}"
 PG_EXTENSION_FLAVOR="${PG_EXTENSION_FLAVOR:-pg${PG_MAJOR}}"
-RUST_BASE_IMAGE="${RUST_BASE_IMAGE:-public.ecr.aws/docker/library/rust:1.92-bookworm}"
+RUST_BASE_IMAGE="${RUST_BASE_IMAGE:-public.ecr.aws/docker/library/rust:1.94-bookworm}"
 POSTGRES_BASE_IMAGE="${POSTGRES_BASE_IMAGE:-public.ecr.aws/docker/library/postgres:${PG_MAJOR}-bookworm}"
 PGRX_VERSION="${PGRX_VERSION:-0.18.0}"
 
