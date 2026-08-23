@@ -185,6 +185,11 @@ where
         Ok(true)
     }
 
+    /// When false, resolved MVCC winners are returned without per-row RLS work.
+    fn requires_row_authorization(&self, _scan_context: &Self::ScanContext) -> bool {
+        true
+    }
+
     async fn authorize_resolved_rows(
         &self,
         _scan_context: &Self::ScanContext,
@@ -295,9 +300,12 @@ where
         if self.allow_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
                 let resolved = resolve_pk_point_lookup(self, scan_context, &pk_scalar).await?;
-                let resolved = self
-                    .authorize_resolved_rows(scan_context, resolved.into_iter().collect())
-                    .await?;
+                let resolved = if self.requires_row_authorization(scan_context) {
+                    self.authorize_resolved_rows(scan_context, resolved.into_iter().collect())
+                        .await?
+                } else {
+                    resolved.into_iter().collect()
+                };
                 let batch = rows_to_arrow_batch(&schema, resolved, projection, |_, _| {})?;
                 return Ok(DeferredBatchOutput::new(batch));
             }
@@ -352,7 +360,11 @@ where
         //     subject_user
         // );
 
-        let authorized_rows = self.authorize_resolved_rows(scan_context, scan_result.rows).await?;
+        let authorized_rows = if self.requires_row_authorization(scan_context) {
+            self.authorize_resolved_rows(scan_context, scan_result.rows).await?
+        } else {
+            scan_result.rows
+        };
         let batch = rows_to_arrow_batch(&schema, authorized_rows, projection, |_, _| {})?;
         Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
     }

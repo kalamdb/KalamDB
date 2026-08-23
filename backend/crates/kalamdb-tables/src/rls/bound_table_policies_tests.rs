@@ -48,11 +48,13 @@ fn row(owner_id: &str) -> Row {
 
 #[test]
 fn subjects_are_default_denied_but_admins_bypass() {
-    let user = BoundTablePolicies::bind(Vec::new(), UserId::new("alice"), Role::User, PolicyCommand::Select);
+    let user = BoundTablePolicies::bind(&[], UserId::new("alice"), Role::User, PolicyCommand::Select);
     assert!(!user.authorizes_row(&table(), &row("alice")));
+    assert!(user.is_default_deny());
 
-    let dba = BoundTablePolicies::bind(Vec::new(), UserId::new("root"), Role::Dba, PolicyCommand::Select);
+    let dba = BoundTablePolicies::admin_bypass(UserId::new("root"));
     assert!(dba.authorizes_row(&table(), &row("alice")));
+    assert!(dba.bypasses_rls());
 }
 
 #[test]
@@ -67,7 +69,7 @@ fn row_local_policies_bind_principal_after_catalog_load() {
             },
         });
     let bound = BoundTablePolicies::bind(
-        vec![owner],
+        &[owner],
         UserId::new("alice"),
         Role::User,
         PolicyCommand::Select);
@@ -85,7 +87,7 @@ fn policy_targets_filter_before_permissive_or() {
             expr: BoundExprShape::Literal(true),
         });
     let bound = BoundTablePolicies::bind(
-        vec![service_only],
+        &[service_only],
         UserId::new("alice"),
         Role::User,
         PolicyCommand::Select);
@@ -111,7 +113,7 @@ fn membership_policy_authorizes_only_keys_in_bound_set() {
         PolicyTarget::Public,
         PolicyProgram::AuthorizationRelation(relation.clone()));
     let bound = BoundTablePolicies::bind(
-        vec![membership.clone()],
+        &[membership.clone()],
         UserId::new("alice"),
         Role::User,
         PolicyCommand::Select);

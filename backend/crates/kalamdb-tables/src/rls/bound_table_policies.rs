@@ -23,8 +23,26 @@ pub struct BoundTablePolicies {
 }
 
 impl BoundTablePolicies {
+    /// System/DBA: no catalog lookup and no per-row evaluation.
+    pub fn admin_bypass(principal: UserId) -> Self {
+        Self {
+            principal,
+            bypass: true,
+            policies: Vec::new(),
+        }
+    }
+
+    /// FORCE RLS with zero applicable policies: deny every row without evaluation.
+    pub fn default_deny(principal: UserId) -> Self {
+        Self {
+            principal,
+            bypass: false,
+            policies: Vec::new(),
+        }
+    }
+
     pub fn bind(
-        policies: Vec<TablePolicy>,
+        policies: &[TablePolicy],
         principal: UserId,
         role: Role,
         command: PolicyCommand) -> Self {
@@ -32,7 +50,7 @@ impl BoundTablePolicies {
     }
 
     pub fn bind_check(
-        policies: Vec<TablePolicy>,
+        policies: &[TablePolicy],
         principal: UserId,
         role: Role,
         command: PolicyCommand) -> Self {
@@ -40,35 +58,36 @@ impl BoundTablePolicies {
     }
 
     fn bind_with_program(
-        policies: Vec<TablePolicy>,
+        policies: &[TablePolicy],
         principal: UserId,
         role: Role,
         command: PolicyCommand,
         check: bool) -> Self {
-        let bypass = matches!(role, Role::System | Role::Dba);
-        let policies = if bypass {
-            Vec::new()
-        } else {
-            policies
-                .into_iter()
-                .filter(|policy| policy.targets.iter().any(|target| target_applies(target, role)))
-                .filter_map(|policy| {
-                    let program = if check {
-                        policy.check_program_for(command)
-                    } else {
-                        policy.using_program_for(command)
-                    };
-                    program.cloned().map(|program| BoundPolicy {
-                        policy_id: policy.policy_id,
-                        policy_generation: policy.policy_generation,
-                        program,
-                    })
+        if matches!(role, Role::System | Role::Dba) {
+            return Self::admin_bypass(principal);
+        }
+        if policies.is_empty() {
+            return Self::default_deny(principal);
+        }
+        let policies = policies
+            .iter()
+            .filter(|policy| policy.targets.iter().any(|target| target_applies(target, role)))
+            .filter_map(|policy| {
+                let program = if check {
+                    policy.check_program_for(command)
+                } else {
+                    policy.using_program_for(command)
+                };
+                program.cloned().map(|program| BoundPolicy {
+                    policy_id: policy.policy_id.clone(),
+                    policy_generation: policy.policy_generation,
+                    program,
                 })
-                .collect()
-        };
+            })
+            .collect();
         Self {
             principal,
-            bypass,
+            bypass: false,
             policies,
         }
     }

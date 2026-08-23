@@ -234,30 +234,40 @@ impl SharedTableProvider {
         role: kalamdb_commons::Role,
         command: PolicyCommand,
         check: bool) -> Result<BoundTablePolicies, KalamDbError> {
-        let policies = self
-            .core
-            .services
-            .table_policies
-            .as_ref()
-            .map(|provider| {
-                provider.compiled_for_table(
-                    self.core.table_id(),
-                    u64::from(self.core.table_def().schema_version))
-            })
-            .transpose()
+        // Hot path: admin never consults the policy catalog.
+        if matches!(role, kalamdb_commons::Role::System | kalamdb_commons::Role::Dba) {
+            return Ok(BoundTablePolicies::admin_bypass(user_id.clone()));
+        }
+
+        let Some(provider) = self.core.services.table_policies.as_ref() else {
+            return Ok(BoundTablePolicies::default_deny(user_id.clone()));
+        };
+
+        let compiled = provider
+            .compiled_for_table(
+                self.core.table_id(),
+                u64::from(self.core.table_def().schema_version))
             .map_err(|error| {
                 KalamDbError::InvalidOperation(format!(
                     "failed to bind RLS policies for {}: {}",
                     self.core.table_id(),
                     error
                 ))
-            })?
-            .map(|compiled| compiled.policies.to_vec())
-            .unwrap_or_default();
+            })?;
+
+        // No CREATE POLICY on this table: FORCE RLS default-deny with zero evaluation.
+        if compiled.policies.is_empty() {
+            return Ok(BoundTablePolicies::default_deny(user_id.clone()));
+        }
+
         Ok(if check {
-            BoundTablePolicies::bind_check(policies, user_id.clone(), role, command)
+            BoundTablePolicies::bind_check(
+                compiled.policies.as_ref(),
+                user_id.clone(),
+                role,
+                command)
         } else {
-            BoundTablePolicies::bind(policies, user_id.clone(), role, command)
+            BoundTablePolicies::bind(compiled.policies.as_ref(), user_id.clone(), role, command)
         })
     }
 
@@ -1197,6 +1207,10 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         scan_context.policies.bypasses_rls()
     }
 
+    fn requires_row_authorization(&self, scan_context: &Self::ScanContext) -> bool {
+        !scan_context.policies.bypasses_rls()
+    }
+
     fn authorization_plan_details(
         &self,
         scan_context: &Self::ScanContext,
@@ -1265,6 +1279,10 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         filter: Option<&Expr>) -> Result<bool, KalamDbError> {
         if scan_context.policies.bypasses_rls() {
             return Ok(true);
+        }
+        // FORCE RLS with zero policies: prove the scan is empty without I/O.
+        if scan_context.policies.is_default_deny() {
+            return Ok(false);
         }
         let Some((policy, relation)) = scan_context.policies.single_membership_policy() else {
             return Ok(true);
@@ -1349,6 +1367,9 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         rows: Vec<(SharedTableRowId, SharedTableRow)>) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         if scan_context.policies.bypasses_rls() {
             return Ok(rows);
+        }
+        if scan_context.policies.is_default_deny() {
+            return Ok(Vec::new());
         }
         let authorization_sets = self
             .build_authorization_sets(&scan_context.policies, scan_context.snapshot_commit_seq)

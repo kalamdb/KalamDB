@@ -83,6 +83,18 @@ async fn compiled_policy_cache_is_user_independent_and_generation_scoped() {
 }
 
 #[tokio::test]
+async fn empty_table_compiled_bundle_is_cached_without_policies() {
+    let provider = TablePoliciesTableProvider::new(Arc::new(InMemoryBackend::new()));
+    let documents = TableId::from_strings("app", "documents_empty");
+
+    let first = provider.compiled_for_table(&documents, 1).unwrap();
+    let second = provider.compiled_for_table(&documents, 1).unwrap();
+    assert!(first.policies.is_empty());
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(provider.policy_generation(&documents).unwrap(), 0);
+}
+
+#[tokio::test]
 async fn drop_table_cleanup_removes_policies_and_reverse_dependencies() {
     let provider = TablePoliciesTableProvider::new(Arc::new(InMemoryBackend::new()));
     let messages = TableId::from_strings("chat", "messages");

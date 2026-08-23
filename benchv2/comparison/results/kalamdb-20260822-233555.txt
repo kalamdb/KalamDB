@@ -8,23 +8,23 @@
 # timed_read_response=bytes; HTTP status validation only (matches TB/PB)
 # http2_prior_knowledge=0
 # schema_response_cache=on; hot_only_pk_skip_cold=on
-# started=2026-08-14T15:59:47Z
+# started=2026-08-22T20:35:55Z
 negotiated_http_version=HTTP/1.1
 logged in to http://127.0.0.1:2900
 mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)
 sql=parameterized ($1..) for plan-cache reuse
 timed_read_response=bytes (HTTP status validation only; matches TB/PB)
-Inserted 100000 rows in 6.376864083s
-Inserted 10000 rows in 707.8085ms
+Inserted 100000 rows in 6.1270075s
+Inserted 10000 rows in 631.179625ms
 Latencies: 
-	p50=997.208µs 
-	p75=1.088459ms 
-	p90=1.23625ms 
-	p95=1.398375ms
-Read 1000000 rows in 17.330754s
+	p50=846.834µs 
+	p75=948.625µs 
+	p90=1.168458ms 
+	p95=1.2955ms
+Read 1000000 rows in 17.474790917s
 Latencies: 
-	p50=251.334µs 
-	p75=289µs 
-	p90=325.083µs 
-	p95=348.584µs
-# finished=2026-08-14T16:00:12Z
+	p50=253.958µs 
+	p75=293.083µs 
+	p90=329.834µs 
+	p95=353.208µs
+# finished=2026-08-22T20:36:19Z

@@ -1,0 +1,17 @@
+# TrailBase comparison (Record API)
+# started=2026-08-22T20:36:19Z
+logged in to http://127.0.0.1:4000
+Inserted 100000 rows in 4.951952167s
+Inserted 10000 rows in 492.231542ms
+Latencies: 
+	p50=747.458µs 
+	p75=882.583µs 
+	p90=1.027209ms 
+	p95=1.118333ms
+Read 1000000 rows in 17.861394459s
+Latencies: 
+	p50=237.333µs 
+	p75=287.625µs 
+	p90=342.458µs 
+	p95=380.958µs
+# finished=2026-08-22T20:36:43Z

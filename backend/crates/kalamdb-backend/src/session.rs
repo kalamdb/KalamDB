@@ -198,6 +198,10 @@ impl BackendSession {
         }
     }
 
+    pub fn auth(&self) -> &BackendAuth {
+        &self.auth
+    }
+
     pub fn snapshot(&self) -> BackendSessionSnapshot {
         BackendSessionSnapshot {
             session_id: self.session_id.clone(),
@@ -212,6 +216,7 @@ impl BackendSession {
             last_seen_at_ms: self.last_seen_at_ms,
             last_method: self.last_method.clone(),
             authenticated_user_id: Some(self.auth.user_id.clone()),
+            authenticated_role: self.auth.role,
         }
     }
 }
@@ -230,6 +235,8 @@ pub struct BackendSessionSnapshot {
     pub last_seen_at_ms: i64,
     pub last_method: Option<String>,
     pub authenticated_user_id: Option<UserId>,
+    /// Role established at `open_session` (System/DBA for privileged PG bridge logins).
+    pub authenticated_role: Role,
 }
 
 #[cfg(test)]

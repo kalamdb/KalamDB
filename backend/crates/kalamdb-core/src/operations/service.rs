@@ -82,22 +82,62 @@ impl OperationService {
         }
     }
 
+    /// Resolve the principal for typed PG RPCs.
+    ///
+    /// Preference order:
+    /// 1. Explicit `user_id` on the request (`kalam.user_id` / RPC field) → table-type role
+    /// 2. Authenticated backend session (account_login bridge) → keep System/DBA role so
+    ///    FORCE RLS bypasses for DBA connections that omit `kalam.user_id`
+    /// 3. Shared tables without either → unauthenticated
+    fn resolve_typed_principal(
+        &self,
+        table_type: TableType,
+        request_user_id: Option<UserId>,
+        session_id: Option<&str>,
+    ) -> Result<(Option<UserId>, Role), Status> {
+        if let Some(user_id) = request_user_id {
+            return Ok((Some(user_id), Self::role_for_table_type(table_type)));
+        }
+
+        if let Some(session_id) = session_id.map(str::trim).filter(|id| !id.is_empty()) {
+            if let Some(manager) = self.app_context.try_backend_session_manager() {
+                if let Some(snapshot) = manager.get_snapshot(session_id) {
+                    if let Some(user_id) = snapshot.authenticated_user_id {
+                        let role = if matches!(
+                            snapshot.authenticated_role,
+                            Role::System | Role::Dba
+                        ) {
+                            snapshot.authenticated_role
+                        } else {
+                            Self::role_for_table_type(table_type)
+                        };
+                        return Ok((Some(user_id), role));
+                    }
+                }
+            }
+        }
+
+        if table_type == TableType::Shared {
+            return Err(Status::unauthenticated(
+                "shared-table operations require an authenticated principal",
+            ));
+        }
+
+        Ok((None, Self::role_for_table_type(table_type)))
+    }
+
     /// Evaluate INSERT WITH CHECK before any overlay is staged.
     ///
     /// Typed shared writes fail closed without a principal or a matching policy.
-    /// UPDATE/DELETE stay rejected on this path until they carry old/new rows.
+    /// System/DBA principals bypass FORCE RLS. UPDATE/DELETE stay rejected on this
+    /// path until they carry old/new rows.
     async fn authorize_typed_shared_insert(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
+        user_id: &UserId,
+        role: Role,
         rows: &[Row],
     ) -> Result<(), Status> {
-        let user_id = user_id.ok_or_else(|| {
-            Status::permission_denied(
-                "typed shared-table writes require an authenticated principal and WITH CHECK \
-                 policy; use SQL",
-            )
-        })?;
         let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
             Status::not_found(format!("shared table {table_id} not found"))
         })?;
@@ -107,7 +147,7 @@ impl OperationService {
                 Status::failed_precondition(format!("{table_id} is not a shared table"))
             })?;
         shared
-            .check_rows_authorized(user_id, Role::Service, PolicyCommand::Insert, true, rows, None)
+            .check_rows_authorized(user_id, role, PolicyCommand::Insert, true, rows, None)
             .await
             .map_err(|error| Status::permission_denied(error.to_string()))
     }
@@ -316,18 +356,17 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_scan(&self, request: ScanRequest) -> Result<ScanResult, Status> {
-        if request.table_type == TableType::Shared && request.user_id.is_none() {
-            return Err(Status::unauthenticated(
-                "shared-table scans require an authenticated principal",
-            ));
-        }
-        let role = Self::role_for_table_type(request.table_type);
+        let (user_id, role) = self.resolve_typed_principal(
+            request.table_type,
+            request.user_id.clone(),
+            request.session_id.as_deref(),
+        )?;
         // Non-transactional scans pay only the idle-session lookup above. The
         // transaction query extension is attached only when a live transaction exists.
         let transaction_query_context =
             self.transaction_query_context_for_session(request.session_id.as_deref())?;
         let session = self.session_with_query_context(
-            request.user_id.as_ref(),
+            user_id.as_ref(),
             role,
             transaction_query_context,
         );
@@ -345,13 +384,20 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_insert(&self, request: InsertRequest) -> Result<MutationResult, Status> {
+        let (resolved_user_id, role) = self.resolve_typed_principal(
+            request.table_type,
+            request.user_id.clone(),
+            request.session_id.as_deref(),
+        )?;
         if request.table_type == TableType::Shared {
-            self.authorize_typed_shared_insert(
-                &request.table_id,
-                request.user_id.as_ref(),
-                &request.rows,
-            )
-            .await?;
+            let user_id = resolved_user_id.as_ref().ok_or_else(|| {
+                Status::permission_denied(
+                    "typed shared-table writes require an authenticated principal and WITH CHECK \
+                     policy; use SQL",
+                )
+            })?;
+            self.authorize_typed_shared_insert(&request.table_id, user_id, role, &request.rows)
+                .await?;
         }
         // Autocommit requests pay only the owner-key lookup here; we do not allocate
         // transaction overlays or staged write buffers unless an explicit transaction is active.
@@ -364,7 +410,7 @@ impl OperationExecutor for OperationService {
         let applier = self.app_context.applier();
         let affected = match request.table_type {
             TableType::User | TableType::Stream => {
-                let user_id = require_user_id(request.user_id, "inserts")?;
+                let user_id = require_user_id(resolved_user_id, "inserts")?;
                 let resp = applier
                     .insert_user_data(request.table_id, user_id, request.rows)
                     .await
@@ -373,7 +419,7 @@ impl OperationExecutor for OperationService {
             },
             TableType::Shared => {
                 let resp = applier
-                    .insert_shared_data(request.table_id, request.user_id, request.rows)
+                    .insert_shared_data(request.table_id, resolved_user_id, request.rows)
                     .await
                     .map_err(|e| Status::internal(e.to_string()))?;
                 resp.rows_affected()
@@ -632,6 +678,66 @@ mod tests {
         };
         let err = svc.execute_scan(req).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn scan_shared_without_principal_returns_unauthenticated() {
+        let (app_ctx, svc) = setup();
+        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("deny_tbl"));
+        register_mem_table(&app_ctx, &table_id, vec![]);
+
+        let err = svc
+            .execute_scan(ScanRequest {
+                table_id,
+                table_type: TableType::Shared,
+                session_id: None,
+                columns: vec![],
+                limit: None,
+                user_id: None,
+                filters: vec![],
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn scan_shared_uses_bridge_session_principal_when_request_user_id_omitted() {
+        let (app_ctx, svc) = setup();
+        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("bridge_tbl"));
+        register_mem_table(&app_ctx, &table_id, vec![]);
+
+        let session_id = "pg-12345-abcdef01";
+        app_ctx
+            .backend_session_manager()
+            .open_session(
+                kalamdb_commons::models::SessionOrigin::ExtensionBridge,
+                session_id,
+                kalamdb_backend::session::BackendAuth::new(
+                    UserId::new("root"),
+                    Role::System,
+                    "account_login",
+                    i64::MAX,
+                ),
+                None,
+                None,
+            )
+            .expect("open bridge session");
+
+        let res = svc
+            .execute_scan(ScanRequest {
+                table_id,
+                table_type: TableType::Shared,
+                session_id: Some(session_id.to_string()),
+                columns: vec![],
+                limit: None,
+                user_id: None,
+                filters: vec![],
+            })
+            .await
+            .expect("bridge System session should authorize shared scans without request user_id");
+        let total_rows: usize = res.batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 0);
     }
 
     #[tokio::test]
@@ -941,7 +1047,9 @@ mod tests {
             })
             .await
             .expect_err("shared typed write must not bypass RLS");
-        assert_eq!(error.code(), tonic::Code::PermissionDenied);
+        // No request principal and no authenticated bridge session → fail closed
+        // before WITH CHECK / overlay staging (same gate as shared scans).
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
 
         assert!(
             app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_none(),

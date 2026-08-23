@@ -34,6 +34,8 @@ impl KSerializable for PolicyGenerationRecord {}
 pub struct TablePoliciesTableProvider {
     store: TablePoliciesStore,
     generations: PolicyGenerationsStore,
+    /// In-memory generation mirror so hot-path `compiled_for_table` avoids RocksDB.
+    generation_cache: Arc<DashMap<TableId, u64>>,
     reverse_dependencies: Arc<DashMap<TableId, HashSet<PolicyId>>>,
     compiled_cache: Arc<DashMap<TableId, Arc<CompiledTablePolicies>>>,
     mutation_lock: Arc<Mutex<()>>,
@@ -54,6 +56,7 @@ impl TablePoliciesTableProvider {
         let provider = Self {
             store,
             generations,
+            generation_cache: Arc::new(DashMap::new()),
             reverse_dependencies: Arc::new(DashMap::new()),
             compiled_cache: Arc::new(DashMap::new()),
             mutation_lock: Arc::new(Mutex::new(())),
@@ -154,11 +157,12 @@ impl TablePoliciesTableProvider {
             }
         }
 
+        let policies = self.list_for_table(table_id)?.into();
         let compiled = Arc::new(CompiledTablePolicies {
             table_id: table_id.clone(),
             policy_generation,
             schema_generation,
-            policies: self.list_for_table(table_id)?.into(),
+            policies,
         });
         self.compiled_cache.insert(table_id.clone(), Arc::clone(&compiled));
         Ok(compiled)
@@ -201,10 +205,16 @@ impl TablePoliciesTableProvider {
     }
 
     pub fn policy_generation(&self, table_id: &TableId) -> Result<u64, SystemError> {
-        self.generations
+        if let Some(generation) = self.generation_cache.get(table_id) {
+            return Ok(*generation);
+        }
+        let generation = self
+            .generations
             .get(table_id)
-            .into_system_error("read table policy generation")
-            .map(|record| record.map_or(0, |record| record.generation))
+            .into_system_error("read table policy generation")?
+            .map_or(0, |record| record.generation);
+        self.generation_cache.insert(table_id.clone(), generation);
+        Ok(generation)
     }
 
     pub fn dependent_policies(&self, relation_table: &TableId) -> Result<Vec<PolicyId>, SystemError> {
@@ -222,6 +232,9 @@ impl TablePoliciesTableProvider {
         self.generations
             .insert(table_id, &PolicyGenerationRecord { generation })
             .into_system_error("write table policy generation")?;
+        self.generation_cache.insert(table_id.clone(), generation);
+        // Drop stale compiled bundles immediately; next bind rebuilds.
+        self.compiled_cache.remove(table_id);
         Ok(generation)
     }
 

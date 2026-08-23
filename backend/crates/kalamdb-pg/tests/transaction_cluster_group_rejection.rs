@@ -59,12 +59,16 @@ async fn pg_transaction_rejects_cross_group_access_without_losing_existing_overl
             rows_json:  vec![row_json],
         }))
         .await
-        .expect_err("typed shared insert should fail closed");
+        .expect_err("typed shared insert into a different raft group must fail");
 
-    assert_eq!(status.code(), tonic::Code::PermissionDenied);
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     assert!(
-        status.message().contains("typed shared-table writes"),
-        "expected RLS fail-closed, got: {status}"
+        status.message().contains("already bound to data raft group"),
+        "expected cross-group rejection, got: {status}"
+    );
+    assert!(
+        status.message().contains(&bound_group.to_string()),
+        "expected bound group in error: {status}"
     );
 
     let handle_after = app_ctx
