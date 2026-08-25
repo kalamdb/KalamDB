@@ -19,8 +19,8 @@ use kalamdb_commons::{
         KalamCellValue, NamespaceId, StorageId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
-    BoundExprShape, NodeId, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, Role, TablePolicy,
-    TableType,
+    BoundExprShape, NodeId, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, Role,
+    TablePolicy, TableType,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{

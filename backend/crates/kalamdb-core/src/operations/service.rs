@@ -126,16 +126,17 @@ impl OperationService {
         Ok((None, Self::role_for_table_type(table_type)))
     }
 
-    /// Evaluate INSERT WITH CHECK before any overlay is staged.
+    /// Evaluate a typed shared-table mutation against FORCE RLS.
     ///
     /// Typed shared writes fail closed without a principal or a matching policy.
-    /// System/DBA principals bypass FORCE RLS. UPDATE/DELETE stay rejected on this
-    /// path until they carry old/new rows.
-    async fn authorize_typed_shared_insert(
+    /// System/DBA principals bypass FORCE RLS.
+    async fn authorize_typed_shared_rows(
         &self,
         table_id: &TableId,
         user_id: &UserId,
         role: Role,
+        command: PolicyCommand,
+        check: bool,
         rows: &[Row],
     ) -> Result<(), Status> {
         let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
@@ -147,9 +148,105 @@ impl OperationService {
                 Status::failed_precondition(format!("{table_id} is not a shared table"))
             })?;
         shared
-            .check_rows_authorized(user_id, role, PolicyCommand::Insert, true, rows, None)
+            .check_rows_authorized(user_id, role, command, check, rows, None)
             .await
             .map_err(|error| Status::permission_denied(error.to_string()))
+    }
+
+    async fn authorize_typed_shared_insert(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role,
+        rows: &[Row],
+    ) -> Result<(), Status> {
+        self.authorize_typed_shared_rows(
+            table_id,
+            user_id,
+            role,
+            PolicyCommand::Insert,
+            true,
+            rows,
+        )
+        .await
+    }
+
+    async fn current_shared_row(
+        &self,
+        table_id: &TableId,
+        pk_value: &str,
+    ) -> Result<Option<Row>, Status> {
+        let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
+            Status::not_found(format!("shared table {table_id} not found"))
+        })?;
+        let shared = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                Status::failed_precondition(format!("{table_id} is not a shared table"))
+            })?;
+        shared
+            .row_by_pk_value(pk_value)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))
+    }
+
+    async fn authorize_typed_shared_update(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role,
+        pk_value: &str,
+        updates: &[Row],
+    ) -> Result<(), Status> {
+        let current = self.current_shared_row(table_id, pk_value).await?;
+        if let Some(old_row) = current.as_ref() {
+            self.authorize_typed_shared_rows(
+                table_id,
+                user_id,
+                role,
+                PolicyCommand::Update,
+                false,
+                std::slice::from_ref(old_row),
+            )
+            .await?;
+        }
+
+        let mut new_row = current.unwrap_or_else(|| Row::new(BTreeMap::new()));
+        for update in updates {
+            for (column, value) in &update.values {
+                new_row.values.insert(column.clone(), value.clone());
+            }
+        }
+        self.authorize_typed_shared_rows(
+            table_id,
+            user_id,
+            role,
+            PolicyCommand::Update,
+            true,
+            std::slice::from_ref(&new_row),
+        )
+        .await
+    }
+
+    async fn authorize_typed_shared_delete(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role,
+        pk_value: &str,
+    ) -> Result<(), Status> {
+        let Some(old_row) = self.current_shared_row(table_id, pk_value).await? else {
+            return Ok(());
+        };
+        self.authorize_typed_shared_rows(
+            table_id,
+            user_id,
+            role,
+            PolicyCommand::Delete,
+            false,
+            std::slice::from_ref(&old_row),
+        )
+        .await
     }
 
     fn active_transaction_for_session(
@@ -434,11 +531,26 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_update(&self, request: UpdateRequest) -> Result<MutationResult, Status> {
+        let (resolved_user_id, role) = self.resolve_typed_principal(
+            request.table_type,
+            request.user_id.clone(),
+            request.session_id.as_deref(),
+        )?;
         if request.table_type == TableType::Shared {
-            return Err(Status::permission_denied(
-                "typed shared-table writes are disabled until the caller supplies an RLS-complete \
-                 role context; use SQL",
-            ));
+            let user_id = resolved_user_id.as_ref().ok_or_else(|| {
+                Status::permission_denied(
+                    "typed shared-table writes require an authenticated principal and WITH CHECK \
+                     policy; use SQL",
+                )
+            })?;
+            self.authorize_typed_shared_update(
+                &request.table_id,
+                user_id,
+                role,
+                &request.pk_value,
+                &request.updates,
+            )
+            .await?;
         }
         // Preserve the autocommit fast path: one presence check, then go straight to the applier.
         if let Some(transaction_id) =
@@ -450,7 +562,7 @@ impl OperationExecutor for OperationService {
         let applier = self.app_context.applier();
         let affected = match request.table_type {
             TableType::User | TableType::Stream => {
-                let user_id = require_user_id(request.user_id, "updates")?;
+                let user_id = require_user_id(resolved_user_id, "updates")?;
                 let resp = applier
                     .update_user_data(
                         request.table_id,
@@ -466,7 +578,7 @@ impl OperationExecutor for OperationService {
                 let resp = applier
                     .update_shared_data(
                         request.table_id,
-                        request.user_id,
+                        resolved_user_id,
                         request.updates,
                         Some(request.pk_value),
                     )
@@ -484,11 +596,20 @@ impl OperationExecutor for OperationService {
     }
 
     async fn execute_delete(&self, request: DeleteRequest) -> Result<MutationResult, Status> {
+        let (resolved_user_id, role) = self.resolve_typed_principal(
+            request.table_type,
+            request.user_id.clone(),
+            request.session_id.as_deref(),
+        )?;
         if request.table_type == TableType::Shared {
-            return Err(Status::permission_denied(
-                "typed shared-table writes are disabled until the caller supplies an RLS-complete \
-                 role context; use SQL",
-            ));
+            let user_id = resolved_user_id.as_ref().ok_or_else(|| {
+                Status::permission_denied(
+                    "typed shared-table writes require an authenticated principal and WITH CHECK \
+                     policy; use SQL",
+                )
+            })?;
+            self.authorize_typed_shared_delete(&request.table_id, user_id, role, &request.pk_value)
+                .await?;
         }
         // Preserve the autocommit fast path: avoid transaction-specific allocations when absent.
         if let Some(transaction_id) =
@@ -500,7 +621,7 @@ impl OperationExecutor for OperationService {
         let applier = self.app_context.applier();
         let affected = match request.table_type {
             TableType::User | TableType::Stream => {
-                let user_id = require_user_id(request.user_id, "deletes")?;
+                let user_id = require_user_id(resolved_user_id, "deletes")?;
                 let resp = applier
                     .delete_user_data(request.table_id, user_id, Some(vec![request.pk_value]))
                     .await
@@ -511,7 +632,7 @@ impl OperationExecutor for OperationService {
                 let resp = applier
                     .delete_shared_data(
                         request.table_id,
-                        request.user_id,
+                        resolved_user_id,
                         Some(vec![request.pk_value]),
                     )
                     .await
@@ -1057,10 +1178,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn shared_insert_with_public_policy_stages_overlay() {
-        let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("policy_items"));
+    async fn register_shared_table_with_public_all_policy(
+        app_ctx: &AppContext,
+        table_name: &str,
+    ) -> TableId {
+        let table_id = TableId::new(NamespaceId::new("default"), TableName::new(table_name));
         let id_col = ColumnDefinition::new(
             1,
             "id".to_string(),
@@ -1110,16 +1232,26 @@ mod tests {
             ))
             .await
             .expect("create public ALL policy");
+        table_id
+    }
 
-        let session_id = "pg-322-cafef00d";
-        let transaction_id = app_ctx
+    fn begin_pg_transaction(app_ctx: &AppContext, session_id: &str) -> TransactionId {
+        app_ctx
             .transaction_coordinator()
             .begin(
                 crate::transactions::ExecutionOwnerKey::from_pg_session_id(session_id).unwrap(),
                 session_id.to_string().into(),
                 kalamdb_commons::models::TransactionOrigin::PgRpc,
             )
-            .unwrap();
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn shared_insert_with_public_policy_stages_overlay() {
+        let (app_ctx, svc) = setup();
+        let table_id = register_shared_table_with_public_all_policy(&app_ctx, "policy_items").await;
+        let session_id = "pg-322-cafef00d";
+        let transaction_id = begin_pg_transaction(&app_ctx, session_id);
 
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
@@ -1138,6 +1270,105 @@ mod tests {
         assert!(
             app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_some(),
             "authorized typed shared insert must stage an overlay"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_update_without_principal_fails_closed() {
+        let (app_ctx, svc) = setup();
+        let session_id = "pg-323-aabbccdd";
+        let transaction_id = begin_pg_transaction(&app_ctx, session_id);
+
+        let error = svc
+            .execute_update(UpdateRequest {
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_type: TableType::Shared,
+                session_id: Some(session_id.to_string()),
+                user_id:    None,
+                updates:    vec![empty_row()],
+                pk_value:   "1".to_string(),
+            })
+            .await
+            .expect_err("shared typed update must not bypass RLS");
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_none(),
+            "rejected typed shared updates must not stage an overlay"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_delete_without_principal_fails_closed() {
+        let (app_ctx, svc) = setup();
+        let session_id = "pg-324-deadbeef";
+        let transaction_id = begin_pg_transaction(&app_ctx, session_id);
+
+        let error = svc
+            .execute_delete(DeleteRequest {
+                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_type: TableType::Shared,
+                session_id: Some(session_id.to_string()),
+                user_id:    None,
+                pk_value:   "1".to_string(),
+            })
+            .await
+            .expect_err("shared typed delete must not bypass RLS");
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_none(),
+            "rejected typed shared deletes must not stage an overlay"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_update_with_public_policy_stages_overlay() {
+        let (app_ctx, svc) = setup();
+        let table_id =
+            register_shared_table_with_public_all_policy(&app_ctx, "policy_update_items").await;
+        let session_id = "pg-325-cafef00d";
+        let transaction_id = begin_pg_transaction(&app_ctx, session_id);
+
+        let mut updates = BTreeMap::new();
+        updates.insert("name".to_string(), ScalarValue::Utf8(Some("renamed".to_string())));
+
+        svc.execute_update(UpdateRequest {
+            table_id,
+            table_type: TableType::Shared,
+            session_id: Some(session_id.to_string()),
+            user_id:    Some(UserId::new("policy-writer")),
+            updates:    vec![Row::new(updates)],
+            pk_value:   "1".to_string(),
+        })
+        .await
+        .expect("USING/WITH CHECK true must allow typed shared update");
+
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_some(),
+            "authorized typed shared update must stage an overlay"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_delete_with_public_policy_stages_overlay() {
+        let (app_ctx, svc) = setup();
+        let table_id =
+            register_shared_table_with_public_all_policy(&app_ctx, "policy_delete_items").await;
+        let session_id = "pg-326-feedface";
+        let transaction_id = begin_pg_transaction(&app_ctx, session_id);
+
+        svc.execute_delete(DeleteRequest {
+            table_id,
+            table_type: TableType::Shared,
+            session_id: Some(session_id.to_string()),
+            user_id:    Some(UserId::new("policy-writer")),
+            pk_value:   "1".to_string(),
+        })
+        .await
+        .expect("USING true must allow typed shared delete");
+
+        assert!(
+            app_ctx.transaction_coordinator().get_overlay(&transaction_id).is_some(),
+            "authorized typed shared delete must stage an overlay"
         );
     }
 }

@@ -3,7 +3,7 @@
 //! These bridge the boundary between the live-query crate and the core server,
 //! so kalamdb-live never depends on kalamdb-core directly.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use arrow::datatypes::Schema as ArrowSchema;
 use async_trait::async_trait;
@@ -19,8 +19,10 @@ use kalamdb_live::{
         LiveApplyBarrier, LiveAuthorization, LiveAuthorizationBinder, LiveSchemaLookup,
         LiveSqlExecutor,
     },
+    LiveRoute,
 };
 use kalamdb_raft::{GroupId, RaftExecutor};
+use kalamdb_rls::LiveAuthorizationRoute;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider};
 
@@ -83,7 +85,14 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        role: Role) -> Result<Arc<dyn LiveAuthorization>, LiveError> {
+        role: Role,
+    ) -> Result<(Arc<dyn LiveAuthorization>, LiveRoute), LiveError> {
+        let table = self
+            .app_context
+            .schema_registry()
+            .get(table_id)
+            .map(|cached| Arc::clone(&cached.table))
+            .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
         let provider = self
             .app_context
             .schema_registry()
@@ -100,13 +109,36 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
             .bind_live_authorization(user_id, role)
             .await
             .map_err(|error| LiveError::PermissionDenied(error.to_string()))?;
-        Ok(Arc::new(TableLiveAuthorization { bound }))
+        let live_route = match bound
+            .live_route()
+            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?
+        {
+            LiveAuthorizationRoute::Broadcast => LiveRoute::Broadcast,
+            LiveAuthorizationRoute::Deny => LiveRoute::Deny,
+            LiveAuthorizationRoute::Keyed(keys) => {
+                let mut named_keys = HashSet::with_capacity(keys.len());
+                for (column_id, value) in keys {
+                    let column = table
+                        .columns
+                        .iter()
+                        .find(|column| column.column_id == column_id)
+                        .ok_or_else(|| {
+                            LiveError::InvalidOperation(format!(
+                                "Live RLS route column {column_id} does not exist on {table_id}"
+                            ))
+                        })?;
+                    named_keys.insert((Arc::from(column.column_name.as_str()), value));
+                }
+                LiveRoute::Keyed(Arc::new(named_keys))
+            },
+        };
+        Ok((Arc::new(TableLiveAuthorization { bound }), live_route))
     }
 }
 
 /// Adapts [`SqlExecutor`] to the [`LiveSqlExecutor`] trait.
 pub struct SqlExecutorAdapter {
-    executor: Arc<SqlExecutor>,
+    executor:             Arc<SqlExecutor>,
     base_session_context: Arc<SessionContext>,
 }
 
@@ -126,7 +158,8 @@ impl LiveSqlExecutor for SqlExecutorAdapter {
         sql: &str,
         user_id: UserId,
         role: Role,
-        read_context: ReadContext) -> Result<Vec<RecordBatch>, LiveError> {
+        read_context: ReadContext,
+    ) -> Result<Vec<RecordBatch>, LiveError> {
         let exec_ctx = ExecutionContext::new(user_id, role, Arc::clone(&self.base_session_context))
             .with_read_context(read_context);
 
@@ -178,7 +211,8 @@ impl LiveApplyBarrier for RaftApplyBarrierAdapter {
         &self,
         _table_id: &TableId,
         table_type: TableType,
-        user_id: &UserId) -> Result<(), LiveError> {
+        user_id: &UserId,
+    ) -> Result<(), LiveError> {
         let Some(group_id) = self.table_group(table_type, user_id) else {
             return Ok(());
         };

@@ -2,10 +2,12 @@
 # Helper script to run CLI tests with custom server URL and authentication
 #
 # Usage:
-#   ./run-tests.sh                                    # Run all workspace tests + CLI e2e (default)
+#   ./run-tests.sh                                    # Run all workspace tests + CLI e2e + native pg_kalam e2e
 #   ./run-tests.sh --url http://localhost:3000        # Custom URL
 #   ./run-tests.sh --password mypass                  # Custom password
 #   ./run-tests.sh --url http://localhost:3000 --password mypass --test smoke
+#   ./run-tests.sh --package kalam-pg-extension        # Release-parity native PG extension e2e
+#   KALAMDB_SKIP_PG_EXTENSION_E2E=true ./run-tests.sh # Skip native pg_kalam e2e (needs pgrx)
 #
 # Examples:
 #   ./run-tests.sh --test smoke                       # Run smoke tests only
@@ -106,7 +108,8 @@ if [ "$SHOW_HELP" = true ]; then
     echo "         using backend e2e feature kalamdb-server/e2e-tests."
     echo "         CLI integration tests live in the kalam-cli-e2e crate."
     echo "         Untargeted full runs also execute PostgreSQL wire e2e tests (smoke,"
-    echo "         transactions, client catalog) and TypeScript SDK unit/browser/e2e,"
+    echo "         transactions, client catalog), native pg_kalam e2e (release-parity:"
+    echo "         e2e_ddl/e2e_dml/e2e_scenarios), and TypeScript SDK unit/browser/e2e,"
     echo "         example, UI, Dart, and Rust SDK test suites."
     echo ""
     echo "Options:"
@@ -128,6 +131,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "Docker helpers (full runs start Dex/MinIO via docker/utils):"
     echo "  KALAMDB_SKIP_DOCKER_DEX=true     Skip Dex; OIDC tests may skip"
     echo "  KALAMDB_SKIP_DOCKER_MINIO=true   Skip MinIO; S3 storage tests may fail"
+    echo "  KALAMDB_SKIP_PG_EXTENSION_E2E=true Skip native pg_kalam e2e (needs pgrx)"
     echo "  KALAMDB_DOCKER_PROBE_TIMEOUT_SECS=5"
     echo "  KALAMDB_DOCKER_UP_TIMEOUT_SECS=45"
     echo ""
@@ -138,6 +142,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  $0 --package kalam-cli-e2e --test-target cluster"
     echo "  $0 --package kalamdb-server --test-target test_scenarios_realtime"
     echo "  $0 --package kalam-cli --package kalam-link"
+    echo "  $0 --package kalam-pg-extension"
     echo "  $0 --test-list failed-tests.txt"
     exit 0
 fi
@@ -548,6 +553,7 @@ fi
     echo "Mode:            $FEATURE_MODE"
     echo "Supplementary:   $SUPPLEMENTARY_MODE"
     echo "PgWire E2E:      included in full runs (smoke, transactions, client catalog)"
+    echo "PG Extension:    native e2e included in full runs (release-parity ddl/dml/scenarios)"
     echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
     if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
         echo "S3/MinIO tests:  use running server (build with cloud-aws for object storage)"
@@ -635,6 +641,24 @@ package_filters_include() {
 
     for package in "${PACKAGE_FILTERS[@]}"; do
         if [ "$package" = "$expected" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Generic workspace nextest excludes kalam-pg-extension (pgrx). Skip that run
+# when every requested package is the PG extension crate.
+rust_workspace_tests_should_run() {
+    local package
+
+    if [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    for package in "${PACKAGE_FILTERS[@]}"; do
+        if [ "$package" != "kalam-pg-extension" ]; then
             return 0
         fi
     done
@@ -1293,6 +1317,166 @@ run_pgwire_catalog_companion_tests_if_needed() {
         wire_client_catalog_returns_data
 }
 
+infer_kalamdb_grpc_target() {
+    local server_url="$1"
+    local authority="${server_url#*://}"
+    local host=""
+    local http_port=""
+    local grpc_port="2910"
+
+    authority="${authority%%/*}"
+    authority="${authority##*@}"
+
+    if [[ "$authority" =~ ^\[([^]]+)\](:(.+))?$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        http_port="${BASH_REMATCH[3]:-}"
+    elif [[ "$authority" =~ ^([^:]+)(:([0-9]+))?$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        http_port="${BASH_REMATCH[3]:-}"
+    fi
+
+    if [[ -z "$host" ]]; then
+        host="127.0.0.1"
+    fi
+
+    case "$http_port" in
+        2900) grpc_port="2910" ;;
+        2901) grpc_port="2911" ;;
+        2902) grpc_port="2912" ;;
+        2903) grpc_port="2913" ;;
+    esac
+
+    printf '%s %s\n' "$host" "$grpc_port"
+}
+
+pg_extension_e2e_should_run() {
+    if [ "${KALAMDB_SKIP_PG_EXTENSION_E2E:-false}" = "true" ]; then
+        return 1
+    fi
+
+    if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
+        package_filters_include "kalam-pg-extension"
+        return $?
+    fi
+
+    if [ -n "$TEST_TARGET" ]; then
+        case "$TEST_TARGET" in
+            e2e_ddl|e2e_dml|e2e_scenarios|extension_metadata|session_settings|e2e_perf)
+                return 0
+                ;;
+        esac
+        return 1
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        case "$TEST_FILTER" in
+            *e2e_dml*|*e2e_ddl*|*e2e_scenarios*|*e2e_bulk*|*kalam-pg-extension*|*pg_kalam*|*extension_metadata*|*session_settings*)
+                return 0
+                ;;
+        esac
+        return 1
+    fi
+
+    if [ -n "$TEST_LIST_FILE" ]; then
+        if [ "$TEST_LIST_FILE" = "-" ]; then
+            return 0
+        fi
+        if grep -Eqi 'e2e_dml|e2e_ddl|e2e_scenarios|e2e_bulk|extension_metadata|session_settings' "$TEST_LIST_FILE"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    return 0
+}
+
+required_pgrx_version() {
+    sed -n 's/^pgrx = "=\?\([0-9][0-9.]*\)"/\1/p' "$REPO_ROOT/Cargo.toml" | head -1
+}
+
+ensure_matching_cargo_pgrx() {
+    local required="$1"
+    local installed=""
+
+    if [ -z "$required" ]; then
+        echo "Error: could not read workspace pgrx version from Cargo.toml." >&2
+        exit 1
+    fi
+
+    if ! command -v cargo >/dev/null 2>&1 || ! cargo pgrx --version >/dev/null 2>&1; then
+        echo "Error: cargo-pgrx ${required} is required for native pg_kalam e2e (release-parity)." >&2
+        echo "Install with: cargo install cargo-pgrx --version ${required} --locked" >&2
+        echo "Then: cargo pgrx init --pg16 download" >&2
+        echo "To skip: KALAMDB_SKIP_PG_EXTENSION_E2E=true" >&2
+        exit 1
+    fi
+
+    installed="$(cargo pgrx --version 2>/dev/null | awk '{print $2}')"
+    if [ "$installed" != "$required" ]; then
+        echo "Error: cargo-pgrx ${installed:-unknown} does not match workspace pgrx ${required}." >&2
+        echo "Install with: cargo install cargo-pgrx --version ${required} --locked" >&2
+        echo "To skip: KALAMDB_SKIP_PG_EXTENSION_E2E=true" >&2
+        exit 1
+    fi
+}
+
+run_pg_extension_native_e2e_if_needed() {
+    local grpc_host
+    local grpc_port
+    local pg_cmd
+
+    if ! pg_extension_e2e_should_run; then
+        return 0
+    fi
+
+    if ! supplementary_server_responding; then
+        echo "Error: native pg_kalam e2e requires a reachable KalamDB server at $KALAMDB_SERVER_URL." >&2
+        echo "Start the server (or rerun with a running --url), matching release.yml PG Extension Tests." >&2
+        echo "To skip: KALAMDB_SKIP_PG_EXTENSION_E2E=true" >&2
+        exit 1
+    fi
+
+    ensure_matching_cargo_pgrx "$(required_pgrx_version)"
+
+    read -r grpc_host grpc_port < <(infer_kalamdb_grpc_target "$KALAMDB_SERVER_URL")
+    export KALAMDB_GRPC_HOST="${KALAMDB_GRPC_HOST:-$grpc_host}"
+    export KALAMDB_GRPC_PORT="${KALAMDB_GRPC_PORT:-$grpc_port}"
+    export PG_MAJOR="${PG_MAJOR:-16}"
+    export PG_EXTENSION_FLAVOR="${PG_EXTENSION_FLAVOR:-pg${PG_MAJOR}}"
+
+    step "Bootstrapping pgrx PostgreSQL for native pg_kalam e2e"
+    bash "$REPO_ROOT/pg/scripts/pgrx-test-setup.sh"
+
+    step "Running native PG extension e2e tests (release-parity)"
+    pg_cmd=(
+        cargo nextest run
+        -p kalam-pg-extension
+        --features e2e
+        --test-threads 1
+    )
+    if [ -n "$TEST_TARGET" ]; then
+        pg_cmd+=(--test "$TEST_TARGET")
+    else
+        pg_cmd+=(
+            --test e2e_ddl
+            --test e2e_dml
+            --test e2e_scenarios
+            --test extension_metadata
+            --test session_settings
+        )
+    fi
+    if [ -n "$TEST_FILTER" ]; then
+        pg_cmd+=("$TEST_FILTER")
+    fi
+    if [ -n "$NOCAPTURE" ]; then
+        pg_cmd+=(--no-capture)
+    fi
+
+    echo "Executing: ${pg_cmd[*]}"
+    echo ""
+    "${pg_cmd[@]}"
+}
+
 cleanup_supplementary_server() {
     if [ -n "$SUPPLEMENTARY_SERVER_PID" ]; then
         kill "$SUPPLEMENTARY_SERVER_PID" 2>/dev/null || true
@@ -1643,6 +1827,9 @@ build_test_cmd() {
     if [ ${#PACKAGE_FILTERS[@]} -gt 0 ]; then
         local package
         for package in "${PACKAGE_FILTERS[@]}"; do
+            if [ "$package" = "kalam-pg-extension" ]; then
+                continue
+            fi
             TEST_CMD+=(-p "$package")
 
             case "$package" in
@@ -1791,13 +1978,16 @@ ensure_minio_for_storage_tests
 run_schema_diff_companion_tests_if_needed
 ensure_pgwire_e2e_env
 
-if [ -n "$TEST_LIST_FILE" ]; then
-    run_test_list "$TEST_LIST_FILE"
-else
-    run_single_test "$TEST_FILTER"
+if rust_workspace_tests_should_run; then
+    if [ -n "$TEST_LIST_FILE" ]; then
+        run_test_list "$TEST_LIST_FILE"
+    else
+        run_single_test "$TEST_FILTER"
+    fi
 fi
 
 run_pgwire_catalog_companion_tests_if_needed
+run_pg_extension_native_e2e_if_needed
 
 if [ "$RUN_SUPPLEMENTARY_SUITES" = true ]; then
     run_supplementary_suites

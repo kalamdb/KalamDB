@@ -108,6 +108,16 @@ impl AuthorizationSet {
             AuthorizationKeys::Composite(keys) => keys.is_empty(),
         }
     }
+
+    /// Clone the single-column membership keys once while a live subscription is bound.
+    ///
+    /// Composite authorization relations are intentionally not exposed as scalar live routes.
+    pub(crate) fn single_keys(&self) -> Option<Vec<ScalarValue>> {
+        match &self.keys {
+            AuthorizationKeys::Single(keys) => Some(keys.iter().cloned().collect()),
+            AuthorizationKeys::Composite(_) => None,
+        }
+    }
 }
 
 fn relation_row_applies(

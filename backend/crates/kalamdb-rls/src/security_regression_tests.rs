@@ -45,14 +45,8 @@ fn documents_table() -> TableDefinition {
 
 fn row(owner_id: Option<&str>, status: Option<&str>) -> Row {
     Row::from_vec(vec![
-        (
-            "owner_id".to_string(),
-            ScalarValue::Utf8(owner_id.map(str::to_string)),
-        ),
-        (
-            "status".to_string(),
-            ScalarValue::Utf8(status.map(str::to_string)),
-        ),
+        ("owner_id".to_string(), ScalarValue::Utf8(owner_id.map(str::to_string))),
+        ("status".to_string(), ScalarValue::Utf8(status.map(str::to_string))),
     ])
 }
 
@@ -138,10 +132,7 @@ fn not_of_matching_owner_denies() {
 #[test]
 fn or_false_with_unknown_denies() {
     let bound = bind(PolicyProgram::RowLocal {
-        expr: BoundExprShape::Or(vec![
-            BoundExprShape::Literal(false),
-            owner_equals_current_user(),
-        ]),
+        expr: BoundExprShape::Or(vec![BoundExprShape::Literal(false), owner_equals_current_user()]),
     });
     assert!(!authorizes(&bound, &row(None, Some("active"))));
 }
@@ -149,10 +140,7 @@ fn or_false_with_unknown_denies() {
 #[test]
 fn or_true_with_unknown_authorizes() {
     let bound = bind(PolicyProgram::RowLocal {
-        expr: BoundExprShape::Or(vec![
-            BoundExprShape::Literal(true),
-            owner_equals_current_user(),
-        ]),
+        expr: BoundExprShape::Or(vec![BoundExprShape::Literal(true), owner_equals_current_user()]),
     });
     assert!(authorizes(&bound, &row(None, Some("active"))));
 }
@@ -160,10 +148,7 @@ fn or_true_with_unknown_authorizes() {
 #[test]
 fn and_true_with_unknown_denies() {
     let bound = bind(PolicyProgram::RowLocal {
-        expr: BoundExprShape::And(vec![
-            BoundExprShape::Literal(true),
-            owner_equals_current_user(),
-        ]),
+        expr: BoundExprShape::And(vec![BoundExprShape::Literal(true), owner_equals_current_user()]),
     });
     assert!(!authorizes(&bound, &row(None, Some("active"))));
 }
@@ -184,7 +169,7 @@ fn null_scalar_equality_is_unknown_and_denies() {
     let bound = bind(PolicyProgram::RowLocal {
         expr: BoundExprShape::ColumnEqualsScalar {
             column_id: 3,
-            value: PolicyScalar::String("active".to_string()),
+            value:     PolicyScalar::String("active".to_string()),
         },
     });
     assert!(!authorizes(&bound, &row(Some("alice"), None)));
@@ -193,20 +178,17 @@ fn null_scalar_equality_is_unknown_and_denies() {
 #[test]
 fn null_membership_key_does_not_authorize_protected_row() {
     let relation = AuthorizationRelation {
-        protected_table: TableId::from_strings("app", "documents"),
-        protected_keys: vec![1],
-        relation_table: TableId::from_strings("app", "members"),
-        relation_keys: vec![2],
-        principal_column: 1,
-        principal: PrincipalExpr::CurrentUser,
+        protected_table:   TableId::from_strings("app", "documents"),
+        protected_keys:    vec![1],
+        relation_table:    TableId::from_strings("app", "members"),
+        relation_keys:     vec![2],
+        principal_column:  1,
+        principal:         PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies: vec![TableId::from_strings("app", "members")],
-        invalidation: InvalidationStrategy::TargetedPrincipal,
+        dependencies:      vec![TableId::from_strings("app", "members")],
+        invalidation:      InvalidationStrategy::TargetedPrincipal,
     };
-    let membership = policy(
-        "member_read",
-        PolicyProgram::AuthorizationRelation(relation.clone()),
-    );
+    let membership = policy("member_read", PolicyProgram::AuthorizationRelation(relation.clone()));
     let bound = BoundTablePolicies::bind(
         &[membership.clone()],
         UserId::new("alice"),
@@ -217,34 +199,24 @@ fn null_membership_key_does_not_authorize_protected_row() {
         relation,
         vec![vec![ScalarValue::Utf8(Some("doc-1".to_string()))]],
     );
-    let sets = HashMap::from([(
-        membership.policy_id,
-        Arc::new(authorization_set),
-    )]);
-    let null_key_row = Row::from_vec(vec![(
-        "id".to_string(),
-        ScalarValue::Utf8(None),
-    )]);
-    assert!(!bound.authorizes_row_with_sets(
-        &documents_table(),
-        &null_key_row,
-        &sets
-    ));
+    let sets = HashMap::from([(membership.policy_id, Arc::new(authorization_set))]);
+    let null_key_row = Row::from_vec(vec![("id".to_string(), ScalarValue::Utf8(None))]);
+    assert!(!bound.authorizes_row_with_sets(&documents_table(), &null_key_row, &sets));
 }
 
 #[test]
 fn null_principal_membership_row_is_ignored() {
     let relation_table = TableId::from_strings("app", "members");
     let relation = AuthorizationRelation {
-        protected_table: TableId::from_strings("app", "messages"),
-        protected_keys: vec![2],
-        relation_table: relation_table.clone(),
-        relation_keys: vec![2],
-        principal_column: 1,
-        principal: PrincipalExpr::CurrentUser,
+        protected_table:   TableId::from_strings("app", "messages"),
+        protected_keys:    vec![2],
+        relation_table:    relation_table.clone(),
+        relation_keys:     vec![2],
+        principal_column:  1,
+        principal:         PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies: vec![relation_table],
-        invalidation: InvalidationStrategy::TargetedPrincipal,
+        dependencies:      vec![relation_table],
+        invalidation:      InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
         NamespaceId::new("app"),
@@ -260,10 +232,7 @@ fn null_principal_membership_row_is_ignored() {
     .unwrap();
     let membership_row = Row::from_vec(vec![
         ("user_id".to_string(), ScalarValue::Utf8(None)),
-        (
-            "group_id".to_string(),
-            ScalarValue::Utf8(Some("group-a".to_string())),
-        ),
+        ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
     ]);
     let set = AuthorizationSet::from_relation_rows(
         relation,
@@ -278,19 +247,19 @@ fn null_principal_membership_row_is_ignored() {
 fn equality_static_predicate_rejects_null_column() {
     let relation_table = TableId::from_strings("app", "members");
     let relation = AuthorizationRelation {
-        protected_table: TableId::from_strings("app", "messages"),
-        protected_keys: vec![2],
-        relation_table: relation_table.clone(),
-        relation_keys: vec![2],
-        principal_column: 1,
-        principal: PrincipalExpr::CurrentUser,
+        protected_table:   TableId::from_strings("app", "messages"),
+        protected_keys:    vec![2],
+        relation_table:    relation_table.clone(),
+        relation_keys:     vec![2],
+        principal_column:  1,
+        principal:         PrincipalExpr::CurrentUser,
         static_predicates: vec![ScalarPredicate {
             column_id: 3,
-            operator: PredicateOperator::Eq,
-            value: PolicyScalar::String("active".to_string()),
+            operator:  PredicateOperator::Eq,
+            value:     PolicyScalar::String("active".to_string()),
         }],
-        dependencies: vec![relation_table],
-        invalidation: InvalidationStrategy::TargetedPrincipal,
+        dependencies:      vec![relation_table],
+        invalidation:      InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
         NamespaceId::new("app"),
@@ -306,14 +275,8 @@ fn equality_static_predicate_rejects_null_column() {
     )
     .unwrap();
     let membership_row = Row::from_vec(vec![
-        (
-            "user_id".to_string(),
-            ScalarValue::Utf8(Some("alice".to_string())),
-        ),
-        (
-            "group_id".to_string(),
-            ScalarValue::Utf8(Some("group-a".to_string())),
-        ),
+        ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+        ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
         ("status".to_string(), ScalarValue::Utf8(None)),
     ]);
     let set = AuthorizationSet::from_relation_rows(
@@ -386,9 +349,7 @@ fn filter_authorized_returns_none_when_epoch_changes_mid_batch() {
         vec![dependency],
     );
     let rows = vec![row(Some("alice"), Some("active"))];
-    assert!(authorization
-        .filter_authorized(rows, |item| item)
-        .is_none());
+    assert!(authorization.filter_authorized(rows, |item| item).is_none());
 }
 
 #[test]
@@ -404,7 +365,7 @@ fn permissive_or_across_policies_grants_when_any_policy_matches() {
         PolicyProgram::RowLocal {
             expr: BoundExprShape::ColumnEqualsScalar {
                 column_id: 3,
-                value: PolicyScalar::String("public".to_string()),
+                value:     PolicyScalar::String("public".to_string()),
             },
         },
     );

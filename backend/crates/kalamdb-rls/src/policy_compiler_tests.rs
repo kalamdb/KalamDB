@@ -148,6 +148,25 @@ fn rejects_unsafe_or_unsupported_policy_shapes() {
 }
 
 #[test]
+fn rejects_unbounded_boolean_row_local_checks_for_indexed_live_routing() {
+    let (messages, compiler) = compiler();
+
+    for expression in [
+        "NOT (group_id = CURRENT_USER)",
+        "group_id = CURRENT_USER OR body = 'public'",
+        "group_id = CURRENT_USER AND body = 'active'",
+    ] {
+        let error = compiler
+            .compile(&messages, expression)
+            .expect_err("complex row-local policy must fail before it can force live fan-out");
+        assert!(
+            error.contains("indexed live routing"),
+            "unexpected error for {expression}: {error}"
+        );
+    }
+}
+
+#[test]
 fn membership_without_covering_primary_key_warns() {
     let (messages, compiler) = compiler();
     let program = compiler

@@ -1,6 +1,6 @@
 use kalamdb_commons::models::rows::Row;
 
-use crate::{AuthorizationPolicyGuard, BoundAuthorization};
+use crate::{AuthorizationPolicyGuard, BoundAuthorization, LiveAuthorizationRoute};
 
 /// Subscription-time authorization evaluator used by live fan-out.
 #[derive(Debug, Clone)]
@@ -31,6 +31,10 @@ impl BoundLiveAuthorization {
         }
         self.authorization.authorizes(row) && self.is_current()
     }
+
+    pub fn live_route(&self) -> Result<LiveAuthorizationRoute, String> {
+        self.authorization.live_route()
+    }
 }
 
 #[cfg(test)]
@@ -53,8 +57,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        AuthorizationDependencyGuard, AuthorizationSet, BoundTablePolicies,
-        LiveAuthorizationRoute, MembershipEpoch,
+        AuthorizationDependencyGuard, AuthorizationSet, BoundTablePolicies, LiveAuthorizationRoute,
+        MembershipEpoch,
     };
 
     struct ChangingMembershipEpoch {
@@ -81,13 +85,10 @@ mod tests {
                 NamespaceId::new("app"),
                 TableName::new("messages"),
                 TableType::Shared,
-                vec![ColumnDefinition::primary_key(
-                    1,
-                    "id",
-                    1,
-                    KalamDataType::Text,
-                ),
-                ColumnDefinition::simple(2, "conversation_id", 2, KalamDataType::Text)],
+                vec![
+                    ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+                    ColumnDefinition::simple(2, "conversation_id", 2, KalamDataType::Text),
+                ],
                 TableOptions::shared(),
                 None,
             )
@@ -167,10 +168,10 @@ mod tests {
 
         assert_eq!(
             authorization.live_route().unwrap(),
-            LiveAuthorizationRoute::Keyed(vec![(
+            LiveAuthorizationRoute::Keyed(std::collections::HashSet::from([(
                 2,
                 datafusion::scalar::ScalarValue::Utf8(Some("conv-123".to_string())),
-            )])
+            )]))
         );
     }
 
@@ -179,15 +180,15 @@ mod tests {
         let table_id = TableId::from_strings("app", "messages");
         let relation_table = TableId::from_strings("app", "conversation_members");
         let relation = AuthorizationRelation {
-            protected_table: table_id.clone(),
-            protected_keys: vec![2],
-            relation_table: relation_table.clone(),
-            relation_keys: vec![3],
-            principal_column: 2,
-            principal: PrincipalExpr::CurrentUser,
+            protected_table:   table_id.clone(),
+            protected_keys:    vec![2],
+            relation_table:    relation_table.clone(),
+            relation_keys:     vec![3],
+            principal_column:  2,
+            principal:         PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies: vec![relation_table],
-            invalidation: InvalidationStrategy::TargetedPrincipal,
+            dependencies:      vec![relation_table],
+            invalidation:      InvalidationStrategy::TargetedPrincipal,
         };
         let policy_id = PolicyId::new(table_id.clone(), "member_read").unwrap();
         let policy = TablePolicy::new(
@@ -212,8 +213,12 @@ mod tests {
         let set = AuthorizationSet::from_keys(
             relation,
             vec![
-                vec![datafusion::scalar::ScalarValue::Utf8(Some("conv-123".to_string()))],
-                vec![datafusion::scalar::ScalarValue::Utf8(Some("conv-456".to_string()))],
+                vec![datafusion::scalar::ScalarValue::Utf8(Some(
+                    "conv-123".to_string(),
+                ))],
+                vec![datafusion::scalar::ScalarValue::Utf8(Some(
+                    "conv-456".to_string(),
+                ))],
             ],
         );
         let authorization = BoundAuthorization::new(
@@ -225,10 +230,10 @@ mod tests {
 
         assert_eq!(
             authorization.live_route().unwrap(),
-            LiveAuthorizationRoute::Keyed(vec![
+            LiveAuthorizationRoute::Keyed(std::collections::HashSet::from([
                 (2, datafusion::scalar::ScalarValue::Utf8(Some("conv-123".to_string()))),
                 (2, datafusion::scalar::ScalarValue::Utf8(Some("conv-456".to_string()))),
-            ])
+            ]))
         );
     }
 }

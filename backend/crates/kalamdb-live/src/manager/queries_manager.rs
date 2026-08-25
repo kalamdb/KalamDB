@@ -29,7 +29,7 @@ use crate::{
     error::LiveError,
     helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult},
     manager::ConnectionsManager,
-    models::{SharedConnectionState, SubscriptionResult},
+    models::{LiveRoute, SharedConnectionState, SubscriptionResult},
     subscription::SubscriptionService,
     traits::{LiveApplyBarrier, LiveAuthorization, LiveAuthorizationBinder, LiveSchemaLookup},
 };
@@ -37,12 +37,12 @@ use crate::{
 /// Live query manager
 pub struct LiveQueryManager {
     /// Unified connections manager using DashMap for lock-free concurrent access
-    registry: Arc<ConnectionsManager>,
+    registry:             Arc<ConnectionsManager>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
-    schema_lookup: Arc<dyn LiveSchemaLookup>,
-    apply_barrier: OnceCell<Arc<dyn LiveApplyBarrier>>,
+    schema_lookup:        Arc<dyn LiveSchemaLookup>,
+    apply_barrier:        OnceCell<Arc<dyn LiveApplyBarrier>>,
     authorization_binder: OnceCell<Arc<dyn LiveAuthorizationBinder>>,
-    node_id: NodeId,
+    node_id:              NodeId,
 
     // Delegated services
     subscription_service: Arc<SubscriptionService>,
@@ -52,7 +52,8 @@ impl LiveQueryManager {
     fn validate_table_subscription_permission(
         user_role: Role,
         table_def: &TableDefinition,
-        table_id: &TableId) -> Result<(), LiveError> {
+        table_id: &TableId,
+    ) -> Result<(), LiveError> {
         let is_admin = matches!(user_role, Role::Dba | Role::System);
         match table_def.table_type {
             kalamdb_commons::TableType::User => {
@@ -94,7 +95,8 @@ impl LiveQueryManager {
 
     pub(crate) fn build_subscription_schema(
         table_def: &TableDefinition,
-        projections: Option<&[String]>) -> Vec<SchemaField> {
+        projections: Option<&[String]>,
+    ) -> Vec<SchemaField> {
         if let Some(proj_cols) = projections {
             proj_cols
                 .iter()
@@ -126,7 +128,8 @@ impl LiveQueryManager {
     /// bootstrap ordering.
     pub fn new(
         schema_lookup: Arc<dyn LiveSchemaLookup>,
-        registry: Arc<ConnectionsManager>) -> Self {
+        registry: Arc<ConnectionsManager>,
+    ) -> Self {
         let node_id = *registry.node_id();
         let subscription_service = Arc::new(SubscriptionService::new(registry.clone()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(Arc::clone(&schema_lookup)));
@@ -182,10 +185,12 @@ impl LiveQueryManager {
         table_id: TableId,
         filter_expr: Option<RowFilter>,
         authorization: Option<Arc<dyn LiveAuthorization>>,
+        live_route: LiveRoute,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,
-        table_type: kalamdb_commons::TableType) -> Result<LiveQueryId, LiveError> {
+        table_type: kalamdb_commons::TableType,
+    ) -> Result<LiveQueryId, LiveError> {
         self.subscription_service
             .register_subscription(
                 connection_state,
@@ -193,10 +198,12 @@ impl LiveQueryManager {
                 table_id,
                 filter_expr,
                 authorization,
+                live_route,
                 projections,
                 batch_size,
                 enable_initial_load,
-                table_type)
+                table_type,
+            )
             .await
     }
 
@@ -214,7 +221,8 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         request: &SubscriptionRequest,
-        initial_data_options: Option<InitialDataOptions>) -> Result<SubscriptionResult, LiveError> {
+        initial_data_options: Option<InitialDataOptions>,
+    ) -> Result<SubscriptionResult, LiveError> {
         // Get user_id from connection state
         let (user_id, user_role) = {
             let user_id = connection_state.user_id().cloned().ok_or_else(|| {
@@ -222,7 +230,8 @@ impl LiveQueryManager {
             })?;
             let user_role = connection_state.user_role().ok_or_else(|| {
                 LiveError::InvalidOperation(
-                    "Connection authenticated without role context".to_string())
+                    "Connection authenticated without role context".to_string(),
+                )
             })?;
             (user_id, user_role)
         };
@@ -272,17 +281,20 @@ impl LiveQueryManager {
         // Compile row-local filter from WHERE clause once for live change fanout.
         let where_clause = parsed_query.where_clause.clone();
         let filter_expr = Self::compile_subscription_filter(where_clause.as_deref(), &user_id)?;
-        let authorization = if table_def.table_type == kalamdb_commons::TableType::Shared
+        let (authorization, live_route) = if table_def.table_type
+            == kalamdb_commons::TableType::Shared
             && !matches!(user_role, Role::Dba | Role::System)
         {
             let binder = self.authorization_binder.get().ok_or_else(|| {
                 LiveError::PermissionDenied(
                     "Shared-table live RLS binder is unavailable; subscription fails closed"
-                        .to_string())
+                        .to_string(),
+                )
             })?;
-            Some(binder.bind(&table_id, &user_id, user_role).await?)
+            let (authorization, live_route) = binder.bind(&table_id, &user_id, user_role).await?;
+            (Some(authorization), live_route)
         } else {
-            None
+            (None, LiveRoute::Broadcast)
         };
 
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
@@ -296,10 +308,12 @@ impl LiveQueryManager {
                 table_id.clone(),
                 filter_expr,
                 authorization,
+                live_route,
                 projections.clone(),
                 batch_size,
                 initial_data_options.is_some(),
-                table_def.table_type)
+                table_def.table_type,
+            )
             .await?;
 
         // Fetch initial data if requested.
@@ -320,7 +334,8 @@ impl LiveQueryManager {
                             &table_id,
                             table_def.table_type,
                             &fetch_options,
-                            where_clause.as_deref())
+                            where_clause.as_deref(),
+                        )
                         .await?
                         .unwrap_or_else(|| SeqId::from(0))
                 };
@@ -335,7 +350,8 @@ impl LiveQueryManager {
                             &table_id,
                             table_def.table_type,
                             &fetch_options,
-                            where_clause.as_deref())
+                            where_clause.as_deref(),
+                        )
                         .await?
                 };
 
@@ -345,7 +361,8 @@ impl LiveQueryManager {
                     connection_state,
                     &request.id,
                     Some(snapshot_seq),
-                    snapshot_commit_seq);
+                    snapshot_commit_seq,
+                );
 
                 self.initial_data_fetcher
                     .fetch_initial_data(
@@ -355,7 +372,8 @@ impl LiveQueryManager {
                         table_def.table_type,
                         fetch_options,
                         where_clause.as_deref(),
-                        projections.as_deref())
+                        projections.as_deref(),
+                    )
                     .await
             }
             .await;
@@ -404,7 +422,8 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        since_seq: Option<SeqId>) -> Result<InitialDataResult, LiveError> {
+        since_seq: Option<SeqId>,
+    ) -> Result<InitialDataResult, LiveError> {
         // Get subscription state from connection
         let sub_state = connection_state.get_subscription(subscription_id).ok_or_else(|| {
             LiveError::NotFound(format!("Subscription not found: {}", subscription_id))
@@ -438,7 +457,8 @@ impl LiveQueryManager {
         let fetch_options = InitialDataOptions::batch(
             since_seq,
             initial_load.snapshot_end_seq,
-            initial_load.batch_size)
+            initial_load.batch_size,
+        )
         .with_commit_range(None, initial_load.snapshot_end_commit_seq);
 
         self.initial_data_fetcher
@@ -449,7 +469,8 @@ impl LiveQueryManager {
                 table_def.table_type,
                 fetch_options,
                 where_clause?.as_deref(),
-                projections_ref)
+                projections_ref,
+            )
             .await
     }
 
@@ -457,7 +478,8 @@ impl LiveQueryManager {
     pub async fn unregister_connection(
         &self,
         user_id: &UserId,
-        connection_id: &ConnectionId) -> Result<Vec<LiveQueryId>, LiveError> {
+        connection_id: &ConnectionId,
+    ) -> Result<Vec<LiveQueryId>, LiveError> {
         self.subscription_service.unregister_connection(user_id, connection_id).await
     }
 
@@ -466,7 +488,8 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        live_id: &LiveQueryId) -> Result<(), LiveError> {
+        live_id: &LiveQueryId,
+    ) -> Result<(), LiveError> {
         self.subscription_service
             .unregister_subscription(connection_state, subscription_id, live_id)
             .await
@@ -478,7 +501,8 @@ impl LiveQueryManager {
     /// from the LiveQueryId. Used by KILL LIVE QUERY command.
     pub async fn unregister_subscription_by_id(
         &self,
-        live_id: &LiveQueryId) -> Result<(), LiveError> {
+        live_id: &LiveQueryId,
+    ) -> Result<(), LiveError> {
         // Get connection from registry
         let connection_state =
             self.registry.get_connection(&live_id.connection_id).ok_or_else(|| {
@@ -500,7 +524,8 @@ impl LiveQueryManager {
 
     fn compile_subscription_filter(
         where_clause: Option<&str>,
-        user_id: &UserId) -> Result<Option<RowFilter>, LiveError> {
+        user_id: &UserId,
+    ) -> Result<Option<RowFilter>, LiveError> {
         where_clause
             .map(|where_clause| {
                 let resolved =
@@ -539,41 +564,41 @@ mod tests {
 
     fn shared_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id: NamespaceId::from("shared"),
-            table_name: TableName::from("events"),
-            table_type: TableType::Shared,
-            columns: vec![],
+            namespace_id:   NamespaceId::from("shared"),
+            table_name:     TableName::from("events"),
+            table_type:     TableType::Shared,
+            columns:        vec![],
             schema_version: 1,
             next_column_id: 1,
-            table_options: TableOptions::Shared(SharedTableOptions {
-                storage_id: kalamdb_commons::StorageId::from("default"),
+            table_options:  TableOptions::Shared(SharedTableOptions {
+                storage_id:   kalamdb_commons::StorageId::from("default"),
                 access_level: None,
                 flush_policy: None,
-                compression: TableCompression::Snappy,
+                compression:  TableCompression::Snappy,
             }),
-            table_comment: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            table_comment:  None,
+            created_at:     chrono::Utc::now(),
+            updated_at:     chrono::Utc::now(),
         }
     }
 
     fn system_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id: NamespaceId::system(),
-            table_name: TableName::from("users"),
-            table_type: TableType::System,
-            columns: vec![],
+            namespace_id:   NamespaceId::system(),
+            table_name:     TableName::from("users"),
+            table_type:     TableType::System,
+            columns:        vec![],
             schema_version: 1,
             next_column_id: 1,
-            table_options: TableOptions::System(SystemTableOptions {
-                read_only: true,
-                enable_cache: true,
+            table_options:  TableOptions::System(SystemTableOptions {
+                read_only:         true,
+                enable_cache:      true,
                 cache_ttl_seconds: 60,
-                localhost_only: false,
+                localhost_only:    false,
             }),
-            table_comment: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            table_comment:  None,
+            created_at:     chrono::Utc::now(),
+            updated_at:     chrono::Utc::now(),
         }
     }
 
@@ -623,7 +648,8 @@ mod tests {
     fn compile_subscription_filter_compiles_once_for_supported_where_clause() {
         let filter = LiveQueryManager::compile_subscription_filter(
             Some("user_id = CURRENT_USER() AND status IN ('active', 'queued')"),
-            &test_user_id())
+            &test_user_id(),
+        )
         .expect("supported WHERE should compile");
         assert!(filter.is_some());
     }
@@ -650,7 +676,8 @@ mod tests {
     fn compile_subscription_filter_rejects_unsupported_where_clause() {
         let result = LiveQueryManager::compile_subscription_filter(
             Some("status IN (SELECT status FROM shared.allowed_statuses)"),
-            &test_user_id());
+            &test_user_id(),
+        );
         assert!(matches!(result, Err(LiveError::InvalidOperation(_))));
     }
 }

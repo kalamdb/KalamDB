@@ -100,8 +100,24 @@ ensure_data_dir() {
     "$INITDB" -D "$DATA_DIR" >/dev/null
 }
 
+ensure_wal_level_logical() {
+    local conf="$DATA_DIR/postgresql.conf"
+
+    if grep -Eq "^[[:space:]]*wal_level[[:space:]]*=[[:space:]]*logical" "$conf" 2>/dev/null; then
+        return 0
+    fi
+
+    info "Setting wal_level=logical (required when leftover logical replication slots exist)"
+    if grep -Eq "^[[:space:]]*#?[[:space:]]*wal_level[[:space:]]*=" "$conf" 2>/dev/null; then
+        perl -0pi -e "s/^[[:space:]]*#?[[:space:]]*wal_level[[:space:]]*=.*$/wal_level = logical/m" "$conf"
+    else
+        echo "wal_level = logical" >> "$conf"
+    fi
+}
+
 start_pg() {
     ensure_data_dir
+    ensure_wal_level_logical
 
     if pg_isready -h "$PG_HOST" -p "$PG_PORT" -q 2>/dev/null; then
         info "PostgreSQL already running on port $PG_PORT"

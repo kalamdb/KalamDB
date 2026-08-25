@@ -24,8 +24,9 @@ use log::debug;
 use super::{
     manager::ConnectionsManager,
     models::{
-        InitialLoadState, SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle,
-        SubscriptionRuntimeMetadata, SubscriptionState, MAX_SUBSCRIPTIONS_PER_CONNECTION,
+        InitialLoadState, LiveRoute, SharedConnectionState, SubscriptionFlowControl,
+        SubscriptionHandle, SubscriptionRuntimeMetadata, SubscriptionState,
+        MAX_SUBSCRIPTIONS_PER_CONNECTION,
     },
 };
 use crate::error::{LiveError, LiveResultExt};
@@ -65,10 +66,12 @@ impl SubscriptionService {
         table_id: TableId,
         filter_expr: Option<RowFilter>,
         authorization: Option<Arc<dyn crate::traits::LiveAuthorization>>,
+        live_route: LiveRoute,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,
-        table_type: TableType) -> Result<LiveQueryId, LiveError> {
+        table_type: TableType,
+    ) -> Result<LiveQueryId, LiveError> {
         // Read connection info from state and check subscription limit
         let (connection_id, user_id, notification_tx) = {
             let user_id = connection_state.user_id().cloned().ok_or_else(|| {
@@ -86,7 +89,8 @@ impl SubscriptionService {
             (
                 connection_state.connection_id().clone(),
                 user_id,
-                connection_state.notification_tx.clone())
+                connection_state.notification_tx.clone(),
+            )
         };
 
         // Generate LiveQueryId
@@ -102,7 +106,8 @@ impl SubscriptionService {
         let runtime_metadata = Arc::new(SubscriptionRuntimeMetadata::new(
             request.sql.as_str(),
             options_json.as_deref(),
-            created_at_ms));
+            created_at_ms,
+        ));
 
         // Wrap filter_expr and projections in Arc for zero-copy sharing between state and handle
         let filter_expr_arc = filter_expr.map(Arc::new);
@@ -130,7 +135,7 @@ impl SubscriptionService {
             runtime_metadata: Arc::clone(&runtime_metadata),
         };
 
-        // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
+        // Index a routing handle (filter, authorization, and channel are Arc-shared).
         let subscription_handle = SubscriptionHandle {
             subscription_id: Arc::clone(&subscription_id),
             filter_expr: filter_expr_arc,
@@ -155,17 +160,19 @@ impl SubscriptionService {
         // Add lightweight handle to registry's table index for efficient lookups
         if table_type == TableType::Shared {
             self.registry.index_shared_subscription(
-                &connection_id,
                 live_id.clone(),
                 table_id.clone(),
-                subscription_handle);
+                &live_route,
+                subscription_handle,
+            );
         } else {
             self.registry.index_subscription(
                 &user_id,
                 &connection_id,
                 live_id.clone(),
                 table_id.clone(),
-                subscription_handle);
+                subscription_handle,
+            );
         }
 
         debug!(
@@ -181,11 +188,10 @@ impl SubscriptionService {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        snapshot_end_seq: SeqId) {
+        snapshot_end_seq: SeqId,
+    ) {
         connection_state.update_snapshot_end_seq(subscription_id, Some(snapshot_end_seq));
     }
-
-    /// Unregister a single live query subscription
 
     /// Update sequence and commit snapshot boundaries after initial data planning.
     pub fn update_snapshot_boundaries(
@@ -193,17 +199,22 @@ impl SubscriptionService {
         connection_state: &SharedConnectionState,
         subscription_id: &str,
         snapshot_end_seq: Option<SeqId>,
-        snapshot_end_commit_seq: Option<u64>) {
+        snapshot_end_commit_seq: Option<u64>,
+    ) {
         connection_state.update_snapshot_boundaries(
             subscription_id,
             snapshot_end_seq,
-            snapshot_end_commit_seq);
+            snapshot_end_commit_seq,
+        );
     }
+
+    /// Unregister a single live query subscription.
     pub async fn unregister_subscription(
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        live_id: &LiveQueryId) -> Result<(), LiveError> {
+        live_id: &LiveQueryId,
+    ) -> Result<(), LiveError> {
         // Get user_id and subscription details, then remove from connection state.
         // Try the raw subscription_id first; if it looks like a full LiveQueryId
         // ("user-conn-sub"), also try extracting just the trailing subscription part.
@@ -234,7 +245,7 @@ impl SubscriptionService {
 
         // Remove from registry's table index
         if is_shared {
-            self.registry.unindex_shared_subscription(live_id, &table_id);
+            self.registry.unindex_shared_subscription(live_id);
         } else {
             self.registry.unindex_subscription(&user_id, live_id, &table_id);
         }
@@ -251,7 +262,8 @@ impl SubscriptionService {
     pub async fn unregister_connection(
         &self,
         _user_id: &UserId,
-        connection_id: &ConnectionId) -> Result<Vec<LiveQueryId>, LiveError> {
+        connection_id: &ConnectionId,
+    ) -> Result<Vec<LiveQueryId>, LiveError> {
         // Unregister from connections manager (removes connection and returns live_ids)
         let live_ids = self.registry.unregister_connection(connection_id);
 
@@ -262,7 +274,8 @@ impl SubscriptionService {
     pub fn get_subscription(
         &self,
         connection_state: &SharedConnectionState,
-        subscription_id: &str) -> Option<SubscriptionState> {
+        subscription_id: &str,
+    ) -> Option<SubscriptionState> {
         connection_state.get_subscription(subscription_id)
     }
 }

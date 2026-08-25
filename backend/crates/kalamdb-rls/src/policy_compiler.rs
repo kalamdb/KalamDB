@@ -8,7 +8,7 @@ use kalamdb_sql::parser::utils::parse_sql_expression;
 use sqlparser::{
     ast::{
         BinaryOperator, Expr, FunctionArguments, GroupByExpr, ObjectName, Query, Select,
-        SelectItem, SetExpr, TableFactor, UnaryOperator, Value,
+        SelectItem, SetExpr, TableFactor, Value,
     },
     dialect::PostgreSqlDialect,
 };
@@ -225,26 +225,13 @@ where
                 Value::Boolean(value) => Ok(BoundExprShape::Literal(*value)),
                 _ => Err("row-local policy must evaluate to boolean".to_string()),
             },
-            Expr::UnaryOp {
-                op: UnaryOperator::Not,
-                expr,
-            } => Ok(BoundExprShape::Not(Box::new(self.compile_row_local(protected_table, expr)?))),
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::And,
-                right,
-            } => Ok(BoundExprShape::And(vec![
-                self.compile_row_local(protected_table, left)?,
-                self.compile_row_local(protected_table, right)?,
-            ])),
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::Or,
-                right,
-            } => Ok(BoundExprShape::Or(vec![
-                self.compile_row_local(protected_table, left)?,
-                self.compile_row_local(protected_table, right)?,
-            ])),
+            Expr::UnaryOp { .. }
+            | Expr::BinaryOp {
+                op: BinaryOperator::And | BinaryOperator::Or,
+                ..
+            } => Err("row-local NOT, AND, and OR policies are disabled because they cannot \
+                      guarantee bounded indexed live routing"
+                .to_string()),
             Expr::BinaryOp {
                 left,
                 op: BinaryOperator::Eq,

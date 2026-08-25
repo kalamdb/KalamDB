@@ -1120,7 +1120,7 @@ pub async fn count_rows(
 
 pub async fn bulk_delete_all(client: &tokio_postgres::Client, table: &str, pk_col: &str) {
     let sql = format!("DELETE FROM {table} WHERE {pk_col} IS NOT NULL");
-    client.batch_execute(&sql).await.ok();
+    client.batch_execute(&sql).await.expect("bulk delete-all");
 }
 
 pub async fn delete_all(client: &tokio_postgres::Client, table: &str, pk_col: &str) {

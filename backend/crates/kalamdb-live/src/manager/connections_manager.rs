@@ -31,7 +31,7 @@ use dashmap::{mapref::entry::Entry, DashMap};
 #[cfg(any(test, feature = "test-helpers"))]
 use kalamdb_commons::WireNotification;
 use kalamdb_commons::{
-    models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId},
+    models::{rows::Row, ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId},
     NodeId,
 };
 use kalamdb_system::{LiveQuery, LiveQueryStatus};
@@ -40,9 +40,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::super::models::{
-    ConnectionEvent, ConnectionRegistration, ConnectionState, SharedConnectionState,
+    ConnectionEvent, ConnectionRegistration, ConnectionState, LiveRoute, SharedConnectionState,
     SubscriptionHandle, EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };
+use crate::IndexedSubscriberRelation;
 
 /// Connections Manager
 ///
@@ -64,37 +65,35 @@ pub struct ConnectionsManager {
     connections: DashMap<ConnectionId, SharedConnectionState>,
 
     // === Secondary Indices (for efficient lookups) ===
-    /// (UserId, TableId) → DashMap<LiveQueryId, SubscriptionHandle> for O(1) notification delivery
-    /// Uses lightweight handles (~48 bytes) instead of full state (~800+ bytes)
+    /// (UserId, TableId) → handles for per-user table notification delivery.
     user_table_subscriptions:
         DashMap<(UserId, TableId), Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
-    /// TableId → DashMap<LiveQueryId, SubscriptionHandle> for shared table subscriptions
-    /// Shared tables are not scoped per-user, so notifications go to all subscribers
-    shared_table_subscriptions: DashMap<TableId, Arc<DashMap<LiveQueryId, SubscriptionHandle>>>,
+    /// RLS-derived exact-key index for shared-table subscriptions.
+    shared_subscribers:       IndexedSubscriberRelation,
     /// Shared empty map to avoid allocations on lookup misses
-    empty_subscriptions: Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
+    empty_subscriptions:      Arc<DashMap<LiveQueryId, SubscriptionHandle>>,
 
     // === Configuration ===
     /// Node identifier for this server
-    pub node_id: NodeId,
+    pub node_id:        NodeId,
     /// Client heartbeat timeout
-    client_timeout: Duration,
+    client_timeout:     Duration,
     /// Authentication timeout
-    auth_timeout: Duration,
+    auth_timeout:       Duration,
     /// Heartbeat check interval
     heartbeat_interval: Duration,
     /// Maximum concurrent connections allowed (DoS protection)
-    max_connections: usize,
+    max_connections:    usize,
 
     // === Shutdown Coordination ===
-    shutdown_token: CancellationToken,
+    shutdown_token:   CancellationToken,
     is_shutting_down: AtomicBool,
 
     // === Metrics ===
-    total_connections: AtomicUsize,
-    peak_connections: AtomicUsize,
+    total_connections:   AtomicUsize,
+    peak_connections:    AtomicUsize,
     total_subscriptions: AtomicUsize,
-    peak_subscriptions: AtomicUsize,
+    peak_subscriptions:  AtomicUsize,
 }
 
 impl ConnectionsManager {
@@ -106,7 +105,7 @@ impl ConnectionsManager {
 
         self.connections.shrink_to_fit();
         self.user_table_subscriptions.shrink_to_fit();
-        self.shared_table_subscriptions.shrink_to_fit();
+        self.shared_subscribers.shrink_to_fit();
         self.empty_subscriptions.shrink_to_fit();
     }
 
@@ -118,13 +117,15 @@ impl ConnectionsManager {
         node_id: NodeId,
         client_timeout: Duration,
         auth_timeout: Duration,
-        heartbeat_interval: Duration) -> Arc<Self> {
+        heartbeat_interval: Duration,
+    ) -> Arc<Self> {
         Self::with_max_connections(
             node_id,
             client_timeout,
             auth_timeout,
             heartbeat_interval,
-            Self::DEFAULT_MAX_CONNECTIONS)
+            Self::DEFAULT_MAX_CONNECTIONS,
+        )
     }
 
     /// Create a new connections manager with a custom max connections limit
@@ -133,13 +134,14 @@ impl ConnectionsManager {
         client_timeout: Duration,
         auth_timeout: Duration,
         heartbeat_interval: Duration,
-        max_connections: usize) -> Arc<Self> {
+        max_connections: usize,
+    ) -> Arc<Self> {
         let shutdown_token = CancellationToken::new();
 
         let registry = Arc::new(Self {
             connections: DashMap::new(),
             user_table_subscriptions: DashMap::new(),
-            shared_table_subscriptions: DashMap::new(),
+            shared_subscribers: IndexedSubscriberRelation::default(),
             empty_subscriptions: Arc::new(DashMap::new()),
             node_id,
             client_timeout,
@@ -183,7 +185,8 @@ impl ConnectionsManager {
     pub fn register_connection(
         &self,
         connection_id: ConnectionId,
-        client_ip: ConnectionInfo) -> Option<ConnectionRegistration> {
+        client_ip: ConnectionInfo,
+    ) -> Option<ConnectionRegistration> {
         if self.is_shutting_down.load(Ordering::Acquire) {
             warn!("Rejecting new connection during shutdown: {}", connection_id);
             return None;
@@ -235,7 +238,8 @@ impl ConnectionsManager {
                 current,
                 current + 1,
                 Ordering::AcqRel,
-                Ordering::Acquire) {
+                Ordering::Acquire,
+            ) {
                 Ok(_) => {
                     self.peak_connections.fetch_max(current + 1, Ordering::AcqRel);
                     return true;
@@ -261,52 +265,43 @@ impl ConnectionsManager {
     /// Returns the list of removed LiveQueryIds for cleanup.
     pub fn unregister_connection(&self, connection_id: &ConnectionId) -> Vec<LiveQueryId> {
         debug!("unregister_connection: starting cleanup for connection {}", connection_id);
-        let removed_live_ids = if let Some((_, shared_state)) =
-            self.connections.remove(connection_id)
-        {
-            self.release_connection_slot();
+        let removed_live_ids =
+            if let Some((_, shared_state)) = self.connections.remove(connection_id) {
+                self.release_connection_slot();
 
-            // Drain once, then touch only the index that owns each subscription.
-            // This avoids a read pass plus a write pass and removes two needless
-            // DashMap lookups per subscription during reconnect cleanup.
-            let subscriptions = shared_state.collect_subscription_info(|sub| {
-                (sub.live_id.clone(), sub.table_id.clone(), sub.is_shared)
-            });
+                // Drain once, then touch only the index that owns each subscription.
+                // This avoids a read pass plus a write pass and removes two needless
+                // DashMap lookups per subscription during reconnect cleanup.
+                let subscriptions = shared_state.collect_subscription_info(|sub| {
+                    (sub.live_id.clone(), sub.table_id.clone(), sub.is_shared)
+                });
 
-            for (live_id, table_id, is_shared) in &subscriptions {
-                if *is_shared {
-                    if let Some(entries) = self.shared_table_subscriptions.get(table_id) {
-                        entries.remove(live_id);
-                        let is_empty = entries.is_empty();
-                        drop(entries);
-                        if is_empty {
-                            self.shared_table_subscriptions
-                                .remove_if(table_id, |_, handles| handles.is_empty());
-                        }
-                    }
-                } else if let Some(user_id) = shared_state.user_id() {
-                    let key = (user_id.clone(), table_id.clone());
-                    if let Some(entries) = self.user_table_subscriptions.get(&key) {
-                        entries.remove(live_id);
-                        let is_empty = entries.is_empty();
-                        drop(entries);
-                        if is_empty {
-                            self.user_table_subscriptions
-                                .remove_if(&key, |_, handles| handles.is_empty());
+                for (live_id, table_id, is_shared) in &subscriptions {
+                    if *is_shared {
+                        self.shared_subscribers.unindex(live_id);
+                    } else if let Some(user_id) = shared_state.user_id() {
+                        let key = (user_id.clone(), table_id.clone());
+                        if let Some(entries) = self.user_table_subscriptions.get(&key) {
+                            entries.remove(live_id);
+                            let is_empty = entries.is_empty();
+                            drop(entries);
+                            if is_empty {
+                                self.user_table_subscriptions
+                                    .remove_if(&key, |_, handles| handles.is_empty());
+                            }
                         }
                     }
                 }
-            }
 
-            let sub_count = subscriptions.len();
-            if sub_count > 0 {
-                self.total_subscriptions.fetch_sub(sub_count, Ordering::AcqRel);
-            }
+                let sub_count = subscriptions.len();
+                if sub_count > 0 {
+                    self.total_subscriptions.fetch_sub(sub_count, Ordering::AcqRel);
+                }
 
-            subscriptions.into_iter().map(|(live_id, _, _)| live_id).collect()
-        } else {
-            Vec::new()
-        };
+                subscriptions.into_iter().map(|(live_id, _, _)| live_id).collect()
+            } else {
+                Vec::new()
+            };
 
         if !removed_live_ids.is_empty() {
             debug!(
@@ -333,7 +328,8 @@ impl ConnectionsManager {
         connection_id: &ConnectionId,
         live_id: LiveQueryId,
         table_id: TableId,
-        handle: SubscriptionHandle) {
+        handle: SubscriptionHandle,
+    ) {
         log::debug!(
             "ConnectionsManager::index_subscription: user={}, table={}, live_id={}",
             user_id,
@@ -357,33 +353,24 @@ impl ConnectionsManager {
         self.peak_subscriptions.fetch_max(count, Ordering::AcqRel);
     }
 
-    /// Add subscription to shared_table_subscriptions index (for shared tables)
+    /// Index a shared-table subscription by its bound live route.
     ///
-    /// Shared tables are not scoped per-user, so all subscribers receive notifications
-    /// regardless of which user made the change.
+    /// Broadcast routes see every change on the table. Keyed routes are looked up by
+    /// the changed row's equality columns. Deny routes are not stored in the lookup
+    /// index and never become candidates.
     pub fn index_shared_subscription(
         &self,
-        connection_id: &ConnectionId,
         live_id: LiveQueryId,
         table_id: TableId,
-        handle: SubscriptionHandle) {
+        route: &LiveRoute,
+        handle: SubscriptionHandle,
+    ) {
         log::debug!(
             "ConnectionsManager::index_shared_subscription: table={}, live_id={}",
             table_id,
             live_id
         );
-        // Add to TableId → Arc<DashMap<LiveQueryId, SubscriptionHandle>> index
-        self.shared_table_subscriptions
-            .entry(table_id)
-            .and_modify(|handles| {
-                handles.insert(live_id.clone(), handle.clone());
-            })
-            .or_insert_with(|| {
-                let handles = DashMap::new();
-                handles.insert(live_id.clone(), handle.clone());
-                Arc::new(handles)
-            });
-        let _ = connection_id;
+        self.shared_subscribers.index(table_id, live_id, route, handle);
 
         let count = self.total_subscriptions.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak_subscriptions.fetch_max(count, Ordering::AcqRel);
@@ -395,7 +382,8 @@ impl ConnectionsManager {
         &self,
         user_id: &UserId,
         live_id: &LiveQueryId,
-        table_id: &TableId) {
+        table_id: &TableId,
+    ) {
         // Remove from user_table_subscriptions index
         let key = (user_id.clone(), table_id.clone());
         if let Some(handles) = self.user_table_subscriptions.get(&key) {
@@ -410,15 +398,8 @@ impl ConnectionsManager {
     }
 
     /// Remove shared table subscription from indices
-    pub fn unindex_shared_subscription(&self, live_id: &LiveQueryId, table_id: &TableId) {
-        // Remove from shared_table_subscriptions index
-        if let Some(handles) = self.shared_table_subscriptions.get(table_id) {
-            handles.remove(live_id);
-            if handles.is_empty() {
-                drop(handles);
-                self.shared_table_subscriptions.remove(table_id);
-            }
-        }
+    pub fn unindex_shared_subscription(&self, live_id: &LiveQueryId) {
+        self.shared_subscribers.unindex(live_id);
 
         self.total_subscriptions.fetch_sub(1, Ordering::AcqRel);
     }
@@ -437,7 +418,12 @@ impl ConnectionsManager {
 
     /// Check if any shared table subscriptions exist for a table
     pub fn has_shared_subscriptions(&self, table_id: &TableId) -> bool {
-        self.shared_table_subscriptions.contains_key(table_id)
+        self.shared_subscribers.has_subscriptions(table_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_index_is_empty(&self) -> bool {
+        self.shared_subscribers.is_empty()
     }
 
     /// Get subscription handles for a specific (user, table) pair for notification routing
@@ -447,24 +433,23 @@ impl ConnectionsManager {
     pub fn get_subscriptions_for_table(
         &self,
         user_id: &UserId,
-        table_id: &TableId) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
+        table_id: &TableId,
+    ) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
         self.user_table_subscriptions
             .get(&(user_id.clone(), table_id.clone()))
             .map(|handles| Arc::clone(handles.value()))
             .unwrap_or_else(|| Arc::clone(&self.empty_subscriptions))
     }
 
-    /// Get subscription handles for a shared table for notification routing
-    ///
-    /// Returns all subscribers to a shared table regardless of which user made the change.
+    /// Get RLS-indexed shared-table candidates for a changed row.
     #[inline]
-    pub fn get_shared_subscriptions_for_table(
+    pub fn get_shared_subscription_candidates(
         &self,
-        table_id: &TableId) -> Arc<DashMap<LiveQueryId, SubscriptionHandle>> {
-        self.shared_table_subscriptions
-            .get(table_id)
-            .map(|handles| Arc::clone(handles.value()))
-            .unwrap_or_else(|| Arc::clone(&self.empty_subscriptions))
+        table_id: &TableId,
+        new_row: &Row,
+        old_row: Option<&Row>,
+    ) -> Vec<SubscriptionHandle> {
+        self.shared_subscribers.candidates(table_id, new_row, old_row)
     }
 
     /// Send a notification directly to all authenticated connections for a user.
@@ -475,7 +460,8 @@ impl ConnectionsManager {
     pub fn notify_connections_for_user(
         &self,
         user_id: &UserId,
-        notification: WireNotification) -> bool {
+        notification: WireNotification,
+    ) -> bool {
         let notification = Arc::new(notification);
         let mut sent = false;
 
@@ -525,7 +511,7 @@ impl ConnectionsManager {
                 warn!("Force closing {} connections without graceful wait", remaining);
                 self.connections.clear();
                 self.user_table_subscriptions.clear();
-                self.shared_table_subscriptions.clear();
+                self.shared_subscribers.clear();
                 self.total_connections.store(0, Ordering::Release);
                 self.total_subscriptions.store(0, Ordering::Release);
             }
@@ -546,7 +532,7 @@ impl ConnectionsManager {
             warn!("Force closing {} connections after timeout", remaining);
             self.connections.clear();
             self.user_table_subscriptions.clear();
-            self.shared_table_subscriptions.clear();
+            self.shared_subscribers.clear();
             self.total_connections.store(0, Ordering::Release);
             self.total_subscriptions.store(0, Ordering::Release);
         }
@@ -719,14 +705,15 @@ mod tests {
     fn notify_shared_table_for_test(
         registry: &ConnectionsManager,
         table_id: &TableId,
-        notification: WireNotification) {
-        let handles = registry.get_shared_subscriptions_for_table(table_id);
+        notification: WireNotification,
+    ) {
+        let row = Row::new(Default::default());
+        let handles = registry.get_shared_subscription_candidates(table_id, &row, None);
         let notification = Arc::new(notification);
-        for handle in handles.iter() {
-            let live_id = handle.key().clone();
+        for handle in handles {
             if let Err(e) = handle.notification_tx.try_send(Arc::clone(&notification)) {
                 if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                    warn!("Notification channel full for {}, dropping", live_id);
+                    warn!("Notification channel full, dropping");
                 }
             }
         }
@@ -736,7 +723,8 @@ mod tests {
         registry: &ConnectionsManager,
         user_id: &UserId,
         table_id: &TableId,
-        notification: WireNotification) {
+        notification: WireNotification,
+    ) {
         let handles = registry.get_subscriptions_for_table(user_id, table_id);
         let notification = Arc::new(notification);
         for handle in handles.iter() {
@@ -754,7 +742,8 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(10),
             Duration::from_secs(3),
-            Duration::from_secs(5))
+            Duration::from_secs(5),
+        )
     }
 
     #[tokio::test]
@@ -764,7 +753,8 @@ mod tests {
 
         let reg = registry.register_connection(
             conn_id.clone(),
-            ConnectionInfo::new(Some("127.0.0.1".to_string())));
+            ConnectionInfo::new(Some("127.0.0.1".to_string())),
+        );
         assert!(reg.is_some());
         assert_eq!(registry.connection_count(), 1);
         assert_eq!(registry.peak_connection_count(), 1);
@@ -865,7 +855,8 @@ mod tests {
             NodeId::new(1),
             Duration::from_millis(100), // client_timeout
             Duration::from_secs(60),
-            Duration::from_secs(5));
+            Duration::from_secs(5),
+        );
 
         let conn_id = ConnectionId::new("alive_conn");
         let mut reg = registry
@@ -902,7 +893,8 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(60),   // client_timeout (long)
             Duration::from_millis(50), // auth_timeout (short)
-            Duration::from_secs(5));
+            Duration::from_secs(5),
+        );
 
         let conn_id = ConnectionId::new("noauth");
         let mut reg = registry
@@ -929,7 +921,8 @@ mod tests {
             NodeId::new(1),
             Duration::from_millis(50),
             Duration::from_secs(60),
-            Duration::from_secs(5));
+            Duration::from_secs(5),
+        );
 
         let conn_id = ConnectionId::new("full_chan");
         let reg = registry
@@ -967,7 +960,8 @@ mod tests {
             NodeId::new(1),
             Duration::from_secs(60),
             Duration::from_secs(60),
-            Duration::from_secs(5));
+            Duration::from_secs(5),
+        );
 
         let conn_id = ConnectionId::new("shutdown_now");
         let reg = registry
@@ -994,7 +988,8 @@ mod tests {
 
     /// Helper: create a SubscriptionHandle with pre-completed flow control
     fn create_test_handle(
-        notification_tx: tokio::sync::mpsc::Sender<Arc<WireNotification>>) -> SubscriptionHandle {
+        notification_tx: tokio::sync::mpsc::Sender<Arc<WireNotification>>,
+    ) -> SubscriptionHandle {
         let flow_control = Arc::new(SubscriptionFlowControl::new());
         flow_control.mark_initial_complete();
         let runtime_metadata =
@@ -1018,10 +1013,11 @@ mod tests {
         use kalamdb_commons::websocket::SharedChangePayload;
         WireNotification {
             subscription_id: Arc::from(sub_id),
-            payload: Arc::new(SharedChangePayload::new(
+            payload:         Arc::new(SharedChangePayload::new(
                 kalamdb_commons::websocket::ChangeType::Insert,
                 Some(vec![]),
-                None)),
+                None,
+            )),
         }
     }
 
@@ -1039,28 +1035,125 @@ mod tests {
         let handle = create_test_handle(tx);
 
         // Index a shared subscription
-        registry.index_shared_subscription(&conn_id, live_id.clone(), table_id.clone(), handle);
+        registry.index_shared_subscription(
+            live_id.clone(),
+            table_id.clone(),
+            &LiveRoute::Broadcast,
+            handle,
+        );
 
         assert_eq!(registry.subscription_count(), 1);
         assert_eq!(registry.peak_subscription_count(), 1);
         assert!(registry.has_shared_subscriptions(&table_id));
         assert!(!registry.has_subscriptions(&UserId::new("u1"), &table_id));
 
-        // Verify get_shared_subscriptions_for_table returns the subscription
-        let subs = registry.get_shared_subscriptions_for_table(&table_id);
+        let row = Row::new(Default::default());
+        let subs = registry.get_shared_subscription_candidates(&table_id, &row, None);
         assert_eq!(subs.len(), 1);
-        assert!(subs.contains_key(&live_id));
 
         // Unindex
-        registry.unindex_shared_subscription(&live_id, &table_id);
+        registry.unindex_shared_subscription(&live_id);
         assert_eq!(registry.subscription_count(), 0);
         assert_eq!(registry.peak_subscription_count(), 1);
         assert!(!registry.has_shared_subscriptions(&table_id));
+        assert!(
+            registry.shared_index_is_empty(),
+            "unsubscribe must drop shared routing DashMaps, not leave empty table buckets"
+        );
 
-        let subs_after = registry.get_shared_subscriptions_for_table(&table_id);
+        let subs_after = registry.get_shared_subscription_candidates(&table_id, &row, None);
         assert!(subs_after.is_empty());
 
         drop(reg);
+    }
+
+    #[tokio::test]
+    async fn keyed_shared_unsubscribe_drops_conversation_lookup_buckets() {
+        use std::collections::HashSet;
+
+        use datafusion_common::ScalarValue;
+
+        let registry = create_test_registry();
+        let conn_id = ConnectionId::new("keyed-unsub");
+        let table_id = make_table_id("chat", "messages");
+        let alice =
+            LiveQueryId::new(UserId::new("alice"), conn_id.clone(), "alice-sub".to_string());
+        let bob = LiveQueryId::new(UserId::new("bob"), conn_id.clone(), "bob-sub".to_string());
+        let _reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .unwrap();
+        let (tx_alice, _rx_alice) = mpsc::channel(8);
+        let (tx_bob, _rx_bob) = mpsc::channel(8);
+        let keyed = |conversation_id: &str| {
+            LiveRoute::Keyed(Arc::new(HashSet::from([(
+                Arc::from("conversation_id"),
+                ScalarValue::Utf8(Some(conversation_id.to_string())),
+            )])))
+        };
+
+        registry.index_shared_subscription(
+            alice.clone(),
+            table_id.clone(),
+            &keyed("conv-123"),
+            create_test_handle(tx_alice),
+        );
+        registry.index_shared_subscription(
+            bob.clone(),
+            table_id.clone(),
+            &keyed("conv-456"),
+            create_test_handle(tx_bob),
+        );
+
+        let alice_row = Row::new(std::collections::BTreeMap::from([(
+            "conversation_id".to_string(),
+            ScalarValue::Utf8(Some("conv-123".to_string())),
+        )]));
+        assert_eq!(
+            registry.get_shared_subscription_candidates(&table_id, &alice_row, None).len(),
+            1
+        );
+
+        registry.unindex_shared_subscription(&alice);
+        assert!(
+            registry
+                .get_shared_subscription_candidates(&table_id, &alice_row, None)
+                .is_empty(),
+            "alice's conversation bucket must be gone after unsubscribe"
+        );
+        assert!(registry.has_shared_subscriptions(&table_id));
+        assert!(!registry.shared_index_is_empty());
+
+        registry.unindex_shared_subscription(&bob);
+        assert!(!registry.has_shared_subscriptions(&table_id));
+        assert!(registry.shared_index_is_empty());
+        assert_eq!(registry.subscription_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn last_user_table_unsubscribe_drops_user_table_dashmap_entry() {
+        let registry = create_test_registry();
+        let conn_id = ConnectionId::new("user-unsub");
+        let user_id = UserId::new("alice");
+        let table_id = make_table_id("app", "notes");
+        let live_id = LiveQueryId::new(user_id.clone(), conn_id.clone(), "notes-sub".to_string());
+        let _reg = registry
+            .register_connection(conn_id.clone(), ConnectionInfo::new(None))
+            .unwrap();
+        let (tx, _rx) = mpsc::channel(8);
+        registry.index_subscription(
+            &user_id,
+            &conn_id,
+            live_id.clone(),
+            table_id.clone(),
+            create_test_handle(tx),
+        );
+        assert!(registry.has_subscriptions(&user_id, &table_id));
+
+        registry.unindex_subscription(&user_id, &live_id, &table_id);
+
+        assert!(!registry.has_subscriptions(&user_id, &table_id));
+        assert!(registry.get_subscriptions_for_table(&user_id, &table_id).is_empty());
+        assert_eq!(registry.subscription_count(), 0);
     }
 
     #[tokio::test]
@@ -1083,26 +1176,25 @@ mod tests {
 
         // Add a shared subscription to ConnectionState.subscriptions.
         let subscription_state = super::super::super::models::SubscriptionState {
-            live_id: live_id.clone(),
-            table_id: table_id.clone(),
-            filter_expr: None,
-            projections: None,
-            initial_load: Some(super::super::super::models::InitialLoadState {
-                batch_size: 100,
-                snapshot_end_seq: None,
+            live_id:          live_id.clone(),
+            table_id:         table_id.clone(),
+            filter_expr:      None,
+            projections:      None,
+            initial_load:     Some(super::super::super::models::InitialLoadState {
+                batch_size:              100,
+                snapshot_end_seq:        None,
                 snapshot_end_commit_seq: None,
-                current_batch_num: 0,
-                flow_control: Arc::new(SubscriptionFlowControl::new()),
+                current_batch_num:       0,
+                flow_control:            Arc::new(SubscriptionFlowControl::new()),
             }),
-            is_shared: true,
+            is_shared:        true,
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM shared.orders",
                 None,
-                1)),
+                1,
+            )),
         };
-        assert!(reg
-            .state
-            .insert_subscription(Arc::from("sub1"), subscription_state.clone()));
+        assert!(reg.state.insert_subscription(Arc::from("sub1"), subscription_state.clone()));
         assert!(
             !reg.state.insert_subscription(Arc::from("sub1"), subscription_state),
             "duplicate subscription IDs must not replace active state or leak counters"
@@ -1111,10 +1203,11 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel(64);
         registry.index_shared_subscription(
-            &conn_id,
             live_id.clone(),
             table_id.clone(),
-            create_test_handle(tx));
+            &LiveRoute::Broadcast,
+            create_test_handle(tx),
+        );
 
         assert_eq!(registry.subscription_count(), 1);
         assert!(registry.has_shared_subscriptions(&table_id));
@@ -1147,7 +1240,12 @@ mod tests {
             let (tx, rx) = mpsc::channel(64);
             let handle = create_test_handle(tx);
 
-            registry.index_shared_subscription(&conn_id, live_id, table_id.clone(), handle);
+            registry.index_shared_subscription(
+                live_id,
+                table_id.clone(),
+                &LiveRoute::Broadcast,
+                handle,
+            );
 
             receivers.push(rx);
         }
@@ -1186,7 +1284,12 @@ mod tests {
             let (tx, rx) = mpsc::channel(64);
             let handle = create_test_handle(tx);
 
-            registry.index_shared_subscription(&conn_id, live_id, table_id.clone(), handle);
+            registry.index_shared_subscription(
+                live_id,
+                table_id.clone(),
+                &LiveRoute::Broadcast,
+                handle,
+            );
 
             receivers.push(rx);
         }
@@ -1194,7 +1297,8 @@ mod tests {
         assert_eq!(registry.subscription_count(), subscriber_count);
 
         // Time the notification fan-out
-        let handles = registry.get_shared_subscriptions_for_table(&table_id);
+        let row = Row::new(Default::default());
+        let handles = registry.get_shared_subscription_candidates(&table_id, &row, None);
         assert_eq!(handles.len(), subscriber_count);
 
         let notification = make_wire_notification("perf");
@@ -1245,10 +1349,11 @@ mod tests {
                         LiveQueryId::new(user_id, conn_id.clone(), format!("parallel_sub_{}", i));
                     let (tx, rx) = mpsc::channel(64);
                     registry.index_shared_subscription(
-                        &conn_id,
                         live_id,
                         table_id,
-                        create_test_handle(tx));
+                        &LiveRoute::Broadcast,
+                        create_test_handle(tx),
+                    );
                     rx
                 })
             })
@@ -1292,10 +1397,11 @@ mod tests {
             LiveQueryId::new(user_id.clone(), conn_id.clone(), "shared_sub".to_string());
         let (tx1, mut rx1) = mpsc::channel(64);
         registry.index_shared_subscription(
-            &conn_id,
             shared_live_id,
             shared_table.clone(),
-            create_test_handle(tx1));
+            &LiveRoute::Broadcast,
+            create_test_handle(tx1),
+        );
 
         // Add a user subscription
         let user_live_id =
@@ -1306,7 +1412,8 @@ mod tests {
             &conn_id,
             user_live_id,
             user_table.clone(),
-            create_test_handle(tx2));
+            create_test_handle(tx2),
+        );
 
         assert_eq!(registry.subscription_count(), 2);
 
@@ -1334,7 +1441,8 @@ mod tests {
         let registry = create_test_registry();
         let table_id = make_table_id("shared", "nonexistent");
 
-        let subs = registry.get_shared_subscriptions_for_table(&table_id);
+        let row = Row::new(Default::default());
+        let subs = registry.get_shared_subscription_candidates(&table_id, &row, None);
         assert!(subs.is_empty());
         assert!(!registry.has_shared_subscriptions(&table_id));
     }

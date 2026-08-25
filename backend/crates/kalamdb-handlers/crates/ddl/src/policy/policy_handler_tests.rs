@@ -32,7 +32,8 @@ fn shared_table(name: &str) -> TableDefinition {
             ColumnDefinition::simple(2, "owner_id", 2, KalamDataType::Text),
         ],
         TableOptions::shared(),
-        None)
+        None,
+    )
     .expect("valid test table")
 }
 
@@ -43,7 +44,8 @@ fn execution_context(role: Role) -> ExecutionContext {
 fn app_execution_context(
     app_context: &std::sync::Arc<kalamdb_core::app_context::AppContext>,
     user_id: &str,
-    role: Role) -> ExecutionContext {
+    role: Role,
+) -> ExecutionContext {
     ExecutionContext::new(UserId::new(user_id), role, app_context.base_session_context())
 }
 
@@ -60,7 +62,8 @@ async fn create_policy_compiles_and_persists_definition() {
     let statement = CreatePolicyStatement::parse(
         "CREATE POLICY owner_read ON chat.documents FOR SELECT TO user USING (owner_id = \
          CURRENT_USER)",
-        &NamespaceId::new("chat"))
+        &NamespaceId::new("chat"),
+    )
     .expect("parse policy");
     let handler = CreatePolicyHandler::new(app_context.clone());
 
@@ -104,10 +107,12 @@ async fn alter_recompiles_and_drop_removes_policy() {
         .execute(
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_mutation FOR SELECT USING (true)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &context)
+            &context,
+        )
         .await
         .expect("create policy");
 
@@ -116,10 +121,12 @@ async fn alter_recompiles_and_drop_removes_policy() {
             AlterPolicyStatement::parse(
                 "ALTER POLICY owner_read ON chat.documents_mutation USING (owner_id = \
                  CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &context)
+            &context,
+        )
         .await
         .expect("alter policy");
 
@@ -143,10 +150,12 @@ async fn alter_recompiles_and_drop_removes_policy() {
         .execute(
             DropPolicyStatement::parse(
                 "DROP POLICY owner_read ON chat.documents_mutation",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &context)
+            &context,
+        )
         .await
         .expect("drop policy");
     assert!(app_context
@@ -187,7 +196,8 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
                     ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
-            ])
+            ],
+        )
         .await
         .expect("seed rows");
 
@@ -207,10 +217,12 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_scan FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .expect("create policy");
 
@@ -236,7 +248,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             ColumnDefinition::simple(2, "group_id", 2, KalamDataType::Text),
         ],
         TableOptions::shared(),
-        None)
+        None,
+    )
     .unwrap();
     let mut members = TableDefinition::new(
         NamespaceId::new("chat"),
@@ -248,7 +261,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             ColumnDefinition::simple(3, "group_id", 3, KalamDataType::Text),
         ],
         TableOptions::shared(),
-        None)
+        None,
+    )
     .unwrap();
     app_context.system_columns_service().add_system_columns(&mut messages).unwrap();
     app_context.system_columns_service().add_system_columns(&mut members).unwrap();
@@ -273,7 +287,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 ("id".to_string(), ScalarValue::Utf8(Some("membership-1".to_string()))),
                 ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
                 ("group_id".to_string(), ScalarValue::Utf8(Some("A".to_string()))),
-            ])])
+            ])],
+        )
         .await
         .unwrap();
     messages_provider
@@ -282,7 +297,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             vec![Row::from_vec(vec![
                 ("id".to_string(), ScalarValue::Utf8(Some("message-1".to_string()))),
                 ("group_id".to_string(), ScalarValue::Utf8(Some("A".to_string()))),
-            ])])
+            ])],
+        )
         .await
         .unwrap();
 
@@ -292,10 +308,12 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 "CREATE POLICY member_read ON chat.mvcc_messages FOR SELECT TO user USING \
                  (group_id IN (SELECT group_id FROM chat.mvcc_members WHERE user_id = \
                  CURRENT_USER))",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -336,8 +354,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
     let broad_text = format!("{broad_explain:?}");
     assert!(
         broad_text.contains("strategy=CachedAuthorizationSet"),
-        "EXPLAIN must show the cached authorization-set strategy for broad membership scans, \
-         got {broad_text}"
+        "EXPLAIN must show the cached authorization-set strategy for broad membership scans, got \
+         {broad_text}"
     );
     assert!(
         !broad_text.contains("HashJoinExec"),
@@ -366,7 +384,9 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             "membership-1",
             Row::from_vec(vec![(
                 "user_id".to_string(),
-                ScalarValue::Utf8(Some("bob".to_string())))]))
+                ScalarValue::Utf8(Some("bob".to_string())),
+            )]),
+        )
         .await
         .unwrap();
     assert!(members_provider
@@ -390,7 +410,9 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             "membership-1",
             Row::from_vec(vec![(
                 "user_id".to_string(),
-                ScalarValue::Utf8(Some("alice".to_string())))]))
+                ScalarValue::Utf8(Some("alice".to_string())),
+            )]),
+        )
         .await
         .unwrap();
     assert!(members_provider
@@ -411,7 +433,8 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
         .update_row_by_pk(
             &system,
             "message-1",
-            Row::from_vec(vec![("group_id".to_string(), ScalarValue::Utf8(Some("B".to_string())))]))
+            Row::from_vec(vec![("group_id".to_string(), ScalarValue::Utf8(Some("B".to_string())))]),
+        )
         .await
         .unwrap();
     assert!(messages_provider
@@ -478,7 +501,8 @@ async fn shared_dml_applies_using_and_with_check_atomically() {
             .execute(
                 CreatePolicyStatement::parse(sql, &NamespaceId::new("chat")).unwrap(),
                 Vec::new(),
-                &admin)
+                &admin,
+            )
             .await
             .expect("create DML policy");
     }
@@ -488,7 +512,8 @@ async fn shared_dml_applies_using_and_with_check_atomically() {
     let batch_error = alice_session
         .sql(
             "INSERT INTO chat.documents_dml (id, owner_id) VALUES ('alice-ok', 'alice'), \
-             ('bob-denied', 'bob')")
+             ('bob-denied', 'bob')",
+        )
         .await
         .unwrap()
         .collect()
@@ -589,7 +614,8 @@ async fn omitted_policy_stays_default_deny_for_users() {
             vec![Row::from_vec(vec![
                 ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
                 ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
-            ])])
+            ])],
+        )
         .await
         .unwrap();
 
@@ -630,7 +656,8 @@ async fn client_or_true_cannot_bypass_row_local_rls() {
                     ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
-            ])
+            ],
+        )
         .await
         .unwrap();
 
@@ -639,10 +666,12 @@ async fn client_or_true_cannot_bypass_row_local_rls() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_bypass FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -743,7 +772,8 @@ async fn plan_cache_binds_current_user_after_lookup() {
                     ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
-            ])
+            ],
+        )
         .await
         .unwrap();
 
@@ -752,10 +782,12 @@ async fn plan_cache_binds_current_user_after_lookup() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_plan_cache FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -789,20 +821,24 @@ async fn user_on_conflict_on_shared_tables_is_rejected() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_write ON chat.documents_on_conflict FOR ALL TO user USING \
                  (owner_id = CURRENT_USER) WITH CHECK (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
-    let executor = SqlExecutor::new(app_context.clone(), std::sync::Arc::new(HandlerRegistry::new()));
+    let executor =
+        SqlExecutor::new(app_context.clone(), std::sync::Arc::new(HandlerRegistry::new()));
     let error = executor
         .execute(
             "INSERT INTO chat.documents_on_conflict (id, owner_id) VALUES ('doc-a', 'alice') ON \
              CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id",
             &app_execution_context(&app_context, "alice", Role::User),
-            Vec::new())
+            Vec::new(),
+        )
         .await
         .expect_err("User ON CONFLICT must not bypass shared-table RLS");
     assert!(
@@ -839,10 +875,12 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_live_revoke FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -856,10 +894,12 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
         .execute(
             DropPolicyStatement::parse(
                 "DROP POLICY owner_read ON chat.documents_live_revoke",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -909,10 +949,12 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_live_grant FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"))
+                &NamespaceId::new("chat"),
+            )
             .unwrap(),
             Vec::new(),
-            &app_execution_context(&app_context, "admin", Role::Dba))
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
         .await
         .unwrap();
 
@@ -929,7 +971,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
 }
 
 #[tokio::test]
-async fn null_owner_rows_stay_hidden_under_not_owner_policy() {
+async fn rejects_unbounded_not_owner_policy() {
     let app_context = test_app_context_simple();
     let mut definition = shared_table("documents_null_owner");
     app_context
@@ -959,7 +1001,7 @@ async fn null_owner_rows_stay_hidden_under_not_owner_policy() {
         .await
         .unwrap();
 
-    CreatePolicyHandler::new(app_context.clone())
+    let error = CreatePolicyHandler::new(app_context.clone())
         .execute(
             CreatePolicyStatement::parse(
                 "CREATE POLICY not_owner_read ON chat.documents_null_owner FOR SELECT TO user \
@@ -971,21 +1013,48 @@ async fn null_owner_rows_stay_hidden_under_not_owner_policy() {
             &app_execution_context(&app_context, "admin", Role::Dba),
         )
         .await
-        .unwrap();
+        .expect_err("unbounded NOT policy must be rejected");
+    assert!(error.to_string().contains("indexed live routing"));
+}
 
-    let visible = app_execution_context(&app_context, "alice", Role::User)
-        .create_session_with_user()
-        .sql("SELECT id FROM chat.documents_null_owner ORDER BY id")
+#[tokio::test]
+async fn alter_rejects_unbounded_not_policy_for_indexed_live_routing() {
+    let app_context = test_app_context_simple();
+    let definition = shared_table("documents_alter_not");
+    app_context
+        .schema_registry()
+        .register_table(definition)
+        .expect("register table");
+    let context = execution_context(Role::Dba);
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY owner_read ON chat.documents_alter_not FOR SELECT USING (owner_id \
+                 = CURRENT_USER)",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &context,
+        )
         .await
-        .unwrap()
-        .collect()
+        .expect("create policy");
+
+    let error = AlterPolicyHandler::new(app_context)
+        .execute(
+            AlterPolicyStatement::parse(
+                "ALTER POLICY owner_read ON chat.documents_alter_not USING (NOT (owner_id = \
+                 CURRENT_USER))",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &context,
+        )
         .await
-        .unwrap();
-    assert_eq!(
-        row_count(&visible),
-        1,
-        "bob's row is visible via NOT(false), but NULL stays hidden because NOT(unknown) is unknown"
-    );
+        .expect_err("ALTER POLICY must reject unbounded NOT");
+    assert!(error.to_string().contains("indexed live routing"));
 }
 
 #[tokio::test]
@@ -1144,8 +1213,8 @@ async fn union_cannot_bypass_row_local_rls() {
     let visible = app_execution_context(&app_context, "alice", Role::User)
         .create_session_with_user()
         .sql(
-            "SELECT id FROM chat.documents_union WHERE owner_id = 'bob' \
-             UNION SELECT id FROM chat.documents_union",
+            "SELECT id FROM chat.documents_union WHERE owner_id = 'bob' UNION SELECT id FROM \
+             chat.documents_union",
         )
         .await
         .unwrap()
@@ -1214,10 +1283,7 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
         ("id".to_string(), ScalarValue::Utf8(Some("message-1".to_string()))),
         ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
     ]);
-    messages_provider
-        .insert_rows(&system, vec![message_row.clone()])
-        .await
-        .unwrap();
+    messages_provider.insert_rows(&system, vec![message_row.clone()]).await.unwrap();
 
     CreatePolicyHandler::new(app_context.clone())
         .execute(
@@ -1240,10 +1306,7 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
         .unwrap();
     assert!(bound.authorizes(&message_row));
 
-    members_provider
-        .delete_row_by_pk(&system, "membership-1")
-        .await
-        .unwrap();
+    members_provider.delete_row_by_pk(&system, "membership-1").await.unwrap();
 
     assert!(
         !bound.authorizes(&message_row),

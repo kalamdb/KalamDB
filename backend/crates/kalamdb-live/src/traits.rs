@@ -6,8 +6,7 @@
 
 use std::sync::Arc;
 
-use arrow::datatypes::Schema as ArrowSchema;
-use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::Schema as ArrowSchema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use kalamdb_commons::{
     models::{rows::Row, ReadContext, TableId, UserId},
@@ -15,7 +14,7 @@ use kalamdb_commons::{
     Role, TableType,
 };
 
-use crate::error::LiveError;
+use crate::{error::LiveError, models::LiveRoute};
 
 /// Optional cluster apply barrier used before live snapshots on follower nodes.
 ///
@@ -29,7 +28,8 @@ pub trait LiveApplyBarrier: Send + Sync {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        user_id: &UserId) -> Result<(), LiveError>;
+        user_id: &UserId,
+    ) -> Result<(), LiveError>;
 }
 
 /// Schema operations needed by the live subsystem.
@@ -56,7 +56,8 @@ pub trait LiveAuthorizationBinder: Send + Sync {
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        role: Role) -> Result<Arc<dyn LiveAuthorization>, LiveError>;
+        role: Role,
+    ) -> Result<(Arc<dyn LiveAuthorization>, LiveRoute), LiveError>;
 }
 
 /// SQL execution needed by the live subsystem (initial data, snapshot boundary).
@@ -74,5 +75,6 @@ pub trait LiveSqlExecutor: Send + Sync {
         sql: &str,
         user_id: UserId,
         role: Role,
-        read_context: ReadContext) -> Result<Vec<RecordBatch>, LiveError>;
+        read_context: ReadContext,
+    ) -> Result<Vec<RecordBatch>, LiveError>;
 }

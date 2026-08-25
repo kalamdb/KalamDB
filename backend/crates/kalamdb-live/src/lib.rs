@@ -13,6 +13,7 @@
 pub mod error;
 pub mod fanout;
 pub mod helpers;
+mod indexed_subscriber_relation;
 pub mod manager;
 pub mod models;
 pub mod notification;
@@ -26,6 +27,7 @@ pub use fanout::{
 };
 // Re-export from helpers
 pub use helpers::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+pub(crate) use indexed_subscriber_relation::IndexedSubscriberRelation;
 pub use kalamdb_commons::{
     models::{ConnectionId, LiveQueryId, TableId, UserId},
     NodeId,
@@ -37,7 +39,7 @@ pub use manager::{ConnectionsManager, LiveQueryManager};
 // Re-export from models (consolidated model definitions)
 pub use models::{
     BufferedNotification, ChangeNotification, ChangeType, ConnectionEvent, ConnectionRegistration,
-    ConnectionState, EventReceiver, EventSender, InitialLoadState, NotificationReceiver,
+    ConnectionState, EventReceiver, EventSender, InitialLoadState, LiveRoute, NotificationReceiver,
     NotificationSender, SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle,
     SubscriptionResult, SubscriptionState, EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };

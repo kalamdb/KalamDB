@@ -6,8 +6,10 @@
 
 use std::time::{Duration, Instant};
 
-use kalam_client::models::{ChangeEvent, ResponseStatus};
-use kalam_client::{KalamCellValue, SubscriptionManager};
+use kalam_client::{
+    models::{ChangeEvent, ResponseStatus},
+    KalamCellValue, SubscriptionManager,
+};
 use kalamdb_commons::{Role, TableId};
 use kalamdb_rls::AuthorizationCacheMetrics;
 use kalamdb_tables::SharedTableProvider;
@@ -306,7 +308,7 @@ async fn test_rls_membership_revoke_invalidates_authorization_cache() -> anyhow:
 
 #[tokio::test]
 #[ntest::timeout(90_000)]
-async fn test_rls_null_owner_hidden_under_not_policy() -> anyhow::Result<()> {
+async fn test_rls_rejects_unbounded_not_policy() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("rls_null");
@@ -314,29 +316,26 @@ async fn test_rls_null_owner_hidden_under_not_policy() -> anyhow::Result<()> {
     let full = format!("{ns}.{table}");
 
     ensure_user_exists(&server, "alice", USER_PASSWORD, &Role::User).await?;
-    let alice_auth = create_user_auth_header(&server, "alice", USER_PASSWORD, &Role::User).await?;
-
     for sql in [
         format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
         format!("CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT) WITH (TYPE='SHARED')"),
         format!("INSERT INTO {full} (id, owner_id) VALUES ('null-row', NULL), ('bob-row', 'bob')"),
-        format!(
-            "CREATE POLICY not_owner ON {full} FOR SELECT TO user USING (NOT (owner_id = \
-             CURRENT_USER))"
-        ),
     ] {
         let resp = server.execute_sql(&sql).await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success, "{sql}: {:?}", resp.error);
     }
 
-    let visible = server
-        .execute_sql_with_auth(&format!("SELECT id FROM {full} ORDER BY id"), &alice_auth)
+    let response = server
+        .execute_sql(&format!(
+            "CREATE POLICY not_owner ON {full} FOR SELECT TO user USING (NOT (owner_id = \
+             CURRENT_USER))"
+        ))
         .await?;
-    assert_query_success(&visible, "NOT policy select");
-    assert_eq!(
-        row_count(&visible),
-        1,
-        "NULL = CURRENT_USER is unknown, so NOT(...) must not leak the null-owner row"
+    anyhow::ensure!(response.status != ResponseStatus::Success);
+    let message = response.error.as_ref().map(|error| error.message.as_str()).unwrap_or_default();
+    anyhow::ensure!(
+        message.contains("indexed live routing"),
+        "complex policy rejection should explain the bounded routing requirement: {message}"
     );
 
     let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
@@ -475,11 +474,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
              '{conversation_id}')"
         );
         let resp = server.execute_sql(&member_sql).await?;
-        anyhow::ensure!(
-            resp.status == ResponseStatus::Success,
-            "{member_sql}: {:?}",
-            resp.error
-        );
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "{member_sql}: {:?}", resp.error);
         users.push((user, conversation_id));
     }
 
@@ -510,11 +505,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
             )
             .await?;
         assert_query_success(&visible, "membership select");
-        assert_eq!(
-            row_count(&visible),
-            1,
-            "{user} must see exactly their conversation row"
-        );
+        assert_eq!(row_count(&visible), 1, "{user} must see exactly their conversation row");
         let body = visible
             .rows_as_maps()
             .into_iter()
@@ -530,9 +521,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
     for (user, _) in &users {
         let client = server.link_client(user);
         let mut subscription = client
-            .live_events(&format!(
-                "SELECT id, conversation_id, body FROM {messages_full}"
-            ))
+            .live_events(&format!("SELECT id, conversation_id, body FROM {messages_full}"))
             .await
             .expect("membership live subscribe");
         drain_subscription_snapshot(&mut subscription, Duration::from_secs(5)).await?;
@@ -566,6 +555,116 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
         );
     }
 
+    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    Ok(())
+}
+
+/// Unrelated principal membership mutation must not leak rows to another live subscriber.
+/// Today membership generations are table-wide, so Alice fails closed rather than seeing Bob's
+/// data.
+#[tokio::test]
+#[ntest::timeout(120_000)]
+async fn test_rls_unrelated_membership_mutation_fails_closed_without_leak() -> anyhow::Result<()> {
+    let _guard = super::test_support::http_server::acquire_test_lock().await;
+    let server = super::test_support::http_server::get_global_server().await;
+    let ns = unique_namespace("rls_unrelated_mut");
+    let messages = unique_table("messages");
+    let members = unique_table("members");
+    let messages_full = format!("{ns}.{messages}");
+    let members_full = format!("{ns}.{members}");
+
+    for sql in [
+        format!("CREATE NAMESPACE IF NOT EXISTS {ns}"),
+        format!(
+            "CREATE TABLE {messages_full} (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                body TEXT NOT NULL
+            ) WITH (TYPE='SHARED')"
+        ),
+        format!(
+            "CREATE TABLE {members_full} (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL
+            ) WITH (TYPE='SHARED')"
+        ),
+    ] {
+        let resp = server.execute_sql(&sql).await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "{sql}: {:?}", resp.error);
+    }
+
+    let alice = format!("{ns}_alice");
+    let bob = format!("{ns}_bob");
+    ensure_user_exists(&server, &alice, USER_PASSWORD, &Role::User).await?;
+    ensure_user_exists(&server, &bob, USER_PASSWORD, &Role::User).await?;
+
+    for sql in [
+        format!(
+            "INSERT INTO {members_full} (id, user_id, conversation_id) VALUES ('m-alice', \
+             '{alice}', 'conv-alice'), ('m-bob', '{bob}', 'conv-bob')"
+        ),
+        format!(
+            "CREATE POLICY conversation_member_read ON {messages_full} FOR SELECT TO user USING \
+             (conversation_id IN (SELECT conversation_id FROM {members_full} WHERE user_id = \
+             CURRENT_USER))"
+        ),
+    ] {
+        let resp = server.execute_sql(&sql).await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "{sql}: {:?}", resp.error);
+    }
+
+    let alice_client = server.link_client(&alice);
+    let mut alice_sub = alice_client
+        .live_events(&format!("SELECT id, conversation_id, body FROM {messages_full}"))
+        .await
+        .expect("alice subscribe");
+    drain_subscription_snapshot(&mut alice_sub, Duration::from_secs(5)).await?;
+
+    // Prove the keyed route delivers Alice's conversation before any membership mutation.
+    let alice_insert = server
+        .execute_sql(&format!(
+            "INSERT INTO {messages_full} (id, conversation_id, body) VALUES ('pre', 'conv-alice', \
+             'alice-before-mutation')"
+        ))
+        .await?;
+    assert_query_success(&alice_insert, "alice pre-mutation insert");
+    assert!(
+        wait_for_insert_body(&mut alice_sub, "alice-before-mutation", Duration::from_secs(8))
+            .await?,
+        "alice must receive her conversation event before membership mutation"
+    );
+
+    // Mutate Bob only. Alice must not receive Bob's conversation traffic afterward.
+    let bob_revoke = server
+        .execute_sql(&format!("DELETE FROM {members_full} WHERE id = 'm-bob'"))
+        .await?;
+    assert_query_success(&bob_revoke, "revoke bob membership");
+
+    let bob_insert = server
+        .execute_sql(&format!(
+            "INSERT INTO {messages_full} (id, conversation_id, body) VALUES ('bob-secret', \
+             'conv-bob', 'bob-after-mutation')"
+        ))
+        .await?;
+    assert_query_success(&bob_insert, "bob conversation insert after mutation");
+    assert!(
+        !wait_for_insert_body(&mut alice_sub, "bob-after-mutation", Duration::from_secs(2)).await?,
+        "alice must not leak bob conversation rows after unrelated membership mutation"
+    );
+
+    let alice_after = server
+        .execute_sql(&format!(
+            "INSERT INTO {messages_full} (id, conversation_id, body) VALUES ('post', \
+             'conv-alice', 'alice-after-mutation')"
+        ))
+        .await?;
+    assert_query_success(&alice_after, "alice post-mutation insert");
+    // Fail-closed is acceptable today (table-wide membership generation). Leaking Bob's row is not.
+    let _ = wait_for_insert_body(&mut alice_sub, "alice-after-mutation", Duration::from_secs(2))
+        .await?;
+
+    let _clients = alice_client;
     let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
@@ -614,6 +713,5 @@ async fn wait_for_insert_body(
 }
 
 fn cell_contains(value: &KalamCellValue, needle: &str) -> bool {
-    value.as_text().is_some_and(|text| text.contains(needle))
-        || format!("{value}").contains(needle)
+    value.as_text().is_some_and(|text| text.contains(needle)) || format!("{value}").contains(needle)
 }

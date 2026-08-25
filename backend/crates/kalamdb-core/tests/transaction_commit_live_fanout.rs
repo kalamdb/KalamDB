@@ -9,7 +9,8 @@ use kalamdb_commons::{
 };
 use kalamdb_core::transactions::{ExecutionOwnerKey, StagedMutation};
 use kalamdb_live::models::{
-    NotificationSender, SubscriptionFlowControl, SubscriptionHandle, SubscriptionRuntimeMetadata,
+    LiveRoute, NotificationSender, SubscriptionFlowControl, SubscriptionHandle,
+    SubscriptionRuntimeMetadata,
 };
 use support::{create_cluster_app_context, create_shared_table, row, unique_namespace};
 use tokio::sync::mpsc;
@@ -20,12 +21,12 @@ fn make_shared_handle(
     flow_control: Arc<SubscriptionFlowControl>,
 ) -> SubscriptionHandle {
     SubscriptionHandle {
-        subscription_id: Arc::from(subscription_id),
-        filter_expr: None,
-        authorization: None,
-        projections: None,
-        notification_tx: tx,
-        flow_control: Some(flow_control),
+        subscription_id:  Arc::from(subscription_id),
+        filter_expr:      None,
+        authorization:    None,
+        projections:      None,
+        notification_tx:  tx,
+        flow_control:     Some(flow_control),
         runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.items",
             None,
@@ -68,9 +69,9 @@ async fn explicit_commit_releases_live_notification_after_commit() {
     let flow_control = Arc::new(SubscriptionFlowControl::new());
     flow_control.mark_initial_complete();
     registry.index_shared_subscription(
-        &connection_id,
         live_id,
         table_id.clone(),
+        &LiveRoute::Broadcast,
         make_shared_handle("sub-live-commit", tx, flow_control),
     );
 
@@ -126,9 +127,9 @@ async fn explicit_rollback_emits_no_live_notification() {
     let flow_control = Arc::new(SubscriptionFlowControl::new());
     flow_control.mark_initial_complete();
     registry.index_shared_subscription(
-        &connection_id,
         live_id,
         table_id.clone(),
+        &LiveRoute::Broadcast,
         make_shared_handle("sub-live-rollback", tx, flow_control),
     );
 
