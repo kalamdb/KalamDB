@@ -567,7 +567,8 @@ async fn test_user_writes_queries_flush_jobs_and_live_subscription_overlap_clean
 
             let jobs_resp = server
                 .execute_sql(&format!(
-                    "SELECT COUNT(*) AS cnt FROM system.jobs WHERE job_type = 'flush' AND parameters LIKE '%{}%' AND parameters LIKE '%{}%'",
+                    "SELECT COUNT(*) AS cnt FROM system.jobs WHERE job_type = 'flush' AND \
+                     parameters LIKE '%{}%' AND parameters LIKE '%{}%'",
                     ns_clone, table_clone
                 ))
                 .await?;
@@ -772,7 +773,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "INSERT INTO {}.{} (id, data) VALUES (1, 'batch_1'), (2, 'batch_2'), (3, 'batch_3'), (4, 'batch_4')",
+                "INSERT INTO {}.{} (id, data) VALUES (1, 'batch_1'), (2, 'batch_2'), (3, \
+                 'batch_3'), (4, 'batch_4')",
                 ns, table
             ),
         )
@@ -780,7 +782,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "INSERT INTO {}.{} (id, data) VALUES (5, 'batch_5'), (6, 'batch_6'), (7, 'batch_7'), (8, 'batch_8')",
+                "INSERT INTO {}.{} (id, data) VALUES (5, 'batch_5'), (6, 'batch_6'), (7, \
+                 'batch_7'), (8, 'batch_8')",
                 ns, table
             ),
         )
@@ -788,7 +791,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "INSERT INTO {}.{} (id, data) VALUES (9, 'batch_9'), (10, 'batch_10'), (11, 'batch_11'), (12, 'batch_12')",
+                "INSERT INTO {}.{} (id, data) VALUES (9, 'batch_9'), (10, 'batch_10'), (11, \
+                 'batch_11'), (12, 'batch_12')",
                 ns, table
             ),
         )
@@ -809,8 +813,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "INSERT INTO {}.{} (id, data) VALUES \
-                 (1, 'seed_1'), (2, 'seed_2'), (3, 'seed_3'), (4, 'seed_4'), (5, 'seed_5'), (6, 'seed_6')",
+                "INSERT INTO {}.{} (id, data) VALUES (1, 'seed_1'), (2, 'seed_2'), (3, 'seed_3'), \
+                 (4, 'seed_4'), (5, 'seed_5'), (6, 'seed_6')",
                 ns, table
             ),
         )
@@ -855,10 +859,9 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "BEGIN; \
-                 INSERT INTO {}.{} (id, data) VALUES (10, 'tx_10'), (11, 'tx_11'), (12, 'tx_12'); \
-                 INSERT INTO {}.{} (id, data) VALUES (13, 'tx_13'), (14, 'tx_14'), (15, 'tx_15'); \
-                 COMMIT;",
+                "BEGIN; INSERT INTO {}.{} (id, data) VALUES (10, 'tx_10'), (11, 'tx_11'), (12, \
+                 'tx_12'); INSERT INTO {}.{} (id, data) VALUES (13, 'tx_13'), (14, 'tx_14'), (15, \
+                 'tx_15'); COMMIT;",
                 ns, table, ns, table
             ),
         )
@@ -879,7 +882,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "INSERT INTO {}.{} (id, data) VALUES (1, 'base_1'), (2, 'base_2'), (3, 'base_3'), (4, 'base_4')",
+                "INSERT INTO {}.{} (id, data) VALUES (1, 'base_1'), (2, 'base_2'), (3, 'base_3'), \
+                 (4, 'base_4')",
                 ns, table
             ),
         )
@@ -887,10 +891,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "BEGIN; \
-                 UPDATE {}.{} SET data = 'tx_updated_2' WHERE id = 2; \
-                 DELETE FROM {}.{} WHERE id = 3; \
-                 INSERT INTO {}.{} (id, data) VALUES (5, 'tx_5'), (6, 'tx_6'); \
+                "BEGIN; UPDATE {}.{} SET data = 'tx_updated_2' WHERE id = 2; DELETE FROM {}.{} \
+                 WHERE id = 3; INSERT INTO {}.{} (id, data) VALUES (5, 'tx_5'), (6, 'tx_6'); \
                  COMMIT;",
                 ns, table, ns, table, ns, table
             ),
@@ -918,9 +920,8 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "BEGIN; \
-                 INSERT INTO {}.{} (id, data) VALUES (1, 'phase1_1'), (2, 'phase1_2'), (3, 'phase1_3'), (4, 'phase1_4'); \
-                 COMMIT;",
+                "BEGIN; INSERT INTO {}.{} (id, data) VALUES (1, 'phase1_1'), (2, 'phase1_2'), (3, \
+                 'phase1_3'), (4, 'phase1_4'); COMMIT;",
                 ns, table
             ),
         )
@@ -944,11 +945,9 @@ async fn test_flush_batch_and_transaction_variations_preserve_exact_rows_over_ht
         execute_root_success(
             server,
             &format!(
-                "BEGIN; \
-                 INSERT INTO {}.{} (id, data) VALUES (7, 'phase3_7'), (8, 'phase3_8'); \
-                 UPDATE {}.{} SET data = 'phase3_updated_6' WHERE id = 6; \
-                 DELETE FROM {}.{} WHERE id = 1; \
-                 COMMIT;",
+                "BEGIN; INSERT INTO {}.{} (id, data) VALUES (7, 'phase3_7'), (8, 'phase3_8'); \
+                 UPDATE {}.{} SET data = 'phase3_updated_6' WHERE id = 6; DELETE FROM {}.{} WHERE \
+                 id = 1; COMMIT;",
                 ns, table, ns, table, ns, table
             ),
         )
@@ -1031,9 +1030,7 @@ async fn test_flush_realtime_soak_preserves_all_rows_and_updates_over_http() -> 
             execute_root_success(
                 server,
                 &format!(
-                    "BEGIN; \
-                     INSERT INTO {}.{} (id, data) VALUES {}; \
-                     COMMIT;",
+                    "BEGIN; INSERT INTO {}.{} (id, data) VALUES {}; COMMIT;",
                     ns_clone, table_clone, values
                 ),
             )

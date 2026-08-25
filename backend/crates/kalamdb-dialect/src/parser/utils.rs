@@ -10,9 +10,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::{
     ast::{
-        BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
-        FunctionArguments, Ident, ObjectName, ObjectNamePart, SelectItem, SetExpr, Statement,
-        TableFactor, TableObject, UnaryOperator, Value, VisitMut, VisitorMut,
+        BinaryOperator, CastKind, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
+        FunctionArgumentList, FunctionArguments, Ident, ObjectName, ObjectNamePart, Select,
+        SelectItem, SetExpr, Statement, TableFactor, TableObject, UnaryOperator, Value, VisitMut,
+        VisitorMut,
     },
     dialect::Dialect,
     parser::{Parser, ParserError, ParserOptions},
@@ -199,7 +200,7 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
 #[inline]
 fn needs_ast_operator_rewrite(sql: &str) -> bool {
     // Cheap scan; false positives only cause an unnecessary but correct re-parse.
-    sql.contains("->") || sql.contains('?') || sql.contains('~')
+    sql.contains("->") || sql.contains('?') || sql.contains('~') || sql.contains("::")
 }
 
 fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
@@ -214,6 +215,9 @@ fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
 
     let mut pg_visitor = PgWireCompatRewriter;
     let _ = statements.visit(&mut pg_visitor);
+
+    let mut text_cast_visitor = RedundantPgTextCastRewriter;
+    let _ = statements.visit(&mut text_cast_visitor);
 
     let mut typrelid_visitor = DbeaverTyprelidRewriter;
     let _ = statements.visit(&mut typrelid_visitor);
@@ -279,6 +283,53 @@ fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
         over: None,
         within_group: vec![],
     })
+}
+
+/// Strip `column::text` casts in SELECT projections.
+///
+/// PostgreSQL clients often cast catalog text columns to `text` for wire encoding.
+/// DataFusion already stores these columns as UTF-8, and keeping the cast causes
+/// duplicate projection names when the same column appears in ORDER BY.
+struct RedundantPgTextCastRewriter;
+
+impl VisitorMut for RedundantPgTextCastRewriter {
+    type Break = ();
+
+    fn post_visit_select(&mut self, select: &mut Select) -> ControlFlow<Self::Break> {
+        for item in &mut select.projection {
+            let SelectItem::UnnamedExpr(expr) = item else {
+                continue;
+            };
+            if let Some(unwrapped) = unwrap_redundant_pg_text_cast(expr) {
+                *expr = unwrapped;
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn unwrap_redundant_pg_text_cast(expr: &Expr) -> Option<Expr> {
+    let Expr::Cast { kind, expr: inner, data_type, array: false, format: None, .. } = expr else {
+        return None;
+    };
+    if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) {
+        return None;
+    }
+    if !is_pg_text_cast_type(data_type) {
+        return None;
+    }
+    is_column_reference(inner).then(|| (**inner).clone())
+}
+
+fn is_pg_text_cast_type(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Character(_)
+    )
+}
+
+fn is_column_reference(expr: &Expr) -> bool {
+    matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
 }
 
 struct PgWireCompatRewriter;
@@ -1118,6 +1169,17 @@ mod tests {
         assert_eq!(
             rewritten,
             "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = $1 ORDER BY datname"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_pg_database_text_cast_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false ORDER BY datname"
         );
     }
 

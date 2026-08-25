@@ -335,9 +335,14 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
         .unwrap();
     let broad_text = format!("{broad_explain:?}");
     assert!(
-        broad_text.contains("HashJoinExec")
-            && (broad_text.contains("RightSemi") || broad_text.contains("LeftSemi")),
-        "EXPLAIN must show a DataFusion semi-join for broad membership, got {broad_text}"
+        broad_text.contains("strategy=CachedAuthorizationSet"),
+        "EXPLAIN must show the cached authorization-set strategy for broad membership scans, \
+         got {broad_text}"
+    );
+    assert!(
+        !broad_text.contains("HashJoinExec"),
+        "broad membership scans must not rely on a duplicate DataFusion semi-join, got \
+         {broad_text}"
     );
 
     let metrics_after_build = messages_provider.authorization_cache_metrics();
@@ -921,4 +926,377 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
         .await
         .unwrap();
     assert!(rebound.authorizes(&alice_row));
+}
+
+#[tokio::test]
+async fn null_owner_rows_stay_hidden_under_not_owner_policy() {
+    let app_context = test_app_context_simple();
+    let mut definition = shared_table("documents_null_owner");
+    app_context
+        .system_columns_service()
+        .add_system_columns(&mut definition)
+        .unwrap();
+    app_context.schema_registry().register_table(definition).unwrap();
+    let table_id = TableId::from_strings("chat", "documents_null_owner");
+    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
+    let provider = (provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    provider
+        .insert_rows(
+            &UserId::new("system"),
+            vec![
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("doc-null".to_string()))),
+                    ("owner_id".to_string(), ScalarValue::Utf8(None)),
+                ]),
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("doc-bob".to_string()))),
+                    ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
+                ]),
+            ],
+        )
+        .await
+        .unwrap();
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY not_owner_read ON chat.documents_null_owner FOR SELECT TO user \
+                 USING (NOT (owner_id = CURRENT_USER))",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
+        .await
+        .unwrap();
+
+    let visible = app_execution_context(&app_context, "alice", Role::User)
+        .create_session_with_user()
+        .sql("SELECT id FROM chat.documents_null_owner ORDER BY id")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(
+        row_count(&visible),
+        1,
+        "bob's row is visible via NOT(false), but NULL stays hidden because NOT(unknown) is unknown"
+    );
+}
+
+#[tokio::test]
+async fn membership_policy_hides_rows_with_null_join_key() {
+    let app_context = test_app_context_simple();
+    let mut messages = TableDefinition::new(
+        NamespaceId::new("chat"),
+        TableName::new("null_key_messages"),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+            ColumnDefinition::simple(2, "group_id", 2, KalamDataType::Text),
+        ],
+        TableOptions::shared(),
+        None,
+    )
+    .unwrap();
+    let mut members = TableDefinition::new(
+        NamespaceId::new("chat"),
+        TableName::new("null_key_members"),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+            ColumnDefinition::simple(2, "user_id", 2, KalamDataType::Text),
+            ColumnDefinition::simple(3, "group_id", 3, KalamDataType::Text),
+            ColumnDefinition::simple(4, "status", 4, KalamDataType::Text),
+        ],
+        TableOptions::shared(),
+        None,
+    )
+    .unwrap();
+    app_context.system_columns_service().add_system_columns(&mut messages).unwrap();
+    app_context.system_columns_service().add_system_columns(&mut members).unwrap();
+    app_context.schema_registry().register_table(messages).unwrap();
+    app_context.schema_registry().register_table(members).unwrap();
+
+    let messages_id = TableId::from_strings("chat", "null_key_messages");
+    let members_id = TableId::from_strings("chat", "null_key_members");
+    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
+    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
+    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    let system = UserId::new("system");
+    members_provider
+        .insert_rows(
+            &system,
+            vec![
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("m-null".to_string()))),
+                    ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+                    ("group_id".to_string(), ScalarValue::Utf8(None)),
+                    ("status".to_string(), ScalarValue::Utf8(Some("active".to_string()))),
+                ]),
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("m-ok".to_string()))),
+                    ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+                    ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
+                    ("status".to_string(), ScalarValue::Utf8(Some("active".to_string()))),
+                ]),
+            ],
+        )
+        .await
+        .unwrap();
+    messages_provider
+        .insert_rows(
+            &system,
+            vec![
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("msg-null".to_string()))),
+                    ("group_id".to_string(), ScalarValue::Utf8(None)),
+                ]),
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("msg-ok".to_string()))),
+                    ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
+                ]),
+            ],
+        )
+        .await
+        .unwrap();
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY member_read ON chat.null_key_messages FOR SELECT TO user USING \
+                 (group_id IN (SELECT group_id FROM chat.null_key_members WHERE user_id = \
+                 CURRENT_USER AND status <> 'blocked'))",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
+        .await
+        .unwrap();
+
+    let visible = app_execution_context(&app_context, "alice", Role::User)
+        .create_session_with_user()
+        .sql("SELECT id FROM chat.null_key_messages ORDER BY id")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(row_count(&visible), 1);
+}
+
+#[tokio::test]
+async fn union_cannot_bypass_row_local_rls() {
+    let app_context = test_app_context_simple();
+    let mut definition = shared_table("documents_union");
+    app_context
+        .system_columns_service()
+        .add_system_columns(&mut definition)
+        .unwrap();
+    app_context.schema_registry().register_table(definition).unwrap();
+    let table_id = TableId::from_strings("chat", "documents_union");
+    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
+    let provider = (provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    provider
+        .insert_rows(
+            &UserId::new("system"),
+            vec![
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
+                    ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+                ]),
+                Row::from_vec(vec![
+                    ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
+                    ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
+                ]),
+            ],
+        )
+        .await
+        .unwrap();
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY owner_read ON chat.documents_union FOR SELECT TO user USING \
+                 (owner_id = CURRENT_USER)",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
+        .await
+        .unwrap();
+
+    let visible = app_execution_context(&app_context, "alice", Role::User)
+        .create_session_with_user()
+        .sql(
+            "SELECT id FROM chat.documents_union WHERE owner_id = 'bob' \
+             UNION SELECT id FROM chat.documents_union",
+        )
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(row_count(&visible), 1);
+}
+
+#[tokio::test]
+async fn live_authorization_fails_closed_when_membership_is_revoked() {
+    let app_context = test_app_context_simple();
+    let mut messages = TableDefinition::new(
+        NamespaceId::new("chat"),
+        TableName::new("live_membership_messages"),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+            ColumnDefinition::simple(2, "group_id", 2, KalamDataType::Text),
+        ],
+        TableOptions::shared(),
+        None,
+    )
+    .unwrap();
+    let mut members = TableDefinition::new(
+        NamespaceId::new("chat"),
+        TableName::new("live_membership_members"),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+            ColumnDefinition::simple(2, "user_id", 2, KalamDataType::Text),
+            ColumnDefinition::simple(3, "group_id", 3, KalamDataType::Text),
+        ],
+        TableOptions::shared(),
+        None,
+    )
+    .unwrap();
+    app_context.system_columns_service().add_system_columns(&mut messages).unwrap();
+    app_context.system_columns_service().add_system_columns(&mut members).unwrap();
+    app_context.schema_registry().register_table(messages).unwrap();
+    app_context.schema_registry().register_table(members).unwrap();
+
+    let messages_id = TableId::from_strings("chat", "live_membership_messages");
+    let members_id = TableId::from_strings("chat", "live_membership_members");
+    let messages_provider = app_context.schema_registry().get_provider(&messages_id).unwrap();
+    let messages_provider = (messages_provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    let members_provider = app_context.schema_registry().get_provider(&members_id).unwrap();
+    let members_provider = (members_provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    let system = UserId::new("system");
+    members_provider
+        .insert_rows(
+            &system,
+            vec![Row::from_vec(vec![
+                ("id".to_string(), ScalarValue::Utf8(Some("membership-1".to_string()))),
+                ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+                ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
+            ])],
+        )
+        .await
+        .unwrap();
+    let message_row = Row::from_vec(vec![
+        ("id".to_string(), ScalarValue::Utf8(Some("message-1".to_string()))),
+        ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
+    ]);
+    messages_provider
+        .insert_rows(&system, vec![message_row.clone()])
+        .await
+        .unwrap();
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY member_read ON chat.live_membership_messages FOR SELECT TO user \
+                 USING (group_id IN (SELECT group_id FROM chat.live_membership_members WHERE \
+                 user_id = CURRENT_USER))",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
+        .await
+        .unwrap();
+
+    let bound = messages_provider
+        .bind_live_authorization(&UserId::new("alice"), Role::User)
+        .await
+        .unwrap();
+    assert!(bound.authorizes(&message_row));
+
+    members_provider
+        .delete_row_by_pk(&system, "membership-1")
+        .await
+        .unwrap();
+
+    assert!(
+        !bound.authorizes(&message_row),
+        "membership revocation must fail closed for already-bound live subscriptions"
+    );
+}
+
+#[tokio::test]
+async fn service_role_does_not_inherit_user_targeted_policies() {
+    let app_context = test_app_context_simple();
+    let mut definition = shared_table("documents_service_role");
+    app_context
+        .system_columns_service()
+        .add_system_columns(&mut definition)
+        .unwrap();
+    app_context.schema_registry().register_table(definition).unwrap();
+    let table_id = TableId::from_strings("chat", "documents_service_role");
+    let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
+    let provider = (provider.as_ref() as &dyn std::any::Any)
+        .downcast_ref::<SharedTableProvider>()
+        .unwrap();
+    provider
+        .insert_rows(
+            &UserId::new("system"),
+            vec![Row::from_vec(vec![
+                ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
+                ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
+            ])],
+        )
+        .await
+        .unwrap();
+
+    CreatePolicyHandler::new(app_context.clone())
+        .execute(
+            CreatePolicyStatement::parse(
+                "CREATE POLICY owner_read ON chat.documents_service_role FOR SELECT TO user USING \
+                 (owner_id = CURRENT_USER)",
+                &NamespaceId::new("chat"),
+            )
+            .unwrap(),
+            Vec::new(),
+            &app_execution_context(&app_context, "admin", Role::Dba),
+        )
+        .await
+        .unwrap();
+
+    let visible = app_execution_context(&app_context, "svc", Role::Service)
+        .create_session_with_user()
+        .sql("SELECT id FROM chat.documents_service_role")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(row_count(&visible), 0);
 }

@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 /// Marks a membership table as unstable while a logical mutation is visible.
-pub(crate) struct AuthorizationMutationGuard {
-    generation: Arc<AtomicU64>,
+pub struct AuthorizationMutationGuard {
+    generation:       Arc<AtomicU64>,
     active_mutations: Arc<AtomicU64>,
 }
 

@@ -1,8 +1,7 @@
 use anyhow::Result;
+use kalamdb_commons::Role;
 use reqwest::StatusCode;
 use serial_test::serial;
-
-use kalamdb_commons::Role;
 
 use super::test_oidc_auto_provision::{
     post_sql_raw, with_configured_oidc_server, TestOidcProvider, TEST_OIDC_CLIENT_ID,

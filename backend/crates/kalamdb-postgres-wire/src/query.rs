@@ -79,11 +79,12 @@ impl KalamQueryHandler {
         self.sql_executor.execute(state, sql).await
     }
 
-    async fn execute_cached(
+    async fn execute_cached_with_format(
         &self,
         state: &WireConnectionState,
         cached: &WireCachedStatement,
         params: Vec<kalamdb_core::sql::ScalarValue>,
+        column_format: &pgwire::api::portal::Format,
     ) -> PgWireResult<Vec<Response>> {
         if let Some(control) = classify_transaction_control(cached.metadata.sql.as_str()) {
             let outcome = execute_transaction_control(
@@ -106,7 +107,9 @@ impl KalamQueryHandler {
             }]);
         }
 
-        self.sql_executor.execute_metadata(state, &cached.metadata, params).await
+        self.sql_executor
+            .execute_metadata(state, &cached.metadata, params, Some(column_format))
+            .await
     }
 }
 
@@ -155,7 +158,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
         state
             .put_prepared_statement(WirePreparedStatement {
                 name: stmt.id.clone(),
-                sql: message.query,
+                sql:  message.query,
             })
             .map_err(limit_error_to_pg)?;
         client.portal_store().put_statement(Arc::new(stmt));
@@ -186,7 +189,7 @@ impl ExtendedQueryHandler for KalamQueryHandler {
         let portal = Portal::try_new(&message, statement)?;
         state
             .put_portal(WirePortal {
-                name: portal.name.clone(),
+                name:           portal.name.clone(),
                 statement_name: statement_name.to_string(),
             })
             .map_err(limit_error_to_pg)?;
@@ -257,10 +260,17 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             .session_extensions()
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
-        let params =
-            portal_parameters_to_scalar_values(portal, &portal.statement.statement.parameter_types)?;
+        let params = portal_parameters_to_scalar_values(
+            portal,
+            &portal.statement.statement.parameter_types,
+        )?;
         let mut responses = self
-            .execute_cached(&state, &portal.statement.statement, params)
+            .execute_cached_with_format(
+                &state,
+                &portal.statement.statement,
+                params,
+                &portal.result_column_format,
+            )
             .await?;
         Ok(responses.remove(0))
     }

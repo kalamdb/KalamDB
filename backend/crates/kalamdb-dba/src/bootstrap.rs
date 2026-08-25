@@ -4,7 +4,7 @@ use kalamdb_commons::{
     models::{NamespaceId, TableId, TableName},
     PolicyCommand, PolicyId, PolicyTarget, TablePolicy,
 };
-use kalamdb_core::{app_context::AppContext, error::KalamDbError, rls::PolicyCompiler};
+use kalamdb_core::{app_context::AppContext, error::KalamDbError, rls::{PolicyCompiler, SchemaPolicyTableResolver}};
 use kalamdb_system::Namespace;
 
 use crate::{
@@ -77,7 +77,7 @@ pub async fn ensure_dba_notification_policies(app_context: Arc<AppContext>) -> R
     let table = app_context.schema_registry().get_table_if_exists(&table_id)?.ok_or_else(|| {
         KalamDbError::InvalidOperation("dba.notifications was not bootstrapped".to_string())
     })?;
-    let program = PolicyCompiler::new(app_context.schema_registry())
+    let program = PolicyCompiler::new(SchemaPolicyTableResolver::new(app_context.schema_registry()))
         .compile(&table, "true")
         .map_err(KalamDbError::InvalidOperation)?;
     let policy_id = PolicyId::new(table_id.clone(), "dba_notifications_select")

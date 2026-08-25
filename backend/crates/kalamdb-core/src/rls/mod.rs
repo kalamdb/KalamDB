@@ -1,6 +1,4 @@
-mod policy_compiler;
+//! Re-exports compile-time RLS APIs from [`kalamdb_rls`].
+pub use kalamdb_rls::{PolicyCompiler, PolicyTableResolver};
 
-pub use policy_compiler::{PolicyCompiler, PolicyTableResolver};
-
-#[cfg(test)]
-mod policy_compiler_tests;
+pub use crate::schema_registry::SchemaPolicyTableResolver;

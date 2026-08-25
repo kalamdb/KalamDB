@@ -165,7 +165,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     let expected_count: i64 = resp.get_i64("cnt").unwrap_or(0);
     assert!(
         expected_count > total_count,
-        "service ingest row should increase fleet count: before={total_count} after={expected_count}"
+        "service ingest row should increase fleet count: before={total_count} \
+         after={expected_count}"
     );
 
     // =========================================================

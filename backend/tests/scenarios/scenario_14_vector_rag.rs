@@ -132,7 +132,8 @@ async fn wait_for_vector_query_contains(
 
         if Instant::now() >= deadline {
             anyhow::bail!(
-                "Timed out waiting for vector query to include {:?}; last_ids={:?}; last_error={:?}",
+                "Timed out waiting for vector query to include {:?}; last_ids={:?}; \
+                 last_error={:?}",
                 expected_ids,
                 last_ids,
                 last_error
@@ -388,8 +389,7 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
     let doc_ids = wait_for_vector_query_contains(
         &user_client,
         &format!(
-            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
-             LIMIT 2",
+            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') LIMIT 2",
             ns, vectors_table
         ),
         &[1],
@@ -463,8 +463,7 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
     let mixed_ids = wait_for_vector_query_contains(
         &user_client,
         &format!(
-            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') \
-             LIMIT 3",
+            "SELECT id FROM {}.{} ORDER BY COSINE_DISTANCE(doc_embedding, '[1.0,0.0,0.0]') LIMIT 3",
             ns, vectors_table
         ),
         &[1, 4],

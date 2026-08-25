@@ -78,7 +78,8 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Insert hot_data {}", i);
     }
@@ -93,7 +94,8 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Insert cold_data {}", i);
     }
@@ -185,7 +187,8 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
                 &format!("INSERT INTO {}.constrained (id, data) VALUES ({}, 'data_{}')", ns, i, i),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Insert row {}", i);
     }
@@ -276,7 +279,8 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         if !resp.success() {
             eprintln!("DEBUG: User1 insert {} FAILED: {:?}", i, resp.error);
@@ -293,7 +297,8 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "User2 insert {}", i);
     }
@@ -301,10 +306,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
     // Insert SHARED data before catalog SELECT policy.
     let shared_inserts: Vec<String> = (1..=10)
         .map(|i| {
-            format!(
-                "INSERT INTO {}.shared_table (id, config) VALUES ({}, 'config_{}')",
-                ns, i, i
-            )
+            format!("INSERT INTO {}.shared_table (id, config) VALUES ({}, 'config_{}')", ns, i, i)
         })
         .collect();
     let shared_insert_refs: Vec<&str> = shared_inserts.iter().map(String::as_str).collect();
@@ -320,7 +322,8 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Insert stream event {}", i);
     }
@@ -361,7 +364,8 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
             &format!("SELECT COUNT(*) as cnt FROM {}.shared_table", ns),
             None,
             None,
-            None)
+            None,
+        )
         .await?;
     let shared_count = resp
         .rows_as_maps()

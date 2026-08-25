@@ -16,24 +16,24 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = kalamdb_system::User {
-        user_id: user_id.clone(),
-        password_hash: "hashed".to_string(),
-        role: Role::System,
-        name: None,
-        email: Some(format!("{}@kalamdb.local", username)),
-        auth_type: AuthType::Password,
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: None,
+        user_id:               user_id.clone(),
+        password_hash:         "hashed".to_string(),
+        role:                  Role::System,
+        name:                  None,
+        email:                 Some(format!("{}@kalamdb.local", username)),
+        auth_type:             AuthType::Password,
+        auth_data:             None,
+        storage_mode:          StorageMode::Table,
+        storage_id:            None,
         failed_login_attempts: 0,
-        locked_until: None,
-        last_login_at: None,
-        created_at: now,
-        updated_at: now,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        invited_by: None,
+        locked_until:          None,
+        last_login_at:         None,
+        created_at:            now,
+        updated_at:            now,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        invited_by:            None,
     };
 
     // Ignore error if user already exists (shared DB in tests)
@@ -169,10 +169,7 @@ async fn test_audit_log_for_table_access_change() {
     // test or update TestServer to support shared tables.
     // For now, let's try to proceed and see if unique name helps (unlikely if it's a CF issue).
 
-    let sql = format!(
-        "CREATE SHARED TABLE {} (id INT, value TEXT)",
-        table_name
-    );
+    let sql = format!("CREATE SHARED TABLE {} (id INT, value TEXT)", table_name);
     let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
 
     if resp.status != ResponseStatus::Success {
@@ -181,9 +178,8 @@ async fn test_audit_log_for_table_access_change() {
     }
 
     let policy_name = format!("events_select_{}", chrono::Utc::now().timestamp_millis());
-    let sql = format!(
-        "CREATE POLICY {policy_name} ON {table_name} FOR SELECT TO PUBLIC USING (true)"
-    );
+    let sql =
+        format!("CREATE POLICY {policy_name} ON {table_name} FOR SELECT TO PUBLIC USING (true)");
     let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
     assert_eq!(resp.status, ResponseStatus::Success, "CREATE POLICY failed: {:?}", resp.error);
 

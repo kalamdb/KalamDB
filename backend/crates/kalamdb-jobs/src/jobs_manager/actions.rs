@@ -244,8 +244,8 @@ impl JobsManager {
         // Use Raft command to cancel job
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CancelJob {
-            job_id: job_id.clone(),
-            reason: "Cancelled by user".to_string(),
+            job_id:       job_id.clone(),
+            reason:       "Cancelled by user".to_string(),
             cancelled_at: Utc::now(),
         };
 
@@ -286,8 +286,10 @@ impl JobsManager {
         // Use Raft command to complete job
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
-            job_id: job_id.clone(),
-            result: Some(serde_json::json!({ "message": success_message.clone() }).to_string()),
+            job_id:       job_id.clone(),
+            result:       Some(
+                serde_json::json!({ "message": success_message.clone() }).to_string(),
+            ),
             completed_at: Utc::now(),
         };
 
@@ -319,9 +321,9 @@ impl JobsManager {
         // Use Raft command to fail job
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::FailJob {
-            job_id: job_id.clone(),
+            job_id:        job_id.clone(),
             error_message: error_message.clone(),
-            failed_at: Utc::now(),
+            failed_at:     Utc::now(),
         };
 
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {

@@ -360,8 +360,8 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let resp = service_client
         .execute_query(
             &format!(
-                "EXECUTE AS USER '{}' (INSERT INTO {}.messages (id, role_id, content) VALUES \
-                 (2, 'assistant', 'AI Response'))",
+                "EXECUTE AS USER '{}' (INSERT INTO {}.messages (id, role_id, content) VALUES (2, \
+                 'assistant', 'AI Response'))",
                 u1_name, ns
             ),
             None,

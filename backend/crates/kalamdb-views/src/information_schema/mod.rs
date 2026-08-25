@@ -20,6 +20,7 @@ pub mod columns;
 pub(crate) mod extend;
 pub mod parameters;
 pub mod tables;
+pub mod triggers;
 pub mod views;
 
 /// `information_schema` provider that delegates to DataFusion for standard tables
@@ -31,6 +32,7 @@ pub struct KalamInformationSchemaProvider {
     tables:     Arc<ExtendedInformationSchemaTablesProvider>,
     parameters: Arc<dyn TableProvider>,
     views:      Arc<dyn TableProvider>,
+    triggers:   Arc<dyn TableProvider>,
 }
 
 impl KalamInformationSchemaProvider {
@@ -49,6 +51,7 @@ impl KalamInformationSchemaProvider {
             parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(Arc::clone(
                 &catalog_list))),
             views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
+            triggers:   triggers::empty_triggers_provider(),
         }
     }
 }
@@ -57,7 +60,7 @@ impl KalamInformationSchemaProvider {
 impl SchemaProvider for KalamInformationSchemaProvider {
     fn table_names(&self) -> Vec<String> {
         let mut names = self.inner.table_names();
-        for name in ["columns", "parameters", "tables", "views"] {
+        for name in ["columns", "parameters", "tables", "views", "triggers"] {
             if names.iter().all(|existing| !existing.eq_ignore_ascii_case(name)) {
                 names.push(name.to_string());
             }
@@ -70,6 +73,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
             || name.eq_ignore_ascii_case("parameters")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
+            || name.eq_ignore_ascii_case("triggers")
         {
             return true;
         }
@@ -89,6 +93,9 @@ impl SchemaProvider for KalamInformationSchemaProvider {
         if name.eq_ignore_ascii_case("views") {
             return Ok(Some(Arc::clone(&self.views)));
         }
+        if name.eq_ignore_ascii_case("triggers") {
+            return Ok(Some(Arc::clone(&self.triggers)));
+        }
         self.inner.table(name).await
     }
 
@@ -97,6 +104,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
             || name.eq_ignore_ascii_case("parameters")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
+            || name.eq_ignore_ascii_case("triggers")
         {
             return Ok(Some(TableType::View));
         }

@@ -48,8 +48,8 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
         let resp = server
             .execute_sql(&format!(
-                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, event_type TEXT, ts INT) WITH (TYPE \
-                     = 'USER', STORAGE_ID = 'local')",
+                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, event_type TEXT, ts INT) WITH (TYPE = \
+                 'USER', STORAGE_ID = 'local')",
                 ns, table
             ))
             .await?;
@@ -134,8 +134,8 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
         let resp = server
             .execute_sql(&format!(
-                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, metric_name TEXT, value DOUBLE) \
-                     WITH (TYPE = 'USER', STORAGE_ID = 'local')",
+                "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, metric_name TEXT, value DOUBLE) WITH \
+                 (TYPE = 'USER', STORAGE_ID = 'local')",
                 ns, table
             ))
             .await?;

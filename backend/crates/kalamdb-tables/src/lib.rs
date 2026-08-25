@@ -52,7 +52,7 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};
-pub use rls::BoundLiveAuthorization;
+pub use kalamdb_rls::BoundLiveAuthorization;
 // Re-export table stores
 pub use kalamdb_commons::models::StreamTableRow;
 pub use kalamdb_commons::models::UserTableRow;

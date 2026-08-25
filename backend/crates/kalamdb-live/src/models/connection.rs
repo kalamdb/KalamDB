@@ -3,7 +3,7 @@
 //! These models support both live query WebSocket subscriptions and topic consumer connections.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     sync::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         Arc, OnceLock,
@@ -502,8 +502,18 @@ impl ConnectionState {
     }
 
     /// Insert a subscription into the connection's map.
-    pub fn insert_subscription(&self, key: Arc<str>, state: SubscriptionState) {
-        self.subscriptions.write().insert(key, state);
+    ///
+    /// Returns `false` when the ID is already active so malformed or racing clients
+    /// cannot replace state while incrementing registry and rate-limit counters again.
+    pub fn insert_subscription(&self, key: Arc<str>, state: SubscriptionState) -> bool {
+        let mut subscriptions = self.subscriptions.write();
+        match subscriptions.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(state);
+                true
+            },
+            Entry::Occupied(_) => false,
+        }
     }
 
     /// Remove a subscription by key, returning the removed value.

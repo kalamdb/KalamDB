@@ -224,7 +224,7 @@ where
 /// The actual middleware service that checks each request.
 pub struct ConnectionProtectionMiddleware<S> {
     service: S,
-    guard: Arc<ConnectionGuard>,
+    guard:   Arc<ConnectionGuard>,
 }
 
 impl<S, B> Service<ServiceRequest> for ConnectionProtectionMiddleware<S>

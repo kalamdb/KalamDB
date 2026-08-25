@@ -377,6 +377,7 @@ pub(super) async fn connection_task(
     let mut seq_id_cache: HashMap<String, crate::SeqId> = HashMap::new();
     let mut ws_stream: Option<WebSocketStream> = None;
     let mut shutdown_requested = false;
+    let mut shutdown_completed: Option<oneshot::Sender<()>> = None;
     let mut next_generation: u64 = 1;
     let mut negotiated_ser = SerializationType::Json;
 
@@ -423,6 +424,9 @@ pub(super) async fn connection_task(
             let was_connected = connected.swap(false, Ordering::SeqCst);
             if was_connected {
                 event_handlers.emit_disconnect(DisconnectReason::new("Client disconnected"));
+            }
+            if let Some(completed) = shutdown_completed.take() {
+                let _ = completed.send(());
             }
             return;
         }
@@ -555,7 +559,12 @@ pub(super) async fn connection_task(
                         Some(ConnCmd::ListSubscriptions { result_tx }) => {
                             let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
                         },
-                        Some(ConnCmd::Shutdown) | None => {
+                        Some(ConnCmd::Shutdown { completed }) => {
+                            shutdown_completed = completed;
+                            shutdown_requested = true;
+                            continue;
+                        },
+                        None => {
                             shutdown_requested = true;
                             continue;
                         },
@@ -753,7 +762,13 @@ pub(super) async fn connection_task(
                     Some(ConnCmd::ListSubscriptions { result_tx }) => {
                         let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
                     },
-                    Some(ConnCmd::Shutdown) | None => return,
+                    Some(ConnCmd::Shutdown { completed }) => {
+                        if let Some(completed) = completed {
+                            let _ = completed.send(());
+                        }
+                        return;
+                    },
+                    None => return,
                 }
                 continue;
             }
@@ -811,7 +826,13 @@ pub(super) async fn connection_task(
                                 let _ =
                                     result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
                             },
-                            Some(ConnCmd::Shutdown) | None => return,
+                            Some(ConnCmd::Shutdown { completed }) => {
+                                if let Some(completed) = completed {
+                                    let _ = completed.send(());
+                                }
+                                return;
+                            },
+                            None => return,
                         }
                     }
                 }
@@ -895,7 +916,12 @@ pub(super) async fn connection_task(
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
                                 let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
                             },
-                            Some(ConnCmd::Shutdown) | None => {
+                            Some(ConnCmd::Shutdown { completed }) => {
+                                shutdown_completed = completed;
+                                got_shutdown = true;
+                                break;
+                            },
+                            None => {
                                 got_shutdown = true;
                                 break;
                             },

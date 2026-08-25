@@ -13,6 +13,7 @@ use futures_util::{stream, StreamExt};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
     api::{
+        portal::Format,
         results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response, Tag},
         Type,
     },
@@ -20,6 +21,14 @@ use pgwire::{
 };
 
 pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Vec<Response>> {
+    execution_result_to_responses_with_format(result, None)
+}
+
+/// Convert an execution result, honoring Bind result-column formats (text/binary).
+pub fn execution_result_to_responses_with_format(
+    result: ExecutionResult,
+    column_format: Option<&Format>,
+) -> PgWireResult<Vec<Response>> {
     match result {
         ExecutionResult::Success { message } => Ok(vec![Response::Execution(Tag::new(&message))]),
         ExecutionResult::Inserted { rows_affected } => Ok(vec![Response::Execution(
@@ -45,7 +54,9 @@ pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Ve
             row_count: _,
             schema,
         } => Ok(vec![Response::Query(record_batches_to_query_response(
-            batches, schema,
+            batches,
+            schema,
+            column_format,
         )?)]),
     }
 }
@@ -53,6 +64,7 @@ pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Ve
 fn record_batches_to_query_response(
     batches: Vec<RecordBatch>,
     empty_schema: Option<SchemaRef>,
+    column_format: Option<&Format>,
 ) -> PgWireResult<QueryResponse> {
     let schema_ref = batches
         .first()
@@ -63,7 +75,8 @@ fn record_batches_to_query_response(
         schema_ref
             .fields()
             .iter()
-            .map(|field| field_info_for_arrow(field))
+            .enumerate()
+            .map(|(index, field)| field_info_for_arrow(field, index, column_format))
             .collect::<PgWireResult<Vec<_>>>()?,
     );
     let rows = rows_from_batches(&fields, batches)?;
@@ -90,13 +103,20 @@ fn rows_from_batches(
     Ok(rows)
 }
 
-fn field_info_for_arrow(field: &Field) -> PgWireResult<FieldInfo> {
+fn field_info_for_arrow(
+    field: &Field,
+    index: usize,
+    column_format: Option<&Format>,
+) -> PgWireResult<FieldInfo> {
+    let format = column_format
+        .map(|fmt| fmt.format_for(index))
+        .unwrap_or(FieldFormat::Text);
     Ok(FieldInfo::new(
         field.name().clone(),
         None,
         None,
         pg_type_for_arrow(field.data_type())?,
-        FieldFormat::Text,
+        format,
     ))
 }
 
@@ -217,6 +237,7 @@ mod tests {
     };
 
     use super::*;
+    use pgwire::api::portal::Format;
 
     #[test]
     fn encodes_supported_scalar_and_fallback_types() {
@@ -249,9 +270,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches: vec![batch],
+            batches:   vec![batch],
             row_count: 1,
-            schema: Some(schema),
+            schema:    Some(schema),
         })
         .expect("supported values encode");
 
@@ -288,9 +309,9 @@ mod tests {
         .expect("batch is valid");
 
         let responses = execution_result_to_responses(ExecutionResult::Rows {
-            batches: vec![batch],
+            batches:   vec![batch],
             row_count: 2,
-            schema: Some(schema),
+            schema:    Some(schema),
         })
         .expect("utf8view values encode");
 
@@ -311,12 +332,45 @@ mod tests {
         .expect("batch is valid");
 
         let error = execution_result_to_responses(ExecutionResult::Rows {
-            batches: vec![batch],
+            batches:   vec![batch],
             row_count: 1,
-            schema: Some(schema),
+            schema:    Some(schema),
         })
         .expect_err("binary should not be silently stringified");
 
         assert!(error.to_string().contains("unsupported Arrow type"));
+    }
+
+    #[test]
+    fn honors_unified_binary_result_format() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("flag", DataType::Boolean, false),
+            Field::new("count", DataType::Int32, false),
+            Field::new("label", DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(BooleanArray::from(vec![true])) as ArrayRef,
+                Arc::new(Int32Array::from(vec![42])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["kalam"])) as ArrayRef,
+            ],
+        )
+        .expect("batch is valid");
+
+        let responses = execution_result_to_responses_with_format(
+            ExecutionResult::Rows {
+                batches:   vec![batch],
+                row_count: 1,
+                schema:    Some(schema),
+            },
+            Some(&Format::UnifiedBinary),
+        )
+        .expect("binary values encode");
+
+        let Response::Query(query) = &responses[0] else {
+            panic!("expected query response");
+        };
+        assert!(query.row_schema.iter().all(|field| field.format() == FieldFormat::Binary));
     }
 }

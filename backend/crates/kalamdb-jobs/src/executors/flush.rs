@@ -50,12 +50,14 @@ use kalamdb_tables::{SharedTableIndexedStore, UserTableIndexedStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
-use crate::executors::{
-    segment_compact::SegmentCompactParams,
-    shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
-    table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
+use crate::{
+    executors::{
+        segment_compact::SegmentCompactParams,
+        shared_table_cleanup::cleanup_empty_shared_scope_if_needed,
+        table_partition::hot_table_partition, JobContext, JobDecision, JobExecutor, JobParams,
+    },
+    AppContextJobsExt,
 };
-use crate::AppContextJobsExt;
 
 const MAX_POST_FLUSH_TASKS: usize = 2;
 
@@ -63,9 +65,9 @@ const MAX_POST_FLUSH_TASKS: usize = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushParams {
     /// Table identifier (required)
-    pub table_id: TableId,
+    pub table_id:        TableId,
     /// Table type (required)
-    pub table_type: TableType,
+    pub table_type:      TableType,
     /// Flush threshold in rows (optional, defaults to config)
     #[serde(default)]
     pub flush_threshold: Option<u64>,
@@ -479,8 +481,8 @@ impl FlushExecutor {
             self.try_spawn_post_flush_task("post-flush shared cleanup", &table_id, async move {
                 // Build a minimal JobContext just for the helper
                 let params = FlushParams {
-                    table_id: cleanup_table_id.clone(),
-                    table_type: TableType::Shared,
+                    table_id:        cleanup_table_id.clone(),
+                    table_type:      TableType::Shared,
                     flush_threshold: None,
                 };
                 let ctx =
@@ -660,11 +662,11 @@ mod tests {
     #[test]
     fn test_flush_params_validate() {
         let params = FlushParams {
-            table_id: TableId::new(
+            table_id:        TableId::new(
                 NamespaceId::default(),
                 kalamdb_commons::TableName::new("users"),
             ),
-            table_type: TableType::User,
+            table_type:      TableType::User,
             flush_threshold: Some(10000),
         };
 

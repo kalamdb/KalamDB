@@ -145,7 +145,12 @@ impl SubscriptionService {
         // If we index after Raft, INSERT commands might be applied before the subscription
         // is indexed, causing notifications to be missed.
         // Add subscription to connection state
-        connection_state.insert_subscription(subscription_id, subscription_state);
+        if !connection_state.insert_subscription(subscription_id, subscription_state) {
+            return Err(LiveError::InvalidOperation(format!(
+                "Subscription ID '{}' is already active on this connection",
+                request.id
+            )));
+        }
 
         // Add lightweight handle to registry's table index for efficient lookups
         if table_type == TableType::Shared {

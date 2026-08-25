@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use datafusion::arrow::{
-    array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray},
+    array::{ArrayRef, BooleanArray, Float64Array, Int64Array, ListBuilder, StringArray},
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
@@ -52,6 +52,10 @@ fn empty_array_for_field(field: &Field) -> ArrayRef {
         DataType::Float64 => Arc::new(Float64Array::from(Vec::<f64>::new())) as ArrayRef,
         DataType::Int64 => Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
         DataType::Utf8 => Arc::new(StringArray::from(Vec::<String>::new())) as ArrayRef,
+        DataType::List(item_field) if matches!(item_field.data_type(), DataType::Int64) => {
+            let mut builder = ListBuilder::new(Int64Array::builder(0));
+            Arc::new(builder.finish()) as ArrayRef
+        },
         _ => Arc::new(StringArray::from(Vec::<String>::new())) as ArrayRef,
     }
 }

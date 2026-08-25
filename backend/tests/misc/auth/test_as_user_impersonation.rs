@@ -508,8 +508,8 @@ async fn test_execute_as_shared_table_is_denied_after_role_authorization() {
     let create_resp = server
         .execute_sql_as_user(
             &format!(
-                "CREATE TABLE {}.global_config (id VARCHAR PRIMARY KEY, value VARCHAR) WITH \
-                 (TYPE = 'SHARED')",
+                "CREATE TABLE {}.global_config (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE \
+                 = 'SHARED')",
                 ns
             ),
             actor.as_str(),
@@ -548,8 +548,7 @@ async fn test_execute_as_unknown_regular_target_uses_user_scope_without_target_l
     let actor = insert_user(&server, &unique_name("missing_actor"), Role::Dba).await;
     let unknown_target = unique_name("unknown_regular_target");
     let insert_sql = format!(
-        "EXECUTE AS USER '{}' (INSERT INTO {}.logs (id, value) VALUES \
-         ('l1', 'blocked'))",
+        "EXECUTE AS USER '{}' (INSERT INTO {}.logs (id, value) VALUES ('l1', 'blocked'))",
         unknown_target, ns
     );
     let resp = server.execute_sql_as_user(&insert_sql, actor.as_str()).await;

@@ -31,19 +31,44 @@ use crate::{
 const INVALID_AUTH_CODE: &str = "28P01";
 const CONNECTION_FAILURE_CODE: &str = "08006";
 
+/// Logical database name advertised in `pg_catalog.pg_database` and
+/// `CURRENT_DATABASE()`. Clients use this when picking a database from a list.
+pub const WIRE_LOGICAL_DATABASE: &str = "kalam";
+
+/// Resolve the PostgreSQL startup `database` parameter to a KalamDB namespace.
+///
+/// KalamDB is a single logical database. Catalog aliases (`kalam`, `postgres`,
+/// empty) open the default namespace so GUI "Load Databases" / reconnect flows
+/// work. Any other non-empty name is treated as the initial schema/namespace.
+pub fn resolve_wire_startup_schema(database: Option<&str>) -> NamespaceId {
+    let trimmed = database.map(str::trim).unwrap_or("");
+    if is_wire_catalog_database(trimmed) {
+        NamespaceId::default_ns()
+    } else {
+        NamespaceId::new(trimmed)
+    }
+}
+
+fn is_wire_catalog_database(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "" | WIRE_LOGICAL_DATABASE | "postgres" | "template1"
+    )
+}
+
 pub struct KalamStartupHandler<P = DefaultServerParameterProvider> {
-    session_manager: Arc<BackendSessionManager>,
-    user_repo: Arc<dyn UserRepository>,
-    parameter_provider: P,
+    session_manager:          Arc<BackendSessionManager>,
+    user_repo:                Arc<dyn UserRepository>,
+    parameter_provider:       P,
     pid_secret_key_generator: Arc<dyn PidSecretKeyGenerator>,
     prepared_statement_limit: usize,
-    portal_limit: usize,
+    portal_limit:             usize,
 }
 
 #[derive(Debug)]
 pub struct WireSessionGuard {
     session_manager: Arc<BackendSessionManager>,
-    session_id: String,
+    session_id:      String,
 }
 
 impl WireSessionGuard {
@@ -164,19 +189,16 @@ where
                         .map_err(|_| pg_error("ERROR", INVALID_AUTH_CODE, "Invalid credentials"))?;
 
                 let session_id = Uuid::now_v7().to_string();
-                let current_schema = client
-                    .metadata()
-                    .get(METADATA_DATABASE)
-                    .filter(|database| !database.trim().is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| NamespaceId::default().as_str().to_string());
+                let current_schema = resolve_wire_startup_schema(
+                    client.metadata().get(METADATA_DATABASE).map(String::as_str),
+                );
 
                 self.session_manager
                     .open_session(
                         SessionOrigin::WireProtocol,
                         session_id.clone(),
                         auth.clone(),
-                        Some(current_schema.clone()),
+                        Some(current_schema.as_str().to_string()),
                         client_addr,
                     )
                     .map_err(|error| {
@@ -193,7 +215,7 @@ where
                 client.session_extensions().insert(WireConnectionState::with_limits(
                     session_id.clone(),
                     auth,
-                    NamespaceId::new(current_schema),
+                    current_schema,
                     self.prepared_statement_limit,
                     self.portal_limit,
                 ));
@@ -235,4 +257,27 @@ fn pg_error(
     message: impl Into<String>,
 ) -> PgWireError {
     PgWireError::UserError(Box::new(ErrorInfo::new(severity.into(), code.into(), message.into())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_aliases_open_default_namespace() {
+        for name in [None, Some(""), Some("kalam"), Some("Kalam"), Some("postgres"), Some("template1")]
+        {
+            assert_eq!(
+                resolve_wire_startup_schema(name).as_str(),
+                "default",
+                "alias {name:?} should map to default namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn other_database_names_become_initial_schema() {
+        assert_eq!(resolve_wire_startup_schema(Some("app_ns")).as_str(), "app_ns");
+        assert_eq!(resolve_wire_startup_schema(Some("  MyNs  ")).as_str(), "myns");
+    }
 }

@@ -1,25 +1,34 @@
-mod authorization_cache;
-mod authorization_cache_key;
-mod authorization_constraint;
-mod authorization_dependency_guard;
-mod authorization_mutation_guard;
-mod authorization_policy_guard;
-mod authorization_set;
-mod authorization_strategy;
-mod bound_live_authorization;
-mod bound_table_policies;
+//! Storage-side adapters for [`kalamdb_rls`] epoch traits.
+//!
+//! Guard and live-authorization types live in `kalamdb-rls`. This module only
+//! implements the catalog / membership epoch traits for table providers.
 
-pub(crate) use authorization_cache::AuthorizationCache;
-pub use authorization_cache::AuthorizationCacheMetrics;
-pub(crate) use authorization_cache_key::AuthorizationCacheKey;
-pub(crate) use authorization_constraint::extract_authorization_constraint;
-pub(crate) use authorization_dependency_guard::AuthorizationDependencyGuard;
-pub(crate) use authorization_mutation_guard::AuthorizationMutationGuard;
-pub(crate) use authorization_policy_guard::AuthorizationPolicyGuard;
-pub use authorization_set::AuthorizationSet;
-pub use authorization_strategy::AuthorizationStrategy;
-pub use bound_live_authorization::BoundLiveAuthorization;
-pub use bound_table_policies::{BoundPolicy, BoundTablePolicies};
+use std::sync::Arc;
 
-#[cfg(test)]
-mod bound_table_policies_tests;
+use kalamdb_commons::TableId;
+use kalamdb_rls::{MembershipEpoch, PolicyCatalogEpoch};
+use kalamdb_system::TablePoliciesTableProvider;
+
+use crate::SharedTableProvider;
+
+impl MembershipEpoch for SharedTableProvider {
+    fn authorization_generation(&self) -> u64 {
+        self.authorization.authorization_generation()
+    }
+
+    fn has_active_authorization_mutations(&self) -> bool {
+        self.authorization.has_active_authorization_mutations()
+    }
+}
+
+/// Adapts [`TablePoliciesTableProvider`] for [`PolicyCatalogEpoch`].
+#[derive(Clone)]
+pub(crate) struct TablePoliciesEpoch(pub(crate) Arc<TablePoliciesTableProvider>);
+
+impl PolicyCatalogEpoch for TablePoliciesEpoch {
+    fn policy_generation(&self, table_id: &TableId) -> Result<u64, String> {
+        self.0
+            .policy_generation(table_id)
+            .map_err(|error| format!("failed to read RLS policy generation for {table_id}: {error}"))
+    }
+}

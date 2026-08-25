@@ -33,6 +33,8 @@ mod routing;
 use reconnect::connection_task;
 use registry::{ConnCmd, SubscriptionReady};
 
+const DISCONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+
 pub(crate) struct SharedConnection {
     cmd_tx: mpsc::Sender<ConnCmd>,
     connected: Arc<AtomicBool>,
@@ -192,13 +194,24 @@ impl SharedConnection {
     }
 
     pub async fn disconnect(&self) {
-        let _ = self.cmd_tx.send(ConnCmd::Shutdown).await;
-
-        for _ in 0..50 {
-            if !self.connected.load(Ordering::Relaxed) {
-                break;
+        let (completed_tx, completed_rx) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(ConnCmd::Shutdown {
+                completed: Some(completed_tx),
+            })
+            .await
+            .is_ok()
+        {
+            if !matches!(
+                tokio::time::timeout(DISCONNECT_TIMEOUT, completed_rx).await,
+                Ok(Ok(()))
+            ) {
+                self._task.abort();
+                self.connected.store(false, Ordering::Release);
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        } else {
+            self.connected.store(false, Ordering::Release);
         }
     }
 
@@ -223,7 +236,7 @@ impl SharedConnection {
 
 impl Drop for SharedConnection {
     fn drop(&mut self) {
-        let _ = self.cmd_tx.try_send(ConnCmd::Shutdown);
+        let _ = self.cmd_tx.try_send(ConnCmd::Shutdown { completed: None });
     }
 }
 
@@ -335,5 +348,72 @@ mod tests {
             ready_deadline: None,
             reconnect_resubscribe_pending: false,
         }
+    }
+
+    #[tokio::test]
+    async fn disconnect_waits_for_connection_task_shutdown_ack() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<ConnCmd>(1);
+        let connected = Arc::new(AtomicBool::new(true));
+        let task_connected = Arc::clone(&connected);
+        let task = tokio::spawn(async move {
+            match cmd_rx.recv().await {
+                Some(ConnCmd::Shutdown { completed }) => {
+                    task_connected.store(false, Ordering::Release);
+                    if let Some(completed) = completed {
+                        let _ = completed.send(());
+                    }
+                },
+                _ => panic!("expected shutdown command"),
+            }
+        });
+
+        let connection = SharedConnection {
+            cmd_tx,
+            connected,
+            _reconnect_attempts: Arc::new(AtomicU32::new(0)),
+            _task: task,
+        };
+
+        tokio::time::timeout(Duration::from_secs(1), connection.disconnect())
+            .await
+            .expect("disconnect should complete after the connection task acknowledges shutdown");
+    }
+
+    #[tokio::test]
+    async fn disconnect_marks_connection_closed_when_shutdown_ack_is_dropped() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<ConnCmd>(1);
+        let connected = Arc::new(AtomicBool::new(true));
+        let task = tokio::spawn(async move {
+            match cmd_rx.recv().await {
+                Some(ConnCmd::Shutdown { completed }) => drop(completed),
+                _ => panic!("expected shutdown command"),
+            }
+        });
+
+        let connection = SharedConnection {
+            cmd_tx,
+            connected: Arc::clone(&connected),
+            _reconnect_attempts: Arc::new(AtomicU32::new(0)),
+            _task: task,
+        };
+
+        connection.disconnect().await;
+        assert!(!connected.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn closed_subscription_cursor_cache_is_bounded() {
+        let mut cache = HashMap::new();
+
+        for index in 0..1_100 {
+            let mut entry = make_test_entry("SELECT 1");
+            entry.last_seq_id = Some(SeqId::from(index + 1));
+            registry::cache_entry_seq(&mut cache, format!("sub-{index}"), &entry);
+        }
+
+        assert!(
+            cache.len() <= 1_024,
+            "closed subscription cursor history must not grow without bound"
+        );
     }
 }

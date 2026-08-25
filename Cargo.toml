@@ -23,6 +23,7 @@ members = [
     "backend/crates/kalamdb-datafusion-sources",
     "backend/crates/kalamdb-system",
     "backend/crates/kalamdb-tables",
+    "backend/crates/kalamdb-rls",
     "backend/crates/kalamdb-dba",
     "backend/crates/kalamdb-observability",
     "backend/crates/kalamdb-vector",
@@ -129,10 +130,10 @@ parquet = { version = "59.2.0", default-features = false, features = ["snap", "z
 # Web framework
 actix-web = { version = "4.15.0", features = ["http2"] }
 actix-ws = "0.4.0"
-actix-cors = "0.7"
+actix-cors = "0.7.2"
 actix-rt = "2.12.0"
 actix-files = "0.7.0"
-actix-multipart = "0.8.0"
+actix-multipart = "0.8.1"
 
 # UUID generation
 uuid = { version = "1.25.0", features = ["v4", "v7", "serde"] }
@@ -199,6 +200,7 @@ kalamdb-plan-cache = { path = "backend/crates/kalamdb-plan-cache" }
 kalamdb-backend = { path = "backend/crates/kalamdb-backend" }
 kalamdb-postgres-wire = { path = "backend/crates/kalamdb-postgres-wire" }
 kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
+kalamdb-rls = { path = "backend/crates/kalamdb-rls" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
 kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources" }
 cookie = "0.18.2"
@@ -226,13 +228,13 @@ http-body-util = "0.1.5"
 cc = "1.4.4"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
-syn = { version = "3.0.3", features = ["full", "extra-traits"] }
+syn = { version = "3.0.4", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 object_store = { version = "0.13.2" }
  
 # Vector ANN engines
-usearch = "2.26.0"
+usearch = "2.26.1"
 
 parking_lot = "0.12"
 tokio-util = "0.7.19"

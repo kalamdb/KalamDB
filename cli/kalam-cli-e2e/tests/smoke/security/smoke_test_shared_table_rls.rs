@@ -388,6 +388,147 @@ fn smoke_shared_table_rls_live_grant_revoke() {
 
 #[ntest::timeout(180000)]
 #[test]
+fn smoke_shared_table_rls_multi_subscriber_conversation_membership() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_shared_table_rls_multi_subscriber_conversation_membership: server not \
+             running"
+        );
+        return;
+    }
+
+    let namespace = generate_unique_namespace("rls_conv_ns");
+    let messages = generate_unique_table("rls_conv_msgs");
+    let members = generate_unique_table("rls_conv_mem");
+    let messages_full = format!("{namespace}.{messages}");
+    let members_full = format!("{namespace}.{members}");
+    let password = "smoke_pass_123";
+    const SUBSCRIBER_COUNT: usize = 10;
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {messages_full} (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            body TEXT NOT NULL
+        ) WITH (TYPE='SHARED')"
+    ))
+    .expect("create messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {members_full} (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL
+        ) WITH (TYPE='SHARED')"
+    ))
+    .expect("create members");
+    wait_for_table_ready(&messages_full, Duration::from_secs(3)).expect("messages ready");
+
+    let mut users = Vec::with_capacity(SUBSCRIBER_COUNT);
+    for i in 0..SUBSCRIBER_COUNT {
+        let user = generate_unique_namespace(&format!("rls_conv_u{i}"));
+        let conversation_id = format!("conv-{i}");
+        execute_sql_as_root_via_client(&format!(
+            "CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"
+        ))
+        .expect("create user");
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {members_full} (id, user_id, conversation_id) VALUES ('m{i}', '{user}', \
+             '{conversation_id}')"
+        ))
+        .expect("seed membership");
+        users.push((user, conversation_id));
+    }
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY conversation_member_read ON {messages_full} FOR SELECT TO user USING \
+         (conversation_id IN (SELECT conversation_id FROM {members_full} WHERE user_id = \
+         CURRENT_USER))"
+    ))
+    .expect("create conversation membership policy");
+
+    for (i, (user, conversation_id)) in users.iter().enumerate() {
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {messages_full} (id, conversation_id, body) VALUES ('seed-{i}', \
+             '{conversation_id}', 'seed-for-{conversation_id}')"
+        ))
+        .expect("seed conversation row");
+        let visible = execute_sql_via_client_as(
+            user,
+            password,
+            &format!("SELECT id, body FROM {messages_full}"),
+        )
+        .expect("membership select");
+        assert!(
+            visible.contains(&format!("seed-for-{conversation_id}")),
+            "{user} must see own conversation seed: {visible}"
+        );
+        for (j, (_, other_conversation)) in users.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            assert!(
+                !visible.contains(&format!("seed-for-{other_conversation}")),
+                "{user} must not see {other_conversation}: {visible}"
+            );
+        }
+    }
+
+    let query = format!("SELECT id, conversation_id, body FROM {messages_full}");
+    let mut listeners = Vec::with_capacity(SUBSCRIBER_COUNT);
+    for (user, _) in &users {
+        match SubscriptionListener::start_as_user(&query, user, password) {
+            Ok(mut listener) => {
+                drain_listener(&mut listener, Duration::from_secs(2));
+                listeners.push(listener);
+            },
+            Err(error) if error.to_string().contains("channel closed") => {
+                eprintln!("Skipping transient live-query backend failure: {error}");
+                for (user, _) in &users {
+                    let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+                }
+                let _ = execute_sql_as_root_via_client(&format!(
+                    "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
+                ));
+                return;
+            },
+            Err(error) => panic!("membership subscription should start for {user}: {error}"),
+        }
+    }
+
+    for (i, (_, conversation_id)) in users.iter().enumerate() {
+        execute_sql_as_root_via_client(&format!(
+            "INSERT INTO {messages_full} (id, conversation_id, body) VALUES ('live-{i}', \
+             '{conversation_id}', 'live-for-{conversation_id}')"
+        ))
+        .expect("live conversation insert");
+    }
+
+    for (i, ((user, conversation_id), listener)) in
+        users.iter().zip(listeners.iter_mut()).enumerate()
+    {
+        let expected = format!("live-for-{conversation_id}");
+        let foreign = format!("live-for-conv-{}", (i + 1) % SUBSCRIBER_COUNT);
+        assert!(
+            wait_for_event(listener, &expected, Duration::from_secs(8)),
+            "{user} must receive live event for {conversation_id}"
+        );
+        assert!(
+            !wait_for_event(listener, &foreign, Duration::from_secs(1)),
+            "{user} must not receive foreign conversation live event {foreign}"
+        );
+        listener.stop().ok();
+    }
+
+    for (user, _) in &users {
+        let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    }
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}
+
+#[ntest::timeout(180000)]
+#[test]
 fn smoke_shared_table_rls_raw_download_denied() {
     if !is_server_running() {
         eprintln!("Skipping smoke_shared_table_rls_raw_download_denied: server not running");
@@ -437,6 +578,299 @@ fn smoke_shared_table_rls_raw_download_denied() {
         status,
         StatusCode::FORBIDDEN,
         "User must not download raw shared-table files even with SELECT policy"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_shared_table_rls_role_policy_targets() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_shared_table_rls_role_policy_targets: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("rls_role_ns");
+    let table = generate_unique_table("rls_role_docs");
+    let full = format!("{namespace}.{table}");
+    let user = generate_unique_namespace("rls_role_user");
+    let service = generate_unique_namespace("rls_role_svc");
+    let password = "smoke_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, label TEXT) \
+         WITH (TYPE='SHARED')"
+    ))
+    .expect("create table");
+    wait_for_table_ready(&full, Duration::from_secs(3)).expect("table ready");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {full} (id, owner_id, label) VALUES ('u1', '{user}', 'user-row'), ('s1', \
+         '{service}', 'service-row')"
+    ))
+    .expect("seed rows");
+    execute_sql_as_root_via_client(&format!("CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"))
+        .expect("create user");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {service} WITH PASSWORD '{password}' ROLE 'service'"
+    ))
+    .expect("create service");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY user_only ON {full} FOR SELECT TO user USING (owner_id = CURRENT_USER)"
+    ))
+    .expect("create user policy");
+
+    let user_rows =
+        execute_sql_via_client_as(&user, password, &format!("SELECT id FROM {full}")).expect("user select");
+    assert!(user_rows.contains("u1") && !user_rows.contains("s1"));
+
+    let service_rows = execute_sql_via_client_as(&service, password, &format!("SELECT id FROM {full}"))
+        .expect("service select");
+    assert!(
+        !service_rows.contains("u1") && !service_rows.contains("s1"),
+        "TO user policy must not grant service role: {service_rows}"
+    );
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY service_only ON {full} FOR SELECT TO service USING (owner_id = CURRENT_USER)"
+    ))
+    .expect("create service policy");
+    let service_granted =
+        execute_sql_via_client_as(&service, password, &format!("SELECT id FROM {full}"))
+            .expect("service granted");
+    assert!(service_granted.contains("s1") && !service_granted.contains("u1"));
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY public_label ON {full} FOR SELECT TO PUBLIC USING (label = 'user-row')"
+    ))
+    .expect("create public policy");
+    let service_public =
+        execute_sql_via_client_as(&service, password, &format!("SELECT id FROM {full}"))
+            .expect("service public select");
+    assert!(
+        service_public.contains("u1") && service_public.contains("s1"),
+        "PUBLIC policy must combine permissively: {service_public}"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {service}"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_shared_table_rls_membership_cache_and_performance() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_shared_table_rls_membership_cache_and_performance: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("rls_mem_cache_ns");
+    let messages = generate_unique_table("rls_messages");
+    let members = generate_unique_table("rls_members");
+    let messages_full = format!("{namespace}.{messages}");
+    let members_full = format!("{namespace}.{members}");
+    let user = generate_unique_namespace("rls_mem_user");
+    let password = "smoke_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {messages_full} (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) WITH \
+         (TYPE='SHARED')"
+    ))
+    .expect("create messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {members_full} (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, group_id TEXT \
+         NOT NULL, status TEXT NOT NULL) WITH (TYPE='SHARED')"
+    ))
+    .expect("create members");
+    wait_for_table_ready(&messages_full, Duration::from_secs(3)).expect("messages ready");
+    execute_sql_as_root_via_client(&format!("CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"))
+        .expect("create user");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {members_full} (id, user_id, group_id, status) VALUES ('m1', '{user}', \
+         'group-a', 'active')"
+    ))
+    .expect("seed membership");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {messages_full} (id, group_id) VALUES ('msg-a', 'group-a'), ('msg-b', \
+         'group-b')"
+    ))
+    .expect("seed messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY member_read ON {messages_full} FOR SELECT TO user USING (group_id IN \
+         (SELECT group_id FROM {members_full} WHERE user_id = CURRENT_USER AND status <> \
+         'blocked'))"
+    ))
+    .expect("create membership policy");
+
+    let select_sql = format!("SELECT id FROM {messages_full}");
+    let first = execute_sql_via_client_as(&user, password, &select_sql).expect("first select");
+    assert!(first.contains("msg-a") && !first.contains("msg-b"));
+
+    let second = execute_sql_via_client_as(&user, password, &select_sql).expect("second select");
+    assert!(second.contains("msg-a") && !second.contains("msg-b"));
+
+    let cold_start = std::time::Instant::now();
+    let _ = execute_sql_via_client_as(&user, password, &select_sql).expect("cold timing select");
+    let cold_elapsed = cold_start.elapsed();
+
+    let warm_start = std::time::Instant::now();
+    for _ in 0..10 {
+        let out = execute_sql_via_client_as(&user, password, &select_sql).expect("warm select");
+        assert!(out.contains("msg-a") && !out.contains("msg-b"));
+    }
+    let warm_avg = warm_start.elapsed() / 10;
+    assert!(
+        warm_avg <= cold_elapsed.mul_f32(3.0).max(Duration::from_millis(250)),
+        "cached membership scans should stay bounded (cold={cold_elapsed:?}, warm_avg={warm_avg:?})"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_shared_table_rls_membership_revoke_invalidates_cache() {
+    if !is_server_running() {
+        eprintln!(
+            "Skipping smoke_shared_table_rls_membership_revoke_invalidates_cache: server not running"
+        );
+        return;
+    }
+
+    let namespace = generate_unique_namespace("rls_revoke_ns");
+    let messages = generate_unique_table("rls_revoke_msgs");
+    let members = generate_unique_table("rls_revoke_mem");
+    let messages_full = format!("{namespace}.{messages}");
+    let members_full = format!("{namespace}.{members}");
+    let user = generate_unique_namespace("rls_revoke_user");
+    let password = "smoke_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {messages_full} (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) WITH \
+         (TYPE='SHARED')"
+    ))
+    .expect("create messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {members_full} (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, group_id TEXT \
+         NOT NULL, status TEXT NOT NULL) WITH (TYPE='SHARED')"
+    ))
+    .expect("create members");
+    wait_for_table_ready(&messages_full, Duration::from_secs(3)).expect("messages ready");
+    execute_sql_as_root_via_client(&format!("CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"))
+        .expect("create user");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {members_full} (id, user_id, group_id, status) VALUES ('m1', '{user}', \
+         'group-a', 'active')"
+    ))
+    .expect("seed membership");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {messages_full} (id, group_id) VALUES ('msg-a', 'group-a')"
+    ))
+    .expect("seed messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY member_read ON {messages_full} FOR SELECT TO user USING (group_id IN \
+         (SELECT group_id FROM {members_full} WHERE user_id = CURRENT_USER))"
+    ))
+    .expect("create policy");
+
+    let select_sql = format!("SELECT id FROM {messages_full}");
+    let visible = execute_sql_via_client_as(&user, password, &select_sql).expect("visible before revoke");
+    assert!(visible.contains("msg-a"));
+    let _ = execute_sql_via_client_as(&user, password, &select_sql).expect("warm cache");
+
+    execute_sql_as_root_via_client(&format!("DELETE FROM {members_full} WHERE id = 'm1'"))
+        .expect("revoke membership");
+    let hidden = execute_sql_via_client_as(&user, password, &select_sql).expect("hidden after revoke");
+    assert!(
+        !hidden.contains("msg-a"),
+        "membership revocation must hide rows: {hidden}"
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn smoke_shared_table_rls_null_not_policy_and_union_bypass() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_shared_table_rls_null_not_policy_and_union_bypass: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("rls_null_union_ns");
+    let table = generate_unique_table("rls_null_docs");
+    let full = format!("{namespace}.{table}");
+    let user = generate_unique_namespace("rls_null_user");
+    let password = "smoke_pass_123";
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT) WITH (TYPE='SHARED')"
+    ))
+    .expect("create table");
+    wait_for_table_ready(&full, Duration::from_secs(3)).expect("table ready");
+    execute_sql_as_root_via_client(&format!("CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"))
+        .expect("create user");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {full} (id, owner_id) VALUES ('null-row', NULL), ('bob-row', 'bob')"
+    ))
+    .expect("seed rows");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY not_owner ON {full} FOR SELECT TO user USING (NOT (owner_id = CURRENT_USER))"
+    ))
+    .expect("create NOT policy");
+
+    let not_rows =
+        execute_sql_via_client_as(&user, password, &format!("SELECT id FROM {full} ORDER BY id"))
+            .expect("NOT policy select");
+    assert!(
+        not_rows.contains("bob-row") && !not_rows.contains("null-row"),
+        "NULL owner must stay hidden under NOT policy: {not_rows}"
+    );
+
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {namespace}.rls_union_msgs (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) \
+         WITH (TYPE='SHARED')"
+    ))
+    .expect("create union messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {namespace}.rls_union_mem (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, \
+         group_id TEXT NOT NULL) WITH (TYPE='SHARED')"
+    ))
+    .expect("create union members");
+    let union_msgs = format!("{namespace}.rls_union_msgs");
+    let union_mem = format!("{namespace}.rls_union_mem");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {union_mem} (id, user_id, group_id) VALUES ('m1', '{user}', 'group-a')"
+    ))
+    .expect("seed union membership");
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {union_msgs} (id, group_id) VALUES ('msg-a', 'group-a'), ('msg-b', 'group-b')"
+    ))
+    .expect("seed union messages");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE POLICY union_member_read ON {union_msgs} FOR SELECT TO user USING (group_id IN \
+         (SELECT group_id FROM {union_mem} WHERE user_id = CURRENT_USER))"
+    ))
+    .expect("create union policy");
+
+    let union_sql = format!(
+        "SELECT id FROM {union_msgs} WHERE group_id = 'group-b' UNION SELECT id FROM {union_msgs}"
+    );
+    let union_rows = execute_sql_via_client_as(&user, password, &union_sql).expect("union select");
+    assert!(
+        union_rows.contains("msg-a") && !union_rows.contains("msg-b"),
+        "UNION must not bypass membership RLS: {union_rows}"
     );
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));

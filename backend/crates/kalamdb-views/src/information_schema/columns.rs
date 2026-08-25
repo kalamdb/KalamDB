@@ -35,6 +35,7 @@ use crate::pg_catalog::type_mapping::{
 };
 
 const IS_GENERATED: &str = "is_generated";
+const IS_IDENTITY: &str = "is_identity";
 const KDB_COLUMN_ID: &str = "kdb_column_id";
 const KDB_COMMENT: &str = "kdb_comment";
 const KDB_DATA_TYPE: &str = "kdb_data_type";
@@ -50,6 +51,7 @@ const COLUMN_EXTENSION_FIELDS: &[&str] = &[
     UDT_NAME,
     UDT_SCHEMA,
     IS_GENERATED,
+    IS_IDENTITY,
     KDB_DATA_TYPE,
     KDB_NAMESPACE_ID,
     KDB_VERSION,
@@ -274,6 +276,7 @@ fn normalize_columns_batch(
                 Arc::new(constant_string_array(normalized_batch.num_rows(), "pg_catalog"))
             },
             IS_GENERATED => Arc::new(constant_string_array(normalized_batch.num_rows(), "NEVER")),
+            IS_IDENTITY => Arc::new(constant_string_array(normalized_batch.num_rows(), "NO")),
             KDB_DATA_TYPE => Arc::new(kdb_types.finish()),
             KDB_NAMESPACE_ID => Arc::new(kdb_namespace_ids.finish()),
             KDB_VERSION => Arc::new(kdb_versions.finish()),

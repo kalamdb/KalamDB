@@ -79,7 +79,7 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
             let resp = server
                 .execute_sql(&format!(
                     "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT) WITH (TYPE='USER', \
-                         STORAGE_ID='local', FLUSH_POLICY='rows:100')",
+                     STORAGE_ID='local', FLUSH_POLICY='rows:100')",
                     ns, table_user
                 ))
                 .await?;
@@ -277,8 +277,8 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
             let table_auto = "items_auto";
             let resp = server
                 .execute_sql(&format!(
-                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, name TEXT) \
-                         WITH (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100')",
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY AUTO_INCREMENT, name TEXT) WITH \
+                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100')",
                     ns, table_auto
                 ))
                 .await?;

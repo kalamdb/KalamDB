@@ -10,10 +10,10 @@ use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentCompactParams {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     #[serde(default)]
-    pub user_id: Option<UserId>,
+    pub user_id:    Option<UserId>,
 }
 
 impl JobParams for SegmentCompactParams {
@@ -57,7 +57,8 @@ impl SegmentCompactExecutor {
         {
             Some(result) => Ok(JobDecision::Completed {
                 message: Some(format!(
-                    "Segment compaction completed for {} (merged {} segments, {} rows, output={}, duration_ms={})",
+                    "Segment compaction completed for {} (merged {} segments, {} rows, output={}, \
+                     duration_ms={})",
                     params.table_id,
                     result.merged_segments,
                     result.rows_merged,
@@ -147,9 +148,9 @@ mod tests {
         let table_id = TableId::new(NamespaceId::default(), kalamdb_commons::TableName::new("t"));
 
         assert!(SegmentCompactParams {
-            table_id: table_id.clone(),
+            table_id:   table_id.clone(),
             table_type: TableType::Shared,
-            user_id: None,
+            user_id:    None,
         }
         .validate()
         .is_ok());

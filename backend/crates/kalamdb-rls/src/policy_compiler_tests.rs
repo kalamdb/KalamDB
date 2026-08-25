@@ -44,8 +44,10 @@ fn shared_table(name: &str, columns: &[(&str, bool)]) -> Arc<TableDefinition> {
             TableType::Shared,
             columns,
             TableOptions::shared(),
-            None)
-        .expect("valid test table"))
+            None,
+        )
+        .expect("valid test table"),
+    )
 }
 
 fn compiler() -> (Arc<TableDefinition>, PolicyCompiler<TestResolver>) {
@@ -88,7 +90,8 @@ fn in_subquery_normalizes_to_authorization_relation() {
     let program = compiler
         .compile(
             &messages,
-            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)")
+            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)",
+        )
         .expect("membership policy should compile");
 
     assert_eq!(
@@ -113,13 +116,15 @@ fn correlated_exists_normalizes_to_same_authorization_relation() {
     let in_program = compiler
         .compile(
             &messages,
-            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)")
+            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)",
+        )
         .expect("IN membership should compile");
     let exists_program = compiler
         .compile(
             &messages,
             "EXISTS (SELECT 1 FROM chat.group_members gm WHERE gm.group_id = messages.group_id \
-             AND gm.user_id = CURRENT_USER)")
+             AND gm.user_id = CURRENT_USER)",
+        )
         .expect("EXISTS membership should compile");
 
     assert_eq!(exists_program, in_program);
@@ -148,7 +153,8 @@ fn membership_without_covering_primary_key_warns() {
     let program = compiler
         .compile(
             &messages,
-            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)")
+            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)",
+        )
         .unwrap();
     let warning = compiler.covering_membership_index_warning(&program).unwrap();
     assert!(warning.contains("group_members"));
@@ -167,7 +173,8 @@ fn membership_with_covering_primary_key_does_not_warn() {
     let program = compiler
         .compile(
             &messages,
-            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)")
+            "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)",
+        )
         .unwrap();
     assert_eq!(compiler.covering_membership_index_warning(&program), None);
 }

@@ -157,6 +157,7 @@ kalamdb-store = { path = "crates/kalamdb-store" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-tables = { path = "crates/kalamdb-tables" }
+kalamdb-rls = { workspace = true }
 kalamdb-raft = { path = "crates/kalamdb-raft" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
 kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["tokio-runtime", "cluster"] }

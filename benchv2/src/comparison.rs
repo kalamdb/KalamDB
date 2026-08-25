@@ -14,6 +14,7 @@ pub struct PreviousRun {
 /// A single benchmark's previous metrics.
 #[derive(Debug, Clone)]
 pub struct PreviousBenchmark {
+    pub description: String,
     pub mean_us: f64,
     pub median_us: f64,
     pub p95_us: f64,
@@ -134,6 +135,7 @@ pub fn load_previous_run(output_dir: &str) -> Option<PreviousRun> {
         results.insert(
             r.name.clone(),
             PreviousBenchmark {
+                description: r.description.clone(),
                 mean_us: r.mean_us,
                 median_us: r.median_us,
                 p95_us: r.p95_us,
@@ -152,7 +154,7 @@ pub fn load_previous_run(output_dir: &str) -> Option<PreviousRun> {
 /// Compare a current result against the previous run.
 pub fn compare(result: &BenchmarkResult, previous: &PreviousRun) -> Option<Comparison> {
     let prev = previous.results.get(&result.name)?;
-    if prev.mean_us <= 0.0 || !result.success {
+    if prev.description != result.description || prev.mean_us <= 0.0 || !result.success {
         return None;
     }
 
@@ -168,4 +170,41 @@ pub fn compare(result: &BenchmarkResult, previous: &PreviousRun) -> Option<Compa
         ops_pct,
         prev_mean_us: prev.mean_us,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, time::Duration};
+
+    use super::*;
+
+    fn previous(description: &str) -> PreviousRun {
+        PreviousRun {
+            timestamp: "2026-08-24T00:00:00Z".to_string(),
+            results: HashMap::from([(
+                "reconnect_subscribe".to_string(),
+                PreviousBenchmark {
+                    description: description.to_string(),
+                    mean_us: 10_000.0,
+                    median_us: 10_000.0,
+                    p95_us: 10_000.0,
+                    p99_us: 10_000.0,
+                    ops_per_sec: 100.0,
+                },
+            )]),
+        }
+    }
+
+    #[test]
+    fn comparison_skips_benchmark_when_semantics_changed() {
+        let result = BenchmarkResult::from_durations(
+            "reconnect_subscribe",
+            "Subscribe",
+            "full WebSocket reconnect and initial results",
+            vec![Duration::from_micros(1_000)],
+        );
+
+        assert!(compare(&result, &previous("same-socket re-subscribe plus fixed sleep")).is_none());
+        assert!(compare(&result, &previous(&result.description)).is_some());
+    }
 }

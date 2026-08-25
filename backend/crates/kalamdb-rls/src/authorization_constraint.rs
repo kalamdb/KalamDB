@@ -1,17 +1,21 @@
-use datafusion::{logical_expr::{Expr, Operator}, scalar::ScalarValue};
+use datafusion::{
+    logical_expr::{Expr, Operator},
+    scalar::ScalarValue,
+};
 
-use super::AuthorizationStrategy;
+use crate::AuthorizationStrategy;
 
 /// Leakproof scalar constraints that may be evaluated before the RLS barrier.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AuthorizationConstraint {
+pub struct AuthorizationConstraint {
     pub strategy: AuthorizationStrategy,
-    pub values: Vec<ScalarValue>,
+    pub values:   Vec<ScalarValue>,
 }
 
-pub(crate) fn extract_authorization_constraint(
+pub fn extract_authorization_constraint(
     filter: Option<&Expr>,
-    protected_column: &str) -> Option<AuthorizationConstraint> {
+    protected_column: &str,
+) -> Option<AuthorizationConstraint> {
     let values = extract_values(filter?, protected_column)?;
     if values.is_empty() {
         return None;
@@ -60,16 +64,13 @@ fn extract_values(expression: &Expr, protected_column: &str) -> Option<Vec<Scala
 fn column_literal(
     column_expression: &Expr,
     value_expression: &Expr,
-    protected_column: &str) -> Option<ScalarValue> {
-    let (Expr::Column(column), Expr::Literal(value, _)) =
-        (column_expression, value_expression)
+    protected_column: &str,
+) -> Option<ScalarValue> {
+    let (Expr::Column(column), Expr::Literal(value, _)) = (column_expression, value_expression)
     else {
         return None;
     };
-    column
-        .name
-        .eq_ignore_ascii_case(protected_column)
-        .then(|| value.clone())
+    column.name.eq_ignore_ascii_case(protected_column).then(|| value.clone())
 }
 
 #[cfg(test)]
@@ -80,22 +81,23 @@ mod tests {
 
     #[test]
     fn extracts_only_literal_equality_and_in_constraints() {
-        let point = extract_authorization_constraint(
-            Some(&col("group_id").eq(lit("group-a"))),
-            "group_id")
-        .unwrap();
+        let point =
+            extract_authorization_constraint(Some(&col("group_id").eq(lit("group-a"))), "group_id")
+                .unwrap();
         assert_eq!(point.strategy, AuthorizationStrategy::PointGuard);
 
         let multi = extract_authorization_constraint(
             Some(&col("group_id").in_list(vec![lit("a"), lit("b")], false)),
-            "group_id")
+            "group_id",
+        )
         .unwrap();
         assert_eq!(multi.strategy, AuthorizationStrategy::MultiGuard);
         assert_eq!(multi.values.len(), 2);
 
         assert!(extract_authorization_constraint(
             Some(&col("group_id").eq(col("other"))),
-            "group_id")
+            "group_id"
+        )
         .is_none());
     }
 }

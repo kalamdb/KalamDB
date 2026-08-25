@@ -20,6 +20,7 @@ kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-plan-cache = { workspace = true }
 kalamdb-pg = { path = "../kalamdb-pg" }
 kalamdb-raft = { path = "../kalamdb-raft" }
+kalamdb-rls = { path = "../kalamdb-rls" }
 kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }

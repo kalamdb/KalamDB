@@ -54,8 +54,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
         .into_iter()
         .map(|(id, name, price)| {
             format!(
-                "INSERT INTO {}.plans (id, name, price, features) VALUES ({}, '{}', {}, \
-                 'features for {}')",
+                "INSERT INTO {}.plans (id, name, price, features) VALUES ({}, '{}', {}, 'features \
+                 for {}')",
                 ns, id, name, price, name
             )
         })
@@ -113,7 +113,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "User1 insert activity {}", i);
     }
@@ -128,7 +129,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "User2 insert activity {}", i);
     }
@@ -196,7 +198,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         // This might succeed or fail depending on implementation
         if resp.success() {
@@ -206,7 +209,8 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
                     &format!("SELECT * FROM {}.activity WHERE id = 1", ns),
                     None,
                     None,
-                    None)
+                    None,
+                )
                 .await?;
             assert!(resp.success(), "Old rows should still be readable after schema change");
         }
@@ -322,7 +326,8 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Insert event {}", i);
     }
@@ -350,7 +355,8 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 ),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         // Accept either success or error (column might not be immediately available)
 
@@ -360,7 +366,8 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
                 &format!("SELECT id, event_name FROM {}.events WHERE id <= 5 ORDER BY id", ns),
                 None,
                 None,
-                None)
+                None,
+            )
             .await?;
         assert!(resp.success(), "Old data should be readable after schema change");
         assert_eq!(resp.rows().len(), 5, "Should still have 5 old events");

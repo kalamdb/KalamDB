@@ -55,11 +55,11 @@ async fn test_dba_repositories_write_through_normal_table_paths() {
     let dba = DbaRegistry::new(server.app_context.clone());
 
     let notification = NotificationRow {
-        id: "notif-1".to_string(),
-        user_id: UserId::new("dba_repo_user"),
-        title: "Background job finished".to_string(),
-        body: Some("Flush completed successfully".to_string()),
-        is_read: false,
+        id:         "notif-1".to_string(),
+        user_id:    UserId::new("dba_repo_user"),
+        title:      "Background job finished".to_string(),
+        body:       Some("Flush completed successfully".to_string()),
+        is_read:    false,
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
     };

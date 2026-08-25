@@ -12,7 +12,12 @@ use kalamdb_core::{
     },
 };
 use pgwire::{
-    api::{portal::Format, results::FieldInfo, stmt::QueryParser, ClientInfo, Type},
+    api::{
+        portal::Format,
+        results::{FieldFormat, FieldInfo},
+        stmt::QueryParser,
+        ClientInfo, Type,
+    },
     error::{ErrorInfo, PgWireError, PgWireResult},
 };
 
@@ -21,13 +26,22 @@ use crate::{connection::WireConnectionState, sql_exec::pg_error};
 /// Prepared statement cached at PostgreSQL wire Parse time.
 #[derive(Debug, Clone)]
 pub struct WireCachedStatement {
-    pub metadata: PreparedExecutionStatement,
+    pub metadata:        PreparedExecutionStatement,
     pub parameter_types: Vec<Type>,
+    /// Result columns resolved at Parse/Describe time (empty = NoData).
+    pub result_columns:  Vec<WireResultColumn>,
+}
+
+/// Name + PostgreSQL type for one result column.
+#[derive(Debug, Clone)]
+pub struct WireResultColumn {
+    pub name:     String,
+    pub datatype: Type,
 }
 
 #[derive(Clone)]
 pub struct KalamQueryParser {
-    app_context: Arc<AppContext>,
+    app_context:  Arc<AppContext>,
     sql_executor: Arc<SqlExecutor>,
 }
 
@@ -61,7 +75,7 @@ impl QueryParser for KalamQueryParser {
         let exec_ctx = ExecutionContext::with_namespace(
             state.auth().user_id.clone(),
             state.auth().role,
-            state.current_schema().clone(),
+            state.current_schema(),
             self.app_context.base_session_context(),
         )
         .with_request_id(format!("wire:{}", state.session_id()));
@@ -74,10 +88,12 @@ impl QueryParser for KalamQueryParser {
             let count = max_placeholder_index(sql);
             vec![Type::TEXT; count]
         });
+        let result_columns = self.infer_result_columns(sql).await.unwrap_or_default();
 
         Ok(WireCachedStatement {
             metadata,
             parameter_types,
+            result_columns,
         })
     }
 
@@ -87,10 +103,26 @@ impl QueryParser for KalamQueryParser {
 
     fn get_result_schema(
         &self,
-        _stmt: &Self::Statement,
-        _column_format: Option<&Format>,
+        stmt: &Self::Statement,
+        column_format: Option<&Format>,
     ) -> PgWireResult<Vec<FieldInfo>> {
-        Ok(vec![])
+        Ok(stmt
+            .result_columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let format = column_format
+                    .map(|fmt| fmt.format_for(index))
+                    .unwrap_or(FieldFormat::Text);
+                FieldInfo::new(
+                    column.name.clone(),
+                    None,
+                    None,
+                    column.datatype.clone(),
+                    format,
+                )
+            })
+            .collect())
     }
 }
 
@@ -126,6 +158,26 @@ impl KalamQueryParser {
         }
         Some(types)
     }
+
+    async fn infer_result_columns(&self, sql: &str) -> Option<Vec<WireResultColumn>> {
+        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
+        let plan = self
+            .app_context
+            .base_session_context()
+            .state()
+            .create_logical_plan(&execution_sql)
+            .await
+            .ok()?;
+        let schema = plan.schema();
+        let mut columns = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            columns.push(WireResultColumn {
+                name:     field.name().to_string(),
+                datatype: pg_type_for_data_type(field.data_type()).unwrap_or(Type::TEXT),
+            });
+        }
+        Some(columns)
+    }
 }
 
 fn pg_type_for_data_type(data_type: &DataType) -> PgWireResult<Type> {
@@ -138,7 +190,7 @@ fn pg_type_for_data_type(data_type: &DataType) -> PgWireResult<Type> {
         DataType::Float64 => Type::FLOAT8,
         DataType::Date32 | DataType::Date64 => Type::DATE,
         DataType::Timestamp(_, _) => Type::TIMESTAMP,
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Null => Type::TEXT,
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View | DataType::Null => Type::TEXT,
         _ => Type::TEXT,
     })
 }

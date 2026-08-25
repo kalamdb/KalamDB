@@ -9,7 +9,7 @@ use std::{
 use async_trait::async_trait;
 use datafusion::{
     arrow::{
-        datatypes::{DataType, Field, SchemaRef},
+        datatypes::SchemaRef,
         record_batch::RecordBatch,
     },
     catalog::{SchemaProvider, Session},
@@ -217,85 +217,18 @@ impl PgCatalogSchemaProvider {
 }
 
 fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn TableProvider>>) {
-    let empty_views = [
-        (
-            "pg_attrdef",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("adrelid", DataType::Int64, false),
-                Field::new("adnum", DataType::Int64, false),
-                Field::new("adbin", DataType::Utf8, false),
-            ]),
-        (
-            "pg_description",
-            vec![
-                Field::new("objoid", DataType::Int64, false),
-                Field::new("classoid", DataType::Int64, false),
-                Field::new("objsubid", DataType::Int64, false),
-                Field::new("description", DataType::Utf8, false),
-            ]),
-        (
-            "pg_constraint",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("conname", DataType::Utf8, false),
-                Field::new("connamespace", DataType::Int64, false),
-                Field::new("contype", DataType::Utf8, false),
-                Field::new("conrelid", DataType::Int64, false),
-                Field::new("confrelid", DataType::Int64, false),
-                Field::new("conkey", DataType::Utf8, true),
-            ]),
-        (
-            "pg_index",
-            vec![
-                Field::new("indexrelid", DataType::Int64, false),
-                Field::new("indrelid", DataType::Int64, false),
-                Field::new("indnatts", DataType::Int64, false),
-                Field::new("indnkeyatts", DataType::Int64, false),
-                Field::new("indisunique", DataType::Boolean, false),
-                Field::new("indisprimary", DataType::Boolean, false),
-                Field::new("indisexclusion", DataType::Boolean, false),
-                Field::new("indimmediate", DataType::Boolean, false),
-                Field::new("indisclustered", DataType::Boolean, false),
-                Field::new("indisvalid", DataType::Boolean, false),
-                Field::new("indcheckxmin", DataType::Boolean, false),
-                Field::new("indisready", DataType::Boolean, false),
-                Field::new("indislive", DataType::Boolean, false),
-                Field::new("indisreplident", DataType::Boolean, false),
-            ]),
-        (
-            "pg_inherits",
-            vec![
-                Field::new("inhrelid", DataType::Int64, false),
-                Field::new("inhparent", DataType::Int64, false),
-                Field::new("inhseqno", DataType::Int64, false),
-            ]),
-        (
-            "pg_enum",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("enumtypid", DataType::Int64, false),
-                Field::new("enumsortorder", DataType::Float64, false),
-                Field::new("enumlabel", DataType::Utf8, false),
-            ]),
-        (
-            "pg_matviews",
-            vec![
-                Field::new("schemaname", DataType::Utf8, false),
-                Field::new("matviewname", DataType::Utf8, false),
-                Field::new("matviewowner", DataType::Utf8, false),
-                Field::new("tablespace", DataType::Utf8, true),
-                Field::new("hasindexes", DataType::Boolean, false),
-                Field::new("ispopulated", DataType::Boolean, false),
-                Field::new("definition", DataType::Utf8, true),
-            ]),
-    ];
+    // Single source of truth: kalamdb-postgres-wire client_catalog (compiled in-place via path).
+    #[allow(dead_code)]
+    #[path = "../../../kalamdb-postgres-wire/src/client_catalog/empty_tables.rs"]
+    mod wire_empty_tables;
 
-    for (name, fields) in empty_views {
+    for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
         providers.insert(
             name.to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(empty::EmptyPgCatalogView::new(
-                name, fields)))));
+                name, fields,
+            )))),
+        );
     }
 }
 

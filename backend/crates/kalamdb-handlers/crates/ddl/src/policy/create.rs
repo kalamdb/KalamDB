@@ -6,7 +6,7 @@ use kalamdb_commons::{
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
-    rls::PolicyCompiler,
+    rls::{PolicyCompiler, SchemaPolicyTableResolver},
     sql::{
         context::{ExecutionContext, ExecutionResult, ScalarValue},
         executor::handlers::TypedStatementHandler,
@@ -42,7 +42,7 @@ impl CreatePolicyHandler {
                 "Row-level security policies are supported only on shared tables".to_string()));
         }
 
-        let compiler = PolicyCompiler::new(registry);
+        let compiler = PolicyCompiler::new(SchemaPolicyTableResolver::new(registry));
         let (using_sql, using_program) = compile_using(&compiler, &table, statement)?;
         let (with_check_sql, check_program) = compile_check(&compiler, &table, statement)?;
         let policy_id = PolicyId::new(statement.table_id.clone(), &statement.policy_name)
@@ -64,7 +64,8 @@ impl CreatePolicyHandler {
 
     fn membership_index_warning(&self, policy: &TablePolicy) -> Option<String> {
         let program = policy.using_program.as_ref().or(policy.check_program.as_ref())?;
-        PolicyCompiler::new(self.app_context.schema_registry()).covering_membership_index_warning(program)
+        PolicyCompiler::new(SchemaPolicyTableResolver::new(self.app_context.schema_registry()))
+            .covering_membership_index_warning(program)
     }
 }
 

@@ -13,8 +13,6 @@ use std::{
 };
 
 use anyhow::Result;
-use kalamdb_commons::{models::UserId, Role};
-use kalam_client::models::QueryResponse;
 pub use helpers::{
     assert_error_contains, assert_manifest_exists, assert_min_row_count, assert_no_duplicates,
     assert_parquet_exists_and_nonempty, assert_query_has_results, assert_query_success,
@@ -25,9 +23,10 @@ pub use helpers::{
     wait_for_ack,
 };
 use kalam_client::{
-    models::{ChangeEvent, ResponseStatus},
+    models::{ChangeEvent, QueryResponse, ResponseStatus},
     KalamCellValue, SubscriptionManager,
 };
+use kalamdb_commons::{models::UserId, Role};
 use tokio::time::{sleep, timeout, Instant};
 
 use crate::test_support::{consolidated_helpers as helpers, http_server::HttpTestServer};
@@ -93,15 +92,12 @@ pub async fn seed_shared_catalog_rows(
 }
 
 /// Collaborative / operational shared rows: subjects may read and write.
-pub async fn grant_shared_public_all(
-    server: &HttpTestServer,
-    qualified_table: &str,
-) -> Result<()> {
+pub async fn grant_shared_public_all(server: &HttpTestServer, qualified_table: &str) -> Result<()> {
     let policy = shared_policy_name(qualified_table, "public");
     let resp = server
         .execute_sql(&format!(
-            "CREATE POLICY {policy} ON {qualified_table} FOR ALL TO PUBLIC USING (true) WITH CHECK \
-             (true)"
+            "CREATE POLICY {policy} ON {qualified_table} FOR ALL TO PUBLIC USING (true) WITH \
+             CHECK (true)"
         ))
         .await?;
     assert_success(&resp, "CREATE shared public ALL policy");

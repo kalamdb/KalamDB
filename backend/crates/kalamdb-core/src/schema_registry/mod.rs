@@ -5,6 +5,7 @@
 //! crate.
 
 pub mod cached_table_data;
+pub mod policy_table_resolver;
 pub mod projection;
 pub mod registry;
 
@@ -15,4 +16,5 @@ pub use kalamdb_commons::{helpers::string_interner::SystemColumns, schemas::Tabl
 pub use kalamdb_system::SystemColumnsService;
 pub use kalamdb_views::error::RegistryError;
 pub use projection::{project_batch, schemas_compatible};
+pub use policy_table_resolver::SchemaPolicyTableResolver;
 pub use registry::{SchemaRegistry, TablesSchemaRegistryAdapter};

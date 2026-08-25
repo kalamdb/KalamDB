@@ -605,7 +605,9 @@ impl SqlExecutor {
 
     fn apply_select_limits(
         &self,
-        df: datafusion::dataframe::DataFrame) -> Result<datafusion::dataframe::DataFrame, KalamDbError> {
+        df: datafusion::dataframe::DataFrame,
+        sql: &str,
+    ) -> Result<datafusion::dataframe::DataFrame, KalamDbError> {
         let max_query_limit = self.app_context.config().limits.max_query_limit;
         let default_query_limit = self.app_context.config().limits.default_query_limit;
         let has_explicit_limit = Self::logical_plan_has_limit(df.logical_plan());
@@ -619,8 +621,9 @@ impl SqlExecutor {
 
             log::debug!(
                 target: "sql::exec",
-                "Applying default query limit {} to unbounded SELECT",
-                effective_default_limit
+                "Applying default query limit {} to unbounded SELECT | sql='{}'",
+                effective_default_limit,
+                sql
             );
 
             return df
@@ -2379,7 +2382,7 @@ impl SqlExecutor {
             }
         };
 
-        let df = self.apply_select_limits(df)?;
+        let df = self.apply_select_limits(df, sql)?;
 
         // Capture schema before collecting (needed for 0 row results)
         // DFSchema -> Arrow Schema via inner() method
@@ -2468,6 +2471,15 @@ impl SqlExecutor {
         &self,
         sql: &str,
         exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        // PostgreSQL GUI `SET` (search_path, client_encoding, …) is owned by
+        // `kalamdb-postgres-wire::client_catalog`. Accept non-DataFusion SET as a
+        // no-op here so HTTP admin sessions do not error; wire applies search_path.
+        if Self::is_postgres_client_set(sql) {
+            return Ok(ExecutionResult::Success {
+                message: "SET".to_string(),
+            });
+        }
+
         let execution_sql = match Self::rewrite_describe_shorthand(sql, exec_ctx) {
             Some(rewritten) => rewritten,
             None => kalamdb_sql::rewrite_context_functions_for_datafusion(sql).to_string(),
@@ -2520,18 +2532,20 @@ impl SqlExecutor {
 
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
-        // log::debug!(
-        //     target: "sql::meta",
-        //     "✅ Meta command completed | sql='{}' | rows={}",
-        //     sql,
-        //     row_count
-        // );
-
         Ok(ExecutionResult::Rows {
             batches,
             row_count,
             schema: Some(schema),
         })
+    }
+
+    fn is_postgres_client_set(sql: &str) -> bool {
+        let trimmed = sql.trim().trim_end_matches(';').trim();
+        if trimmed.len() < 4 || !trimmed[..3].eq_ignore_ascii_case("SET") {
+            return false;
+        }
+        let rest = trimmed[3..].trim_start();
+        !rest.to_ascii_lowercase().starts_with("datafusion.")
     }
 
     /// Log SQL errors with appropriate level (warn for user errors, error for system errors)

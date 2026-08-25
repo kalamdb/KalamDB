@@ -24,6 +24,17 @@ KalamDB exposes a minimal `pg_catalog` schema so PostgreSQL wire clients (DBeave
 
 **Notable UDFs:** `pg_get_expr`, `has_database_privilege`, `format_type`, `quote_ident`, `pg_backend_pid`
 
+## Ownership
+
+| Concern | Home |
+|---------|------|
+| Wire `SET` / `search_path`, empty `pg_catalog` probe schemas | `kalamdb-postgres-wire::client_catalog` |
+| Populated `pg_catalog` / `information_schema` TableProviders | `kalamdb-views` (shared HTTP + wire) |
+| UDFs (`current_setting`, `format_type`, …) | `kalamdb-core` session registration |
+| TCP / auth / row encode | `kalamdb-postgres-wire` |
+
+Empty probe table schemas are defined once in `client_catalog/empty_tables.rs` and compiled into `kalamdb-views` via `#[path]` so providers stay in sync without a crate cycle.
+
 ## KalamDB current shims
 
 Registered in `kalamdb-views/src/pg_catalog/mod.rs` when pg_catalog is enabled:

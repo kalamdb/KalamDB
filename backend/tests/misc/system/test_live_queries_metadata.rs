@@ -51,8 +51,8 @@ async fn test_system_live_metadata() {
 
     // 2. Subscribe using SubscriptionRequest
     let subscription1 = SubscriptionRequest {
-        id: "sub_meta_test".to_string(),
-        sql: format!("SELECT * FROM {}.events", ns),
+        id:      "sub_meta_test".to_string(),
+        sql:     format!("SELECT * FROM {}.events", ns),
         options: Some(SubscriptionOptions::default()),
     };
 
@@ -95,8 +95,8 @@ async fn test_system_live_metadata() {
     // 6. Test connection close cleanup
     // Re-subscribe
     let subscription2 = SubscriptionRequest {
-        id: "sub_meta_test2".to_string(),
-        sql: format!("SELECT * FROM {}.events", ns),
+        id:      "sub_meta_test2".to_string(),
+        sql:     format!("SELECT * FROM {}.events", ns),
         options: Some(SubscriptionOptions::default()),
     };
     let result2 = manager
@@ -166,8 +166,8 @@ async fn test_cleanup_connection_removes_live_rows_and_registry_state() {
     );
 
     let subscription = SubscriptionRequest {
-        id: "sub_cleanup_test".to_string(),
-        sql: format!("SELECT * FROM {}.events", ns),
+        id:      "sub_cleanup_test".to_string(),
+        sql:     format!("SELECT * FROM {}.events", ns),
         options: Some(SubscriptionOptions::default()),
     };
 

@@ -28,9 +28,9 @@ use kalamdb_configs::DataFusionSettings;
 use crate::sql::{
     functions::{
         ColDescriptionFunction, CosineDistanceFunction, CurrentDatabaseFunction,
-        CurrentRoleFunction, CurrentSchemaFunction, CurrentUserFunction, FormatTypeFunction,
-        PgBackendPidFunction, PgGetExprFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
-        VersionFunction,
+        CurrentRoleFunction, CurrentSchemaFunction, CurrentSettingFunction, CurrentUserFunction,
+        FormatTypeFunction, PgBackendPidFunction, PgGetExprFunction, SnowflakeIdFunction,
+        UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -170,6 +170,7 @@ impl DataFusionSessionFactory {
         // PostgreSQL wire client introspection stubs
         ctx.register_udf(ScalarUDF::from(PgBackendPidFunction::new()));
         ctx.register_udf(ScalarUDF::from(VersionFunction::new()));
+        ctx.register_udf(ScalarUDF::from(CurrentSettingFunction::new()));
         ctx.register_udf(ScalarUDF::from(ColDescriptionFunction::new()));
         ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));

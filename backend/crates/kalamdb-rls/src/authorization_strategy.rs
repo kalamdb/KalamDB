@@ -3,6 +3,4 @@
 pub enum AuthorizationStrategy {
     PointGuard,
     MultiGuard,
-    DataFusionSemiJoin,
-    CachedAuthorizationSet,
 }

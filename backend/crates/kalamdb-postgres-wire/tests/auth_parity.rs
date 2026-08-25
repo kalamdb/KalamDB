@@ -90,8 +90,8 @@ async fn wire_password_auth_maps_success_to_backend_auth() {
 
     let auth = authenticate_startup_password(
         WirePasswordAuthRequest {
-            user: "wire_user".to_string(),
-            password: "correct-password".to_string(),
+            user:        "wire_user".to_string(),
+            password:    "correct-password".to_string(),
             client_addr: Some("127.0.0.1:5432".to_string()),
         },
         &repo,
@@ -111,8 +111,8 @@ async fn failed_wire_auth_does_not_produce_backend_auth() {
 
     let error = authenticate_startup_password(
         WirePasswordAuthRequest {
-            user: "missing_user".to_string(),
-            password: "wrong-password".to_string(),
+            user:        "missing_user".to_string(),
+            password:    "wrong-password".to_string(),
             client_addr: None,
         },
         &repo,

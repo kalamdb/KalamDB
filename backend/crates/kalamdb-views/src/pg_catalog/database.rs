@@ -21,6 +21,8 @@ fn schema() -> SchemaRef {
                 Field::new("datname", DataType::Utf8, false),
                 Field::new("datdba", DataType::Int64, false),
                 Field::new("datistemplate", DataType::Boolean, false),
+                // Clients (Tabularis, DBeaver, etc.) filter connectable DBs with this.
+                Field::new("datallowconn", DataType::Boolean, false),
             ]))
         })
         .clone()
@@ -53,10 +55,12 @@ impl PgCatalogView for PgDatabaseView {
         let mut names = StringBuilder::new();
         let mut owners = Int64Builder::new();
         let mut templates = BooleanBuilder::new();
+        let mut allow_conn = BooleanBuilder::new();
         oids.append_value(stable_oid(&["database", self.database_name.as_str()]));
         names.append_value(self.database_name.as_str());
         owners.append_value(10);
         templates.append_value(false);
+        allow_conn.append_value(true);
 
         RecordBatch::try_new(
             self.schema(),
@@ -65,6 +69,7 @@ impl PgCatalogView for PgDatabaseView {
                 Arc::new(names.finish()) as ArrayRef,
                 Arc::new(owners.finish()) as ArrayRef,
                 Arc::new(templates.finish()) as ArrayRef,
+                Arc::new(allow_conn.finish()) as ArrayRef,
             ],
         )
         .map_err(|error| RegistryError::Other(format!("failed to build pg_database: {error}")))

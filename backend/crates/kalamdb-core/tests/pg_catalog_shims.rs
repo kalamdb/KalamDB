@@ -104,6 +104,23 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
             vec![ScalarValue::Boolean(Some(false))])
         .await);
     assert_eq!(string_values(&unqualified_param_rows, "datname"), vec!["kalam".to_string()]);
+
+    let text_cast_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .await);
+    assert_eq!(string_values(&text_cast_rows, "datname"), vec!["kalam".to_string()]);
+
+    let allowconn_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT datistemplate \
+             ORDER BY datname")
+        .await);
+    assert_eq!(string_values(&allowconn_rows, "datname"), vec!["kalam".to_string()]);
 }
 
 #[tokio::test]

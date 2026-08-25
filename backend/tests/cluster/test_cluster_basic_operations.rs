@@ -37,7 +37,8 @@ async fn test_cluster_basic_crud_operations() {
     assert!(consistency, "Namespace not replicated to all nodes");
 
     let create_table_sql = format!(
-        "CREATE TABLE {}.{} (id INT PRIMARY KEY, content TEXT, status TEXT) WITH (TYPE='USER', STORAGE_ID='local')",
+        "CREATE TABLE {}.{} (id INT PRIMARY KEY, content TEXT, status TEXT) WITH (TYPE='USER', \
+         STORAGE_ID='local')",
         namespace, table
     );
     let response = cluster
@@ -65,7 +66,8 @@ async fn test_cluster_basic_crud_operations() {
     assert!(consistency, "Table not replicated to all nodes");
 
     let insert_sql = format!(
-        "INSERT INTO {}.{} (id, content, status) VALUES (1, 'message 1', 'active'), (2, 'message 2', 'active')",
+        "INSERT INTO {}.{} (id, content, status) VALUES (1, 'message 1', 'active'), (2, 'message \
+         2', 'active')",
         namespace, table
     );
     let response = cluster.execute_sql_on_random(&insert_sql).await.expect("Failed to insert data");

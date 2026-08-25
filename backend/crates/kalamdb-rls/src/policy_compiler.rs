@@ -13,19 +13,9 @@ use sqlparser::{
     dialect::PostgreSqlDialect,
 };
 
-use crate::schema_registry::SchemaRegistry;
-
 /// Resolves table definitions while compiling a policy.
 pub trait PolicyTableResolver {
     fn resolve_table(&self, table_id: &TableId) -> Result<Arc<TableDefinition>, String>;
-}
-
-impl PolicyTableResolver for Arc<SchemaRegistry> {
-    fn resolve_table(&self, table_id: &TableId) -> Result<Arc<TableDefinition>, String> {
-        self.get_table_if_exists(table_id)
-            .map_err(|error| format!("failed to resolve table {table_id}: {error}"))?
-            .ok_or_else(|| format!("table {table_id} does not exist"))
-    }
 }
 
 /// Compiles policy SQL into user-independent authorization semantics.
@@ -44,7 +34,8 @@ where
     pub fn compile(
         &self,
         protected_table: &TableDefinition,
-        expression_sql: &str) -> Result<PolicyProgram, String> {
+        expression_sql: &str,
+    ) -> Result<PolicyProgram, String> {
         let dialect = PostgreSqlDialect {};
         let expression = parse_sql_expression(expression_sql, &dialect)
             .map_err(|error| format!("invalid policy expression: {error}"))?;
@@ -72,7 +63,8 @@ where
         &self,
         protected_table: &TableDefinition,
         protected_expr: &Expr,
-        query: &Query) -> Result<PolicyProgram, String> {
+        query: &Query,
+    ) -> Result<PolicyProgram, String> {
         let protected_column = column_name(protected_expr)
             .ok_or_else(|| "membership key must be a protected-table column".to_string())?;
         let protected_column_id = resolve_column_id(protected_table, protected_column.1)?;
@@ -112,7 +104,8 @@ where
     fn compile_exists(
         &self,
         protected_table: &TableDefinition,
-        query: &Query) -> Result<PolicyProgram, String> {
+        query: &Query,
+    ) -> Result<PolicyProgram, String> {
         let (select, relation_table_id, relation_qualifier) =
             self.authorization_select(protected_table, query)?;
         if select.projection.len() != 1 {
@@ -137,16 +130,19 @@ where
             if let Some((relation_column, protected_column)) = correlation_equality(
                 predicate,
                 &relation_qualifier,
-                protected_table.table_name.as_str()) {
+                protected_table.table_name.as_str(),
+            ) {
                 key_pair = Some((
                     resolve_column_id(&relation_table, relation_column)?,
-                    resolve_column_id(protected_table, protected_column)?));
+                    resolve_column_id(protected_table, protected_column)?,
+                ));
                 continue;
             }
             static_predicates.push(compile_static_predicate(
                 predicate,
                 &relation_table,
-                &relation_qualifier)?);
+                &relation_qualifier,
+            )?);
         }
 
         let principal_column = principal_column
@@ -170,7 +166,8 @@ where
     fn authorization_select<'a>(
         &self,
         protected_table: &TableDefinition,
-        query: &'a Query) -> Result<(&'a Select, TableId, String), String> {
+        query: &'a Query,
+    ) -> Result<(&'a Select, TableId, String), String> {
         if query.with.is_some()
             || query.order_by.is_some()
             || query.limit_clause.is_some()
@@ -220,7 +217,8 @@ where
     fn compile_row_local(
         &self,
         protected_table: &TableDefinition,
-        expression: &Expr) -> Result<BoundExprShape, String> {
+        expression: &Expr,
+    ) -> Result<BoundExprShape, String> {
         match expression {
             Expr::Nested(expression) => self.compile_row_local(protected_table, expression),
             Expr::Value(value) => match &value.value {
@@ -282,7 +280,8 @@ fn table_id(table: &TableDefinition) -> TableId {
 
 fn has_covering_membership_primary_key(
     table: &TableDefinition,
-    relation: &AuthorizationRelation) -> bool {
+    relation: &AuthorizationRelation,
+) -> bool {
     let mut pk_columns =
         table.columns.iter().filter(|column| column.is_primary_key).collect::<Vec<_>>();
     pk_columns.sort_by_key(|column| column.ordinal_position);
@@ -311,7 +310,8 @@ fn resolve_column_id(table: &TableDefinition, column_name: &str) -> Result<u64, 
 
 fn object_name_to_table_id(
     name: &ObjectName,
-    default_namespace: &kalamdb_commons::NamespaceId) -> Result<TableId, String> {
+    default_namespace: &kalamdb_commons::NamespaceId,
+) -> Result<TableId, String> {
     let parts = name
         .0
         .iter()
@@ -403,7 +403,8 @@ fn principal_equality<'a>(expression: &'a Expr, relation_qualifier: &str) -> Opt
 fn correlation_equality<'a>(
     expression: &'a Expr,
     relation_qualifier: &str,
-    protected_qualifier: &str) -> Option<(&'a str, &'a str)> {
+    protected_qualifier: &str,
+) -> Option<(&'a str, &'a str)> {
     let Expr::BinaryOp {
         left,
         op: BinaryOperator::Eq,
@@ -435,7 +436,8 @@ fn compile_relation_predicates(
     selection: &Expr,
     relation_table: &TableDefinition,
     relation_qualifier: &str,
-    allow_correlation: bool) -> Result<(u64, Vec<ScalarPredicate>), String> {
+    allow_correlation: bool,
+) -> Result<(u64, Vec<ScalarPredicate>), String> {
     let mut principal_column = None;
     let mut static_predicates = Vec::new();
     for predicate in flatten_and(selection) {
@@ -450,7 +452,8 @@ fn compile_relation_predicates(
             static_predicates.push(compile_static_predicate(
                 predicate,
                 relation_table,
-                relation_qualifier)?);
+                relation_qualifier,
+            )?);
         }
     }
     principal_column
@@ -461,7 +464,8 @@ fn compile_relation_predicates(
 fn compile_static_predicate(
     expression: &Expr,
     relation_table: &TableDefinition,
-    relation_qualifier: &str) -> Result<ScalarPredicate, String> {
+    relation_qualifier: &str,
+) -> Result<ScalarPredicate, String> {
     let Expr::BinaryOp { left, op, right } = expression else {
         return Err("authorization relation predicate must be scalar equality".to_string());
     };
@@ -492,7 +496,8 @@ fn compile_static_predicate(
 fn compile_row_equality(
     protected_table: &TableDefinition,
     left: &Expr,
-    right: &Expr) -> Result<BoundExprShape, String> {
+    right: &Expr,
+) -> Result<BoundExprShape, String> {
     for (column, value) in [(left, right), (right, left)] {
         let Some((qualifier, column_name)) = column_name(column) else {
             continue;
@@ -515,7 +520,8 @@ fn compile_row_equality(
     }
     Err(
         "row-local equality must compare a protected column to CURRENT_USER or a literal"
-            .to_string())
+            .to_string(),
+    )
 }
 
 fn policy_scalar(expression: &Expr) -> Option<PolicyScalar> {

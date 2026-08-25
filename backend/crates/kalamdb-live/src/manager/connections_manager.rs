@@ -266,34 +266,44 @@ impl ConnectionsManager {
         {
             self.release_connection_slot();
 
-            // Remove from user_table_subscriptions and shared_table_subscriptions indices
-            if let Some(user_id) = shared_state.user_id() {
-                shared_state.for_each_subscription(|_id, sub| {
-                    // Try user_table_subscriptions first
-                    let key = (user_id.clone(), sub.table_id.clone());
-                    if let Some(entries) = self.user_table_subscriptions.get(&key) {
-                        entries.remove(&sub.live_id);
-                    }
-                    self.user_table_subscriptions.remove_if(&key, |_, handles| handles.is_empty());
+            // Drain once, then touch only the index that owns each subscription.
+            // This avoids a read pass plus a write pass and removes two needless
+            // DashMap lookups per subscription during reconnect cleanup.
+            let subscriptions = shared_state.collect_subscription_info(|sub| {
+                (sub.live_id.clone(), sub.table_id.clone(), sub.is_shared)
+            });
 
-                    // Also try shared_table_subscriptions
-                    if let Some(entries) = self.shared_table_subscriptions.get(&sub.table_id) {
-                        entries.remove(&sub.live_id);
+            for (live_id, table_id, is_shared) in &subscriptions {
+                if *is_shared {
+                    if let Some(entries) = self.shared_table_subscriptions.get(table_id) {
+                        entries.remove(live_id);
+                        let is_empty = entries.is_empty();
+                        drop(entries);
+                        if is_empty {
+                            self.shared_table_subscriptions
+                                .remove_if(table_id, |_, handles| handles.is_empty());
+                        }
                     }
-                    self.shared_table_subscriptions
-                        .remove_if(&sub.table_id, |_, handles| handles.is_empty());
-                });
+                } else if let Some(user_id) = shared_state.user_id() {
+                    let key = (user_id.clone(), table_id.clone());
+                    if let Some(entries) = self.user_table_subscriptions.get(&key) {
+                        entries.remove(live_id);
+                        let is_empty = entries.is_empty();
+                        drop(entries);
+                        if is_empty {
+                            self.user_table_subscriptions
+                                .remove_if(&key, |_, handles| handles.is_empty());
+                        }
+                    }
+                }
             }
 
-            // Collect and remove all subscriptions
-            let removed = shared_state.collect_subscription_info(|sub| sub.live_id.clone());
-
-            let sub_count = removed.len();
+            let sub_count = subscriptions.len();
             if sub_count > 0 {
                 self.total_subscriptions.fetch_sub(sub_count, Ordering::AcqRel);
             }
 
-            removed
+            subscriptions.into_iter().map(|(live_id, _, _)| live_id).collect()
         } else {
             Vec::new()
         };
@@ -304,10 +314,6 @@ impl ConnectionsManager {
                 connection_id,
                 removed_live_ids.len()
             );
-        }
-
-        if self.connection_count() == 0 && self.subscription_count() == 0 {
-            self.trim_idle_capacity();
         }
 
         removed_live_ids
@@ -689,6 +695,13 @@ impl ConnectionsManager {
         for conn_id in force_unregister {
             self.unregister_connection(&conn_id);
         }
+
+        // Reclaim high-water capacity off the disconnect/reconnect critical path.
+        // An immediate reconnect can reuse the allocation; a truly idle registry
+        // releases it on the next heartbeat sweep.
+        if self.connection_count() == 0 && self.subscription_count() == 0 {
+            self.trim_idle_capacity();
+        }
     }
 }
 
@@ -1068,29 +1081,33 @@ mod tests {
             reg.state.mark_authenticated(user_id.clone(), kalamdb_commons::Role::User);
         }
 
-        // Add a shared subscription to ConnectionState.subscriptions
-        {
-            reg.state.insert_subscription(
-                Arc::from("sub1"),
-                super::super::super::models::SubscriptionState {
-                    live_id: live_id.clone(),
-                    table_id: table_id.clone(),
-                    filter_expr: None,
-                    projections: None,
-                    initial_load: Some(super::super::super::models::InitialLoadState {
-                        batch_size: 100,
-                        snapshot_end_seq: None,
-                        snapshot_end_commit_seq: None,
-                        current_batch_num: 0,
-                        flow_control: Arc::new(SubscriptionFlowControl::new()),
-                    }),
-                    is_shared: true,
-                    runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
-                        "SELECT * FROM shared.orders",
-                        None,
-                        1)),
-                });
-        }
+        // Add a shared subscription to ConnectionState.subscriptions.
+        let subscription_state = super::super::super::models::SubscriptionState {
+            live_id: live_id.clone(),
+            table_id: table_id.clone(),
+            filter_expr: None,
+            projections: None,
+            initial_load: Some(super::super::super::models::InitialLoadState {
+                batch_size: 100,
+                snapshot_end_seq: None,
+                snapshot_end_commit_seq: None,
+                current_batch_num: 0,
+                flow_control: Arc::new(SubscriptionFlowControl::new()),
+            }),
+            is_shared: true,
+            runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
+                "SELECT * FROM shared.orders",
+                None,
+                1)),
+        };
+        assert!(reg
+            .state
+            .insert_subscription(Arc::from("sub1"), subscription_state.clone()));
+        assert!(
+            !reg.state.insert_subscription(Arc::from("sub1"), subscription_state),
+            "duplicate subscription IDs must not replace active state or leak counters"
+        );
+        assert_eq!(reg.state.subscription_count(), 1);
 
         let (tx, _rx) = mpsc::channel(64);
         registry.index_shared_subscription(

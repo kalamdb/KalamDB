@@ -45,7 +45,7 @@ pub enum LeadershipStatus {
 #[derive(Clone)]
 pub struct LeaderOnlyJobGuard {
     executor: Arc<dyn CommandExecutor>,
-    node_id: NodeId,
+    node_id:  NodeId,
 }
 
 impl LeaderOnlyJobGuard {
@@ -90,8 +90,8 @@ impl LeaderOnlyJobGuard {
         let now = Utc::now();
 
         let cmd = MetaCommand::ClaimJob {
-            job_id: job_id.clone(),
-            node_id: self.node_id,
+            job_id:     job_id.clone(),
+            node_id:    self.node_id,
             claimed_at: now,
         };
 
@@ -114,8 +114,8 @@ impl LeaderOnlyJobGuard {
         let now = Utc::now();
 
         let cmd = MetaCommand::ReleaseJob {
-            job_id: job_id.clone(),
-            reason: reason.to_string(),
+            job_id:      job_id.clone(),
+            reason:      reason.to_string(),
             released_at: now,
         };
 
@@ -137,8 +137,8 @@ impl LeaderOnlyJobGuard {
         let now = Utc::now();
 
         let cmd = MetaCommand::CompleteJob {
-            job_id: job_id.clone(),
-            result: result_json,
+            job_id:       job_id.clone(),
+            result:       result_json,
             completed_at: now,
         };
 
@@ -156,9 +156,9 @@ impl LeaderOnlyJobGuard {
         let now = Utc::now();
 
         let cmd = MetaCommand::FailJob {
-            job_id: job_id.clone(),
+            job_id:        job_id.clone(),
             error_message: error_message.to_string(),
-            failed_at: now,
+            failed_at:     now,
         };
 
         match self.executor.execute_meta(cmd).await {
@@ -191,37 +191,37 @@ mod tests {
     /// Mock CommandExecutor for testing
     #[derive(Debug)]
     struct MockExecutor {
-        is_leader: AtomicBool,
+        is_leader:  AtomicBool,
         is_cluster: bool,
-        node_id: NodeId,
-        leader_id: Option<NodeId>,
+        node_id:    NodeId,
+        leader_id:  Option<NodeId>,
     }
 
     impl MockExecutor {
         fn new_leader() -> Self {
             Self {
-                is_leader: AtomicBool::new(true),
+                is_leader:  AtomicBool::new(true),
                 is_cluster: true,
-                node_id: NodeId::from(1u64),
-                leader_id: Some(NodeId::from(1u64)),
+                node_id:    NodeId::from(1u64),
+                leader_id:  Some(NodeId::from(1u64)),
             }
         }
 
         fn new_follower() -> Self {
             Self {
-                is_leader: AtomicBool::new(false),
+                is_leader:  AtomicBool::new(false),
                 is_cluster: true,
-                node_id: NodeId::from(2u64),
-                leader_id: Some(NodeId::from(1u64)),
+                node_id:    NodeId::from(2u64),
+                leader_id:  Some(NodeId::from(1u64)),
             }
         }
 
         fn new_standalone() -> Self {
             Self {
-                is_leader: AtomicBool::new(true),
+                is_leader:  AtomicBool::new(true),
                 is_cluster: false,
-                node_id: NodeId::default(),
-                leader_id: None,
+                node_id:    NodeId::default(),
+                leader_id:  None,
             }
         }
 
@@ -287,10 +287,10 @@ mod tests {
 
         fn get_cluster_info(&self) -> ClusterInfo {
             ClusterInfo {
-                cluster_id: "test-cluster".to_string(),
-                current_node_id: self.node_id.clone(),
-                is_cluster_mode: self.is_cluster,
-                nodes: vec![ClusterNodeInfo {
+                cluster_id:              "test-cluster".to_string(),
+                current_node_id:         self.node_id.clone(),
+                is_cluster_mode:         self.is_cluster,
+                nodes:                   vec![ClusterNodeInfo {
                     node_id: self.node_id.clone(),
                     role: if self.is_leader.load(Ordering::SeqCst) {
                         NodeRole::Leader
@@ -325,12 +325,12 @@ mod tests {
                     os: Some("test".to_string()),
                     arch: Some("x86_64".to_string()),
                 }],
-                total_groups: 14,
-                user_shards: 12,
-                shared_shards: 1,
-                current_term: 1,
-                last_log_index: None,
-                last_applied: None,
+                total_groups:            14,
+                user_shards:             12,
+                shared_shards:           1,
+                current_term:            1,
+                last_log_index:          None,
+                last_applied:            None,
                 millis_since_quorum_ack: None,
             }
         }
