@@ -38,18 +38,39 @@ fn smoke_shared_table_crud() {
     );
     execute_sql_as_root_via_client(&create_sql).expect("create shared table should succeed");
     wait_for_table_ready(&full, Duration::from_secs(3)).expect("table should be ready");
+    grant_public_shared_table_access(&full);
+
+    let collaborator = generate_unique_namespace("shared_crud_user");
+    let password = "smoke_pass_123";
+    execute_sql_as_root_via_client(&format!(
+        "CREATE USER {collaborator} WITH PASSWORD '{password}' ROLE 'user'"
+    ))
+    .expect("create collaborator");
 
     // 2) Insert rows
     let ins1 = format!("INSERT INTO {} (name, status) VALUES ('alpha', 'new')", full);
     let ins2 = format!("INSERT INTO {} (name, status) VALUES ('beta', 'new')", full);
     execute_sql_as_root_via_client(&ins1).expect("insert alpha should succeed");
     execute_sql_as_root_via_client(&ins2).expect("insert beta should succeed");
+    execute_sql_via_client_as(
+        &collaborator,
+        password,
+        &format!("INSERT INTO {full} (name, status) VALUES ('gamma', 'new')"),
+    )
+    .expect("user INSERT under public ALL policy");
 
     // 3) SELECT and verify both rows present
     let sel_all = format!("SELECT * FROM {}", full);
     let out = execute_sql_as_root_via_client(&sel_all).expect("select should succeed");
     assert!(out.contains("alpha"), "expected 'alpha' in results: {}", out);
     assert!(out.contains("beta"), "expected 'beta' in results: {}", out);
+    assert!(out.contains("gamma"), "expected user-inserted 'gamma' in results: {}", out);
+    let user_out = execute_sql_via_client_as(&collaborator, password, &sel_all)
+        .expect("user SELECT under public ALL policy");
+    assert!(
+        user_out.contains("alpha") && user_out.contains("gamma"),
+        "collaborator must see DBA and own rows: {user_out}"
+    );
 
     // 4) Retrieve ids for rows we will mutate (backend requires primary key equality for
     //    UPDATE/DELETE)
@@ -124,5 +145,6 @@ fn smoke_shared_table_crud() {
     }
 
     // Cleanup
+    let _ = execute_sql_as_root_via_client(&format!("DROP USER {collaborator}"));
     let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
 }

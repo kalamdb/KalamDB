@@ -11,7 +11,7 @@ use super::http_server::HttpTestServer;
 /// A test cluster with 3 nodes for testing replication and consistency.
 pub struct ClusterTestServer {
     /// Three independent server instances that form a cluster
-    pub nodes: Vec<HttpTestServer>,
+    pub nodes:   Vec<HttpTestServer>,
     /// Track which nodes are currently online (for offline testing)
     node_states: std::sync::Arc<Mutex<Vec<bool>>>,
 }

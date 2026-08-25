@@ -15,7 +15,7 @@ use tokio::{
 };
 use tracing::Instrument;
 
-use super::{types::JobsManager, utils::log_job};
+use super::{runtime::drain_job_tasks, types::JobsManager, utils::log_job};
 use crate::{
     executors::JobDecision, AppContextJobsExt, FlushScheduler, HealthMonitor,
     StreamEvictionScheduler, TopicRetentionScheduler,
@@ -36,8 +36,8 @@ impl JobsManager {
     async fn mark_job_running(&self, job_id: &JobId) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJob {
-            job_id: job_id.clone(),
-            node_id: self.node_id,
+            job_id:     job_id.clone(),
+            node_id:    self.node_id,
             claimed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -52,8 +52,8 @@ impl JobsManager {
     async fn claim_job_node(&self, job_id: &JobId) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::ClaimJobNode {
-            job_id: job_id.clone(),
-            node_id: self.node_id,
+            job_id:     job_id.clone(),
+            node_id:    self.node_id,
             claimed_at: chrono::Utc::now(),
         };
 
@@ -94,8 +94,8 @@ impl JobsManager {
         let app_ctx = self.get_attached_app_context();
         let success_message = message.unwrap_or_else(|| "Job completed successfully".to_string());
         let cmd = MetaCommand::CompleteJob {
-            job_id: job_id.clone(),
-            result: Some(serde_json::json!({ "message": success_message }).to_string()),
+            job_id:       job_id.clone(),
+            result:       Some(serde_json::json!({ "message": success_message }).to_string()),
             completed_at: chrono::Utc::now(),
         };
         app_ctx
@@ -116,9 +116,9 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::FailJob {
-            job_id: job_id.clone(),
+            job_id:        job_id.clone(),
             error_message: error_message.clone(),
-            failed_at: chrono::Utc::now(),
+            failed_at:     chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
             KalamDbError::Other(format!("Failed to mark job as failed via Raft: {}", e))
@@ -135,8 +135,8 @@ impl JobsManager {
     ) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
         let cmd = MetaCommand::CompleteJob {
-            job_id: job_id.clone(),
-            result: Some(
+            job_id:       job_id.clone(),
+            result:       Some(
                 serde_json::json!({ "message": skip_message, "skipped": true }).to_string(),
             ),
             completed_at: chrono::Utc::now(),
@@ -147,8 +147,8 @@ impl JobsManager {
 
         // Mark job as skipped in the jobs table
         let cmd_status = MetaCommand::UpdateJobStatus {
-            job_id: job_id.clone(),
-            status: JobStatus::Skipped,
+            job_id:     job_id.clone(),
+            status:     JobStatus::Skipped,
             updated_at: chrono::Utc::now(),
         };
         app_ctx.executor().execute_meta(cmd_status).await.map_err(|e| {
@@ -283,6 +283,9 @@ impl JobsManager {
             None
         };
         let wal_cleanup_enabled = wal_cleanup_interval.is_some();
+        // Prevent overlapping full-DB flushes: a timed-out flush keeps running on
+        // the blocking pool, and a second flush worsens RocksDB stall waits.
+        let wal_flush_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Leadership checks are only useful in cluster mode. In standalone mode this node is
         // always the leader, so avoid a permanent 1s idle wake-up.
@@ -394,18 +397,50 @@ impl JobsManager {
                             log::info!("Shutdown signal received, stopping job loop");
                             break;
                         }
+                        if wal_flush_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                            log::debug!("WAL cleanup skipped: previous flush still in flight");
+                            continue;
+                        }
                         let app_ctx = self.get_attached_app_context();
                         let backend = app_ctx.storage_backend();
-                        match tokio::task::spawn_blocking(move || backend.flush_all_memtables()).await {
-                            Ok(Ok(())) => {
+                        let in_flight = Arc::clone(&wal_flush_in_flight);
+                        // Bound the wait so the job loop can keep polling shutdown.
+                        // The blocking flush itself must not hang (see allow_write_stall).
+                        const WAL_FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+                        match tokio::time::timeout(
+                            WAL_FLUSH_TIMEOUT,
+                            tokio::task::spawn_blocking(move || {
+                                let result = backend.flush_all_memtables();
+                                in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+                                result
+                            }),
+                        )
+                        .await
+                        {
+                            Ok(Ok(Ok(()))) => {
                                 log::debug!("WAL cleanup: flushed all memtables");
                             },
-                            Ok(Err(e)) => {
+                            Ok(Ok(Err(e))) => {
                                 log::warn!("WAL cleanup flush_all_memtables failed: {}", e);
                             },
-                            Err(e) => {
+                            Ok(Err(e)) => {
+                                // spawn_blocking join failed before the closure ran its
+                                // in_flight clear — release the gate.
+                                wal_flush_in_flight
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
                                 log::warn!("WAL cleanup task join failed: {}", e);
                             },
+                            Err(_) => {
+                                // Leave in_flight=true until the blocking thread finishes.
+                                log::warn!(
+                                    "WAL cleanup flush_all_memtables timed out after {:?}",
+                                    WAL_FLUSH_TIMEOUT
+                                );
+                            },
+                        }
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
                         }
                         continue;
                     }
@@ -562,6 +597,10 @@ impl JobsManager {
                 },
             }
         }
+
+        // Stop scheduling new work, then let already-started jobs finish. The owner of this run
+        // loop enforces the shutdown deadline and aborts this task only if draining takes too long.
+        drain_job_tasks(&mut join_set).await;
 
         Ok(())
     }

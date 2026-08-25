@@ -18,8 +18,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             true,
             false,
             ColumnDefault::None,
-            Some("Table identifier: namespace_id:table_name".to_string()),
-        ),
+            Some("Table identifier: namespace_id:table_name".to_string())),
         ColumnDefinition::new(
             2,
             "table_name",
@@ -29,8 +28,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Table name within namespace".to_string()),
-        ),
+            Some("Table name within namespace".to_string())),
         ColumnDefinition::new(
             3,
             "namespace_id",
@@ -40,8 +38,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Namespace containing this table".to_string()),
-        ),
+            Some("Namespace containing this table".to_string())),
         ColumnDefinition::new(
             4,
             "table_type",
@@ -51,8 +48,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Table type: USER, SHARED, STREAM, SYSTEM".to_string()),
-        ),
+            Some("Table type: USER, SHARED, STREAM, SYSTEM".to_string())),
         ColumnDefinition::new(
             5,
             "created_at",
@@ -62,8 +58,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Table creation timestamp".to_string()),
-        ),
+            Some("Table creation timestamp".to_string())),
         ColumnDefinition::new(
             6,
             "schema_version",
@@ -73,8 +68,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Current schema version number".to_string()),
-        ),
+            Some("Current schema version number".to_string())),
         ColumnDefinition::new(
             7,
             "columns",
@@ -84,8 +78,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Column definitions as JSON array".to_string()),
-        ),
+            Some("Column definitions as JSON array".to_string())),
         ColumnDefinition::new(
             8,
             "table_comment",
@@ -95,8 +88,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Optional table description or comment".to_string()),
-        ),
+            Some("Optional table description or comment".to_string())),
         ColumnDefinition::new(
             9,
             "updated_at",
@@ -106,8 +98,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Last modification timestamp".to_string()),
-        ),
+            Some("Last modification timestamp".to_string())),
         ColumnDefinition::new(
             10,
             "options",
@@ -117,8 +108,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Serialized table options (JSON)".to_string()),
-        ),
+            Some("Serialized table options (JSON)".to_string())),
         ColumnDefinition::new(
             11,
             "access_level",
@@ -128,8 +118,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Access level for Shared tables: public, private, protected".to_string()),
-        ),
+            Some("Deprecated; ignored. Shared tables use FORCE RLS and CREATE POLICY.".to_string())),
         ColumnDefinition::new(
             12,
             "is_latest",
@@ -139,8 +128,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Whether this is the latest version of the table schema".to_string()),
-        ),
+            Some("Whether this is the latest version of the table schema".to_string())),
         ColumnDefinition::new(
             13,
             "storage_id",
@@ -150,8 +138,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Storage backend identifier for this table".to_string()),
-        ),
+            Some("Storage backend identifier for this table".to_string())),
         ColumnDefinition::new(
             14,
             "use_user_storage",
@@ -161,8 +148,7 @@ pub fn schemas_table_definition() -> TableDefinition {
             false,
             false,
             ColumnDefault::None,
-            Some("Whether this table uses user-specific storage assignment".to_string()),
-        ),
+            Some("Whether this table uses user-specific storage assignment".to_string())),
     ];
 
     TableDefinition::new(
@@ -171,8 +157,7 @@ pub fn schemas_table_definition() -> TableDefinition {
         TableType::System,
         columns,
         TableOptions::system(),
-        Some("Registry of all table schemas and their histories in the database".to_string()),
-    )
+        Some("Registry of all table schemas and their histories in the database".to_string()))
     .expect("Failed to create system.schemas table definition")
 }
 

@@ -36,25 +36,25 @@ use crate::test_support::*;
 
 #[derive(Debug, Clone, Deserialize)]
 struct HttpConsumeMessage {
-    offset: u64,
+    offset:       u64,
     partition_id: u32,
-    key: Option<String>,
+    key:          Option<String>,
     #[serde(default)]
-    user: Option<String>,
+    user:         Option<String>,
     #[serde(default)]
-    op: Option<String>,
+    op:           Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpConsumeResponse {
-    messages: Vec<HttpConsumeMessage>,
+    messages:    Vec<HttpConsumeMessage>,
     next_offset: u64,
-    has_more: bool,
+    has_more:    bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct HttpAckResponse {
-    success: bool,
+    success:             bool,
     acknowledged_offset: u64,
 }
 
@@ -154,9 +154,9 @@ async fn wait_until_group_reads_at_least(
 
         if aggregated_messages.len() >= min_messages {
             return HttpConsumeResponse {
-                messages: aggregated_messages,
+                messages:    aggregated_messages,
                 next_offset: response_next_offset,
-                has_more: response_has_more,
+                has_more:    response_has_more,
             };
         }
 
@@ -610,7 +610,8 @@ async fn test_topic_source_where_filters_insert_messages() {
 
     let create_table = server
         .execute_sql(&format!(
-            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL DEFAULT false)",
+            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL \
+             DEFAULT false)",
             source_table
         ))
         .await;
@@ -697,7 +698,8 @@ async fn test_topic_source_where_filters_update_messages() {
 
     let create_table = server
         .execute_sql(&format!(
-            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL DEFAULT false)",
+            "CREATE TABLE {} (id INT PRIMARY KEY, title TEXT NOT NULL, cancelled BOOLEAN NOT NULL \
+             DEFAULT false)",
             source_table
         ))
         .await;
@@ -792,7 +794,8 @@ async fn test_topic_source_where_filters_complex_insert_messages() {
 
     let create_table = server
         .execute_sql(&format!(
-            "CREATE TABLE {} (id INT PRIMARY KEY, status TEXT NOT NULL, priority INT NOT NULL, event_type TEXT NOT NULL, archived BOOLEAN)",
+            "CREATE TABLE {} (id INT PRIMARY KEY, status TEXT NOT NULL, priority INT NOT NULL, \
+             event_type TEXT NOT NULL, archived BOOLEAN)",
             source_table
         ))
         .await;
@@ -813,7 +816,9 @@ async fn test_topic_source_where_filters_complex_insert_messages() {
 
     let add_source = server
         .execute_sql(&format!(
-            "ALTER TOPIC {} ADD SOURCE {} ON INSERT WHERE ((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL WITH (payload = 'full')",
+            "ALTER TOPIC {} ADD SOURCE {} ON INSERT WHERE ((status IN ('blocked', 'cancelled') \
+             AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL \
+             WITH (payload = 'full')",
             topic, source_table
         ))
         .await;
@@ -853,7 +858,8 @@ async fn test_topic_source_where_filters_complex_insert_messages() {
 
     let matching_event_type = server
         .execute_sql(&format!(
-            "INSERT INTO {} (id, status, priority, event_type) VALUES (3, 'active', 1, 'DEPLOY_START')",
+            "INSERT INTO {} (id, status, priority, event_type) VALUES (3, 'active', 1, \
+             'DEPLOY_START')",
             source_table
         ))
         .await;
@@ -866,7 +872,8 @@ async fn test_topic_source_where_filters_complex_insert_messages() {
 
     let archived_match_candidate = server
         .execute_sql(&format!(
-            "INSERT INTO {} (id, status, priority, event_type, archived) VALUES (4, 'blocked', 7, 'noop', true)",
+            "INSERT INTO {} (id, status, priority, event_type, archived) VALUES (4, 'blocked', 7, \
+             'noop', true)",
             source_table
         ))
         .await;

@@ -77,6 +77,9 @@ impl PgCatalogView for PgNamespaceView {
 
         for name in namespace_names {
             let name = name.as_str();
+            if name.is_empty() {
+                continue;
+            }
             oids.append_value(stable_oid(&["namespace", name]));
             names.append_value(name);
             owners.append_value(10);

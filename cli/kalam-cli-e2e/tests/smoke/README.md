@@ -78,11 +78,16 @@ Tests ALTER TABLE schema evolution:
 - `ALTER TABLE ADD COLUMN` (nullable + with DEFAULT)
 - `ALTER TABLE DROP COLUMN`
 - `ALTER TABLE MODIFY COLUMN` (partial support)
-- `ALTER TABLE SET TBLPROPERTIES (ACCESS_LEVEL)` (SHARED tables)
+- `ALTER TABLE SET TBLPROPERTIES` (SHARED tables; ACCESS_LEVEL is rejected)
 - Error: ADD NOT NULL without DEFAULT on non-empty table
 - Error: Cannot ALTER system columns (_updated, _deleted)
 
 **Run**: `cargo test --test smoke smoke_test_ddl_alter -- --nocapture`
+
+### Shared-table FORCE RLS (`smoke_test_shared_table_rls.rs`)
+Covers ACCESS_LEVEL rejection, User/Service default-deny, CREATE POLICY grants, query-bypass attempts, plan-cache isolation, ON CONFLICT rejection, live grant/revoke fail-closed, and raw file download deny.
+
+**Run**: `cargo test --test smoke smoke_shared_table_rls -- --nocapture`
 
 ### 5. `smoke_test_dml_extended.rs`
 Tests advanced DML operations:

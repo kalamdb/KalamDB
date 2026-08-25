@@ -25,8 +25,7 @@ use std::{
 };
 
 use kalam_client::{
-    AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, KalamLinkTimeouts,
-    SubscriptionConfig, SubscriptionManager,
+    AuthProvider, KalamLinkClient, KalamLinkError, KalamLinkTimeouts, SubscriptionConfig,
 };
 use tokio::time::{sleep, timeout};
 
@@ -75,23 +74,6 @@ async fn setup_table(ns: &str, tbl: &str) -> String {
     .await;
     sleep(Duration::from_millis(50)).await;
     full
-}
-
-/// Wait for the first Ack event — confirms the subscription is registered.
-async fn wait_for_ack(sub: &mut SubscriptionManager, deadline: Duration) -> bool {
-    matches!(
-        timeout(deadline, async {
-            loop {
-                match sub.next().await {
-                    Some(Ok(ChangeEvent::Ack { .. })) => return true,
-                    Some(Ok(_)) => continue,
-                    _ => return false,
-                }
-            }
-        })
-        .await,
-        Ok(true)
-    )
 }
 
 /// Poll `system.live` until `marker` appears or disappears.

@@ -52,13 +52,13 @@ pub enum JobRecoveryAction {
 /// Failover handler for orphaned jobs
 pub struct LeaderFailoverHandler {
     /// Job guard for leadership checks and job operations
-    job_guard: LeaderOnlyJobGuard,
+    job_guard:     LeaderOnlyJobGuard,
     /// Jobs provider for querying job state
     jobs_provider: Arc<JobsTableProvider>,
     /// This node's ID
-    node_id: NodeId,
+    node_id:       NodeId,
     /// Set of known active node IDs in the cluster
-    active_nodes: HashSet<NodeId>,
+    active_nodes:  HashSet<NodeId>,
 }
 
 impl LeaderFailoverHandler {
@@ -222,9 +222,9 @@ impl LeaderFailoverHandler {
             JobType::Retention | JobType::UserCleanup | JobType::TopicCleanup => {
                 JobRecoveryAction::Fail {
                     reason: format!(
-                        "Legacy retired job type {} was running on offline node {}. Failing job instead of requeueing.",
-                        job.job_type,
-                        job.node_id
+                        "Legacy retired job type {} was running on offline node {}. Failing job \
+                         instead of requeueing.",
+                        job.job_type, job.node_id
                     ),
                 }
             },
@@ -266,13 +266,13 @@ impl LeaderFailoverHandler {
 #[derive(Debug, Default)]
 pub struct RecoveryReport {
     /// Jobs that were re-queued for execution
-    pub requeued: Vec<JobId>,
+    pub requeued:      Vec<JobId>,
     /// Jobs that were marked as failed
     pub marked_failed: Vec<JobId>,
     /// Jobs that will continue (crash recovery)
-    pub continued: Vec<JobId>,
+    pub continued:     Vec<JobId>,
     /// Jobs that failed to recover
-    pub failed: Vec<(JobId, String)>,
+    pub failed:        Vec<(JobId, String)>,
 }
 
 impl RecoveryReport {

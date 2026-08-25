@@ -2,13 +2,16 @@ mod support;
 
 use std::{sync::Arc, time::Duration};
 
-use kalamdb_commons::{models::pg_operations::InsertRequest, TableType};
+use kalamdb_commons::{
+    models::{pg_operations::InsertRequest, UserId},
+    TableType,
+};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{operations::service::OperationService, transactions::ExecutionOwnerKey};
 use kalamdb_pg::OperationExecutor;
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_shared_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
+    create_user_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,
     request_transaction_state, row, select_names, unique_namespace,
 };
 
@@ -17,9 +20,10 @@ use support::{
 async fn repeated_commit_vs_rollback_clears_coordinator_state() {
     let (app_ctx, _test_db) = create_cluster_app_context().await;
     let table_id =
-        create_shared_table(&app_ctx, &unique_namespace("tx_race_commit_rb"), "items").await;
+        create_user_table(&app_ctx, &unique_namespace("tx_race_commit_rb"), "items").await;
     let service = Arc::new(OperationService::new(Arc::clone(&app_ctx)));
     let session_id = "pg-7101-deadbeef";
+    let user_id = UserId::new("tx-race-user");
     let owner_key =
         ExecutionOwnerKey::from_pg_session_id(session_id).expect("pg owner key should parse");
 
@@ -33,11 +37,11 @@ async fn repeated_commit_vs_rollback_clears_coordinator_state() {
 
         service
             .execute_insert(InsertRequest {
-                table_id: table_id.clone(),
-                table_type: TableType::Shared,
+                table_id:   table_id.clone(),
+                table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id: None,
-                rows: vec![row((iteration + 1) as i64, &row_name)],
+                user_id:    Some(user_id.clone()),
+                rows:       vec![row((iteration + 1) as i64, &row_name)],
             })
             .await
             .expect("staged write succeeds");
@@ -85,12 +89,12 @@ async fn repeated_timeout_cleanup_drops_staged_state() {
     config.transaction_timeout_secs = 1;
 
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
-    let table_id =
-        create_shared_table(&app_ctx, &unique_namespace("tx_race_timeout"), "items").await;
+    let table_id = create_user_table(&app_ctx, &unique_namespace("tx_race_timeout"), "items").await;
     let service = Arc::new(OperationService::new(Arc::clone(&app_ctx)));
     let executor = create_executor(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let session_id = "pg-7102-feedface";
+    let user_id = UserId::new("tx-race-timeout-user");
     let owner_key =
         ExecutionOwnerKey::from_pg_session_id(session_id).expect("pg owner key should parse");
 
@@ -103,11 +107,11 @@ async fn repeated_timeout_cleanup_drops_staged_state() {
 
         service
             .execute_insert(InsertRequest {
-                table_id: table_id.clone(),
-                table_type: TableType::Shared,
+                table_id:   table_id.clone(),
+                table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id: None,
-                rows: vec![row((iteration + 1) as i64, &format!("timeout-{iteration}"))],
+                user_id:    Some(user_id.clone()),
+                rows:       vec![row((iteration + 1) as i64, &format!("timeout-{iteration}"))],
             })
             .await
             .expect("staged write succeeds");
@@ -116,11 +120,11 @@ async fn repeated_timeout_cleanup_drops_staged_state() {
 
         let timeout_error = service
             .execute_insert(InsertRequest {
-                table_id: table_id.clone(),
-                table_type: TableType::Shared,
+                table_id:   table_id.clone(),
+                table_type: TableType::User,
                 session_id: Some(session_id.to_string()),
-                user_id: None,
-                rows: vec![row((iteration + 101) as i64, "late")],
+                user_id:    Some(user_id.clone()),
+                rows:       vec![row((iteration + 101) as i64, "late")],
             })
             .await
             .expect_err("follow-up write should fail after timeout");

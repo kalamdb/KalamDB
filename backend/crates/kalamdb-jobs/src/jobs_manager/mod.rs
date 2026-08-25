@@ -24,7 +24,9 @@
 mod actions;
 mod queries;
 mod runner;
+mod runtime;
 mod types;
 mod utils;
 
+pub use runtime::{JobsManagerRuntime, JobsShutdownStatus};
 pub use types::JobsManager;

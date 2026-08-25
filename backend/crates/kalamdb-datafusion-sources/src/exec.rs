@@ -51,14 +51,12 @@ pub fn finalize_deferred_batch(
     physical_filter: Option<&Arc<dyn PhysicalExpr>>,
     projection: Option<&[usize]>,
     limit: Option<usize>,
-    source_name: &str,
-) -> DataFusionResult<RecordBatch> {
+    source_name: &str) -> DataFusionResult<RecordBatch> {
     if let Some(predicate) = physical_filter {
         let evaluated = predicate.evaluate(&batch)?.into_array(batch.num_rows())?;
         let Some(mask) = evaluated.as_any().downcast_ref::<BooleanArray>() else {
             return Err(DataFusionError::Execution(format!(
-                "{source_name} filter expression did not evaluate to BooleanArray",
-            )));
+                "{source_name} filter expression did not evaluate to BooleanArray")));
         };
         batch = compute::filter_record_batch(&batch, mask)
             .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
@@ -81,8 +79,7 @@ pub fn finalize_deferred_batch(
 /// schema when no projection was requested.
 pub fn projected_schema(
     input_schema: &SchemaRef,
-    projection: Option<&[usize]>,
-) -> DataFusionResult<SchemaRef> {
+    projection: Option<&[usize]>) -> DataFusionResult<SchemaRef> {
     match projection {
         Some(indices) => input_schema
             .project(indices)
@@ -98,8 +95,7 @@ pub fn version_ordering<S>(
     candidate_commit_seq: u64,
     candidate_seq: S,
     current_commit_seq: u64,
-    current_seq: S,
-) -> Ordering
+    current_seq: S) -> Ordering
 where
     S: Ord,
 {
@@ -113,8 +109,7 @@ pub fn prefers_version<S>(
     candidate_commit_seq: u64,
     candidate_seq: S,
     current_commit_seq: u64,
-    current_seq: S,
-) -> bool
+    current_seq: S) -> bool
 where
     S: Ord,
 {
@@ -136,8 +131,7 @@ impl<P, S> VersionCandidate<P, S> {
         commit_seq: u64,
         seq_id: S,
         deleted: bool,
-        payload: P,
-    ) -> Self {
+        payload: P) -> Self {
         Self {
             pk_key: pk_key.into(),
             commit_seq,
@@ -202,8 +196,7 @@ fn consider_candidate<H, C, S>(
     best: &mut HashMap<PkBucketKey, Candidate<H, C, S>>,
     pk_key: PkBucketKey,
     candidate: Candidate<H, C, S>,
-    snapshot_commit_seq: Option<u64>,
-) where
+    snapshot_commit_seq: Option<u64>) where
     S: Ord + Copy,
 {
     if !is_visible_at_snapshot(candidate.commit_seq(), snapshot_commit_seq) {
@@ -217,8 +210,7 @@ fn consider_candidate<H, C, S>(
                 candidate.commit_seq(),
                 candidate.seq_id(),
                 current.commit_seq(),
-                current.seq_id(),
-            ) {
+                current.seq_id()) {
                 entry.insert(candidate);
             }
         },
@@ -235,8 +227,7 @@ pub fn select_latest_versions<H, C, S, HI, CI>(
     hot_candidates: HI,
     cold_candidates: CI,
     snapshot_commit_seq: Option<u64>,
-    keep_deleted: bool,
-) -> Vec<SelectedVersion<H, C>>
+    keep_deleted: bool) -> Vec<SelectedVersion<H, C>>
 where
     HI: IntoIterator<Item = VersionCandidate<H, S>>,
     CI: IntoIterator<Item = VersionCandidate<C, S>>,
@@ -265,8 +256,7 @@ where
                 deleted,
                 payload,
             }),
-            snapshot_commit_seq,
-        );
+            snapshot_commit_seq);
     }
 
     for VersionCandidate {
@@ -286,8 +276,7 @@ where
                 deleted,
                 payload,
             }),
-            snapshot_commit_seq,
-        );
+            snapshot_commit_seq);
     }
 
     let mut winners = Vec::with_capacity(best.len());
@@ -359,8 +348,7 @@ pub fn candidate_pk_key<R: VersionedRow>(pk_name: &str, row: &R) -> PkBucketKey 
 pub fn version_candidate_from_row<R, P>(
     pk_name: &str,
     row: &R,
-    payload: P,
-) -> VersionCandidate<P, SeqId>
+    payload: P) -> VersionCandidate<P, SeqId>
 where
     R: VersionedRow,
 {
@@ -369,16 +357,14 @@ where
         row.commit_seq(),
         row.seq_id(),
         row.deleted(),
-        payload,
-    )
+        payload)
 }
 
 pub fn count_merged_rows<R, I, J>(
     pk_name: &str,
     hot_rows: I,
     cold_rows: J,
-    snapshot_commit_seq: Option<u64>,
-) -> usize
+    snapshot_commit_seq: Option<u64>) -> usize
 where
     I: IntoIterator<Item = R>,
     J: IntoIterator<Item = R>,
@@ -388,8 +374,7 @@ where
         hot_rows.into_iter().map(|row| version_candidate_from_row(pk_name, &row, ())),
         cold_rows.into_iter().map(|row| version_candidate_from_row(pk_name, &row, ())),
         snapshot_commit_seq,
-        false,
-    )
+        false)
     .len()
 }
 
@@ -397,8 +382,7 @@ pub fn count_resolved_from_metadata(
     pk_name: &str,
     hot_metadata: Vec<RowMetadata>,
     cold_batch: &RecordBatch,
-    snapshot_commit_seq: Option<u64>,
-) -> DataFusionResult<usize> {
+    snapshot_commit_seq: Option<u64>) -> DataFusionResult<usize> {
     let cold_metadata = parquet_batch_to_metadata(cold_batch, pk_name)?;
 
     Ok(count_merged_rows(pk_name, hot_metadata, cold_metadata, snapshot_commit_seq))
@@ -409,8 +393,7 @@ pub fn merge_versioned_rows<K, R, I, J>(
     hot_rows: I,
     cold_rows: J,
     keep_deleted: bool,
-    snapshot_commit_seq: Option<u64>,
-) -> Vec<(K, R)>
+    snapshot_commit_seq: Option<u64>) -> Vec<(K, R)>
 where
     I: IntoIterator<Item = (K, R)>,
     J: IntoIterator<Item = (K, R)>,
@@ -433,8 +416,7 @@ where
             VersionCandidate::new(pk_key, commit_seq, seq_id, deleted, (key, row))
         }),
         snapshot_commit_seq,
-        keep_deleted,
-    )
+        keep_deleted)
     .into_iter()
     .map(|winner| match winner {
         SelectedVersion::Hot(row) | SelectedVersion::Cold(row) => row,
@@ -448,8 +430,7 @@ pub fn resolve_latest_kvs_from_cold_batch<K, R, I, F>(
     cold_batch: &RecordBatch,
     keep_deleted: bool,
     snapshot_commit_seq: Option<u64>,
-    build_cold_row: F,
-) -> DataFusionResult<Vec<(K, R)>>
+    build_cold_row: F) -> DataFusionResult<Vec<(K, R)>>
 where
     I: IntoIterator<Item = (K, R)>,
     F: Fn(ParquetRowData) -> DataFusionResult<(K, R)>,
@@ -471,12 +452,10 @@ where
                 decoder.commit_seq_at(row_idx),
                 decoder.seq_at(row_idx),
                 decoder.deleted_at(row_idx),
-                row_idx,
-            )
+                row_idx)
         }),
         snapshot_commit_seq,
-        keep_deleted,
-    );
+        keep_deleted);
 
     let mut resolved = Vec::with_capacity(winners.len());
     for winner in winners {
@@ -509,8 +488,7 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> DataFusionResult<Vec<Parque
 /// Decode only the metadata needed for count-only and winner-selection MVCC paths.
 pub fn parquet_batch_to_metadata(
     batch: &RecordBatch,
-    pk_name: &str,
-) -> DataFusionResult<Vec<RowMetadata>> {
+    pk_name: &str) -> DataFusionResult<Vec<RowMetadata>> {
     if batch.num_rows() == 0 {
         return Ok(Vec::new());
     }
@@ -583,8 +561,7 @@ fn null_or_key<T>(
     is_null: bool,
     seq: SeqId,
     value: T,
-    to_key: impl FnOnce(T) -> PkBucketKey,
-) -> PkBucketKey {
+    to_key: impl FnOnce(T) -> PkBucketKey) -> PkBucketKey {
     if is_null {
         PkBucketKey::Seq(seq.as_i64())
     } else {
@@ -896,7 +873,7 @@ impl DeferredBatchMetrics {
 pub trait DeferredBatchSource: Send + Sync {
     fn source_name(&self) -> &'static str;
 
-    fn plan_details(&self) -> Option<&'static str> {
+    fn plan_details(&self) -> Option<String> {
         None
     }
 
@@ -994,43 +971,36 @@ impl ExecutionPlan for DeferredBatchExec {
 
     fn apply_expressions(
         &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>,
-    ) -> DataFusionResult<TreeNodeRecursion> {
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DataFusionResult<TreeNodeRecursion>) -> DataFusionResult<TreeNodeRecursion> {
         Ok(TreeNodeRecursion::Continue)
     }
 
     fn replace_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
-        _options: ReplaceChildrenOptions,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        _options: ReplaceChildrenOptions) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if !children.is_empty() {
             return Err(DataFusionError::Execution(
-                "DeferredBatchExec does not accept children".to_string(),
-            ));
+                "DeferredBatchExec does not accept children".to_string()));
         }
         Ok(self)
     }
 
     fn with_new_children(
         self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        children: Vec<Arc<dyn ExecutionPlan>>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         self.replace_children(
             children,
-            ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
-        )
+            ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute))
     }
 
     fn execute(
         &self,
         partition: usize,
-        _context: Arc<TaskContext>,
-    ) -> DataFusionResult<SendableRecordBatchStream> {
+        _context: Arc<TaskContext>) -> DataFusionResult<SendableRecordBatchStream> {
         if partition != 0 {
             return Err(DataFusionError::Execution(format!(
-                "DeferredBatchExec only supports partition 0, got {partition}",
-            )));
+                "DeferredBatchExec only supports partition 0, got {partition}")));
         }
 
         let source = Arc::clone(&self.source);
@@ -1052,4 +1022,3 @@ impl ExecutionPlan for DeferredBatchExec {
         self.metrics.as_ref().map(|metrics| metrics.set.clone_inner())
     }
 }
-

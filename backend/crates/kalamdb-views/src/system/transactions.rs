@@ -19,24 +19,23 @@ use kalamdb_commons::{
 };
 use parking_lot::RwLock;
 
-use crate::view_base::VirtualView;
-
 use super::common::{system_view_definition, SystemViewProvider};
+use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(transactions_schema, TransactionsView);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransactionSnapshot {
-    pub transaction_id: String,
-    pub owner_id: String,
-    pub origin: String,
-    pub state: String,
-    pub age_ms: i64,
-    pub idle_ms: i64,
-    pub write_count: i64,
-    pub write_bytes: i64,
+    pub transaction_id:       String,
+    pub owner_id:             String,
+    pub origin:               String,
+    pub state:                String,
+    pub age_ms:               i64,
+    pub idle_ms:              i64,
+    pub write_count:          i64,
+    pub write_bytes:          i64,
     pub touched_tables_count: i64,
-    pub snapshot_commit_seq: i64,
+    pub snapshot_commit_seq:  i64,
 }
 
 /// Active-transaction snapshot callback type.
@@ -77,8 +76,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Canonical explicit transaction identifier".to_string()),
-            ),
+                Some("Canonical explicit transaction identifier".to_string())),
             ColumnDefinition::new(
                 2,
                 "owner_id",
@@ -88,8 +86,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Human-readable execution owner identifier".to_string()),
-            ),
+                Some("Human-readable execution owner identifier".to_string())),
             ColumnDefinition::new(
                 3,
                 "origin",
@@ -99,8 +96,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Transaction origin surface".to_string()),
-            ),
+                Some("Transaction origin surface".to_string())),
             ColumnDefinition::new(
                 4,
                 "state",
@@ -110,8 +106,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current transaction lifecycle state".to_string()),
-            ),
+                Some("Current transaction lifecycle state".to_string())),
             ColumnDefinition::new(
                 5,
                 "age_ms",
@@ -121,8 +116,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Transaction age in milliseconds".to_string()),
-            ),
+                Some("Transaction age in milliseconds".to_string())),
             ColumnDefinition::new(
                 6,
                 "idle_ms",
@@ -132,8 +126,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Milliseconds since the transaction last performed work".to_string()),
-            ),
+                Some("Milliseconds since the transaction last performed work".to_string())),
             ColumnDefinition::new(
                 7,
                 "write_count",
@@ -143,8 +136,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Number of staged mutations currently buffered".to_string()),
-            ),
+                Some("Number of staged mutations currently buffered".to_string())),
             ColumnDefinition::new(
                 8,
                 "write_bytes",
@@ -154,8 +146,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Approximate in-memory size of the staged write set".to_string()),
-            ),
+                Some("Approximate in-memory size of the staged write set".to_string())),
             ColumnDefinition::new(
                 9,
                 "touched_tables_count",
@@ -165,8 +156,7 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Number of tables referenced by the transaction".to_string()),
-            ),
+                Some("Number of tables referenced by the transaction".to_string())),
             ColumnDefinition::new(
                 10,
                 "snapshot_commit_seq",
@@ -176,15 +166,13 @@ impl TransactionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Committed snapshot boundary captured at BEGIN".to_string()),
-            ),
+                Some("Committed snapshot boundary captured at BEGIN".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Transactions,
             columns,
-            "Active explicit transactions across pg RPC, SQL batch, and internal origins",
-        )
+            "Active explicit transactions across pg RPC, SQL batch, and internal origins")
     }
 }
 

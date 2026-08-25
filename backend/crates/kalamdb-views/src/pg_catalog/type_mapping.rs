@@ -42,8 +42,7 @@ pub(crate) fn info_schema_data_type(data_type: &KalamDataType) -> &'static str {
 
 /// Numeric metadata for `information_schema.columns` (precision, radix, scale).
 pub(crate) fn info_schema_numeric_metadata(
-    data_type: &KalamDataType,
-) -> (Option<u64>, Option<u64>, Option<u64>) {
+    data_type: &KalamDataType) -> (Option<u64>, Option<u64>, Option<u64>) {
     match data_type {
         KalamDataType::SmallInt => (Some(16), Some(2), None),
         KalamDataType::Int => (Some(32), Some(2), None),
@@ -169,10 +168,7 @@ mod tests {
         assert_eq!(arrow_info_type_to_kalam_sql_name("Int64"), "BIGINT");
         assert_eq!(arrow_info_type_to_kalam_sql_name("Utf8"), "TEXT");
         assert_eq!(arrow_info_type_to_kalam_sql_name("Boolean"), "BOOLEAN");
-        assert_eq!(
-            arrow_info_type_to_kalam_sql_name("Timestamp(Microsecond, None)"),
-            "TIMESTAMP"
-        );
+        assert_eq!(arrow_info_type_to_kalam_sql_name("Timestamp(Microsecond, None)"), "TIMESTAMP");
     }
 
     #[test]

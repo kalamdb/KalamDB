@@ -1,15 +1,11 @@
-//! Shared table provider implementation without RLS
+//! Shared-table storage with FORCE row-level security at SQL and live boundaries.
 //!
 //! This module provides SharedTableProvider implementing BaseTableProvider<SharedTableRowId,
-//! SharedTableRow> for cross-user shared tables (no Row-Level Security).
-//!
-//! **Key Features**:
-//! - Direct fields (no wrapper layer)
-//! - Shared core via Arc<TableProviderCore>
-//! - No handlers - all DML logic inline
-//! - NO RLS - ignores user_id parameter (operates on all rows)
-//! - SessionState NOT extracted in scan_rows() (scans all rows)
-//! - PK Index: Uses SharedTableIndexedStore for efficient O(1) lookups by PK value
+//! SharedTableRow>. Low-level storage remains principal-agnostic; public SQL, typed DML, and live
+//! paths bind and enforce RLS before returning or mutating rows.
+
+#[path = "shared_table_authorization.rs"]
+mod shared_table_authorization;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -22,6 +18,7 @@ use datafusion::{
     catalog::Session,
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
+    execution::context::SessionState,
     logical_expr::{dml::InsertOp, Expr, TableProviderFilterPushDown},
     physical_plan::ExecutionPlan,
     scalar::ScalarValue,
@@ -31,21 +28,26 @@ use kalamdb_commons::{
     ids::SharedTableRowId,
     models::{rows::Row, OperationKind, UserId},
     websocket::ChangeNotification,
-    NotLeaderError, TableType,
+    NotLeaderError, PolicyCommand, TableId, TableType,
 };
-use kalamdb_datafusion_sources::exec::DeferredScanDiagnostics;
-use kalamdb_datafusion_sources::provider::{
-    merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability, ScanDescriptor,
-    SourceProvider,
+use kalamdb_datafusion_sources::{
+    exec::DeferredScanDiagnostics,
+    provider::{
+        merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
+        ScanDescriptor, SourceProvider,
+    },
 };
+use kalamdb_rls::BoundLiveAuthorization;
 use kalamdb_session_datafusion::{
     check_shared_table_access, check_shared_table_write_access, session_error_to_datafusion,
+    RlsCommandContext,
 };
 use kalamdb_store::EntityStore;
 use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
 use kalamdb_vector::{
     new_indexed_shared_vector_hot_store, SharedVectorHotOpId, SharedVectorHotStore,
 };
+use shared_table_authorization::SharedTableAuthorization;
 use tracing::Instrument;
 
 use crate::{
@@ -84,9 +86,90 @@ pub struct SharedTableProvider {
 
     /// Cached vector staging stores keyed by embedding column name.
     vector_stores: HashMap<String, Arc<SharedVectorHotStore>>,
+
+    /// Shared-table row-level security orchestration.
+    pub(crate) authorization: SharedTableAuthorization,
 }
 
 impl SharedTableProvider {
+    fn session_state_with_rls_command(
+        state: &dyn Session,
+        command: PolicyCommand,
+    ) -> DataFusionResult<SessionState> {
+        let mut state = state
+            .as_any()
+            .downcast_ref::<SessionState>()
+            .ok_or_else(|| DataFusionError::Execution("Expected SessionState".to_string()))?
+            .clone();
+        state
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(RlsCommandContext { command });
+        Ok(state)
+    }
+
+    async fn bind_authorization(
+        &self,
+        policies: &kalamdb_rls::BoundTablePolicies,
+        snapshot_commit_seq: Option<u64>,
+    ) -> Result<kalamdb_rls::BoundAuthorization, KalamDbError> {
+        self.authorization.bind_authorization(self, policies, snapshot_commit_seq).await
+    }
+
+    fn bind_policies(
+        &self,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        command: PolicyCommand,
+        check: bool,
+    ) -> Result<kalamdb_rls::BoundTablePolicies, KalamDbError> {
+        self.authorization
+            .bind_policies(self.core.as_ref(), user_id, role, command, check)
+    }
+
+    async fn ensure_rows_authorized(
+        &self,
+        policies: &kalamdb_rls::BoundTablePolicies,
+        rows: &[Row],
+        snapshot_commit_seq: Option<u64>,
+        operation: &str,
+    ) -> DataFusionResult<()> {
+        self.authorization
+            .ensure_rows_authorized(self, policies, rows, snapshot_commit_seq, operation)
+            .await
+    }
+
+    pub async fn check_rows_authorized(
+        &self,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        command: PolicyCommand,
+        check: bool,
+        rows: &[Row],
+        snapshot_commit_seq: Option<u64>,
+    ) -> Result<(), KalamDbError> {
+        self.authorization
+            .check_rows_authorized(self, user_id, role, command, check, rows, snapshot_commit_seq)
+            .await
+    }
+
+    pub async fn bind_live_authorization(
+        &self,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+    ) -> Result<BoundLiveAuthorization, KalamDbError> {
+        self.authorization.bind_live_authorization(self, user_id, role).await
+    }
+
+    fn authorization_cold_columns(
+        &self,
+        scan_context: &SharedScanContext,
+        cold_columns: Option<&[String]>,
+    ) -> Option<Vec<String>> {
+        self.authorization.authorization_cold_columns(self, scan_context, cold_columns)
+    }
+
     /// Create a new shared table provider
     ///
     /// # Arguments
@@ -108,7 +191,24 @@ impl SharedTableProvider {
             pk_index,
             vector_columns,
             vector_stores,
+            authorization: SharedTableAuthorization::new(),
         }
+    }
+
+    pub fn authorization_generation(&self) -> u64 {
+        self.authorization.authorization_generation()
+    }
+
+    pub fn has_active_authorization_mutations(&self) -> bool {
+        self.authorization.has_active_authorization_mutations()
+    }
+
+    pub fn authorization_cache_metrics(&self) -> kalamdb_rls::AuthorizationCacheMetrics {
+        self.authorization.cache_metrics()
+    }
+
+    fn begin_authorization_mutation(&self) -> kalamdb_rls::AuthorizationMutationGuard {
+        self.authorization.begin_mutation()
     }
 
     pub async fn collect_live_string_primary_keys_before_async(
@@ -176,6 +276,12 @@ impl SharedTableProvider {
             entity._commit_seq,
             entity._deleted,
         )
+    }
+
+    fn build_delete_notification(&self, table_id: TableId, row: Row) -> ChangeNotification {
+        let mut notification = ChangeNotification::delete_soft(table_id, row);
+        notification.pk_columns = vec![self.primary_key_field_name().to_string()];
+        notification
     }
 
     /// Access the underlying indexed store (used by flush jobs)
@@ -386,6 +492,29 @@ impl SharedTableProvider {
         }))
     }
 
+    /// Load the current visible row for a PK string, using the same hot-then-cold
+    /// lookup as typed UPDATE/DELETE apply.
+    pub async fn row_by_pk_value(&self, pk_value: &str) -> Result<Option<Row>, KalamDbError> {
+        let pk_name = self.primary_key_field_name();
+        let schema = self.schema_ref();
+        let pk_field = schema.field_with_name(pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("PK column lookup failed: {e}"))
+        })?;
+        let pk_scalar = kalamdb_commons::conversions::parse_string_as_scalar(
+            pk_value,
+            pk_field.data_type(),
+        )
+        .map_err(KalamDbError::InvalidOperation)?;
+
+        if let Some((_, row)) = self.find_by_pk(&pk_scalar).await? {
+            return Ok(Some(row.fields));
+        }
+        if self.pk_tombstoned_in_hot(&pk_scalar).await? {
+            return Ok(None);
+        }
+        Ok(base::find_row_by_pk(self, None, pk_value).await?.map(|(_, row)| row.fields))
+    }
+
     pub async fn patch_commit_seq_for_row_key(
         &self,
         row_key: &SharedTableRowId,
@@ -566,10 +695,10 @@ mod tests {
         (
             row_id,
             SharedTableRow {
-                _seq: row_id,
+                _seq:        row_id,
                 _commit_seq: 0,
-                _deleted: deleted,
-                fields: Row::new(fields),
+                _deleted:    deleted,
+                fields:      Row::new(fields),
             },
         )
     }
@@ -643,6 +772,7 @@ mod tests {
 #[derive(Clone)]
 pub struct SharedScanContext {
     snapshot_commit_seq: Option<u64>,
+    policies:            kalamdb_rls::BoundTablePolicies,
 }
 
 #[async_trait]
@@ -654,14 +784,56 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
     }
 
     fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError> {
+        let (user_id, role, _) = extract_full_user_context(state)?;
+        let command = state
+            .config()
+            .options()
+            .extensions
+            .get::<RlsCommandContext>()
+            .map(|context| context.command)
+            .unwrap_or(PolicyCommand::Select);
+        let policies = self.bind_policies(user_id, role, command, false)?;
         Ok(SharedScanContext {
             snapshot_commit_seq: extract_transaction_query_context(state)
                 .map(|context| context.snapshot_commit_seq),
+            policies,
         })
     }
 
     fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<u64> {
         scan_context.snapshot_commit_seq
+    }
+
+    fn allow_count_only_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
+        scan_context.policies.bypasses_rls()
+    }
+
+    fn requires_row_authorization(&self, scan_context: &Self::ScanContext) -> bool {
+        !scan_context.policies.bypasses_rls()
+    }
+
+    fn authorization_plan_details(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+    ) -> Option<String> {
+        self.authorization.authorization_plan_details(self, scan_context, filter)
+    }
+
+    async fn pre_authorize_scan(
+        &self,
+        scan_context: &Self::ScanContext,
+        filter: Option<&Expr>,
+    ) -> Result<bool, KalamDbError> {
+        self.authorization.pre_authorize_scan(self, scan_context, filter).await
+    }
+
+    async fn authorize_resolved_rows(
+        &self,
+        scan_context: &Self::ScanContext,
+        rows: Vec<(SharedTableRowId, SharedTableRow)>,
+    ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        self.authorization.authorize_resolved_rows(self, scan_context, rows).await
     }
 
     fn scan_scope_label(&self, _scan_context: &Self::ScanContext) -> &'static str {
@@ -696,13 +868,15 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
         self.scan_with_version_resolution_to_kvs_async(
             base::system_user_id(),
             filter,
             since_seq,
-            limit,
+            scan_limit,
             keep_deleted,
-            cold_columns,
+            cold_columns.as_deref(),
             scan_context.snapshot_commit_seq,
         )
         .await
@@ -717,12 +891,14 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
     ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
+        let scan_limit = scan_context.policies.bypasses_rls().then_some(limit).flatten();
+        let cold_columns = self.authorization_cold_columns(scan_context, cold_columns);
         self.scan_with_version_resolution_to_kvs_result_async(
             filter,
             since_seq,
-            limit,
+            scan_limit,
             keep_deleted,
-            cold_columns,
+            cold_columns.as_deref(),
             scan_context.snapshot_commit_seq,
             true,
         )
@@ -759,10 +935,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         // Shared tables use SeqId as the key (no user_id scoping)
         let row_key = row_data.seq_id;
         let row = SharedTableRow {
-            _seq: row_data.seq_id,
+            _seq:        row_data.seq_id,
             _commit_seq: row_data.commit_seq,
-            _deleted: row_data.deleted,
-            fields: row_data.fields.clone(),
+            _deleted:    row_data.deleted,
+            fields:      row_data.fields.clone(),
         };
         Ok(Some((row_key, row)))
     }
@@ -824,6 +1000,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             column_count = row_data.values.len()
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
             crate::utils::datafusion_dml::validate_not_null_with_set(
@@ -843,10 +1020,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 
             // Create SharedTableRow directly
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: row_data,
+                _deleted:    false,
+                fields:      row_data,
             };
 
             // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
@@ -954,10 +1131,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 None,
                 *key,
                 |row_data| SharedTableRow {
-                    _seq: row_data.seq_id,
+                    _seq:        row_data.seq_id,
                     _commit_seq: row_data.commit_seq,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
+                    _deleted:    row_data.deleted,
+                    fields:      row_data.fields,
                 },
             )
             .await?
@@ -989,6 +1166,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             update_columns = updates.values.len()
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             // IGNORE user_id parameter - no RLS for shared tables
             let pk_name = self.primary_key_field_name().to_string();
 
@@ -1063,10 +1241,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
             })?;
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: new_fields,
+                _deleted:    false,
+                fields:      new_fields,
             };
             let row_key = seq_id;
             // Use insert() to update PK index for the new MVCC version
@@ -1148,10 +1326,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 None,
                 *key,
                 |row_data| SharedTableRow {
-                    _seq: row_data.seq_id,
+                    _seq:        row_data.seq_id,
                     _commit_seq: row_data.commit_seq,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
+                    _deleted:    row_data.deleted,
+                    fields:      row_data.fields,
                 },
             )
             .await?
@@ -1179,6 +1357,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             pk = pk_value
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             // IGNORE user_id parameter - no RLS for shared tables
             let pk_name = self.primary_key_field_name().to_string();
             let schema = self.schema();
@@ -1224,10 +1403,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             let values = latest_row.fields.values.clone();
 
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: true,
-                fields: Row::new(values),
+                _deleted:    true,
+                fields:      Row::new(values),
             };
             let row_key = seq_id;
             log::debug!(
@@ -1280,7 +1459,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                         .await;
                 }
                 if has_live_subs {
-                    let notification = ChangeNotification::delete_soft(table_id.clone(), row);
+                    let notification = self.build_delete_notification(table_id.clone(), row);
                     notification_service.notify_table_change(None, table_id, notification);
                 }
             }
@@ -1389,12 +1568,12 @@ impl SharedTableProvider {
         );
         let diagnostics = if include_diagnostics {
             DeferredScanDiagnostics {
-                hot_rows_scanned: Some(resolved.hot_rows_scanned),
-                cold_rows_scanned: Some(resolved.cold_rows_scanned),
-                cold_files_total: Some(resolved.cold_files_total),
+                hot_rows_scanned:   Some(resolved.hot_rows_scanned),
+                cold_rows_scanned:  Some(resolved.cold_rows_scanned),
+                cold_files_total:   Some(resolved.cold_files_total),
                 cold_files_skipped: Some(resolved.cold_files_skipped),
                 cold_files_scanned: Some(resolved.cold_files_scanned),
-                cold_files: resolved.cold_files,
+                cold_files:         resolved.cold_files,
             }
         } else {
             DeferredScanDiagnostics::default()
@@ -1482,6 +1661,7 @@ impl SharedTableProvider {
             deferred_side_effects = true
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
             crate::utils::datafusion_dml::validate_not_null_with_set(
@@ -1500,10 +1680,10 @@ impl SharedTableProvider {
             })?;
 
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: row_data,
+                _deleted:    false,
+                fields:      row_data,
             };
             let row_key = seq_id;
 
@@ -1568,6 +1748,8 @@ impl SharedTableProvider {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
+
+        let _authorization_mutation = self.begin_authorization_mutation();
 
         ensure_manifest_ready(&self.core, self.core.table_type(), None, "SharedTableProvider")?;
 
@@ -1685,10 +1867,10 @@ impl SharedTableProvider {
             entries.push((
                 seq_id,
                 SharedTableRow {
-                    _seq: seq_id,
+                    _seq:        seq_id,
                     _commit_seq: commit_seq,
-                    _deleted: false,
-                    fields: row_data,
+                    _deleted:    false,
+                    fields:      row_data,
                 },
             ));
         }
@@ -1874,6 +2056,7 @@ impl SharedTableProvider {
             deferred_side_effects = true
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             let schema = self.schema();
             let updates = coerce_updates(updates, &schema).map_err(|e| {
                 KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
@@ -1934,10 +2117,10 @@ impl SharedTableProvider {
                 KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
             })?;
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: commit_seq,
-                _deleted: false,
-                fields: new_fields,
+                _deleted:    false,
+                fields:      new_fields,
             };
             let row_key = seq_id;
             self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
@@ -1998,6 +2181,7 @@ impl SharedTableProvider {
             deferred_side_effects = true
         );
         async move {
+            let _authorization_mutation = self.begin_authorization_mutation();
             let pk_name = self.primary_key_field_name().to_string();
             let schema = self.schema();
             let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
@@ -2028,10 +2212,10 @@ impl SharedTableProvider {
             })?;
 
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: commit_seq,
-                _deleted: true,
-                fields: Row::new(latest_row.fields.values.clone()),
+                _deleted:    true,
+                fields:      Row::new(latest_row.fields.values.clone()),
             };
             let row_key = seq_id;
             self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
@@ -2062,10 +2246,9 @@ impl SharedTableProvider {
             let has_topics = self.core.has_topic_routes(&table_id);
             let has_live_subs = notification_service.has_subscribers(None, &table_id);
             let notification = if has_topics || has_live_subs {
-                Some(ChangeNotification::delete_soft(
-                    table_id,
-                    Self::build_notification_row(&entity),
-                ))
+                Some(
+                    self.build_delete_notification(table_id, Self::build_notification_row(&entity)),
+                )
             } else {
                 None
             };
@@ -2111,7 +2294,7 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // SECURITY: Enforce shared table access rules (access_level + role)
+        // SECURITY: Admit authenticated roles; FORCE RLS filters rows.
         check_shared_table_access(state, self.core.table_def())
             .map_err(session_error_to_datafusion)?;
 
@@ -2173,10 +2356,17 @@ impl TableProvider for SharedTableProvider {
 
         self.ensure_shared_write_route(state).await?;
 
-        let (user_id, _role) =
+        let (user_id, role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        let check_policies = self
+            .bind_policies(user_id, role, PolicyCommand::Insert, true)
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        let snapshot_commit_seq =
+            extract_transaction_query_context(state).map(|context| context.snapshot_commit_seq);
+        self.ensure_rows_authorized(&check_policies, &rows, snapshot_commit_seq, "WITH CHECK")
+            .await?;
         if let Some(transaction_query_context) = extract_transaction_query_context(state) {
             let inserted = crate::utils::datafusion_dml::stage_insert_rows(
                 transaction_query_context,
@@ -2220,9 +2410,10 @@ impl TableProvider for SharedTableProvider {
             &[],
             &[&pk_column],
         )?;
+        let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Delete)?;
         let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
             self,
-            state,
+            &rls_state,
             &filters,
             projection.as_ref(),
         )
@@ -2308,22 +2499,42 @@ impl TableProvider for SharedTableProvider {
 
         self.ensure_shared_write_route(state).await?;
 
-        let (user_id, _role) =
+        let (user_id, role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let pk_column = self.primary_key_field_name().to_string();
         crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
+
+        let check_policies = self
+            .bind_policies(user_id, role, PolicyCommand::Update, true)
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        let mut required_columns = vec![pk_column.clone()];
+        for column_id in check_policies.required_column_ids() {
+            if let Some(column) = self
+                .core
+                .table_def()
+                .columns
+                .iter()
+                .find(|column| column.column_id == column_id)
+            {
+                if !required_columns.iter().any(|name| name == &column.column_name) {
+                    required_columns.push(column.column_name.clone());
+                }
+            }
+        }
+        let required_column_refs = required_columns.iter().map(String::as_str).collect::<Vec<_>>();
 
         let schema = self.schema_ref();
         let projection = crate::utils::datafusion_dml::dml_scan_projection(
             &schema,
             &filters,
             &assignments,
-            &[&pk_column],
+            &required_column_refs,
         )?;
+        let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Update)?;
         let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
             self,
-            state,
+            &rls_state,
             &filters,
             projection.as_ref(),
         )
@@ -2335,6 +2546,12 @@ impl TableProvider for SharedTableProvider {
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
         let transaction_query_context = extract_transaction_query_context(state);
+        let snapshot_commit_seq =
+            transaction_query_context.map(|context| context.snapshot_commit_seq);
+        let check_authorization = self
+            .bind_authorization(&check_policies, snapshot_commit_seq)
+            .await
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         let commit_seq = transaction_query_context
             .is_none()
             .then(|| self.core.services.commit_sequence_source.allocate_next());
@@ -2353,6 +2570,16 @@ impl TableProvider for SharedTableProvider {
                 &row,
                 &assignments,
             )?;
+            let mut new_row = row.clone();
+            for (column, value) in &evaluated_updates.values {
+                new_row.values.insert(column.clone(), value.clone());
+            }
+            if !check_authorization.authorizes(&new_row) {
+                return Err(DataFusionError::Plan(format!(
+                    "row-level security WITH CHECK policy denied UPDATE on {}",
+                    self.core.table_id()
+                )));
+            }
             if crate::utils::datafusion_dml::update_assignments_noop(
                 &schema,
                 &row,

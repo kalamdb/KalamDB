@@ -33,11 +33,11 @@ const FLUSH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Typed parameters for single-table export operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableExportParams {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     #[serde(default)]
-    pub user_id: Option<String>,
-    pub export_id: String,
+    pub user_id:    Option<String>,
+    pub export_id:  String,
 }
 
 impl JobParams for TableExportParams {
@@ -58,11 +58,11 @@ impl JobParams for TableExportParams {
 /// Typed parameters for importing a table export archive into one table scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableImportParams {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     #[serde(default)]
-    pub user_id: Option<String>,
-    pub import_id: String,
+    pub user_id:    Option<String>,
+    pub import_id:  String,
 }
 
 impl JobParams for TableImportParams {
@@ -190,7 +190,7 @@ impl JobExecutor for TableExportExecutor {
 
             segments.push(TableExportSegmentData {
                 source_path: segment.path.clone(),
-                data: get_result.data.to_vec(),
+                data:        get_result.data.to_vec(),
             });
         }
 
@@ -465,7 +465,10 @@ async fn maybe_flush_table_scope(
             flush_job = Some(job_id);
         },
         Err(KalamDbError::IdempotentConflict(_)) => {
-            ctx.log_debug("A matching flush job is already active; proceeding after existing data is available");
+            ctx.log_debug(
+                "A matching flush job is already active; proceeding after existing data is \
+                 available",
+            );
             flush_job = find_active_flush_job(&job_manager, &flush_key).await?;
         },
         Err(KalamDbError::Other(ref message))

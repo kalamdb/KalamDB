@@ -97,8 +97,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
             title TEXT
             ) USING kalamdb WITH (
                 type = 'shared',
-                storage_id = 'local',
-                access_level = 'public'
+                storage_id = 'local'
             );"
     ))
     .await
@@ -128,10 +127,7 @@ async fn e2e_ddl_create_table_using_kalamdb_forwards_shared_options() {
     assert!(table_type.eq_ignore_ascii_case("shared"));
     assert_eq!(storage_id, "local");
     assert!(
-        options.contains("access_level")
-            && options.contains("Public")
-            && options.contains("storage_id")
-            && options.contains("local"),
+        options.contains("storage_id") && options.contains("local"),
         "forwarded options should be persisted in information_schema.tables kdb_options: {options}"
     );
 
@@ -254,8 +250,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
         &format!(
             "CREATE SHARED TABLE {ns}.{table} (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name \
              TEXT)"
-        ),
-    )
+        ))
     .await;
     assert!(
         contains_status(&create_table, &["created", "ok"]),
@@ -378,8 +373,7 @@ async fn e2e_ddl_local_postgres_jsonb_operator_query() {
                 "SELECT doc->>'name' AS name, doc ? 'profile' AS has_profile FROM {ns}.{table} \
                  WHERE id = 1"
             ),
-            &[],
-        )
+            &[])
         .await
         .expect("query local Postgres jsonb operators over foreign table");
 
@@ -421,8 +415,7 @@ async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
     wait_for_backend_session_cleanup(
         env,
         backend_pid,
-        "disconnect after CREATE TABLE USING kalamdb",
-    )
+        "disconnect after CREATE TABLE USING kalamdb")
     .await;
 
     let cleanup = env.pg_connect().await;

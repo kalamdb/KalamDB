@@ -12,6 +12,7 @@ use kalam_cli::parser::CommandParser;
 
 use crate::common::*;
 
+#[allow(unused_imports)]
 #[path = "../../../src/args.rs"]
 mod cli_args;
 

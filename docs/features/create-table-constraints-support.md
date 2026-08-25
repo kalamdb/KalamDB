@@ -172,7 +172,7 @@ CREATE SHARED TABLE IF NOT EXISTS test.products (
   price REAL NOT NULL,
   stock INT NOT NULL
 ) WITH (
-  ACCESS_LEVEL = 'public'
+  
 );
 ```
 

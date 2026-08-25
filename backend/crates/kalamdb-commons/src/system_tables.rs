@@ -110,6 +110,13 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: Some("system_migrations"),
     },
     SystemTableMetadata {
+        table: SystemTable::TablePolicies,
+        sql_name: "table_policies",
+        aliases: &["table_policies", "system_table_policies"],
+        is_view: false,
+        column_family_name: Some("system_table_policies"),
+    },
+    SystemTableMetadata {
         table: SystemTable::Stats,
         sql_name: "stats",
         aliases: &["stats"],
@@ -253,6 +260,8 @@ pub enum SystemTable {
     TopicOffsets,
     /// system.migrations - Applied and in-progress project migrations (persisted)
     Migrations,
+    /// system.table_policies - Shared-table row-level security policies (persisted)
+    TablePolicies,
 
     // ==================== VIRTUAL VIEWS ====================
     /// system.stats - Runtime metrics (computed on-demand)
@@ -345,6 +354,7 @@ impl SystemTable {
             SystemTable::Topics,
             SystemTable::TopicOffsets,
             SystemTable::Migrations,
+            SystemTable::TablePolicies,
         ]
     }
 
@@ -385,6 +395,7 @@ impl SystemTable {
             SystemTable::Topics,
             SystemTable::TopicOffsets,
             SystemTable::Migrations,
+            SystemTable::TablePolicies,
             // Views
             SystemTable::Stats,
             SystemTable::Live,
@@ -428,6 +439,8 @@ impl SystemTable {
         static TOPIC_OFFSETS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_topic_offsets"));
         static MIGRATIONS: Lazy<Partition> = Lazy::new(|| Partition::new("system_migrations"));
+        static TABLE_POLICIES: Lazy<Partition> =
+            Lazy::new(|| Partition::new("system_table_policies"));
 
         match self {
             SystemTable::Users => Some(&USERS),
@@ -442,6 +455,7 @@ impl SystemTable {
             SystemTable::Topics => Some(&TOPICS),
             SystemTable::TopicOffsets => Some(&TOPIC_OFFSETS),
             SystemTable::Migrations => Some(&MIGRATIONS),
+            SystemTable::TablePolicies => Some(&TABLE_POLICIES),
             // Views have no partition
             SystemTable::Stats
             | SystemTable::Live
@@ -755,12 +769,13 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 25); // 12 tables + 13 views
+        assert_eq!(all.len(), 26); // 13 tables + 13 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
         assert!(all.contains(&SystemTable::TopicOffsets));
         assert!(all.contains(&SystemTable::Migrations));
+        assert!(all.contains(&SystemTable::TablePolicies));
         assert!(all.contains(&SystemTable::Stats));
         assert!(all.contains(&SystemTable::Live));
         assert!(all.contains(&SystemTable::Sessions));
@@ -774,7 +789,8 @@ mod tests {
     #[test]
     fn test_all_tables() {
         let tables = SystemTable::all_tables();
-        assert_eq!(tables.len(), 12);
+        assert_eq!(tables.len(), 13);
+        assert!(tables.contains(&SystemTable::TablePolicies));
         assert!(tables.iter().all(|t| !t.is_view()));
     }
 

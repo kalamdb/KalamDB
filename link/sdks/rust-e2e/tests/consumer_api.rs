@@ -26,11 +26,11 @@ async fn consumer_polls_and_commits_topic_messages() {
     client
         .execute_query(
             &format!(
-                "CREATE TABLE IF NOT EXISTS {table} (
+                "CREATE STREAM TABLE IF NOT EXISTS {table} (
                     id INT PRIMARY KEY,
                     message TEXT,
                     created_at TIMESTAMP DEFAULT NOW()
-                )"
+                ) WITH (TTL_SECONDS = 3600)"
             ),
             None,
             None,

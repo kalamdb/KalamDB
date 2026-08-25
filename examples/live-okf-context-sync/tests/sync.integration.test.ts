@@ -9,7 +9,7 @@ import { Auth, createClient } from '@kalamdb/client';
 import { createDb, createKalamClient, resolveKalamConnection, TABLE } from '../src/db/client.js';
 import { downloadFileByPath, fetchRemoteHash, sha256Hex, upsertSyncFile } from '../src/remote-files.js';
 import { FolderSyncApp } from '../src/sync-app.js';
-import { waitForLocalFiles } from '../src/helpers.js';
+import { ensureUser, waitForLocalFiles } from '../src/helpers.js';
 import { stopSyncApp } from './sync.helpers.js';
 
 const SERVER_URL = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
@@ -22,11 +22,17 @@ const RUN_INTEGRATION = process.env.KALAM_INTEGRATION === '1';
 
 async function ensureOkfSchema(root: Awaited<ReturnType<typeof login>>): Promise<void> {
   const schema = await readSchema(resolve('kalam/schema.sql'), 'utf8');
-  try {
-    await root.client.query(schema);
-  } catch (error) {
-    if (!/already exists/i.test(String(error))) {
-      throw error;
+  const statements = schema
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+  for (const statement of statements) {
+    try {
+      await root.client.query(statement);
+    } catch (error) {
+      if (!/already exists/i.test(String(error))) {
+        throw error;
+      }
     }
   }
 }
@@ -58,20 +64,15 @@ test('integration: file roundtrip and isolation', { skip: !RUN_INTEGRATION }, as
 
   const root = await login('root', ROOT_PASSWORD);
   await ensureOkfSchema(root);
-  try {
-    await root.client.query(`CREATE USER 'alice' WITH PASSWORD 'alice123' ROLE 'user'`);
-  } catch {
-    // already exists
-  }
-  try {
-    await root.client.query(`CREATE USER 'bob' WITH PASSWORD 'bob123' ROLE 'user'`);
-  } catch {
-    // already exists
-  }
+  const suffix = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
+  const aliceName = `okf_alice_${suffix}`;
+  const bobName = `okf_bob_${suffix}`;
+  await ensureUser(root.client, aliceName, 'alice123');
+  await ensureUser(root.client, bobName, 'bob123');
   await root.client.disconnect();
 
-  const alice = await login('alice', 'alice123');
-  const bob = await login('bob', 'bob123');
+  const alice = await login(aliceName, 'alice123');
+  const bob = await login(bobName, 'bob123');
   const aliceDb = createDb(alice.client);
   const bobDb = createDb(bob.client);
 

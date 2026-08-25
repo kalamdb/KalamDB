@@ -60,9 +60,9 @@ pub const RAFT_PARTITION_NAME: &str = "raft_data";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaftLogEntry {
     /// Log index (1-based, monotonically increasing)
-    pub index: u64,
+    pub index:   u64,
     /// Raft term when this entry was created
-    pub term: u64,
+    pub term:    u64,
     /// Serialized entry payload (command bytes)
     pub payload: Vec<u8>,
 }
@@ -73,7 +73,7 @@ impl KSerializable for RaftLogEntry {}
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RaftVote {
     /// The term in which the vote was cast
-    pub term: u64,
+    pub term:      u64,
     /// Node ID that received the vote (None if no vote cast)
     pub voted_for: Option<u64>,
     /// Whether this node is the leader for this term
@@ -86,7 +86,7 @@ impl KSerializable for RaftVote {}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RaftLogId {
     /// Leader term
-    pub term: u64,
+    pub term:  u64,
     /// Log index
     pub index: u64,
 }
@@ -101,7 +101,7 @@ pub struct RaftSnapshotMeta {
     /// Snapshot ID (unique identifier)
     pub snapshot_id: String,
     /// Size of the snapshot data in bytes
-    pub size_bytes: u64,
+    pub size_bytes:  u64,
 }
 
 impl KSerializable for RaftSnapshotMeta {}
@@ -124,8 +124,8 @@ impl KSerializable for RaftSnapshotData {}
 /// All operations are synchronous and use the `StorageBackend` trait.
 /// Thread-safe via internal `Arc<dyn StorageBackend>`.
 pub struct RaftPartitionStore {
-    backend: Arc<dyn StorageBackend>,
-    group_id: GroupId,
+    backend:   Arc<dyn StorageBackend>,
+    group_id:  GroupId,
     partition: Partition,
 }
 
@@ -234,7 +234,9 @@ impl RaftPartitionStore {
 
         let iter = self.backend.scan(&self.partition, Some(&prefix), Some(&start_key), None)?;
 
-        let mut entries = Vec::with_capacity((end - start) as usize);
+        let span = end.saturating_sub(start);
+        let cap = usize::try_from(span).unwrap_or(0).min(1024);
+        let mut entries = Vec::with_capacity(cap);
         for (key, value) in iter {
             // Parse index and check if < end
             if let Some(index) = Self::parse_log_index_from_key(&key) {
@@ -510,18 +512,18 @@ mod tests {
 
         let entries = vec![
             RaftLogEntry {
-                index: 1,
-                term: 1,
+                index:   1,
+                term:    1,
                 payload: b"cmd1".to_vec(),
             },
             RaftLogEntry {
-                index: 2,
-                term: 1,
+                index:   2,
+                term:    1,
                 payload: b"cmd2".to_vec(),
             },
             RaftLogEntry {
-                index: 3,
-                term: 2,
+                index:   3,
+                term:    2,
                 payload: b"cmd3".to_vec(),
             },
         ];
@@ -547,8 +549,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index: i,
-                term: 1,
+                index:   i,
+                term:    1,
                 payload: format!("cmd{}", i).into_bytes(),
             })
             .collect();
@@ -576,18 +578,18 @@ mod tests {
         // Add some entries
         let entries = vec![
             RaftLogEntry {
-                index: 5,
-                term: 1,
+                index:   5,
+                term:    1,
                 payload: vec![],
             },
             RaftLogEntry {
-                index: 6,
-                term: 1,
+                index:   6,
+                term:    1,
                 payload: vec![],
             },
             RaftLogEntry {
-                index: 7,
-                term: 1,
+                index:   7,
+                term:    1,
                 payload: vec![],
             },
         ];
@@ -605,8 +607,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index: i,
-                term: 1,
+                index:   i,
+                term:    1,
                 payload: vec![],
             })
             .collect();
@@ -637,8 +639,8 @@ mod tests {
 
         let entries: Vec<RaftLogEntry> = (1..=10)
             .map(|i| RaftLogEntry {
-                index: i,
-                term: 1,
+                index:   i,
+                term:    1,
                 payload: vec![i as u8],
             })
             .collect();
@@ -666,7 +668,7 @@ mod tests {
 
         // Save a vote
         let vote = RaftVote {
-            term: 5,
+            term:      5,
             voted_for: Some(2),
             committed: false,
         };
@@ -679,7 +681,7 @@ mod tests {
 
         // Update vote
         let vote2 = RaftVote {
-            term: 6,
+            term:      6,
             voted_for: Some(3),
             committed: true,
         };
@@ -699,7 +701,10 @@ mod tests {
         assert!(store.read_purge().unwrap().is_none());
 
         // Save commit
-        let commit = RaftLogId { term: 3, index: 42 };
+        let commit = RaftLogId {
+            term:  3,
+            index: 42,
+        };
         store.save_commit(Some(commit)).unwrap();
 
         let read_commit = store.read_commit().unwrap().unwrap();
@@ -707,7 +712,10 @@ mod tests {
         assert_eq!(read_commit.index, 42);
 
         // Save purge
-        let purge = RaftLogId { term: 2, index: 30 };
+        let purge = RaftLogId {
+            term:  2,
+            index: 30,
+        };
         store.save_purge(Some(purge)).unwrap();
 
         let read_purge = store.read_purge().unwrap().unwrap();
@@ -729,11 +737,11 @@ mod tests {
         // Save snapshot meta
         let meta = RaftSnapshotMeta {
             last_log_id: Some(RaftLogId {
-                term: 5,
+                term:  5,
                 index: 100,
             }),
             snapshot_id: "snap-001".to_string(),
-            size_bytes: 1024,
+            size_bytes:  1024,
         };
         store.save_snapshot_meta(&meta).unwrap();
 
@@ -762,8 +770,8 @@ mod tests {
         // Add entries to store1
         store1
             .append_logs(&[RaftLogEntry {
-                index: 1,
-                term: 1,
+                index:   1,
+                term:    1,
                 payload: b"sys".to_vec(),
             }])
             .unwrap();
@@ -771,8 +779,8 @@ mod tests {
         // Add entries to store2 (different group)
         store2
             .append_logs(&[RaftLogEntry {
-                index: 1,
-                term: 2,
+                index:   1,
+                term:    2,
                 payload: b"users".to_vec(),
             }])
             .unwrap();

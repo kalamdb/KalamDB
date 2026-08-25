@@ -132,10 +132,10 @@ fn smoke_test_cached_point_get_projection() {
     ))
     .expect("CREATE USER blogs table should succeed");
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {shared_table} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED', \
-         ACCESS_LEVEL = 'PUBLIC')"
+        "CREATE TABLE {shared_table} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED')"
     ))
     .expect("CREATE SHARED table should succeed");
+    grant_public_select_shared_table(&shared_table);
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {stream_table} (event_id TEXT PRIMARY KEY, payload TEXT) WITH (TYPE = \
          'STREAM', TTL_SECONDS = 60)"
@@ -191,8 +191,7 @@ fn smoke_test_cached_point_get_projection() {
 
     let (names, rows) = query_rows(
         &format!("SELECT file_ref FROM {files_table} WHERE path = $1"),
-        vec![Value::String("missing.md".to_string())],
-    );
+        vec![Value::String("missing.md".to_string())]);
     assert_eq!(names, vec!["file_ref"]);
     assert!(rows.is_empty(), "missing PK must return no file_ref row");
 
@@ -205,8 +204,7 @@ fn smoke_test_cached_point_get_projection() {
 
     let (names, rows) = query_rows(
         &format!("SELECT file_ref, path, body FROM {files_table} WHERE path = $1"),
-        path_param.clone(),
-    );
+        path_param.clone());
     assert_eq!(names, vec!["file_ref", "path", "body"]);
     assert_eq!(file_ref_sha256(&rows[0]), second_sha);
     assert_eq!(string_value(&rows[0], "path"), "index.md");

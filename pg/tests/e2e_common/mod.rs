@@ -183,14 +183,12 @@ fn kalamdb_pg_grpc_target() -> (String, u16) {
 async fn server_option_exists(
     pg: &tokio_postgres::Client,
     server_name: &str,
-    option_name: &str,
-) -> bool {
+    option_name: &str) -> bool {
     pg.query_opt(
         "SELECT 1 FROM pg_foreign_server AS server CROSS JOIN LATERAL \
          pg_options_to_table(server.srvoptions) AS option_entry WHERE server.srvname = $1 AND \
          option_entry.option_name = $2",
-        &[&server_name, &option_name],
-    )
+        &[&server_name, &option_name])
     .await
     .expect("query foreign server option")
     .is_some()
@@ -200,8 +198,7 @@ async fn ensure_server_option(
     pg: &tokio_postgres::Client,
     server_name: &str,
     option_name: &str,
-    value: &str,
-) {
+    value: &str) {
     let action = if server_option_exists(pg, server_name, option_name).await {
         "SET"
     } else {
@@ -220,8 +217,7 @@ async fn ensure_server_option(
 async fn drop_server_option_if_present(
     pg: &tokio_postgres::Client,
     server_name: &str,
-    option_name: &str,
-) {
+    option_name: &str) {
     if !server_option_exists(pg, server_name, option_name).await {
         return;
     }
@@ -485,8 +481,7 @@ impl TestEnv {
                     "password": config.setup_password,
                     "root_password": config.root_password,
                 }),
-                None,
-            )
+                None)
             .await;
 
         if let Some(token) =
@@ -570,8 +565,7 @@ impl TestEnv {
                 &pg,
                 "kalam_server",
                 "login_password",
-                &auth_config.login_password,
-            )
+                &auth_config.login_password)
             .await;
         }
         .await;
@@ -631,8 +625,7 @@ async fn try_login(
     client: &TestHttpClient,
     base_url: &str,
     username: &str,
-    password: &str,
-) -> Option<String> {
+    password: &str) -> Option<String> {
     let resp = client
         .post_json(
             &format!("{base_url}/v1/api/auth/login"),
@@ -640,8 +633,7 @@ async fn try_login(
                 "user": username,
                 "password": password,
             }),
-            None,
-        )
+            None)
         .await
         .ok()?;
     if !resp.status.is_success() {
@@ -658,8 +650,7 @@ async fn try_login(
 pub async fn create_shared_kalam_table(
     client: &tokio_postgres::Client,
     table: &str,
-    columns: &str,
-) {
+    columns: &str) {
     create_shared_kalam_table_in_schema(client, "e2e", table, columns).await;
     TestEnv::global().await.wait_for_kalamdb_table_exists("e2e", table).await;
     wait_for_table_queryable(client, &format!("e2e.{table}")).await;
@@ -674,16 +665,14 @@ pub async fn create_shared_kalam_table_in_schema(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
-    columns: &str,
-) {
+    columns: &str) {
     create_kalam_table_in_schema(
         client,
         schema,
         table,
         columns,
         "shared",
-        "create shared Kalam table",
-    )
+        "create shared Kalam table")
     .await;
 
     rebind_shared_table_to_leader(client, schema, table, columns).await;
@@ -693,8 +682,7 @@ pub async fn create_shared_public_kalam_table_in_schema(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
-    columns: &str,
-) {
+    columns: &str) {
     ensure_schema_exists(client, schema).await;
     client
         .batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {schema}.{table};"))
@@ -702,8 +690,7 @@ pub async fn create_shared_public_kalam_table_in_schema(
         .ok();
     client
         .batch_execute(&format!(
-            "CREATE TABLE {schema}.{table} ({columns}) USING kalamdb WITH (type = 'shared', \
-             access_level = 'public');"
+            "CREATE TABLE {schema}.{table} ({columns}) USING kalamdb WITH (type = 'shared');"
         ))
         .await
         .expect("create public shared Kalam table");
@@ -715,8 +702,7 @@ pub async fn create_user_kalam_table_in_schema(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
-    columns: &str,
-) {
+    columns: &str) {
     create_kalam_table_in_schema(client, schema, table, columns, "user", "create user Kalam table")
         .await;
 }
@@ -799,8 +785,7 @@ async fn shared_leader_grpc_target_for_env(env: &TestEnv) -> (String, u16) {
             .kalamdb_sql(
                 "SELECT cluster.rpc_addr FROM system.cluster_groups AS groups JOIN \
                  system.cluster AS cluster ON groups.current_leader = cluster.node_id WHERE \
-                 groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1",
-            )
+                 groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1")
             .await;
 
         if let Some(target) =
@@ -836,8 +821,7 @@ async fn shared_leader_api_base_url_for_env(env: &TestEnv) -> String {
             .kalamdb_sql(
                 "SELECT cluster.api_addr FROM system.cluster_groups AS groups JOIN \
                  system.cluster AS cluster ON groups.current_leader = cluster.node_id WHERE \
-                 groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1",
-            )
+                 groups.group_type = 'shared_data' AND groups.current_leader IS NOT NULL LIMIT 1")
             .await;
 
         if let Some(base_url) =
@@ -921,8 +905,7 @@ async fn rebind_shared_table_to_leader(
     client: &tokio_postgres::Client,
     schema: &str,
     table: &str,
-    columns: &str,
-) {
+    columns: &str) {
     let (leader_host, leader_port) = shared_leader_grpc_target().await;
     let server_name = shared_table_server_name(schema, table);
     let server_options = kalamdb_account_login_server_options(&leader_host, leader_port);
@@ -934,8 +917,7 @@ async fn rebind_shared_table_to_leader(
              ({server_options}); CREATE FOREIGN TABLE {schema}.{table} ({columns}) SERVER \
              {server_name} OPTIONS (namespace '{}', \"table\" '{}', table_type 'shared');",
             sql_literal(schema),
-            sql_literal(table),
-        ))
+            sql_literal(table)))
         .await
         .expect("rebind shared Kalam table to shared leader");
 }
@@ -945,8 +927,7 @@ pub async fn rebind_user_table_to_user_leader(
     schema: &str,
     table: &str,
     columns: &str,
-    user_id: &str,
-) {
+    user_id: &str) {
     let (leader_host, leader_port) = user_shard_leader_grpc_target(user_id).await;
     let server_name = user_table_server_name(schema, table);
     let server_options = kalamdb_account_login_server_options(&leader_host, leader_port);
@@ -958,8 +939,7 @@ pub async fn rebind_user_table_to_user_leader(
              ({server_options}); CREATE FOREIGN TABLE {schema}.{table} ({columns}) SERVER \
              {server_name} OPTIONS (namespace '{}', \"table\" '{}', table_type 'user');",
             sql_literal(schema),
-            sql_literal(table),
-        ))
+            sql_literal(table)))
         .await
         .expect("rebind user Kalam table to user shard leader");
 
@@ -1129,8 +1109,7 @@ pub async fn wait_for_table_queryable(client: &tokio_postgres::Client, table: &s
 pub async fn count_rows(
     client: &tokio_postgres::Client,
     table: &str,
-    where_clause: Option<&str>,
-) -> i64 {
+    where_clause: Option<&str>) -> i64 {
     let sql = match where_clause {
         Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
         None => format!("SELECT COUNT(*) FROM {table}"),
@@ -1141,7 +1120,7 @@ pub async fn count_rows(
 
 pub async fn bulk_delete_all(client: &tokio_postgres::Client, table: &str, pk_col: &str) {
     let sql = format!("DELETE FROM {table} WHERE {pk_col} IS NOT NULL");
-    client.batch_execute(&sql).await.ok();
+    client.batch_execute(&sql).await.expect("bulk delete-all");
 }
 
 pub async fn delete_all(client: &tokio_postgres::Client, table: &str, pk_col: &str) {
@@ -1170,8 +1149,7 @@ pub async fn timed_batch_execute(client: &tokio_postgres::Client, sql: &str) -> 
 pub async fn timed_count(
     client: &tokio_postgres::Client,
     table: &str,
-    where_clause: Option<&str>,
-) -> (i64, f64) {
+    where_clause: Option<&str>) -> (i64, f64) {
     let sql = match where_clause {
         Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
         None => format!("SELECT COUNT(*) FROM {table}"),
@@ -1184,8 +1162,7 @@ pub async fn timed_count(
 
 pub async fn timed_query(
     client: &tokio_postgres::Client,
-    sql: &str,
-) -> (Vec<tokio_postgres::Row>, f64) {
+    sql: &str) -> (Vec<tokio_postgres::Row>, f64) {
     let start = std::time::Instant::now();
     let rows = client.query(sql, &[]).await.expect("timed_query");
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -1266,8 +1243,7 @@ pub fn process_group_rss_kb(pids: &[u32]) -> u64 {
 pub async fn sample_process_peak_rss_kb(
     pid: u32,
     sample_interval_ms: u64,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> u64 {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> u64 {
     use std::sync::atomic::Ordering;
 
     let mut peak = process_rss_kb(pid);
@@ -1281,8 +1257,7 @@ pub async fn sample_process_peak_rss_kb(
 pub async fn sample_process_group_peak_rss_kb(
     pids: Vec<u32>,
     sample_interval_ms: u64,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> u64 {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> u64 {
     use std::sync::atomic::Ordering;
 
     let mut peak = process_group_rss_kb(&pids);
@@ -1311,8 +1286,7 @@ fn process_physical_footprint_kb(pid: u32) -> Option<u64> {
         libc::proc_pid_rusage(
             pid,
             libc::RUSAGE_INFO_V4,
-            usage.as_mut_ptr() as *mut libc::rusage_info_t,
-        )
+            usage.as_mut_ptr() as *mut libc::rusage_info_t)
     };
 
     if result < 0 {
@@ -1345,8 +1319,7 @@ async fn create_kalam_table_in_schema(
     table: &str,
     columns: &str,
     table_type: &str,
-    description: &str,
-) {
+    description: &str) {
     ensure_schema_exists(client, schema).await;
     client
         .batch_execute(&format!("DROP FOREIGN TABLE IF EXISTS {schema}.{table};"))

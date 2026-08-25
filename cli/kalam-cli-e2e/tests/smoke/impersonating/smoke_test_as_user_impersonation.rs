@@ -349,6 +349,7 @@ fn smoke_as_user_shared_table_denied_without_mutation() {
         full_table
     ))
     .expect("Failed to create shared table");
+    grant_public_select_shared_table(&full_table);
     create_user_with_retry(&actor, password, "dba");
     create_user_with_retry(&target, password, "user");
 

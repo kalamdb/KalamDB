@@ -17,10 +17,10 @@ use super::http_server::{self, HttpTestServer};
 /// Test server instance backed by the shared HTTP server.
 #[derive(Clone)]
 pub struct TestServer {
-    http: &'static HttpTestServer,
-    pub app_context: Arc<AppContext>,
+    http:                &'static HttpTestServer,
+    pub app_context:     Arc<AppContext>,
     pub session_context: Arc<SessionContext>,
-    pub sql_executor: Arc<SqlExecutor>,
+    pub sql_executor:    Arc<SqlExecutor>,
 }
 
 impl TestServer {
@@ -102,11 +102,11 @@ impl TestServer {
         match self.http.execute_sql_with_auth(sql, &auth_header).await {
             Ok(resp) => resp,
             Err(err) => QueryResponse {
-                status: ResponseStatus::Error,
+                status:  ResponseStatus::Error,
                 results: vec![],
-                took: None,
-                error: Some(ErrorDetail {
-                    code: String::new(),
+                took:    None,
+                error:   Some(ErrorDetail {
+                    code:    String::new(),
                     message: format!("HTTP SQL failed: {}", err),
                     details: None,
                 }),
@@ -130,11 +130,11 @@ impl TestServer {
             // Check if user is soft-deleted
             if user.deleted_at.is_some() {
                 return QueryResponse {
-                    status: ResponseStatus::Error,
+                    status:  ResponseStatus::Error,
                     results: vec![],
-                    took: None,
-                    error: Some(ErrorDetail {
-                        code: "INVALID_CREDENTIALS".to_string(),
+                    took:    None,
+                    error:   Some(ErrorDetail {
+                        code:    "INVALID_CREDENTIALS".to_string(),
                         message: "Invalid credentials".to_string(),
                         details: None,
                     }),
@@ -173,11 +173,11 @@ impl TestServer {
         match self.http.execute_sql_with_auth(sql, &auth_header).await {
             Ok(resp) => resp,
             Err(err) => QueryResponse {
-                status: ResponseStatus::Error,
+                status:  ResponseStatus::Error,
                 results: vec![],
-                took: None,
-                error: Some(ErrorDetail {
-                    code: String::new(),
+                took:    None,
+                error:   Some(ErrorDetail {
+                    code:    String::new(),
                     message: format!("HTTP SQL failed: {}", err),
                     details: None,
                 }),

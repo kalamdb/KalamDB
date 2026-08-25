@@ -25,7 +25,7 @@ pub mod leader_guard;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
 pub use flush_scheduler::FlushScheduler;
 pub use health_monitor::HealthMonitor;
-pub use jobs_manager::JobsManager;
+pub use jobs_manager::{JobsManager, JobsManagerRuntime, JobsShutdownStatus};
 // Phase 16 exports (cluster mode)
 pub use leader_failover::{JobRecoveryAction, LeaderFailoverHandler, RecoveryReport};
 pub use leader_guard::{LeaderOnlyJobGuard, LeadershipStatus};

@@ -39,6 +39,7 @@ fn setup_json_table(prefix: &str, extra_cols: &str) -> (String, String) {
         "CREATE TABLE {full_table} ({cols}) WITH (TYPE = 'SHARED')"
     ))
     .expect("create table");
+    grant_public_shared_table_access(&full_table);
 
     (namespace, full_table)
 }

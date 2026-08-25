@@ -65,7 +65,6 @@ CREATE SHARED TABLE IF NOT EXISTS case30_shared (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
   STORAGE_ID = 'case30_storage',
-  ACCESS_LEVEL = 'PUBLIC',
   FLUSH_POLICY = 'rows:25,interval:12',
   COMPRESSION = 'zstd'
 );
@@ -95,7 +94,7 @@ CREATE TABLE IF NOT EXISTS case30_other_table2 (
   id BIGINT PRIMARY KEY,
   label TEXT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC');
+) WITH (TYPE = 'SHARED');
 
 USE sql_file_case_30_main;
 

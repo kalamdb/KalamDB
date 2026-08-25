@@ -183,17 +183,17 @@ pub async fn create_messages_table(
             .unwrap_or(false);
         if already_exists {
             return QueryResponse {
-                status: ResponseStatus::Success,
+                status:  ResponseStatus::Success,
                 results: vec![QueryResult {
-                    schema: vec![],
-                    rows: None,
+                    schema:     vec![],
+                    rows:       None,
                     named_rows: None,
-                    row_count: 0,
-                    message: Some("Table already existed".to_string()),
-                    as_user: None,
+                    row_count:  0,
+                    message:    Some("Table already existed".to_string()),
+                    as_user:    None,
                 }],
-                took: Some(0.0),
-                error: None,
+                took:    Some(0.0),
+                error:   None,
             };
         } else {
             eprintln!(
@@ -305,17 +305,17 @@ pub async fn create_stream_table(
             .unwrap_or(false);
         if already_exists {
             return QueryResponse {
-                status: ResponseStatus::Success,
+                status:  ResponseStatus::Success,
                 results: vec![QueryResult {
-                    schema: vec![],
-                    rows: None,
+                    schema:     vec![],
+                    rows:       None,
                     named_rows: None,
-                    row_count: 0,
-                    message: Some("Table already existed".to_string()),
-                    as_user: None,
+                    row_count:  0,
+                    message:    Some("Table already existed".to_string()),
+                    as_user:    None,
                 }],
-                took: Some(0.0),
-                error: None,
+                took:    Some(0.0),
+                error:   None,
             };
         }
     }

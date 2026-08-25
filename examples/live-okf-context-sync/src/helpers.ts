@@ -5,10 +5,54 @@
  */
 
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { QueryResponse } from '@kalamdb/client';
 import { createKalamClient, resolveKalamConnection } from './db/client.js';
 import { sha256Hex } from './lib/file-utils.js';
-import { syncFilePath, syncParentDir } from './lib/paths.js';
+import { projectRoot, syncFilePath, syncParentDir } from './lib/paths.js';
 import { resolveRootPassword } from './lib/server-credentials.js';
+
+type SqlClient = {
+  query: (sql: string) => Promise<QueryResponse>;
+};
+
+function sqlFailureMessage(error: unknown, response?: QueryResponse): string {
+  if (response?.error?.message) {
+    return response.error.details
+      ? `${response.error.message}: ${response.error.details}`
+      : response.error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error ?? 'unknown SQL error');
+}
+
+function isAlreadyExists(message: string): boolean {
+  return /already exists|duplicate|conflict|idempotent/i.test(message);
+}
+
+async function runSql(client: SqlClient, sql: string): Promise<void> {
+  const response = await client.query(sql);
+  if (response.status === 'error' || response.error) {
+    throw new Error(sqlFailureMessage(undefined, response));
+  }
+}
+
+/** Create a password user, or reset the password if that user already exists. */
+export async function ensureUser(client: SqlClient, name: string, password: string): Promise<void> {
+  try {
+    await runSql(
+      client,
+      `CREATE USER '${name}' WITH PASSWORD '${password}' ROLE 'user'`,
+    );
+  } catch (error) {
+    if (!isAlreadyExists(sqlFailureMessage(error))) {
+      throw error;
+    }
+    await runSql(client, `ALTER USER '${name}' SET PASSWORD '${password}'`);
+  }
+}
 
 /** Pause polling loops used by test wait helpers. */
 export function sleep(ms: number): Promise<void> {
@@ -30,25 +74,57 @@ export class TaskQueue {
   }
 }
 
-/** Create demo users once so the example works out of the box. */
-export async function ensureDemoUsers(): Promise<void> {
-  const connection = resolveKalamConnection({
-    ...process.env,
-    KALAM_USER: 'root',
-    KALAM_PASSWORD: resolveRootPassword(),
-  });
-  const client = createKalamClient(connection);
-  await client.initialize();
+let demoBootstrap: Promise<void> | null = null;
 
-  for (const [name, password] of [['alice', 'alice123'], ['bob', 'bob123']] as const) {
+async function applyOkfSchema(client: SqlClient): Promise<void> {
+  const schema = await readFile(join(projectRoot(), 'kalam/schema.sql'), 'utf8');
+  // Run one statement at a time — multi-statement SQL can stop after CREATE NAMESPACE
+  // and leave context_files missing, which breaks the first integration SELECT.
+  const statements = schema
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+  for (const statement of statements) {
     try {
-      await client.query(`CREATE USER '${name}' WITH PASSWORD '${password}' ROLE 'user'`);
-    } catch {
-      // User already exists on subsequent runs.
+      await runSql(client, statement);
+    } catch (error) {
+      if (!isAlreadyExists(sqlFailureMessage(error))) {
+        throw error;
+      }
     }
   }
+}
 
-  await client.disconnect();
+/**
+ * Ensure `okf_sync.context_files` and demo users exist.
+ *
+ * Called from FolderSyncApp.start so integration tests and `npm run dev`
+ * work against a bare server without a separate migrate step.
+ */
+export async function ensureDemoUsers(): Promise<void> {
+  if (!demoBootstrap) {
+    demoBootstrap = (async () => {
+      const connection = resolveKalamConnection({
+        ...process.env,
+        KALAM_USER: 'root',
+        KALAM_PASSWORD: resolveRootPassword(),
+      });
+      const client = createKalamClient(connection);
+      await client.initialize();
+      try {
+        await applyOkfSchema(client);
+        for (const [name, password] of [['alice', 'alice123'], ['bob', 'bob123']] as const) {
+          await ensureUser(client, name, password);
+        }
+      } finally {
+        await client.disconnect();
+      }
+    })().catch((error) => {
+      demoBootstrap = null;
+      throw error;
+    });
+  }
+  await demoBootstrap;
 }
 
 export async function readSyncFileBytes(syncDir: string, relativePath: string): Promise<Uint8Array> {

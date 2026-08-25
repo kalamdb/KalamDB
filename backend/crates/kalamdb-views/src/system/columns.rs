@@ -29,9 +29,8 @@ use kalamdb_commons::{
 };
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{error::RegistryError, view_base::VirtualView};
-
 use super::common::{registry_view_provider, system_view_definition, SystemViewProvider};
+use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(columns_schema, ColumnsView);
 
@@ -79,8 +78,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Namespace containing this table".to_string()),
-            ),
+                Some("Namespace containing this table".to_string())),
             ColumnDefinition::new(
                 2,
                 "table_name",
@@ -90,8 +88,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table name within namespace".to_string()),
-            ),
+                Some("Table name within namespace".to_string())),
             ColumnDefinition::new(
                 3,
                 "version",
@@ -101,8 +98,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Schema version this column belongs to".to_string()),
-            ),
+                Some("Schema version this column belongs to".to_string())),
             ColumnDefinition::new(
                 4,
                 "column_id",
@@ -112,8 +108,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Unique column identifier within table".to_string()),
-            ),
+                Some("Unique column identifier within table".to_string())),
             ColumnDefinition::new(
                 5,
                 "column_name",
@@ -123,8 +118,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Column name".to_string()),
-            ),
+                Some("Column name".to_string())),
             ColumnDefinition::new(
                 6,
                 "comment",
@@ -134,8 +128,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Column comment/description".to_string()),
-            ),
+                Some("Column comment/description".to_string())),
             ColumnDefinition::new(
                 7,
                 "data_type",
@@ -145,8 +138,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("KalamDataType of the column".to_string()),
-            ),
+                Some("KalamDataType of the column".to_string())),
             ColumnDefinition::new(
                 8,
                 "default_value",
@@ -156,8 +148,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Default value expression (if any)".to_string()),
-            ),
+                Some("Default value expression (if any)".to_string())),
             ColumnDefinition::new(
                 9,
                 "ordinal",
@@ -167,8 +158,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Column position in table (1-based)".to_string()),
-            ),
+                Some("Column position in table (1-based)".to_string())),
             ColumnDefinition::new(
                 10,
                 "nullable",
@@ -178,8 +168,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether column accepts NULL values".to_string()),
-            ),
+                Some("Whether column accepts NULL values".to_string())),
             ColumnDefinition::new(
                 11,
                 "primary_key",
@@ -189,8 +178,7 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether column is part of primary key".to_string()),
-            ),
+                Some("Whether column is part of primary key".to_string())),
             ColumnDefinition::new(
                 12,
                 "primary_key_pos",
@@ -200,15 +188,13 @@ impl ColumnsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Position in primary key (1-based, NULL if not PK)".to_string()),
-            ),
+                Some("Position in primary key (1-based, NULL if not PK)".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Columns,
             columns,
-            "Column metadata view (computed from system.schemas)",
-        )
+            "Column metadata view (computed from system.schemas)")
     }
 
     /// Create a new columns view
@@ -306,8 +292,7 @@ impl VirtualView for ColumnsView {
                 Arc::new(nullables.finish()) as ArrayRef,
                 Arc::new(primary_keys.finish()) as ArrayRef,
                 Arc::new(primary_key_positions.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| RegistryError::Other(format!("Failed to build columns view batch: {}", e)))
     }
 }
@@ -324,9 +309,7 @@ pub type ColumnsTableProvider = SystemViewProvider<ColumnsView>;
     since = "0.5.4-rc.1",
     note = "use `information_schema.columns` with `kdb_*` columns instead"
 )]
-pub fn create_columns_provider(
-    system_registry: Arc<SystemTablesRegistry>,
-) -> ColumnsTableProvider {
+pub fn create_columns_provider(system_registry: Arc<SystemTablesRegistry>) -> ColumnsTableProvider {
     registry_view_provider(system_registry, ColumnsView::new)
 }
 

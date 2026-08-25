@@ -19,7 +19,8 @@ use kalamdb_commons::{
         KalamCellValue, NamespaceId, StorageId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
-    NodeId, Role, TableAccess, TableType,
+    BoundExprShape, NodeId, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, Role,
+    TablePolicy, TableType,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -125,15 +126,6 @@ pub async fn create_shared_table(
     namespace: &NamespaceId,
     table_name: &str,
 ) -> TableId {
-    create_shared_table_with_access(app_ctx, namespace, table_name, TableAccess::Public).await
-}
-
-pub async fn create_shared_table_with_access(
-    app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
-    table_name: &str,
-    access: TableAccess,
-) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
     let id_col = ColumnDefinition::new(
         1,
@@ -148,10 +140,7 @@ pub async fn create_shared_table_with_access(
     );
     let name_col = ColumnDefinition::simple(2, "name", 2, KalamDataType::Text);
 
-    let mut table_options = TableOptions::shared();
-    if let TableOptions::Shared(options) = &mut table_options {
-        options.access_level = Some(access);
-    }
+    let table_options = TableOptions::shared();
 
     let mut table_def = TableDefinition::new(
         namespace.clone(),
@@ -172,6 +161,41 @@ pub async fn create_shared_table_with_access(
         .register_table(table_def)
         .expect("register shared table");
 
+    table_id
+}
+
+pub async fn grant_public_all_policy(app_ctx: &Arc<AppContext>, table_id: &TableId) {
+    let policy_name = format!("{}_public", table_id.table_name());
+    let always = PolicyProgram::RowLocal {
+        expr: BoundExprShape::Literal(true),
+    };
+    app_ctx
+        .system_tables()
+        .table_policies()
+        .create_policy(TablePolicy::new(
+            PolicyId::new(table_id.clone(), &policy_name).expect("policy id"),
+            table_id.clone(),
+            policy_name,
+            PolicyCommand::All,
+            vec![PolicyTarget::Public],
+            Some("true".to_string()),
+            Some("true".to_string()),
+            Some(always.clone()),
+            Some(always),
+            0,
+            1,
+        ))
+        .await
+        .unwrap_or_else(|error| panic!("grant public ALL on {table_id}: {error}"));
+}
+
+pub async fn create_shared_table_with_public_policy(
+    app_ctx: &Arc<AppContext>,
+    namespace: &NamespaceId,
+    table_name: &str,
+) -> TableId {
+    let table_id = create_shared_table(app_ctx, namespace, table_name).await;
+    grant_public_all_policy(app_ctx, &table_id).await;
     table_id
 }
 

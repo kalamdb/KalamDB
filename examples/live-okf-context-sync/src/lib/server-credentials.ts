@@ -11,8 +11,13 @@ const DEFAULT_ROOT_PASSWORD = 'kalamdb123';
  * `kalam/server/server.toml`, so prefer that as the source of truth.
  */
 export function resolveRootPassword(env: Record<string, string | undefined> = process.env): string {
-  if (env.KALAM_ROOT_PASSWORD) {
-    return env.KALAM_ROOT_PASSWORD;
+  const fromEnv =
+    env.KALAM_ROOT_PASSWORD
+    ?? env.KALAMDB_ROOT_PASSWORD
+    ?? env.KALAMDB_PASSWORD
+    ?? env.KALAM_PASS;
+  if (fromEnv) {
+    return fromEnv;
   }
 
   try {

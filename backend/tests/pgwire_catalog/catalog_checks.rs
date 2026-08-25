@@ -11,45 +11,87 @@ pub const FIXTURE_TABLE: &str = "items";
 
 /// Catalog surfaces clients rely on (pg_catalog shims + information_schema).
 pub struct CatalogQuery {
-    pub label: &'static str,
-    pub sql: &'static str,
+    pub label:    &'static str,
+    pub sql:      &'static str,
     pub min_rows: usize,
 }
 
 pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
     &[
         CatalogQuery {
-            label: "pg_namespace",
-            sql: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN \
-                   ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1",
+            label:    "pg_namespace",
+            sql:      "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN \
+                       ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1",
             min_rows: 1,
         },
         CatalogQuery {
-            label: "pg_class_fixture",
-            sql: "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'",
+            label:    "pg_class_fixture",
+            sql:      "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'",
             min_rows: 1,
         },
         CatalogQuery {
-            label: "pg_attribute_fixture",
-            sql: "SELECT a.attname FROM pg_catalog.pg_attribute a \
-                   JOIN pg_catalog.pg_class c ON a.attrelid = c.oid \
-                   WHERE c.relname = 'items' AND a.attnum > 0 ORDER BY a.attnum",
+            label:    "pg_attribute_fixture",
+            sql:      "SELECT a.attname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c \
+                       ON a.attrelid = c.oid WHERE c.relname = 'items' AND a.attnum > 0 ORDER BY \
+                       a.attnum",
             min_rows: 2,
         },
         CatalogQuery {
-            label: "pg_database",
-            sql: "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false",
+            label:    "pg_database",
+            sql:      "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false",
             min_rows: 1,
         },
         CatalogQuery {
-            label: "pg_type_unqualified_dbeaver",
-            sql: "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as typeid \
-                   FROM pg_type t \
-                   LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
-                   WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c \
-                   WHERE c.oid = t.typrelid)) \
-                     AND n.nspname NOT IN ('pg_catalog', 'information_schema') \
-                     AND t.typname !~ '^_'",
+            label:    "pg_database_tabularis",
+            sql:      "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY \
+                       datname",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "pg_database_allowconn",
+            sql:      "SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT \
+                       datistemplate",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "current_setting_server_version_num",
+            sql:      "SELECT current_setting('server_version_num')::int4 AS v",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "information_schema_triggers",
+            sql:      "SELECT trigger_name FROM information_schema.triggers LIMIT 1",
+            min_rows: 0,
+        },
+        CatalogQuery {
+            label:    "pg_proc_routines",
+            sql:      "SELECT proname, prokind FROM pg_proc WHERE prokind IN ('f', 'p') ORDER BY \
+                       proname LIMIT 1",
+            min_rows: 0,
+        },
+        CatalogQuery {
+            label:    "pg_settings_empty",
+            sql:      "SELECT name FROM pg_settings LIMIT 1",
+            min_rows: 0,
+        },
+        CatalogQuery {
+            label:    "pg_roles_empty",
+            sql:      "SELECT rolname FROM pg_roles LIMIT 1",
+            min_rows: 0,
+        },
+        CatalogQuery {
+            label:    "columns_is_identity",
+            sql:      "SELECT column_name, is_identity FROM information_schema.columns WHERE \
+                       table_schema = 'catalog_e2e' AND table_name = 'items' LIMIT 1",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "pg_type_unqualified_dbeaver",
+            sql:      "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as \
+                       typeid FROM pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = \
+                       t.typnamespace WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM \
+                       pg_catalog.pg_class c WHERE c.oid = t.typrelid)) AND n.nspname NOT IN \
+                       ('pg_catalog', 'information_schema') AND t.typname !~ '^_'",
             min_rows: 1,
         },
     ]
@@ -58,29 +100,28 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
 pub fn required_information_schema_queries() -> &'static [CatalogQuery] {
     &[
         CatalogQuery {
-            label: "schemata",
-            sql: "SELECT schema_name FROM information_schema.schemata \
-                   WHERE schema_name = 'catalog_e2e'",
+            label:    "schemata",
+            sql:      "SELECT schema_name FROM information_schema.schemata WHERE schema_name = \
+                       'catalog_e2e'",
             min_rows: 1,
         },
         CatalogQuery {
-            label: "tables",
-            sql: "SELECT table_name FROM information_schema.tables \
-                   WHERE table_schema = 'catalog_e2e' AND table_name = 'items'",
+            label:    "tables",
+            sql:      "SELECT table_name FROM information_schema.tables WHERE table_schema = \
+                       'catalog_e2e' AND table_name = 'items'",
             min_rows: 1,
         },
         CatalogQuery {
-            label: "columns_udt_name",
-            sql: "SELECT column_name, udt_name FROM information_schema.columns \
-                   WHERE table_schema = 'catalog_e2e' AND table_name = 'items' \
-                   ORDER BY ordinal_position",
+            label:    "columns_udt_name",
+            sql:      "SELECT column_name, udt_name FROM information_schema.columns WHERE \
+                       table_schema = 'catalog_e2e' AND table_name = 'items' ORDER BY \
+                       ordinal_position",
             min_rows: 2,
         },
         CatalogQuery {
-            label: "columns",
-            sql: "SELECT column_name FROM information_schema.columns \
-                   WHERE table_schema = 'catalog_e2e' AND table_name = 'items' \
-                   ORDER BY ordinal_position",
+            label:    "columns",
+            sql:      "SELECT column_name FROM information_schema.columns WHERE table_schema = \
+                       'catalog_e2e' AND table_name = 'items' ORDER BY ordinal_position",
             min_rows: 2,
         },
     ]
@@ -128,7 +169,8 @@ pub async fn assert_all_catalog_queries(client: &Client) -> Result<(), String> {
     Ok(())
 }
 
-/// SC-011: fixture table visible via pg_class and information_schema.tables over the same connection.
+/// SC-011: fixture table visible via pg_class and information_schema.tables over the same
+/// connection.
 pub async fn assert_pg_class_matches_system_tables(client: &Client) -> Result<(), String> {
     let pg_rows = simple_query_first_column(
         client,
@@ -139,8 +181,8 @@ pub async fn assert_pg_class_matches_system_tables(client: &Client) -> Result<()
 
     let system_rows = simple_query_first_column(
         client,
-        "SELECT table_name FROM information_schema.tables \
-         WHERE table_schema = 'catalog_e2e' AND table_name = 'items'",
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'catalog_e2e' AND \
+         table_name = 'items'",
     )
     .await
     .map_err(|error| format!("information_schema.tables parity query failed: {error}"))?;
@@ -162,17 +204,16 @@ pub async fn assert_pg_class_matches_system_tables(client: &Client) -> Result<()
 pub async fn assert_pg_attribute_matches_system_columns(client: &Client) -> Result<(), String> {
     let pg_rows = simple_query_first_column(
         client,
-        "SELECT a.attname FROM pg_catalog.pg_attribute a \
-         JOIN pg_catalog.pg_class c ON a.attrelid = c.oid \
-         WHERE c.relname = 'items' AND a.attnum > 0",
+        "SELECT a.attname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON a.attrelid \
+         = c.oid WHERE c.relname = 'items' AND a.attnum > 0",
     )
     .await
     .map_err(|error| format!("pg_attribute parity query failed: {error}"))?;
 
     let system_rows = simple_query_first_column(
         client,
-        "SELECT column_name FROM information_schema.columns \
-         WHERE table_schema = 'catalog_e2e' AND table_name = 'items'",
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'catalog_e2e' \
+         AND table_name = 'items'",
     )
     .await
     .map_err(|error| format!("information_schema.columns parity query failed: {error}"))?;

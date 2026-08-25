@@ -29,6 +29,7 @@ use super::providers::{
     tables::schemas_table_definition,
     topic_offsets::models::TopicOffset,
     topics::models::Topic,
+    table_policies::{TablePoliciesTableProvider, TablePolicyRecord},
     users::models::User,
     AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
     ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider, StoragesTableProvider,
@@ -56,6 +57,7 @@ pub struct SystemTablesRegistry {
     topics: Arc<TopicsTableProvider>,
     topic_offsets: Arc<TopicOffsetsTableProvider>,
     migrations: Arc<MigrationsTableProvider>,
+    table_policies: Arc<TablePoliciesTableProvider>,
     // ===== Manifest cache table =====
     manifest: Arc<ManifestTableProvider>,
 
@@ -86,6 +88,7 @@ impl SystemTablesRegistry {
             SystemTable::Topics,
             SystemTable::TopicOffsets,
             SystemTable::Migrations,
+            SystemTable::TablePolicies,
         ]
     }
 
@@ -119,6 +122,7 @@ impl SystemTablesRegistry {
             topics: Arc::new(TopicsTableProvider::new(storage_backend.clone())),
             topic_offsets: Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
             migrations: Arc::new(MigrationsTableProvider::new(storage_backend.clone())),
+            table_policies: Arc::new(TablePoliciesTableProvider::new(storage_backend.clone())),
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
@@ -151,6 +155,7 @@ impl SystemTablesRegistry {
                     (SystemTable::Topics, Topic::definition()),
                     (SystemTable::TopicOffsets, TopicOffset::definition()),
                     (SystemTable::Migrations, Migration::definition()),
+                    (SystemTable::TablePolicies, TablePolicyRecord::definition()),
                 ];
 
                 defs.into_iter().map(|(_, definition)| Arc::new(definition)).collect()
@@ -210,6 +215,11 @@ impl SystemTablesRegistry {
         self.migrations.clone()
     }
 
+    /// Get the system.table_policies provider.
+    pub fn table_policies(&self) -> Arc<TablePoliciesTableProvider> {
+        self.table_policies.clone()
+    }
+
     /// Get the system.stats provider (virtual table)
     pub fn stats(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.stats.read().clone()
@@ -266,8 +276,7 @@ impl SystemTablesRegistry {
     /// This is the canonical provider lookup used by SchemaRegistry cache binding.
     pub fn persisted_table_provider(
         &self,
-        table: SystemTable,
-    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        table: SystemTable) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         if table.is_view() {
             return None;
         }
@@ -294,6 +303,9 @@ impl SystemTablesRegistry {
             SystemTable::Topics => Some(self.topics.clone() as Arc<dyn TableProvider>),
             SystemTable::TopicOffsets => Some(self.topic_offsets.clone() as Arc<dyn TableProvider>),
             SystemTable::Migrations => Some(self.migrations.clone() as Arc<dyn TableProvider>),
+            SystemTable::TablePolicies => {
+                Some(self.table_policies.clone() as Arc<dyn TableProvider>)
+            },
             _ => None,
         }
     }
@@ -334,6 +346,7 @@ impl SystemTablesRegistry {
             SystemTable::Topics,
             SystemTable::TopicOffsets,
             SystemTable::Migrations,
+            SystemTable::TablePolicies,
         ]
         .into_iter()
         .collect()

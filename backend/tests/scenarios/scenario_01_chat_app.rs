@@ -27,8 +27,6 @@ use tokio::time::{sleep, Instant};
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main chat app scenario test
 #[tokio::test]
 #[ntest::timeout(90000)] // 90 seconds - chat app core scenario
@@ -250,7 +248,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
 
     // Query should still work correctly
     let deadline = Instant::now() + Duration::from_secs(15);
-    let mut post_flush_count: i64 = 0;
+    let mut post_flush_count;
     loop {
         let resp = u1_client
             .execute_query(
@@ -362,8 +360,8 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let resp = service_client
         .execute_query(
             &format!(
-                "EXECUTE AS USER '{}' (INSERT INTO {}.messages (id, role_id, content) VALUES \
-                 (2, 'assistant', 'AI Response'))",
+                "EXECUTE AS USER '{}' (INSERT INTO {}.messages (id, role_id, content) VALUES (2, \
+                 'assistant', 'AI Response'))",
                 u1_name, ns
             ),
             None,

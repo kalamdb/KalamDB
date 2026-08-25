@@ -14,12 +14,11 @@
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use kalam_client::models::ResponseStatus;
+use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(180);
 const ROW_COUNT: usize = 5000;
 
 /// Main IoT telemetry test - 5k rows with wide columns
@@ -57,6 +56,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE telemetry table");
+    grant_shared_telemetry_policies(server, &format!("{}.telemetry", ns)).await?;
 
     // =========================================================
     // Step 2: Insert 5000 rows (batch insert for performance)
@@ -118,6 +118,55 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
         "Expected ~{} rows, got {}",
         ROW_COUNT,
         total_count
+    );
+
+    // Operators can read fleet telemetry; devices ingest as Service; User cannot write.
+    let operator = format!("{}_operator", ns);
+    let ingest = format!("{}_ingest", ns);
+    let operator_client = create_user_and_client(server, &operator, &Role::User).await?;
+    let ingest_client = create_user_and_client(server, &ingest, &Role::Service).await?;
+    let resp = operator_client
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None, None)
+        .await?;
+    let operator_count: i64 = resp.get_i64("cnt").unwrap_or(0);
+    assert!(
+        operator_count as usize >= ROW_COUNT * 9 / 10,
+        "operator SELECT policy must expose fleet telemetry, got {operator_count}"
+    );
+    let resp = ingest_client
+        .execute_query(
+            &format!(
+                "INSERT INTO {}.telemetry (id, device_id, temp, humidity, pressure, battery, \
+                 is_charging, firmware, payload) VALUES (99999, 'device_svc', 21.0, 40.0, 1000.0, \
+                 90.0, false, 'v-svc', 'service_ingest')",
+                ns
+            ),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "service ingest policy must allow INSERT: {:?}", resp.error);
+    assert_shared_write_denied(
+        &operator_client,
+        &format!(
+            "INSERT INTO {}.telemetry (id, device_id, temp, humidity, pressure, battery, \
+             is_charging, firmware, payload) VALUES (100000, 'device_user', 21.0, 40.0, 1000.0, \
+             90.0, false, 'v-user', 'blocked')",
+            ns
+        ),
+        "user INSERT into fleet telemetry",
+    )
+    .await?;
+
+    let resp = client
+        .execute_query(&format!("SELECT COUNT(*) as cnt FROM {}.telemetry", ns), None, None, None)
+        .await?;
+    let expected_count: i64 = resp.get_i64("cnt").unwrap_or(0);
+    assert!(
+        expected_count > total_count,
+        "service ingest row should increase fleet count: before={total_count} \
+         after={expected_count}"
     );
 
     // =========================================================
@@ -186,7 +235,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
         .await?;
     let post_flush_count: i64 = resp.get_i64("cnt").unwrap_or(0);
 
-    assert_eq!(post_flush_count, total_count, "Count should be same after flush");
+    assert_eq!(post_flush_count, expected_count, "Count should be same after flush");
 
     // Device filter should still work
     let resp = client
@@ -230,6 +279,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE telemetry table");
+    grant_shared_telemetry_policies(server, &format!("{}.telemetry", ns)).await?;
 
     let client = server.link_client("root");
 
@@ -332,6 +382,7 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE telemetry table");
+    grant_shared_telemetry_policies(server, &format!("{}.telemetry", ns)).await?;
 
     let client = server.link_client("root");
 

@@ -60,12 +60,12 @@ fn smoke_test_system_tables_options_column() {
         ) WITH (
             TYPE = 'SHARED',
             STORAGE_ID = 'local',
-            FLUSH_POLICY = 'rows:100',
-            ACCESS_LEVEL = 'PUBLIC'
+            FLUSH_POLICY = 'rows:100'
         )"#,
         namespace, shared_table
     );
     execute_sql_as_root_via_client(&create_shared_sql).expect("Failed to create shared table");
+    grant_public_select_shared_table(&format!("{}.{}", namespace, shared_table));
 
     // Create STREAM table with TTL
     let create_stream_sql = format!(
@@ -141,12 +141,6 @@ fn smoke_test_system_tables_options_column() {
     assert!(
         output.contains("TTL_SECONDS") || output.contains("ttl_seconds"),
         "Expected TTL_SECONDS in options JSON for stream table"
-    );
-
-    // For SHARED table: ACCESS_LEVEL
-    assert!(
-        output.contains("ACCESS_LEVEL") || output.contains("access_level"),
-        "Expected ACCESS_LEVEL in options JSON for shared table"
     );
 
     println!("✅ Verified system.schemas options column contains metadata");

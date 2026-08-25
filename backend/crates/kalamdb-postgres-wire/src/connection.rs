@@ -10,12 +10,12 @@ pub const DEFAULT_PORTAL_LIMIT: usize = 1_024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePreparedStatement {
     pub name: String,
-    pub sql: String,
+    pub sql:  String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePortal {
-    pub name: String,
+    pub name:           String,
     pub statement_name: String,
 }
 
@@ -40,13 +40,13 @@ impl std::error::Error for WireConnectionStateError {}
 
 #[derive(Debug)]
 pub struct WireConnectionState {
-    session_id: String,
-    auth: BackendAuth,
-    current_schema: NamespaceId,
+    session_id:               String,
+    auth:                     BackendAuth,
+    current_schema:           Mutex<NamespaceId>,
     prepared_statement_limit: usize,
-    portal_limit: usize,
-    prepared_statements: Mutex<HashMap<String, WirePreparedStatement>>,
-    portals: Mutex<HashMap<String, WirePortal>>,
+    portal_limit:             usize,
+    prepared_statements:      Mutex<HashMap<String, WirePreparedStatement>>,
+    portals:                  Mutex<HashMap<String, WirePortal>>,
 }
 
 impl WireConnectionState {
@@ -74,7 +74,7 @@ impl WireConnectionState {
         Self {
             session_id: session_id.into(),
             auth,
-            current_schema,
+            current_schema: Mutex::new(current_schema),
             prepared_statement_limit,
             portal_limit,
             prepared_statements: Mutex::new(HashMap::new()),
@@ -90,12 +90,12 @@ impl WireConnectionState {
         &self.auth
     }
 
-    pub fn current_schema(&self) -> &NamespaceId {
-        &self.current_schema
+    pub fn current_schema(&self) -> NamespaceId {
+        self.current_schema.lock().clone()
     }
 
-    pub fn set_current_schema(&mut self, current_schema: NamespaceId) {
-        self.current_schema = current_schema;
+    pub fn set_current_schema(&self, current_schema: NamespaceId) {
+        *self.current_schema.lock() = current_schema;
     }
 
     pub fn prepared_statement_limit(&self) -> usize {
@@ -200,14 +200,14 @@ mod tests {
         state
             .put_prepared_statement(WirePreparedStatement {
                 name: "one".to_string(),
-                sql: "SELECT 1".to_string(),
+                sql:  "SELECT 1".to_string(),
             })
             .expect("first statement fits");
 
         let error = state
             .put_prepared_statement(WirePreparedStatement {
                 name: "two".to_string(),
-                sql: "SELECT 2".to_string(),
+                sql:  "SELECT 2".to_string(),
             })
             .expect_err("second statement exceeds cap");
 
@@ -220,14 +220,14 @@ mod tests {
             WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
         state
             .put_portal(WirePortal {
-                name: "portal_one".to_string(),
+                name:           "portal_one".to_string(),
                 statement_name: "stmt".to_string(),
             })
             .expect("first portal fits");
 
         let error = state
             .put_portal(WirePortal {
-                name: "portal_two".to_string(),
+                name:           "portal_two".to_string(),
                 statement_name: "stmt".to_string(),
             })
             .expect_err("second portal exceeds cap");

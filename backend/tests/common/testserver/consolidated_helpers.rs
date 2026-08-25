@@ -24,10 +24,61 @@ use kalam_client::{
     models::{ChangeEvent, QueryResponse, ResponseStatus},
     KalamCellValue, SubscriptionManager,
 };
-use kalamdb_commons::Role;
+use kalamdb_commons::{AuthType, Role, StorageId, UserId};
+use kalamdb_system::providers::storages::models::StorageMode;
 use tokio::time::{timeout, Instant};
 
 use super::http_server::HttpTestServer;
+
+fn upsert_test_user(
+    server: &HttpTestServer,
+    username: &str,
+    password: &str,
+    role: Role,
+) -> Result<UserId> {
+    let user_id = UserId::new(username);
+    let password_hash = bcrypt::hash(password, 4).unwrap_or_default();
+    let users_provider = server.app_context().system_tables().users();
+
+    if let Ok(Some(mut existing)) = users_provider.get_user_by_id(&user_id) {
+        existing.password_hash = password_hash;
+        existing.role = role;
+        existing.email = Some(format!("{username}@test.com"));
+        existing.auth_type = AuthType::Password;
+        existing.auth_data = None;
+        existing.failed_login_attempts = 0;
+        existing.locked_until = None;
+        existing.deleted_at = None;
+        existing.updated_at = chrono::Utc::now().timestamp_millis();
+        let _ = users_provider.update_user(existing);
+    } else {
+        let user = kalamdb_system::User {
+            user_id: user_id.clone(),
+            password_hash,
+            role,
+            name: None,
+            email: Some(format!("{username}@test.com")),
+            auth_type: AuthType::Password,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::local()),
+            failed_login_attempts: 0,
+            locked_until: None,
+            last_login_at: None,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            last_seen: None,
+            deleted_at: None,
+            invite_expires_at: None,
+            invited_by: None,
+        };
+        let _ = users_provider.create_user(user);
+    }
+
+    server.cache_user_id(username, user_id.as_str());
+    server.cache_user_password(username, password);
+    Ok(user_id)
+}
 
 // =============================================================================
 // Query Result Extraction Helpers
@@ -210,57 +261,8 @@ pub async fn ensure_user_exists(
     password: &str,
     role: &Role,
 ) -> Result<String> {
-    let lookup_sql =
-        format!("SELECT user_id FROM system.users WHERE user_id = '{}' LIMIT 1", user_id);
-    let create_sql =
-        format!("CREATE USER '{}' WITH PASSWORD '{}' ROLE '{}'", user_id, password, role);
-
-    for attempt in 0..10 {
-        if let Ok(resp) = server.execute_sql(&lookup_sql).await {
-            if resp.status == ResponseStatus::Success {
-                if let Some(rows) = resp.rows_as_maps().first() {
-                    if let Some(user_id_val) = rows.get("user_id") {
-                        let user_id_str = user_id_val
-                            .as_str()
-                            .map(ToString::to_string)
-                            .or_else(|| {
-                                user_id_val
-                                    .get("Utf8")
-                                    .and_then(|v| v.as_str())
-                                    .map(ToString::to_string)
-                            })
-                            .unwrap_or_default();
-
-                        if !user_id_str.is_empty() {
-                            server.cache_user_id(user_id, &user_id_str);
-                            server.cache_user_password(user_id, password);
-                            return Ok(user_id_str);
-                        }
-                    }
-                }
-            }
-        }
-
-        let _ = server.execute_sql(&create_sql).await;
-
-        if attempt < 9 {
-            let backoff = 100u64.saturating_mul((attempt + 1) as u64);
-            tokio::time::sleep(Duration::from_millis(backoff)).await;
-        }
-    }
-
-    let resp = server.execute_sql(&lookup_sql).await?;
-    let resolved_user_id = resp
-        .rows_as_maps()
-        .first()
-        .and_then(|r| r.get("user_id"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Failed to get user_id for {}", user_id))?
-        .to_string();
-
-    server.cache_user_id(user_id, &resolved_user_id);
-    server.cache_user_password(user_id, password);
-    Ok(resolved_user_id)
+    let user_id = upsert_test_user(server, user_id, password, *role)?;
+    Ok(user_id.to_string())
 }
 
 /// Create multiple test users at once.

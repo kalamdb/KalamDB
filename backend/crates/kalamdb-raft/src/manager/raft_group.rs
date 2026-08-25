@@ -9,7 +9,10 @@ use std::{
 
 use kalamdb_commons::models::NodeId;
 use kalamdb_store::StorageBackend;
-use openraft::{storage::Adaptor, Config, Raft, RaftMetrics};
+use openraft::{
+    error::{ClientWriteError, RaftError as OpenRaftError},
+    Config, Raft, RaftMetrics,
+};
 use parking_lot::RwLock;
 
 use crate::{
@@ -21,9 +24,6 @@ use crate::{
 
 /// Type alias for the openraft Raft instance
 pub type RaftInstance = Raft<KalamTypeConfig>;
-
-/// Type alias for the storage adaptor
-pub type StorageAdaptor<SM> = Adaptor<KalamTypeConfig, Arc<KalamRaftStorage<SM>>>;
 
 /// A single Raft consensus group
 ///
@@ -149,80 +149,90 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         timeout: Duration,
     ) -> RaftError {
         RaftError::ReplicationTimeout {
-            group: self.group_id.to_string(),
+            group:            self.group_id.to_string(),
             committed_log_id: committed_index.max(snapshot_index).to_string(),
-            detail: format!(
+            detail:           format!(
                 "local apply barrier did not reach the required read point: applied={}, \
                  committed={}, snapshot={}",
                 applied_index, committed_index, snapshot_index
             ),
-            timeout_ms: timeout.as_millis() as u64,
+            timeout_ms:       timeout.as_millis() as u64,
         }
     }
 
     /// Wait until this node has applied every log entry already known locally.
     pub async fn wait_for_local_apply_barrier(&self, timeout: Duration) -> Result<u64, RaftError> {
-        let metrics =
-            self.metrics().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?;
-        let committed_index = self.storage.get_committed().map(|log_id| log_id.index).unwrap_or(0);
-        let snapshot_index = metrics.snapshot.map(|log_id| log_id.index).unwrap_or(0);
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
+
+        let (committed_index, snapshot_index, applied_index) = {
+            let metrics = raft.metrics();
+            let metrics = metrics.borrow();
+            (
+                self.storage.get_committed().map(|log_id| log_id.index).unwrap_or(0),
+                metrics.snapshot.map(|log_id| log_id.index).unwrap_or(0),
+                metrics.last_applied.map(|log_id| log_id.index).unwrap_or(0),
+            )
+        };
         let target_index = committed_index.max(snapshot_index);
 
         if target_index == 0 {
             return Ok(0);
         }
-
-        let start = Instant::now();
-        if let Some(mut applied_rx) = self.storage.state_machine().subscribe_last_applied() {
-            loop {
-                let applied_index = *applied_rx.borrow();
-                if applied_index >= target_index {
-                    return Ok(applied_index);
-                }
-
-                let elapsed = start.elapsed();
-                if elapsed >= timeout {
-                    return Err(self.local_apply_timeout(
-                        applied_index,
-                        committed_index,
-                        snapshot_index,
-                        timeout,
-                    ));
-                }
-
-                match tokio::time::timeout(timeout - elapsed, applied_rx.changed()).await {
-                    Ok(Ok(())) => {},
-                    Ok(Err(_)) => break,
-                    Err(_) => {
-                        return Err(self.local_apply_timeout(
-                            applied_index,
-                            committed_index,
-                            snapshot_index,
-                            timeout,
-                        ));
-                    },
-                }
-            }
+        if applied_index >= target_index {
+            return Ok(applied_index);
         }
 
-        let poll_interval = Duration::from_millis(5);
+        match raft
+            .wait(Some(timeout))
+            .applied_index_at_least(Some(target_index), "local apply barrier")
+            .await
+        {
+            Ok(metrics) => {
+                Ok(metrics.last_applied.map(|log_id| log_id.index).unwrap_or(target_index))
+            },
+            Err(_) => Err(self.local_apply_timeout(
+                self.storage.state_machine().last_applied_index(),
+                committed_index,
+                snapshot_index,
+                timeout,
+            )),
+        }
+    }
 
-        loop {
-            let applied_index = self.storage.state_machine().last_applied_index();
-            if applied_index >= target_index {
-                return Ok(applied_index);
-            }
+    async fn wait_until_applied(
+        &self,
+        log_index: u64,
+        timeout: Duration,
+    ) -> Result<u64, RaftError> {
+        if log_index == 0 {
+            return Ok(0);
+        }
 
-            if start.elapsed() > timeout {
-                return Err(self.local_apply_timeout(
-                    applied_index,
-                    committed_index,
-                    snapshot_index,
-                    timeout,
-                ));
-            }
+        let raft = {
+            let guard = self.raft.read();
+            guard.clone().ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
+        };
 
-            tokio::time::sleep(poll_interval).await;
+        let applied = raft.metrics().borrow().last_applied.map(|log_id| log_id.index).unwrap_or(0);
+        if applied >= log_index {
+            return Ok(applied);
+        }
+
+        match raft
+            .wait(Some(timeout))
+            .applied_index_at_least(Some(log_index), "read-your-writes")
+            .await
+        {
+            Ok(metrics) => Ok(metrics.last_applied.map(|log_id| log_id.index).unwrap_or(log_index)),
+            Err(_) => Err(self.local_apply_timeout(
+                self.storage.state_machine().last_applied_index(),
+                log_index,
+                0,
+                timeout,
+            )),
         }
     }
 
@@ -307,17 +317,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let config =
             Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
 
-        // Create adaptor from combined storage
-        let (log_store, state_machine): (StorageAdaptor<SM>, StorageAdaptor<SM>) =
-            Adaptor::new(self.storage.clone());
-
-        // Create the Raft instance
+        let storage = self.storage.clone();
         let raft = Raft::new(
             node_id.as_u64(),
             config,
             self.network_factory.clone(),
-            log_store,
-            state_machine,
+            storage.clone(),
+            storage,
         )
         .await
         .map_err(|e| RaftError::Internal(format!("Failed to create Raft: {:?}", e)))?;
@@ -397,10 +403,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         loop {
             if start.elapsed() > timeout {
                 return Err(RaftError::ReplicationTimeout {
-                    group: self.group_id.to_string(),
+                    group:            self.group_id.to_string(),
                     committed_log_id: "catchup".to_string(),
-                    detail: format!("learner {} did not catch up to the leader", node_id),
-                    timeout_ms: timeout.as_millis() as u64,
+                    detail:           format!("learner {} did not catch up to the leader", node_id),
+                    timeout_ms:       timeout.as_millis() as u64,
                 });
             }
 
@@ -494,13 +500,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Check if this node is the leader for this group
     pub fn is_leader(&self) -> bool {
         let raft = self.raft.read();
-        match raft.as_ref() {
-            Some(r) => {
-                let metrics = r.metrics().borrow().clone();
-                metrics.current_leader == Some(metrics.id)
-            },
-            None => false,
-        }
+        let Some(r) = raft.as_ref() else {
+            return false;
+        };
+        let metrics = r.metrics();
+        let metrics = metrics.borrow();
+        metrics.current_leader == Some(metrics.id)
     }
 
     /// Get the current leader node ID, if known
@@ -563,10 +568,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .clone();
 
         // Submit the command and wait for commit
-        let response = raft
-            .client_write(command_bytes)
-            .await
-            .map_err(|e| RaftError::Proposal(format!("{:?}", e)))?;
+        let response = match raft.client_write(command_bytes).await {
+            Ok(response) => response,
+            Err(OpenRaftError::APIError(ClientWriteError::ForwardToLeader(forward))) => {
+                return Err(RaftError::not_leader(self.group_id.to_string(), forward.leader_id));
+            },
+            Err(e) => return Err(RaftError::Proposal(format!("{:?}", e))),
+        };
 
         // Deserialize the response based on command type using centralized serde_helpers.
         // The state machine returns MetaResponse or DataResponse directly, not wrapped in
@@ -670,39 +678,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
                                             log_index
                                         );
 
-                                        // Poll the state machine until the log is applied
-                                        let start = Instant::now();
-                                        let timeout = Duration::from_secs(10);
-                                        let poll_interval = Duration::from_millis(5);
-
-                                        loop {
-                                            let applied =
-                                                self.storage.state_machine().last_applied_index();
-                                            if applied >= log_index {
-                                                log::debug!(
-                                                    "{} log index {} applied locally (current: \
-                                                     {}), read-your-writes consistency achieved",
-                                                    self.group_id,
-                                                    log_index,
-                                                    applied
-                                                );
-                                                break;
-                                            }
-
-                                            if start.elapsed() > timeout {
-                                                log::warn!(
-                                                    "Timeout waiting for {} log index {} to be \
-                                                     applied locally (current: {}). \
-                                                     Read-your-writes consistency may not be \
-                                                     guaranteed.",
-                                                    self.group_id,
-                                                    log_index,
-                                                    applied
-                                                );
-                                                break;
-                                            }
-
-                                            tokio::time::sleep(poll_interval).await;
+                                        if let Err(e) = self
+                                            .wait_until_applied(log_index, Duration::from_secs(10))
+                                            .await
+                                        {
+                                            log::warn!(
+                                                "Timeout waiting for {} log index {} to be \
+                                                 applied locally ({}). Read-your-writes \
+                                                 consistency may not be guaranteed.",
+                                                self.group_id,
+                                                log_index,
+                                                e
+                                            );
                                         }
                                     }
                                     return Ok(response);
@@ -918,22 +905,36 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     /// Shutdown this Raft group
     ///
     /// Calls OpenRaft's Raft::shutdown() to cleanly terminate the internal tasks.
-    /// This is important for test cleanup to prevent "Fatal(Stopped)" errors.
+    /// OpenRaft waits until RaftCore joins; on a single-node process that join
+    /// can hang forever, so this is bounded and then abandoned.
     pub async fn shutdown(&self) -> Result<(), RaftError> {
         let raft = {
             let mut guard = self.raft.write();
             guard.take() // Take ownership to drop after shutdown
         };
 
-        if let Some(raft) = raft {
-            log::debug!("Shutting down Raft group {}", self.group_id);
-            raft.shutdown().await.map_err(|e| {
-                RaftError::Internal(format!(
-                    "Failed to shutdown Raft group {}: {:?}",
-                    self.group_id, e
-                ))
-            })?;
-            log::debug!("Raft group {} shutdown complete", self.group_id);
+        let Some(raft) = raft else {
+            return Ok(());
+        };
+
+        log::debug!("Shutting down Raft group {}", self.group_id);
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+        match tokio::time::timeout(SHUTDOWN_TIMEOUT, raft.shutdown()).await {
+            Ok(Ok(())) => {
+                log::debug!("Raft group {} shutdown complete", self.group_id);
+            },
+            Ok(Err(e)) => {
+                log::warn!("Failed to shutdown Raft group {}: {:?}", self.group_id, e);
+            },
+            Err(_) => {
+                log::warn!(
+                    "Raft group {} shutdown timed out after {:?}; abandoning RaftCore so process \
+                     exit can proceed",
+                    self.group_id,
+                    SHUTDOWN_TIMEOUT
+                );
+                std::mem::forget(raft);
+            },
         }
 
         Ok(())

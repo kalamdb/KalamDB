@@ -16,6 +16,9 @@ impl DdlAst for CreateTableStatement {}
 impl DdlAst for DescribeTableStatement {}
 impl DdlAst for DropNamespaceStatement {}
 impl DdlAst for DropTableStatement {}
+impl DdlAst for CreatePolicyStatement {}
+impl DdlAst for AlterPolicyStatement {}
+impl DdlAst for DropPolicyStatement {}
 impl DdlAst for CompactAllTablesStatement {}
 impl DdlAst for CompactTableStatement {}
 impl DdlAst for FlushAllTablesStatement {}

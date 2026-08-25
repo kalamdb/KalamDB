@@ -253,11 +253,11 @@ fn smoke_test_timing_join_query() {
 
     // Create users table
     execute_sql_as_root_via_cli(&format!(
-        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED', \
-         ACCESS_LEVEL='PUBLIC')",
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='SHARED')",
         full1
     ))
     .expect("create users table");
+    grant_public_select_shared_table(&full1);
     let users_table_check = format!(
         "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table1
@@ -266,17 +266,17 @@ fn smoke_test_timing_join_query() {
         &users_table_check,
         &table1,
         Duration::from_secs(10),
-        execute_sql_as_root_via_cli_json,
-    )
+        execute_sql_as_root_via_cli_json)
     .expect("users table should be visible");
 
     // Create orders table
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, user_id BIGINT, total DOUBLE) WITH \
-         (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')",
+         (TYPE='SHARED')",
         full2
     ))
     .expect("create orders table");
+    grant_public_shared_table_access(&full2);
     let orders_table_check = format!(
         "SELECT table_name FROM system.schemas WHERE namespace_id = '{}' AND table_name = '{}'",
         namespace, table2
@@ -285,8 +285,7 @@ fn smoke_test_timing_join_query() {
         &orders_table_check,
         &table2,
         Duration::from_secs(10),
-        execute_sql_as_root_via_cli_json,
-    )
+        execute_sql_as_root_via_cli_json)
     .expect("orders table should be visible");
 
     // Insert test data

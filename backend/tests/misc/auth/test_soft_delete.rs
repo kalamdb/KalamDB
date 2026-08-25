@@ -19,7 +19,9 @@ async fn test_soft_delete_hides_rows() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE \
+             = 'USER',\n                STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;
@@ -99,7 +101,9 @@ async fn test_soft_delete_preserves_data() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT,\n                completed BOOLEAN\n            ) WITH (\n                TYPE \
+             = 'USER',\n                STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;
@@ -153,9 +157,9 @@ async fn test_deleted_field_default_false() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
-                 title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
-                 STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
+             STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;
@@ -195,9 +199,9 @@ async fn test_multiple_deletes() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
-                 title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
-                 STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
+             STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;
@@ -255,9 +259,9 @@ async fn test_delete_with_where_clause() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
-                 title TEXT,\n                priority INT\n            ) WITH (\n                \
-                 TYPE = 'USER',\n                STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT,\n                priority INT\n            ) WITH (\n                TYPE = \
+             'USER',\n                STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;
@@ -325,9 +329,9 @@ async fn test_count_excludes_deleted_rows() {
     fixtures::create_namespace(&server, &namespace).await;
     server
         .execute_sql(&format!(
-            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                \
-                 title TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
-                 STORAGE_ID = 'local'\n            )",
+            "CREATE TABLE {}.tasks (\n                id TEXT PRIMARY KEY,\n                title \
+             TEXT\n            ) WITH (\n                TYPE = 'USER',\n                \
+             STORAGE_ID = 'local'\n            )",
             namespace
         ))
         .await;

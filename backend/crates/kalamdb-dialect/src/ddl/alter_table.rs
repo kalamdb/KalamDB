@@ -6,12 +6,12 @@
 //! - ALTER TABLE messages MODIFY COLUMN age BIGINT
 
 use kalamdb_commons::{
-    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableAccess, TableId, TableName},
+    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression},
 };
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
-use regex::{Captures, Regex};
+use regex::Regex;
 use sqlparser::{
     ast::{
         AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
@@ -59,8 +59,6 @@ pub enum ColumnOperation {
         old_column_name: String,
         new_column_name: String,
     },
-    /// Set access level (SHARED tables only)
-    SetAccessLevel { access_level: TableAccess },
     /// Set one or more table-level options.
     SetTableOptions { updates: TablePropertyUpdates },
     /// Create or enable a vector index for an embedding column.
@@ -78,7 +76,6 @@ pub struct TablePropertyUpdates {
     pub use_user_storage: Option<bool>,
     pub flush_policy: Option<Option<FlushPolicy>>,
     pub ttl_seconds: Option<u64>,
-    pub access_level: Option<TableAccess>,
     pub compression: Option<TableCompression>,
     pub eviction_strategy: Option<String>,
     pub max_stream_size_bytes: Option<u64>,
@@ -90,26 +87,12 @@ impl TablePropertyUpdates {
             && self.use_user_storage.is_none()
             && self.flush_policy.is_none()
             && self.ttl_seconds.is_none()
-            && self.access_level.is_none()
-            && self.compression.is_none()
-            && self.eviction_strategy.is_none()
-            && self.max_stream_size_bytes.is_none()
-    }
-
-    fn is_access_level_only(&self) -> bool {
-        self.access_level.is_some()
-            && self.storage_id.is_none()
-            && self.use_user_storage.is_none()
-            && self.flush_policy.is_none()
-            && self.ttl_seconds.is_none()
             && self.compression.is_none()
             && self.eviction_strategy.is_none()
             && self.max_stream_size_bytes.is_none()
     }
 }
 
-static SET_ACCESS_LEVEL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)SET\s+ACCESS\s+LEVEL\s+(PUBLIC|PRIVATE|RESTRICTED)").unwrap());
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
 static ALTER_CREATE_VECTOR_INDEX_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -140,6 +123,7 @@ pub struct AlterTableStatement {
 impl AlterTableStatement {
     /// Parse an ALTER TABLE statement from SQL (sqlparser-backed)
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
+        crate::ddl::reject_access_level_sql(sql)?;
         if let Some(stmt) = parse_vector_index_operation(sql, current_namespace)? {
             return Ok(stmt);
         }
@@ -246,12 +230,7 @@ fn resolve_table_reference_from_str(
 }
 
 fn normalize_alter_sql(sql: &str) -> String {
-    let trimmed = sql.trim().trim_end_matches(';');
-    SET_ACCESS_LEVEL_RE
-        .replace(trimmed, |caps: &Captures| {
-            format!("SET TBLPROPERTIES (ACCESS_LEVEL = '{}')", caps[1].to_uppercase())
-        })
-        .into_owned()
+    sql.trim().trim_end_matches(';').to_string()
 }
 
 fn resolve_table_reference(
@@ -418,12 +397,6 @@ fn build_set_table_properties_operation(
         return Err("At least one table property is required".to_string());
     }
 
-    if updates.is_access_level_only() {
-        if let Some(access_level) = updates.access_level {
-            return Ok(ColumnOperation::SetAccessLevel { access_level });
-        }
-    }
-
     Ok(ColumnOperation::SetTableOptions { updates })
 }
 
@@ -439,7 +412,7 @@ fn extract_table_property_updates(
 
         match key.value.to_uppercase().as_str() {
             "ACCESS_LEVEL" => {
-                updates.access_level = Some(parse_access_level_value(value)?);
+                return Err(crate::ddl::ACCESS_LEVEL_UNSUPPORTED.to_string());
             },
             "STORAGE_ID" => {
                 let storage_id = expr_to_literal(value);
@@ -609,20 +582,6 @@ fn value_to_string(value: &Value) -> String {
         Value::QuoteDelimitedStringLiteral(s) | Value::NationalQuoteDelimitedStringLiteral(s) => {
             s.value.clone()
         },
-    }
-}
-
-fn parse_access_level_value(value: &Expr) -> DdlResult<TableAccess> {
-    let normalized = expr_to_literal(value).to_uppercase();
-    match normalized.as_str() {
-        "PUBLIC" => Ok(TableAccess::Public),
-        "PRIVATE" => Ok(TableAccess::Private),
-        "RESTRICTED" => Ok(TableAccess::Restricted),
-        "DBA" => Ok(TableAccess::Dba),
-        other => Err(format!(
-            "Invalid ACCESS_LEVEL '{}'. Supported values: PUBLIC, PRIVATE, RESTRICTED, DBA",
-            other
-        )),
     }
 }
 
@@ -969,62 +928,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_set_access_level_public() {
-        let stmt = AlterTableStatement::parse(
+    fn test_parse_rejects_access_level() {
+        let err = AlterTableStatement::parse(
+            "ALTER TABLE analytics SET TBLPROPERTIES (ACCESS_LEVEL = 'PUBLIC')",
+            &test_namespace(),
+        )
+        .unwrap_err();
+        assert!(err.contains("ACCESS_LEVEL is not supported"));
+        assert!(err.contains("CREATE POLICY"));
+
+        let err = AlterTableStatement::parse(
             "ALTER TABLE analytics SET ACCESS LEVEL public",
             &test_namespace(),
         )
-        .unwrap();
-
-        assert_eq!(stmt.table_name.as_str(), "analytics");
-
-        match stmt.operation {
-            ColumnOperation::SetAccessLevel { access_level } => {
-                assert_eq!(access_level, TableAccess::Public);
-            },
-            _ => panic!("Expected SetAccessLevel operation"),
-        }
-    }
-
-    #[test]
-    fn test_parse_set_access_level_private() {
-        let stmt = AlterTableStatement::parse(
-            "ALTER TABLE reports SET ACCESS LEVEL private",
-            &test_namespace(),
-        )
-        .unwrap();
-
-        match stmt.operation {
-            ColumnOperation::SetAccessLevel { access_level } => {
-                assert_eq!(access_level, TableAccess::Private);
-            },
-            _ => panic!("Expected SetAccessLevel operation"),
-        }
-    }
-
-    #[test]
-    fn test_parse_set_access_level_restricted() {
-        let stmt = AlterTableStatement::parse(
-            "ALTER TABLE sensitive SET ACCESS LEVEL restricted",
-            &test_namespace(),
-        )
-        .unwrap();
-
-        match stmt.operation {
-            ColumnOperation::SetAccessLevel { access_level } => {
-                assert_eq!(access_level, TableAccess::Restricted);
-            },
-            _ => panic!("Expected SetAccessLevel operation"),
-        }
-    }
-
-    #[test]
-    fn test_parse_set_access_level_invalid() {
-        let result = AlterTableStatement::parse(
-            "ALTER TABLE test SET ACCESS LEVEL invalid",
-            &test_namespace(),
-        );
-        assert!(result.is_err());
+        .unwrap_err();
+        assert!(err.contains("ACCESS_LEVEL is not supported"));
     }
 
     #[test]
@@ -1086,13 +1004,6 @@ mod tests {
         let sql = "ALTER TABLE events SET TBLPROPERTIES (COMPRESSION='lz4')";
         let err = AlterTableStatement::parse(sql, &test_namespace()).unwrap_err();
         assert!(err.contains("Supported: none, snappy, zstd"));
-    }
-
-    #[test]
-    fn test_parse_set_access_level_missing_keyword() {
-        let result =
-            AlterTableStatement::parse("ALTER TABLE test SET LEVEL public", &test_namespace());
-        assert!(result.is_err());
     }
 
     #[test]

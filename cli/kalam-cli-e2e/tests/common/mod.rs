@@ -62,6 +62,41 @@ fn shared_token_cache_lock_path() -> PathBuf {
     std::env::temp_dir().join("kalamdb_test_tokens.lock")
 }
 
+fn shared_ensure_ready_lock_path() -> PathBuf {
+    std::env::temp_dir().join("kalamdb_test_ensure_ready.lock")
+}
+
+fn shared_ready_marker_key(base_url: &str) -> String {
+    format!("{}|__auth_ready__", base_url)
+}
+
+#[cfg(unix)]
+struct ExclusiveFileLock {
+    file: std::fs::File,
+}
+
+#[cfg(unix)]
+impl ExclusiveFileLock {
+    fn acquire(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = OpenOptions::new().create(true).read(true).write(true).open(path)?;
+        unsafe {
+            if flock(file.as_raw_fd(), LOCK_EX) != 0 {
+                return Err(format!("Failed to acquire lock {}", path.display()).into());
+            }
+        }
+        Ok(Self { file })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ExclusiveFileLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = flock(self.file.as_raw_fd(), LOCK_UN);
+        }
+    }
+}
+
 // Re-export commonly used types for credential tests
 #[cfg(unix)]
 pub use std::os::unix::fs::PermissionsExt;
@@ -161,6 +196,7 @@ static AUTO_TEST_RUNTIME: OnceLock<&'static Runtime> = OnceLock::new();
 static TOKEN_CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
 static TEST_AUTH_MANAGER: OnceLock<TestAuthManager> = OnceLock::new();
 static LOGIN_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
+static ENSURE_READY_MUTEX: OnceLock<TokioMutex<()>> = OnceLock::new();
 static TOKEN_FILE_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static TEST_CLI_HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 static TEST_CLI_CREDENTIALS_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -172,8 +208,10 @@ pub fn shared_http_client() -> Client {
     Client::builder()
         .pool_max_idle_per_host(512)
         .pool_idle_timeout(Duration::from_secs(90))
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(3))
+        .connect_timeout(Duration::from_secs(5))
+        // DDL on a busy running server can exceed a few seconds; keep this aligned
+        // with CLI client waits so ensure_ready/SQL helpers do not false-fail first.
+        .timeout(Duration::from_secs(30))
         .tcp_nodelay(true)
         .build()
         .expect("failed to build test HTTP client")
@@ -304,6 +342,14 @@ impl TestAuthManager {
         Ok(())
     }
 
+    fn setup_error_is_recoverable(body: &str) -> bool {
+        let lower = body.to_ascii_lowercase();
+        lower.contains("user_exists")
+            || lower.contains("already exists")
+            || lower.contains("already_configured")
+            || lower.contains("already configured")
+    }
+
     async fn complete_setup_if_needed(
         &self,
         base_url: &str,
@@ -327,10 +373,11 @@ impl TestAuthManager {
         }
 
         let root_password = root_password_from_env();
+        let admin_user = std::env::var("KALAMDB_ADMIN_USER").unwrap_or_else(|_| admin_username().to_string());
         let setup_response = self
             .send_with_retry(client.post(format!("{}/v1/api/auth/setup", base_url)).json(&json!({
-                "user": "admin",
-                "password": "kalamdb123",
+                "user": admin_user,
+                "password": admin_password(),
                 "root_password": root_password,
                 "email": null
             })))
@@ -338,6 +385,9 @@ impl TestAuthManager {
 
         if !setup_response.status().is_success() {
             let text = setup_response.text().await?;
+            if Self::setup_error_is_recoverable(&text) {
+                return Ok(());
+            }
             return Err(format!("Failed to complete setup: {}", text).into());
         }
 
@@ -436,11 +486,28 @@ impl TestAuthManager {
         }
     }
 
+    async fn admin_credentials_work(
+        &self,
+        base_url: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        match self.login_for_token(base_url, admin_username(), &admin_password()).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     async fn ensure_admin_user(
         &self,
         base_url: &str,
         root_password: &str,
+        force_reset: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Parallel CLI e2e binaries used to stampede ALTER USER on every ensure_ready.
+        // Prefer a cheap login check so we only mutate when credentials are wrong.
+        if !force_reset && self.admin_credentials_work(base_url).await? {
+            return Ok(());
+        }
+
         invalidate_cached_token_for_credentials(base_url, admin_username(), admin_password());
 
         let root_token = self.token_for_url_cached(base_url, "root", root_password).await?;
@@ -536,10 +603,13 @@ impl TestAuthManager {
     async fn force_reset_admin(&self, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.complete_setup_if_needed(base_url).await?;
         let root_password = root_password_from_env();
-        self.ensure_admin_user(base_url, &root_password).await?;
+        self.ensure_admin_user(base_url, &root_password, true).await?;
         if let Ok(mut guard) = self.ready_urls.lock() {
             guard.insert(base_url.to_string());
         }
+        let _ = self.with_shared_token_cache(|map| {
+            map.insert(shared_ready_marker_key(base_url), "1".to_string());
+        });
         if let Ok(mut guard) = TOKEN_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
             guard.retain(|key, _| !key.contains("admin:") && !key.contains("root:"));
         }
@@ -554,17 +624,53 @@ impl TestAuthManager {
             }
         }
 
+        if let Ok(Some(_)) = self.shared_token_for_key(&shared_ready_marker_key(base_url)) {
+            if let Ok(mut guard) = self.ready_urls.lock() {
+                guard.insert(base_url.to_string());
+            }
+            return Ok(());
+        }
+
+        let ensure_lock = ENSURE_READY_MUTEX.get_or_init(|| TokioMutex::new(()));
+        let _ensure_guard = ensure_lock.lock().await;
+
+        if let Ok(guard) = self.ready_urls.lock() {
+            if guard.contains(base_url) {
+                return Ok(());
+            }
+        }
+
+        if let Ok(Some(_)) = self.shared_token_for_key(&shared_ready_marker_key(base_url)) {
+            if let Ok(mut guard) = self.ready_urls.lock() {
+                guard.insert(base_url.to_string());
+            }
+            return Ok(());
+        }
+
+        #[cfg(unix)]
+        let _cross_process_lock = ExclusiveFileLock::acquire(&shared_ensure_ready_lock_path())?;
+
+        if let Ok(Some(_)) = self.shared_token_for_key(&shared_ready_marker_key(base_url)) {
+            if let Ok(mut guard) = self.ready_urls.lock() {
+                guard.insert(base_url.to_string());
+            }
+            return Ok(());
+        }
+
         self.complete_setup_if_needed(base_url).await?;
 
         let auth_required = server_requires_auth_for_url(base_url).unwrap_or(true);
         if auth_required {
             let root_password = root_password_from_env();
-            self.ensure_admin_user(base_url, &root_password).await?;
+            self.ensure_admin_user(base_url, &root_password, false).await?;
         }
 
         if let Ok(mut guard) = self.ready_urls.lock() {
             guard.insert(base_url.to_string());
         }
+        let _ = self.with_shared_token_cache(|map| {
+            map.insert(shared_ready_marker_key(base_url), "1".to_string());
+        });
 
         Ok(())
     }
@@ -4388,6 +4494,36 @@ pub fn execute_sql_as_root_via_client(sql: &str) -> Result<String, Box<dyn std::
     execute_sql_via_client_as(default_username(), default_password(), sql)
 }
 
+fn shared_table_policy_ident(qualified_table: &str) -> &str {
+    qualified_table.rsplit('.').next().unwrap_or(qualified_table)
+}
+
+/// Grant User/Service full access to a shared table.
+///
+/// Shared tables are FORCE RLS. Tests that are about routing, CRUD, or visibility
+/// (not default-deny) must create a policy; System/DBA already bypass RLS.
+pub fn grant_public_shared_table_access(qualified_table: &str) {
+    let table_ident = shared_table_policy_ident(qualified_table);
+    let sql = format!(
+        "CREATE POLICY {table_ident}_public ON {qualified_table} FOR ALL TO PUBLIC USING (true) \
+         WITH CHECK (true)"
+    );
+    execute_sql_as_root_via_client(&sql).unwrap_or_else(|err| {
+        panic!("failed to grant public shared access on {qualified_table}: {err}")
+    });
+}
+
+/// Grant catalog-style read access: subjects can SELECT, writes stay DBA/System.
+pub fn grant_public_select_shared_table(qualified_table: &str) {
+    let table_ident = shared_table_policy_ident(qualified_table);
+    let sql = format!(
+        "CREATE POLICY {table_ident}_select ON {qualified_table} FOR SELECT TO PUBLIC USING (true)"
+    );
+    execute_sql_as_root_via_client(&sql).unwrap_or_else(|err| {
+        panic!("failed to grant public SELECT on {qualified_table}: {err}")
+    });
+}
+
 /// Execute SQL as root user via kalam-client with query parameters
 pub fn execute_sql_as_root_via_client_with_params(
     sql: &str,
@@ -5144,16 +5280,37 @@ impl SubscriptionListener {
         Self::start_with_timeout(query, 30) // Default 30 second timeout for tests
     }
 
+    /// Start a subscription listener as a specific user.
+    pub fn start_as_user(
+        query: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_as_user_with_timeout(query, username, password, 30)
+    }
+
     /// Start a subscription listener with a specific timeout in seconds.
     /// Uses the kalam-client WebSocket path instead of spawning CLI processes.
     pub fn start_with_timeout(
         query: &str,
+        timeout_secs: u64,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_as_user_with_timeout(query, default_username(), default_password(), timeout_secs)
+    }
+
+    /// Start a subscription listener as a specific user with a timeout.
+    pub fn start_as_user_with_timeout(
+        query: &str,
+        username: &str,
+        password: &str,
         _timeout_secs: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (event_tx, event_rx) = std_mpsc::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
 
         let query = query.to_string();
+        let username = username.to_string();
+        let password = password.to_string();
 
         let handle = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -5173,8 +5330,8 @@ impl SubscriptionListener {
                 // Build client for subscription
                 let client = match build_client_for_url_with_timeouts(
                     &base_url,
-                    default_username(),
-                    default_password(),
+                    &username,
+                    &password,
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
                         .receive_timeout_secs(30)

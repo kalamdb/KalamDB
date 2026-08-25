@@ -43,8 +43,7 @@ impl SqlStatement {
     pub fn classify_and_parse(
         sql: &str,
         default_namespace: &NamespaceId,
-        role: Role,
-    ) -> Result<Self, StatementClassificationError> {
+        role: Role) -> Result<Self, StatementClassificationError> {
         // Use sqlparser's parser lookahead to tokenize without full parsing
         let dialect = sqlparser::dialect::GenericDialect {};
         let tokens = collect_non_whitespace_tokens(sql, &dialect).unwrap_or_default();
@@ -71,6 +70,7 @@ impl SqlStatement {
 
         // Admin users (DBA, System) can do anything - skip authorization checks
         let is_admin = is_admin_role(role);
+        let can_manage_policy = is_admin || role == Role::Service;
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
@@ -82,33 +82,59 @@ impl SqlStatement {
             "INSERT" => {
                 return Ok(Self::new(
                     sql.to_string(),
-                    SqlStatementKind::Insert(crate::ddl::InsertStatement),
-                ));
+                    SqlStatementKind::Insert(crate::ddl::InsertStatement)));
             },
             "DELETE" => {
                 return Ok(Self::new(
                     sql.to_string(),
-                    SqlStatementKind::Delete(crate::ddl::DeleteStatement),
-                ));
+                    SqlStatementKind::Delete(crate::ddl::DeleteStatement)));
             },
             "UPDATE" => {
                 return Ok(Self::new(
                     sql.to_string(),
-                    SqlStatementKind::Update(crate::ddl::UpdateStatement),
-                ));
+                    SqlStatementKind::Update(crate::ddl::UpdateStatement)));
             },
             _ => {},
         }
 
         // Check multi-word prefixes and parse DDL statements
         match word_refs.as_slice() {
+            ["CREATE", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string()));
+                }
+                Self::wrap(sql, || {
+                    CreatePolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::CreatePolicy)
+                })
+            },
+            ["ALTER", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string()));
+                }
+                Self::wrap(sql, || {
+                    AlterPolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::AlterPolicy)
+                })
+            },
+            ["DROP", "POLICY", ..] => {
+                if !can_manage_policy {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "System, DBA, or Service role required for policy operations".to_string()));
+                }
+                Self::wrap(sql, || {
+                    DropPolicyStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::DropPolicy)
+                })
+            },
             // Namespace operations - require admin
             ["CREATE", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     CreateNamespaceStatement::parse(sql).map(SqlStatementKind::CreateNamespace)
@@ -118,8 +144,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     AlterNamespaceStatement::parse(sql).map(SqlStatementKind::AlterNamespace)
@@ -129,8 +154,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     DropNamespaceStatement::parse(sql).map(SqlStatementKind::DropNamespace)
@@ -162,8 +186,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     CreateStorageStatement::parse(sql).map(SqlStatementKind::CreateStorage)
@@ -173,8 +196,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     AlterStorageStatement::parse(sql).map(SqlStatementKind::AlterStorage)
@@ -184,8 +206,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     DropStorageStatement::parse(sql).map(SqlStatementKind::DropStorage)
@@ -290,8 +311,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for storage operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     CheckStorageStatement::parse(sql).map(SqlStatementKind::CheckStorage)
@@ -311,8 +331,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for job management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || parse_job_command(sql).map(SqlStatementKind::KillJob))
             },
@@ -328,8 +347,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterSnapshot))
             },
@@ -337,8 +355,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
 
                 let tokens_no_ws: Vec<&sqlparser::tokenizer::Token> = tokens
@@ -391,8 +408,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterTriggerElection))
             },
@@ -401,8 +417,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 let node_id = node_id.parse::<u64>().map_err(|_| {
                     StatementClassificationError::InvalidSql {
@@ -416,8 +431,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
 
                 let node_id = node_id.parse::<u64>().map_err(|_| {
@@ -472,15 +486,13 @@ impl SqlStatement {
                         node_id,
                         rpc_addr,
                         api_addr,
-                    },
-                ))
+                    }))
             },
             ["CLUSTER", "REBALANCE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterRebalance))
             },
@@ -488,8 +500,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterStepdown))
             },
@@ -497,8 +508,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for cluster operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::ClusterClear))
             },
@@ -532,8 +542,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for topic management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     crate::ddl::topic_commands::parse_create_topic(sql)
@@ -544,8 +553,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for topic management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     crate::ddl::topic_commands::parse_drop_topic(sql)
@@ -556,8 +564,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for topic management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     crate::ddl::topic_commands::parse_clear_topic(sql)
@@ -568,8 +575,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for topic management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 if word_refs.get(3) == Some(&"SET") && word_refs.get(4) == Some(&"RETENTION")
                 {
@@ -608,8 +614,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for consumer group reset"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     crate::ddl::topic_commands::parse_reset_consumer_group(sql)
@@ -622,8 +627,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for backup operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     BackupDatabaseStatement::parse(sql).map(SqlStatementKind::BackupDatabase)
@@ -633,8 +637,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for restore operations"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     RestoreDatabaseStatement::parse(sql).map(SqlStatementKind::RestoreDatabase)
@@ -652,8 +655,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for user management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || {
                     CreateUserStatement::parse(sql).map(SqlStatementKind::CreateUser)
@@ -667,8 +669,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for user management"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Self::wrap(sql, || DropUserStatement::parse(sql).map(SqlStatementKind::DropUser))
             },
@@ -681,8 +682,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for EXPLAIN commands"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
@@ -690,8 +690,7 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for SET commands"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
@@ -699,16 +698,14 @@ impl SqlStatement {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for SHOW COLUMNS"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
             ["SHOW", "ALL", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for SHOW ALL".to_string(),
-                    ));
+                        "Admin privileges (DBA or System role) required for SHOW ALL".to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
@@ -718,16 +715,14 @@ impl SqlStatement {
             ["DESCRIBE", next, ..] if *next != "TABLE" => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for DESCRIBE".to_string(),
-                    ));
+                        "Admin privileges (DBA or System role) required for DESCRIBE".to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
             ["DESC", next, ..] if *next != "TABLE" => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for DESC".to_string(),
-                    ));
+                        "Admin privileges (DBA or System role) required for DESC".to_string()));
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
@@ -860,14 +855,24 @@ impl SqlStatement {
                 Ok(())
             },
 
+            SqlStatementKind::CreatePolicy(_)
+            | SqlStatementKind::AlterPolicy(_)
+            | SqlStatementKind::DropPolicy(_) => {
+                if role == Role::Service {
+                    Ok(())
+                } else {
+                    Err("System, DBA, or Service role required for policy operations".to_string())
+                }
+            },
+
             // SELECT, INSERT, UPDATE, DELETE - defer to table access control
             SqlStatementKind::Select
             | SqlStatementKind::Insert(_)
             | SqlStatementKind::Update(_)
             | SqlStatementKind::Delete(_) => {
-                // Query-level authorization will be enforced by using per-user sessions
-                // User tables are filtered by user_id in UserTableProvider
-                // Shared tables enforce access control based on access_level
+                // Query-level authorization is enforced by per-user sessions.
+                // User tables are filtered by user_id in UserTableProvider.
+                // Shared tables are FORCE RLS via BoundTablePolicies.
                 Ok(())
             },
 

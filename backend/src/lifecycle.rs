@@ -1,17 +1,11 @@
 //! Server lifecycle management helpers.
 //!
-//! This module encapsulates the heavy lifting previously handled directly
-//! in `main.rs`: bootstrapping databases and services, wiring the HTTP
-//! server, and coordinating graceful shutdown.
+//! This module bootstraps application services and exposes production and
+//! integration-test lifecycle entry points. Transport construction and ordered
+//! shutdown live in their dedicated modules.
 
-use std::{
-    future::Future,
-    net::{SocketAddr, TcpListener},
-    pin::Pin,
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 
-use actix_web::{App, HttpServer};
 use anyhow::Result;
 use chrono::Utc;
 use kalamdb_api::limiter::RateLimiter;
@@ -22,173 +16,123 @@ use kalamdb_core::sql::{
     datafusion_session::DataFusionSessionFactory,
     executor::{handler_registry::HandlerRegistry, SqlExecutor},
 };
-use kalamdb_dba::initialize_dba_namespace;
-use kalamdb_jobs::AppContextJobsExt;
+use kalamdb_dba::{ensure_dba_notification_policies, initialize_dba_namespace};
+use kalamdb_jobs::{AppContextJobsExt, JobsManagerRuntime};
 use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use kalamdb_postgres_wire::{
-    query::KalamQueryHandler,
-    server::{run_listener_until_shutdown, KalamWireHandlers, PostgresWireListenerConfig},
-    sql_exec::WireSqlExecutor,
-    startup::KalamStartupHandler,
+    format_startup_log_segment, PostgresWireListener, PostgresWireRuntimeDeps,
 };
 use kalamdb_store::open_storage_backend;
 use kalamdb_system::providers::storages::models::StorageMode;
 use log::{debug, info, warn};
-use tracing_actix_web::{RootSpanBuilder, TracingLogger};
 
+pub use crate::http_server::effective_max_blocking_threads;
 use crate::{
-    http_runtime::{AuthRuntimeMode, HttpRuntimeState},
-    middleware, routes, startup,
+    http_runtime::AuthRuntimeMode,
+    http_server::{effective_workers, HttpServerRuntime},
+    shutdown::{shutdown_background_services, shutdown_server, wait_for_termination},
+    startup,
 };
-
-/// Resolve the effective number of actix-web worker threads.
-///
-/// Precedence: `KALAMDB_SERVER_WORKERS` env var > server.toml `workers` > auto.
-/// When auto (`configured == 0`), uses `num_cpus` but caps at 4 to keep
-/// idle RSS low (~2 MB per worker). For high-throughput production
-/// deployments, set `workers` explicitly in server.toml or the env var.
-fn effective_workers(configured: usize) -> usize {
-    // Environment variable takes highest priority
-    if let Ok(val) = std::env::var("KALAMDB_SERVER_WORKERS") {
-        if let Ok(n) = val.parse::<usize>() {
-            if n > 0 {
-                return n;
-            }
-        }
-    }
-    if configured == 0 {
-        num_cpus::get().min(4)
-    } else {
-        configured
-    }
-}
-
-/// Resolve the configured blocking-pool cap used by Actix workers and the
-/// outer Tokio runtime.
-pub fn effective_max_blocking_threads(configured: usize) -> usize {
-    if configured == 0 {
-        kalamdb_configs::defaults::default_worker_max_blocking_threads()
-    } else {
-        configured
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShutdownSignal {
-    CtrlC,
-    SigTerm,
-}
-
-async fn select_shutdown_signal<CtrlCFut, SigTermFut>(
-    ctrl_c: CtrlCFut,
-    sigterm: SigTermFut,
-) -> std::io::Result<ShutdownSignal>
-where
-    CtrlCFut: Future<Output = std::io::Result<()>>,
-    SigTermFut: Future<Output = std::io::Result<()>>,
-{
-    tokio::select! {
-        result = ctrl_c => {
-            result?;
-            Ok(ShutdownSignal::CtrlC)
-        }
-        result = sigterm => {
-            result?;
-            Ok(ShutdownSignal::SigTerm)
-        }
-    }
-}
-
-type ShutdownSignalFuture = Pin<Box<dyn Future<Output = std::io::Result<ShutdownSignal>> + Send>>;
-
-fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-
-        let ctrl_c = tokio::signal::ctrl_c();
-        let mut sigterm = signal(SignalKind::terminate())?;
-        Ok(Box::pin(async move {
-            select_shutdown_signal(ctrl_c, async move {
-                sigterm.recv().await.ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "SIGTERM signal stream closed unexpectedly",
-                    )
-                })
-            })
-            .await
-        }))
-    }
-
-    #[cfg(not(unix))]
-    {
-        let ctrl_c = tokio::signal::ctrl_c();
-        Ok(Box::pin(async move {
-            select_shutdown_signal(ctrl_c, std::future::pending::<std::io::Result<()>>()).await
-        }))
-    }
-}
-
-/// Custom root span builder that forces `parent: None` on every request span.
-///
-/// The default `TracingLogger` inherits whatever span is "current" on the
-/// thread when a new request arrives.  With `tracing-opentelemetry` in the
-/// subscriber stack, this means that a request processed on a thread that
-/// still has another request's span entered will be incorrectly parented
-/// under that span in Jaeger.  By explicitly setting `parent: None` we
-/// guarantee every HTTP request starts a fresh, independent trace.
-struct KalamDbRootSpanBuilder;
-
-impl RootSpanBuilder for KalamDbRootSpanBuilder {
-    fn on_request_start(request: &actix_web::dev::ServiceRequest) -> tracing::Span {
-        let method = request.method().as_str();
-        let path = request.uri().path();
-        // `parent: None` ensures this span is always a root span,
-        // preventing cross-request span contamination.
-        tracing::info_span!(
-            parent: None,
-            "HTTP request",
-            http.method = %method,
-            http.route = %path,
-            http.status_code = tracing::field::Empty,
-            otel.kind = "server",
-            otel.status_code = tracing::field::Empty,
-        )
-    }
-
-    fn on_request_end<B: actix_web::body::MessageBody>(
-        span: tracing::Span,
-        outcome: &Result<actix_web::dev::ServiceResponse<B>, actix_web::Error>,
-    ) {
-        match outcome {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                span.record("http.status_code", status);
-                if status >= 500 {
-                    span.record("otel.status_code", "ERROR");
-                } else {
-                    span.record("otel.status_code", "OK");
-                }
-            },
-            Err(err) => {
-                span.record("otel.status_code", "ERROR");
-                span.record("http.status_code", 500u16);
-                tracing::error!(parent: &span, error = %err, "HTTP request error");
-            },
-        }
-    }
-}
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
 pub struct ApplicationComponents {
-    pub session_factory: Arc<DataFusionSessionFactory>,
-    pub sql_executor: Arc<SqlExecutor>,
-    pub rate_limiter: Arc<RateLimiter>,
-    pub live_query_manager: Arc<LiveQueryManager>,
-    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
+    pub session_factory:     Arc<DataFusionSessionFactory>,
+    pub sql_executor:        Arc<SqlExecutor>,
+    pub rate_limiter:        Arc<RateLimiter>,
+    pub live_query_manager:  Arc<LiveQueryManager>,
+    pub user_repo:           Arc<dyn kalamdb_auth::UserRepository>,
     pub connection_registry: Arc<ConnectionsManager>,
+    pub jobs_runtime:        Option<JobsManagerRuntime>,
+}
+
+async fn fail_bootstrap<T>(
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+    error: anyhow::Error,
+) -> Result<T> {
+    if let Err(cleanup_error) =
+        shutdown_background_services(None, app_context, std::time::Duration::ZERO).await
+    {
+        warn!("Startup cleanup failed while preserving the original error: {cleanup_error}");
+    }
+    Err(error)
+}
+
+#[derive(Clone, Copy)]
+enum AppContextMode {
+    Global,
+    Isolated,
+}
+
+fn create_app_context(
+    config: &ServerConfig,
+    mode: AppContextMode,
+) -> Result<Arc<kalamdb_core::app_context::AppContext>> {
+    let phase_start = std::time::Instant::now();
+    let db_path = config.storage.rocksdb_dir();
+    std::fs::create_dir_all(&db_path)?;
+
+    let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
+    info!(
+        "Storage backend initialized at {} with {} partitions ({:.2}ms)",
+        db_path.display(),
+        partition_count,
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
+    if !config.storage.rocksdb.sync_writes {
+        debug!("Async writes enabled (sync_writes=false) for high throughput");
+    }
+
+    let node_id = config
+        .cluster
+        .as_ref()
+        .map(|cluster| kalamdb_commons::NodeId::new(cluster.node_id))
+        .unwrap_or_else(|| kalamdb_commons::NodeId::new(1));
+    let storage_dir = config.storage.storage_dir().to_string_lossy().into_owned();
+    let phase_start = std::time::Instant::now();
+    let app_context = match mode {
+        AppContextMode::Global => kalamdb_core::app_context::AppContext::init(
+            backend,
+            node_id,
+            storage_dir,
+            config.clone(),
+        ),
+        AppContextMode::Isolated => kalamdb_core::app_context::AppContext::create_isolated(
+            backend,
+            node_id,
+            storage_dir,
+            config.clone(),
+        ),
+    };
+    info!(
+        "Startup: AppContext initialized in {:.2}ms",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
+    Ok(app_context)
+}
+
+async fn finish_bootstrap(
+    config: &ServerConfig,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+    use_root_password_env: bool,
+) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
+    app_context.wire_raft_appliers();
+
+    let phase_start = std::time::Instant::now();
+    if let Err(error) = startup::create_default_storage_if_needed(config, &app_context) {
+        return fail_bootstrap(app_context, error).await;
+    }
+    debug!(
+        "Storage initialization completed ({:.2}ms)",
+        phase_start.elapsed().as_secs_f64() * 1000.0
+    );
+
+    let components =
+        match prepare_components(config, app_context.clone(), use_root_password_env).await {
+            Ok(components) => components,
+            Err(error) => return fail_bootstrap(app_context, error).await,
+        };
+    Ok((components, app_context))
 }
 
 /// Prepare services and background tasks for an already-initialized [`AppContext`].
@@ -226,6 +170,7 @@ pub async fn prepare_components(
 
     let dba_start = std::time::Instant::now();
     initialize_dba_namespace(app_context.clone())?;
+    ensure_dba_notification_policies(app_context.clone()).await?;
     debug!(
         "Startup: DBA namespace initialized in {:.2}ms",
         dba_start.elapsed().as_secs_f64() * 1000.0
@@ -241,15 +186,6 @@ pub async fn prepare_components(
     // Initialize job system (executors, manager, waker) — extracted to kalamdb-jobs crate
     kalamdb_jobs::init_job_manager(&app_context);
 
-    let job_manager = app_context.job_manager();
-    let max_concurrent = config.jobs.max_concurrent;
-    tokio::spawn(async move {
-        debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
-        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
-            log::error!("JobsManager run loop failed: {}", e);
-        }
-    });
-
     let rate_limiter = Arc::new(RateLimiter::with_config(&config.rate_limit));
     let connection_registry = app_context.connection_registry();
 
@@ -260,6 +196,11 @@ pub async fn prepare_components(
         use_root_password_env,
     )
     .await?;
+
+    let max_concurrent = config.jobs.max_concurrent;
+    debug!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
+    let jobs_runtime =
+        JobsManagerRuntime::start(app_context.job_manager(), max_concurrent as usize);
 
     info!(
         "Startup: prepare_components completed in {:.2}ms",
@@ -273,6 +214,7 @@ pub async fn prepare_components(
         live_query_manager,
         user_repo,
         connection_registry,
+        jobs_runtime: Some(jobs_runtime),
     })
 }
 
@@ -280,46 +222,7 @@ pub async fn prepare_components(
 pub async fn bootstrap(
     config: &ServerConfig,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
-    // Initialize the storage backend
-    let phase_start = std::time::Instant::now();
-    let db_path = config.storage.rocksdb_dir();
-    std::fs::create_dir_all(&db_path)?;
-
-    let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
-    info!(
-        "Storage backend initialized at {} with {} partitions ({:.2}ms)",
-        db_path.display(),
-        partition_count,
-        phase_start.elapsed().as_secs_f64() * 1000.0
-    );
-    if !config.storage.rocksdb.sync_writes {
-        debug!("Async writes enabled (sync_writes=false) for high throughput");
-    }
-
-    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
-    // Phase 5: AppContext now creates all dependencies internally!
-    // Uses constants from kalamdb_commons for table prefixes
-    let phase_start = std::time::Instant::now();
-
-    // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
-    let node_id = if let Some(cluster) = &config.cluster {
-        kalamdb_commons::NodeId::new(cluster.node_id)
-    } else {
-        kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
-    };
-
-    let app_context = kalamdb_core::app_context::AppContext::init(
-        backend.clone(),
-        node_id,
-        config.storage.storage_dir().to_string_lossy().into_owned(),
-        config.clone(), // ServerConfig needs to be cloned for Arc storage in AppContext
-    );
-    info!(
-        "Startup: AppContext initialized in {:.2}ms",
-        phase_start.elapsed().as_secs_f64() * 1000.0
-    );
-
-    // Log runtime snapshot (CPU/memory/threads) using shared sysinfo helper
+    let app_context = create_app_context(config, AppContextMode::Global)?;
     app_context.log_runtime_metrics();
 
     // Start the executor (always Raft - single-node or cluster)
@@ -360,11 +263,13 @@ pub async fn bootstrap(
             debug!("  Peer {}: rpc={}, api={}", peer.node_id, peer.rpc_addr, peer.api_addr);
         }
 
-        app_context
-            .executor()
-            .start()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to start Raft cluster: {}", e))?;
+        if let Err(error) = app_context.executor().start().await {
+            return fail_bootstrap(
+                app_context,
+                anyhow::anyhow!("Failed to start Raft cluster: {}", error),
+            )
+            .await;
+        }
 
         // Auto-bootstrap: node_id=1 is the designated bootstrap node
         let should_bootstrap = cluster_config.peers.is_empty() || cluster_config.node_id == 1;
@@ -377,11 +282,13 @@ pub async fn bootstrap(
                     cluster_config.node_id
                 );
             }
-            app_context
-                .executor()
-                .initialize_cluster()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to initialize cluster: {}", e))?;
+            if let Err(error) = app_context.executor().initialize_cluster().await {
+                return fail_bootstrap(
+                    app_context,
+                    anyhow::anyhow!("Failed to initialize cluster: {}", error),
+                )
+                .await;
+            }
         } else {
             info!(
                 "Node {} is ready and waiting for bootstrap node 1 to admit it to the cluster",
@@ -398,16 +305,17 @@ pub async fn bootstrap(
         // Single-node mode (lightweight Raft)
         debug!("Single-node mode - initializing lightweight Raft");
 
-        app_context
-            .executor()
-            .start()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
-        app_context
-            .executor()
-            .initialize_cluster()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+        if let Err(error) = app_context.executor().start().await {
+            return fail_bootstrap(app_context, anyhow::anyhow!("Failed to start Raft: {}", error))
+                .await;
+        }
+        if let Err(error) = app_context.executor().initialize_cluster().await {
+            return fail_bootstrap(
+                app_context,
+                anyhow::anyhow!("Failed to initialize single-node Raft: {}", error),
+            )
+            .await;
+        }
 
         debug!(
             "✓ Single-node Raft initialized ({:.2}ms)",
@@ -415,31 +323,7 @@ pub async fn bootstrap(
         );
     }
 
-    // Ensure Raft appliers are registered after Raft has started.
-    // Some Raft initialization flows may recreate state machines; re-wiring here keeps
-    // metadata/data replication applying into local providers (system tables, schema registry,
-    // etc.).
-    app_context.wire_raft_appliers();
-
-    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
-    // and user/shared tables are initialized. The state machine restoration may need to
-    // apply commands that interact with these providers.
-
-    // Manifest cache uses lazy loading via get_or_load() - no pre-loading needed
-    // When a manifest is needed, get_or_load() checks hot cache → RocksDB → returns None
-    // This avoids loading manifests that may never be accessed
-
-    // Seed default storage if necessary (using SystemTablesRegistry)
-    let phase_start = std::time::Instant::now();
-    startup::create_default_storage_if_needed(config, &app_context)?;
-    debug!(
-        "Storage initialization completed ({:.2}ms)",
-        phase_start.elapsed().as_secs_f64() * 1000.0
-    );
-
-    let components = prepare_components(config, app_context.clone(), true).await?;
-
-    Ok((components, app_context))
+    finish_bootstrap(config, app_context, true).await
 }
 
 async fn bootstrap_isolated_inner(
@@ -447,66 +331,30 @@ async fn bootstrap_isolated_inner(
     initialize_cluster: bool,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
-
-    // Initialize the storage backend
-    let phase_start = std::time::Instant::now();
-    let db_path = config.storage.rocksdb_dir();
-    std::fs::create_dir_all(&db_path)?;
-
-    let (backend, partition_count) = open_storage_backend(&db_path, &config.storage.rocksdb)?;
-    debug!(
-        "Storage backend initialized at {} with {} partitions ({:.2}ms)",
-        db_path.display(),
-        partition_count,
-        phase_start.elapsed().as_secs_f64() * 1000.0
-    );
-
-    // Node ID: use cluster.node_id (u64) if cluster mode, otherwise default to 1 for standalone
-    let node_id = if let Some(cluster) = &config.cluster {
-        kalamdb_commons::NodeId::new(cluster.node_id)
-    } else {
-        kalamdb_commons::NodeId::new(1) // Standalone mode uses node ID 1
-    };
-
-    // Use create_isolated instead of init to bypass the global singleton
-    let app_context = kalamdb_core::app_context::AppContext::create_isolated(
-        backend.clone(),
-        node_id,
-        config.storage.storage_dir().to_string_lossy().into_owned(),
-        config.clone(),
-    );
+    let app_context = create_app_context(config, AppContextMode::Isolated)?;
 
     // Start Raft (same as bootstrap)
-    app_context
-        .executor()
-        .start()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to start Raft: {}", e))?;
+    if let Err(error) = app_context.executor().start().await {
+        return fail_bootstrap(app_context, anyhow::anyhow!("Failed to start Raft: {}", error))
+            .await;
+    }
     if initialize_cluster {
-        app_context
-            .executor()
-            .initialize_cluster()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize single-node Raft: {}", e))?;
+        if let Err(error) = app_context.executor().initialize_cluster().await {
+            return fail_bootstrap(
+                app_context,
+                anyhow::anyhow!("Failed to initialize single-node Raft: {}", error),
+            )
+            .await;
+        }
     }
 
-    app_context.wire_raft_appliers();
-
-    // NOTE: restore_raft_state_machines() is called LATER after system tables, storages,
-    // and user/shared tables are initialized. The state machine restoration may need to
-    // apply commands that interact with these providers.
-
-    // Seed default storage if necessary
-    startup::create_default_storage_if_needed(config, &app_context)?;
-
-    let components = prepare_components(config, app_context.clone(), false).await?;
+    let result = finish_bootstrap(config, app_context, false).await;
 
     debug!(
         "🚀 Server bootstrap (isolated) completed in {:.2}ms",
         bootstrap_start.elapsed().as_secs_f64() * 1000.0
     );
-
-    Ok((components, app_context))
+    result
 }
 
 /// Bootstrap the server for tests with isolated AppContext.
@@ -546,14 +394,10 @@ fn log_server_started(
     } else {
         crate::http_runtime::format_startup_ui_status_plain(config, ui_status)
     };
-    let pgwire_segment = if config.postgres_wire.enabled {
-        let pgwire_addr = format!("{}:{}", config.postgres_wire.host, config.postgres_wire.port);
-        format!(" | PostgreSQL wire on {pgwire_addr}")
-    } else {
-        String::new()
-    };
+    let pgwire_segment = format_startup_log_segment(&config.postgres_wire);
     let message = format!(
-        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | UI: {ui_segment})"
+        "🚀 Server started in {elapsed_ms:.2}ms ({http_version} on {bind_addr}{pgwire_segment} | \
+         UI: {ui_segment})"
     );
 
     if crate::http_runtime::should_print_terminal_hyperlinks(config) {
@@ -567,73 +411,10 @@ fn log_server_started(
     info!("{message}");
 }
 
-struct PostgresWireListenerHandle {
-    shutdown: tokio::sync::oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl PostgresWireListenerHandle {
-    async fn shutdown(self) {
-        let _ = self.shutdown.send(());
-        if let Err(error) = self.task.await {
-            log::error!("PostgreSQL wire listener task join failed: {}", error);
-        }
-    }
-}
-
-fn spawn_postgres_wire_listener(
-    config: &ServerConfig,
-    components: &ApplicationComponents,
-    app_context: Arc<kalamdb_core::app_context::AppContext>,
-) -> Option<PostgresWireListenerHandle> {
-    if !config.postgres_wire.enabled {
-        return None;
-    }
-
-    let listener_config = PostgresWireListenerConfig {
-        enabled: config.postgres_wire.enabled,
-        host: config.postgres_wire.host.clone(),
-        port: config.postgres_wire.port,
-        tls_enabled: config.postgres_wire.tls_enabled,
-        tls_cert_path: config.postgres_wire.tls_cert_path.clone(),
-        tls_key_path: config.postgres_wire.tls_key_path.clone(),
-    };
-    let session_manager = app_context.backend_session_manager();
-    let startup_handler = Arc::new(
-        KalamStartupHandler::new(session_manager.clone(), components.user_repo.clone())
-            .with_statement_limits(
-                config.postgres_wire.prepared_statement_limit,
-                config.postgres_wire.portal_limit,
-            ),
-    );
-    let wire_sql_executor = Arc::new(WireSqlExecutor::new(
-        app_context,
-        components.sql_executor.clone(),
-        session_manager,
-    ));
-    let query_handler = Arc::new(KalamQueryHandler::new(wire_sql_executor));
-    let handlers = Arc::new(KalamWireHandlers::new(startup_handler, query_handler));
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-    let task = tokio::spawn(async move {
-        let shutdown = async move {
-            let _ = shutdown_rx.await;
-        };
-        if let Err(error) = run_listener_until_shutdown(listener_config, handlers, shutdown).await {
-            log::error!("PostgreSQL wire listener stopped with error: {}", error);
-        }
-    });
-
-    Some(PostgresWireListenerHandle {
-        shutdown: shutdown_tx,
-        task,
-    })
-}
-
 /// Start the HTTP server and manage graceful shutdown.
 pub async fn run(
     config: &ServerConfig,
-    components: ApplicationComponents,
+    mut components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
     main_start: std::time::Instant,
 ) -> Result<()> {
@@ -672,227 +453,78 @@ pub async fn run(
         debug!("CORS: allowed origins={:?}", config.security.cors.allowed_origins);
     }
 
-    // Get JobsManager for graceful shutdown
-    let job_manager_shutdown = app_context.job_manager();
-    let shutdown_timeout_secs = config.shutdown.flush.timeout;
-    let connection_registry_shutdown = components.connection_registry.clone();
-    let shutdown_signal = shutdown_signal_listener();
-
-    let http_runtime = HttpRuntimeState::new(
+    let jobs_runtime = components
+        .jobs_runtime
+        .take()
+        .expect("jobs runtime must be initialized before server startup");
+    let job_drain_timeout = std::time::Duration::from_secs(config.shutdown.flush.timeout.into());
+    let mut http_server = match HttpServerRuntime::start_configured(
         config,
         &components,
         app_context.clone(),
         AuthRuntimeMode::AlreadyConfigured,
-    )?;
-    let ui_status = http_runtime.ui_status();
-    debug!("Admin UI: {} (at /ui)", ui_status);
-    let mut postgres_wire_listener =
-        spawn_postgres_wire_listener(config, &components, app_context.clone());
-
-    let server = HttpServer::new(move || {
-        let runtime = http_runtime.clone();
-        let mut app = App::new()
-            // Connection protection (first middleware - drops bad requests early)
-            .wrap(runtime.connection_protection.clone())
-            // Tracing middleware (creates a root span per HTTP request)
-            // Uses KalamDbRootSpanBuilder to force `parent: None` on each request,
-            // preventing cross-request span contamination in OTel/Jaeger.
-            .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
-            .app_data(runtime.app_context.clone())
-            .app_data(runtime.session_factory.clone())
-            .app_data(runtime.sql_executor.clone())
-            .app_data(runtime.rate_limiter.clone())
-            .app_data(runtime.live_query_manager.clone())
-            .app_data(runtime.user_repo.clone())
-            .app_data(runtime.connection_registry.clone())
-            .app_data(runtime.auth_settings.clone())
-            .configure(routes::configure);
-
-        // Add UI routes - prefer embedded, fallback to filesystem path
-        #[cfg(feature = "embedded-ui")]
-        if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
-            });
-        } else if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(
-                    cfg,
-                    &path,
-                    runtime_config.clone(),
-                );
-            });
-        }
-
-        #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(
-                    cfg,
-                    &path,
-                    runtime_config.clone(),
-                );
-            });
-        }
-
-        app
-    })
-    // Set backlog BEFORE bind() - this affects the listen queue size
-    .backlog(config.performance.backlog)
-    .disable_signals();
-
-    // Bind with HTTP/2 support if enabled, otherwise use HTTP/1.1 only
-    let http_version = if config.server.enable_http2 {
-        "HTTP/2"
-    } else {
-        "HTTP/1.1"
+    ) {
+        Ok(server) => server,
+        Err(error) => {
+            if let Err(cleanup_error) =
+                shutdown_background_services(Some(jobs_runtime), app_context, job_drain_timeout)
+                    .await
+            {
+                warn!("Startup cleanup failed after HTTP bind error: {cleanup_error}");
+            }
+            return Err(error.into());
+        },
     };
-    let server = if config.server.enable_http2 {
-        debug!("HTTP/2 support enabled (h2c - HTTP/2 cleartext)");
-        server.bind_auto_h2c(&bind_addr)?
-    } else {
-        debug!("HTTP/1.1 only mode");
-        server.bind(&bind_addr)?
+    debug!("Admin UI: {} (at /ui)", http_server.ui_status());
+    let connection_registry = components.connection_registry.clone();
+    let mut postgres_wire_listener = match PostgresWireListener::start(
+        config,
+        PostgresWireRuntimeDeps {
+            app_context:  app_context.clone(),
+            sql_executor: components.sql_executor.clone(),
+            user_repo:    components.user_repo.clone(),
+        },
+    )
+    .await
+    {
+        Ok(listener) => listener,
+        Err(error) => {
+            return shutdown_server(
+                crate::shutdown::TerminationReason::PostgresWireStopped(Err(error)),
+                http_server,
+                None,
+                jobs_runtime,
+                connection_registry,
+                app_context,
+                job_drain_timeout,
+            )
+            .await;
+        },
     };
 
     log_server_started(
         config,
         main_start.elapsed().as_secs_f64() * 1000.0,
-        http_version,
-        &bind_addr,
-        ui_status,
+        http_server.http_version(),
+        &http_server.bind_addr().to_string(),
+        http_server.ui_status(),
     );
 
-    let server = server
-    .workers(effective_workers(config.server.workers))
-    // Per-worker max concurrent connections (default: 25000)
-    .max_connections(config.performance.max_connections)
-    // Blocking thread pool size per worker for RocksDB and CPU-intensive ops
-    .worker_max_blocking_threads(effective_max_blocking_threads(
-        config.performance.worker_max_blocking_threads,
-    ))
-    // Enable HTTP keep-alive for connection reuse (improves throughput 2-3x)
-    // Connections stay open for reuse, reducing TCP handshake overhead
-    .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
-    // Client must send request headers within this time
-    .client_request_timeout(std::time::Duration::from_secs(config.performance.client_request_timeout))
-    // Allow time for graceful connection shutdown
-    .client_disconnect_timeout(std::time::Duration::from_secs(config.performance.client_disconnect_timeout))
-    // Cap graceful HTTP drain at 10s; WebSocket connections are closed before this runs
-    // so in practice it completes in milliseconds.
-    .shutdown_timeout(10)
-    .run();
-
-    let server_handle = server.handle();
-    let server_task = tokio::spawn(server);
-
-    tokio::select! {
-        result = server_task => {
-            if let Err(e) = result {
-                log::error!("Server task failed: {}", e);
-            }
-            if let Some(listener) = postgres_wire_listener.take() {
-                listener.shutdown().await;
-            }
-        }
-        signal = async {
-            match shutdown_signal {
-                Ok(shutdown_signal) => shutdown_signal.await,
-                Err(error) => Err(error),
-            }
-        } => {
-            match signal {
-                Ok(ShutdownSignal::CtrlC) => {
-                    info!("Received Ctrl+C, initiating graceful shutdown...");
-                }
-                Ok(ShutdownSignal::SigTerm) => {
-                    info!("Received SIGTERM, initiating graceful shutdown...");
-                }
-                Err(error) => {
-                    warn!(
-                        "Failed to install shutdown signal handlers ({}), initiating graceful shutdown anyway",
-                        error
-                    );
-                }
-            }
-
-            // Give WebSocket handlers a short grace window to process the shutdown event and
-            // unregister before falling back to a force close.
-            info!("Shutting down WebSocket connections...");
-            connection_registry_shutdown
-                .shutdown(std::time::Duration::from_secs(1))
-                .await;
-
-            // Stop the HTTP server once live connections had a brief chance to close cleanly.
-            server_handle.stop(false).await;
-            if let Some(listener) = postgres_wire_listener.take() {
-                listener.shutdown().await;
-            }
-
-            info!(
-                "Waiting up to {}s for running jobs to complete...",
-                shutdown_timeout_secs
-            );
-
-            // Signal shutdown to JobsManager (non-async, uses AtomicBool)
-            job_manager_shutdown.shutdown();
-
-            // Wait for active jobs with timeout
-            let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
-            let start = std::time::Instant::now();
-
-            loop {
-                // Check for Running jobs
-                let filter = kalamdb_system::JobFilter {
-                    status: Some(kalamdb_system::JobStatus::Running),
-                    ..Default::default()
-                };
-
-                match job_manager_shutdown.list_jobs(filter).await {
-                    Ok(jobs) if jobs.is_empty() => {
-                        info!("All jobs completed successfully");
-                        break;
-                    }
-                    Ok(jobs) => {
-                        if start.elapsed() > timeout {
-                            warn!("Timeout waiting for {} active jobs to complete", jobs.len());
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    }
-                    Err(e) => {
-                        log::error!("Error checking job status during shutdown: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            // Ensure all file descriptors are released
-            info!("Performing cleanup to release file descriptors...");
-
-            // Shutdown the executor (Raft cluster shutdown in cluster mode)
-            if app_context.executor().is_cluster_mode() {
-                info!("Shutting down Raft cluster...");
-                if let Err(e) = app_context.executor().shutdown().await {
-                    log::error!("Error shutting down Raft cluster: {}", e);
-                }
-            }
-
-            drop(components);
-            drop(app_context);
-
-            debug!("Graceful shutdown complete");
-        }
-    }
-
+    let reason = wait_for_termination(&mut http_server, &mut postgres_wire_listener).await;
+    let shutdown_result = shutdown_server(
+        reason,
+        http_server,
+        postgres_wire_listener,
+        jobs_runtime,
+        connection_registry,
+        app_context.clone(),
+        job_drain_timeout,
+    )
+    .await;
+    drop(components);
+    drop(app_context);
     info!("Server shutdown complete");
-    Ok(())
+    shutdown_result
 }
 
 /// A running HTTP server instance intended for integration tests.
@@ -901,35 +533,33 @@ pub async fn run(
 /// route registration, app_data wiring, auth config, rate limiting, etc.) but binds
 /// to an ephemeral port and provides an explicit shutdown handle.
 pub struct RunningTestHttpServer {
-    pub base_url: String,
-    pub bind_addr: SocketAddr,
-    pub app_context: Arc<kalamdb_core::app_context::AppContext>,
-    server_handle: actix_web::dev::ServerHandle,
-    server_task: tokio::task::JoinHandle<std::io::Result<()>>,
+    pub base_url:        String,
+    pub bind_addr:       SocketAddr,
+    pub app_context:     Arc<kalamdb_core::app_context::AppContext>,
+    http_server:         HttpServerRuntime,
+    jobs_runtime:        JobsManagerRuntime,
+    connection_registry: Arc<ConnectionsManager>,
+    job_drain_timeout:   std::time::Duration,
 }
 
 impl RunningTestHttpServer {
     pub async fn shutdown(self) {
         println!("Shutting down test HTTP server at {}", self.base_url);
-        // Stop the HTTP server first
-        self.server_handle.stop(false).await;
-        let _ = self.server_task.await;
-
-        // Stop JobsManager background loop before tearing down storage/executor
-        self.app_context.job_manager().shutdown();
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Then shutdown the Raft executor to cleanly stop all Raft groups
-        // This prevents "Fatal(Stopped)" errors in subsequent tests
-        log::debug!("Shutting down Raft executor for test server...");
-        println!("Shutting down Raft executor for test server...");
-        if let Err(e) = self.app_context.executor().shutdown().await {
-            log::warn!("Failed to shutdown Raft executor: {}", e);
+        let result = shutdown_server(
+            crate::shutdown::TerminationReason::Explicit,
+            self.http_server,
+            None,
+            self.jobs_runtime,
+            self.connection_registry,
+            self.app_context,
+            self.job_drain_timeout,
+        )
+        .await;
+        if let Err(error) = result {
+            log::warn!("Test server shutdown failed: {}", error);
         }
 
         println!("Test HTTP server shutdown complete");
-        // Brief delay to allow background tasks to clean up
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -940,189 +570,84 @@ impl RunningTestHttpServer {
 /// - Caller must invoke `shutdown()` to stop the server.
 pub async fn run_for_tests(
     config: &ServerConfig,
-    components: ApplicationComponents,
+    mut components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
 ) -> Result<RunningTestHttpServer> {
-    let bind_ip = if config.server.host.is_empty() {
-        "127.0.0.1"
-    } else {
-        config.server.host.as_str()
-    };
-
-    let listener = TcpListener::bind((bind_ip, 0))?;
-    let bind_addr = listener.local_addr()?;
-
-    let http_runtime = HttpRuntimeState::new(
+    let jobs_runtime = components
+        .jobs_runtime
+        .take()
+        .expect("jobs runtime must be initialized before test server startup");
+    let job_drain_timeout = std::time::Duration::from_secs(config.shutdown.flush.timeout.into());
+    let http_server = match HttpServerRuntime::start_ephemeral(
         config,
         &components,
         app_context.clone(),
         AuthRuntimeMode::Configure,
-    )?;
-
-    let server = HttpServer::new(move || {
-        let runtime = http_runtime.clone();
-        let mut app = App::new()
-            .wrap(runtime.connection_protection.clone())
-            .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
-            .app_data(runtime.app_context.clone())
-            .app_data(runtime.session_factory.clone())
-            .app_data(runtime.sql_executor.clone())
-            .app_data(runtime.rate_limiter.clone())
-            .app_data(runtime.live_query_manager.clone())
-            .app_data(runtime.user_repo.clone())
-            .app_data(runtime.connection_registry.clone())
-            .app_data(runtime.auth_settings.clone())
-            .configure(routes::configure);
-
-        #[cfg(feature = "embedded-ui")]
-        if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
-            });
-        } else if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
-            });
-        }
-
-        #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
-            });
-        }
-
-        app
-    })
-    .backlog(config.performance.backlog)
-    .disable_signals();
-
-    let server = server
-        .listen(listener)?
-        .workers(effective_workers(config.server.workers))
-        .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(effective_max_blocking_threads(
-            config.performance.worker_max_blocking_threads,
-        ))
-        .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
-        .client_request_timeout(std::time::Duration::from_secs(
-            config.performance.client_request_timeout,
-        ))
-        .client_disconnect_timeout(std::time::Duration::from_secs(
-            config.performance.client_disconnect_timeout,
-        ))
-        .run();
-
-    let server_handle = server.handle();
-    let server_task = tokio::spawn(server);
+    ) {
+        Ok(server) => server,
+        Err(error) => {
+            if let Err(cleanup_error) =
+                shutdown_background_services(Some(jobs_runtime), app_context, job_drain_timeout)
+                    .await
+            {
+                warn!("Test startup cleanup failed after HTTP bind error: {cleanup_error}");
+            }
+            return Err(error);
+        },
+    };
+    let bind_addr = http_server.bind_addr();
     let base_url = format!("http://{}", bind_addr);
 
     Ok(RunningTestHttpServer {
         base_url,
         bind_addr,
         app_context,
-        server_handle,
-        server_task,
+        http_server,
+        jobs_runtime,
+        connection_registry: components.connection_registry.clone(),
+        job_drain_timeout,
     })
 }
 
 /// Start the HTTP server without Ctrl+C handling and bind to the configured address.
 pub async fn run_detached(
     config: &ServerConfig,
-    components: ApplicationComponents,
+    mut components: ApplicationComponents,
     app_context: Arc<kalamdb_core::app_context::AppContext>,
 ) -> Result<RunningTestHttpServer> {
-    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
-
-    let http_runtime = HttpRuntimeState::new(
+    let jobs_runtime = components
+        .jobs_runtime
+        .take()
+        .expect("jobs runtime must be initialized before detached server startup");
+    let job_drain_timeout = std::time::Duration::from_secs(config.shutdown.flush.timeout.into());
+    let http_server = match HttpServerRuntime::start_configured(
         config,
         &components,
         app_context.clone(),
         AuthRuntimeMode::Configure,
-    )?;
-
-    let server = HttpServer::new(move || {
-        let runtime = http_runtime.clone();
-        let mut app = App::new()
-            .wrap(runtime.connection_protection.clone())
-            .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
-            .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
-            .app_data(runtime.app_context.clone())
-            .app_data(runtime.session_factory.clone())
-            .app_data(runtime.sql_executor.clone())
-            .app_data(runtime.rate_limiter.clone())
-            .app_data(runtime.live_query_manager.clone())
-            .app_data(runtime.user_repo.clone())
-            .app_data(runtime.connection_registry.clone())
-            .app_data(runtime.auth_settings.clone())
-            .configure(routes::configure);
-
-        #[cfg(feature = "embedded-ui")]
-        if kalamdb_api::routes::is_embedded_ui_available() {
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_embedded_ui_routes(cfg, runtime_config.clone());
-            });
-        } else if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
-            });
-        }
-
-        #[cfg(not(feature = "embedded-ui"))]
-        if let Some(ref path) = runtime.ui_path {
-            let path: String = path.clone();
-            let runtime_config = runtime.ui_runtime_config.clone();
-            app = app.configure(move |cfg| {
-                kalamdb_api::routes::configure_ui_routes(cfg, &path, runtime_config.clone());
-            });
-        }
-
-        app
-    })
-    .backlog(config.performance.backlog)
-    .disable_signals();
-
-    let server = if config.server.enable_http2 {
-        server.bind_auto_h2c(&bind_addr)?
-    } else {
-        server.bind(&bind_addr)?
+    ) {
+        Ok(server) => server,
+        Err(error) => {
+            if let Err(cleanup_error) =
+                shutdown_background_services(Some(jobs_runtime), app_context, job_drain_timeout)
+                    .await
+            {
+                warn!("Detached startup cleanup failed after HTTP bind error: {cleanup_error}");
+            }
+            return Err(error);
+        },
     };
-
-    let server = server
-        .workers(effective_workers(config.server.workers))
-        .max_connections(config.performance.max_connections)
-        .worker_max_blocking_threads(effective_max_blocking_threads(
-            config.performance.worker_max_blocking_threads,
-        ))
-        .keep_alive(std::time::Duration::from_secs(config.performance.keepalive_timeout))
-        .client_request_timeout(std::time::Duration::from_secs(
-            config.performance.client_request_timeout,
-        ))
-        .client_disconnect_timeout(std::time::Duration::from_secs(
-            config.performance.client_disconnect_timeout,
-        ))
-        .run();
-
-    let server_handle = server.handle();
-    let server_task = tokio::spawn(server);
-    let bind_addr = bind_addr.parse()?;
+    let bind_addr = http_server.bind_addr();
     let base_url = format!("http://{}", bind_addr);
 
     Ok(RunningTestHttpServer {
         base_url,
         bind_addr,
         app_context,
-        server_handle,
-        server_task,
+        http_server,
+        jobs_runtime,
+        connection_registry: components.connection_registry.clone(),
+        job_drain_timeout,
     })
 }
 
@@ -1241,87 +766,5 @@ async fn create_default_system_user(
 
             Ok(())
         },
-    }
-}
-
-// /// Check for security issues with remote access configuration
-// ///
-// /// Informs users about password requirements for remote access
-
-// async fn check_remote_access_security(
-//     config: &ServerConfig,
-//     users_provider: Arc<kalamdb_system::UsersTableProvider>,
-// ) -> Result<()> {
-//     use kalamdb_commons::constants::AuthConstants;
-
-//     // Check if root user exists and has empty password
-//     // Always show this info if root has no password, regardless of allow_remote_access setting
-//     if let Ok(Some(user)) =
-//         users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME)
-//     {
-//         if user.password_hash.is_empty() {
-//             // Root user has no password - this is secure for localhost-only but warn about
-// limitations
-// warn!("╔═══════════════════════════════════════════════════════════════════╗");
-// warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
-// warn!("╠═══════════════════════════════════════════════════════════════════╣");
-// warn!("║                                                                   ║");
-// warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
-// warn!("║                                                                   ║");
-// warn!("║  SECURITY ENFORCEMENT:                                           ║");
-// warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
-// warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
-// warn!("║  • This configuration is secure by design                        ║");
-// warn!("║                                                                   ║");
-// warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
-// warn!("║  Set a strong password for the root user:                        ║");
-// warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
-// warn!("║                                                                   ║");
-// warn!(                 "║  Note: allow_remote_access config is currently: {}               ║",
-//                 if config.auth.allow_remote_access {
-//                     "ENABLED "
-//                 } else {
-//                     "DISABLED"
-//                 }
-//             );
-//             warn!("║  (Remote access still requires password for system users)        ║");
-//             warn!("║                                                                   ║");
-//             warn!("╚═══════════════════════════════════════════════════════════════════╝");
-//         }
-//     }
-
-//     Ok(())
-// }
-
-#[cfg(test)]
-mod tests {
-    use std::future::{pending, ready};
-
-    use super::{select_shutdown_signal, ShutdownSignal};
-
-    #[test]
-    fn select_shutdown_signal_returns_ctrl_c_when_ctrl_c_resolves_first() {
-        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
-        let signal = runtime
-            .block_on(select_shutdown_signal(
-                ready::<std::io::Result<()>>(Ok(())),
-                pending::<std::io::Result<()>>(),
-            ))
-            .expect("ctrl+c future should succeed");
-
-        assert_eq!(signal, ShutdownSignal::CtrlC);
-    }
-
-    #[test]
-    fn select_shutdown_signal_returns_sigterm_when_sigterm_resolves_first() {
-        let runtime = tokio::runtime::Runtime::new().expect("test runtime");
-        let signal = runtime
-            .block_on(select_shutdown_signal(
-                pending::<std::io::Result<()>>(),
-                ready::<std::io::Result<()>>(Ok(())),
-            ))
-            .expect("sigterm future should succeed");
-
-        assert_eq!(signal, ShutdownSignal::SigTerm);
     }
 }

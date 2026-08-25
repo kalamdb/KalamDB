@@ -59,7 +59,7 @@ describe("table editor DDL generator", () => {
     const sql = generateAlterTableSql(original, draft);
 
     expect(sql).toContain("ALTER TABLE default.settings SET TBLPROPERTIES");
-    expect(sql).toContain("ACCESS_LEVEL = 'PUBLIC'");
+    expect(sql).not.toContain("ACCESS_LEVEL");
     expect(sql).toContain("FLUSH_POLICY = 'rows:2000,interval:120'");
     expect(sql).toContain("COMPRESSION = 'none'");
     expect(sql).not.toContain("STORAGE_ID");

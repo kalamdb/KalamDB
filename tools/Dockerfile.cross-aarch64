@@ -22,22 +22,21 @@ RUN set -eux; \
     update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-16 100; \
     rm -rf /var/lib/apt/lists/*
 
-# Install GCC 10 aarch64 cross-compiler.
-# arm_sve.h was introduced in GCC 10; the base image ships GCC 9 (no arm_sve.h),
-# which causes simsimd (bundled in usearch 2.x) to fail to compile.
-# CC_/CXX_ env vars tell the Rust `cc` crate to use the GCC 10 cross toolchain.
+# Install GCC 12 aarch64 cross-compiler.
+# - RocksDB (bundled via librocksdb-sys) requires C++20 `using enum` (GCC >= 11).
+# - arm_sve.h (needed by simsimd in usearch 2.x) needs GCC >= 10.
+# CC_/CXX_ env vars tell the Rust `cc` crate to use this cross toolchain.
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
-    apt-get install --fix-missing -y --no-install-recommends gcc-10-aarch64-linux-gnu g++-10-aarch64-linux-gnu; \
+    apt-get install --fix-missing -y --no-install-recommends gcc-12-aarch64-linux-gnu g++-12-aarch64-linux-gnu; \
     rm -rf /var/lib/apt/lists/*
 
-ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc-10
-ENV CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++-10
-# NumKong's Arm dot-product probes fail under the GCC 10 cross toolchain when
-# the translation units are compiled with the armv8-a baseline. Disable the
-# optional SDOT/SVE-SDOT dispatch paths for CI cross-builds until the image is
-# moved to a newer toolchain that can compile those probes consistently.
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc-12
+ENV CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++-12
+# NumKong's Arm dot-product probes can fail under the aarch64 cross toolchain when
+# TUs are compiled with the armv8-a baseline. Keep optional SDOT/SVE-SDOT dispatch
+# disabled for CI cross-builds.
 ENV NK_TARGET_NEONSDOT=0
 ENV NK_TARGET_SVESDOT=0
 

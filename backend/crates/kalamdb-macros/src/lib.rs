@@ -24,8 +24,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
             None => {
                 return syn::Error::new_spanned(
                     &field.ident,
-                    "missing #[column(...)] attribute for field",
-                )
+                    "missing #[column(...)] attribute for field")
                 .to_compile_error()
                 .into();
             },
@@ -40,8 +39,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
             None => {
                 return syn::Error::new_spanned(
                     &field.ty,
-                    "tuple structs are not supported by #[table]",
-                )
+                    "tuple structs are not supported by #[table]")
                 .to_compile_error()
                 .into();
             },
@@ -50,8 +48,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         if !column_ids.insert(column_attr.column_id) {
             return syn::Error::new_spanned(
                 &field.ident,
-                format!("duplicate column id {}", column_attr.column_id),
-            )
+                format!("duplicate column id {}", column_attr.column_id))
             .to_compile_error()
             .into();
         }
@@ -59,8 +56,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         if !ordinals.insert(column_attr.ordinal_position) {
             return syn::Error::new_spanned(
                 &field.ident,
-                format!("duplicate column ordinal {}", column_attr.ordinal_position),
-            )
+                format!("duplicate column ordinal {}", column_attr.ordinal_position))
             .to_compile_error()
             .into();
         }
@@ -94,8 +90,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #is_primary_key,
                 #is_partition_key,
                 #default_value,
-                #column_comment,
-            )
+                #column_comment)
         }
     });
 
@@ -107,11 +102,11 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         comment,
     } = table_args;
 
-    if access_level.is_some() && table_type != TableKind::Shared {
+    if access_level.is_some() {
         return syn::Error::new(
             proc_macro2::Span::call_site(),
-            "#[table(access_level = ...)] is only supported for shared tables",
-        )
+            "#[table(access_level = ...)] is not supported. Shared tables use FORCE row-level \
+             security; grant access with CREATE POLICY")
         .to_compile_error()
         .into();
     }
@@ -128,29 +123,6 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
     let table_comment = match comment {
         Some(comment) => quote!(Some(#comment.to_string())),
         None => quote!(None),
-    };
-    let table_option_mutation = match access_level {
-        Some(TableAccessKind::Public) => quote! {
-            if let kalamdb_commons::schemas::TableOptions::Shared(options) = &mut table_def.table_options {
-                options.access_level = Some(kalamdb_commons::TableAccess::Public);
-            }
-        },
-        Some(TableAccessKind::Private) => quote! {
-            if let kalamdb_commons::schemas::TableOptions::Shared(options) = &mut table_def.table_options {
-                options.access_level = Some(kalamdb_commons::TableAccess::Private);
-            }
-        },
-        Some(TableAccessKind::Restricted) => quote! {
-            if let kalamdb_commons::schemas::TableOptions::Shared(options) = &mut table_def.table_options {
-                options.access_level = Some(kalamdb_commons::TableAccess::Restricted);
-            }
-        },
-        Some(TableAccessKind::Dba) => quote! {
-            if let kalamdb_commons::schemas::TableOptions::Shared(options) = &mut table_def.table_options {
-                options.access_level = Some(kalamdb_commons::TableAccess::Dba);
-            }
-        },
-        None => quote! {},
     };
     let error_message =
         format!("Failed to create {}.{} table definition", namespace_for_error, table_name);
@@ -169,11 +141,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
                     kalamdb_commons::TableName::new(#table_name),
                     #table_type_expr,
                     columns,
-                    #table_comment,
-                )
+                    #table_comment)
                 .expect(#error_message);
-
-                #table_option_mutation
 
                 table_def
             }
@@ -286,8 +255,7 @@ impl TableKind {
             "system" => Ok(Self::System),
             _ => Err(syn::Error::new_spanned(
                 value,
-                "unsupported table_type; expected user|shared|stream|system",
-            )),
+                "unsupported table_type; expected user|shared|stream|system")),
         }
     }
 
@@ -318,8 +286,7 @@ impl TableAccessKind {
             "dba" => Ok(Self::Dba),
             _ => Err(syn::Error::new(
                 span,
-                "unsupported access_level; expected public|private|restricted|dba",
-            )),
+                "unsupported access_level; expected public|private|restricted|dba")),
         }
     }
 
@@ -391,8 +358,7 @@ impl ColumnArgs {
             Some(expr) => quote!(#expr),
             None => syn::Error::new(
                 proc_macro2::Span::call_site(),
-                "#[column] requires data_type = KalamDataType::...",
-            )
+                "#[column] requires data_type = KalamDataType::...")
             .to_compile_error(),
         }
     }
@@ -415,8 +381,7 @@ impl ColumnArgs {
                 if inner.trim().is_empty() {
                     syn::Error::new(
                         proc_macro2::Span::call_site(),
-                        "Function() default requires a function name",
-                    )
+                        "Function() default requires a function name")
                     .to_compile_error()
                 } else {
                     quote!(kalamdb_commons::schemas::ColumnDefault::function(#inner, vec![]))
@@ -428,8 +393,7 @@ impl ColumnArgs {
                     "unsupported default '{}'; expected None, Literal(true|false), or \
                      Function(NAME)",
                     other
-                ),
-            )
+                ))
             .to_compile_error(),
         }
     }
@@ -479,8 +443,7 @@ impl Parse for ColumnArgs {
                     "data_type" => {
                         return Err(syn::Error::new_spanned(
                             key,
-                            "data_type must use list syntax: data_type(KalamDataType::...)",
-                        ));
+                            "data_type must use list syntax: data_type(KalamDataType::...)"));
                     },
                     "nullable" => {
                         let value: LitBool = input.parse()?;
@@ -520,8 +483,7 @@ impl Parse for ColumnArgs {
         if args.data_type.is_none() {
             return Err(syn::Error::new(
                 input.span(),
-                "#[column] requires data_type(KalamDataType::...)",
-            ));
+                "#[column] requires data_type(KalamDataType::...)"));
         }
 
         if args.default_value.is_empty() {
@@ -532,8 +494,7 @@ impl Parse for ColumnArgs {
             if !seen.contains(required) {
                 return Err(syn::Error::new(
                     input.span(),
-                    format!("#[column] requires {} = true|false", required),
-                ));
+                    format!("#[column] requires {} = true|false", required)));
             }
         }
 

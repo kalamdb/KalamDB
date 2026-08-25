@@ -20,8 +20,6 @@ use tokio::time::sleep;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Main collaborative editing scenario test
 /// NOTE: This test is ignored because SHARED table subscriptions are not supported (FR-128,
 /// FR-129). The subscription infrastructure only supports USER tables for per-user real-time sync.
@@ -51,6 +49,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE documents table");
+    grant_shared_public_all(server, &format!("{}.documents", ns)).await?;
 
     // Presence table (STREAM with short TTL for rapid expiry testing)
     let resp = server
@@ -355,6 +354,73 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
+    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    Ok(())
+}
+
+/// Collaborative docs are a workspace-wide resource: every authenticated
+/// collaborator can read and write after `FOR ALL TO PUBLIC`.
+#[tokio::test]
+async fn test_scenario_07_shared_document_policies() -> anyhow::Result<()> {
+    let server = crate::test_support::http_server::get_global_server().await;
+    let ns = unique_ns("docs_rls");
+
+    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    assert_success(&resp, "CREATE NAMESPACE");
+
+    let resp = server
+        .execute_sql(&format!(
+            r#"CREATE TABLE {}.documents (
+                        id BIGINT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        content TEXT,
+                        version INT DEFAULT 1
+                    ) WITH (TYPE = 'SHARED')"#,
+            ns
+        ))
+        .await?;
+    assert_success(&resp, "CREATE documents table");
+    grant_shared_public_all(server, &format!("{}.documents", ns)).await?;
+
+    let user1_name = format!("{}_editor1", ns);
+    let user2_name = format!("{}_editor2", ns);
+    let user1 = create_user_and_client(server, &user1_name, &Role::User).await?;
+    let user2 = create_user_and_client(server, &user2_name, &Role::User).await?;
+
+    let resp = user1
+        .execute_query(
+            &format!(
+                "INSERT INTO {}.documents (id, title, content) VALUES (1, 'Spec', 'draft')",
+                ns
+            ),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "editor1 must INSERT under public ALL policy: {:?}", resp.error);
+
+    let resp = user2
+        .execute_query(
+            &format!("UPDATE {}.documents SET content = 'reviewed', version = 2 WHERE id = 1", ns),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "editor2 must UPDATE a collaborator's doc: {:?}", resp.error);
+
+    let resp = user1
+        .execute_query(
+            &format!("SELECT content, version FROM {}.documents WHERE id = 1", ns),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "editor1 must read the updated shared doc");
+    assert_eq!(resp.rows().len(), 1, "both collaborators must see the same document row");
+
     let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
     Ok(())
 }

@@ -1,7 +1,6 @@
 //! Lightweight HTTP runtime state shared by Actix workers.
 
-use std::io::IsTerminal;
-use std::sync::Arc;
+use std::{io::IsTerminal, sync::Arc};
 
 use actix_web::web;
 use anyhow::Result;
@@ -27,19 +26,19 @@ pub enum AuthRuntimeMode {
 
 #[derive(Clone)]
 pub struct HttpRuntimeState {
-    pub app_context: web::Data<Arc<AppContext>>,
-    pub session_factory: web::Data<Arc<DataFusionSessionFactory>>,
-    pub sql_executor: web::Data<Arc<SqlExecutor>>,
-    pub rate_limiter: web::Data<Arc<RateLimiter>>,
-    pub live_query_manager: web::Data<Arc<LiveQueryManager>>,
-    pub user_repo: web::Data<Arc<dyn UserRepository>>,
-    pub connection_registry: web::Data<Arc<ConnectionsManager>>,
-    pub auth_settings: web::Data<AuthSettings>,
+    pub app_context:           web::Data<Arc<AppContext>>,
+    pub session_factory:       web::Data<Arc<DataFusionSessionFactory>>,
+    pub sql_executor:          web::Data<Arc<SqlExecutor>>,
+    pub rate_limiter:          web::Data<Arc<RateLimiter>>,
+    pub live_query_manager:    web::Data<Arc<LiveQueryManager>>,
+    pub user_repo:             web::Data<Arc<dyn UserRepository>>,
+    pub connection_registry:   web::Data<Arc<ConnectionsManager>>,
+    pub auth_settings:         web::Data<AuthSettings>,
     pub connection_protection: ConnectionProtection,
-    pub cors_settings: Arc<CorsSettings>,
-    pub ui_path: Option<String>,
-    pub ui_runtime_config: UiRuntimeConfig,
-    ui_status: &'static str,
+    pub cors_settings:         Arc<CorsSettings>,
+    pub ui_path:               Option<String>,
+    pub ui_runtime_config:     UiRuntimeConfig,
+    ui_status:                 &'static str,
 }
 
 impl HttpRuntimeState {

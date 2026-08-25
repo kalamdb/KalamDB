@@ -50,6 +50,7 @@ fn smoke_test_alter_table_with_data_verification() {
         namespace, table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create table");
+    grant_public_shared_table_access(&format!("{}.{}", namespace, table));
 
     // Insert 3 rows
     let insert_sql = format!(

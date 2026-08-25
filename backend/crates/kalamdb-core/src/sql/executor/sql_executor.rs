@@ -133,8 +133,7 @@ impl SqlExecutor {
         sql: &str,
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
-        params: &[ScalarValue],
-    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        params: &[ScalarValue]) -> Result<Option<ExecutionResult>, KalamDbError> {
         if !params.is_empty() {
             super::parameter_binding::validate_params(params)?;
         }
@@ -169,8 +168,7 @@ impl SqlExecutor {
                         self.sql_cache_registry.as_ref(),
                         exec_ctx,
                         table_id,
-                        params,
-                    )?
+                        params)?
                 {
                     return self
                         .execute_literal_on_conflict_update(table_id, exec_ctx, on_conflict_rows)
@@ -192,8 +190,7 @@ impl SqlExecutor {
             self.sql_cache_registry.as_ref(),
             exec_ctx,
             table_id,
-            params,
-        )?
+            params)?
         else {
             return Ok(None);
         };
@@ -205,8 +202,7 @@ impl SqlExecutor {
                     insert_rows.table_type,
                     table_id,
                     exec_ctx,
-                    insert_rows.rows,
-                )
+                    insert_rows.rows)
                 .await?
             else {
                 return Ok(None);
@@ -221,8 +217,7 @@ impl SqlExecutor {
                     insert_rows.table_type,
                     table_id,
                     exec_ctx,
-                    insert_rows.rows,
-                )
+                    insert_rows.rows)
                 .await?
             else {
                 return Ok(None);
@@ -237,10 +232,39 @@ impl SqlExecutor {
         table_type: TableType,
         table_id: &TableId,
         exec_ctx: &ExecutionContext,
-        rows: Vec<Row>,
-    ) -> Result<Option<usize>, KalamDbError> {
+        rows: Vec<Row>) -> Result<Option<usize>, KalamDbError> {
         if table_type == TableType::System {
             return Ok(None);
+        }
+
+        if table_type == TableType::Shared {
+            let provider = self
+                .app_context
+                .schema_registry()
+                .get_provider(table_id)
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Table provider not found for RLS check: {}",
+                        table_id
+                    ))
+                })?;
+            let provider = (provider.as_ref() as &dyn std::any::Any)
+                .downcast_ref::<SharedTableProvider>()
+                .ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Shared table provider type mismatch for RLS check: {}",
+                        table_id
+                    ))
+                })?;
+            provider
+                .check_rows_authorized(
+                    exec_ctx.user_id(),
+                    exec_ctx.user_role(),
+                    kalamdb_commons::PolicyCommand::Insert,
+                    true,
+                    &rows,
+                    None)
+                .await?;
         }
 
         let applier = self.app_context.applier();
@@ -265,8 +289,14 @@ impl SqlExecutor {
         &self,
         table_id: &TableId,
         exec_ctx: &ExecutionContext,
-        on_conflict_rows: super::transaction_batch_insert::LiteralOnConflictUpdateRows,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        on_conflict_rows: super::transaction_batch_insert::LiteralOnConflictUpdateRows) -> Result<ExecutionResult, KalamDbError> {
+        if on_conflict_rows.table_type == TableType::Shared
+            && matches!(exec_ctx.user_role(), Role::User | Role::Service)
+        {
+            return Err(KalamDbError::InvalidOperation(
+                "ON CONFLICT on RLS-protected shared tables is not supported until both conflict branches can be policy-checked"
+                    .to_string()));
+        }
         super::transaction_batch_insert::reject_system_table_dml(on_conflict_rows.table_type)?;
 
         let owned_exec_ctx;
@@ -283,8 +313,7 @@ impl SqlExecutor {
         let mut request_state = RequestTransactionState::from_request_id(dml_exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
-                    "ON CONFLICT DO UPDATE requires a request-scoped execution context".to_string(),
-                )
+                    "ON CONFLICT DO UPDATE requires a request-scoped execution context".to_string())
             })?;
         request_state.sync(&request_transaction_coordinator);
 
@@ -299,8 +328,7 @@ impl SqlExecutor {
 
         let transaction_id = request_state.active_transaction_id().cloned().ok_or_else(|| {
             KalamDbError::InvalidOperation(
-                "ON CONFLICT DO UPDATE could not start a transaction".to_string(),
-            )
+                "ON CONFLICT DO UPDATE could not start a transaction".to_string())
         })?;
 
         let result = self
@@ -308,8 +336,7 @@ impl SqlExecutor {
                 table_id,
                 dml_exec_ctx,
                 &transaction_id,
-                &on_conflict_rows,
-            )
+                &on_conflict_rows)
             .await;
 
         match result {
@@ -326,8 +353,7 @@ impl SqlExecutor {
                     self.build_on_conflict_returning_result(
                         table_id,
                         returning,
-                        stage_result.returned_rows,
-                    )
+                        stage_result.returned_rows)
                     .await
                 } else {
                     Ok(ExecutionResult::Inserted {
@@ -349,12 +375,10 @@ impl SqlExecutor {
         table_id: &TableId,
         exec_ctx: &ExecutionContext,
         transaction_id: &TransactionId,
-        on_conflict_rows: &super::transaction_batch_insert::LiteralOnConflictUpdateRows,
-    ) -> Result<OnConflictStageResult, KalamDbError> {
+        on_conflict_rows: &super::transaction_batch_insert::LiteralOnConflictUpdateRows) -> Result<OnConflictStageResult, KalamDbError> {
         let user_ids = super::transaction_batch_insert::on_conflict_user_ids(
             on_conflict_rows.table_type,
-            exec_ctx,
-        )?;
+            exec_ctx)?;
 
         let provider_arc =
             self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
@@ -408,8 +432,7 @@ impl SqlExecutor {
                         on_conflict_rows.table_type,
                         user_ids.lookup_user_id.clone(),
                         primary_key,
-                        &table_provider,
-                    )
+                        &table_provider)
                     .await?
                 {
                     row_state_by_pk.insert(pk_key.clone(), existing_row);
@@ -432,8 +455,7 @@ impl SqlExecutor {
                     mutation_user_id,
                     primary_key_string.clone(),
                     row,
-                    existing_row_ref,
-                )?
+                    existing_row_ref)?
             else {
                 continue;
             };
@@ -447,8 +469,7 @@ impl SqlExecutor {
                 OnConflictExistingRow {
                     row: returned_row,
                     mutation_user_id,
-                },
-            );
+                });
         }
 
         self.app_context
@@ -468,8 +489,7 @@ impl SqlExecutor {
         table_type: TableType,
         user_id: Option<UserId>,
         primary_key: &ScalarValue,
-        table_provider: &OnConflictTableProvider<'_>,
-    ) -> Result<Option<OnConflictExistingRow>, KalamDbError> {
+        table_provider: &OnConflictTableProvider<'_>) -> Result<Option<OnConflictExistingRow>, KalamDbError> {
         let primary_key_str = primary_key.to_string();
         if let Some(overlay) =
             self.app_context.transaction_coordinator().get_overlay(transaction_id)
@@ -478,14 +498,12 @@ impl SqlExecutor {
                 TableType::User | TableType::Stream => overlay.latest_visible_entry_for_scope(
                     table_id,
                     user_id.as_ref(),
-                    primary_key_str.as_str(),
-                ),
+                    primary_key_str.as_str()),
                 TableType::Shared => overlay
                     .latest_visible_entry_for_scope(
                         table_id,
                         user_id.as_ref(),
-                        primary_key_str.as_str(),
-                    )
+                        primary_key_str.as_str())
                     .or_else(|| overlay.latest_visible_entry(table_id, primary_key_str.as_str())),
                 TableType::System => {
                     overlay.latest_visible_entry(table_id, primary_key_str.as_str())
@@ -507,8 +525,7 @@ impl SqlExecutor {
             (TableType::User | TableType::Stream, OnConflictTableProvider::User(provider)) => {
                 let user_id = user_id.ok_or_else(|| {
                     KalamDbError::InvalidOperation(
-                        "user table ON CONFLICT lookup requires user_id".to_string(),
-                    )
+                        "user table ON CONFLICT lookup requires user_id".to_string())
                 })?;
                 Ok(provider.find_by_pk(&user_id, primary_key).await?.map(|(_, row)| {
                     OnConflictExistingRow {
@@ -534,8 +551,7 @@ impl SqlExecutor {
         &self,
         table_id: &TableId,
         returning: &[sqlparser::ast::SelectItem],
-        returned_rows: Vec<Row>,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        returned_rows: Vec<Row>) -> Result<ExecutionResult, KalamDbError> {
         let cached_table = self.app_context.schema_registry().get(table_id).ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Table schema not found: {}", table_id))
         })?;
@@ -590,6 +606,7 @@ impl SqlExecutor {
     fn apply_select_limits(
         &self,
         df: datafusion::dataframe::DataFrame,
+        sql: &str,
     ) -> Result<datafusion::dataframe::DataFrame, KalamDbError> {
         let max_query_limit = self.app_context.config().limits.max_query_limit;
         let default_query_limit = self.app_context.config().limits.default_query_limit;
@@ -604,8 +621,9 @@ impl SqlExecutor {
 
             log::debug!(
                 target: "sql::exec",
-                "Applying default query limit {} to unbounded SELECT",
-                effective_default_limit
+                "Applying default query limit {} to unbounded SELECT | sql='{}'",
+                effective_default_limit,
+                sql
             );
 
             return df
@@ -631,8 +649,7 @@ impl SqlExecutor {
     fn block_system_namespace_dml(
         &self,
         table_id: Option<&TableId>,
-        dml_kind: DmlKind,
-    ) -> Result<(), KalamDbError> {
+        dml_kind: DmlKind) -> Result<(), KalamDbError> {
         let Some(table_id) = table_id else {
             return Ok(());
         };
@@ -647,8 +664,7 @@ impl SqlExecutor {
                 "Cannot {} system table '{}.{}'",
                 op.to_lowercase(),
                 table_id.namespace_id().as_str(),
-                table_id.table_name().as_str(),
-            )));
+                table_id.table_name().as_str())));
         }
         Ok(())
     }
@@ -705,8 +721,7 @@ impl SqlExecutor {
                 }
             },
             AssignmentTarget::Tuple(_) => Err(KalamDbError::InvalidSql(
-                "Tuple assignments are not supported for system.migrations".to_string(),
-            )),
+                "Tuple assignments are not supported for system.migrations".to_string())),
         }
     }
 
@@ -768,8 +783,7 @@ impl SqlExecutor {
     }
 
     fn migration_from_insert_values(
-        values: &HashMap<String, &Expr>,
-    ) -> Result<Migration, KalamDbError> {
+        values: &HashMap<String, &Expr>) -> Result<Migration, KalamDbError> {
         let required = |column: &str| -> Result<&Expr, KalamDbError> {
             values.get(column).copied().ok_or_else(|| {
                 KalamDbError::InvalidSql(format!(
@@ -783,8 +797,7 @@ impl SqlExecutor {
         Ok(Migration {
             migration_key: MigrationId::new(Self::expr_string(
                 required("migration_key")?,
-                "migration_key",
-            )?),
+                "migration_key")?),
             migration_id: Self::expr_string(required("migration_id")?, "migration_id")?,
             namespace: Self::expr_string(required("namespace")?, "namespace")?,
             name: Self::expr_string(required("name")?, "name")?,
@@ -815,19 +828,16 @@ impl SqlExecutor {
 
     fn apply_migration_assignment(
         migration: &mut Migration,
-        assignment: &Assignment,
-    ) -> Result<(), KalamDbError> {
+        assignment: &Assignment) -> Result<(), KalamDbError> {
         let column = Self::assignment_column_name(assignment)?;
         match column.as_str() {
             "migration_key" => {
                 return Err(KalamDbError::InvalidOperation(
-                    "system.migrations migration_key cannot be updated".to_string(),
-                ));
+                    "system.migrations migration_key cannot be updated".to_string()));
             },
             "migration_id" => {
                 return Err(KalamDbError::InvalidOperation(
-                    "system.migrations migration_id cannot be updated".to_string(),
-                ));
+                    "system.migrations migration_id cannot be updated".to_string()));
             },
             "namespace" => migration.namespace = Self::expr_string(&assignment.value, &column)?,
             "name" => migration.name = Self::expr_string(&assignment.value, &column)?,
@@ -857,12 +867,10 @@ impl SqlExecutor {
     }
 
     fn migration_key_from_update_selection(
-        selection: Option<&Expr>,
-    ) -> Result<MigrationId, KalamDbError> {
+        selection: Option<&Expr>) -> Result<MigrationId, KalamDbError> {
         let Some(selection) = selection else {
             return Err(KalamDbError::InvalidSql(
-                "UPDATE system.migrations requires WHERE migration_key = <literal>".to_string(),
-            ));
+                "UPDATE system.migrations requires WHERE migration_key = <literal>".to_string()));
         };
         match selection {
             Expr::BinaryOp { left, op, right } if *op == BinaryOperator::Eq => {
@@ -874,20 +882,17 @@ impl SqlExecutor {
                     return Ok(MigrationId::new(Self::expr_string(right, "migration_key")?));
                 }
                 Err(KalamDbError::InvalidSql(
-                    "UPDATE system.migrations WHERE clause must target migration_key".to_string(),
-                ))
+                    "UPDATE system.migrations WHERE clause must target migration_key".to_string()))
             },
             _ => Err(KalamDbError::InvalidSql(
-                "UPDATE system.migrations requires WHERE migration_key = <literal>".to_string(),
-            )),
+                "UPDATE system.migrations requires WHERE migration_key = <literal>".to_string())),
         }
     }
 
     async fn try_execute_system_migrations_dml(
         &self,
         metadata: &PreparedExecutionStatement,
-        dml_kind: DmlKind,
-    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        dml_kind: DmlKind) -> Result<Option<ExecutionResult>, KalamDbError> {
         if !Self::is_system_migrations_table(metadata.table_id.as_ref()) {
             return Ok(None);
         }
@@ -896,8 +901,7 @@ impl SqlExecutor {
             DmlKind::Insert => {
                 let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidSql(
-                        "Missing prepared DML metadata for system.migrations INSERT".to_string(),
-                    )
+                        "Missing prepared DML metadata for system.migrations INSERT".to_string())
                 })?;
                 let Statement::Insert(insert) = statement else {
                     return Ok(None);
@@ -906,23 +910,20 @@ impl SqlExecutor {
                     TableObject::TableName(name) => Self::expect_system_migrations_object(name)?,
                     TableObject::TableFunction(_) | TableObject::TableQuery(_) => {
                         return Err(KalamDbError::InvalidSql(
-                            "INSERT system.migrations requires a table name".to_string(),
-                        ));
+                            "INSERT system.migrations requires a table name".to_string()));
                     },
                 }
 
                 let Some(source) = insert.source.as_ref() else {
                     return Err(KalamDbError::InvalidSql(
-                        "INSERT system.migrations requires VALUES".to_string(),
-                    ));
+                        "INSERT system.migrations requires VALUES".to_string()));
                 };
                 if source.with.is_some()
                     || source.order_by.is_some()
                     || source.limit_clause.is_some()
                 {
                     return Err(KalamDbError::InvalidSql(
-                        "INSERT system.migrations supports VALUES only".to_string(),
-                    ));
+                        "INSERT system.migrations supports VALUES only".to_string()));
                 }
                 let row = kalamdb_sql::single_values_insert_row(&insert).map_err(|reason| {
                     KalamDbError::InvalidSql(match reason {
@@ -938,8 +939,7 @@ impl SqlExecutor {
                 if insert.columns.len() != row.len() {
                     return Err(KalamDbError::InvalidSql(
                         "INSERT system.migrations column count does not match value count"
-                            .to_string(),
-                    ));
+                            .to_string()));
                 }
 
                 let values = insert
@@ -951,8 +951,7 @@ impl SqlExecutor {
                             kalamdb_sql::object_name_to_string(column)
                                 .unwrap_or_default()
                                 .to_ascii_lowercase(),
-                            value,
-                        )
+                            value)
                     })
                     .collect::<HashMap<_, _>>();
                 let migration = Self::migration_from_insert_values(&values)?;
@@ -966,23 +965,20 @@ impl SqlExecutor {
             DmlKind::Update => {
                 let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidSql(
-                        "Missing prepared DML metadata for system.migrations UPDATE".to_string(),
-                    )
+                        "Missing prepared DML metadata for system.migrations UPDATE".to_string())
                 })?;
                 let Statement::Update(update) = statement else {
                     return Ok(None);
                 };
                 if !update.table.joins.is_empty() {
                     return Err(KalamDbError::InvalidSql(
-                        "UPDATE system.migrations does not support joins".to_string(),
-                    ));
+                        "UPDATE system.migrations does not support joins".to_string()));
                 }
                 match &update.table.relation {
                     TableFactor::Table { name, .. } => Self::expect_system_migrations_object(name)?,
                     _ => {
                         return Err(KalamDbError::InvalidSql(
-                            "UPDATE system.migrations requires a table name".to_string(),
-                        ));
+                            "UPDATE system.migrations requires a table name".to_string()));
                     },
                 }
 
@@ -1009,8 +1005,7 @@ impl SqlExecutor {
                 Ok(Some(ExecutionResult::Updated { rows_affected: 1 }))
             },
             DmlKind::Delete => Err(KalamDbError::InvalidOperation(
-                "DELETE system.migrations is not supported".to_string(),
-            )),
+                "DELETE system.migrations is not supported".to_string())),
         }
     }
 
@@ -1121,8 +1116,7 @@ impl SqlExecutor {
     }
 
     fn map_classification_error(
-        err: kalamdb_sql::classifier::StatementClassificationError,
-    ) -> KalamDbError {
+        err: kalamdb_sql::classifier::StatementClassificationError) -> KalamDbError {
         match err {
             kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
                 KalamDbError::Unauthorized(msg)
@@ -1147,13 +1141,15 @@ impl SqlExecutor {
                 | SqlStatementKind::CreateView(_)
                 | SqlStatementKind::AlterTable(_)
                 | SqlStatementKind::DropTable(_)
+                | SqlStatementKind::CreatePolicy(_)
+                | SqlStatementKind::AlterPolicy(_)
+                | SqlStatementKind::DropPolicy(_)
         )
     }
 
     fn request_transaction_state<'a>(
         &self,
-        exec_ctx: &'a ExecutionContext,
-    ) -> Result<Option<RequestTransactionState<'a>>, KalamDbError> {
+        exec_ctx: &'a ExecutionContext) -> Result<Option<RequestTransactionState<'a>>, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id());
@@ -1165,8 +1161,7 @@ impl SqlExecutor {
 
     fn active_request_transaction_id(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<Option<TransactionId>, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<Option<TransactionId>, KalamDbError> {
         Ok(self
             .request_transaction_state(exec_ctx)?
             .and_then(|state| state.active_transaction_id().cloned()))
@@ -1174,8 +1169,7 @@ impl SqlExecutor {
 
     async fn resolve_prepared_table_type(
         &self,
-        metadata: &PreparedExecutionStatement,
-    ) -> Result<Option<TableType>, KalamDbError> {
+        metadata: &PreparedExecutionStatement) -> Result<Option<TableType>, KalamDbError> {
         if let Some(table_type) = metadata.table_type {
             return Ok(Some(table_type));
         }
@@ -1198,8 +1192,7 @@ impl SqlExecutor {
 
     fn transaction_query_context_for_request(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<Option<TransactionQueryContext>, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<Option<TransactionQueryContext>, KalamDbError> {
         let transaction_id = match exec_ctx.transaction_id().cloned() {
             Some(transaction_id) => Some(transaction_id),
             None => self.active_request_transaction_id(exec_ctx)?,
@@ -1228,17 +1221,14 @@ impl SqlExecutor {
             handle.snapshot_commit_seq,
             Arc::new(crate::transactions::CoordinatorOverlayView::new(
                 Arc::clone(&coordinator),
-                transaction_id.clone(),
-            )),
+                transaction_id.clone())),
             Arc::new(crate::transactions::CoordinatorMutationSink::new(coordinator)),
-            Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),
-        )))
+            Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())))))
     }
 
     fn create_session_with_transaction_context(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<SessionContext, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<SessionContext, KalamDbError> {
         let Some(transaction_query_context) =
             self.transaction_query_context_for_request(exec_ctx)?
         else {
@@ -1256,16 +1246,14 @@ impl SqlExecutor {
 
     fn point_read_session_state(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<Arc<datafusion::execution::context::SessionState>, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<Arc<datafusion::execution::context::SessionState>, KalamDbError> {
         let transaction_query_context = self.transaction_query_context_for_request(exec_ctx)?;
         if transaction_query_context.is_none() {
             let key = PointReadSessionCacheKey::new(
                 exec_ctx.user_id().clone(),
                 exec_ctx.user_role(),
                 exec_ctx.default_namespace(),
-                exec_ctx.read_context(),
-            );
+                exec_ctx.read_context());
             if let Some(state) = self.point_read_session_cache.get(&key) {
                 return Ok(state);
             }
@@ -1288,15 +1276,13 @@ impl SqlExecutor {
 
     async fn execute_begin_transaction(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
-                    "BEGIN requires a request-scoped execution context".to_string(),
-                )
+                    "BEGIN requires a request-scoped execution context".to_string())
             })?;
         request_state.sync(&request_transaction_coordinator);
         let transaction_id = request_state
@@ -1309,15 +1295,13 @@ impl SqlExecutor {
 
     async fn execute_commit_transaction(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
-                    "COMMIT requires a request-scoped execution context".to_string(),
-                )
+                    "COMMIT requires a request-scoped execution context".to_string())
             })?;
         request_state.sync(&request_transaction_coordinator);
         let transaction_id = request_state
@@ -1331,15 +1315,13 @@ impl SqlExecutor {
 
     fn execute_rollback_transaction(
         &self,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let request_transaction_coordinator =
             AppContextRequestTransactionCoordinator::new(self.app_context.as_ref());
         let mut request_state = RequestTransactionState::from_request_id(exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
-                    "ROLLBACK requires a request-scoped execution context".to_string(),
-                )
+                    "ROLLBACK requires a request-scoped execution context".to_string())
             })?;
         request_state.sync(&request_transaction_coordinator);
         let transaction_id = request_state
@@ -1353,8 +1335,7 @@ impl SqlExecutor {
     fn reject_ddl_in_active_request_transaction(
         &self,
         classified: &SqlStatement,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<(), KalamDbError> {
         if !Self::is_ddl_statement(classified.kind()) {
             return Ok(());
         }
@@ -1371,8 +1352,7 @@ impl SqlExecutor {
     async fn reject_unsupported_dml_in_active_request_transaction(
         &self,
         metadata: &PreparedExecutionStatement,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<(), KalamDbError> {
         let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
             return Ok(());
         };
@@ -1393,15 +1373,13 @@ impl SqlExecutor {
     /// Construct a new executor with a pre-built handler registry.
     pub fn new(
         app_context: std::sync::Arc<crate::app_context::AppContext>,
-        handler_registry: Arc<HandlerRegistry>,
-    ) -> Self {
+        handler_registry: Arc<HandlerRegistry>) -> Self {
         let plan_max_entries = app_context.config().execution.sql_plan_cache_max_entries;
         let plan_idle_ttl =
             Duration::from_secs(app_context.config().execution.sql_plan_cache_ttl_seconds);
         let sql_cache_registry = Arc::new(SqlCacheRegistry::new(SqlCacheRegistryConfig::new(
             plan_max_entries,
-            plan_idle_ttl,
-        )));
+            plan_idle_ttl)));
         let prepared_statement_cache = moka::sync::Cache::builder()
             .max_capacity(plan_max_entries)
             .time_to_idle(plan_idle_ttl)
@@ -1455,8 +1433,7 @@ impl SqlExecutor {
     async fn optimized_plan_for_cache(
         &self,
         session: &SessionContext,
-        data_frame: &DataFrame,
-    ) -> Result<LogicalPlan, KalamDbError> {
+        data_frame: &DataFrame) -> Result<LogicalPlan, KalamDbError> {
         let ordered =
             apply_default_order_by(data_frame.logical_plan().clone(), &self.app_context).await?;
         session.state().optimize(&ordered).map_err(Self::datafusion_to_execution_error)
@@ -1491,8 +1468,7 @@ impl SqlExecutor {
     fn project_point_get_batches(
         batches: Vec<RecordBatch>,
         source_schema: SchemaRef,
-        target_schema: SchemaRef,
-    ) -> Option<Vec<RecordBatch>> {
+        target_schema: SchemaRef) -> Option<Vec<RecordBatch>> {
         let mut indices = Vec::with_capacity(target_schema.fields().len());
         for field in target_schema.fields() {
             indices.push(source_schema.index_of(field.name()).ok()?);
@@ -1518,8 +1494,7 @@ impl SqlExecutor {
         &self,
         plan: &LogicalPlan,
         params: &[ScalarValue],
-        exec_ctx: &ExecutionContext,
-    ) -> Result<Option<ExecutionResult>, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<Option<ExecutionResult>, KalamDbError> {
         let (scan, requested_schema) = match Self::unwrap_default_order_wrappers(plan) {
             LogicalPlan::TableScan(scan) => (scan, None),
             LogicalPlan::Projection(projection) => {
@@ -1617,12 +1592,11 @@ impl SqlExecutor {
     /// Returns `Ok(Some(results))` with per-statement `ExecutionResult::Inserted`,
     /// `Ok(None)` if the batch path is not applicable (caller should fall back to
     /// per-statement execution), or `Err(e)` on execution failure.
-    pub fn try_batch_insert_in_transaction(
+    pub async fn try_batch_insert_in_transaction(
         &self,
         statements: &[&PreparedExecutionStatement],
         exec_ctx: &ExecutionContext,
-        transaction_id: &TransactionId,
-    ) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
+        transaction_id: &TransactionId) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
         let parsed_stmts: Option<Vec<&sqlparser::ast::Statement>> =
             statements.iter().map(|statement| statement.parsed_dml.as_ref()).collect();
         let parsed_stmts = match parsed_stmts {
@@ -1641,14 +1615,14 @@ impl SqlExecutor {
             self.sql_cache_registry.as_ref(),
             exec_ctx,
             table_id,
-            transaction_id,
-        )? {
+            transaction_id)
+        .await?
+        {
             Some(counts) => Ok(Some(
                 counts
                     .into_iter()
                     .map(|rows_affected| crate::sql::ExecutionResult::Inserted { rows_affected })
-                    .collect(),
-            )),
+                    .collect())),
             None => Ok(None),
         }
     }
@@ -1656,14 +1630,12 @@ impl SqlExecutor {
     pub fn prepare_statement_metadata(
         &self,
         sql: &str,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        exec_ctx: &ExecutionContext) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         self.prepare_statement_metadata_for_role_with_options(
             sql,
             &exec_ctx.default_namespace(),
             exec_ctx.user_role(),
-            true,
-        )
+            true)
     }
 
     /// Classify SQL and resolve DML table metadata without retaining a sqlparser AST.
@@ -1672,22 +1644,19 @@ impl SqlExecutor {
     pub fn prepare_statement_metadata_light(
         &self,
         sql: &str,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        exec_ctx: &ExecutionContext) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         self.prepare_statement_metadata_for_role_with_options(
             sql,
             &exec_ctx.default_namespace(),
             exec_ctx.user_role(),
-            false,
-        )
+            false)
     }
 
     pub fn prepare_statement_metadata_for_role(
         &self,
         sql: &str,
         default_namespace: &NamespaceId,
-        role: Role,
-    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        role: Role) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         self.prepare_statement_metadata_for_role_with_options(sql, default_namespace, role, true)
     }
 
@@ -1696,8 +1665,7 @@ impl SqlExecutor {
         sql: &str,
         default_namespace: &NamespaceId,
         role: Role,
-        include_dml_ast: bool,
-    ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
+        include_dml_ast: bool) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         let cache_key = (PlanCacheKey::new(default_namespace.clone(), role, sql), include_dml_ast);
         if let Some(prepared) = self.prepared_statement_cache.get(&cache_key) {
             return Ok(prepared);
@@ -1724,8 +1692,7 @@ impl SqlExecutor {
             table_type,
             Some(classified),
             track_slow_query,
-            parsed_dml,
-        );
+            parsed_dml);
         self.prepared_statement_cache.insert(cache_key, prepared.clone());
         Ok(prepared)
     }
@@ -1733,16 +1700,14 @@ impl SqlExecutor {
     fn parse_dml_metadata(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &str,
-    ) -> Result<(Option<TableId>, Option<Statement>), StatementClassificationError> {
+        default_namespace: &str) -> Result<(Option<TableId>, Option<Statement>), StatementClassificationError> {
         match kind {
             SqlStatementKind::Insert(_)
             | SqlStatementKind::Update(_)
             | SqlStatementKind::Delete(_) => {
                 let dialect = sqlparser::dialect::GenericDialect {};
                 let mut statements = kalamdb_sql::parser::utils::parse_sql_statements(
-                    sql, &dialect,
-                )
+                    sql, &dialect)
                 .map_err(|error| StatementClassificationError::InvalidSql {
                     sql: sql.to_string(),
                     message: error.to_string(),
@@ -1765,8 +1730,7 @@ impl SqlExecutor {
     fn extract_dml_table_id_only(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &str,
-    ) -> (Option<TableId>, Option<Statement>) {
+        default_namespace: &str) -> (Option<TableId>, Option<Statement>) {
         let table_id = match kind {
             SqlStatementKind::Insert(_)
             | SqlStatementKind::Update(_)
@@ -1784,8 +1748,7 @@ impl SqlExecutor {
         &self,
         sql: &str,
         exec_ctx: &ExecutionContext,
-        params: Vec<ScalarValue>,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        params: Vec<ScalarValue>) -> Result<ExecutionResult, KalamDbError> {
         // Step 0: Check SQL query length to prevent DoS attacks
         if sql.len() > kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH {
             log::warn!(
@@ -1812,8 +1775,7 @@ impl SqlExecutor {
         &self,
         metadata: &PreparedExecutionStatement,
         exec_ctx: &ExecutionContext,
-        params: Vec<ScalarValue>,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        params: Vec<ScalarValue>) -> Result<ExecutionResult, KalamDbError> {
         let sql = metadata.sql.as_str();
         kalamdb_observability::kdb_await_in_info_span!(
             async {
@@ -1824,11 +1786,9 @@ impl SqlExecutor {
                     kalamdb_observability::observe_query(
                         kalamdb_observability::QueryMetricKind::Other,
                         query_start.elapsed(),
-                        true,
-                    );
+                        true);
                     return Err(KalamDbError::InvalidSql(
-                        "Missing pre-classified statement metadata for SQL execution".to_string(),
-                    ));
+                        "Missing pre-classified statement metadata for SQL execution".to_string()));
                 },
             };
 
@@ -1842,11 +1802,9 @@ impl SqlExecutor {
             {
                 if let Some(table_id) = metadata.table_id.as_ref() {
                     kalamdb_observability::should_observe_query_namespace(
-                        table_id.namespace_id().as_str(),
-                    )
+                        table_id.namespace_id().as_str())
                 } else if !kalamdb_observability::should_observe_query_namespace(
-                    exec_ctx.default_namespace().as_str(),
-                ) {
+                    exec_ctx.default_namespace().as_str()) {
                     false
                 } else if matches!(classified.kind(), SqlStatementKind::Select) {
                     !contains_internal_namespace_hint(metadata.sql.as_str())
@@ -1891,8 +1849,7 @@ impl SqlExecutor {
                     SqlStatementKind::Insert(_) => {
                         if let Err(error) = self
                             .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx,
-                            )
+                                metadata, exec_ctx)
                             .await
                         {
                             Err(error)
@@ -1902,8 +1859,7 @@ impl SqlExecutor {
                                     classified.as_str(),
                                     metadata,
                                     exec_ctx,
-                                    &params,
-                                )
+                                    &params)
                                 .await
                             {
                                 Ok(Some(result)) => Ok(result),
@@ -1913,8 +1869,7 @@ impl SqlExecutor {
                                         metadata,
                                         params,
                                         exec_ctx,
-                                        DmlKind::Insert,
-                                    )
+                                        DmlKind::Insert)
                                     .await
                                 },
                                 Err(error) => Err(error),
@@ -1924,8 +1879,7 @@ impl SqlExecutor {
                     SqlStatementKind::Update(_) => {
                         if let Err(error) = self
                             .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx,
-                            )
+                                metadata, exec_ctx)
                             .await
                         {
                             Err(error)
@@ -1935,16 +1889,14 @@ impl SqlExecutor {
                                 metadata,
                                 params,
                                 exec_ctx,
-                                DmlKind::Update,
-                            )
+                                DmlKind::Update)
                             .await
                         }
                     },
                     SqlStatementKind::Delete(_) => {
                         if let Err(error) = self
                             .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx,
-                            )
+                                metadata, exec_ctx)
                             .await
                         {
                             Err(error)
@@ -1954,8 +1906,7 @@ impl SqlExecutor {
                                 metadata,
                                 params,
                                 exec_ctx,
-                                DmlKind::Delete,
-                            )
+                                DmlKind::Delete)
                             .await
                         }
                     },
@@ -1966,6 +1917,9 @@ impl SqlExecutor {
                     | SqlStatementKind::DropTable(_)
                     | SqlStatementKind::AlterTable(_)
                     | SqlStatementKind::CreateView(_)
+                    | SqlStatementKind::CreatePolicy(_)
+                    | SqlStatementKind::AlterPolicy(_)
+                    | SqlStatementKind::DropPolicy(_)
                     | SqlStatementKind::CreateNamespace(_)
                     | SqlStatementKind::DropNamespace(_) => {
                         let result = self
@@ -1989,8 +1943,7 @@ impl SqlExecutor {
                 kalamdb_observability::observe_query(
                     query_kind,
                     query_start.elapsed(),
-                    result.is_err(),
-                );
+                    result.is_err());
             }
 
             #[cfg(feature = "traceability")]
@@ -2011,15 +1964,13 @@ impl SqlExecutor {
             user_id = %exec_ctx.user_id().as_str(),
             namespace = %exec_ctx.default_namespace().as_str(),
             command = tracing::field::Empty,
-            rows = tracing::field::Empty,
-        )
+            rows = tracing::field::Empty)
     }
 
     fn should_stage_autocommit_dml(
         &self,
         metadata: &PreparedExecutionStatement,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<bool, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<bool, KalamDbError> {
         if exec_ctx.transaction_id().is_some() {
             return Ok(false);
         }
@@ -2046,8 +1997,7 @@ impl SqlExecutor {
         metadata: &PreparedExecutionStatement,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
-        dml_kind: DmlKind,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        dml_kind: DmlKind) -> Result<ExecutionResult, KalamDbError> {
         let owned_exec_ctx;
         let dml_exec_ctx = if exec_ctx.request_id().is_some() {
             exec_ctx
@@ -2062,8 +2012,7 @@ impl SqlExecutor {
         let mut request_state = RequestTransactionState::from_request_id(dml_exec_ctx.request_id())
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(
-                    "autocommit DML requires a request-scoped execution context".to_string(),
-                )
+                    "autocommit DML requires a request-scoped execution context".to_string())
             })?;
         request_state.sync(&request_transaction_coordinator);
 
@@ -2101,8 +2050,7 @@ impl SqlExecutor {
         metadata: &PreparedExecutionStatement,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
-        dml_kind: DmlKind,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        dml_kind: DmlKind) -> Result<ExecutionResult, KalamDbError> {
         if self.should_stage_autocommit_dml(metadata, exec_ctx)? {
             return self
                 .execute_autocommit_dml_via_transaction(sql, metadata, params, exec_ctx, dml_kind)
@@ -2117,8 +2065,7 @@ impl SqlExecutor {
         &self,
         execution_sql: &str,
         original_sql: &str,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(SessionContext, DataFrame), KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<(SessionContext, DataFrame), KalamDbError> {
         let session = self.create_session_with_transaction_context(exec_ctx)?;
         #[cfg(feature = "traceability")]
         let plan_start = std::time::Instant::now();
@@ -2162,8 +2109,7 @@ impl SqlExecutor {
         &self,
         cache_key: &PlanCacheKey,
         planned_df: DataFrame,
-        params: &[ScalarValue],
-    ) -> Result<LogicalPlan, KalamDbError> {
+        params: &[ScalarValue]) -> Result<LogicalPlan, KalamDbError> {
         let template_plan = planned_df.logical_plan().clone();
         self.sql_cache_registry
             .plan_cache()
@@ -2176,8 +2122,7 @@ impl SqlExecutor {
         skip_all,
         fields(
             dml_kind = %Self::dml_operation_name(dml_kind),
-            rows_affected = tracing::field::Empty,
-        )
+            rows_affected = tracing::field::Empty)
     ))]
     async fn execute_dml_via_datafusion_inner(
         &self,
@@ -2185,12 +2130,10 @@ impl SqlExecutor {
         metadata: &PreparedExecutionStatement,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
-        dml_kind: DmlKind,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        dml_kind: DmlKind) -> Result<ExecutionResult, KalamDbError> {
         if Self::is_system_migrations_table(metadata.table_id.as_ref()) && !params.is_empty() {
             return Err(KalamDbError::InvalidOperation(
-                "Parameterized system.migrations DML is not supported".to_string(),
-            ));
+                "Parameterized system.migrations DML is not supported".to_string()));
         }
         if params.is_empty() {
             if let Some(result) = self.try_execute_system_migrations_dml(metadata, dml_kind).await?
@@ -2216,8 +2159,7 @@ impl SqlExecutor {
             let cache_key = PlanCacheKey::new(
                 exec_ctx.default_namespace(),
                 exec_ctx.user_role(),
-                execution_sql,
-            );
+                execution_sql);
             let session = self.create_session_with_transaction_context(exec_ctx)?;
 
             if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
@@ -2285,8 +2227,7 @@ impl SqlExecutor {
         &self,
         sql: &str,
         params: Vec<ScalarValue>,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
 
@@ -2441,7 +2382,7 @@ impl SqlExecutor {
             }
         };
 
-        let df = self.apply_select_limits(df)?;
+        let df = self.apply_select_limits(df, sql)?;
 
         // Capture schema before collecting (needed for 0 row results)
         // DFSchema -> Arrow Schema via inner() method
@@ -2490,8 +2431,7 @@ impl SqlExecutor {
              WHERE table_schema = {} AND table_name = {} \
              ORDER BY ordinal_position",
             Self::sql_string_literal(namespace.as_str()),
-            Self::sql_string_literal(stmt.table_name.as_str()),
-        ))
+            Self::sql_string_literal(stmt.table_name.as_str())))
     }
 
     fn sql_string_literal(value: &str) -> String {
@@ -2530,8 +2470,16 @@ impl SqlExecutor {
     async fn execute_meta_command(
         &self,
         sql: &str,
-        exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        // PostgreSQL GUI `SET` (search_path, client_encoding, …) is owned by
+        // `kalamdb-postgres-wire::client_catalog`. Accept non-DataFusion SET as a
+        // no-op here so HTTP admin sessions do not error; wire applies search_path.
+        if Self::is_postgres_client_set(sql) {
+            return Ok(ExecutionResult::Success {
+                message: "SET".to_string(),
+            });
+        }
+
         let execution_sql = match Self::rewrite_describe_shorthand(sql, exec_ctx) {
             Some(rewritten) => rewritten,
             None => kalamdb_sql::rewrite_context_functions_for_datafusion(sql).to_string(),
@@ -2584,13 +2532,6 @@ impl SqlExecutor {
 
         let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
 
-        // log::debug!(
-        //     target: "sql::meta",
-        //     "✅ Meta command completed | sql='{}' | rows={}",
-        //     sql,
-        //     row_count
-        // );
-
         Ok(ExecutionResult::Rows {
             batches,
             row_count,
@@ -2598,13 +2539,21 @@ impl SqlExecutor {
         })
     }
 
+    fn is_postgres_client_set(sql: &str) -> bool {
+        let trimmed = sql.trim().trim_end_matches(';').trim();
+        if trimmed.len() < 4 || !trimmed[..3].eq_ignore_ascii_case("SET") {
+            return false;
+        }
+        let rest = trimmed[3..].trim_start();
+        !rest.to_ascii_lowercase().starts_with("datafusion.")
+    }
+
     /// Log SQL errors with appropriate level (warn for user errors, error for system errors)
     fn log_sql_error(
         &self,
         sql: &str,
         exec_ctx: &ExecutionContext,
-        e: datafusion::error::DataFusionError,
-    ) -> KalamDbError {
+        e: datafusion::error::DataFusionError) -> KalamDbError {
         let mapped_error = Self::classify_datafusion_error(&e);
 
         match &mapped_error {
@@ -2755,6 +2704,20 @@ mod tests {
     use super::*;
     use datafusion::common::DFSchema;
     use datafusion::logical_expr::{lit, EmptyRelation, Limit, Sort, SortExpr};
+    use kalamdb_commons::{
+        datatypes::KalamDataType,
+        schemas::{ColumnDefinition, TableDefinition, TableOptions},
+        BoundExprShape, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr,
+        TableName, TablePolicy,
+    };
+    use kalamdb_tables::utils::KalamTableProvider;
+
+    fn result_row_count(result: ExecutionResult) -> usize {
+        match result {
+            ExecutionResult::Rows { row_count, .. } => row_count,
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
 
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
@@ -2834,8 +2797,7 @@ mod tests {
             vec![
                 Arc::new(StringArray::from(vec!["notes.md"])),
                 Arc::new(StringArray::from(vec!["sha-abc"])),
-            ],
-        )
+            ])
         .unwrap();
         let target_schema =
             Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
@@ -2843,8 +2805,7 @@ mod tests {
         let projected = SqlExecutor::project_point_get_batches(
             vec![batch],
             source_schema,
-            Arc::clone(&target_schema),
-        )
+            Arc::clone(&target_schema))
         .expect("projection should keep file_ref");
 
         assert_eq!(projected.len(), 1);
@@ -2870,8 +2831,7 @@ mod tests {
                 Arc::new(StringArray::from(vec!["notes.md"])),
                 Arc::new(StringArray::from(vec!["sha-abc"])),
                 Arc::new(StringArray::from(vec!["hello"])),
-            ],
-        )
+            ])
         .unwrap();
         let target_schema = Arc::new(Schema::new(vec![
             Field::new("file_ref", DataType::Utf8, true),
@@ -2881,8 +2841,7 @@ mod tests {
         let projected = SqlExecutor::project_point_get_batches(
             vec![batch],
             source_schema,
-            Arc::clone(&target_schema),
-        )
+            Arc::clone(&target_schema))
         .expect("reordered projection");
 
         assert_eq!(projected[0].schema().field(0).name(), "file_ref");
@@ -2901,8 +2860,7 @@ mod tests {
         let source_schema = Arc::new(Schema::new(vec![Field::new("path", DataType::Utf8, false)]));
         let batch = RecordBatch::try_new(
             Arc::clone(&source_schema),
-            vec![Arc::new(StringArray::from(vec!["notes.md"]))],
-        )
+            vec![Arc::new(StringArray::from(vec!["notes.md"]))])
         .unwrap();
         let target_schema =
             Arc::new(Schema::new(vec![Field::new("file_ref", DataType::Utf8, true)]));
@@ -2927,12 +2885,124 @@ mod tests {
         let projected = SqlExecutor::project_point_get_batches(
             Vec::new(),
             source_schema,
-            Arc::clone(&target_schema),
-        )
+            Arc::clone(&target_schema))
         .expect("empty projection");
 
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].num_rows(), 0);
         assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+    }
+
+    #[tokio::test]
+    async fn cached_point_plan_binds_rls_principal_per_execution() {
+        let app_context = crate::test_helpers::test_app_context_simple();
+        let mut table = TableDefinition::new(
+            NamespaceId::new("security"),
+            TableName::new("cached_documents"),
+            TableType::Shared,
+            vec![
+                ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Text),
+                ColumnDefinition::simple(2, "owner_id", 2, KalamDataType::Text),
+            ],
+            TableOptions::shared(),
+            None)
+        .unwrap();
+        app_context.system_columns_service().add_system_columns(&mut table).unwrap();
+        app_context.schema_registry().register_table(table).unwrap();
+        let table_id = TableId::from_strings("security", "cached_documents");
+        let provider = app_context.schema_registry().get_provider(&table_id).unwrap();
+        let provider = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .unwrap();
+        provider
+            .insert_rows(
+                &UserId::new("system"),
+                vec![
+                    Row::from_vec(vec![
+                        ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
+                        (
+                            "owner_id".to_string(),
+                            ScalarValue::Utf8(Some("alice".to_string()))),
+                    ]),
+                    Row::from_vec(vec![
+                        ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
+                        (
+                            "owner_id".to_string(),
+                            ScalarValue::Utf8(Some("bob".to_string()))),
+                    ]),
+                ])
+            .await
+            .unwrap();
+
+        app_context
+            .system_tables()
+            .table_policies()
+            .create_policy(TablePolicy::new(
+                PolicyId::new(table_id.clone(), "owner_read").unwrap(),
+                table_id,
+                "owner_read",
+                PolicyCommand::Select,
+                vec![PolicyTarget::Role(Role::User)],
+                Some("owner_id = CURRENT_USER".to_string()),
+                None,
+                Some(PolicyProgram::RowLocal {
+                    expr: BoundExprShape::ColumnEqualsPrincipal {
+                        column_id: 2,
+                        principal: PrincipalExpr::CurrentUser,
+                    },
+                }),
+                None,
+                0,
+                1))
+            .await
+            .unwrap();
+
+        let executor = SqlExecutor::new(
+            app_context.clone(),
+            Arc::new(HandlerRegistry::new()));
+        let alice = ExecutionContext::new(
+            UserId::new("alice"),
+            Role::User,
+            app_context.base_session_context());
+        let bob = ExecutionContext::new(
+            UserId::new("bob"),
+            Role::User,
+            app_context.base_session_context());
+        let sql = "SELECT id FROM security.cached_documents WHERE id = $1";
+
+        assert_eq!(
+            result_row_count(
+                executor
+                    .execute(sql, &alice, vec![ScalarValue::Utf8(Some("doc-a".to_string()))])
+                    .await
+                    .unwrap()),
+            1
+        );
+        assert_eq!(
+            result_row_count(
+                executor
+                    .execute(sql, &bob, vec![ScalarValue::Utf8(Some("doc-a".to_string()))])
+                    .await
+                    .unwrap()),
+            0
+        );
+        assert_eq!(
+            result_row_count(
+                executor
+                    .execute(sql, &bob, vec![ScalarValue::Utf8(Some("doc-b".to_string()))])
+                    .await
+                    .unwrap()),
+            1
+        );
+        assert_eq!(
+            result_row_count(
+                executor
+                    .execute(sql, &alice, vec![ScalarValue::Utf8(Some("doc-b".to_string()))])
+                    .await
+                    .unwrap()),
+            0
+        );
+        assert_eq!(executor.plan_cache_len(), 1);
+        assert!(executor.point_get_fast_path_hits() >= 3);
     }
 }

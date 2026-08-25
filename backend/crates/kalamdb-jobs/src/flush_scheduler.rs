@@ -14,10 +14,10 @@ use crate::{
 
 #[derive(Debug, Default)]
 struct PendingFlushScan {
-    table_ids: Vec<TableId>,
-    pending_entries: usize,
+    table_ids:         Vec<TableId>,
+    pending_entries:   usize,
     duplicate_entries: usize,
-    read_errors: usize,
+    read_errors:       usize,
 }
 
 fn collect_pending_flush_tables(
@@ -131,8 +131,8 @@ impl FlushScheduler {
                 .unwrap_or(default_row_limit);
 
             let params = FlushParams {
-                table_id: (*table_id).clone(),
-                table_type: table_def.table_type,
+                table_id:        (*table_id).clone(),
+                table_type:      table_def.table_type,
                 flush_threshold: Some(flush_threshold),
             };
 

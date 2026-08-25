@@ -1,71 +1,100 @@
-//! Integration tests for shared table access control
-//!
-//! **Implements shared table access control tests**: Table sharing and access permissions
-//!
-//! These tests validate:
-//! - Public table access across namespaces
-//! - Private table access restrictions
-//! - Restricted table access control
-//! - Cross-user table permissions
-//! - Table sharing functionality
+//! Shared-table FORCE RLS: catalog reads vs default-deny vs collaborative writes.
 
 use crate::common;
 
-/// Test basic table creation and access
+/// Catalog-style shared table: User can SELECT after a PUBLIC SELECT policy,
+/// but cannot INSERT without WITH CHECK.
+#[ntest::timeout(120000)]
 #[test]
-fn test_basic_table_creation_and_access() {
+fn test_shared_catalog_select_without_write() {
     if !common::is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
-    let table_name = common::generate_unique_table("shared_test");
-    let namespace = "test_shared";
+    let namespace = common::generate_unique_namespace("shared_catalog");
+    let table = common::generate_unique_table("plans");
+    let full = format!("{namespace}.{table}");
+    let user = common::generate_unique_namespace("catalog_reader");
+    let password = "smoke_pass_123";
 
-    // Create namespace first
-    let _ = common::execute_sql_as_root_via_cli(&format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        namespace
-    ));
+    common::execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    common::execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {full} (
+            id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL
+        ) WITH (TYPE='SHARED')"
+    ))
+    .expect("create shared catalog table");
+    common::grant_public_select_shared_table(&full);
+    common::execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {full} (id, name) VALUES (1, 'free')"
+    ))
+    .expect("dba seed catalog");
+    common::execute_sql_as_root_via_client(&format!(
+        "CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"
+    ))
+    .expect("create user");
 
-    // Create test table
-    let create_sql = format!(
-        r#"CREATE TABLE {}.{} (
-            id BIGINT PRIMARY KEY AUTO_INCREMENT,
-            content VARCHAR NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) WITH (TYPE='USER', FLUSH_POLICY='rows:10')"#,
-        namespace, table_name
+    let visible = common::execute_sql_via_client_as(&user, password, &format!("SELECT name FROM {full}"))
+        .expect("user SELECT catalog");
+    assert!(
+        visible.to_lowercase().contains("free"),
+        "PUBLIC SELECT policy must expose catalog rows: {visible}"
     );
 
-    let result = common::execute_sql_as_root_via_cli(&create_sql);
-    assert!(result.is_ok(), "Should create table successfully: {:?}", result.err());
+    let insert = common::execute_sql_via_client_as(
+        &user,
+        password,
+        &format!("INSERT INTO {full} (id, name) VALUES (2, 'pwned')"),
+    );
+    assert!(
+        insert.is_err(),
+        "SELECT-only catalog must reject subject INSERT: {insert:?}"
+    );
 
-    // Insert test data
-    let insert_sql =
-        format!("INSERT INTO {}.{} (content) VALUES ('test data')", namespace, table_name);
-    let result = common::execute_sql_as_root_via_cli(&insert_sql);
-    assert!(result.is_ok(), "Should insert data successfully: {:?}", result.err());
-
-    // Query the data
-    let select_sql = format!("SELECT content FROM {}.{}", namespace, table_name);
-    let result = common::execute_sql_as_root_via_cli(&select_sql);
-    assert!(result.is_ok(), "Should query data successfully: {:?}", result.err());
-    let output = result.unwrap();
-    assert!(output.contains("test data"), "Should contain inserted data: {}", output);
-
-    // Cleanup
-    let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
-    let _ = common::execute_sql_as_root_via_cli(&drop_sql);
-    let _ = common::execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace
-    ));
+    let _ = common::execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    let _ = common::execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
 }
 
-// Future tests to implement:
-// - test_public_table_access
-// - test_private_table_restrictions
-// - test_restricted_table_permissions
-// - test_cross_user_table_sharing
-// - test_table_access_control_inheritance
+/// No policy means User sees zero rows (FORCE RLS default deny).
+#[ntest::timeout(120000)]
+#[test]
+fn test_shared_default_deny_without_policy() {
+    if !common::is_server_running() {
+        eprintln!("⚠️  Server not running. Skipping test.");
+        return;
+    }
+
+    let namespace = common::generate_unique_namespace("shared_deny");
+    let table = common::generate_unique_table("secrets");
+    let full = format!("{namespace}.{table}");
+    let user = common::generate_unique_namespace("denied_reader");
+    let password = "smoke_pass_123";
+
+    common::execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .expect("create namespace");
+    common::execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {full} (id BIGINT PRIMARY KEY, content TEXT NOT NULL) WITH (TYPE='SHARED')"
+    ))
+    .expect("create private shared table");
+    common::execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {full} (id, content) VALUES (1, 'classified')"
+    ))
+    .expect("dba seed");
+    common::execute_sql_as_root_via_client(&format!(
+        "CREATE USER {user} WITH PASSWORD '{password}' ROLE 'user'"
+    ))
+    .expect("create user");
+
+    let output = common::execute_sql_via_client_as(&user, password, &format!("SELECT content FROM {full}"))
+        .expect("default-deny SELECT returns zero rows");
+    assert!(
+        !output.to_lowercase().contains("classified"),
+        "User must not see rows without a policy: {output}"
+    );
+
+    let _ = common::execute_sql_as_root_via_client(&format!("DROP USER {user}"));
+    let _ = common::execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+}

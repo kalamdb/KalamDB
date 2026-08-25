@@ -105,10 +105,12 @@ async fn e2e_scenario_mobilechat_oidc_pg_subscription_embeddings() {
 
     create_shared_public_kalam_table_in_schema(&pg_admin, &schema, &documents, document_columns)
         .await;
-    let set_documents_public = env
-        .kalamdb_sql(&format!("ALTER TABLE {schema}.{documents} SET ACCESS LEVEL public"))
+    let grant_documents = env
+        .kalamdb_sql(&format!(
+            "CREATE POLICY {documents}_select ON {schema}.{documents} FOR SELECT TO PUBLIC USING (true)"
+        ))
         .await;
-    assert_sql_success(&set_documents_public, "set shared documents table public");
+    assert_sql_success(&grant_documents, "grant SELECT on shared documents");
     create_user_kalam_table_in_schema(&pg_admin, &schema, &notifications, notification_columns)
         .await;
 

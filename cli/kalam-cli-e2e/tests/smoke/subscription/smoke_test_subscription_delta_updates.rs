@@ -34,10 +34,11 @@ fn smoke_subscription_update_sends_delta_only() {
             name VARCHAR NOT NULL,
             email VARCHAR,
             age INT
-        ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')"#,
+        ) WITH (TYPE='SHARED')"#,
         full
     );
     execute_sql_as_root_via_client(&create_sql).expect("create table should succeed");
+    grant_public_shared_table_access(&full);
 
     // 2) Insert a row with all columns populated
     let ins =
@@ -48,8 +49,7 @@ fn smoke_subscription_update_sends_delta_only() {
     let _ = wait_for_sql_output_contains(
         &format!("SELECT * FROM {} WHERE name = 'Alice'", full),
         "Alice",
-        Duration::from_secs(5),
-    );
+        Duration::from_secs(5));
 
     // 3) Start subscription
     let query = format!("SELECT * FROM {}", full);

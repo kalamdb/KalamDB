@@ -56,8 +56,8 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
         .map_err(|e| format!("CREATE NAMESPACE fixture failed: {e}"))?;
 
     let table_sql = format!(
-        "CREATE TABLE IF NOT EXISTS {FIXTURE_NAMESPACE}.{FIXTURE_TABLE} \
-         (id INT PRIMARY KEY, name TEXT)"
+        "CREATE TABLE IF NOT EXISTS {FIXTURE_NAMESPACE}.{FIXTURE_TABLE} (id INT PRIMARY KEY, name \
+         TEXT)"
     );
     client
         .batch_execute(&table_sql)
@@ -72,7 +72,8 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
 /// Requires: running server with `postgres_wire.enabled = true` and `pg_catalog_enabled = true`.
 /// Future: replace env-based connect with embedded test server (extend `http_server` harness).
 #[tokio::test]
-#[ignore = "requires postgres wire listener (US2) and pg_catalog shims (US9); see validation/us9-client-catalog.md"]
+#[ignore = "requires postgres wire listener (US2) and pg_catalog shims (US9); see \
+            validation/us9-client-catalog.md"]
 async fn wire_client_catalog_returns_data_and_matches_system_views() {
     let client = connect_pgwire().await.expect("connect");
     seed_fixture_metadata(&client).await.expect("seed fixture");

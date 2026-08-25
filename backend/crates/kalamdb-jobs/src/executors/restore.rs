@@ -151,7 +151,7 @@ impl JobExecutor for RestoreExecutor {
             Err(e) => {
                 ctx.log_error(&format!("Restore failed: {}", e));
                 Ok(JobDecision::Failed {
-                    message: format!("Restore failed: {}", e),
+                    message:         format!("Restore failed: {}", e),
                     exception_trace: Some(format!("{:?}", e)),
                 })
             },

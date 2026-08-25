@@ -263,8 +263,11 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         let error_message =
             upload.error.as_ref().map(|err| err.message.to_lowercase()).unwrap_or_default();
         assert!(
-            error_message.contains("access") || error_message.contains("permission"),
-            "Expected permission denial, got: {}",
+            error_message.contains("access")
+                || error_message.contains("permission")
+                || error_message.contains("denied")
+                || error_message.contains("row-level security"),
+            "Expected permission or RLS denial, got: {}",
             error_message
         );
 

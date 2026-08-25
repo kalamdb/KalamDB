@@ -19,28 +19,27 @@ use kalamdb_commons::{
 };
 use parking_lot::RwLock;
 
-use crate::view_base::VirtualView;
-
 use super::common::{system_view_definition, SystemViewProvider};
+use crate::view_base::VirtualView;
 
 crate::memoized_view_schema!(sessions_schema, SessionsView);
 
 /// Serializable snapshot of a live connection session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionSessionSnapshot {
-    pub session_id: String,
-    pub origin: String,
-    pub backend_pid: Option<i64>,
-    pub authenticated_user_id: Option<String>,
-    pub current_schema: Option<String>,
-    pub state: String,
-    pub transaction_id: Option<String>,
-    pub transaction_state: Option<String>,
+    pub session_id:             String,
+    pub origin:                 String,
+    pub backend_pid:            Option<i64>,
+    pub authenticated_user_id:  Option<String>,
+    pub current_schema:         Option<String>,
+    pub state:                  String,
+    pub transaction_id:         Option<String>,
+    pub transaction_state:      Option<String>,
     pub transaction_has_writes: bool,
-    pub client_addr: Option<String>,
-    pub opened_at_ms: i64,
-    pub last_seen_at_ms: i64,
-    pub last_method: Option<String>,
+    pub client_addr:            Option<String>,
+    pub opened_at_ms:           i64,
+    pub last_seen_at_ms:        i64,
+    pub last_method:            Option<String>,
 }
 
 /// Active-session snapshot callback type.
@@ -81,8 +80,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Server-side PostgreSQL gRPC session identifier".to_string()),
-            ),
+                Some("Server-side PostgreSQL gRPC session identifier".to_string())),
             ColumnDefinition::new(
                 2,
                 "origin",
@@ -92,8 +90,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Connection entry point that opened this session".to_string()),
-            ),
+                Some("Connection entry point that opened this session".to_string())),
             ColumnDefinition::new(
                 3,
                 "backend_pid",
@@ -106,9 +103,7 @@ impl SessionsView {
                 Some(
                     "Parsed PostgreSQL backend PID when session_id follows pg-<pid> or \
                      pg-<pid>-<config-hash>"
-                        .to_string(),
-                ),
-            ),
+                        .to_string())),
             ColumnDefinition::new(
                 4,
                 "authenticated_user_id",
@@ -118,8 +113,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Authenticated KalamDB user id for this connection session".to_string()),
-            ),
+                Some("Authenticated KalamDB user id for this connection session".to_string())),
             ColumnDefinition::new(
                 5,
                 "current_schema",
@@ -129,8 +123,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current schema reported by the connection session".to_string()),
-            ),
+                Some("Current schema reported by the connection session".to_string())),
             ColumnDefinition::new(
                 6,
                 "state",
@@ -140,8 +133,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Session state similar to pg_stat_activity semantics".to_string()),
-            ),
+                Some("Session state similar to pg_stat_activity semantics".to_string())),
             ColumnDefinition::new(
                 7,
                 "transaction_id",
@@ -151,8 +143,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Active remote transaction identifier, if any".to_string()),
-            ),
+                Some("Active remote transaction identifier, if any".to_string())),
             ColumnDefinition::new(
                 8,
                 "transaction_state",
@@ -162,8 +153,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current remote transaction lifecycle state".to_string()),
-            ),
+                Some("Current remote transaction lifecycle state".to_string())),
             ColumnDefinition::new(
                 9,
                 "transaction_has_writes",
@@ -173,8 +163,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether the active transaction has performed writes".to_string()),
-            ),
+                Some("Whether the active transaction has performed writes".to_string())),
             ColumnDefinition::new(
                 10,
                 "client_addr",
@@ -184,8 +173,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Observed client socket address for the gRPC session".to_string()),
-            ),
+                Some("Observed client socket address for the gRPC session".to_string())),
             ColumnDefinition::new(
                 11,
                 "transport",
@@ -195,8 +183,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Transport used by the session".to_string()),
-            ),
+                Some("Transport used by the session".to_string())),
             ColumnDefinition::new(
                 12,
                 "opened_at",
@@ -206,8 +193,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("When the server first observed this session".to_string()),
-            ),
+                Some("When the server first observed this session".to_string())),
             ColumnDefinition::new(
                 13,
                 "last_seen_at",
@@ -217,8 +203,7 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Most recent RPC activity timestamp for this session".to_string()),
-            ),
+                Some("Most recent RPC activity timestamp for this session".to_string())),
             ColumnDefinition::new(
                 14,
                 "last_method",
@@ -228,15 +213,13 @@ impl SessionsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Most recent gRPC method observed for this session".to_string()),
-            ),
+                Some("Most recent gRPC method observed for this session".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Sessions,
             columns,
-            "Active connection sessions tracked by KalamDB",
-        )
+            "Active connection sessions tracked by KalamDB")
     }
 }
 
@@ -351,8 +334,7 @@ impl VirtualView for SessionsView {
                 Arc::new(opened_ats.finish()) as ArrayRef,
                 Arc::new(last_seen_ats.finish()) as ArrayRef,
                 Arc::new(last_methods.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|error| {
             crate::error::RegistryError::Other(format!(
                 "Failed to build system.sessions batch: {}",
@@ -380,19 +362,19 @@ mod tests {
         let view = SessionsView::new();
         let callback: SessionsSnapshotCallback = Arc::new(|| {
             vec![ConnectionSessionSnapshot {
-                session_id: "pg-321-deadbeef".to_string(),
-                origin: "extension_bridge".to_string(),
-                backend_pid: Some(321),
-                authenticated_user_id: Some("bridge-user".to_string()),
-                current_schema: Some("app".to_string()),
-                state: "idle in transaction".to_string(),
-                transaction_id: Some("tx-pg-321-0".to_string()),
-                transaction_state: Some("active".to_string()),
+                session_id:             "pg-321-deadbeef".to_string(),
+                origin:                 "extension_bridge".to_string(),
+                backend_pid:            Some(321),
+                authenticated_user_id:  Some("bridge-user".to_string()),
+                current_schema:         Some("app".to_string()),
+                state:                  "idle in transaction".to_string(),
+                transaction_id:         Some("tx-pg-321-0".to_string()),
+                transaction_state:      Some("active".to_string()),
                 transaction_has_writes: true,
-                client_addr: Some("127.0.0.1:40000".to_string()),
-                opened_at_ms: 1,
-                last_seen_at_ms: 2,
-                last_method: Some("ExecuteQuery".to_string()),
+                client_addr:            Some("127.0.0.1:40000".to_string()),
+                opened_at_ms:           1,
+                last_seen_at_ms:        2,
+                last_method:            Some("ExecuteQuery".to_string()),
             }]
         });
         view.set_snapshot_callback(callback);

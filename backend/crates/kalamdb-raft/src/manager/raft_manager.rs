@@ -2008,6 +2008,12 @@ impl RaftManager {
             }
         }
 
+        // Abort bootstrap peer-join work so it cannot keep Arc refs to groups/storage
+        // alive after this node is leaving.
+        if let Some(handle) = self.cluster_init_handle.write().take() {
+            handle.abort();
+        }
+
         // Shutdown all Raft groups (calls OpenRaft's Raft::shutdown())
         log::debug!("[CLUSTER] Shutting down all Raft groups...");
 

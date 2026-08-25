@@ -3,7 +3,7 @@
 //! These bridge the boundary between the live-query crate and the core server,
 //! so kalamdb-live never depends on kalamdb-core directly.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use arrow::datatypes::Schema as ArrowSchema;
 use async_trait::async_trait;
@@ -15,10 +15,16 @@ use kalamdb_commons::{
 };
 use kalamdb_live::{
     error::LiveError,
-    traits::{LiveApplyBarrier, LiveSchemaLookup, LiveSqlExecutor},
+    traits::{
+        LiveApplyBarrier, LiveAuthorization, LiveAuthorizationBinder, LiveSchemaLookup,
+        LiveSqlExecutor,
+    },
+    LiveRoute,
 };
 use kalamdb_raft::{GroupId, RaftExecutor};
+use kalamdb_rls::LiveAuthorizationRoute;
 use kalamdb_sharding::ShardRouter;
+use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider};
 
 use crate::{
     app_context::AppContext,
@@ -52,9 +58,87 @@ impl LiveSchemaLookup for SchemaRegistryLookup {
     }
 }
 
+#[derive(Debug)]
+struct TableLiveAuthorization {
+    bound: BoundLiveAuthorization,
+}
+
+impl LiveAuthorization for TableLiveAuthorization {
+    fn authorizes(&self, row: &kalamdb_commons::models::rows::Row) -> bool {
+        self.bound.authorizes(row)
+    }
+}
+
+pub struct LiveAuthorizationBinderAdapter {
+    app_context: Arc<AppContext>,
+}
+
+impl LiveAuthorizationBinderAdapter {
+    pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self { app_context }
+    }
+}
+
+#[async_trait]
+impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
+    async fn bind(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role,
+    ) -> Result<(Arc<dyn LiveAuthorization>, LiveRoute), LiveError> {
+        let table = self
+            .app_context
+            .schema_registry()
+            .get(table_id)
+            .map(|cached| Arc::clone(&cached.table))
+            .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
+        let provider = self
+            .app_context
+            .schema_registry()
+            .get_provider(table_id)
+            .ok_or_else(|| LiveError::TableNotFound(table_id.to_string()))?;
+        let provider = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                LiveError::InvalidOperation(format!(
+                    "Shared-table RLS provider unavailable for {table_id}"
+                ))
+            })?;
+        let bound = provider
+            .bind_live_authorization(user_id, role)
+            .await
+            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?;
+        let live_route = match bound
+            .live_route()
+            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?
+        {
+            LiveAuthorizationRoute::Broadcast => LiveRoute::Broadcast,
+            LiveAuthorizationRoute::Deny => LiveRoute::Deny,
+            LiveAuthorizationRoute::Keyed(keys) => {
+                let mut named_keys = HashSet::with_capacity(keys.len());
+                for (column_id, value) in keys {
+                    let column = table
+                        .columns
+                        .iter()
+                        .find(|column| column.column_id == column_id)
+                        .ok_or_else(|| {
+                            LiveError::InvalidOperation(format!(
+                                "Live RLS route column {column_id} does not exist on {table_id}"
+                            ))
+                        })?;
+                    named_keys.insert((Arc::from(column.column_name.as_str()), value));
+                }
+                LiveRoute::Keyed(Arc::new(named_keys))
+            },
+        };
+        Ok((Arc::new(TableLiveAuthorization { bound }), live_route))
+    }
+}
+
 /// Adapts [`SqlExecutor`] to the [`LiveSqlExecutor`] trait.
 pub struct SqlExecutorAdapter {
-    executor: Arc<SqlExecutor>,
+    executor:             Arc<SqlExecutor>,
     base_session_context: Arc<SessionContext>,
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@kalamdb/cli",
-  "version": "0.5.6-rc.1",
+  "version": "0.6.0-rc.0",
   "description": "KalamDB command-line interface",
   "license": "Apache-2.0",
   "homepage": "https://kalamdb.org",

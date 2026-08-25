@@ -151,13 +151,13 @@ async fn topic_has_pending_retention_cleanup(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicRetentionParams {
     /// Topic identifier (required)
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     /// Optional partition ID to clean. None means all partitions.
     #[serde(default)]
     pub partition_id: Option<u32>,
     /// Maximum messages to delete per partition.
     #[serde(default = "default_batch_size")]
-    pub batch_size: usize,
+    pub batch_size:   usize,
 }
 
 impl JobParams for TopicRetentionParams {
@@ -368,10 +368,10 @@ mod tests {
         topic.retention_seconds = retention_seconds;
         topic.retention_max_bytes = retention_max_bytes;
         topic.routes.push(TopicRoute {
-            table_id: table_id.clone(),
-            op: TopicOp::Insert,
-            payload_mode: PayloadMode::Full,
-            filter_expr: None,
+            table_id:           table_id.clone(),
+            op:                 TopicOp::Insert,
+            payload_mode:       PayloadMode::Full,
+            filter_expr:        None,
             partition_key_expr: None,
         });
 
@@ -389,17 +389,17 @@ mod tests {
     fn test_topic_retention_params_validation() {
         // Valid params
         let valid_params = TopicRetentionParams {
-            topic_id: TopicId::new("topic_123"),
+            topic_id:     TopicId::new("topic_123"),
             partition_id: None,
-            batch_size: 1000,
+            batch_size:   1000,
         };
         assert!(valid_params.validate().is_ok());
 
         // Invalid: zero batch size
         let invalid_params = TopicRetentionParams {
-            topic_id: TopicId::new("topic_123"),
+            topic_id:     TopicId::new("topic_123"),
             partition_id: None,
-            batch_size: 0,
+            batch_size:   0,
         };
         assert!(invalid_params.validate().is_err());
     }
@@ -407,9 +407,9 @@ mod tests {
     #[test]
     fn test_topic_retention_params_serialization() {
         let params = TopicRetentionParams {
-            topic_id: TopicId::new("topic_abc"),
+            topic_id:     TopicId::new("topic_abc"),
             partition_id: Some(0),
-            batch_size: 100,
+            batch_size:   100,
         };
 
         // Test JSON round-trip
@@ -425,9 +425,9 @@ mod tests {
         let app_ctx = test_app_context_simple();
         let executor = TopicRetentionExecutor::new();
         let params = TopicRetentionParams {
-            topic_id: TopicId::new("missing.topic"),
+            topic_id:     TopicId::new("missing.topic"),
             partition_id: None,
-            batch_size: 100,
+            batch_size:   100,
         };
 
         let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
@@ -440,9 +440,9 @@ mod tests {
         let executor = TopicRetentionExecutor::new();
         let (topic, _) = setup_topic_with_route(&app_ctx, "disabled.topic", None, None).await;
         let params = TopicRetentionParams {
-            topic_id: topic.topic_id.clone(),
+            topic_id:     topic.topic_id.clone(),
             partition_id: None,
-            batch_size: 100,
+            batch_size:   100,
         };
 
         let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
@@ -463,9 +463,9 @@ mod tests {
             .unwrap();
 
         let params = TopicRetentionParams {
-            topic_id: topic.topic_id.clone(),
+            topic_id:     topic.topic_id.clone(),
             partition_id: Some(0),
-            batch_size: 100,
+            batch_size:   100,
         };
 
         let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
@@ -486,9 +486,9 @@ mod tests {
             .unwrap();
 
         let params = TopicRetentionParams {
-            topic_id: topic.topic_id.clone(),
+            topic_id:     topic.topic_id.clone(),
             partition_id: Some(0),
-            batch_size: 100,
+            batch_size:   100,
         };
 
         let should_run = executor.pre_validate(&app_ctx, &params).await.unwrap();
@@ -511,9 +511,9 @@ mod tests {
         }
 
         let params = TopicRetentionParams {
-            topic_id: topic.topic_id.clone(),
+            topic_id:     topic.topic_id.clone(),
             partition_id: Some(0),
-            batch_size: 100,
+            batch_size:   100,
         };
         let ctx = JobContext::new(
             app_ctx.clone(),

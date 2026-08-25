@@ -24,7 +24,7 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     let resp = server
         .execute_sql(&format!(
             "CREATE TABLE {}.{} (id INT PRIMARY KEY, v TEXT) WITH (TYPE='USER', \
-                 STORAGE_ID='local', FLUSH_POLICY='rows:5')",
+             STORAGE_ID='local', FLUSH_POLICY='rows:5')",
             ns, table_user
         ))
         .await?;

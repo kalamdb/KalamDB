@@ -40,6 +40,7 @@ fn smoke_test_leader_read_succeeds_on_leader() {
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT NOT NULL)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
     wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
+    grant_public_shared_table_access(&full_table_name);
 
     // Insert test data
     execute_sql_as_root_via_client(&format!(
@@ -95,6 +96,7 @@ fn smoke_test_leader_read_with_filters() {
     );
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
     wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
+    grant_public_shared_table_access(&full_table_name);
 
     // Insert multiple rows
     for i in 0..10 {
@@ -158,6 +160,7 @@ fn smoke_test_leader_read_shared_table() {
         format!("CREATE SHARED TABLE {} (key TEXT PRIMARY KEY, value TEXT)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE SHARED TABLE should succeed");
     wait_for_table_ready(&full_table_name, Duration::from_secs(3)).expect("table should be ready");
+    grant_public_select_shared_table(&full_table_name);
 
     // Insert data
     execute_sql_as_root_via_client(&format!(
@@ -274,6 +277,7 @@ fn smoke_test_read_after_write_consistency() {
     let create_table_sql =
         format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, counter INT)", full_table_name);
     execute_sql_as_root_via_client(&create_table_sql).expect("CREATE TABLE should succeed");
+    grant_public_shared_table_access(&full_table_name);
 
     // Perform write-then-read cycles
     for i in 0..20 {

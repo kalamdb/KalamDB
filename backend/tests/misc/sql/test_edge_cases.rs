@@ -210,7 +210,7 @@ async fn test_maximum_password_length() {
 
     // Try to authenticate via credential flow
     let auth_request = AuthRequest::Credentials {
-        user: "max_pass_user".to_string(),
+        user:     "max_pass_user".to_string(),
         password: max_password,
     };
     let result = authenticate(auth_request, &connection_info, &user_repo).await;

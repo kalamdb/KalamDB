@@ -71,6 +71,7 @@ fn open_session_appears_in_snapshot_with_origin_and_auth() {
     assert_eq!(snapshots[0].current_schema.as_deref(), Some("app"));
     assert_eq!(snapshots[0].client_addr.as_deref(), Some("127.0.0.1:5432"));
     assert_eq!(snapshots[0].authenticated_user_id.as_ref().map(UserId::as_str), Some("user_1"));
+    assert_eq!(snapshots[0].authenticated_role, Role::User);
 }
 
 #[test]

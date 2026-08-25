@@ -16,24 +16,24 @@ async fn create_system_user(server: &TestServer, username: &str) -> UserId {
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = kalamdb_system::User {
-        user_id: user_id.clone(),
-        password_hash: "hashed".to_string(),
-        role: Role::System,
-        name: None,
-        email: Some(format!("{}@kalamdb.local", username)),
-        auth_type: AuthType::Password,
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: None,
+        user_id:               user_id.clone(),
+        password_hash:         "hashed".to_string(),
+        role:                  Role::System,
+        name:                  None,
+        email:                 Some(format!("{}@kalamdb.local", username)),
+        auth_type:             AuthType::Password,
+        auth_data:             None,
+        storage_mode:          StorageMode::Table,
+        storage_id:            None,
         failed_login_attempts: 0,
-        locked_until: None,
-        last_login_at: None,
-        created_at: now,
-        updated_at: now,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        invited_by: None,
+        locked_until:          None,
+        last_login_at:         None,
+        created_at:            now,
+        updated_at:            now,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        invited_by:            None,
     };
 
     // Ignore error if user already exists (shared DB in tests)
@@ -162,17 +162,14 @@ async fn test_audit_log_for_table_access_change() {
         panic!("CREATE NAMESPACE failed: {:?}", resp.error);
     }
 
-    // Use a regular table instead of shared table if shared tables are problematic in tests
-    // But ACCESS LEVEL is only for shared tables.
-    // Let's try to create a shared table with a unique name
+    // Shared tables are FORCE RLS; grant visibility with CREATE POLICY.
     let table_name = format!("analytics.events_{}", chrono::Utc::now().timestamp_millis());
 
     // Note: If this fails due to missing column families, we might need to skip this part of the
     // test or update TestServer to support shared tables.
     // For now, let's try to proceed and see if unique name helps (unlikely if it's a CF issue).
 
-    let sql =
-        format!("CREATE SHARED TABLE {} (id INT, value TEXT) ACCESS LEVEL private", table_name);
+    let sql = format!("CREATE SHARED TABLE {} (id INT, value TEXT)", table_name);
     let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
 
     if resp.status != ResponseStatus::Success {
@@ -180,9 +177,11 @@ async fn test_audit_log_for_table_access_change() {
         return;
     }
 
-    let sql = format!("ALTER TABLE {} SET ACCESS LEVEL public", table_name);
+    let policy_name = format!("events_select_{}", chrono::Utc::now().timestamp_millis());
+    let sql =
+        format!("CREATE POLICY {policy_name} ON {table_name} FOR SELECT TO PUBLIC USING (true)");
     let resp = server.execute_sql_as_user(&sql, admin_id.as_str()).await;
-    assert_eq!(resp.status, ResponseStatus::Success, "ALTER TABLE failed");
+    assert_eq!(resp.status, ResponseStatus::Success, "CREATE POLICY failed: {:?}", resp.error);
 
     let logs = server
         .app_context
@@ -191,9 +190,9 @@ async fn test_audit_log_for_table_access_change() {
         .scan_all()
         .expect("Failed to read audit log");
 
-    let entry = find_audit_entry(&logs, "ALTER_TABLE", &table_name);
-    // Details string: "Operation: SET ACCESS LEVEL Public, New Version: ..."
-    assert!(entry.details.as_ref().unwrap().contains("SET ACCESS LEVEL Public"));
+    let target = format!("{policy_name} ON {table_name}");
+    let entry = find_audit_entry(&logs, "CREATE_POLICY", &target);
+    assert_eq!(entry.action, "CREATE_POLICY");
 }
 
 #[actix_web::test]

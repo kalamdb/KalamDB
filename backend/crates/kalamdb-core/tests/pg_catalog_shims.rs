@@ -4,21 +4,20 @@ use datafusion_common::ScalarValue;
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
     models::{KalamCellValue, SessionOrigin, UserId},
-    NamespaceId, Role, TableAccess,
+    NamespaceId, Role,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::sql::{context::ExecutionContext, ExecutionResult};
 
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
-    create_shared_table, create_shared_table_with_access, execute_err, execute_ok,
+    create_shared_table, execute_err, execute_ok,
     execute_ok_with_params, observer_exec_ctx, result_rows, unique_namespace,
 };
 
 fn string_values(
     rows: &[std::collections::HashMap<String, KalamCellValue>],
-    field: &str,
-) -> Vec<String> {
+    field: &str) -> Vec<String> {
     rows.iter()
         .filter_map(|row| row.get(field).and_then(|value| value.as_str()).map(ToString::to_string))
         .collect()
@@ -43,10 +42,8 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
                 "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = '{}'",
                 table_id.namespace_id()
             )
-            .as_str(),
-        )
-        .await,
-    );
+            .as_str())
+        .await);
     assert_eq!(
         string_values(&namespace_rows, "nspname"),
         vec![table_id.namespace_id().to_string()]
@@ -56,10 +53,8 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
         execute_ok(
             &executor,
             &observer_ctx,
-            "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'",
-        )
-        .await,
-    );
+            "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items'")
+        .await);
     assert_eq!(string_values(&class_rows, "relname"), vec!["items".to_string()]);
 
     let attribute_rows = result_rows(
@@ -73,28 +68,23 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
                  WHERE n.nspname = '{namespace}' AND c.relname = 'items' \
                    AND a.attname IN ('id', 'name') ORDER BY a.attname"
             )
-            .as_str(),
-        )
-        .await,
-    );
+            .as_str())
+        .await);
     assert_eq!(
         string_values(&attribute_rows, "attname"),
         vec!["id".to_string(), "name".to_string()]
     );
 
     let database_rows = result_rows(
-        execute_ok(&executor, &observer_ctx, "SELECT datname FROM pg_catalog.pg_database").await,
-    );
+        execute_ok(&executor, &observer_ctx, "SELECT datname FROM pg_catalog.pg_database").await);
     assert_eq!(string_values(&database_rows, "datname"), vec!["kalam".to_string()]);
 
     let non_template_rows = result_rows(
         execute_ok(
             &executor,
             &observer_ctx,
-            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false ORDER BY datname",
-        )
-        .await,
-    );
+            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false ORDER BY datname")
+        .await);
     assert_eq!(string_values(&non_template_rows, "datname"), vec!["kalam".to_string()]);
 
     let text_param_rows = result_rows(
@@ -102,10 +92,8 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
             &executor,
             &observer_ctx,
             "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = $1 ORDER BY datname",
-            vec![ScalarValue::Boolean(Some(false))],
-        )
-        .await,
-    );
+            vec![ScalarValue::Boolean(Some(false))])
+        .await);
     assert_eq!(string_values(&text_param_rows, "datname"), vec!["kalam".to_string()]);
 
     let unqualified_param_rows = result_rows(
@@ -113,11 +101,26 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
             &executor,
             &observer_ctx,
             "SELECT datname FROM pg_database WHERE datistemplate = $1 ORDER BY datname",
-            vec![ScalarValue::Boolean(Some(false))],
-        )
-        .await,
-    );
+            vec![ScalarValue::Boolean(Some(false))])
+        .await);
     assert_eq!(string_values(&unqualified_param_rows, "datname"), vec!["kalam".to_string()]);
+
+    let text_cast_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT datname::text FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .await);
+    assert_eq!(string_values(&text_cast_rows, "datname"), vec!["kalam".to_string()]);
+
+    let allowconn_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT datname FROM pg_catalog.pg_database WHERE datallowconn AND NOT datistemplate \
+             ORDER BY datname")
+        .await);
+    assert_eq!(string_values(&allowconn_rows, "datname"), vec!["kalam".to_string()]);
 }
 
 #[tokio::test]
@@ -140,10 +143,8 @@ async fn pg_catalog_shim_pg_type_lists_column_types_for_namespace() {
                  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
                  WHERE n.nspname = '{namespace}' ORDER BY t.typname"
             )
-            .as_str(),
-        )
-        .await,
-    );
+            .as_str())
+        .await);
     let typnames = string_values(&type_rows, "typname");
     assert!(typnames.contains(&"int8".to_string()));
     assert!(typnames.contains(&"text".to_string()));
@@ -272,10 +273,8 @@ async fn pg_catalog_shim_beekeeper_column_metadata_query() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
 
     let columns = string_values(&rows, "attname");
     assert!(columns.contains(&"id".to_string()));
@@ -319,8 +318,7 @@ async fn pg_catalog_shim_beekeeper_information_schema_column_query() {
         vec![
             ScalarValue::Utf8(Some(namespace.to_string())),
             ScalarValue::Utf8(Some("items".to_string())),
-        ],
-    )
+        ])
     .await;
 
     let rows = result_rows(
@@ -332,10 +330,8 @@ async fn pg_catalog_shim_beekeeper_information_schema_column_query() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
 
     let columns = string_values(&rows, "column_name");
     assert!(columns.contains(&"id".to_string()));
@@ -365,10 +361,8 @@ async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
     assert_eq!(string_values(&table_rows, "tablename"), vec!["items".to_string()]);
 
     let view_rows = result_rows(
@@ -379,10 +373,8 @@ async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
     assert!(view_rows.is_empty(), "user tables must not be exposed through pg_views");
 
     let matview_rows = result_rows(
@@ -393,10 +385,8 @@ async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
     assert!(matview_rows.is_empty(), "user tables must not be exposed through pg_matviews");
 }
 
@@ -414,10 +404,8 @@ async fn information_schema_views_lists_system_views_not_tables() {
             &executor,
             &observer_ctx,
             "SELECT table_schema, table_name FROM information_schema.views \
-             WHERE table_schema = 'system' AND table_name = 'cluster'",
-        )
-        .await,
-    );
+             WHERE table_schema = 'system' AND table_name = 'cluster'")
+        .await);
     assert_eq!(
         string_values(&view_rows, "table_name"),
         vec!["cluster".to_string()],
@@ -429,10 +417,8 @@ async fn information_schema_views_lists_system_views_not_tables() {
             &executor,
             &observer_ctx,
             "SELECT table_schema, table_name FROM information_schema.views \
-             WHERE table_schema = 'system' AND table_name = 'users'",
-        )
-        .await,
-    );
+             WHERE table_schema = 'system' AND table_name = 'users'")
+        .await);
     assert!(
         table_rows.is_empty(),
         "system.users is a table and must not be listed as a view"
@@ -453,10 +439,8 @@ async fn pg_catalog_shim_classifies_views_and_tables() {
             &executor,
             &observer_ctx,
             "SELECT relname, relkind FROM pg_catalog.pg_class \
-             WHERE relname IN ('cluster', 'audit_log') ORDER BY relname",
-        )
-        .await,
-    );
+             WHERE relname IN ('cluster', 'audit_log') ORDER BY relname")
+        .await);
     let relnames = string_values(&class_rows, "relname");
     let relkinds = string_values(&class_rows, "relkind");
     assert_eq!(relnames, vec!["audit_log".to_string(), "cluster".to_string()]);
@@ -467,10 +451,8 @@ async fn pg_catalog_shim_classifies_views_and_tables() {
             &executor,
             &observer_ctx,
             "SELECT viewname FROM pg_catalog.pg_views \
-             WHERE schemaname = 'system' AND viewname = 'cluster'",
-        )
-        .await,
-    );
+             WHERE schemaname = 'system' AND viewname = 'cluster'")
+        .await);
     assert_eq!(string_values(&pg_view_rows, "viewname"), vec!["cluster".to_string()]);
 
     let pg_table_rows = result_rows(
@@ -478,10 +460,8 @@ async fn pg_catalog_shim_classifies_views_and_tables() {
             &executor,
             &observer_ctx,
             "SELECT tablename FROM pg_catalog.pg_tables \
-             WHERE schemaname = 'system' AND tablename IN ('cluster', 'audit_log') ORDER BY tablename",
-        )
-        .await,
-    );
+             WHERE schemaname = 'system' AND tablename IN ('cluster', 'audit_log') ORDER BY tablename")
+        .await);
     assert_eq!(
         string_values(&pg_table_rows, "tablename"),
         vec!["audit_log".to_string()],
@@ -506,10 +486,8 @@ async fn pg_catalog_shim_beekeeper_system_table_column_metadata() {
             vec![
                 ScalarValue::Utf8(Some("system".to_string())),
                 ScalarValue::Utf8(Some("audit_log".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
 
     let columns = string_values(&rows, "attname");
     assert!(columns.contains(&"target".to_string()));
@@ -574,10 +552,8 @@ async fn information_schema_lists_user_relation_once_as_base_table() {
             vec![
                 ScalarValue::Utf8(Some(namespace.to_string())),
                 ScalarValue::Utf8(Some("items".to_string())),
-            ],
-        )
-        .await,
-    );
+            ])
+        .await);
     assert_eq!(string_values(&rows, "table_name"), vec!["items".to_string()]);
 
     let table_types = string_values(&rows, "table_type");
@@ -603,10 +579,8 @@ async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
         execute_ok(
             &executor,
             &observer_ctx.with_namespace_id(NamespaceId::new(namespace.as_str())),
-            "SELECT typname FROM pg_type WHERE typrelid = 0 ORDER BY typname LIMIT 5",
-        )
-        .await,
-    );
+            "SELECT typname FROM pg_type WHERE typrelid = 0 ORDER BY typname LIMIT 5")
+        .await);
     assert!(
         !type_rows.is_empty(),
         "unqualified pg_type should resolve to pg_catalog.pg_type"
@@ -630,8 +604,7 @@ async fn pg_stat_activity_projects_backend_sessions() {
             session_id,
             BackendAuth::new(UserId::new("wire_user"), Role::Dba, "password", i64::MAX),
             Some("system".to_string()),
-            Some("127.0.0.1:6543".to_string()),
-        )
+            Some("127.0.0.1:6543".to_string()))
         .expect("open wire session");
 
     let rows = result_rows(
@@ -639,10 +612,8 @@ async fn pg_stat_activity_projects_backend_sessions() {
             &executor,
             &observer_ctx,
             "SELECT usename, backend_type FROM pg_catalog.pg_stat_activity WHERE usename = \
-             'wire_user'",
-        )
-        .await,
-    );
+             'wire_user'")
+        .await);
 
     assert_eq!(string_values(&rows, "usename"), vec!["wire_user".to_string()]);
     assert_eq!(string_values(&rows, "backend_type"), vec!["wire_protocol".to_string()]);
@@ -658,8 +629,7 @@ async fn pg_catalog_rbac_rejects_non_admin_stat_activity() {
     let user_ctx = ExecutionContext::new(
         UserId::new("basic_user"),
         Role::User,
-        app_ctx.base_session_context(),
-    );
+        app_ctx.base_session_context());
 
     let error =
         execute_err(&executor, &user_ctx, "SELECT pid FROM pg_catalog.pg_stat_activity").await;
@@ -671,25 +641,20 @@ async fn pg_catalog_rbac_rejects_non_admin_stat_activity() {
 
 #[tokio::test]
 #[ntest::timeout(10_000)]
-async fn pg_catalog_rbac_filters_private_table_metadata_for_non_admin() {
+async fn pg_catalog_lists_shared_tables_for_non_admin_while_rls_hides_rows() {
     let mut config = ServerConfig::default();
     config.postgres_wire.pg_catalog_enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let private_namespace = unique_namespace("pg_catalog_private");
-    let private_table = create_shared_table_with_access(
-        &app_ctx,
-        &private_namespace,
-        "private_items",
-        TableAccess::Private,
-    )
-    .await;
+    let private_table = create_shared_table(&app_ctx, &private_namespace, "private_items").await;
     let user_ctx = ExecutionContext::new(
         UserId::new("basic_user"),
         Role::User,
-        app_ctx.base_session_context(),
-    );
+        app_ctx.base_session_context());
 
+    // Shared tables are FORCE RLS, not ACCESS_LEVEL. pg_catalog may list the
+    // relation while SELECT returns 0 rows until CREATE POLICY grants access.
     let namespace_rows = result_rows(
         execute_ok(
             &executor,
@@ -698,21 +663,20 @@ async fn pg_catalog_rbac_filters_private_table_metadata_for_non_admin() {
                 "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname = '{}'",
                 private_table.namespace_id()
             )
-            .as_str(),
-        )
-        .await,
+            .as_str())
+        .await);
+    assert_eq!(
+        string_values(&namespace_rows, "nspname"),
+        vec![private_table.namespace_id().to_string()]
     );
-    assert!(namespace_rows.is_empty());
 
     let class_rows = result_rows(
         execute_ok(
             &executor,
             &user_ctx,
-            "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'private_items'",
-        )
-        .await,
-    );
-    assert!(class_rows.is_empty());
+            "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'private_items'")
+        .await);
+    assert_eq!(string_values(&class_rows, "relname"), vec!["private_items".to_string()]);
 
     let attribute_rows = result_rows(
         execute_ok(
@@ -720,11 +684,32 @@ async fn pg_catalog_rbac_filters_private_table_metadata_for_non_admin() {
             &user_ctx,
             "SELECT a.attname FROM pg_catalog.pg_attribute a \
              JOIN pg_catalog.pg_class c ON a.attrelid = c.oid \
-             WHERE c.relname = 'private_items'",
-        )
-        .await,
+             WHERE c.relname = 'private_items' AND a.attname IN ('id', 'name') \
+             ORDER BY a.attname")
+        .await);
+    assert_eq!(
+        string_values(&attribute_rows, "attname"),
+        vec!["id".to_string(), "name".to_string()]
     );
-    assert!(attribute_rows.is_empty());
+
+    let data_rows = result_rows(
+        execute_ok(
+            &executor,
+            &user_ctx,
+            &format!(
+                "SELECT id FROM {}.private_items",
+                private_table.namespace_id()
+            ))
+        .await);
+    assert!(data_rows.is_empty());
+
+    let system_class_rows = result_rows(
+        execute_ok(
+            &executor,
+            &user_ctx,
+            "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'sessions'")
+        .await);
+    assert!(system_class_rows.is_empty());
 }
 
 #[tokio::test]

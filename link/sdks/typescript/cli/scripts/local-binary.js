@@ -41,7 +41,7 @@ function tryInstallFromLocalBinary(packageRoot) {
 
   const installedPath = installedBinaryPath(packageRoot);
   if (fs.existsSync(installedPath)) {
-    return true;
+    return false;
   }
 
   const source = localKalamBinaryCandidates(packageRoot).find((candidate) => {
@@ -62,7 +62,19 @@ function tryInstallFromLocalBinary(packageRoot) {
   return true;
 }
 
+function hasWorkspaceKalamBinary(packageRoot) {
+  if (!shouldUseLocalBinaryFallback()) {
+    return false;
+  }
+
+  const installedPath = installedBinaryPath(packageRoot);
+  return localKalamBinaryCandidates(packageRoot).some(
+    (candidate) => candidate !== installedPath && fs.existsSync(candidate),
+  );
+}
+
 module.exports = {
+  hasWorkspaceKalamBinary,
   localKalamBinaryCandidates,
   monorepoRootFromPackageRoot,
   shouldUseLocalBinaryFallback,

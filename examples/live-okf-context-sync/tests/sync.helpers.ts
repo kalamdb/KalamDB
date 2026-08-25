@@ -23,11 +23,17 @@ export function aliceConnection() {
 
 export async function ensureOkfSchema(root: Awaited<ReturnType<typeof login>>): Promise<void> {
   const schema = await readFile(resolve('kalam/schema.sql'), 'utf8');
-  try {
-    await root.client.query(schema);
-  } catch (error) {
-    if (!/already exists/i.test(String(error))) {
-      throw error;
+  const statements = schema
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+  for (const statement of statements) {
+    try {
+      await root.client.query(statement);
+    } catch (error) {
+      if (!/already exists/i.test(String(error))) {
+        throw error;
+      }
     }
   }
 }

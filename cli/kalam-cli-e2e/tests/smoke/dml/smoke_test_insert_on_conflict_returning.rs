@@ -26,11 +26,12 @@ impl UsersFixture {
 
         let create_sql = format!(
             "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT, age INT) \
-             WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')",
+             WITH (TYPE='SHARED')",
             full_table
         );
         execute_sql_as_root_via_client(&create_sql)
             .expect("create shared users table should succeed");
+        grant_public_shared_table_access(&full_table);
 
         Self {
             namespace,
@@ -456,11 +457,9 @@ fn smoke_on_conflict_user_table_isolation() {
     );
 
     let json_a = parse_client_json(
-        &execute_sql_via_client_as_json(&user_a, password, &upsert_a).expect("user A upsert"),
-    );
+        &execute_sql_via_client_as_json(&user_a, password, &upsert_a).expect("user A upsert"));
     let json_b = parse_client_json(
-        &execute_sql_via_client_as_json(&user_b, password, &upsert_b).expect("user B upsert"),
-    );
+        &execute_sql_via_client_as_json(&user_b, password, &upsert_b).expect("user B upsert"));
 
     assert_status_success(&json_a, "user A upsert");
     assert_status_success(&json_b, "user B upsert");
@@ -475,14 +474,12 @@ fn smoke_on_conflict_user_table_isolation() {
     let view_a = execute_sql_via_client_as(
         &user_a,
         password,
-        &format!("SELECT text FROM {} WHERE id = 1", fixture.full_table),
-    )
+        &format!("SELECT text FROM {} WHERE id = 1", fixture.full_table))
     .expect("user A select");
     let view_b = execute_sql_via_client_as(
         &user_b,
         password,
-        &format!("SELECT text FROM {} WHERE id = 1", fixture.full_table),
-    )
+        &format!("SELECT text FROM {} WHERE id = 1", fixture.full_table))
     .expect("user B select");
 
     assert!(view_a.contains("A note"), "user A should see own row: {view_a}");

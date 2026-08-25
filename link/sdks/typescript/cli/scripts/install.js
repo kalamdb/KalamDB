@@ -6,26 +6,30 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const { bootstrapBinary } = require('./bootstrap');
-const { tryInstallFromLocalBinary } = require('./local-binary');
+const { hasWorkspaceKalamBinary, tryInstallFromLocalBinary } = require('./local-binary');
 const { installedBinaryPath, packageRootFromEnv } = require('./platforms');
 
 async function main() {
-  if (process.env.KALAM_SKIP_DOWNLOAD === '1') {
-    console.log('Skipping KalamDB CLI binary download because KALAM_SKIP_DOWNLOAD=1');
-    return;
-  }
-
   const packageRoot = packageRootFromEnv();
   const packageJson = require(path.join(packageRoot, 'package.json'));
   const version = (process.env.KALAM_CLI_VERSION || packageJson.version).replace(/^v/, '');
   const binaryPath = installedBinaryPath(packageRoot);
   const userAgent = `@kalamdb/cli/${packageJson.version}`;
+  const skipDownload = process.env.KALAM_SKIP_DOWNLOAD === '1';
+  const usedLocalBinary = tryInstallFromLocalBinary(packageRoot);
 
-  if (!fs.existsSync(binaryPath) && !tryInstallFromLocalBinary(packageRoot)) {
+  if (!fs.existsSync(binaryPath)) {
+    if (skipDownload) {
+      throw new Error('KALAM_SKIP_DOWNLOAD=1 and no kalam binary is available');
+    }
     await bootstrapBinary(packageRoot, version, userAgent);
   }
 
-  runKalamUpdate(binaryPath, version);
+  // In-repo installs reuse target/debug|release kalam. `kalam update` would
+  // fetch GitHub assets that do not exist for unpublished prereleases.
+  if (!skipDownload && !usedLocalBinary && !hasWorkspaceKalamBinary(packageRoot)) {
+    runKalamUpdate(binaryPath, version);
+  }
   logLocalInstallHint(binaryPath);
 }
 

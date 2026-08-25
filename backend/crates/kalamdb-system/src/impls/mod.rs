@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::{arrow::datatypes::SchemaRef, datasource::TableProvider};
 use kalamdb_commons::{models::schemas::TableDefinition, StorageId, TableId, UserId};
 use kalamdb_store::StorageError;
 
@@ -24,48 +24,41 @@ pub trait ManifestService: Send + Sync {
     fn get_or_load(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError>;
+        user_id: Option<&UserId>) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError>;
 
     /// Async version of get_or_load to avoid blocking the tokio runtime.
     async fn get_or_load_async(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError>;
+        user_id: Option<&UserId>) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError>;
 
     fn validate_manifest(&self, manifest: &Manifest) -> Result<(), StorageError>;
 
     fn mark_as_stale(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<(), StorageError>;
+        user_id: Option<&UserId>) -> Result<(), StorageError>;
 
     fn rebuild_manifest(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Manifest, StorageError>;
+        user_id: Option<&UserId>) -> Result<Manifest, StorageError>;
 
     fn mark_pending_write(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<(), StorageError>;
+        user_id: Option<&UserId>) -> Result<(), StorageError>;
 
     fn ensure_manifest_initialized(
         &self,
         table_id: &TableId,
-        user_id: Option<&UserId>,
-    ) -> Result<Manifest, StorageError>;
+        user_id: Option<&UserId>) -> Result<Manifest, StorageError>;
 
     fn stage_before_flush(
         &self,
         table_id: &TableId,
         user_id: Option<&UserId>,
-        manifest: &Manifest,
-    ) -> Result<(), StorageError>;
+        manifest: &Manifest) -> Result<(), StorageError>;
 
     fn get_manifest_user_ids(&self, table_id: &TableId) -> Result<Vec<UserId>, StorageError>;
 }
@@ -78,16 +71,20 @@ pub trait SchemaRegistry: Send + Sync {
 
     fn get_table_if_exists(
         &self,
-        table_id: &TableId,
-    ) -> Result<Option<Arc<TableDefinition>>, Self::Error>;
+        table_id: &TableId) -> Result<Option<Arc<TableDefinition>>, Self::Error>;
 
     fn get_arrow_schema_for_version(
         &self,
         table_id: &TableId,
-        schema_version: u32,
-    ) -> Result<SchemaRef, Self::Error>;
+        schema_version: u32) -> Result<SchemaRef, Self::Error>;
 
     fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, Self::Error>;
+
+    fn get_table_provider(
+        &self,
+        _table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        None
+    }
 }
 
 /// Interface for cluster leadership checks used by providers.

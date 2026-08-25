@@ -19,10 +19,10 @@ use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorIndexParams {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     #[serde(default)]
-    pub user_id: Option<UserId>,
+    pub user_id:    Option<UserId>,
 }
 
 impl JobParams for VectorIndexParams {

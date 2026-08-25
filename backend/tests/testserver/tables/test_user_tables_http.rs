@@ -56,7 +56,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
         let resp = server
             .execute_sql(&format!(
                 "CREATE TABLE {}.notes (id TEXT PRIMARY KEY, content TEXT, priority INT) WITH \
-                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:50')",
+                 (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:50')",
                 ns
             ))
             .await?;
@@ -166,7 +166,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
         let resp = server
             .execute_sql(&format!(
                 "CREATE TABLE {}.{} (id TEXT PRIMARY KEY, content TEXT) WITH (TYPE='USER', \
-                     STORAGE_ID='local', FLUSH_POLICY='rows:2')",
+                 STORAGE_ID='local', FLUSH_POLICY='rows:2')",
                 ns, table
             ))
             .await?;

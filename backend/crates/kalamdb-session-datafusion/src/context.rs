@@ -1,7 +1,7 @@
 use std::any::Any;
 
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
-use kalamdb_commons::models::{ReadContext, Role, UserId};
+use kalamdb_commons::{models::{ReadContext, Role, UserId}, PolicyCommand};
 use kalamdb_session::UserContext;
 
 /// Session-level user context stored in DataFusion config extensions.
@@ -78,6 +78,46 @@ impl ExtensionOptions for SessionUserContext {
 
 impl ConfigExtension for SessionUserContext {
     const PREFIX: &'static str = "kalamdb_user";
+}
+
+/// Per-operation RLS command used while a provider performs DML visibility scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RlsCommandContext {
+    pub command: PolicyCommand,
+}
+
+impl Default for RlsCommandContext {
+    fn default() -> Self {
+        Self {
+            command: PolicyCommand::Select,
+        }
+    }
+}
+
+impl ExtensionOptions for RlsCommandContext {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn cloned(&self) -> Box<dyn ExtensionOptions> {
+        Box::new(*self)
+    }
+
+    fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
+        Ok(())
+    }
+
+    fn entries(&self) -> Vec<ConfigEntry> {
+        vec![]
+    }
+}
+
+impl ConfigExtension for RlsCommandContext {
+    const PREFIX: &'static str = "kalamdb_rls_command";
 }
 
 /// Session flag used to opt into scan-level diagnostics for `EXPLAIN ANALYZE`.

@@ -9,14 +9,11 @@
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use kalam_client::models::{ChangeEvent, ResponseStatus};
 use kalamdb_commons::Role;
 use tokio::time::sleep;
 
 use super::helpers::*;
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Main DDL while active scenario test
 #[tokio::test]

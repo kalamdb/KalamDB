@@ -6,7 +6,7 @@
 
 use wasm_bindgen::prelude::*;
 
-mod client;
+mod wasm_client;
 mod file_ref;
 mod helpers;
 mod reconnect;
@@ -15,7 +15,7 @@ mod validation;
 mod wasm_auth;
 mod wasm_timestamp;
 
-pub use client::KalamClient;
+pub use wasm_client::KalamClient;
 pub use file_ref::{
     file_ref_download_url, file_ref_relative_path, file_ref_relative_url, file_ref_stored_name,
 };

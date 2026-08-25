@@ -16,21 +16,15 @@ pub mod system;
 pub mod view_base;
 
 pub use error::*;
-pub use view_base::*;
-
+#[allow(deprecated)]
+pub use system::columns::{create_columns_provider, ColumnsTableProvider, ColumnsView};
+#[allow(deprecated)]
+pub use system::tables::{create_tables_provider, TablesTableProvider, TablesView};
 // Re-export `system` view modules at the crate root for backward compatibility.
 // `system::tables` is omitted because it collides with `pg_catalog::tables`.
 pub use system::{
-    cluster, cluster_groups, columns, datatypes, describe, live, server_logs, sessions,
-    settings, slow_queries, stats, transactions,
+    cluster, cluster_groups, columns, datatypes, describe, live, server_logs, sessions, settings,
+    slow_queries, stats, transactions,
 };
-#[allow(deprecated)]
-pub use system::columns::{
-    create_columns_provider, ColumnsTableProvider, ColumnsView,
-};
-pub use system::datatypes::create_datatypes_provider;
-#[allow(deprecated)]
-pub use system::tables::{
-    create_tables_provider, TablesTableProvider, TablesView,
-};
-pub use system::system_view_table_definition;
+pub use system::{datatypes::create_datatypes_provider, system_view_table_definition};
+pub use view_base::*;

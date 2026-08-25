@@ -28,13 +28,14 @@ use kalamdb_datafusion_sources::{
 };
 use kalamdb_system::SystemTablesRegistry;
 
+use super::catalog_metadata::{normalize_column_types, CatalogMetadataIndex};
 use crate::pg_catalog::type_mapping::{
-    arrow_info_type_to_kalam_sql_name, arrow_info_type_to_udt_name, udt_name_to_info_schema_data_type,
+    arrow_info_type_to_kalam_sql_name, arrow_info_type_to_udt_name,
+    udt_name_to_info_schema_data_type,
 };
 
-use super::catalog_metadata::{normalize_column_types, CatalogMetadataIndex};
-
 const IS_GENERATED: &str = "is_generated";
+const IS_IDENTITY: &str = "is_identity";
 const KDB_COLUMN_ID: &str = "kdb_column_id";
 const KDB_COMMENT: &str = "kdb_comment";
 const KDB_DATA_TYPE: &str = "kdb_data_type";
@@ -50,6 +51,7 @@ const COLUMN_EXTENSION_FIELDS: &[&str] = &[
     UDT_NAME,
     UDT_SCHEMA,
     IS_GENERATED,
+    IS_IDENTITY,
     KDB_DATA_TYPE,
     KDB_NAMESPACE_ID,
     KDB_VERSION,
@@ -79,16 +81,15 @@ fn extended_schema(base: &SchemaRef) -> SchemaRef {
 /// Wraps DataFusion's `information_schema.columns` and normalizes type metadata.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaColumnsProvider {
-    inner: Arc<dyn TableProvider>,
-    schema: SchemaRef,
+    inner:         Arc<dyn TableProvider>,
+    schema:        SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
 impl ExtendedInformationSchemaColumnsProvider {
     pub fn new(
         catalog_list: Arc<dyn datafusion::catalog::CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>,
-    ) -> Self {
+        system_tables: Arc<SystemTablesRegistry>) -> Self {
         let inner = {
             let catalog_list = Arc::clone(&catalog_list);
             std::thread::spawn(move || {
@@ -119,8 +120,7 @@ impl ExtendedInformationSchemaColumnsProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<RecordBatch> {
+        limit: Option<usize>) -> DataFusionResult<RecordBatch> {
         let plan = self.inner.scan(state, None, filters, limit).await?;
         let task_ctx = state.task_ctx();
         let mut stream = plan.execute(0, task_ctx)?;
@@ -146,8 +146,7 @@ impl ExtendedInformationSchemaColumnsProvider {
 fn normalize_columns_batch(
     batch: &RecordBatch,
     output_schema: &SchemaRef,
-    system_tables: &SystemTablesRegistry,
-) -> DataFusionResult<RecordBatch> {
+    system_tables: &SystemTablesRegistry) -> DataFusionResult<RecordBatch> {
     let table_schema_idx = batch.schema().index_of("table_schema").map_err(plan_err)?;
     let table_name_idx = batch.schema().index_of("table_name").map_err(plan_err)?;
     let column_name_idx = batch.schema().index_of("column_name").map_err(plan_err)?;
@@ -238,8 +237,7 @@ fn normalize_columns_batch(
                     batch,
                     row,
                     numeric_precision_idx,
-                    numeric_precisions.as_mut().unwrap(),
-                );
+                    numeric_precisions.as_mut().unwrap());
             }
             if numeric_scales.is_some() {
                 copy_optional_u64(batch, row, numeric_scale_idx, numeric_scales.as_mut().unwrap());
@@ -249,8 +247,7 @@ fn normalize_columns_batch(
                     batch,
                     row,
                     datetime_precision_idx,
-                    datetime_precisions.as_mut().unwrap(),
-                );
+                    datetime_precisions.as_mut().unwrap());
             }
         }
     }
@@ -275,8 +272,11 @@ fn normalize_columns_batch(
     for field in output_schema.fields().iter().skip(normalized_batch.num_columns()) {
         let array: ArrayRef = match field.name().as_str() {
             UDT_NAME => Arc::new(udt_names.finish()),
-            UDT_SCHEMA => Arc::new(constant_string_array(normalized_batch.num_rows(), "pg_catalog")),
+            UDT_SCHEMA => {
+                Arc::new(constant_string_array(normalized_batch.num_rows(), "pg_catalog"))
+            },
             IS_GENERATED => Arc::new(constant_string_array(normalized_batch.num_rows(), "NEVER")),
+            IS_IDENTITY => Arc::new(constant_string_array(normalized_batch.num_rows(), "NO")),
             KDB_DATA_TYPE => Arc::new(kdb_types.finish()),
             KDB_NAMESPACE_ID => Arc::new(kdb_namespace_ids.finish()),
             KDB_VERSION => Arc::new(kdb_versions.finish()),
@@ -301,8 +301,7 @@ fn normalize_columns_batch(
 fn string_column<'a>(
     batch: &'a RecordBatch,
     index: usize,
-    name: &str,
-) -> DataFusionResult<&'a StringArray> {
+    name: &str) -> DataFusionResult<&'a StringArray> {
     batch
         .column(index)
         .as_any()
@@ -322,8 +321,7 @@ fn copy_optional_u64(
     batch: &RecordBatch,
     row: usize,
     index: Option<usize>,
-    builder: &mut UInt64Builder,
-) {
+    builder: &mut UInt64Builder) {
     let Some(index) = index else {
         builder.append_null();
         return;
@@ -349,13 +347,13 @@ fn plan_err(error: arrow::error::ArrowError) -> DataFusionError {
 }
 
 struct ExtendedColumnsScanSource {
-    provider: Arc<ExtendedInformationSchemaColumnsProvider>,
-    session_state: SessionState,
+    provider:        Arc<ExtendedInformationSchemaColumnsProvider>,
+    session_state:   SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
+    filters:         Vec<Expr>,
 }
 
 #[async_trait]
@@ -379,8 +377,7 @@ impl DeferredBatchSource for ExtendedColumnsScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -399,8 +396,7 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -425,8 +421,8 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedColumnsScanSource {
             provider: Arc::new(ExtendedInformationSchemaColumnsProvider {
-                inner: Arc::clone(&self.inner),
-                schema: Arc::clone(&self.schema),
+                inner:         Arc::clone(&self.inner),
+                schema:        Arc::clone(&self.schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,
@@ -440,8 +436,7 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
     }
 }

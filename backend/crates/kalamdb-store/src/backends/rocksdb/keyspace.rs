@@ -85,3 +85,28 @@ pub(crate) fn next_prefix_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     }
     None
 }
+
+/// Exclusive end of the logical partition (or registry) prefix inside a physical key.
+pub(crate) fn physical_prefix_end(key: &[u8]) -> Option<usize> {
+    let tag = *key.first()?;
+    if tag == LOGICAL_PARTITION_REGISTRY_TAG {
+        return Some(1);
+    }
+    if tag != PARTITION_KEY_PREFIX_TAG || key.len() < 5 {
+        return None;
+    }
+    let name_len = u32::from_be_bytes(key[1..5].try_into().ok()?) as usize;
+    let end = 5usize.checked_add(name_len)?;
+    (key.len() >= end).then_some(end)
+}
+
+pub(crate) fn physical_key_prefix_transform(key: &[u8]) -> &[u8] {
+    match physical_prefix_end(key) {
+        Some(end) => &key[..end],
+        None => key,
+    }
+}
+
+pub(crate) fn physical_key_prefix_in_domain(key: &[u8]) -> bool {
+    physical_prefix_end(key).is_some()
+}

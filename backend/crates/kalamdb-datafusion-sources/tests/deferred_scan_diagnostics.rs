@@ -47,8 +47,8 @@ impl DeferredBatchSource for DiagnosticSource {
         "diagnostic_scan"
     }
 
-    fn plan_details(&self) -> Option<&'static str> {
-        Some("storage_tiers=[hot=rocksdb,cold=parquet], mvcc=true")
+    fn plan_details(&self) -> Option<String> {
+        Some("storage_tiers=[hot=rocksdb,cold=parquet], mvcc=true".to_string())
     }
 
     fn schema(&self) -> SchemaRef {
@@ -58,8 +58,7 @@ impl DeferredBatchSource for DiagnosticSource {
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
         let batch = RecordBatch::try_new(
             Arc::clone(&self.schema),
-            vec![Arc::new(Int64Array::from(vec![1, 2]))],
-        )?;
+            vec![Arc::new(Int64Array::from(vec![1, 2]))])?;
         Ok(batch)
     }
 
@@ -174,8 +173,7 @@ impl TableProvider for DiagnosticTableProvider {
 
     fn supports_filters_pushdown(
         &self,
-        _filters: &[&datafusion::logical_expr::Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        _filters: &[&datafusion::logical_expr::Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(vec![])
     }
 
@@ -184,8 +182,7 @@ impl TableProvider for DiagnosticTableProvider {
         _state: &dyn Session,
         _projection: Option<&Vec<usize>>,
         _filters: &[datafusion::logical_expr::Expr],
-        _limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        _limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(DeferredBatchExec::new_with_scan_diagnostics(
             self.source.clone() as Arc<dyn DeferredBatchSource>
         )))

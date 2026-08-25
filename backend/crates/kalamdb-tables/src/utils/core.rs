@@ -13,7 +13,7 @@ use kalamdb_filestore::StorageRegistry;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, ManifestService as ManifestServiceTrait,
     NotificationService as NotificationServiceTrait, SchemaRegistry as SchemaRegistryTrait,
-    TopicPublisher as TopicPublisherTrait,
+    TablePoliciesTableProvider, TopicPublisher as TopicPublisherTrait,
 };
 use kalamdb_transactions::CommitSequenceSource;
 
@@ -49,6 +49,9 @@ pub struct TableServices {
     /// Topic publisher for synchronous CDC publishing (optional, None when topics are not
     /// configured)
     pub topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
+
+    /// Persisted shared-table RLS policy catalog. Missing means subject roles fail closed.
+    pub table_policies: Option<Arc<TablePoliciesTableProvider>>,
 }
 
 impl TableServices {
@@ -61,8 +64,7 @@ impl TableServices {
         notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
         commit_sequence_source: Arc<dyn CommitSequenceSource>,
-        topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
-    ) -> Self {
+        topic_publisher: Option<Arc<dyn TopicPublisherTrait>>) -> Self {
         Self {
             schema_registry,
             system_columns,
@@ -72,7 +74,13 @@ impl TableServices {
             cluster_coordinator,
             commit_sequence_source,
             topic_publisher,
+            table_policies: None,
         }
+    }
+
+    pub fn with_table_policies(mut self, table_policies: Arc<TablePoliciesTableProvider>) -> Self {
+        self.table_policies = Some(table_policies);
+        self
     }
 }
 
@@ -121,8 +129,7 @@ impl TableProviderCore {
         services: Arc<TableServices>,
         primary_key_field_name: String,
         schema: SchemaRef,
-        column_defaults: HashMap<String, Expr>,
-    ) -> Self {
+        column_defaults: HashMap<String, Expr>) -> Self {
         use kalamdb_commons::{constants::SystemColumnNames, schemas::ColumnDefault};
 
         // Precompute non-nullable columns from the schema.
@@ -197,8 +204,7 @@ impl TableProviderCore {
 
     /// NotificationService accessor
     pub fn notification_service(
-        &self,
-    ) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
+        &self) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
         &self.services.notification_service
     }
 
@@ -293,8 +299,7 @@ impl TableProviderCore {
         table_id: &TableId,
         op: kalamdb_commons::models::TopicOp,
         row: &kalamdb_commons::models::rows::Row,
-        user_id: Option<&kalamdb_commons::models::UserId>,
-    ) {
+        user_id: Option<&kalamdb_commons::models::UserId>) {
         let topic_pub = match self.services.topic_publisher.as_ref() {
             Some(tp) if tp.has_topics_for_table(table_id) => tp,
             _ => return,
@@ -328,8 +333,7 @@ impl TableProviderCore {
         table_id: &TableId,
         op: kalamdb_commons::models::TopicOp,
         rows: &[kalamdb_commons::models::rows::Row],
-        user_id: Option<&kalamdb_commons::models::UserId>,
-    ) {
+        user_id: Option<&kalamdb_commons::models::UserId>) {
         if rows.is_empty() {
             return;
         }

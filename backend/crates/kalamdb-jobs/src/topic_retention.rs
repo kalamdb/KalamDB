@@ -133,10 +133,10 @@ mod tests {
         topic.retention_seconds = retention_seconds;
         topic.retention_max_bytes = retention_max_bytes;
         topic.routes.push(TopicRoute {
-            table_id: table_id.clone(),
-            op: TopicOp::Insert,
-            payload_mode: PayloadMode::Full,
-            filter_expr: None,
+            table_id:           table_id.clone(),
+            op:                 TopicOp::Insert,
+            payload_mode:       PayloadMode::Full,
+            filter_expr:        None,
             partition_key_expr: None,
         });
 

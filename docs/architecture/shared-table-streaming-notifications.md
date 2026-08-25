@@ -16,18 +16,20 @@ For SHARED tables with many subscribers, repeatedly materializing row payloads a
 
 ### Shared subscription indexing
 
-ConnectionsManager adds a dedicated index for shared tables:
+ConnectionsManager indexes shared-table subscriptions through `IndexedSubscriberRelation`:
 
-- shared_table_subscriptions: DashMap<TableId, Arc<DashMap<LiveQueryId, SubscriptionHandle>>>
+- Broadcast: every change on the table is a candidate
+- Keyed: lookup by equality column name and typed `ScalarValue` (for example `conversation_id`)
+- Deny: not stored in lookup buckets
 
-This enables O(1)-style table-level lookup of all shared subscribers without user-level partitioning.
+The bound RLS evaluator still fail-closes after candidate selection. Fan-out is not “all subscribers on the table” unless the policy is broadcast (`USING (true)` or RLS bypass).
 
 ### Streaming fan-out path
 
 NotificationService adds a dedicated shared dispatch path:
 
 - Method: notify_shared_table_streaming
-- Chunk size constant: SHARED_NOTIFY_CHUNK_SIZE = 256
+- Chunk size constant: SHARED_NOTIFY_CHUNK_SIZE = 2048
 
 The method executes in three phases:
 
@@ -35,8 +37,8 @@ The method executes in three phases:
    - Convert row_data (and old_data when present) once into JSON maps.
    - Wrap maps in Arc for zero-copy sharing across chunk tasks.
 
-2. Collect handles snapshot
-   - Read shared subscriptions for the table and clone lightweight handle references into a vector.
+2. Collect candidate handles
+   - Look up broadcast plus keyed buckets for the changed row, then clone those handles.
 
 3. Parallel chunk processing
    - Split subscribers into chunks of 256.

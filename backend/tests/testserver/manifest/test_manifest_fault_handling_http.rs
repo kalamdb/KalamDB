@@ -1,4 +1,8 @@
-use std::{fs, path::Path, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Result;
 use kalam_client::models::ResponseStatus;

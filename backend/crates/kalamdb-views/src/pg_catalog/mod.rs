@@ -9,7 +9,7 @@ use std::{
 use async_trait::async_trait;
 use datafusion::{
     arrow::{
-        datatypes::{DataType, Field, SchemaRef},
+        datatypes::SchemaRef,
         record_batch::RecordBatch,
     },
     catalog::{SchemaProvider, Session},
@@ -28,17 +28,13 @@ use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
-use kalamdb_session::{
-    can_access_shared_table, can_access_system_table, can_access_user_table, is_admin_role,
-    shared_table_access_level,
-};
+use kalamdb_session::{can_access_system_table, can_access_user_table, is_admin_role};
 use kalamdb_session_datafusion::{extract_user_role, PermissionChecker};
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    system::sessions::SessionsSnapshotCallback,
-    system::system_view_table_definition,
+    system::{sessions::SessionsSnapshotCallback, system_view_table_definition},
 };
 
 pub mod attribute;
@@ -73,12 +69,12 @@ impl<V: PgCatalogView> PgCatalogViewTableProvider<V> {
 }
 
 struct PgCatalogScanSource<V: PgCatalogView> {
-    view: Arc<V>,
+    view:            Arc<V>,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    role: Role,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
+    role:            Role,
 }
 
 impl<V: PgCatalogView> std::fmt::Debug for PgCatalogScanSource<V> {
@@ -115,8 +111,7 @@ impl<V: PgCatalogView + 'static> DeferredBatchSource for PgCatalogScanSource<V> 
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -135,8 +130,7 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if let Some(system_table) = self.view.required_system_table() {
             PermissionChecker::check_system_table(state, &system_table.table_id())?;
         }
@@ -169,8 +163,7 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
     }
 }
@@ -183,57 +176,40 @@ pub struct PgCatalogSchemaProvider {
 impl PgCatalogSchemaProvider {
     pub fn new(
         system_registry: Arc<SystemTablesRegistry>,
-        sessions_snapshot_callback: SessionsSnapshotCallback,
-    ) -> Self {
+        sessions_snapshot_callback: SessionsSnapshotCallback) -> Self {
         let mut providers = BTreeMap::<String, Arc<dyn TableProvider>>::new();
         providers.insert(
             "pg_namespace".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(namespace::PgNamespaceView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         providers.insert(
             "pg_class".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(class::PgClassView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         providers.insert(
             "pg_attribute".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(attribute::PgAttributeView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         providers.insert(
             "pg_type".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(r#type::PgTypeView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         providers.insert(
             "pg_database".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(database::PgDatabaseView::new(
-                "kalam",
-            )))),
-        );
+                "kalam")))));
         providers.insert(
             "pg_stat_activity".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(
-                stat_activity::PgStatActivityView::new(sessions_snapshot_callback),
-            ))),
-        );
+                stat_activity::PgStatActivityView::new(sessions_snapshot_callback)))));
         providers.insert(
             "pg_tables".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(tables::PgTablesView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         providers.insert(
             "pg_views".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(views::PgViewsView::new(
-                Arc::clone(&system_registry),
-            )))),
-        );
+                Arc::clone(&system_registry))))));
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -241,88 +217,12 @@ impl PgCatalogSchemaProvider {
 }
 
 fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn TableProvider>>) {
-    let empty_views = [
-        (
-            "pg_attrdef",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("adrelid", DataType::Int64, false),
-                Field::new("adnum", DataType::Int64, false),
-                Field::new("adbin", DataType::Utf8, false),
-            ],
-        ),
-        (
-            "pg_description",
-            vec![
-                Field::new("objoid", DataType::Int64, false),
-                Field::new("classoid", DataType::Int64, false),
-                Field::new("objsubid", DataType::Int64, false),
-                Field::new("description", DataType::Utf8, false),
-            ],
-        ),
-        (
-            "pg_constraint",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("conname", DataType::Utf8, false),
-                Field::new("connamespace", DataType::Int64, false),
-                Field::new("contype", DataType::Utf8, false),
-                Field::new("conrelid", DataType::Int64, false),
-                Field::new("confrelid", DataType::Int64, false),
-                Field::new("conkey", DataType::Utf8, true),
-            ],
-        ),
-        (
-            "pg_index",
-            vec![
-                Field::new("indexrelid", DataType::Int64, false),
-                Field::new("indrelid", DataType::Int64, false),
-                Field::new("indnatts", DataType::Int64, false),
-                Field::new("indnkeyatts", DataType::Int64, false),
-                Field::new("indisunique", DataType::Boolean, false),
-                Field::new("indisprimary", DataType::Boolean, false),
-                Field::new("indisexclusion", DataType::Boolean, false),
-                Field::new("indimmediate", DataType::Boolean, false),
-                Field::new("indisclustered", DataType::Boolean, false),
-                Field::new("indisvalid", DataType::Boolean, false),
-                Field::new("indcheckxmin", DataType::Boolean, false),
-                Field::new("indisready", DataType::Boolean, false),
-                Field::new("indislive", DataType::Boolean, false),
-                Field::new("indisreplident", DataType::Boolean, false),
-            ],
-        ),
-        (
-            "pg_inherits",
-            vec![
-                Field::new("inhrelid", DataType::Int64, false),
-                Field::new("inhparent", DataType::Int64, false),
-                Field::new("inhseqno", DataType::Int64, false),
-            ],
-        ),
-        (
-            "pg_enum",
-            vec![
-                Field::new("oid", DataType::Int64, false),
-                Field::new("enumtypid", DataType::Int64, false),
-                Field::new("enumsortorder", DataType::Float64, false),
-                Field::new("enumlabel", DataType::Utf8, false),
-            ],
-        ),
-        (
-            "pg_matviews",
-            vec![
-                Field::new("schemaname", DataType::Utf8, false),
-                Field::new("matviewname", DataType::Utf8, false),
-                Field::new("matviewowner", DataType::Utf8, false),
-                Field::new("tablespace", DataType::Utf8, true),
-                Field::new("hasindexes", DataType::Boolean, false),
-                Field::new("ispopulated", DataType::Boolean, false),
-                Field::new("definition", DataType::Utf8, true),
-            ],
-        ),
-    ];
+    // Single source of truth: kalamdb-postgres-wire client_catalog (compiled in-place via path).
+    #[allow(dead_code)]
+    #[path = "../../../kalamdb-postgres-wire/src/client_catalog/empty_tables.rs"]
+    mod wire_empty_tables;
 
-    for (name, fields) in empty_views {
+    for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
         providers.insert(
             name.to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(empty::EmptyPgCatalogView::new(
@@ -361,8 +261,7 @@ pub(crate) fn stable_oid(parts: &[&str]) -> i64 {
 
 pub(crate) fn visible_table_definitions(
     system_registry: &SystemTablesRegistry,
-    role: Role,
-) -> Result<Vec<TableDefinition>, RegistryError> {
+    role: Role) -> Result<Vec<TableDefinition>, RegistryError> {
     let mut definitions = BTreeMap::<(String, String), TableDefinition>::new();
 
     let tables = system_registry
@@ -385,16 +284,13 @@ pub(crate) fn visible_table_definitions(
 
 fn insert_catalog_definition(
     definitions: &mut BTreeMap<(String, String), TableDefinition>,
-    table: TableDefinition,
-) {
-    let key = (
-        table.namespace_id.as_str().to_string(),
-        table.table_name.as_str().to_string(),
-    );
+    table: TableDefinition) {
+    let key = (table.namespace_id.as_str().to_string(), table.table_name.as_str().to_string());
     definitions.entry(key).or_insert(table);
 }
 
-fn supplemental_catalog_definitions(system_registry: &SystemTablesRegistry) -> Vec<TableDefinition> {
+fn supplemental_catalog_definitions(
+    system_registry: &SystemTablesRegistry) -> Vec<TableDefinition> {
     let mut definitions = system_registry
         .expected_system_table_definitions()
         .into_iter()
@@ -415,7 +311,7 @@ pub(crate) fn include_explicit_namespaces(role: Role) -> bool {
 fn table_visible_to_role(table: &TableDefinition, role: Role) -> bool {
     match table.table_type {
         KalamTableType::System => can_access_system_table(role),
-        KalamTableType::Shared => can_access_shared_table(shared_table_access_level(table), role),
+        KalamTableType::Shared => !matches!(role, Role::Anonymous),
         KalamTableType::User | KalamTableType::Stream => can_access_user_table(role),
     }
 }

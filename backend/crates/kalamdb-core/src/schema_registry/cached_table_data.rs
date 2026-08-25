@@ -7,8 +7,7 @@ use datafusion::datasource::TableProvider;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     models::{schemas::TableDefinition, StorageId, TableId},
-    schemas::{TableOptions, TableType},
-    TableAccess,
+    schemas::{TableType},
 };
 use kalamdb_filestore::StorageCached;
 use parking_lot::RwLock;
@@ -64,8 +63,6 @@ pub struct TableEntry {
     pub storage_id: StorageId,
     /// Table type (User or Shared)
     pub table_type: TableType,
-    /// Access level (for shared tables)
-    pub access_level: Option<TableAccess>,
 }
 
 /// Cached table data containing all metadata and schema information
@@ -151,8 +148,7 @@ impl CachedTableData {
     pub fn from_table_definition(
         _app_ctx: &AppContext,
         _table_id: &TableId,
-        table_def: Arc<TableDefinition>,
-    ) -> Result<Self, KalamDbError> {
+        table_def: Arc<TableDefinition>) -> Result<Self, KalamDbError> {
         Ok(Self::new(table_def))
     }
 
@@ -216,12 +212,6 @@ impl CachedTableData {
         TableEntry {
             storage_id: self.storage_id.clone(),
             table_type: self.table.table_type.into(),
-            access_level: match &self.table.table_options {
-                TableOptions::Shared(opts) => {
-                    Some(opts.access_level.clone().unwrap_or(TableAccess::Private))
-                },
-                TableOptions::User(_) | TableOptions::System(_) | TableOptions::Stream(_) => None,
-            },
         }
     }
 
@@ -241,8 +231,7 @@ impl CachedTableData {
     /// Returns error if storage not found
     pub fn storage_cached(
         &self,
-        storage_registry: &Arc<kalamdb_filestore::StorageRegistry>,
-    ) -> Result<Arc<StorageCached>, KalamDbError> {
+        storage_registry: &Arc<kalamdb_filestore::StorageRegistry>) -> Result<Arc<StorageCached>, KalamDbError> {
         storage_registry
             .get_cached(&self.storage_id)
             .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?
@@ -306,8 +295,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Utf8, false)]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
-            vec![Arc::new(StringArray::from(vec!["value"]))],
-        )
+            vec![Arc::new(StringArray::from(vec!["value"]))])
         .expect("test batch");
 
         Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("test provider"))
@@ -344,8 +332,7 @@ mod tests {
                 ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
             ],
             TableOptions::shared(),
-            None,
-        )
+            None)
         .expect("table definition");
 
         let cached = CachedTableData::new(Arc::new(table_def));

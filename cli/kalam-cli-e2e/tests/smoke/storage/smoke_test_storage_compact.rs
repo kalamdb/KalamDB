@@ -85,6 +85,7 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
         full_table
     ))
     .expect("create shared table");
+    grant_public_shared_table_access(&full_table);
 
     for i in 1..=40 {
         execute_sql_as_root_via_client(&format!(

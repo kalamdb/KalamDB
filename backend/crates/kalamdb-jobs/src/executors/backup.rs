@@ -149,7 +149,7 @@ impl JobExecutor for BackupExecutor {
             Err(e) => {
                 ctx.log_error(&format!("Backup failed: {}", e));
                 Ok(JobDecision::Failed {
-                    message: format!("Backup failed: {}", e),
+                    message:         format!("Backup failed: {}", e),
                     exception_trace: Some(format!("{:?}", e)),
                 })
             },

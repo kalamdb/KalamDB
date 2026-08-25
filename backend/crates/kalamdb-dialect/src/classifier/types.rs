@@ -81,6 +81,12 @@ pub enum SqlStatementKind {
     DescribeTable(DescribeTableStatement),
     /// SHOW STATS [FOR <namespace>.<table>]
     ShowStats(ShowTableStatsStatement),
+    /// CREATE POLICY ... ON ...
+    CreatePolicy(CreatePolicyStatement),
+    /// ALTER POLICY ... ON ...
+    AlterPolicy(AlterPolicyStatement),
+    /// DROP POLICY ... ON ...
+    DropPolicy(DropPolicyStatement),
 
     // ===== Storage Maintenance Operations =====
     /// STORAGE FLUSH TABLE <namespace>.<table>
@@ -292,6 +298,9 @@ impl SqlStatement {
             | SqlStatementKind::CreateView(_)
             | SqlStatementKind::AlterTable(_)
             | SqlStatementKind::DropTable(_)
+            | SqlStatementKind::CreatePolicy(_)
+            | SqlStatementKind::AlterPolicy(_)
+            | SqlStatementKind::DropPolicy(_)
             | SqlStatementKind::Insert(_)
             | SqlStatementKind::Update(_)
             | SqlStatementKind::Delete(_)
@@ -349,6 +358,9 @@ impl SqlStatement {
             SqlStatementKind::ShowTables(_) => "SHOW TABLES",
             SqlStatementKind::DescribeTable(_) => "DESCRIBE TABLE",
             SqlStatementKind::ShowStats(_) => "SHOW STATS",
+            SqlStatementKind::CreatePolicy(_) => "CREATE POLICY",
+            SqlStatementKind::AlterPolicy(_) => "ALTER POLICY",
+            SqlStatementKind::DropPolicy(_) => "DROP POLICY",
             SqlStatementKind::FlushTable(_) => "STORAGE FLUSH TABLE",
             SqlStatementKind::FlushAllTables(_) => "STORAGE FLUSH ALL",
             SqlStatementKind::CompactTable(_) => "STORAGE COMPACT TABLE",

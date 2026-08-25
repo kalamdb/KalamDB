@@ -24,8 +24,9 @@ use log::debug;
 use super::{
     manager::ConnectionsManager,
     models::{
-        InitialLoadState, SharedConnectionState, SubscriptionFlowControl, SubscriptionHandle,
-        SubscriptionRuntimeMetadata, SubscriptionState, MAX_SUBSCRIPTIONS_PER_CONNECTION,
+        InitialLoadState, LiveRoute, SharedConnectionState, SubscriptionFlowControl,
+        SubscriptionHandle, SubscriptionRuntimeMetadata, SubscriptionState,
+        MAX_SUBSCRIPTIONS_PER_CONNECTION,
     },
 };
 use crate::error::{LiveError, LiveResultExt};
@@ -64,6 +65,8 @@ impl SubscriptionService {
         request: &SubscriptionRequest,
         table_id: TableId,
         filter_expr: Option<RowFilter>,
+        authorization: Option<Arc<dyn crate::traits::LiveAuthorization>>,
+        live_route: LiveRoute,
         projections: Option<Vec<String>>,
         batch_size: usize,
         enable_initial_load: bool,
@@ -132,10 +135,11 @@ impl SubscriptionService {
             runtime_metadata: Arc::clone(&runtime_metadata),
         };
 
-        // Create lightweight handle for the index (~48 bytes vs ~800+ bytes)
+        // Index a routing handle (filter, authorization, and channel are Arc-shared).
         let subscription_handle = SubscriptionHandle {
             subscription_id: Arc::clone(&subscription_id),
             filter_expr: filter_expr_arc,
+            authorization,
             projections: projections_arc,
             notification_tx,
             flow_control,
@@ -146,14 +150,19 @@ impl SubscriptionService {
         // If we index after Raft, INSERT commands might be applied before the subscription
         // is indexed, causing notifications to be missed.
         // Add subscription to connection state
-        connection_state.insert_subscription(subscription_id, subscription_state);
+        if !connection_state.insert_subscription(subscription_id, subscription_state) {
+            return Err(LiveError::InvalidOperation(format!(
+                "Subscription ID '{}' is already active on this connection",
+                request.id
+            )));
+        }
 
         // Add lightweight handle to registry's table index for efficient lookups
         if table_type == TableType::Shared {
             self.registry.index_shared_subscription(
-                &connection_id,
                 live_id.clone(),
                 table_id.clone(),
+                &live_route,
                 subscription_handle,
             );
         } else {
@@ -184,8 +193,6 @@ impl SubscriptionService {
         connection_state.update_snapshot_end_seq(subscription_id, Some(snapshot_end_seq));
     }
 
-    /// Unregister a single live query subscription
-
     /// Update sequence and commit snapshot boundaries after initial data planning.
     pub fn update_snapshot_boundaries(
         &self,
@@ -200,6 +207,8 @@ impl SubscriptionService {
             snapshot_end_commit_seq,
         );
     }
+
+    /// Unregister a single live query subscription.
     pub async fn unregister_subscription(
         &self,
         connection_state: &SharedConnectionState,
@@ -236,7 +245,7 @@ impl SubscriptionService {
 
         // Remove from registry's table index
         if is_shared {
-            self.registry.unindex_shared_subscription(live_id, &table_id);
+            self.registry.unindex_shared_subscription(live_id);
         } else {
             self.registry.unindex_subscription(&user_id, live_id, &table_id);
         }

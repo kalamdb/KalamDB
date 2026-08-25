@@ -4,17 +4,15 @@
 macro_rules! memoized_view_schema {
     ($schema_fn:ident, $view:ty) => {
         fn $schema_fn() -> ::datafusion::arrow::datatypes::SchemaRef {
-            static SCHEMA: ::std::sync::OnceLock<
-                ::datafusion::arrow::datatypes::SchemaRef,
-            > = ::std::sync::OnceLock::new();
+            static SCHEMA: ::std::sync::OnceLock<::datafusion::arrow::datatypes::SchemaRef> =
+                ::std::sync::OnceLock::new();
             $crate::system::common::schema_from_definition(&SCHEMA, <$view>::definition)
         }
     };
     ($schema_fn:ident, @ $def:expr) => {
         fn $schema_fn() -> ::datafusion::arrow::datatypes::SchemaRef {
-            static SCHEMA: ::std::sync::OnceLock<
-                ::datafusion::arrow::datatypes::SchemaRef,
-            > = ::std::sync::OnceLock::new();
+            static SCHEMA: ::std::sync::OnceLock<::datafusion::arrow::datatypes::SchemaRef> =
+                ::std::sync::OnceLock::new();
             $crate::system::common::schema_from_definition(&SCHEMA, || $def)
         }
     };
@@ -41,6 +39,8 @@ pub use cluster_groups::*;
 pub use columns::*;
 pub use datatypes::*;
 pub use describe::*;
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_system::SystemTable;
 pub use live::*;
 pub use server_logs::*;
 pub use sessions::*;
@@ -50,9 +50,6 @@ pub use stats::*;
 #[allow(deprecated)]
 pub use tables::*;
 pub use transactions::*;
-
-use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_system::SystemTable;
 
 /// Resolve the canonical [`TableDefinition`] for a `system.*` virtual view.
 pub fn system_view_table_definition(system_table: SystemTable) -> TableDefinition {

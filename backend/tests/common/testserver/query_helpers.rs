@@ -137,14 +137,8 @@ pub fn explain_plan_text(response: &QueryResponse) -> String {
     };
 
     for row in result.rows_as_maps() {
-        let plan_type = row
-            .get("plan_type")
-            .and_then(|value| value.as_text())
-            .unwrap_or_default();
-        let plan = row
-            .get("plan")
-            .and_then(|value| value.as_text())
-            .unwrap_or_default();
+        let plan_type = row.get("plan_type").and_then(|value| value.as_text()).unwrap_or_default();
+        let plan = row.get("plan").and_then(|value| value.as_text()).unwrap_or_default();
         lines.push(format!("{plan_type} | {plan}"));
     }
 

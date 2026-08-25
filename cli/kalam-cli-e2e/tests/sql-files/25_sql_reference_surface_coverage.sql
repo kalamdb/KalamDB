@@ -27,7 +27,6 @@ CREATE SHARED TABLE IF NOT EXISTS case25_shared_tbl (
   val TEXT NOT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (
-  ACCESS_LEVEL = 'PUBLIC',
   COMPRESSION = 'zstd'
 );
 
@@ -62,6 +61,10 @@ ROLLBACK;
 BEGIN;
 INSERT INTO case25_shared_tbl (id, val) VALUES (2511, 'shared tx commit');
 COMMIT;
+
+CREATE POLICY case25_shared_select ON sql_file_case_25.case25_shared_tbl
+  FOR SELECT TO PUBLIC USING (true);
+DROP POLICY case25_shared_select ON sql_file_case_25.case25_shared_tbl;
 
 CREATE TOPIC sql_file_case_25.case25_topic
 PARTITIONS 1

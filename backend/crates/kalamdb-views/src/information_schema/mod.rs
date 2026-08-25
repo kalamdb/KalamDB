@@ -3,16 +3,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use columns::ExtendedInformationSchemaColumnsProvider;
 use datafusion::{
     catalog::{information_schema::InformationSchemaProvider, CatalogProviderList, SchemaProvider},
     datasource::TableProvider,
     error::Result as DataFusionResult,
     logical_expr::TableType,
 };
-
 use kalamdb_system::SystemTablesRegistry;
-
-use columns::ExtendedInformationSchemaColumnsProvider;
 use parameters::ExtendedInformationSchemaParametersProvider;
 use tables::ExtendedInformationSchemaTablesProvider;
 use views::InformationSchemaViewsProvider;
@@ -22,39 +20,38 @@ pub mod columns;
 pub(crate) mod extend;
 pub mod parameters;
 pub mod tables;
+pub mod triggers;
 pub mod views;
 
 /// `information_schema` provider that delegates to DataFusion for standard tables
 /// and serves an extended `columns` view with SQL/PG types from `KalamDataType`.
 #[derive(Debug)]
 pub struct KalamInformationSchemaProvider {
-    inner: InformationSchemaProvider,
-    columns: Arc<dyn TableProvider>,
-    tables: Arc<ExtendedInformationSchemaTablesProvider>,
+    inner:      InformationSchemaProvider,
+    columns:    Arc<dyn TableProvider>,
+    tables:     Arc<ExtendedInformationSchemaTablesProvider>,
     parameters: Arc<dyn TableProvider>,
-    views: Arc<dyn TableProvider>,
+    views:      Arc<dyn TableProvider>,
+    triggers:   Arc<dyn TableProvider>,
 }
 
 impl KalamInformationSchemaProvider {
     pub fn new(
         catalog_list: Arc<dyn CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>,
-    ) -> Self {
+        system_tables: Arc<SystemTablesRegistry>) -> Self {
         let tables = Arc::new(ExtendedInformationSchemaTablesProvider::new(
             Arc::clone(&catalog_list),
-            Arc::clone(&system_tables),
-        ));
+            Arc::clone(&system_tables)));
         Self {
-            inner: InformationSchemaProvider::new(Arc::clone(&catalog_list)),
-            columns: Arc::new(ExtendedInformationSchemaColumnsProvider::new(
+            inner:      InformationSchemaProvider::new(Arc::clone(&catalog_list)),
+            columns:    Arc::new(ExtendedInformationSchemaColumnsProvider::new(
                 Arc::clone(&catalog_list),
-                system_tables,
-            )),
-            tables: Arc::clone(&tables),
+                system_tables)),
+            tables:     Arc::clone(&tables),
             parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(Arc::clone(
-                &catalog_list,
-            ))),
-            views: Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
+                &catalog_list))),
+            views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
+            triggers:   triggers::empty_triggers_provider(),
         }
     }
 }
@@ -63,7 +60,7 @@ impl KalamInformationSchemaProvider {
 impl SchemaProvider for KalamInformationSchemaProvider {
     fn table_names(&self) -> Vec<String> {
         let mut names = self.inner.table_names();
-        for name in ["columns", "parameters", "tables", "views"] {
+        for name in ["columns", "parameters", "tables", "views", "triggers"] {
             if names.iter().all(|existing| !existing.eq_ignore_ascii_case(name)) {
                 names.push(name.to_string());
             }
@@ -76,6 +73,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
             || name.eq_ignore_ascii_case("parameters")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
+            || name.eq_ignore_ascii_case("triggers")
         {
             return true;
         }
@@ -95,6 +93,9 @@ impl SchemaProvider for KalamInformationSchemaProvider {
         if name.eq_ignore_ascii_case("views") {
             return Ok(Some(Arc::clone(&self.views)));
         }
+        if name.eq_ignore_ascii_case("triggers") {
+            return Ok(Some(Arc::clone(&self.triggers)));
+        }
         self.inner.table(name).await
     }
 
@@ -103,6 +104,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
             || name.eq_ignore_ascii_case("parameters")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
+            || name.eq_ignore_ascii_case("triggers")
         {
             return Ok(Some(TableType::View));
         }

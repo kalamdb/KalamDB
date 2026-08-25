@@ -10,7 +10,7 @@ pub mod context;
 pub mod permissions;
 pub mod secured_provider;
 
-pub use context::{ScanDiagnosticsContext, SessionUserContext};
+pub use context::{RlsCommandContext, ScanDiagnosticsContext, SessionUserContext};
 pub use permissions::{
     check_shared_table_access, check_shared_table_write_access, check_system_table_access,
     check_system_table_access_by_name, check_user_table_access, check_user_table_write_access,

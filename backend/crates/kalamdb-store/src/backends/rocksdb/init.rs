@@ -6,8 +6,9 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use kalamdb_configs::RocksDbSettings;
-use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, Options, DB};
+use kalamdb_configs::{RocksDbMemoryMode, RocksDbSettings};
+use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, DataBlockIndexType, Options, DB};
+use sysinfo::{MemoryRefreshKind, System};
 
 use super::{
     cf_tuning::{apply_cf_settings, apply_db_settings},
@@ -16,7 +17,7 @@ use super::{
 
 /// RocksDB initializer for creating/opening a database with fixed physical CFs.
 pub struct RocksDbInit {
-    db_path: String,
+    db_path:  String,
     settings: RocksDbSettings,
 }
 
@@ -24,9 +25,13 @@ impl RocksDbInit {
     /// Create a new initializer for the given path with custom settings.
     pub fn new(db_path: impl Into<String>, settings: RocksDbSettings) -> Self {
         Self {
-            db_path: db_path.into(),
-            settings,
+            db_path:  db_path.into(),
+            settings: resolve_rocksdb_settings(settings),
         }
+    }
+
+    pub(crate) fn settings(&self) -> &RocksDbSettings {
+        &self.settings
     }
 
     /// Create a new initializer with default settings.
@@ -127,11 +132,40 @@ pub(crate) fn new_block_cache(capacity: usize) -> Cache {
 pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOptions {
     let mut block_opts = BlockBasedOptions::default();
     block_opts.set_block_cache(cache);
-    block_opts.set_bloom_filter(10.0, false);
+    block_opts.set_hybrid_ribbon_filter(10.0, 2);
+    block_opts.set_optimize_filters_for_memory(true);
+    block_opts.set_format_version(7);
+    block_opts.set_data_block_index_type(DataBlockIndexType::BinaryAndHash);
+    block_opts.set_data_block_hash_ratio(0.75);
     block_opts.set_cache_index_and_filter_blocks(true);
     block_opts.set_cache_index_and_filter_blocks_with_high_priority(true);
     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
     block_opts.set_pin_top_level_index_and_filter(true);
     block_opts.set_whole_key_filtering(true);
     block_opts
+}
+
+fn resolve_rocksdb_settings(settings: RocksDbSettings) -> RocksDbSettings {
+    match settings.memory_mode {
+        RocksDbMemoryMode::Compact => settings,
+        RocksDbMemoryMode::Auto => {
+            let total_memory_bytes = host_total_memory_bytes();
+            let resolved = settings.resolved_for_host_memory(total_memory_bytes);
+            log::info!(
+                "rocksdb memory_mode=auto host_ram_bytes={:?} block_cache={} \
+                 hot_data_write_buffer={}",
+                total_memory_bytes,
+                resolved.block_cache_size,
+                resolved.cf_profiles.hot_data.write_buffer_size
+            );
+            resolved
+        },
+    }
+}
+
+fn host_total_memory_bytes() -> Option<u64> {
+    let mut system = System::new();
+    system.refresh_memory_specifics(MemoryRefreshKind::everything());
+    let total = system.total_memory();
+    (total > 0).then_some(total)
 }

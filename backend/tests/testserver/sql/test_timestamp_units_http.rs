@@ -56,7 +56,7 @@ async fn test_timestamp_column_defaults_return_microseconds() -> anyhow::Result<
     let response = server
         .execute_sql(&format!(
             "CREATE TABLE {namespace}.events (id INT PRIMARY KEY, created TIMESTAMP DEFAULT \
-                 CURRENT_TIMESTAMP) WITH (TYPE='USER', STORAGE_ID='local')"
+             CURRENT_TIMESTAMP) WITH (TYPE='USER', STORAGE_ID='local')"
         ))
         .await?;
     anyhow::ensure!(

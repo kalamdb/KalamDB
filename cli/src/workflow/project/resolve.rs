@@ -280,6 +280,7 @@ mod tests {
 
     #[test]
     fn resolve_project_server_url_for_instance_reads_matching_env() {
+        let _url_guard = EnvVarGuard::unset(ENV_VAR_KALAM_URL);
         let temp = TempDir::new().unwrap();
         fs::write(
             temp.path().join("kalam.toml"),

@@ -27,7 +27,7 @@ const CHARACTER_MAXIMUM_LENGTH: &str = "character_maximum_length";
 /// `character_maximum_length` (always NULL — routine parameters have no char length).
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaParametersProvider {
-    inner: Arc<dyn TableProvider>,
+    inner:  Arc<dyn TableProvider>,
     schema: SchemaRef,
 }
 
@@ -42,26 +42,24 @@ impl ExtendedInformationSchemaParametersProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        limit: Option<usize>) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
         let batch = collect_inner_batch(&self.inner, state, filters, limit).await?;
         if batch.num_rows() == 0 {
             return Ok(datafusion::arrow::record_batch::RecordBatch::new_empty(Arc::clone(
-                &self.schema,
-            )));
+                &self.schema)));
         }
         append_nullable_uint64_column(&batch, &self.schema, CHARACTER_MAXIMUM_LENGTH)
     }
 }
 
 struct ExtendedParametersScanSource {
-    provider: Arc<ExtendedInformationSchemaParametersProvider>,
-    session_state: SessionState,
+    provider:        Arc<ExtendedInformationSchemaParametersProvider>,
+    session_state:   SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
+    filters:         Vec<Expr>,
 }
 
 #[async_trait]
@@ -74,7 +72,8 @@ impl DeferredBatchSource for ExtendedParametersScanSource {
         Arc::clone(&self.output_schema)
     }
 
-    async fn produce_batch(&self) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+    async fn produce_batch(
+        &self) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
         let batch = self
             .provider
             .collect_extended_batch(&self.session_state, &self.filters, self.limit)
@@ -85,8 +84,7 @@ impl DeferredBatchSource for ExtendedParametersScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -105,8 +103,7 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -131,7 +128,7 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedParametersScanSource {
             provider: Arc::new(ExtendedInformationSchemaParametersProvider {
-                inner: Arc::clone(&self.inner),
+                inner:  Arc::clone(&self.inner),
                 schema: Arc::clone(&self.schema),
             }),
             session_state,
@@ -145,8 +142,7 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
     }
 }

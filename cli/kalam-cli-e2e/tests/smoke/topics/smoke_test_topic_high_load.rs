@@ -383,6 +383,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     ))
     .await
     .expect("Failed to create shared table");
+    common::grant_public_shared_table_access(&shared_table);
 
     let user_table = format!("{}.user_profiles", namespace);
     execute_sql(&format!(
@@ -410,6 +411,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     ))
     .await
     .expect("Failed to create product table");
+    common::grant_public_shared_table_access(&product_table);
 
     let session_table = format!("{}.user_sessions", namespace);
     execute_sql(&format!(
@@ -1056,6 +1058,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
         .await
         .expect("Failed to create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic))
         .await
         .expect("Failed to create topic");
@@ -1164,6 +1167,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -1252,6 +1256,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -1369,6 +1374,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -1471,6 +1477,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -1617,6 +1624,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
         .await
         .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await
@@ -1792,6 +1800,7 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
     ))
     .await
     .expect("create table");
+    common::grant_public_shared_table_access(&table);
     execute_sql(&format!("CREATE TOPIC {}", topic)).await.expect("create topic");
     execute_sql(&format!("ALTER TOPIC {} ADD SOURCE {} ON INSERT", topic, table))
         .await

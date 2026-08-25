@@ -208,24 +208,24 @@ pub fn authenticate_bearer(username: &str, user_id: &str, role: Role) -> (String
 pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> String {
     #[derive(Debug, Serialize, Deserialize)]
     struct Claims {
-        sub: String,
-        iss: String,
-        exp: usize,
-        iat: usize,
+        sub:      String,
+        iss:      String,
+        exp:      usize,
+        iat:      usize,
         username: String,
-        email: Option<String>,
-        role: String,
+        email:    Option<String>,
+        role:     String,
     }
 
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = Claims {
-        sub: format!("user_{}", username),
-        iss: "kalamdb".to_string(),
-        exp: (now as i64 + exp_seconds) as usize,
-        iat: now,
+        sub:      format!("user_{}", username),
+        iss:      "kalamdb".to_string(),
+        exp:      (now as i64 + exp_seconds) as usize,
+        iat:      now,
         username: username.to_string(),
-        email: Some(format!("{}@example.com", username)),
-        role: "user".to_string(),
+        email:    Some(format!("{}@example.com", username)),
+        role:     "user".to_string(),
     };
 
     let header = Header::new(Algorithm::HS256);
@@ -245,24 +245,24 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = User {
-        user_id: UserId::new(format!("sys_{}", username)),
-        password_hash: String::new(), // No password for system users (localhost-only)
-        role: Role::System,
-        name: None,
-        email: None,
-        auth_type: AuthType::Password,
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: Some(StorageId::local()),
+        user_id:               UserId::new(format!("sys_{}", username)),
+        password_hash:         String::new(), // No password for system users (localhost-only)
+        role:                  Role::System,
+        name:                  None,
+        email:                 None,
+        auth_type:             AuthType::Password,
+        auth_data:             None,
+        storage_mode:          StorageMode::Table,
+        storage_id:            Some(StorageId::local()),
         failed_login_attempts: 0,
-        locked_until: None,
-        last_login_at: None,
-        created_at: now,
-        updated_at: now,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        invited_by: None,
+        locked_until:          None,
+        last_login_at:         None,
+        created_at:            now,
+        updated_at:            now,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        invited_by:            None,
     };
 
     server

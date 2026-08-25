@@ -31,7 +31,6 @@ const LIVE_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.live-sst-files-size";
 const TOTAL_SST_FILES_SIZE_PROPERTY: &str = "rocksdb.total-sst-files-size";
 const ALL_MEMTABLES_SIZE_PROPERTY: &str = "rocksdb.cur-size-all-mem-tables";
 const PENDING_COMPACTION_BYTES_PROPERTY: &str = "rocksdb.estimate-pending-compaction-bytes";
-const DROP_PARTITION_BATCH_SIZE: usize = 4_096;
 
 #[inline]
 fn prefixed_physical_key(partition_prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
@@ -39,6 +38,43 @@ fn prefixed_physical_key(partition_prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
     physical_key.extend_from_slice(partition_prefix);
     physical_key.extend_from_slice(user_key);
     physical_key
+}
+
+fn prefix_scan_readopts(prefix: Vec<u8>) -> rocksdb::ReadOptions {
+    let mut readopts = rocksdb::ReadOptions::default();
+    readopts.set_iterate_range(PrefixRange(prefix));
+    readopts.set_async_io(true);
+    readopts
+}
+
+/// Flush options that wait for completion but do not block forever on write-stall.
+///
+/// rust-rocksdb only exposes `set_wait`. With RocksDB's default
+/// `allow_write_stall=false`, `FlushMemTable` calls
+/// `WaitUntilFlushWouldNotStallWrites`, which can wait indefinitely on `bg_cv_`
+/// when L0 / compaction pressure never clears. That left timed-out Tokio
+/// `spawn_blocking` WAL cleanup threads alive and blocked process exit.
+///
+/// RocksDB C++ `FlushOptions` layout is `{ bool wait; bool allow_write_stall; }`
+/// inside `rocksdb_flushoptions_t`. Set the second field via the inner pointer.
+fn flush_options_allow_write_stall() -> rocksdb::FlushOptions {
+    let mut flush_opts = rocksdb::FlushOptions::default();
+    flush_opts.set_wait(true);
+
+    debug_assert_eq!(
+        std::mem::size_of::<rocksdb::FlushOptions>(),
+        std::mem::size_of::<*mut ()>(),
+        "FlushOptions must be a single raw pointer for allow_write_stall poke"
+    );
+    // SAFETY: FlushOptions is `{ inner: *mut rocksdb_flushoptions_t }`; the C++
+    // wrapper stores `FlushOptions { wait, allow_write_stall }` at offset 0.
+    unsafe {
+        let inner = *(std::ptr::from_ref(&flush_opts) as *const *mut u8);
+        assert!(!inner.is_null(), "FlushOptions inner pointer is null");
+        *inner.add(std::mem::size_of::<bool>()) = 1;
+    }
+
+    flush_opts
 }
 
 /// RocksDB implementation of the StorageBackend trait.
@@ -57,8 +93,7 @@ impl RocksDBBackend {
         sync_writes: bool,
         disable_wal: bool,
         settings: RocksDbSettings,
-        block_cache: Cache,
-    ) -> Self {
+        block_cache: Cache) -> Self {
         let mut write_opts = WriteOptions::default();
         write_opts.set_sync(sync_writes);
         write_opts.disable_wal(disable_wal);
@@ -86,8 +121,7 @@ impl RocksDBBackend {
         db: Arc<DB>,
         sync_writes: bool,
         disable_wal: bool,
-        settings: RocksDbSettings,
-    ) -> Self {
+        settings: RocksDbSettings) -> Self {
         let block_cache = new_block_cache(settings.block_cache_size);
         Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
@@ -98,8 +132,7 @@ impl RocksDBBackend {
         sync_writes: bool,
         disable_wal: bool,
         settings: RocksDbSettings,
-        block_cache: Cache,
-    ) -> Self {
+        block_cache: Cache) -> Self {
         Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
 
@@ -164,16 +197,14 @@ impl RocksDBBackend {
             return;
         };
         let prefix = logical_partition_registry_prefix();
-        let mut readopts = rocksdb::ReadOptions::default();
-        readopts.set_iterate_range(PrefixRange(prefix.clone()));
+        let readopts = prefix_scan_readopts(prefix.clone());
 
         let names: Vec<String> = self
             .db
             .iterator_cf_opt(
                 &cf,
                 readopts,
-                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
-            )
+                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward))
             .filter_map(|item| {
                 item.ok().and_then(|(key, _)| {
                     decode_logical_partition_registry_key(&key).map(str::to_string)
@@ -240,7 +271,8 @@ impl StorageBackend for RocksDBBackend {
         let cf = self.get_cf(partition)?;
         let physical_key = physical_key(partition.name(), key);
         self.db
-            .get_cf(&cf, physical_key)
+            .get_pinned_cf(&cf, physical_key)
+            .map(|value| value.map(|slice| slice.to_vec()))
             .map_err(|e| StorageError::IoError(e.to_string()))
     }
 
@@ -322,8 +354,7 @@ impl StorageBackend for RocksDBBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+        limit: Option<usize>) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan",
             partition = %partition.name(),
@@ -343,8 +374,7 @@ impl StorageBackend for RocksDBBackend {
                 let mut physical_prefix = partition_prefix.clone();
                 physical_prefix.extend_from_slice(prefix);
                 physical_prefix
-            },
-        );
+            });
         let physical_start = start_key.map(|start| {
             let mut physical_start = partition_prefix.clone();
             physical_start.extend_from_slice(start);
@@ -357,17 +387,16 @@ impl StorageBackend for RocksDBBackend {
             IteratorMode::From(physical_prefix.as_slice(), Direction::Forward)
         };
 
-        let mut readopts = rocksdb::ReadOptions::default();
+        let mut readopts = prefix_scan_readopts(physical_prefix.clone());
         readopts.set_snapshot(&snapshot);
-        readopts.set_iterate_range(PrefixRange(physical_prefix.clone()));
         let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotScanIter<'a, D: rocksdb::DBAccess> {
-            _snapshot: rocksdb::SnapshotWithThreadMode<'a, D>,
-            inner: rocksdb::DBIteratorWithThreadMode<'a, D>,
+            _snapshot:        rocksdb::SnapshotWithThreadMode<'a, D>,
+            inner:            rocksdb::DBIteratorWithThreadMode<'a, D>,
             partition_prefix: Vec<u8>,
-            user_prefix: Option<Vec<u8>>,
-            remaining: Option<usize>,
+            user_prefix:      Option<Vec<u8>>,
+            remaining:        Option<usize>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
@@ -417,8 +446,7 @@ impl StorageBackend for RocksDBBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>,
-    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+        limit: Option<usize>) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan_reverse",
             partition = %partition.name(),
@@ -437,17 +465,15 @@ impl StorageBackend for RocksDBBackend {
                 let mut physical_prefix = partition_prefix.clone();
                 physical_prefix.extend_from_slice(prefix);
                 physical_prefix
-            },
-        );
+            });
         let physical_start = start_key.map(|start| {
             let mut physical_start = partition_prefix.clone();
             physical_start.extend_from_slice(start);
             physical_start
         });
 
-        let mut readopts = rocksdb::ReadOptions::default();
+        let mut readopts = prefix_scan_readopts(physical_prefix.clone());
         readopts.set_snapshot(&snapshot);
-        readopts.set_iterate_range(PrefixRange(physical_prefix.clone()));
 
         let iter_mode = if let Some(start) = &physical_start {
             IteratorMode::From(start.as_slice(), Direction::Reverse)
@@ -458,11 +484,11 @@ impl StorageBackend for RocksDBBackend {
         let inner = self.db.iterator_cf_opt(&cf, readopts, iter_mode);
 
         struct SnapshotReverseScanIter<'a, D: rocksdb::DBAccess> {
-            _snapshot: rocksdb::SnapshotWithThreadMode<'a, D>,
-            inner: rocksdb::DBIteratorWithThreadMode<'a, D>,
+            _snapshot:        rocksdb::SnapshotWithThreadMode<'a, D>,
+            inner:            rocksdb::DBIteratorWithThreadMode<'a, D>,
             partition_prefix: Vec<u8>,
-            user_prefix: Option<Vec<u8>>,
-            remaining: Option<usize>,
+            user_prefix:      Option<Vec<u8>>,
+            remaining:        Option<usize>,
         }
 
         impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotReverseScanIter<'a, D> {
@@ -533,49 +559,11 @@ impl StorageBackend for RocksDBBackend {
 
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
         let cf = self.get_cf(partition)?;
-        let prefix = partition_key_prefix(partition.name());
-
-        loop {
-            let (batch, deleted_count) = {
-                let snapshot = self.db.snapshot();
-                let mut readopts = rocksdb::ReadOptions::default();
-                readopts.set_snapshot(&snapshot);
-                readopts.set_iterate_range(PrefixRange(prefix.clone()));
-
-                let mut batch = rocksdb::WriteBatch::default();
-                let mut deleted_count = 0usize;
-
-                for item in self.db.iterator_cf_opt(
-                    &cf,
-                    readopts,
-                    IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
-                ) {
-                    let (key, _) = item.map_err(|e| StorageError::IoError(e.to_string()))?;
-                    if !key.starts_with(&prefix) {
-                        break;
-                    }
-
-                    batch.delete_cf(&cf, key.as_ref());
-                    deleted_count += 1;
-                    if deleted_count >= DROP_PARTITION_BATCH_SIZE {
-                        break;
-                    }
-                }
-
-                (batch, deleted_count)
-            };
-
-            if deleted_count == 0 {
-                break;
-            }
-
+        let start = partition_key_prefix(partition.name());
+        if let Some(end) = next_prefix_bound(&start) {
             self.db
-                .write_opt(batch, &self.write_opts)
+                .delete_range_cf_opt(&cf, start, end, &self.write_opts)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
-
-            if deleted_count < DROP_PARTITION_BATCH_SIZE {
-                break;
-            }
         }
 
         if let Ok(mut names) = self.logical_partition_names.write() {
@@ -598,15 +586,19 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn flush_all_memtables(&self) -> Result<()> {
-        let names = self
+        // Clone names and drop the RwLock before calling into RocksDB.
+        // Holding `known_cf_names` across `flush_cf` deadlocks with
+        // `create_partition` / `track_physical_cf`, which need the write lock
+        // while RocksDB flush can stall waiting for concurrent CF/schema work.
+        let names: Vec<String> = self
             .known_cf_names
             .read()
-            .map_err(|e| StorageError::Other(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| StorageError::Other(format!("lock poisoned: {}", e)))?
+            .clone();
 
-        let mut flush_opts = rocksdb::FlushOptions::default();
-        flush_opts.set_wait(true);
+        let flush_opts = flush_options_allow_write_stall();
 
-        for cf_name in names.iter() {
+        for cf_name in &names {
             if let Some(cf) = self.db.cf_handle(cf_name) {
                 if let Err(e) = self.db.flush_cf_opt(&cf, &flush_opts) {
                     log::warn!("flush_all_memtables: failed to flush CF '{}': {}", cf_name, e);
@@ -661,8 +653,7 @@ impl StorageBackend for RocksDBBackend {
     fn restore_from(
         &self,
         backup_dir: &std::path::Path,
-        restore_token: &str,
-    ) -> crate::storage_trait::Result<()> {
+        restore_token: &str) -> crate::storage_trait::Result<()> {
         use rocksdb::{
             backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
             Env,
@@ -670,8 +661,7 @@ impl StorageBackend for RocksDBBackend {
 
         if restore_token.is_empty() {
             return Err(crate::storage_trait::StorageError::Other(
-                "restore_token cannot be empty".to_string(),
-            ));
+                "restore_token cannot be empty".to_string()));
         }
 
         let opts = BackupEngineOptions::new(backup_dir).map_err(|e| {
@@ -724,48 +714,37 @@ impl StorageBackend for RocksDBBackend {
             ("storage_backend".to_string(), "rocksdb".to_string()),
             (
                 "storage_partition_count".to_string(),
-                self.tracked_partition_count().to_string(),
-            ),
+                self.tracked_partition_count().to_string()),
             (
                 "rocksdb_physical_cf_count".to_string(),
-                self.tracked_cf_names().len().to_string(),
-            ),
+                self.tracked_cf_names().len().to_string()),
             (
                 "rocksdb_estimate_num_keys".to_string(),
-                self.sum_cf_property(ESTIMATE_NUM_KEYS_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(ESTIMATE_NUM_KEYS_PROPERTY).to_string()),
             (
                 "rocksdb_estimate_live_data_size_bytes".to_string(),
-                self.sum_cf_property(ESTIMATE_LIVE_DATA_SIZE_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(ESTIMATE_LIVE_DATA_SIZE_PROPERTY).to_string()),
             (
                 "rocksdb_active_memtable_entries".to_string(),
-                self.sum_cf_property(ACTIVE_MEMTABLE_ENTRIES_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(ACTIVE_MEMTABLE_ENTRIES_PROPERTY).to_string()),
             (
                 "rocksdb_immutable_memtable_entries".to_string(),
-                self.sum_cf_property(IMM_MEMTABLE_ENTRIES_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(IMM_MEMTABLE_ENTRIES_PROPERTY).to_string()),
             (
                 "rocksdb_active_memtable_size_bytes".to_string(),
-                self.sum_cf_property(ACTIVE_MEMTABLE_SIZE_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(ACTIVE_MEMTABLE_SIZE_PROPERTY).to_string()),
             (
                 "rocksdb_live_sst_files_size_bytes".to_string(),
-                self.sum_cf_property(LIVE_SST_FILES_SIZE_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(LIVE_SST_FILES_SIZE_PROPERTY).to_string()),
             (
                 "rocksdb_total_sst_files_size_bytes".to_string(),
-                self.sum_cf_property(TOTAL_SST_FILES_SIZE_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(TOTAL_SST_FILES_SIZE_PROPERTY).to_string()),
             (
                 "rocksdb_memtables_size_bytes".to_string(),
-                self.sum_cf_property(ALL_MEMTABLES_SIZE_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(ALL_MEMTABLES_SIZE_PROPERTY).to_string()),
             (
                 "rocksdb_pending_compaction_bytes".to_string(),
-                self.sum_cf_property(PENDING_COMPACTION_BYTES_PROPERTY).to_string(),
-            ),
+                self.sum_cf_property(PENDING_COMPACTION_BYTES_PROPERTY).to_string()),
         ])
     }
 }
@@ -776,8 +755,7 @@ mod tests {
     use kalamdb_configs::RocksDbSettings;
     use tempfile::TempDir;
 
-    use super::super::init::RocksDbInit;
-    use super::*;
+    use super::{super::init::RocksDbInit, *};
 
     fn create_test_db() -> (Arc<DB>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -840,17 +818,17 @@ mod tests {
         let ops = vec![
             Operation::Put {
                 partition: partition.clone(),
-                key: b"key1".to_vec(),
-                value: b"value1".to_vec(),
+                key:       b"key1".to_vec(),
+                value:     b"value1".to_vec(),
             },
             Operation::Put {
                 partition: partition.clone(),
-                key: b"key2".to_vec(),
-                value: b"value2".to_vec(),
+                key:       b"key2".to_vec(),
+                value:     b"value2".to_vec(),
             },
             Operation::Delete {
                 partition: partition.clone(),
-                key: b"key1".to_vec(),
+                key:       b"key1".to_vec(),
             },
         ];
 
@@ -967,8 +945,7 @@ mod tests {
                 db,
                 false,
                 false,
-                RocksDbSettings::default(),
-            );
+                RocksDbSettings::default());
             backend.set_known_cf_names(cf_names);
 
             backend.create_partition(&partition).unwrap();
@@ -984,8 +961,7 @@ mod tests {
                 db,
                 false,
                 false,
-                RocksDbSettings::default(),
-            );
+                RocksDbSettings::default());
             backend.set_known_cf_names(cf_names);
 
             assert!(backend.partition_exists(&partition));

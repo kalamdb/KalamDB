@@ -281,10 +281,11 @@ fn smoke_test_soft_delete_shared_table() {
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             config_key TEXT NOT NULL,
             config_value TEXT
-        ) WITH (TYPE = 'SHARED', ACCESS_LEVEL = 'PUBLIC', FLUSH_POLICY = 'rows:1000')"#,
+        ) WITH (TYPE = 'SHARED', FLUSH_POLICY = 'rows:1000')"#,
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_shared_table_access(&full_table);
 
     // Insert and delete
     let insert_sql = format!(

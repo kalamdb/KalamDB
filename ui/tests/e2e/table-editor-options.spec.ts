@@ -312,7 +312,6 @@ test("admin edits shared table options", async ({ page }) => {
   await openTableEditor(page);
 
   await page.getByText(/^settings$/i, { exact: true }).click();
-  await chooseSelect(page, "table-option-access-level", /public/i);
   await chooseSelect(page, "table-option-flush-policy", /combined/i);
   await page.getByTestId("table-option-flush-rows").fill("2000");
   await page.getByTestId("table-option-flush-interval").fill("120");
@@ -325,7 +324,7 @@ test("admin edits shared table options", async ({ page }) => {
     .poll(() => executedSql.find((sql) => /alter\s+table/i.test(sql)) ?? "")
     .toContain("SET TBLPROPERTIES");
   const alterSql = executedSql.find((sql) => /alter\s+table/i.test(sql)) ?? "";
-  expect(alterSql).toContain("ACCESS_LEVEL = 'PUBLIC'");
+  expect(alterSql).not.toContain("ACCESS_LEVEL");
   expect(alterSql).toContain("FLUSH_POLICY = 'rows:2000,interval:120'");
   expect(alterSql).toContain("COMPRESSION = 'none'");
 });

@@ -33,8 +33,8 @@ async fn test_oauth_google_success() {
 
     // Create external OIDC user with issuer and subject
     let create_sql = format!(
-        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \"{}\"}}' \
-         ROLE user EMAIL '{}@gmail.com'",
+        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \
+         \"{}\"}}' ROLE user EMAIL '{}@gmail.com'",
         oauth_username, oauth_username, oauth_username
     );
 
@@ -74,8 +74,8 @@ async fn test_oauth_user_password_rejected() {
 
     // Create OAuth user
     let create_sql = format!(
-        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://github.example.test\", \"subject\": \"{}\"}}' \
-         ROLE user",
+        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://github.example.test\", \"subject\": \
+         \"{}\"}}' ROLE user",
         oauth_username, oauth_username
     );
     let res = server.execute_sql_as_user(&create_sql, admin_id_str).await;
@@ -94,7 +94,7 @@ async fn test_oauth_user_password_rejected() {
 
     // Attempt credential auth (login flow)
     let auth_request = AuthRequest::Credentials {
-        user: oauth_username.clone(),
+        user:     oauth_username.clone(),
         password: "somepassword".to_string(),
     };
 
@@ -121,13 +121,13 @@ async fn test_oauth_subject_matching() {
 
     // Create two OAuth users with different subjects
     let create_sql1 = format!(
-        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \"{}\"}}' \
-         ROLE user",
+        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \
+         \"{}\"}}' ROLE user",
         user1_name, user1_name
     );
     let create_sql2 = format!(
-        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \"{}\"}}' \
-         ROLE user",
+        "CREATE USER {} WITH OAUTH '{{\"issuer\": \"https://accounts.google.com\", \"subject\": \
+         \"{}\"}}' ROLE user",
         user2_name, user2_name
     );
 

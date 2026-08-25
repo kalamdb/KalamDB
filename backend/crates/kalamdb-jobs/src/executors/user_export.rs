@@ -47,7 +47,7 @@ const FLUSH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserExportParams {
     /// User ID whose data to export
-    pub user_id: String,
+    pub user_id:   String,
     /// Unique export identifier (used for filename and lookup)
     pub export_id: String,
 }
@@ -183,8 +183,8 @@ impl JobExecutor for UserExportExecutor {
             }
 
             let flush_params = FlushParams {
-                table_id: table_id.clone(),
-                table_type: TableType::User,
+                table_id:        table_id.clone(),
+                table_type:      TableType::User,
                 flush_threshold: None,
             };
             let flush_key = format!("export-flush:{}:{}", params.user_id, table_id);

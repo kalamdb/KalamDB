@@ -42,6 +42,7 @@ mod file_ref;
 mod payload_mode;
 mod read_context;
 mod role;
+pub mod row_level_security;
 mod session_origin;
 mod topic_op;
 mod transaction;
@@ -64,6 +65,11 @@ pub use kalam_cell_value::KalamCellValue;
 pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;
+pub use row_level_security::{
+    AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+    PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, ScalarPredicate,
+    TablePolicy,
+};
 #[cfg(feature = "rows")]
 pub use rows::{KTableRow, StreamTableRow, SystemTableRow, UserTableRow};
 pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};

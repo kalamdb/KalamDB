@@ -144,7 +144,16 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
 }
 
 fn should_install_managed_server(target: &ReleaseTarget, args: &UpdateArgs) -> bool {
+    if skip_managed_server_update() {
+        return false;
+    }
     args.force || target.version().as_str() != CLI_VERSION
+}
+
+fn skip_managed_server_update() -> bool {
+    matches!(env::var("KALAM_SKIP_MANAGED_SERVER_UPDATE").as_deref(), Ok("1"))
+        || (env::var(RELEASE_BASE_URL_ENV).is_ok()
+            && env::var("KALAMDB_SERVER_RELEASE_BASE_URL").is_err())
 }
 
 async fn install_managed_server_after_cli_update(

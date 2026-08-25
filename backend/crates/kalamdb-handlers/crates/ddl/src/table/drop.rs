@@ -40,8 +40,7 @@ const CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 pub(crate) fn capture_storage_cleanup_details(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
-    table_type: TableType,
-) -> Result<StorageCleanupDetails, KalamDbError> {
+    table_type: TableType) -> Result<StorageCleanupDetails, KalamDbError> {
     let registry = app_context.schema_registry();
     let cached = registry.get(table_id).ok_or_else(|| {
         KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
@@ -62,8 +61,7 @@ pub(crate) fn capture_storage_cleanup_details(
         TableType::Shared | TableType::Stream => storage.shared_tables_template.clone(),
         TableType::System => {
             return Err(KalamDbError::InvalidOperation(
-                "System tables do not use storage templates".to_string(),
-            ))
+                "System tables do not use storage templates".to_string()))
         },
     };
 
@@ -87,8 +85,7 @@ pub(crate) async fn schedule_drop_table_cleanup(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
-    storage_details: StorageCleanupDetails,
-) -> Result<String, KalamDbError> {
+    storage_details: StorageCleanupDetails) -> Result<String, KalamDbError> {
     cleanup_dropped_table_partitions(app_context, table_id, table_type).await?;
     enqueue_drop_table_cleanup_job(app_context, table_id, table_type, storage_details).await
 }
@@ -96,8 +93,7 @@ pub(crate) async fn schedule_drop_table_cleanup(
 pub(crate) async fn cleanup_dropped_table_partitions(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
-    table_type: TableType,
-) -> Result<(), KalamDbError> {
+    table_type: TableType) -> Result<(), KalamDbError> {
     cleanup_table_data_internal(app_context, table_id, table_type).await?;
     Ok(())
 }
@@ -105,8 +101,7 @@ pub(crate) async fn cleanup_dropped_table_partitions(
 pub(crate) async fn wait_for_cleanup_job(
     app_context: &Arc<AppContext>,
     cleanup_job_id: &str,
-    scope: &str,
-) -> Result<(), KalamDbError> {
+    scope: &str) -> Result<(), KalamDbError> {
     let job_manager = app_context.job_manager();
     let job_id = JobId::new(cleanup_job_id.to_string());
     let deadline = Instant::now() + CLEANUP_WAIT_TIMEOUT;
@@ -145,8 +140,7 @@ async fn enqueue_drop_table_cleanup_job(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
-    storage_details: StorageCleanupDetails,
-) -> Result<String, KalamDbError> {
+    storage_details: StorageCleanupDetails) -> Result<String, KalamDbError> {
     let params = CleanupParams {
         table_id: table_id.clone(),
         table_type,
@@ -175,8 +169,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         &self,
         statement: DropTableStatement,
         _params: Vec<ScalarValue>,
-        context: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let table_id =
             TableId::from_strings(statement.namespace_id.as_str(), statement.table_name.as_str());
 
@@ -194,8 +187,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             &statement.namespace_id,
             "DROP",
             "TABLE",
-            Some(statement.table_name.as_str()),
-        )?;
+            Some(statement.table_name.as_str()))?;
 
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
@@ -216,8 +208,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 actual_type
             );
             return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to drop this table".to_string(),
-            ));
+                "Insufficient privileges to drop this table".to_string()));
         }
 
         // Check existence via system.tables provider (for IF EXISTS behavior)
@@ -348,6 +339,18 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
+        self.app_context
+            .system_tables()
+            .table_policies()
+            .delete_for_table(&table_id)
+            .await
+            .map_err(|error| {
+                KalamDbError::ExecutionError(format!(
+                    "DROP TABLE policy cleanup failed for {}: {}",
+                    table_id, error
+                ))
+            })?;
+
         let job_id =
             schedule_drop_table_cleanup(&self.app_context, &table_id, actual_type, storage_details)
                 .await?;
@@ -364,8 +367,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                 actual_type,
                 job_id.as_str()
             )),
-            None,
-        );
+            None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         log::debug!(
@@ -389,8 +391,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
     async fn check_authorization(
         &self,
         _statement: &DropTableStatement,
-        context: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
+        context: &ExecutionContext) -> Result<(), KalamDbError> {
         // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "DROP TABLE")?;
 
@@ -452,7 +453,6 @@ mod tests {
             eviction_strategy: None,
             max_stream_size_bytes: None,
             if_not_exists: false,
-            access_level: None,
         }
     }
 
@@ -466,8 +466,7 @@ mod tests {
         let store = kalamdb_tables::new_indexed_user_table_store(
             app_ctx.storage_backend(),
             &table_id,
-            "id",
-        );
+            "id");
         let main_partition = store.partition();
         let pk_partition = store.indexes()[0].partition();
 
@@ -516,8 +515,7 @@ mod tests {
                     if_exists: false,
                 },
                 vec![],
-                &ctx,
-            )
+                &ctx)
             .await;
 
         assert!(drop_result.is_ok(), "DROP TABLE failed: {:?}", drop_result);

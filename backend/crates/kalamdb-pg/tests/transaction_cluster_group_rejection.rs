@@ -51,26 +51,36 @@ async fn pg_transaction_rejects_cross_group_access_without_losing_existing_overl
 
     let status = service
         .insert(request(InsertRpcRequest {
-            namespace: shared_table.namespace_id().to_string(),
+            namespace:  shared_table.namespace_id().to_string(),
             table_name: shared_table.table_name().to_string(),
             table_type: "shared".to_string(),
             session_id: session_id.to_string(),
-            user_id: None,
-            rows_json: vec![row_json],
+            user_id:    None,
+            rows_json:  vec![row_json],
         }))
         .await
-        .expect_err("cross-group insert should fail");
+        .expect_err("typed shared insert into a different raft group must fail");
 
-    let message = status.message().to_string();
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
     assert!(
-        message.contains("already bound to data raft group"),
-        "expected cross-group rejection, got: {message}"
+        status.message().contains("already bound to data raft group"),
+        "expected cross-group rejection, got: {status}"
     );
     assert!(
-        message.contains(&bound_group.to_string()),
-        "expected bound group in error: {message}"
+        status.message().contains(&bound_group.to_string()),
+        "expected bound group in error: {status}"
     );
-    assert!(message.contains("data:shared:00"), "expected shared group in error: {message}");
+
+    let handle_after = app_ctx
+        .transaction_coordinator()
+        .get_handle(&parsed_transaction_id)
+        .expect("typed shared rejection must not drop the active transaction");
+    match handle_after.raft_binding {
+        TransactionRaftBinding::BoundCluster { group_id, .. } => {
+            assert_eq!(group_id, bound_group);
+        },
+        other => panic!("expected bound cluster transaction after rejection, got {:?}", other),
+    }
 
     let same_tx_rows = scan_user_rows(&service, &user_table, session_id, user_id).await;
     assert_eq!(same_tx_rows.len(), 1);

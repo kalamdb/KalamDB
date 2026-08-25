@@ -1,0 +1,24 @@
+[package]
+name = "kalamdb-rls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared-table row-level security compile and runtime evaluation for KalamDB"
+keywords = ["kalamdb", "database", "rls", "authorization"]
+categories = ["database"]
+
+[dependencies]
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
+
+arrow = { workspace = true }
+dashmap = { workspace = true }
+datafusion = { workspace = true }
+sqlparser = { workspace = true }
+
+[lib]
+name = "kalamdb_rls"
+path = "src/lib.rs"

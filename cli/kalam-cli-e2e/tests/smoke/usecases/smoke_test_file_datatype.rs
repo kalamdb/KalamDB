@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::common::{
     force_auto_test_server_url_async, generate_unique_namespace, get_access_token_for_url,
-    get_available_server_urls, is_cluster_mode, is_leader_error,
+    get_available_server_urls, grant_public_shared_table_access, is_cluster_mode, is_leader_error,
     is_retryable_cluster_error_for_sql, shared_http_client, test_context,
 };
 
@@ -43,6 +43,7 @@ async fn test_file_datatype_upload_and_download() {
     );
     let result = execute_sql_via_http_as_for_url(&client, &base_url, &token, &create_sql).await;
     assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result);
+    grant_public_shared_table_access(&format!("{}.{}", ns, table));
 
     // 3. Upload file via multipart endpoint
     let test_content = b"This is the file content for testing FILE datatype!";

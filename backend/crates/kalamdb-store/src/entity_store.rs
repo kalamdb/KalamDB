@@ -134,8 +134,7 @@ where
         &self,
         start_key: Option<&K>,
         direction: ScanDirection,
-        limit: usize,
-    ) -> Result<EntityIterator<'_, K, V>> {
+        limit: usize) -> Result<EntityIterator<'_, K, V>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         if limit == 0 {
             return Ok(Box::new(Vec::<Result<(K, V)>>::new().into_iter()));
@@ -172,8 +171,7 @@ where
                     &partition,
                     None,
                     start_bytes.as_deref(),
-                    Some(scan_limit),
-                )?;
+                    Some(scan_limit))?;
 
                 let mut rows = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, value_bytes) in iter {
@@ -200,8 +198,7 @@ where
     fn scan_iterator(
         &self,
         prefix: Option<&K>,
-        start_key: Option<&K>,
-    ) -> Result<EntityIterator<'_, K, V>> {
+        start_key: Option<&K>) -> Result<EntityIterator<'_, K, V>> {
         let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
         let start_key_bytes = start_key.map(|k| k.storage_key());
@@ -210,8 +207,7 @@ where
             &partition,
             prefix_bytes.as_deref(),
             start_key_bytes.as_deref(),
-            None,
-        )?;
+            None)?;
 
         let mapped = iter.map(|(key_bytes, value_bytes)| {
             let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
@@ -350,8 +346,7 @@ where
             &partition,
             Some(&prefix.storage_key()),
             None,
-            Some(effective_limit),
-        )?;
+            Some(effective_limit))?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -400,8 +395,7 @@ where
         &self,
         limit: Option<usize>,
         prefix: Option<&K>,
-        start_key: Option<&K>,
-    ) -> Result<Vec<(K, V)>> {
+        start_key: Option<&K>) -> Result<Vec<(K, V)>> {
         const MAX_SCAN_LIMIT: usize = 10000;
         let effective_limit = limit.unwrap_or(MAX_SCAN_LIMIT);
 
@@ -413,8 +407,7 @@ where
             &partition,
             prefix_bytes.as_deref(),
             start_key_bytes.as_deref(),
-            Some(effective_limit),
-        )?;
+            Some(effective_limit))?;
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -459,8 +452,7 @@ where
         &self,
         prefix: &[u8],
         start_key: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<Vec<(K, V)>> {
+        limit: usize) -> Result<Vec<(K, V)>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         let partition = self.partition();
         let iter = self.backend().scan(&partition, Some(prefix), start_key, Some(limit))?;
@@ -496,8 +488,7 @@ where
         &self,
         prefix: Option<&K>,
         start_key: Option<&K>,
-        limit: usize,
-    ) -> Result<Vec<(K, V)>> {
+        limit: usize) -> Result<Vec<(K, V)>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         let partition = self.partition();
         let prefix_bytes = prefix.map(|k| k.storage_key());
@@ -506,8 +497,7 @@ where
             &partition,
             prefix_bytes.as_deref(),
             start_bytes.as_deref(),
-            Some(limit),
-        )?;
+            Some(limit))?;
 
         let mut results = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, value_bytes) in iter {
@@ -540,8 +530,7 @@ where
         &self,
         prefix: Option<&K>,
         start_key: Option<&K>,
-        limit: usize,
-    ) -> Result<Vec<K>> {
+        limit: usize) -> Result<Vec<K>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         if limit == 0 {
             return Ok(Vec::new());
@@ -554,8 +543,7 @@ where
             &partition,
             prefix_bytes.as_deref(),
             start_bytes.as_deref(),
-            Some(limit),
-        )?;
+            Some(limit))?;
 
         let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
         for (key_bytes, _) in iter {
@@ -595,8 +583,7 @@ where
         &self,
         prefix: &[u8],
         start_key: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<Vec<K>> {
+        limit: usize) -> Result<Vec<K>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         if limit == 0 {
             return Ok(Vec::new());
@@ -629,8 +616,7 @@ where
         &self,
         start_key: Option<&K>,
         direction: ScanDirection,
-        limit: usize,
-    ) -> Result<Vec<K>> {
+        limit: usize) -> Result<Vec<K>> {
         const MAX_PREALLOC_CAPACITY: usize = 100_000;
         if limit == 0 {
             return Ok(Vec::new());
@@ -667,8 +653,7 @@ where
                     &partition,
                     None,
                     start_bytes.as_deref(),
-                    Some(scan_limit),
-                )?;
+                    Some(scan_limit))?;
 
                 let mut keys = Vec::with_capacity(limit.min(MAX_PREALLOC_CAPACITY));
                 for (key_bytes, _) in iter {
@@ -735,7 +720,7 @@ where
             .iter()
             .map(|key| Operation::Delete {
                 partition: partition.clone(),
-                key: key.storage_key(),
+                key:       key.storage_key(),
             })
             .collect();
 
@@ -804,8 +789,7 @@ where
         &self,
         limit: Option<usize>,
         prefix: Option<K>,
-        start_key: Option<K>,
-    ) -> Result<Vec<(Vec<u8>, V)>> {
+        start_key: Option<K>) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         run_blocking_result(move || {
             let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;
@@ -822,8 +806,7 @@ where
         &self,
         prefix: &[u8],
         start_key: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<Vec<(K, V)>> {
+        limit: usize) -> Result<Vec<(K, V)>> {
         let store = self.clone();
         let prefix = prefix.to_vec();
         let start_key = start_key.map(|s| s.to_vec());
@@ -841,8 +824,7 @@ where
         &self,
         prefix: Option<&K>,
         start_key: Option<&K>,
-        limit: usize,
-    ) -> Result<Vec<(K, V)>> {
+        limit: usize) -> Result<Vec<(K, V)>> {
         let store = self.clone();
         let prefix = prefix.cloned();
         let start_key = start_key.cloned();
@@ -954,7 +936,7 @@ mod tests {
     // Mock implementation for testing
     struct MockStore {
         backend: Arc<dyn StorageBackend>,
-        access: Option<TableAccess>,
+        access:  Option<TableAccess>,
     }
 
     impl EntityStore<UserId, String> for MockStore {
@@ -974,7 +956,7 @@ mod tests {
     }
 
     struct BinaryStore {
-        backend: Arc<dyn StorageBackend>,
+        backend:   Arc<dyn StorageBackend>,
         partition: String,
     }
 
@@ -993,7 +975,7 @@ mod tests {
         // System table (table_access = None)
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access: None,
+            access:  None,
         };
 
         assert!(!store.can_read(&Role::User)); // Regular users cannot read system tables
@@ -1006,7 +988,7 @@ mod tests {
     fn test_public_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access: Some(TableAccess::Public),
+            access:  Some(TableAccess::Public),
         };
 
         assert!(store.can_read(&Role::User));
@@ -1019,7 +1001,7 @@ mod tests {
     fn test_private_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access: Some(TableAccess::Private),
+            access:  Some(TableAccess::Private),
         };
 
         assert!(!store.can_read(&Role::User));
@@ -1032,7 +1014,7 @@ mod tests {
     fn test_restricted_table_access() {
         let store = MockStore {
             backend: Arc::new(crate::test_utils::InMemoryBackend::new()),
-            access: Some(TableAccess::Restricted),
+            access:  Some(TableAccess::Restricted),
         };
 
         assert!(!store.can_read(&Role::User));

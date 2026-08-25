@@ -15,8 +15,6 @@ use kalamdb_commons::Role;
 
 use super::helpers::*;
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Performance baseline test for inserts
 #[tokio::test]
 async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {

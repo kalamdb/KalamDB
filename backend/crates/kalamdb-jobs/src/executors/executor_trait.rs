@@ -88,16 +88,16 @@ pub enum JobDecision {
     /// Job should be retried after a delay
     Retry {
         /// Error message
-        message: String,
+        message:         String,
         /// Optional stack trace
         exception_trace: Option<String>,
         /// Backoff delay in milliseconds
-        backoff_ms: u64,
+        backoff_ms:      u64,
     },
     /// Job failed permanently (no more retries)
     Failed {
         /// Error message
-        message: String,
+        message:         String,
         /// Optional stack trace
         exception_trace: Option<String>,
     },
@@ -128,13 +128,13 @@ pub trait JobParams: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync
 #[derive(Clone)]
 pub struct JobContext<T: JobParams> {
     /// Application context for accessing stores, registries, etc.
-    pub app_ctx: Arc<AppContext>,
+    pub app_ctx:            Arc<AppContext>,
     /// Cancellation token for graceful shutdown
     pub cancellation_token: CancellationToken,
     /// Job ID for logging (automatically prefixed to log messages)
-    pub job_id: String,
+    pub job_id:             String,
     /// Typed job parameters (deserialized once at creation)
-    params: T,
+    params:                 T,
 }
 
 impl<T: JobParams> JobContext<T> {
@@ -368,9 +368,9 @@ mod tests {
     #[test]
     fn test_job_decision_retry() {
         let decision = JobDecision::Retry {
-            message: "Temporary failure".to_string(),
+            message:         "Temporary failure".to_string(),
             exception_trace: Some("Stack trace".to_string()),
-            backoff_ms: 1000,
+            backoff_ms:      1000,
         };
         match decision {
             JobDecision::Retry {
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn test_job_decision_failed() {
         let decision = JobDecision::Failed {
-            message: "Permanent failure".to_string(),
+            message:         "Permanent failure".to_string(),
             exception_trace: None,
         };
         match decision {

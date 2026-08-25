@@ -25,9 +25,8 @@ use kalamdb_commons::{
 };
 use kalamdb_system::SystemTable;
 
-use crate::{error::RegistryError, view_base::VirtualView};
-
 use super::common::system_view_definition;
+use crate::{error::RegistryError, view_base::VirtualView};
 
 crate::memoized_view_schema!(describe_schema, DescribeView);
 
@@ -83,8 +82,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Name of the column".to_string()),
-            ),
+                Some("Name of the column".to_string())),
             ColumnDefinition::new(
                 2,
                 "ordinal_position",
@@ -94,8 +92,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Position of column in SELECT * (1-indexed)".to_string()),
-            ),
+                Some("Position of column in SELECT * (1-indexed)".to_string())),
             ColumnDefinition::new(
                 3,
                 "column_id",
@@ -105,8 +102,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Stable column ID (Parquet field_id)".to_string()),
-            ),
+                Some("Stable column ID (Parquet field_id)".to_string())),
             ColumnDefinition::new(
                 4,
                 "data_type",
@@ -116,8 +112,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Column data type".to_string()),
-            ),
+                Some("Column data type".to_string())),
             ColumnDefinition::new(
                 5,
                 "is_nullable",
@@ -127,8 +122,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether NULL values are allowed".to_string()),
-            ),
+                Some("Whether NULL values are allowed".to_string())),
             ColumnDefinition::new(
                 6,
                 "is_primary_key",
@@ -138,8 +132,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Whether column is part of primary key".to_string()),
-            ),
+                Some("Whether column is part of primary key".to_string())),
             ColumnDefinition::new(
                 7,
                 "column_default",
@@ -149,8 +142,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Default value expression".to_string()),
-            ),
+                Some("Default value expression".to_string())),
             ColumnDefinition::new(
                 8,
                 "column_comment",
@@ -160,8 +152,7 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Column description/comment".to_string()),
-            ),
+                Some("Column description/comment".to_string())),
             ColumnDefinition::new(
                 9,
                 "schema_version",
@@ -171,15 +162,13 @@ impl DescribeView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Schema version when column was added (1 = original)".to_string()),
-            ),
+                Some("Schema version when column was added (1 = original)".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Describe,
             columns,
-            "Virtual view for DESCRIBE TABLE functionality",
-        )
+            "Virtual view for DESCRIBE TABLE functionality")
     }
 
     /// Create a new describe view without a callback (placeholder mode)
@@ -253,8 +242,7 @@ impl DescribeView {
                 Arc::new(defaults.finish()) as ArrayRef,
                 Arc::new(comments.finish()) as ArrayRef,
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| RegistryError::ArrowError {
             message: e.to_string(),
         })?;
@@ -288,11 +276,12 @@ impl VirtualView for DescribeView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::{
         schemas::{TableOptions, TableType},
         NamespaceId, TableName,
     };
+
+    use super::*;
 
     #[test]
     fn test_describe_view_definition() {
@@ -328,8 +317,7 @@ mod tests {
             TableType::User,
             columns,
             TableOptions::user(),
-            Some("Test table".to_string()),
-        )
+            Some("Test table".to_string()))
         .unwrap();
 
         let batch = DescribeView::build_batch(&table_def).unwrap();

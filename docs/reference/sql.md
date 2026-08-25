@@ -73,7 +73,6 @@ CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
   USE_USER_STORAGE = <TRUE|FALSE>,
   FLUSH_POLICY = '<rows:N|interval:N|rows:N,interval:N>',
   TTL_SECONDS = <seconds>,
-  ACCESS_LEVEL = '<PUBLIC|PRIVATE|RESTRICTED|DBA>',
   EVICTION_STRATEGY = '<time_based|size_based|hybrid>',
   MAX_STREAM_SIZE_BYTES = <bytes>,
   COMPRESSION = '<none|snappy|zstd>'
@@ -83,7 +82,7 @@ CREATE [USER|SHARED|STREAM] TABLE [IF NOT EXISTS] [<namespace>.]<table_name> (
 Table options are type-specific:
 
 - `USER`: `STORAGE_ID`, `USE_USER_STORAGE`, `FLUSH_POLICY`, `COMPRESSION`
-- `SHARED`: `STORAGE_ID`, `ACCESS_LEVEL`, `FLUSH_POLICY`, `COMPRESSION`
+- `SHARED`: `STORAGE_ID`, `FLUSH_POLICY`, `COMPRESSION`
 - `STREAM`: `TTL_SECONDS`, `EVICTION_STRATEGY`, `MAX_STREAM_SIZE_BYTES`
 
 `COMPRESSION` accepts only `none`, `snappy`, and `zstd`, and is valid only for `USER` and `SHARED`
@@ -116,7 +115,6 @@ CREATE SHARED TABLE app.config (
   value TEXT NOT NULL,
   updated_at TIMESTAMP DEFAULT NOW()
 ) WITH (
-  ACCESS_LEVEL = 'PUBLIC',
   COMPRESSION = 'zstd'
 );
 
@@ -147,7 +145,7 @@ Examples:
 
 ```sql
 ALTER TABLE app.config
-  SET TBLPROPERTIES (ACCESS_LEVEL = 'PUBLIC', COMPRESSION = 'zstd');
+  SET TBLPROPERTIES (COMPRESSION = 'zstd');
 
 ALTER TABLE app.messages
   SET TBLPROPERTIES (FLUSH_POLICY = 'rows:5000', USE_USER_STORAGE = true);
@@ -160,6 +158,11 @@ ALTER TABLE app.events
   );
 ```
 
+Shared tables always use FORCE row-level security. Creating a shared table without
+`CREATE POLICY` is default-deny for User and Service (zero rows on SELECT; writes fail).
+System and DBA bypass RLS. `ACCESS_LEVEL` is not a table option; grant access with
+`CREATE POLICY`.
+
 ### DROP TABLE
 
 ```sql
@@ -168,6 +171,81 @@ DROP USER TABLE [IF EXISTS] [<namespace>.]<table_name>;
 DROP SHARED TABLE [IF EXISTS] [<namespace>.]<table_name>;
 DROP STREAM TABLE [IF EXISTS] [<namespace>.]<table_name>;
 ```
+
+### CREATE / ALTER / DROP POLICY
+
+Row-level security applies to every shared-table scan, write, live event, and file
+download for User and Service. System and DBA bypass. Policies are permissive (`OR`);
+`AS RESTRICTIVE` is rejected. `CURRENT_USER` is bound after plan-cache lookup, so the
+same cached plan can return different rows for Alice and Bob.
+
+`TO` selects which roles the policy applies to:
+
+- `TO user` — end-user sessions only
+- `TO service` — service-account sessions only
+- `TO user, service` — both authenticated principals
+- `TO PUBLIC` (or omit `TO`) — every role subject to RLS (`user` and `service`)
+
+```sql
+-- SELECT: end users see only their own documents
+CREATE POLICY owner_read ON app.documents
+  FOR SELECT TO user
+  USING (owner_id = CURRENT_USER);
+
+-- SELECT: membership subquery (same IR as EXISTS)
+CREATE POLICY member_read ON app.messages
+  FOR SELECT TO user
+  USING (
+    group_id IN (
+      SELECT group_id FROM app.group_members
+      WHERE user_id = CURRENT_USER
+    )
+  );
+
+-- SELECT: service accounts can read every published row
+CREATE POLICY service_published_read ON app.documents
+  FOR SELECT TO service
+  USING (status = 'published');
+
+-- SELECT: both user and service share the same visibility rule
+CREATE POLICY tenant_read ON app.events
+  FOR SELECT TO user, service
+  USING (tenant_id = CURRENT_USER);
+
+-- SELECT: PUBLIC = user and service (same as TO user, service here)
+CREATE POLICY public_catalog_read ON app.catalog
+  FOR SELECT TO PUBLIC
+  USING (is_public = true);
+
+-- DML: separate policies per command, or one FOR ALL
+CREATE POLICY owner_insert ON app.documents
+  FOR INSERT TO user
+  WITH CHECK (owner_id = CURRENT_USER);
+
+CREATE POLICY owner_update ON app.documents
+  FOR UPDATE TO user
+  USING (owner_id = CURRENT_USER)
+  WITH CHECK (owner_id = CURRENT_USER);
+
+CREATE POLICY owner_delete ON app.documents
+  FOR DELETE TO user
+  USING (owner_id = CURRENT_USER);
+
+CREATE POLICY service_full ON app.documents
+  FOR ALL TO service
+  USING (true)
+  WITH CHECK (true);
+
+ALTER POLICY owner_read ON app.documents
+  USING (owner_id = CURRENT_USER);
+
+DROP POLICY owner_read ON app.documents;
+```
+
+`EXISTS` and `IN (SELECT … WHERE principal = CURRENT_USER)` compile to the same
+membership relation. Covering primary keys should be `(principal, relation_key)`
+so PointGuard can probe without a full membership scan. Client `WHERE` clauses,
+including `OR true`, cannot bypass RLS: authorized MVCC winners are selected first.
 
 ### CREATE VIEW
 

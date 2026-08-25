@@ -6,16 +6,15 @@
 
 use std::sync::Arc;
 
-use arrow::datatypes::Schema as ArrowSchema;
-use arrow::record_batch::RecordBatch;
+use arrow::{datatypes::Schema as ArrowSchema, record_batch::RecordBatch};
 use async_trait::async_trait;
 use kalamdb_commons::{
-    models::{ReadContext, TableId, UserId},
+    models::{rows::Row, ReadContext, TableId, UserId},
     schemas::TableDefinition,
     Role, TableType,
 };
 
-use crate::error::LiveError;
+use crate::{error::LiveError, models::LiveRoute};
 
 /// Optional cluster apply barrier used before live snapshots on follower nodes.
 ///
@@ -43,6 +42,22 @@ pub trait LiveSchemaLookup: Send + Sync {
 
     /// Get memoized Arrow schema for a table.
     fn get_arrow_schema(&self, table_id: &TableId) -> Result<Arc<ArrowSchema>, LiveError>;
+}
+
+/// Synchronous subscription-bound evaluator used in the fan-out hot path.
+pub trait LiveAuthorization: std::fmt::Debug + Send + Sync {
+    fn authorizes(&self, row: &Row) -> bool;
+}
+
+/// Binds shared-table RLS once when a subscription is created.
+#[async_trait]
+pub trait LiveAuthorizationBinder: Send + Sync {
+    async fn bind(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: Role,
+    ) -> Result<(Arc<dyn LiveAuthorization>, LiveRoute), LiveError>;
 }
 
 /// SQL execution needed by the live subsystem (initial data, snapshot boundary).

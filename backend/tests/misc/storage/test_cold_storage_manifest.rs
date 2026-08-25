@@ -321,10 +321,7 @@ async fn test_shared_table_cold_storage_uses_manifest() {
     assert_eq!(rows[0].get("price").map(parse_i64).unwrap(), 2000);
 
     let explain_resp = server
-        .execute_sql(&format!(
-            "EXPLAIN ANALYZE SELECT id, name, price FROM {}.products",
-            ns
-        ))
+        .execute_sql(&format!("EXPLAIN ANALYZE SELECT id, name, price FROM {}.products", ns))
         .await;
     query_helpers::assert_explain_analyze_contains(
         &explain_resp,
@@ -422,7 +419,8 @@ async fn test_manifest_tracks_multiple_flush_segments() {
 
     let explain_batch1 = server
         .execute_sql(
-            "EXECUTE AS 'multi_user' ( EXPLAIN ANALYZE SELECT id, event_type FROM multi_flush_ns.events )",
+            "EXECUTE AS 'multi_user' ( EXPLAIN ANALYZE SELECT id, event_type FROM \
+             multi_flush_ns.events )",
         )
         .await;
     query_helpers::assert_explain_analyze_contains(

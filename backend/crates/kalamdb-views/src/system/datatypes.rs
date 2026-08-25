@@ -28,9 +28,8 @@ use kalamdb_commons::{
 };
 use kalamdb_system::SystemTable;
 
+use super::common::{system_view_definition, view_provider, SystemViewProvider};
 use crate::view_base::VirtualView;
-
-use super::common::{system_view_definition, SystemViewProvider, view_provider};
 
 crate::memoized_view_schema!(datatypes_schema, DatatypesView);
 
@@ -62,8 +61,7 @@ impl DatatypesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Arrow internal type name (e.g., Utf8, Int64)".to_string()),
-            ),
+                Some("Arrow internal type name (e.g., Utf8, Int64)".to_string())),
             ColumnDefinition::new(
                 2,
                 "kalam_type",
@@ -73,8 +71,7 @@ impl DatatypesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("KalamDB type name (e.g., Text, BigInt)".to_string()),
-            ),
+                Some("KalamDB type name (e.g., Text, BigInt)".to_string())),
             ColumnDefinition::new(
                 3,
                 "sql_name",
@@ -84,8 +81,7 @@ impl DatatypesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("SQL type name for display (e.g., TEXT, BIGINT)".to_string()),
-            ),
+                Some("SQL type name for display (e.g., TEXT, BIGINT)".to_string())),
             ColumnDefinition::new(
                 4,
                 "description",
@@ -95,15 +91,13 @@ impl DatatypesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Human-readable description of the data type".to_string()),
-            ),
+                Some("Human-readable description of the data type".to_string())),
         ];
 
         system_view_definition(
             SystemTable::Datatypes,
             columns,
-            "Arrow to KalamDB SQL type mappings (read-only view)",
-        )
+            "Arrow to KalamDB SQL type mappings (read-only view)")
     }
 
     /// Create a new datatypes view
@@ -141,39 +135,33 @@ impl DatatypesView {
                 "Timestamp(Microsecond, None)",
                 "Timestamp",
                 "TIMESTAMP",
-                "Timestamp with microsecond precision",
-            ),
+                "Timestamp with microsecond precision"),
             (
                 "Timestamp(Millisecond, None)",
                 "Timestamp",
                 "TIMESTAMP",
-                "Timestamp with millisecond precision",
-            ),
+                "Timestamp with millisecond precision"),
             (
                 "Timestamp(Nanosecond, None)",
                 "Timestamp",
                 "TIMESTAMP",
-                "Timestamp with nanosecond precision",
-            ),
+                "Timestamp with nanosecond precision"),
             (
                 "Timestamp(Second, None)",
                 "Timestamp",
                 "TIMESTAMP",
-                "Timestamp with second precision",
-            ),
+                "Timestamp with second precision"),
             // DateTime with timezone
             (
                 "Timestamp(Microsecond, Some(\"UTC\"))",
                 "DateTime",
                 "DATETIME",
-                "DateTime with timezone (UTC)",
-            ),
+                "DateTime with timezone (UTC)"),
             (
                 "Timestamp(Millisecond, Some(\"UTC\"))",
                 "DateTime",
                 "DATETIME",
-                "DateTime with timezone (UTC)",
-            ),
+                "DateTime with timezone (UTC)"),
             // Date types
             ("Date32", "Date", "DATE", "Date (days since epoch)"),
             ("Date64", "Date", "DATE", "Date (milliseconds since epoch)"),
@@ -190,8 +178,7 @@ impl DatatypesView {
                 "FixedSizeList",
                 "Embedding",
                 "EMBEDDING",
-                "Fixed-size float32 vector for ML embeddings",
-            ),
+                "Fixed-size float32 vector for ML embeddings"),
         ]
     }
 }
@@ -231,8 +218,7 @@ impl VirtualView for DatatypesView {
                 Arc::new(kalam_types.finish()) as ArrayRef,
                 Arc::new(sql_names.finish()) as ArrayRef,
                 Arc::new(descriptions.finish()) as ArrayRef,
-            ],
-        )
+            ])
         .map_err(|e| {
             crate::error::RegistryError::Other(format!("Failed to build datatypes batch: {}", e))
         })

@@ -272,14 +272,10 @@ fn smoke_test_alter_table_modify_column() {
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }
 
-/// Test ALTER TABLE SET TBLPROPERTIES for SHARED tables
-///
-/// Verifies:
-/// - Can change ACCESS_LEVEL for shared tables
-/// - ACCESS_LEVEL appears in system.schemas options
+/// Test that ACCESS_LEVEL is rejected on ALTER TABLE
 #[ntest::timeout(180000)]
 #[test]
-fn smoke_test_alter_shared_table_access_level() {
+fn smoke_test_alter_shared_table_rejects_access_level() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -289,61 +285,34 @@ fn smoke_test_alter_shared_table_access_level() {
     let table = generate_unique_table("shared_access_test");
     let full_table = format!("{}.{}", namespace, table);
 
-    println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES (ACCESS_LEVEL)");
-
-    // Cleanup and setup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
-    // Create SHARED table with PUBLIC access
     let create_sql = format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
             data TEXT
         ) WITH (
             TYPE = 'SHARED',
-            ACCESS_LEVEL = 'PUBLIC',
             FLUSH_POLICY = 'rows:1000'
         )"#,
         full_table
     );
     execute_sql_as_root_via_client(&create_sql).expect("Failed to create shared table");
+    grant_public_select_shared_table(&full_table);
 
-    println!("✅ Created SHARED table with ACCESS_LEVEL='PUBLIC'");
-
-    // Alter access level to RESTRICTED
     let alter_sql =
         format!("ALTER TABLE {} SET TBLPROPERTIES (ACCESS_LEVEL = 'RESTRICTED')", full_table);
+    let err = execute_sql_as_root_via_client(&alter_sql)
+        .expect_err("ACCESS_LEVEL should be rejected");
+    assert!(
+        err.to_string().contains("ACCESS_LEVEL is not supported"),
+        "unexpected error: {err}"
+    );
 
-    match execute_sql_as_root_via_client(&alter_sql) {
-        Ok(_) => {
-            println!("✅ Changed ACCESS_LEVEL to RESTRICTED");
-
-            // Verify in system.schemas
-            let query_sql =
-                format!("SELECT options FROM system.schemas WHERE table_name = '{}'", table);
-            let output = execute_sql_as_root_via_client_json(&query_sql)
-                .expect("Failed to query system.schemas");
-
-            assert!(
-                output.contains("RESTRICTED")
-                    || output.contains("restricted")
-                    || output.contains("Restricted"),
-                "Expected ACCESS_LEVEL='RESTRICTED' in system.schemas options"
-            );
-
-            println!("✅ Verified ACCESS_LEVEL updated in system.schemas");
-        },
-        Err(e) => {
-            println!("⚠️  SET TBLPROPERTIES not yet implemented: {}", e);
-            println!("TODO: Implement ALTER TABLE SET TBLPROPERTIES for SHARED tables");
-        },
-    }
-
-    // Cleanup
     let _ =
         execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
 }

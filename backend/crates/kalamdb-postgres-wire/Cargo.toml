@@ -13,12 +13,15 @@ categories = ["database"]
 [dependencies]
 async-trait = { workspace = true }
 arrow = { workspace = true }
+datafusion = { workspace = true }
 futures-util = { workspace = true }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-backend = { path = "../kalamdb-backend" }
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
+log = { workspace = true }
 sqlparser = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
@@ -27,6 +30,7 @@ parking_lot = { workspace = true }
 
 [dev-dependencies]
 kalamdb-system = { path = "../kalamdb-system" }
+ntest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-postgres = { workspace = true }
 

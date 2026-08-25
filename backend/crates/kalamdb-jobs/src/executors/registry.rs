@@ -474,8 +474,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::executors::backup::BackupExecutor;
-    use crate::executors::JobParams;
+    use crate::executors::{backup::BackupExecutor, JobParams};
 
     #[derive(Clone, Serialize, Deserialize)]
     struct MockParams {

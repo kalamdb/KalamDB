@@ -66,8 +66,7 @@ fn wait_for_subscription_value(
     listener: &mut SubscriptionListener,
     event_kind: &str,
     token: &str,
-    timeout: Duration,
-) -> Result<String, Box<dyn std::error::Error>> {
+    timeout: Duration) -> Result<String, Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut seen = Vec::new();
 
@@ -137,7 +136,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
             title TEXT NOT NULL,
             state TEXT NOT NULL,
             updated_at_ms BIGINT NOT NULL
-        ) WITH (TYPE='SHARED', ACCESS_LEVEL='PUBLIC')"#,
+        ) WITH (TYPE='SHARED')"#,
         conversations
     ))
     .expect("create shared conversations table");
@@ -207,8 +206,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     assert_error_contains_any(
         &cross_group_tx,
         &["cannot access table", "data raft group"],
-        "cross USER+SHARED explicit transaction",
-    );
+        "cross USER+SHARED explicit transaction");
 
     let shared_insert_tx = execute_http_as_root(&format!(
         "BEGIN; \
@@ -233,8 +231,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         &mut message_listener,
         "Insert",
         "Draft the launch checklist",
-        event_timeout,
-    )
+        event_timeout)
     .expect("message subscriber should receive committed row");
     wait_for_subscription_value(&mut conversation_listener, "Insert", "Launch plan", event_timeout)
         .expect("shared subscriber should receive committed row");
@@ -270,8 +267,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         &mut message_listener,
         "Update",
         "Launch checklist committed",
-        event_timeout,
-    )
+        event_timeout)
     .expect("message subscriber should receive committed update");
     wait_for_subscription_value(&mut conversation_listener, "Update", "active", event_timeout)
         .expect("shared subscriber should receive committed update");
@@ -288,8 +284,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         &mut message_listener,
         "Insert",
         "Checklist is ready",
-        event_timeout,
-    )
+        event_timeout)
     .expect("message subscription should survive schema evolution");
 
     let message_rollback_tx = execute_http_as_root(&format!(
@@ -351,8 +346,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     assert_error_contains(
         &stream_tx,
         "stream tables are not supported inside explicit transactions",
-        "stream write inside explicit transaction",
-    );
+        "stream write inside explicit transaction");
 
     let stream_rows = execute_sql_as_root_via_client_json(&format!(
         "SELECT event_type FROM {} WHERE conversation_id = {}",
@@ -371,8 +365,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     );
 
     let active_transactions = execute_sql_as_root_via_client_json(
-        "SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch'",
-    )
+        "SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch'")
     .expect("system.transactions should be readable by root");
     assert!(
         json_count_is_zero(&active_transactions),

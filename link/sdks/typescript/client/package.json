@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/client",
   "type": "module",
-  "version": "0.5.6-rc.1",
+  "version": "0.6.0-rc.0",
   "description": "KalamDB client library for TypeScript, providing a WebSocket-based interface for interacting with KalamDB servers, supporting live queries, authentication, and real-time updates.",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -35,8 +35,9 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "clean": "node -e \"const fs=require('fs');const p=require('path');const rm=d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}};rm('dist');rm('wasm')\"",
-    "build:wasm": "node -e \"const {execSync,spawnSync}=require('child_process');process.chdir('../../..');const env={...process.env,CARGO_ENCODED_RUSTFLAGS:'',RUSTFLAGS:'',RUSTC_WRAPPER:'',CARGO_BUILD_RUSTC_WRAPPER:'',CARGO_TARGET_DIR:'sdks/typescript/client/.wasm-target',CARGO_HOME:'sdks/typescript/client/.wasm-cargo-home'};execSync('wasm-pack build kalam-link-wasm --target web --out-dir ../sdks/typescript/client/wasm --out-name kalam_client --no-opt --profile release-dist',{stdio:'inherit',env});const wasmPath='sdks/typescript/client/wasm/kalam_client_bg.wasm';const opt=spawnSync('wasm-opt',['-Oz','--all-features','--strip-debug','--strip-dwarf','-o',wasmPath,wasmPath],{stdio:'inherit',env});if(opt.error&&opt.error.code==='ENOENT'){console.warn('wasm-opt not found; skipping post-build size optimization')}else if(opt.status!==0){process.exit(opt.status||1)}\"",
+    "clean": "node -e \"const fs=require('fs');const rm=d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}};rm('dist');rm('wasm')\"",
+    "clean:all": "node -e \"const fs=require('fs');const rm=d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}};rm('dist');rm('wasm');rm('.wasm-target');rm('.wasm-cargo-home')\"",
+    "build:wasm": "node -e \"const {execSync,spawnSync}=require('child_process');const path=require('path');const pkgDir=process.cwd();process.chdir(path.resolve(pkgDir,'../../..'));const env={...process.env,CARGO_ENCODED_RUSTFLAGS:'',RUSTFLAGS:'',RUSTC_WRAPPER:'',CARGO_BUILD_RUSTC_WRAPPER:'',CARGO_TARGET_DIR:path.join(pkgDir,'.wasm-target'),CARGO_HOME:path.join(pkgDir,'.wasm-cargo-home')};execSync('wasm-pack build kalam-link-wasm --target web --out-dir ../sdks/typescript/client/wasm --out-name kalam_client --no-opt --profile release-dist',{stdio:'inherit',env});const wasmPath=path.join(pkgDir,'wasm/kalam_client_bg.wasm');const opt=spawnSync('wasm-opt',['-Oz','--all-features','--strip-debug','--strip-dwarf','-o',wasmPath,wasmPath],{stdio:'inherit',env});if(opt.error&&opt.error.code==='ENOENT'){console.warn('wasm-opt not found; skipping post-build size optimization')}else if(opt.status!==0){process.exit(opt.status||1)}\"",
     "build:prepare-wasm-dts": "node ../scripts/prepare-wasm-dts.mjs . --add-json-value",
     "build:ts": "tsc",
     "build:copy-wasm": "node ../scripts/copy-wasm.mjs .",
@@ -48,11 +49,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "ws": "^8.21.0"
+    "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.0",
-    "@types/node": "^25.9.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.3.0",
     "typescript": "^6.0.3"
   },
   "keywords": [

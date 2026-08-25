@@ -15,14 +15,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
 use kalam_client::models::ChangeEvent;
 use kalamdb_commons::Role;
 use tokio::time::sleep;
 
 use super::helpers::*;
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Main burst test - high-rate writes with active subscription
 #[tokio::test]

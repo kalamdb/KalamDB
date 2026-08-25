@@ -34,9 +34,9 @@ use crate::executors::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactParams {
     /// Table identifier (required)
-    pub table_id: TableId,
+    pub table_id:            TableId,
     /// Table type (required)
-    pub table_type: TableType,
+    pub table_type:          TableType,
     /// Target file size in MB (optional, defaults to 128)
     #[serde(default = "default_target_file_size")]
     pub target_file_size_mb: u64,
@@ -91,7 +91,7 @@ impl JobExecutor for CompactExecutor {
             };
 
             return Ok(JobDecision::Failed {
-                message: format!(
+                message:         format!(
                     "STORAGE COMPACT TABLE is not supported for {} tables",
                     table_kind
                 ),
@@ -114,7 +114,7 @@ impl JobExecutor for CompactExecutor {
             Err(e) => {
                 ctx.log_error(&format!("Compaction failed: {}", e));
                 Ok(JobDecision::Failed {
-                    message: format!("Compaction failed for {}: {}", table_id, e),
+                    message:         format!("Compaction failed for {}: {}", table_id, e),
                     exception_trace: Some(e.to_string()),
                 })
             },

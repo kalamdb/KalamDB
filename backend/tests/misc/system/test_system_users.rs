@@ -7,7 +7,8 @@
 //! - T100: System users CANNOT authenticate remotely without password even if allow_remote=true
 //!
 //! **System User Requirements**:
-//! - system-role local-password users are restricted to localhost by default when the password is empty
+//! - system-role local-password users are restricted to localhost by default when the password is
+//!   empty
 //! - Per-user metadata {"allow_remote": true} enables remote access
 //! - Remote-enabled system users MUST have a password set
 //! - Localhost root can skip password until initial setup assigns one

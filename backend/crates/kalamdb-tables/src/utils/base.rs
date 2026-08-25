@@ -130,7 +130,7 @@ pub use crate::utils::row_utils::{
 use crate::{error::KalamDbError, manifest::ManifestAccessPlanner, utils::unified_dml};
 
 pub struct MvccScanResult<K, V> {
-    pub rows: Vec<(K, V)>,
+    pub rows:        Vec<(K, V)>,
     pub diagnostics: DeferredScanDiagnostics,
 }
 
@@ -165,6 +165,37 @@ where
 
     fn allow_count_only_fast_path(&self, _scan_context: &Self::ScanContext) -> bool {
         true
+    }
+
+    fn authorization_plan_details(
+        &self,
+        _scan_context: &Self::ScanContext,
+        _filter: Option<&Expr>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Return false only when a leakproof authorization guard proves that the
+    /// scan cannot produce an authorized row.
+    async fn pre_authorize_scan(
+        &self,
+        _scan_context: &Self::ScanContext,
+        _filter: Option<&Expr>,
+    ) -> Result<bool, KalamDbError> {
+        Ok(true)
+    }
+
+    /// When false, resolved MVCC winners are returned without per-row RLS work.
+    fn requires_row_authorization(&self, _scan_context: &Self::ScanContext) -> bool {
+        true
+    }
+
+    async fn authorize_resolved_rows(
+        &self,
+        _scan_context: &Self::ScanContext,
+        rows: Vec<(K, V)>,
+    ) -> Result<Vec<(K, V)>, KalamDbError> {
+        Ok(rows)
     }
 
     fn scan_scope_label(&self, _scan_context: &Self::ScanContext) -> &'static str {
@@ -231,7 +262,7 @@ where
         limit: Option<usize>,
     ) -> Result<RecordBatch, KalamDbError> {
         Ok(self
-            .scan_rows_output(scan_context, projection, filter, limit, false)
+            .scan_rows_output(scan_context, projection, filter, filter, limit, false)
             .await?
             .batch)
     }
@@ -243,7 +274,8 @@ where
         filter: Option<&Expr>,
         limit: Option<usize>,
     ) -> Result<DeferredBatchOutput, KalamDbError> {
-        self.scan_rows_output(scan_context, projection, filter, limit, true).await
+        self.scan_rows_output(scan_context, projection, filter, filter, limit, true)
+            .await
     }
 
     async fn scan_rows_output(
@@ -251,6 +283,7 @@ where
         scan_context: &Self::ScanContext,
         projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
+        authorization_filter: Option<&Expr>,
         limit: Option<usize>,
         include_diagnostics: bool,
     ) -> Result<DeferredBatchOutput, KalamDbError> {
@@ -259,15 +292,21 @@ where
         let _scope_label = self.scan_scope_label(scan_context);
         let _subject_user = self.scan_cold_scope(scan_context).map(UserId::as_str).unwrap_or("-");
 
+        if !self.pre_authorize_scan(scan_context, authorization_filter).await? {
+            let batch = rows_to_arrow_batch(&schema, Vec::<(K, V)>::new(), projection, |_, _| {})?;
+            return Ok(DeferredBatchOutput::new(batch));
+        }
+
         if self.allow_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
                 let resolved = resolve_pk_point_lookup(self, scan_context, &pk_scalar).await?;
-                let batch = rows_to_arrow_batch(
-                    &schema,
-                    resolved.into_iter().collect(),
-                    projection,
-                    |_, _| {},
-                )?;
+                let resolved = if self.requires_row_authorization(scan_context) {
+                    self.authorize_resolved_rows(scan_context, resolved.into_iter().collect())
+                        .await?
+                } else {
+                    resolved.into_iter().collect()
+                };
+                let batch = rows_to_arrow_batch(&schema, resolved, projection, |_, _| {})?;
                 return Ok(DeferredBatchOutput::new(batch));
             }
         }
@@ -299,7 +338,7 @@ where
             .await?
         } else {
             MvccScanResult {
-                rows: self
+                rows:        self
                     .scan_kvs_with_context(
                         scan_context,
                         filter,
@@ -321,7 +360,12 @@ where
         //     subject_user
         // );
 
-        let batch = rows_to_arrow_batch(&schema, scan_result.rows, projection, |_, _| {})?;
+        let authorized_rows = if self.requires_row_authorization(scan_context) {
+            self.authorize_resolved_rows(scan_context, scan_result.rows).await?
+        } else {
+            scan_result.rows
+        };
+        let batch = rows_to_arrow_batch(&schema, authorized_rows, projection, |_, _| {})?;
         Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
     }
 }
@@ -332,15 +376,16 @@ where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    provider: P,
-    scan_context: P::ScanContext,
-    projection: Option<Vec<usize>>,
-    filter: Option<Expr>,
-    physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    output_projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    _marker: std::marker::PhantomData<(K, V)>,
+    provider:             P,
+    scan_context:         P::ScanContext,
+    projection:           Option<Vec<usize>>,
+    filter:               Option<Expr>,
+    authorization_filter: Option<Expr>,
+    physical_filter:      Option<Arc<dyn PhysicalExpr>>,
+    output_projection:    Option<Vec<usize>>,
+    limit:                Option<usize>,
+    output_schema:        SchemaRef,
+    _marker:              std::marker::PhantomData<(K, V)>,
 }
 
 impl<P, K, V> std::fmt::Debug for DeferredMvccScanSource<P, K, V>
@@ -354,6 +399,7 @@ where
             .field("source", &self.provider.scan_source_name())
             .field("projection", &self.projection)
             .field("has_filter", &self.filter.is_some())
+            .field("has_authorization_filter", &self.authorization_filter.is_some())
             .finish()
     }
 }
@@ -373,33 +419,24 @@ where
         } else {
             None
         };
-        let output = if include_diagnostics {
-            self.provider
-                .scan_rows_with_diagnostics(
-                    &self.scan_context,
-                    self.projection.as_ref(),
-                    self.filter.as_ref(),
-                    source_limit,
-                )
-                .await
-        } else {
-            self.provider
-                .scan_rows_with_context(
-                    &self.scan_context,
-                    self.projection.as_ref(),
-                    self.filter.as_ref(),
-                    source_limit,
-                )
-                .await
-                .map(DeferredBatchOutput::new)
-        }
-        .map_err(|error| {
-            DataFusionError::Execution(format!(
-                "{} failed: {}",
-                self.provider.scan_source_name(),
-                error
-            ))
-        })?;
+        let output = self
+            .provider
+            .scan_rows_output(
+                &self.scan_context,
+                self.projection.as_ref(),
+                self.filter.as_ref(),
+                self.authorization_filter.as_ref(),
+                source_limit,
+                include_diagnostics,
+            )
+            .await
+            .map_err(|error| {
+                DataFusionError::Execution(format!(
+                    "{} failed: {}",
+                    self.provider.scan_source_name(),
+                    error
+                ))
+            })?;
 
         let batch = finalize_deferred_batch(
             output.batch,
@@ -423,8 +460,16 @@ where
         self.provider.scan_source_name()
     }
 
-    fn plan_details(&self) -> Option<&'static str> {
-        Some("storage_tiers=[hot=rocksdb,cold=parquet], mvcc=true")
+    fn plan_details(&self) -> Option<String> {
+        let mut details = "storage_tiers=[hot=rocksdb,cold=parquet], mvcc=true".to_string();
+        if let Some(authorization) = self.provider.authorization_plan_details(
+            &self.scan_context,
+            self.authorization_filter.as_ref().or(self.filter.as_ref()),
+        ) {
+            details.push_str(", ");
+            details.push_str(&authorization);
+        }
+        Some(details)
     }
 
     fn schema(&self) -> SchemaRef {
@@ -774,6 +819,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             mvcc_filter_evaluation(pruning.filters.filters.as_ref(), self.primary_key_field_name());
         let _ = pruning.limit.limit;
         let source_filter = combined_filter(filter_evaluation.inexact.filters.as_ref());
+        let authorization_filter = combined_filter(filters);
         let exact_filter = combined_filter(filter_evaluation.exact.filters.as_ref());
         let effective_projection =
             pruning.projection.columns.as_ref().map(|indices| indices.as_ref().to_vec());
@@ -813,6 +859,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             scan_context,
             projection: effective_projection,
             filter: source_filter,
+            authorization_filter,
             physical_filter,
             output_projection,
             limit,
@@ -892,7 +939,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
     /// Enforce leader-only reads for client contexts in cluster mode.
     async fn ensure_leader_read(&self, state: &dyn Session) -> Result<(), KalamDbError> {
-        let (_user_id, _role, read_context) = extract_full_user_context(state)?;
+        let (user_id, _role, read_context) = extract_full_user_context(state)?;
         if !read_context.requires_leader() {
             return Ok(());
         }
@@ -904,7 +951,6 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         match self.provider_table_type() {
             TableType::User | TableType::Stream => {
-                let (user_id, _role, _read_context) = extract_full_user_context(state)?;
                 if !coordinator.is_leader_for_user(user_id).await {
                     let leader_addr = coordinator.leader_addr_for_user(user_id).await;
                     return Err(KalamDbError::NotLeader { leader_addr });
@@ -1263,13 +1309,13 @@ where
 }
 
 pub(crate) struct ResolvedMvccScan<K, V> {
-    pub rows: Vec<(K, V)>,
-    pub hot_rows_scanned: usize,
-    pub cold_rows_scanned: usize,
-    pub cold_files_total: usize,
+    pub rows:               Vec<(K, V)>,
+    pub hot_rows_scanned:   usize,
+    pub cold_rows_scanned:  usize,
+    pub cold_files_total:   usize,
     pub cold_files_skipped: usize,
     pub cold_files_scanned: usize,
-    pub cold_files: Vec<String>,
+    pub cold_files:         Vec<String>,
 }
 
 pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture, Build>(
@@ -2099,7 +2145,7 @@ mod tests {
 
     #[derive(Clone)]
     struct TestScanRow {
-        row: Row,
+        row:     Row,
         deleted: bool,
     }
 
@@ -2145,7 +2191,7 @@ mod tests {
     #[test]
     fn visible_hot_entry_hides_latest_tombstone() {
         let tombstone = TestScanRow {
-            row: Row::from_vec(vec![]),
+            row:     Row::from_vec(vec![]),
             deleted: true,
         };
 
@@ -2155,7 +2201,7 @@ mod tests {
     #[test]
     fn visible_hot_entry_keeps_latest_live_row() {
         let live = TestScanRow {
-            row: Row::from_vec(vec![]),
+            row:     Row::from_vec(vec![]),
             deleted: false,
         };
 

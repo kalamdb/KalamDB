@@ -23,8 +23,8 @@ async fn force_flush_table(server: &HttpTestServer, ns: &str, table: &str) -> Re
         .ok_or_else(|| anyhow::anyhow!("Table not found for forced flush: {}.{}", ns, table))?;
 
     let params = FlushParams {
-        table_id: table_id.clone(),
-        table_type: table_def.table_type,
+        table_id:        table_id.clone(),
+        table_type:      table_def.table_type,
         flush_threshold: None,
     };
 

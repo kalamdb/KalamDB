@@ -15,7 +15,7 @@ fn prepared_statement_limit_rejects_new_entries_after_cap() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt_one".to_string(),
-            sql: "SELECT 1".to_string(),
+            sql:  "SELECT 1".to_string(),
         })
         .expect("first statement fits");
 
@@ -32,7 +32,7 @@ fn prepared_statement_limit_allows_replacing_existing_name() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt".to_string(),
-            sql: "SELECT 1".to_string(),
+            sql:  "SELECT 1".to_string(),
         })
         .expect("first statement fits");
     state
@@ -41,7 +41,7 @@ fn prepared_statement_limit_allows_replacing_existing_name() {
     state
         .put_prepared_statement(WirePreparedStatement {
             name: "stmt".to_string(),
-            sql: "SELECT 2".to_string(),
+            sql:  "SELECT 2".to_string(),
         })
         .expect("replacement fits");
 
@@ -54,7 +54,7 @@ fn portal_limit_rejects_new_entries_after_cap_and_close_releases_slot() {
 
     state
         .put_portal(WirePortal {
-            name: "portal_one".to_string(),
+            name:           "portal_one".to_string(),
             statement_name: "stmt".to_string(),
         })
         .expect("first portal fits");

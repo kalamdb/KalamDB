@@ -122,8 +122,8 @@ async fn test_flush_policy_and_parquet_output_over_http() {
             let table = "messages";
             let resp = server
                 .execute_sql(&format!(
-                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, content TEXT) WITH \
-                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:25')",
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, content TEXT) WITH (TYPE='USER', \
+                     STORAGE_ID='local', FLUSH_POLICY='rows:25')",
                     ns, table
                 ))
                 .await?;
@@ -169,8 +169,8 @@ async fn test_flush_policy_and_parquet_output_over_http() {
             let table = "events";
             let resp = server
                 .execute_sql(&format!(
-                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH \
-                     (TYPE='USER', STORAGE_ID='local', FLUSH_POLICY='rows:100,interval:30')",
+                    "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, payload TEXT) WITH (TYPE='USER', \
+                     STORAGE_ID='local', FLUSH_POLICY='rows:100,interval:30')",
                     ns, table
                 ))
                 .await?;

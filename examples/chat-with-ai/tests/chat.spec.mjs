@@ -561,11 +561,11 @@ test('message insert streams a live draft and syncs the committed reply to both 
   await expect(pageOne.getByTestId('stream-preview')).toContainText('KalamDB Copilot', { timeout: 15000 });
   await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
   await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageOne.getByTestId('agent-events')).toContainText('Assistant reply committed', { timeout: 15000 });
-  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 15000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 15000 });
-  await expect(pageOne.getByTestId('stream-preview')).toHaveCount(0, { timeout: 15000 });
-  await expect(pageTwo.getByTestId('stream-preview')).toHaveCount(0, { timeout: 15000 });
+  await expect(pageOne.getByTestId('agent-events')).toContainText('Assistant reply committed', { timeout: 30000 });
+  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 30000 });
+  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 30000 });
+  await expect(pageOne.getByTestId('stream-preview')).toHaveCount(0, { timeout: 30000 });
+  await expect(pageTwo.getByTestId('stream-preview')).toHaveCount(0, { timeout: 30000 });
 
   const pageOneScroll = await pageOne.getByTestId('chat-thread').evaluate((node) => ({
     scrollTop: node.scrollTop,

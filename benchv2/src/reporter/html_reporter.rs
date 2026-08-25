@@ -1225,6 +1225,7 @@ mod tests {
             (
               "subscriber_scale".to_string(),
               PreviousBenchmark {
+                description: "subscriber scale".to_string(),
                 mean_us: 40_000_000.0,
                 median_us: 40_000_000.0,
                 p95_us: 40_000_000.0,
@@ -1235,6 +1236,7 @@ mod tests {
             (
               "single_insert".to_string(),
               PreviousBenchmark {
+                description: "single insert".to_string(),
                 mean_us: 3_050.0,
                 median_us: 3_050.0,
                 p95_us: 3_050.0,
@@ -1245,6 +1247,7 @@ mod tests {
             (
               "concurrent_select".to_string(),
               PreviousBenchmark {
+                description: "concurrent select".to_string(),
                 mean_us: 60_000.0,
                 median_us: 60_000.0,
                 p95_us: 60_000.0,

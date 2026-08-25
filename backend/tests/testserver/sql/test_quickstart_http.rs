@@ -23,7 +23,7 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
         let resp = server
             .execute_sql(&format!(
                 "CREATE TABLE {}.messages (id BIGINT PRIMARY KEY, content TEXT, created_at \
-                     BIGINT) WITH (TYPE='USER', STORAGE_ID='local')",
+                 BIGINT) WITH (TYPE='USER', STORAGE_ID='local')",
                 ns
             ))
             .await?;
@@ -114,7 +114,7 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
         let resp = server
             .execute_sql(&format!(
                 "CREATE TABLE {}.events (id BIGINT PRIMARY KEY, kind TEXT, created_at BIGINT) \
-                     WITH (TYPE='USER', STORAGE_ID='local')",
+                 WITH (TYPE='USER', STORAGE_ID='local')",
                 ns
             ))
             .await?;

@@ -40,13 +40,13 @@ use crate::executors::{JobContext, JobDecision, JobExecutor, JobParams};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupParams {
     /// Table identifier (required)
-    pub table_id: TableId,
+    pub table_id:   TableId,
     /// Table type (required)
     pub table_type: TableType,
     /// Cleanup operation (required)
-    pub operation: CleanupOperation,
+    pub operation:  CleanupOperation,
     /// Storage cleanup details captured at DROP time
-    pub storage: StorageCleanupDetails,
+    pub storage:    StorageCleanupDetails,
 }
 
 impl JobParams for CleanupParams {
@@ -184,12 +184,12 @@ mod tests {
     #[test]
     fn test_params_validation() {
         let params = CleanupParams {
-            table_id: TableId::new(NamespaceId::default(), TableName::new("users")),
+            table_id:   TableId::new(NamespaceId::default(), TableName::new("users")),
             table_type: TableType::User,
-            operation: CleanupOperation::DropTable,
-            storage: StorageCleanupDetails {
-                storage_id: StorageId::local(),
-                base_directory: "/tmp".to_string(),
+            operation:  CleanupOperation::DropTable,
+            storage:    StorageCleanupDetails {
+                storage_id:             StorageId::local(),
+                base_directory:         "/tmp".to_string(),
                 relative_path_template: "users/{userId}".to_string(),
             },
         };

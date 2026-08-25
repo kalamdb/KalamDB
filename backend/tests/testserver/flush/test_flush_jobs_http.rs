@@ -3,8 +3,7 @@
 use kalam_client::models::ResponseStatus;
 use tokio::time::{sleep, Duration, Instant};
 
-use super::test_support::consolidated_helpers::unique_namespace;
-use super::test_support::flush::flush_table_and_wait;
+use super::test_support::{consolidated_helpers::unique_namespace, flush::flush_table_and_wait};
 
 #[tokio::test]
 #[ntest::timeout(120000)] // 120 seconds - allow for server startup + job persistence

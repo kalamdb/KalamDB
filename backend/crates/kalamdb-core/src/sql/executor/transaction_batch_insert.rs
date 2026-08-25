@@ -10,9 +10,10 @@ use kalamdb_commons::{
     ids::SnowflakeGenerator,
     models::{rows::row::Row, OperationKind, TransactionId, UserId},
     schemas::{ColumnDefault, TableType},
-    TableId,
+    PolicyCommand, Role, TableId,
 };
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
+use kalamdb_tables::SharedTableProvider;
 use sqlparser::ast::{Expr, Parens, SelectItem, Statement};
 use ulid::Ulid;
 use uuid::Uuid;
@@ -45,8 +46,7 @@ fn insert_default_snowflake_generator() -> &'static SnowflakeGenerator {
 
 fn build_insert_metadata(
     requested_columns: &[String],
-    cached_table: &CachedTableData,
-) -> Result<FastInsertMetadata, KalamDbError> {
+    cached_table: &CachedTableData) -> Result<FastInsertMetadata, KalamDbError> {
     let available_columns: Vec<&str> = cached_table
         .table
         .columns
@@ -79,8 +79,7 @@ fn build_insert_metadata(
         .map(|column| {
             Ok(FastInsertDefaultEntry::new(
                 column.column_name.clone(),
-                prepare_default_template(&column.default_value)?,
-            ))
+                prepare_default_template(&column.default_value)?))
         })
         .collect::<Result<Vec<_>, KalamDbError>>()?;
 
@@ -130,8 +129,7 @@ impl From<KalamDbError> for InsertValuesRowsError {
 fn apply_missing_defaults(
     rows: &mut [Row],
     missing_defaults: &[FastInsertDefaultEntry],
-    exec_ctx: &ExecutionContext,
-) -> Result<(), KalamDbError> {
+    exec_ctx: &ExecutionContext) -> Result<(), KalamDbError> {
     if rows.is_empty() || missing_defaults.is_empty() {
         return Ok(());
     }
@@ -140,8 +138,7 @@ fn apply_missing_defaults(
     for default_entry in missing_defaults {
         prepared_defaults.push((
             default_entry.column_name.clone(),
-            prepare_statement_default(&default_entry.template, exec_ctx)?,
-        ));
+            prepare_statement_default(&default_entry.template, exec_ctx)?));
     }
 
     for row in rows.iter_mut() {
@@ -159,15 +156,13 @@ fn try_build_insert_rows_from_values_rows(
     insert_metadata: &FastInsertMetadata,
     cached_table: &CachedTableData,
     exec_ctx: &ExecutionContext,
-    params: &[ScalarValue],
-) -> Result<Option<Vec<Row>>, KalamDbError> {
+    params: &[ScalarValue]) -> Result<Option<Vec<Row>>, KalamDbError> {
     let mut rows = match build_insert_rows_from_values_rows(
         value_rows,
         &insert_metadata.column_names,
         cached_table,
         exec_ctx,
-        params,
-    ) {
+        params) {
         Ok(rows) => rows,
         Err(InsertValuesRowsError::Unsupported) => return Ok(None),
         Err(InsertValuesRowsError::Execution(error)) => return Err(error),
@@ -185,8 +180,7 @@ fn build_insert_rows_from_values_rows(
     column_names: &[String],
     cached_table: &CachedTableData,
     exec_ctx: &ExecutionContext,
-    params: &[ScalarValue],
-) -> Result<Vec<Row>, InsertValuesRowsError> {
+    params: &[ScalarValue]) -> Result<Vec<Row>, InsertValuesRowsError> {
     let mut rows = Vec::with_capacity(value_rows.len());
     let mut explicit_default_values = BTreeMap::new();
 
@@ -205,9 +199,7 @@ fn build_insert_rows_from_values_rows(
                     cached_table,
                     exec_ctx,
                     params,
-                    &mut explicit_default_values,
-                )?,
-            );
+                    &mut explicit_default_values)?);
         }
         rows.push(Row::new(values));
     }
@@ -221,15 +213,13 @@ fn insert_value_expr_to_scalar(
     cached_table: &CachedTableData,
     exec_ctx: &ExecutionContext,
     params: &[ScalarValue],
-    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>,
-) -> Result<ScalarValue, InsertValuesRowsError> {
+    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>) -> Result<ScalarValue, InsertValuesRowsError> {
     if is_default_expr(expr) {
         return materialize_explicit_default(
             column_name,
             cached_table,
             exec_ctx,
-            explicit_default_values,
-        )
+            explicit_default_values)
         .map_err(InsertValuesRowsError::Execution);
     }
 
@@ -240,8 +230,7 @@ fn materialize_explicit_default(
     column_name: &str,
     cached_table: &CachedTableData,
     exec_ctx: &ExecutionContext,
-    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>,
-) -> Result<ScalarValue, KalamDbError> {
+    explicit_default_values: &mut BTreeMap<String, PreparedDefaultValue>) -> Result<ScalarValue, KalamDbError> {
     let prepared_default = match explicit_default_values.entry(column_name.to_string()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
@@ -254,8 +243,7 @@ fn materialize_explicit_default(
 fn prepare_explicit_default(
     column_name: &str,
     cached_table: &CachedTableData,
-    exec_ctx: &ExecutionContext,
-) -> Result<PreparedDefaultValue, KalamDbError> {
+    exec_ctx: &ExecutionContext) -> Result<PreparedDefaultValue, KalamDbError> {
     let column = cached_table
         .table
         .columns
@@ -299,8 +287,7 @@ pub(crate) fn try_build_literal_insert_rows(
     sql_cache_registry: &SqlCacheRegistry,
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
-    params: &[ScalarValue],
-) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    params: &[ScalarValue]) -> Result<Option<LiteralInsertRows>, KalamDbError> {
     try_build_literal_insert_rows_inner(
         statement,
         app_context,
@@ -308,8 +295,7 @@ pub(crate) fn try_build_literal_insert_rows(
         exec_ctx,
         table_id,
         false,
-        params,
-    )
+        params)
 }
 
 fn try_build_literal_insert_rows_inner(
@@ -319,8 +305,7 @@ fn try_build_literal_insert_rows_inner(
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
     allow_on_conflict: bool,
-    params: &[ScalarValue],
-) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    params: &[ScalarValue]) -> Result<Option<LiteralInsertRows>, KalamDbError> {
     if table_id.namespace_id().is_system_namespace() {
         return Ok(None);
     }
@@ -342,8 +327,7 @@ fn try_build_literal_insert_rows_inner(
         exec_ctx,
         table_id,
         !allow_on_conflict,
-        params,
-    )
+        params)
 }
 
 fn build_literal_insert_rows_from_values(
@@ -353,8 +337,7 @@ fn build_literal_insert_rows_from_values(
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
     include_returning: bool,
-    params: &[ScalarValue],
-) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    params: &[ScalarValue]) -> Result<Option<LiteralInsertRows>, KalamDbError> {
     let insert = view.insert;
     let value_rows = view.value_rows;
 
@@ -364,15 +347,11 @@ fn build_literal_insert_rows_from_values(
     };
 
     let cached_table_entry = cached_table.table_entry();
-    if cached_table_entry.table_type == kalamdb_commons::schemas::TableType::Shared {
-        let access_level =
-            cached_table_entry.access_level.unwrap_or(kalamdb_commons::TableAccess::Private);
-        kalamdb_session::permissions::check_shared_table_write_access_level(
-            exec_ctx.user_role(),
-            access_level,
-            table_id,
-        )
-        .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
+    if cached_table_entry.table_type == TableType::Shared
+        && matches!(exec_ctx.user_role(), Role::Anonymous)
+    {
+        return Err(KalamDbError::PermissionDenied(
+            "Anonymous shared-table writes are denied".to_string()));
     }
 
     let requested_columns: Vec<String> =
@@ -397,8 +376,7 @@ fn build_literal_insert_rows_from_values(
         &insert_metadata,
         cached_table.as_ref(),
         exec_ctx,
-        params,
-    )? {
+        params)? {
         Some(rows) => rows,
         None => return Ok(None),
     };
@@ -425,8 +403,7 @@ pub(crate) fn try_build_literal_on_conflict_update_rows(
     sql_cache_registry: &SqlCacheRegistry,
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
-    params: &[ScalarValue],
-) -> Result<Option<LiteralOnConflictUpdateRows>, KalamDbError> {
+    params: &[ScalarValue]) -> Result<Option<LiteralOnConflictUpdateRows>, KalamDbError> {
     let Some((view, on_conflict)) = on_conflict_values_insert(statement) else {
         return Ok(None);
     };
@@ -438,16 +415,14 @@ pub(crate) fn try_build_literal_on_conflict_update_rows(
         exec_ctx,
         table_id,
         false,
-        params,
-    )? {
+        params)? {
         Some(rows) => rows,
         None => return Ok(None),
     };
 
     let primary_key_column = insert_rows.primary_key_column.ok_or_else(|| {
         KalamDbError::InvalidOperation(
-            "ON CONFLICT requires a single primary key column".to_string(),
-        )
+            "ON CONFLICT requires a single primary key column".to_string())
     })?;
 
     validate_primary_key_conflict_target(on_conflict, &primary_key_column)
@@ -481,8 +456,7 @@ pub(crate) struct OnConflictUserIds {
 
 pub(crate) fn on_conflict_user_ids(
     table_type: TableType,
-    exec_ctx: &ExecutionContext,
-) -> Result<OnConflictUserIds, KalamDbError> {
+    exec_ctx: &ExecutionContext) -> Result<OnConflictUserIds, KalamDbError> {
     reject_system_table_dml(table_type)?;
     let user_id = exec_ctx.user_id().clone();
     Ok(match table_type {
@@ -506,8 +480,7 @@ pub(crate) fn build_on_conflict_staged_mutation_for_action(
     mutation_user_id: Option<UserId>,
     primary_key: String,
     inserted_row: &Row,
-    existing_row: Option<&Row>,
-) -> Result<Option<OnConflictStagedMutation>, KalamDbError> {
+    existing_row: Option<&Row>) -> Result<Option<OnConflictStagedMutation>, KalamDbError> {
     match action {
         ParsedOnConflictAction::DoNothing => {
             if existing_row.is_some() {
@@ -521,8 +494,7 @@ pub(crate) fn build_on_conflict_staged_mutation_for_action(
                 primary_key,
                 inserted_row,
                 &[],
-                None,
-            )?))
+                None)?))
         },
         ParsedOnConflictAction::DoUpdate {
             assignments,
@@ -542,8 +514,7 @@ pub(crate) fn build_on_conflict_staged_mutation_for_action(
                 primary_key,
                 inserted_row,
                 assignments,
-                existing_row,
-            )?))
+                existing_row)?))
         },
     }
 }
@@ -556,8 +527,7 @@ pub(crate) fn build_on_conflict_staged_mutation(
     primary_key: String,
     inserted_row: &Row,
     assignments: &[OnConflictUpdateAssignment],
-    existing_row: Option<&Row>,
-) -> Result<OnConflictStagedMutation, KalamDbError> {
+    existing_row: Option<&Row>) -> Result<OnConflictStagedMutation, KalamDbError> {
     if let Some(existing_row) = existing_row {
         let mut updates = BTreeMap::new();
         for assignment in assignments {
@@ -589,8 +559,7 @@ pub(crate) fn build_on_conflict_staged_mutation(
                 OperationKind::Update,
                 primary_key,
                 Row::new(updates),
-                false,
-            ),
+                false),
             returned_row: Row::new(returned_values),
         })
     } else {
@@ -603,20 +572,17 @@ pub(crate) fn build_on_conflict_staged_mutation(
                 OperationKind::Insert,
                 primary_key,
                 inserted_row.clone(),
-                false,
-            ),
+                false),
             returned_row: inserted_row.clone(),
         })
     }
 }
 
 fn prepare_default_template(
-    default_value: &ColumnDefault,
-) -> Result<FastInsertDefaultTemplate, KalamDbError> {
+    default_value: &ColumnDefault) -> Result<FastInsertDefaultTemplate, KalamDbError> {
     match default_value {
         ColumnDefault::None => Err(KalamDbError::InvalidOperation(
-            "Missing default value metadata for omitted insert column".to_string(),
-        )),
+            "Missing default value metadata for omitted insert column".to_string())),
         ColumnDefault::Literal(json) => {
             Ok(FastInsertDefaultTemplate::Literal(json_value_to_scalar(json)))
         },
@@ -646,20 +612,17 @@ fn prepare_default_template(
 
 fn prepare_statement_default(
     default_template: &FastInsertDefaultTemplate,
-    exec_ctx: &ExecutionContext,
-) -> Result<PreparedDefaultValue, KalamDbError> {
+    exec_ctx: &ExecutionContext) -> Result<PreparedDefaultValue, KalamDbError> {
     match default_template {
         FastInsertDefaultTemplate::Literal(value) => {
             Ok(PreparedDefaultValue::Constant(value.clone()))
         },
         FastInsertDefaultTemplate::CurrentTimestamp => Ok(PreparedDefaultValue::Constant(
-            ScalarValue::TimestampMicrosecond(Some(Utc::now().timestamp_micros()), None),
-        )),
+            ScalarValue::TimestampMicrosecond(Some(Utc::now().timestamp_micros()), None))),
         FastInsertDefaultTemplate::CurrentUser => {
             let user_id = exec_ctx.user_id();
             Ok(PreparedDefaultValue::Constant(ScalarValue::Utf8(Some(
-                user_id.as_str().to_string(),
-            ))))
+                user_id.as_str().to_string()))))
         },
         FastInsertDefaultTemplate::SnowflakeId => {
             Ok(PreparedDefaultValue::Volatile(VolatileDefaultFunction::SnowflakeId))
@@ -675,8 +638,7 @@ fn prepare_statement_default(
 
 fn materialize_prepared_default(
     prepared_default: &PreparedDefaultValue,
-    _exec_ctx: &ExecutionContext,
-) -> Result<ScalarValue, KalamDbError> {
+    _exec_ctx: &ExecutionContext) -> Result<ScalarValue, KalamDbError> {
     match prepared_default {
         PreparedDefaultValue::Constant(value) => Ok(value.clone()),
         PreparedDefaultValue::Volatile(VolatileDefaultFunction::SnowflakeId) => {
@@ -701,14 +663,13 @@ fn materialize_prepared_default(
 ///
 /// Resolves table metadata once for the batch, converts all VALUES rows to staged
 /// mutations, and submits them with a single `stage_batch()` call.
-pub(crate) fn try_batch_inserts_in_transaction(
+pub(crate) async fn try_batch_inserts_in_transaction(
     statements: &[&Statement],
     app_context: &AppContext,
     sql_cache_registry: &SqlCacheRegistry,
     exec_ctx: &ExecutionContext,
     table_id: &TableId,
-    transaction_id: &TransactionId,
-) -> Result<Option<Vec<usize>>, KalamDbError> {
+    transaction_id: &TransactionId) -> Result<Option<Vec<usize>>, KalamDbError> {
     if statements.is_empty() {
         return Ok(Some(vec![]));
     }
@@ -729,15 +690,9 @@ pub(crate) fn try_batch_inserts_in_transaction(
 
     let cached_table_entry = cached_table.table_entry();
     let table_type = cached_table_entry.table_type;
-    if cached_table_entry.table_type == kalamdb_commons::schemas::TableType::Shared {
-        let access_level =
-            cached_table_entry.access_level.unwrap_or(kalamdb_commons::TableAccess::Private);
-        kalamdb_session::permissions::check_shared_table_write_access_level(
-            exec_ctx.user_role(),
-            access_level,
-            table_id,
-        )
-        .map_err(|e| KalamDbError::PermissionDenied(e.to_string()))?;
+    if table_type == TableType::Shared && matches!(exec_ctx.user_role(), Role::Anonymous) {
+        return Err(KalamDbError::PermissionDenied(
+            "Anonymous shared-table writes are denied".to_string()));
     }
 
     let requested_columns: Vec<String> = first_insert
@@ -778,8 +733,7 @@ pub(crate) fn try_batch_inserts_in_transaction(
 
         let Some(view) = kalamdb_sql::values_insert_view_from_statement(
             statement,
-            ValuesInsertShapeOptions::BATCH,
-        ) else {
+            ValuesInsertShapeOptions::BATCH) else {
             return Ok(None);
         };
 
@@ -788,8 +742,7 @@ pub(crate) fn try_batch_inserts_in_transaction(
             &insert_metadata,
             cached_table.as_ref(),
             exec_ctx,
-            &[],
-        )? {
+            &[])? {
             Some(rows) => rows,
             None => return Ok(None),
         };
@@ -801,14 +754,38 @@ pub(crate) fn try_batch_inserts_in_transaction(
 
     let all_rows = coerce_rows(all_rows, &schema)
         .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+    if table_type == TableType::Shared {
+        let provider = cached_table.get_provider().ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Shared table provider not found: {table_id}"))
+        })?;
+        let provider = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Shared table provider type mismatch: {table_id}"
+                ))
+            })?;
+        let snapshot_commit_seq = app_context
+            .transaction_coordinator()
+            .get_handle(transaction_id)
+            .map(|handle| handle.snapshot_commit_seq);
+        provider
+            .check_rows_authorized(
+                exec_ctx.user_id(),
+                exec_ctx.user_role(),
+                PolicyCommand::Insert,
+                true,
+                &all_rows,
+                snapshot_commit_seq)
+            .await?;
+    }
     let all_mutations = build_insert_staged_mutations(
         transaction_id,
         table_id,
         table_type,
         user_id,
         pk_column,
-        all_rows,
-    )
+        all_rows)
     .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
 
     app_context

@@ -55,9 +55,7 @@ fn extended_schema(base: &SchemaRef) -> SchemaRef {
         }
         let data_type = match *field_name {
             KDB_VERSION => DataType::Int64,
-            KDB_UPDATED_AT | KDB_CREATED_AT => {
-                DataType::Timestamp(TimeUnit::Microsecond, None)
-            },
+            KDB_UPDATED_AT | KDB_CREATED_AT => DataType::Timestamp(TimeUnit::Microsecond, None),
             _ => DataType::Utf8,
         };
         fields.push(Arc::new(Field::new(*field_name, data_type, true)));
@@ -68,16 +66,15 @@ fn extended_schema(base: &SchemaRef) -> SchemaRef {
 /// Wraps DataFusion's `information_schema.tables` and appends `kdb_*` metadata.
 #[derive(Debug)]
 pub struct ExtendedInformationSchemaTablesProvider {
-    inner: Arc<dyn TableProvider>,
-    schema: SchemaRef,
+    inner:         Arc<dyn TableProvider>,
+    schema:        SchemaRef,
     system_tables: Arc<SystemTablesRegistry>,
 }
 
 impl ExtendedInformationSchemaTablesProvider {
     pub fn new(
         catalog_list: Arc<dyn datafusion::catalog::CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>,
-    ) -> Self {
+        system_tables: Arc<SystemTablesRegistry>) -> Self {
         let inner = load_inner_table(catalog_list, "tables");
         let schema = extended_schema(&inner.schema());
         Self {
@@ -95,8 +92,7 @@ impl ExtendedInformationSchemaTablesProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<RecordBatch> {
+        limit: Option<usize>) -> DataFusionResult<RecordBatch> {
         let batch = collect_inner_batch(&self.inner, state, filters, limit).await?;
         if batch.num_rows() == 0 {
             return Ok(RecordBatch::new_empty(Arc::clone(&self.schema)));
@@ -108,8 +104,7 @@ impl ExtendedInformationSchemaTablesProvider {
 fn normalize_tables_batch(
     batch: &RecordBatch,
     output_schema: &SchemaRef,
-    system_tables: &SystemTablesRegistry,
-) -> DataFusionResult<RecordBatch> {
+    system_tables: &SystemTablesRegistry) -> DataFusionResult<RecordBatch> {
     let table_schema_idx = batch.schema().index_of("table_schema").map_err(plan_err)?;
     let table_name_idx = batch.schema().index_of("table_name").map_err(plan_err)?;
 
@@ -184,8 +179,7 @@ fn normalize_tables_batch(
 fn string_column<'a>(
     batch: &'a RecordBatch,
     index: usize,
-    name: &str,
-) -> DataFusionResult<&'a StringArray> {
+    name: &str) -> DataFusionResult<&'a StringArray> {
     batch
         .column(index)
         .as_any()
@@ -198,13 +192,13 @@ fn plan_err(error: arrow::error::ArrowError) -> DataFusionError {
 }
 
 struct ExtendedTablesScanSource {
-    provider: Arc<ExtendedInformationSchemaTablesProvider>,
-    session_state: SessionState,
+    provider:        Arc<ExtendedInformationSchemaTablesProvider>,
+    session_state:   SessionState,
     physical_filter: Option<Arc<dyn datafusion::physical_expr::PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    output_schema: SchemaRef,
-    filters: Vec<Expr>,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    output_schema:   SchemaRef,
+    filters:         Vec<Expr>,
 }
 
 #[async_trait]
@@ -228,8 +222,7 @@ impl DeferredBatchSource for ExtendedTablesScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name(),
-        )
+            self.source_name())
     }
 }
 
@@ -248,8 +241,7 @@ impl TableProvider for ExtendedInformationSchemaTablesProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -274,8 +266,8 @@ impl TableProvider for ExtendedInformationSchemaTablesProvider {
 
         Ok(Arc::new(DeferredBatchExec::new(Arc::new(ExtendedTablesScanSource {
             provider: Arc::new(ExtendedInformationSchemaTablesProvider {
-                inner: Arc::clone(&self.inner),
-                schema: Arc::clone(&self.schema),
+                inner:         Arc::clone(&self.inner),
+                schema:        Arc::clone(&self.schema),
                 system_tables: Arc::clone(&self.system_tables),
             }),
             session_state,
@@ -289,8 +281,7 @@ impl TableProvider for ExtendedInformationSchemaTablesProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr],
-    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
     }
 }

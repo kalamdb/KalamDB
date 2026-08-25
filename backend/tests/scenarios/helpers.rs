@@ -13,7 +13,6 @@ use std::{
 };
 
 use anyhow::Result;
-// Re-export commonly used consolidated helpers
 pub use helpers::{
     assert_error_contains, assert_manifest_exists, assert_min_row_count, assert_no_duplicates,
     assert_parquet_exists_and_nonempty, assert_query_has_results, assert_query_success,
@@ -24,9 +23,10 @@ pub use helpers::{
     wait_for_ack,
 };
 use kalam_client::{
-    models::{ChangeEvent, ResponseStatus},
+    models::{ChangeEvent, QueryResponse, ResponseStatus},
     KalamCellValue, SubscriptionManager,
 };
+use kalamdb_commons::{models::UserId, Role};
 use tokio::time::{sleep, timeout, Instant};
 
 use crate::test_support::{consolidated_helpers as helpers, http_server::HttpTestServer};
@@ -38,6 +38,107 @@ use crate::test_support::{consolidated_helpers as helpers, http_server::HttpTest
 /// Alias for unique_namespace - generates unique namespace for test isolation
 pub fn unique_ns(prefix: &str) -> String {
     unique_namespace(prefix)
+}
+
+fn shared_policy_name(qualified_table: &str, suffix: &str) -> String {
+    let table = qualified_table.rsplit('.').next().unwrap_or(qualified_table);
+    format!("{table}_{suffix}")
+}
+
+/// Catalog / feature-flag / plan tables: every subject can read; DBA/System write.
+pub async fn grant_shared_catalog_read(
+    server: &HttpTestServer,
+    qualified_table: &str,
+) -> Result<()> {
+    let policy = shared_policy_name(qualified_table, "select");
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE POLICY {policy} ON {qualified_table} FOR SELECT TO PUBLIC USING (true)"
+        ))
+        .await?;
+    assert_success(&resp, "CREATE shared catalog SELECT policy");
+    Ok(())
+}
+
+/// Execute SQL as a specific user via JWT-backed HTTP (mirrors TestServer paths).
+pub async fn execute_sql_as_user(
+    server: &HttpTestServer,
+    username: &str,
+    role: &Role,
+    sql: &str,
+) -> Result<QueryResponse> {
+    let _ = ensure_user_exists(server, username, "test123", role).await?;
+    let users = server.app_context().system_tables().users();
+    let user_id = UserId::new(username);
+    let user = users
+        .get_user_by_id(&user_id)?
+        .ok_or_else(|| anyhow::anyhow!("user '{username}' not found after ensure"))?;
+    let token = server.create_jwt_token_with_id(&user.user_id, &user.role);
+    let auth_header = format!("Bearer {token}");
+    server.execute_sql_with_auth(sql, &auth_header).await
+}
+
+/// Seed catalog rows as System (root bypasses FORCE RLS), then leave SELECT-only access.
+pub async fn seed_shared_catalog_rows(
+    server: &HttpTestServer,
+    qualified_table: &str,
+    inserts: &[&str],
+) -> Result<()> {
+    for sql in inserts {
+        let resp = server.execute_sql(sql).await?;
+        assert_success(&resp, "seed shared catalog row as system");
+    }
+    grant_shared_catalog_read(server, qualified_table).await
+}
+
+/// Collaborative / operational shared rows: subjects may read and write.
+pub async fn grant_shared_public_all(server: &HttpTestServer, qualified_table: &str) -> Result<()> {
+    let policy = shared_policy_name(qualified_table, "public");
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE POLICY {policy} ON {qualified_table} FOR ALL TO PUBLIC USING (true) WITH \
+             CHECK (true)"
+        ))
+        .await?;
+    assert_success(&resp, "CREATE shared public ALL policy");
+    Ok(())
+}
+
+/// Fleet telemetry: operators read everything; the service role ingests.
+pub async fn grant_shared_telemetry_policies(
+    server: &HttpTestServer,
+    qualified_table: &str,
+) -> Result<()> {
+    let read = shared_policy_name(qualified_table, "read");
+    let ingest = shared_policy_name(qualified_table, "ingest");
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE POLICY {read} ON {qualified_table} FOR SELECT TO PUBLIC USING (true)"
+        ))
+        .await?;
+    assert_success(&resp, "CREATE telemetry SELECT policy");
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE POLICY {ingest} ON {qualified_table} FOR INSERT TO service WITH CHECK (true)"
+        ))
+        .await?;
+    assert_success(&resp, "CREATE telemetry service INSERT policy");
+    Ok(())
+}
+
+/// Subjects without WITH CHECK must not mutate a catalog shared table.
+pub async fn assert_shared_write_denied(
+    client: &kalam_client::KalamLinkClient,
+    sql: &str,
+    context: &str,
+) -> Result<()> {
+    match client.execute_query(sql, None, None, None).await {
+        Ok(resp) if resp.success() => {
+            anyhow::bail!("{context}: expected FORCE RLS to deny the mutation");
+        },
+        Ok(_) => Ok(()),
+        Err(_) => Ok(()),
+    }
 }
 
 /// Alias for wait_for_flush_jobs_settled - waits for flush jobs to settle

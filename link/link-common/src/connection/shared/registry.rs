@@ -21,6 +21,10 @@ use crate::{
 pub(super) type SubscriptionReady = Result<(u64, Option<SeqId>)>;
 type SubscriptionReadySender = oneshot::Sender<SubscriptionReady>;
 
+/// Retain enough recently closed cursors for intentional ID reuse without allowing
+/// unique subscription churn to grow the shared connection forever.
+const MAX_CACHED_SUBSCRIPTION_CURSORS: usize = 1_024;
+
 #[inline]
 pub(super) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
@@ -68,7 +72,15 @@ pub(super) fn cache_entry_seq(
     entry: &SubEntry,
 ) {
     if let Some(seq) = effective_entry_seq(entry) {
-        seq_id_cache.insert(id.into(), seq);
+        let id = id.into();
+        if !seq_id_cache.contains_key(&id)
+            && seq_id_cache.len() >= MAX_CACHED_SUBSCRIPTION_CURSORS
+        {
+            if let Some(evicted_id) = seq_id_cache.keys().next().cloned() {
+                seq_id_cache.remove(&evicted_id);
+            }
+        }
+        seq_id_cache.insert(id, seq);
     }
 }
 
@@ -151,7 +163,7 @@ pub(super) fn remove_subscription_entry(
     }
 
     subs.remove(id).inspect(|entry| {
-        cache_entry_seq(seq_id_cache, id.to_string(), entry);
+        cache_entry_seq(seq_id_cache, id, entry);
     })
 }
 
@@ -279,7 +291,9 @@ pub(super) enum ConnCmd {
     ListSubscriptions {
         result_tx: oneshot::Sender<Vec<SubscriptionInfo>>,
     },
-    Shutdown,
+    Shutdown {
+        completed: Option<oneshot::Sender<()>>,
+    },
 }
 
 pub(super) struct SubEntry {

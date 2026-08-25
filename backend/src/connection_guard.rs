@@ -15,9 +15,9 @@ use parking_lot::Mutex;
 
 #[derive(Debug)]
 struct TokenBucket {
-    capacity: u32,
-    tokens: u32,
-    last_refill: Instant,
+    capacity:       u32,
+    tokens:         u32,
+    last_refill:    Instant,
     tokens_per_sec: f64,
 }
 
@@ -64,22 +64,22 @@ impl TokenBucket {
 
 struct IpState {
     active_connections: AtomicU32,
-    request_bucket: Mutex<TokenBucket>,
-    banned_until: Mutex<Option<Instant>>,
-    violation_count: AtomicU32,
+    request_bucket:     Mutex<TokenBucket>,
+    banned_until:       Mutex<Option<Instant>>,
+    violation_count:    AtomicU32,
 }
 
 impl IpState {
     fn new(max_requests_per_sec: u32) -> Self {
         Self {
             active_connections: AtomicU32::new(0),
-            request_bucket: Mutex::new(TokenBucket::new(
+            request_bucket:     Mutex::new(TokenBucket::new(
                 max_requests_per_sec,
                 max_requests_per_sec,
                 Duration::from_secs(1),
             )),
-            banned_until: Mutex::new(None),
-            violation_count: AtomicU32::new(0),
+            banned_until:       Mutex::new(None),
+            violation_count:    AtomicU32::new(0),
         }
     }
 
@@ -116,12 +116,12 @@ pub enum ConnectionGuardResult {
 }
 
 pub struct ConnectionGuard {
-    max_connections_per_ip: u32,
+    max_connections_per_ip:      u32,
     max_requests_per_ip_per_sec: u32,
-    request_body_limit_bytes: usize,
-    ban_duration: Duration,
-    enabled: bool,
-    ip_states: Cache<IpAddr, Arc<IpState>>,
+    request_body_limit_bytes:    usize,
+    ban_duration:                Duration,
+    enabled:                     bool,
+    ip_states:                   Cache<IpAddr, Arc<IpState>>,
 }
 
 impl ConnectionGuard {
@@ -326,10 +326,10 @@ impl Default for ConnectionGuard {
 
 #[derive(Debug, Clone)]
 pub struct ConnectionGuardStats {
-    pub tracked_ips: usize,
-    pub banned_ips: usize,
+    pub tracked_ips:              usize,
+    pub banned_ips:               usize,
     pub total_active_connections: u32,
-    pub total_violations: u32,
+    pub total_violations:         u32,
 }
 
 #[cfg(test)]

@@ -61,9 +61,8 @@ async fn test_insert_on_conflict_do_update_returning_over_http() -> anyhow::Resu
 
     let resp = server
         .execute_sql(&format!(
-            "INSERT INTO {}.items (id, name) VALUES (1, 'beta') \
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-             RETURNING id, name",
+            "INSERT INTO {}.items (id, name) VALUES (1, 'beta') ON CONFLICT (id) DO UPDATE SET \
+             name = EXCLUDED.name RETURNING id, name",
             namespace
         ))
         .await?;
@@ -92,12 +91,9 @@ async fn test_insert_on_conflict_do_update_transaction_over_http() -> anyhow::Re
 
     let resp = server
         .execute_sql(&format!(
-            "BEGIN; \
-             INSERT INTO {}.items (id, name) VALUES (2, 'alpha'); \
-             INSERT INTO {}.items (id, name) VALUES (2, 'gamma') \
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-             RETURNING id, name; \
-             COMMIT;",
+            "BEGIN; INSERT INTO {}.items (id, name) VALUES (2, 'alpha'); INSERT INTO {}.items \
+             (id, name) VALUES (2, 'gamma') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
+             RETURNING id, name; COMMIT;",
             namespace, namespace
         ))
         .await?;
@@ -182,9 +178,8 @@ async fn test_parameterized_insert_on_conflict_do_update_returning_over_http() -
     let resp = server
         .execute_sql_with_params(
             &format!(
-                "INSERT INTO {}.items (id, name) VALUES ($1, $2) \
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-                 RETURNING id, name",
+                "INSERT INTO {}.items (id, name) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET \
+                 name = EXCLUDED.name RETURNING id, name",
                 namespace
             ),
             vec![serde_json::json!(1), serde_json::json!("beta")],

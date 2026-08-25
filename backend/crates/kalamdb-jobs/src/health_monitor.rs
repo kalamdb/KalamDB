@@ -82,7 +82,8 @@ impl HealthMonitor {
             );
         } else if active_connections > 0 || ws_sessions > 0 {
             log::debug!(
-                "Idle trim forced allocator collection after {:?} idle with {} connections and {} ws sessions",
+                "Idle trim forced allocator collection after {:?} idle with {} connections and {} \
+                 ws sessions",
                 idle_for,
                 active_connections,
                 ws_sessions,

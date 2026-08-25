@@ -32,17 +32,17 @@ pub fn create_default_storage_if_needed(
     info!("No storages found, creating default 'local' storage");
     let now = chrono::Utc::now().timestamp_millis();
     let default_storage = Storage {
-        storage_id: StorageId::from("local"),
-        storage_name: "Local Filesystem".to_string(),
-        description: Some("Default local filesystem storage".to_string()),
-        storage_type: StorageType::Filesystem,
-        base_directory: config.storage.storage_dir().to_string_lossy().into_owned(),
-        credentials: None,
-        config_json: None,
+        storage_id:             StorageId::from("local"),
+        storage_name:           "Local Filesystem".to_string(),
+        description:            Some("Default local filesystem storage".to_string()),
+        storage_type:           StorageType::Filesystem,
+        base_directory:         config.storage.storage_dir().to_string_lossy().into_owned(),
+        credentials:            None,
+        config_json:            None,
         shared_tables_template: config.storage.shared_tables_template.clone(),
-        user_tables_template: config.storage.user_tables_template.clone(),
-        created_at: now,
-        updated_at: now,
+        user_tables_template:   config.storage.user_tables_template.clone(),
+        created_at:             now,
+        updated_at:             now,
     };
     storages_provider.insert_storage(default_storage)?;
     info!("Default 'local' storage created successfully");

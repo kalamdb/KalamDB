@@ -5,6 +5,8 @@
 //!
 //! Run with: cargo test --test test_consumer -- --nocapture
 
+mod common;
+
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicU64, Ordering},
@@ -13,21 +15,8 @@ use std::{
 
 use kalam_client::{
     consumer::{AutoOffsetReset, TopicConsumer},
-    AuthProvider, KalamLinkClient,
+    KalamLinkClient,
 };
-
-fn get_server_url() -> String {
-    std::env::var("KALAMDB_SERVER_URL")
-        .or_else(|_| std::env::var("KALAMDB_URL"))
-        .unwrap_or_else(|_| "http://localhost:2900".to_string())
-}
-
-fn get_auth() -> AuthProvider {
-    let password = std::env::var("KALAMDB_ROOT_PASSWORD")
-        .or_else(|_| std::env::var("KALAMDB_PASSWORD"))
-        .unwrap_or_else(|_| "kalamdb123".to_string());
-    AuthProvider::system_user_auth(password)
-}
 
 fn unique_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -39,40 +28,47 @@ fn unique_id() -> String {
     format!("test_{}_{}_{}", micros, std::process::id(), seq)
 }
 
-async fn create_client() -> KalamLinkClient {
-    KalamLinkClient::builder()
-        .base_url(get_server_url())
-        .auth(get_auth())
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("Failed to create client")
+fn create_client() -> KalamLinkClient {
+    common::create_client().expect("Failed to create client")
 }
 
 async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table_name: &str) {
-    // Create namespace if needed
     let ns = topic_name.split('.').next().unwrap_or("test");
-    let _ = client
-        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns), None, None, None)
-        .await;
+    client
+        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {ns}"), None, None, None)
+        .await
+        .expect("create namespace");
 
-    // Create table
-    let create_table = format!(
-        "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, message TEXT, created_at TIMESTAMP \
-         DEFAULT NOW())",
-        table_name
-    );
-    let _ = client.execute_query(&create_table, None, None, None).await;
+    client
+        .execute_query(
+            &format!(
+                "CREATE STREAM TABLE IF NOT EXISTS {table_name} (\
+                 id INT PRIMARY KEY, message TEXT, created_at TIMESTAMP DEFAULT NOW()\
+                 ) WITH (TTL_SECONDS = 3600)"
+            ),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("create stream table");
 
-    // Create topic
-    let create_topic = format!("CREATE TOPIC IF NOT EXISTS {}", topic_name);
-    let _ = client.execute_query(&create_topic, None, None, None).await;
+    client
+        .execute_query(&format!("CREATE TOPIC IF NOT EXISTS {topic_name}"), None, None, None)
+        .await
+        .expect("create topic");
 
-    // Add route from table to topic
-    let add_route = format!(
-        "ALTER TOPIC {} ADD SOURCE {} ON INSERT WITH (payload = 'full')",
-        topic_name, table_name
-    );
-    let _ = client.execute_query(&add_route, None, None, None).await;
+    client
+        .execute_query(
+            &format!(
+                "ALTER TOPIC {topic_name} ADD SOURCE {table_name} ON INSERT WITH (payload = 'full')"
+            ),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("add topic source");
 }
 
 async fn insert_messages(client: &KalamLinkClient, table_name: &str, count: usize) {
@@ -174,7 +170,7 @@ fn test_consumer_builder_all_options() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_basic_consume_manual_commit() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -214,7 +210,7 @@ async fn test_basic_consume_manual_commit() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_auto_commit() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -256,7 +252,7 @@ async fn test_auto_commit() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_auto_offset_reset_earliest() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -284,7 +280,7 @@ async fn test_auto_offset_reset_earliest() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_auto_offset_reset_latest() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -313,7 +309,7 @@ async fn test_auto_offset_reset_latest() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_poll_with_timeout_returns_empty() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -346,7 +342,7 @@ async fn test_poll_with_timeout_returns_empty() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_seek_changes_position() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -385,7 +381,7 @@ async fn test_seek_changes_position() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_commit_persistence_across_consumers() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -437,7 +433,7 @@ async fn test_commit_persistence_across_consumers() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_high_load_multiple_messages() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -495,7 +491,7 @@ async fn test_high_load_multiple_messages() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_multiple_consumers_different_topics() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
 
     let topic1 = format!("test.topic1_{}", id);
@@ -560,7 +556,7 @@ async fn test_multiple_consumers_different_topics() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_reconnect_after_disconnect() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -619,7 +615,7 @@ async fn test_reconnect_after_disconnect() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_consumer_from_client_convenience() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -640,7 +636,7 @@ async fn test_consumer_from_client_convenience() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_max_poll_records_respected() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -675,7 +671,7 @@ async fn test_max_poll_records_respected() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_commit_async() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
@@ -711,7 +707,7 @@ async fn test_commit_async() {
 #[tokio::test]
 #[ignore = "Requires running KalamDB server"]
 async fn test_close_flushes_auto_commit() {
-    let client = create_client().await;
+    let client = create_client();
     let id = unique_id();
     let topic_name = format!("test.topic_{}", id);
     let table_name = format!("test.table_{}", id);
