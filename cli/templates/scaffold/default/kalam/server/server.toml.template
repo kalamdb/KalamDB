@@ -19,6 +19,14 @@ log_to_console = true
 root_password = "{{root_password}}"
 jwt_secret = "dev-local-jwt-secret-minimum-32-chars"
 
+[postgres_wire]
+enabled = false
+host = "127.0.0.1"
+port = 5432
+tls_enabled = false
+prepared_statement_limit = 1024
+portal_limit = 1024
+
 [rate_limit]
 # Relaxed limits for local development and testing
 max_queries_per_sec = 100000

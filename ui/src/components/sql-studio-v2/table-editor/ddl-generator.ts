@@ -1,4 +1,10 @@
-import type { DraftColumn, DraftTable } from "./types";
+import type {
+  DraftColumn,
+  DraftPolicyCommand,
+  DraftTable,
+  DraftTablePolicy,
+  DraftPolicyTarget,
+} from "./types";
 
 function quoteIdent(name: string): string {
   if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) return name;
@@ -88,6 +94,7 @@ export interface DraftValidation {
   table: string[];
   name: string | null;
   columns: Record<string, string>;
+  policies: Record<string, string>;
   hasAny: boolean;
 }
 
@@ -96,6 +103,7 @@ export function validateDraft(draft: DraftTable): DraftValidation {
     table: [],
     name: null,
     columns: {},
+    policies: {},
     hasAny: false,
   };
 
@@ -179,11 +187,206 @@ export function validateDraft(draft: DraftTable): DraftValidation {
     }
   }
 
+  if (draft.tableType === "shared") {
+    validatePolicies(draft, result);
+  }
+
   result.hasAny =
     result.table.length > 0 ||
     result.name !== null ||
-    Object.keys(result.columns).length > 0;
+    Object.keys(result.columns).length > 0 ||
+    Object.keys(result.policies).length > 0;
   return result;
+}
+
+export function policyUsesUsing(command: DraftPolicyCommand): boolean {
+  return command !== "insert";
+}
+
+export function policyUsesWithCheck(command: DraftPolicyCommand): boolean {
+  return command === "all" || command === "insert" || command === "update";
+}
+
+function validatePolicies(draft: DraftTable, result: DraftValidation): void {
+  const live = draft.policies.filter((policy) => !policy.isDeleted);
+  const seen = new Map<string, string[]>();
+  for (const policy of live) {
+    const name = policy.name.trim();
+    if (!name) {
+      result.policies[policy.id] = "Policy name is required";
+      continue;
+    }
+    const lower = name.toLowerCase();
+    if (!seen.has(lower)) seen.set(lower, []);
+    seen.get(lower)!.push(policy.id);
+    if (policy.targets.length === 0) {
+      result.policies[policy.id] = "Select at least one role";
+      continue;
+    }
+    if (policyUsesUsing(policy.command) && !policy.usingExpr.trim()) {
+      result.policies[policy.id] = "USING expression is required";
+      continue;
+    }
+    if (policyUsesWithCheck(policy.command) && !policy.withCheckExpr.trim()) {
+      if (policy.command === "insert") {
+        result.policies[policy.id] = "WITH CHECK expression is required";
+      } else if (!policy.usingExpr.trim()) {
+        result.policies[policy.id] =
+          "USING or WITH CHECK expression is required";
+      }
+    }
+  }
+  for (const [, ids] of seen) {
+    if (ids.length > 1) {
+      for (const id of ids.slice(1)) {
+        result.policies[id] = "Duplicate policy name";
+      }
+    }
+  }
+}
+
+function wrapExpr(expr: string): string {
+  const trimmed = expr.trim();
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) return trimmed;
+  return `(${trimmed})`;
+}
+
+function formatPolicyTargets(targets: DraftPolicyTarget[]): string {
+  if (targets.includes("public")) return "PUBLIC";
+  return targets.join(", ");
+}
+
+export function generateCreatePolicySql(
+  namespace: string,
+  tableName: string,
+  policy: DraftTablePolicy,
+): string {
+  const fqn = qualifiedName(namespace, tableName);
+  const parts = [
+    `CREATE POLICY ${quoteIdent(policy.name.trim())} ON ${fqn}`,
+    `FOR ${upperOption(policy.command)}`,
+    `TO ${formatPolicyTargets(policy.targets)}`,
+  ];
+  if (policyUsesUsing(policy.command) && policy.usingExpr.trim()) {
+    parts.push(`USING ${wrapExpr(policy.usingExpr)}`);
+  }
+  if (policyUsesWithCheck(policy.command) && policy.withCheckExpr.trim()) {
+    parts.push(`WITH CHECK ${wrapExpr(policy.withCheckExpr)}`);
+  }
+  return `${parts.join(" ")};`;
+}
+
+function generateDropPolicySql(
+  namespace: string,
+  tableName: string,
+  policyName: string,
+): string {
+  return `DROP POLICY ${quoteIdent(policyName.trim())} ON ${qualifiedName(namespace, tableName)};`;
+}
+
+function generateRenamePolicySql(
+  namespace: string,
+  tableName: string,
+  fromName: string,
+  toName: string,
+): string {
+  return `ALTER POLICY ${quoteIdent(fromName.trim())} ON ${qualifiedName(namespace, tableName)} RENAME TO ${quoteIdent(toName.trim())};`;
+}
+
+function generateAlterPolicyApplySql(
+  namespace: string,
+  tableName: string,
+  policy: DraftTablePolicy,
+  original: DraftTablePolicy,
+): string | null {
+  const clauses: string[] = [];
+  const sameTargets =
+    policy.targets.length === original.targets.length &&
+    policy.targets.every((target) => original.targets.includes(target));
+  if (!sameTargets) {
+    clauses.push(`TO ${formatPolicyTargets(policy.targets)}`);
+  }
+  if (
+    policyUsesUsing(policy.command) &&
+    policy.usingExpr.trim() !== original.usingExpr.trim()
+  ) {
+    clauses.push(`USING ${wrapExpr(policy.usingExpr)}`);
+  }
+  if (
+    policyUsesWithCheck(policy.command) &&
+    policy.withCheckExpr.trim() !== original.withCheckExpr.trim() &&
+    policy.withCheckExpr.trim()
+  ) {
+    clauses.push(`WITH CHECK ${wrapExpr(policy.withCheckExpr)}`);
+  }
+  if (clauses.length === 0) return null;
+  return `ALTER POLICY ${quoteIdent(policy.name.trim())} ON ${qualifiedName(namespace, tableName)} ${clauses.join(" ")};`;
+}
+
+export function generatePolicyDdl(
+  original: DraftTable | null,
+  draft: DraftTable,
+): string[] {
+  if (draft.tableType !== "shared") return [];
+  const liveCreates = draft.policies.filter(
+    (policy) => !policy.isDeleted && (original == null || policy.isNew),
+  );
+  if (original == null) {
+    return liveCreates.map((policy) =>
+      generateCreatePolicySql(draft.namespace, draft.name, policy),
+    );
+  }
+  const stmts: string[] = [];
+  const originalById = new Map<string, DraftTablePolicy>();
+  for (const policy of original?.policies ?? []) {
+    originalById.set(policy.id, policy);
+  }
+
+  for (const policy of draft.policies) {
+    if (policy.isDeleted && !policy.isNew) {
+      const orig = originalById.get(policy.id);
+      stmts.push(
+        generateDropPolicySql(
+          draft.namespace,
+          draft.name,
+          orig?.name ?? policy.name,
+        ),
+      );
+    }
+  }
+
+  for (const policy of draft.policies) {
+    if (policy.isNew && !policy.isDeleted) {
+      stmts.push(generateCreatePolicySql(draft.namespace, draft.name, policy));
+      continue;
+    }
+    if (policy.isNew || policy.isDeleted) continue;
+    const orig = originalById.get(policy.id);
+    if (!orig) continue;
+    const nameChanged = orig.name.trim() !== policy.name.trim();
+    const working: DraftTablePolicy = nameChanged
+      ? { ...policy, name: orig.name }
+      : policy;
+    const apply = generateAlterPolicyApplySql(
+      draft.namespace,
+      draft.name,
+      working,
+      orig,
+    );
+    if (apply) stmts.push(apply);
+    if (nameChanged) {
+      stmts.push(
+        generateRenamePolicySql(
+          draft.namespace,
+          draft.name,
+          orig.name,
+          policy.name,
+        ),
+      );
+    }
+  }
+
+  return stmts;
 }
 
 export function generateCreateTableSql(draft: DraftTable): string {
@@ -192,7 +395,9 @@ export function generateCreateTableSql(draft: DraftTable): string {
     .map((c) => columnClause(c))
     .join(", ");
   const props = tablePropertyMap(draft, true, false);
-  return `CREATE TABLE ${qualifiedName(draft.namespace, draft.name)} (${cols}) WITH (${formatProperties(props)});`;
+  const createTable = `CREATE TABLE ${qualifiedName(draft.namespace, draft.name)} (${cols}) WITH (${formatProperties(props)});`;
+  const policies = generatePolicyDdl(null, draft);
+  return [createTable, ...policies].join("\n");
 }
 
 export function generateAlterTableSql(
@@ -263,6 +468,8 @@ export function generateAlterTableSql(
       }
     }
   }
+
+  stmts.push(...generatePolicyDdl(original, draft));
 
   return stmts.join("\n");
 }

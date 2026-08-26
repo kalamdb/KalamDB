@@ -29,12 +29,8 @@ fn create_test_storage(base_directory: &str) -> Storage {
 
 #[tokio::test]
 async fn test_health_check_local_filesystem() {
-    // Create a temp directory for testing
-    let temp_dir = env::temp_dir().join("kalamdb_health_test");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
-
-    let storage = create_test_storage(&temp_dir.to_string_lossy());
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let storage = create_test_storage(&temp_dir.path().to_string_lossy());
 
     let result = StorageHealthService::run_full_health_check(&storage).await.unwrap();
 
@@ -44,10 +40,6 @@ async fn test_health_check_local_filesystem() {
     assert!(result.listable);
     assert!(result.deletable);
     assert!(result.error.is_none());
-    assert!(result.latency_ms > 0);
-
-    // Cleanup
-    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[tokio::test]

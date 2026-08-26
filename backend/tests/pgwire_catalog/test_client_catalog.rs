@@ -10,6 +10,7 @@
 //!   cd backend && cargo test --test pgwire_catalog --features e2e-tests
 
 mod catalog_checks;
+mod jdbc;
 
 use std::env;
 
@@ -69,7 +70,7 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
 
 /// Primary US9 acceptance test — wire client, all required catalog surfaces, SC-011 parity.
 ///
-/// Requires: running server with `postgres_wire.enabled = true` and `pg_catalog_enabled = true`.
+/// Requires: running server with `postgres_wire.enabled = true`.
 /// Future: replace env-based connect with embedded test server (extend `http_server` harness).
 #[tokio::test]
 #[ignore = "requires postgres wire listener (US2) and pg_catalog shims (US9); see \

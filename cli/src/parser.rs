@@ -556,7 +556,7 @@ struct TrailingValueArgs {
 
 impl TrailingValueArgs {
     fn joined(self) -> String {
-        self.values.join(" ")
+        crate::identifiers::trim_sql_target(&self.values.join(" ")).to_string()
     }
 }
 
@@ -1045,6 +1045,10 @@ mod tests {
             parser.parse("\\flush table messages").unwrap(),
             Command::Flush(FlushTarget::Table("messages".to_string()))
         );
+        assert_eq!(
+            parser.parse("\\flush table test_kalam_60.users;").unwrap(),
+            Command::Flush(FlushTarget::Table("test_kalam_60.users".to_string()))
+        );
     }
 
     #[test]
@@ -1058,6 +1062,10 @@ mod tests {
         let parser = CommandParser::new();
         let cmd = parser.parse("\\describe users").unwrap();
         assert_eq!(cmd, Command::Describe("users".to_string()));
+        assert_eq!(
+            parser.parse("\\describe chat.messages;").unwrap(),
+            Command::Describe("chat.messages".to_string())
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ use kalamdb_core::{
         executor::{
             parameter_binding::max_placeholder_index, PreparedExecutionStatement, SqlExecutor,
         },
+        functions::classify_postgres_show,
     },
 };
 use pgwire::{
@@ -160,6 +161,13 @@ impl KalamQueryParser {
     }
 
     async fn infer_result_columns(&self, sql: &str) -> Option<Vec<WireResultColumn>> {
+        if let Some(shown) = classify_postgres_show(sql) {
+            return Some(vec![WireResultColumn {
+                name:     shown.name,
+                datatype: Type::TEXT,
+            }]);
+        }
+
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let plan = self
             .app_context

@@ -83,4 +83,48 @@ describe("EditTableForm", () => {
     expect(within(textRow).getByText("ULID()")).toBeTruthy();
     expect(within(textRow).queryByText("NOW()")).toBeNull();
   });
+
+  it("hides access level and shows policies for shared tables", () => {
+    const store = configureStore({
+      reducer: {
+        editorTab: editorTabReducer,
+      },
+    });
+    store.dispatch(
+      startCreateTable({
+        namespace: "default",
+        emptyDraft: emptyDraft("default", "shared"),
+      }),
+    );
+
+    render(
+      <Provider store={store}>
+        <Toaster>
+          <SqlPreviewProvider>
+            <EditTableForm schema={[]} />
+          </SqlPreviewProvider>
+        </Toaster>
+      </Provider>,
+    );
+
+    expect(screen.queryByText("Access level")).toBeNull();
+    expect(screen.getByTestId("table-policies-section")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("table-policy-add"));
+    fireEvent.change(screen.getByTestId("table-policy-name"), {
+      target: { value: "owner_read" },
+    });
+    fireEvent.change(screen.getByTestId("table-policy-using"), {
+      target: { value: "owner_id = CURRENT_USER()" },
+    });
+
+    expect(store.getState().editorTab.draft?.policies).toEqual([
+      expect.objectContaining({
+        name: "owner_read",
+        command: "select",
+        usingExpr: "owner_id = CURRENT_USER()",
+        isNew: true,
+      }),
+    ]);
+  });
 });

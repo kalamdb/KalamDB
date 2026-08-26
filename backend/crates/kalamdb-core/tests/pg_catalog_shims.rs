@@ -27,7 +27,7 @@ fn string_values(
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -127,7 +127,7 @@ async fn pg_catalog_shims_project_namespaces_tables_columns_and_database() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_pg_type_lists_column_types_for_namespace() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -239,7 +239,7 @@ ORDER BY table_schema, table_name, ordinal_position";
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_dbeaver_unqualified_pg_type_query() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -258,7 +258,7 @@ async fn pg_catalog_shim_dbeaver_unqualified_pg_type_query() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_beekeeper_column_metadata_query() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -285,7 +285,7 @@ async fn pg_catalog_shim_beekeeper_column_metadata_query() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_beekeeper_bulk_table_columns_query() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -304,7 +304,7 @@ async fn pg_catalog_shim_beekeeper_bulk_table_columns_query() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_beekeeper_information_schema_column_query() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -346,7 +346,7 @@ async fn pg_catalog_shim_beekeeper_information_schema_column_query() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -394,7 +394,7 @@ async fn pg_catalog_shim_lists_user_relations_as_tables_not_views() {
 #[ntest::timeout(10_000)]
 async fn information_schema_views_lists_system_views_not_tables() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -429,7 +429,7 @@ async fn information_schema_views_lists_system_views_not_tables() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_classifies_views_and_tables() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -473,7 +473,7 @@ async fn pg_catalog_shim_classifies_views_and_tables() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_beekeeper_system_table_column_metadata() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -508,7 +508,7 @@ async fn pg_catalog_shim_beekeeper_system_table_column_metadata() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_reports_conservative_postgres_version() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -523,7 +523,7 @@ async fn pg_catalog_shim_reports_conservative_postgres_version() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_beekeeper_empty_auxiliary_catalogs() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -536,7 +536,7 @@ async fn pg_catalog_shim_beekeeper_empty_auxiliary_catalogs() {
 #[ntest::timeout(10_000)]
 async fn information_schema_lists_user_relation_once_as_base_table() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -568,7 +568,7 @@ async fn information_schema_lists_user_relation_once_as_base_table() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -591,7 +591,7 @@ async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
 #[ntest::timeout(10_000)]
 async fn pg_stat_activity_projects_backend_sessions() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let observer_ctx = observer_exec_ctx(&app_ctx);
@@ -623,7 +623,7 @@ async fn pg_stat_activity_projects_backend_sessions() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_rbac_rejects_non_admin_stat_activity() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let user_ctx = ExecutionContext::new(
@@ -643,7 +643,7 @@ async fn pg_catalog_rbac_rejects_non_admin_stat_activity() {
 #[ntest::timeout(10_000)]
 async fn pg_catalog_lists_shared_tables_for_non_admin_while_rls_hides_rows() {
     let mut config = ServerConfig::default();
-    config.postgres_wire.pg_catalog_enabled = true;
+    config.postgres_wire.enabled = true;
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
     let executor = create_executor(app_ctx.clone());
     let private_namespace = unique_namespace("pg_catalog_private");
@@ -725,4 +725,170 @@ async fn pg_catalog_is_not_registered_when_disabled() {
         error.contains("pg_catalog") || error.contains("not found"),
         "expected pg_catalog lookup failure, got: {error}"
     );
+}
+
+fn jdbc_get_tables_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT current_database() AS \"TABLE_CAT\", n.nspname AS \"TABLE_SCHEM\", c.relname AS \
+         \"TABLE_NAME\", \
+         CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema' \
+         WHEN true THEN CASE \
+         WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN CASE c.relkind \
+         WHEN 'r' THEN 'SYSTEM TABLE' WHEN 'v' THEN 'SYSTEM VIEW' ELSE NULL END \
+         ELSE CASE c.relkind WHEN 'r' THEN 'TEMPORARY TABLE' ELSE NULL END END \
+         WHEN false THEN CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'v' THEN 'VIEW' ELSE NULL END \
+         ELSE NULL END AS \"TABLE_TYPE\", d.description AS \"REMARKS\" \
+         FROM pg_catalog.pg_namespace n, pg_catalog.pg_class c \
+         LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0 and \
+         d.classoid = 'pg_class'::regclass) \
+         WHERE c.relnamespace = n.oid AND n.nspname LIKE '{schema}' AND c.relname LIKE '{table}' \
+         AND (false OR ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> \
+         'information_schema' )) \
+         ORDER BY \"TABLE_TYPE\",\"TABLE_SCHEM\",\"TABLE_NAME\""
+    )
+}
+
+fn jdbc_get_schemas_sql(schema: &str) -> String {
+    format!(
+        "SELECT nspname AS \"TABLE_SCHEM\", current_database() AS \"TABLE_CATALOG\" FROM \
+         pg_catalog.pg_namespace WHERE nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_' OR \
+         nspname = (pg_catalog.current_schemas(true))[1]) AND (nspname !~ '^pg_toast_temp_' OR \
+         nspname = replace((pg_catalog.current_schemas(true))[1], 'pg_temp_', 'pg_toast_temp_')) \
+         AND nspname LIKE '{schema}' ORDER BY \"TABLE_SCHEM\""
+    )
+}
+
+fn jdbc_get_columns_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT * FROM (SELECT current_database(), n.nspname,c.relname,a.attname,a.atttypid,\
+         a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,a.atttypmod,a.attlen,\
+         t.typtypmod, row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum, \
+         nullif(a.attidentity, '') as attidentity, nullif(a.attgenerated, '') as attgenerated, \
+         pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,dsc.description,t.typbasetype,\
+         t.typtype FROM pg_catalog.pg_namespace n \
+         JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid) \
+         JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid) \
+         JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid) \
+         LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum) \
+         LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) \
+         LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class') \
+         LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog') \
+         WHERE c.relkind in ('r','p','v','f','m') and a.attnum > 0 AND NOT a.attisdropped \
+         AND n.nspname LIKE '{schema}' AND c.relname LIKE '{table}') c WHERE true \
+         ORDER BY nspname,c.relname,attnum"
+    )
+}
+
+fn jdbc_get_primary_keys_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT result.TABLE_CAT AS \"TABLE_CAT\", result.TABLE_SCHEM AS \"TABLE_SCHEM\", \
+         result.TABLE_NAME AS \"TABLE_NAME\", result.COLUMN_NAME AS \"COLUMN_NAME\", \
+         result.KEY_SEQ AS \"KEY_SEQ\", result.PK_NAME AS \"PK_NAME\" FROM ( \
+         SELECT current_database() AS TABLE_CAT, n.nspname AS TABLE_SCHEM, \
+         ct.relname AS TABLE_NAME, a.attname AS COLUMN_NAME, \
+         (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, ci.relname AS PK_NAME, \
+         information_schema._pg_expandarray(i.indkey) AS KEYS, a.attnum AS A_ATTNUM, \
+         i.indnkeyatts as KEY_COUNT FROM pg_catalog.pg_class ct \
+         JOIN pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) \
+         JOIN pg_catalog.pg_namespace n ON (ct.relnamespace = n.oid) \
+         JOIN pg_catalog.pg_index i ON ( a.attrelid = i.indrelid) \
+         JOIN pg_catalog.pg_class ci ON (ci.oid = i.indexrelid) \
+         WHERE true AND n.nspname = '{schema}' AND ct.relname = '{table}' AND i.indisprimary \
+         ) result where result.A_ATTNUM = (result.KEYS).x AND result.KEY_SEQ <= KEY_COUNT \
+         ORDER BY result.table_name, result.pk_name, result.key_seq"
+    )
+}
+
+#[tokio::test]
+#[ntest::timeout(10_000)]
+async fn pg_catalog_shim_jdbc_get_tables_query() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let namespace = unique_namespace("jdbc_get_tables");
+    create_shared_table(&app_ctx, &namespace, "items").await;
+
+    let rows = result_rows(
+        execute_ok(&executor, &observer_ctx, &jdbc_get_tables_sql(namespace.as_str(), "items")).await,
+    );
+    assert_eq!(string_values(&rows, "TABLE_NAME"), vec!["items".to_string()]);
+    assert_eq!(string_values(&rows, "TABLE_TYPE"), vec!["TABLE".to_string()]);
+}
+
+#[tokio::test]
+#[ntest::timeout(10_000)]
+async fn pg_catalog_shim_jdbc_get_schemas_and_catalogs() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let namespace = unique_namespace("jdbc_get_schemas");
+    create_shared_table(&app_ctx, &namespace, "items").await;
+
+    let schema_rows =
+        result_rows(execute_ok(&executor, &observer_ctx, &jdbc_get_schemas_sql(namespace.as_str())).await);
+    assert_eq!(
+        string_values(&schema_rows, "TABLE_SCHEM"),
+        vec![namespace.to_string()]
+    );
+
+    let catalog_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT datname AS \"TABLE_CAT\" FROM pg_catalog.pg_database WHERE datallowconn = true \
+             ORDER BY datname",
+        )
+        .await,
+    );
+    assert_eq!(string_values(&catalog_rows, "TABLE_CAT"), vec!["kalam".to_string()]);
+
+    let name_type_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            "SELECT t.typlen FROM pg_catalog.pg_type t, pg_catalog.pg_namespace n \
+             WHERE t.typnamespace=n.oid AND t.typname='name' AND n.nspname='pg_catalog'",
+        )
+        .await,
+    );
+    assert_eq!(name_type_rows.len(), 1);
+}
+
+#[tokio::test]
+#[ntest::timeout(10_000)]
+async fn pg_catalog_shim_jdbc_get_columns_and_primary_keys() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let namespace = unique_namespace("jdbc_get_columns");
+    create_shared_table(&app_ctx, &namespace, "items").await;
+
+    let column_rows = result_rows(
+        execute_ok(&executor, &observer_ctx, &jdbc_get_columns_sql(namespace.as_str(), "items")).await,
+    );
+    let names = string_values(&column_rows, "attname");
+    assert!(names.contains(&"id".to_string()), "getColumns missing id: {names:?}");
+    assert!(names.contains(&"name".to_string()), "getColumns missing name: {names:?}");
+    let unique = names.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        names.len(),
+        "getColumns should not duplicate columns: {names:?}"
+    );
+
+    let pk_rows = result_rows(
+        execute_ok(
+            &executor,
+            &observer_ctx,
+            &jdbc_get_primary_keys_sql(namespace.as_str(), "items"),
+        )
+        .await,
+    );
+    assert_eq!(string_values(&pk_rows, "COLUMN_NAME"), vec!["id".to_string()]);
 }

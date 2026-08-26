@@ -115,7 +115,6 @@ impl ServerConfig {
     /// - KALAMDB_ENABLE_PGWIRE: Override postgres_wire.enabled ("true" | "false")
     /// - KALAMDB_PGWIRE_HOST: Override postgres_wire.host
     /// - KALAMDB_PGWIRE_PORT: Override postgres_wire.port
-    /// - KALAMDB_PGWIRE_CATALOG_ENABLED: Override postgres_wire.pg_catalog_enabled
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> Result<()> {
@@ -147,9 +146,6 @@ impl ServerConfig {
             if let Ok(port) = value.parse() {
                 self.postgres_wire.port = port;
             }
-        }
-        if let Some(enabled) = env_truthy("KALAMDB_PGWIRE_CATALOG_ENABLED") {
-            self.postgres_wire.pg_catalog_enabled = enabled;
         }
     }
 

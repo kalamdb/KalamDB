@@ -21,6 +21,7 @@ pub mod formatter;
 pub mod fs_atomic;
 pub mod history;
 pub mod history_menu;
+pub mod identifiers;
 pub mod output;
 pub mod parser;
 pub mod process;

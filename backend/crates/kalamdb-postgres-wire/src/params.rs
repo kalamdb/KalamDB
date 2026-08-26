@@ -37,18 +37,9 @@ where
             let value: Option<bool> = portal.parameter(index, &Type::BOOL)?;
             Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Boolean(Some(value))))
         },
-        Type::INT2 => {
-            let value: Option<i16> = portal.parameter(index, &Type::INT2)?;
-            Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int16(Some(value))))
-        },
-        Type::INT4 => {
-            let value: Option<i32> = portal.parameter(index, &Type::INT4)?;
-            Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int32(Some(value))))
-        },
-        Type::INT8 => {
-            let value: Option<i64> = portal.parameter(index, &Type::INT8)?;
-            Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int64(Some(value))))
-        },
+        // JDBC `setInt` binds INT4 (4 bytes). DataFusion often infers INT8 for
+        // integer placeholders, which then fails with "failed to fill whole buffer".
+        Type::INT2 | Type::INT4 | Type::INT8 => decode_integer_parameter(portal, index),
         Type::FLOAT4 => {
             let value: Option<f32> = portal.parameter(index, &Type::FLOAT4)?;
             Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Float32(Some(value))))
@@ -65,4 +56,24 @@ where
             })
         },
     }
+}
+
+fn decode_integer_parameter<S>(portal: &Portal<S>, index: usize) -> PgWireResult<ScalarValue>
+where
+    S: Clone,
+{
+    if let Ok(value) = portal.parameter::<i32>(index, &Type::INT4) {
+        return Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int32(Some(value))));
+    }
+    if let Ok(value) = portal.parameter::<i64>(index, &Type::INT8) {
+        return Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int64(Some(value))));
+    }
+    if let Ok(value) = portal.parameter::<i16>(index, &Type::INT2) {
+        return Ok(value.map_or(ScalarValue::Null, |value| ScalarValue::Int16(Some(value))));
+    }
+    let text: Option<String> = portal.parameter(index, &Type::TEXT)?;
+    Ok(match text {
+        None => ScalarValue::Null,
+        Some(value) => ScalarValue::Utf8(Some(value)),
+    })
 }

@@ -231,6 +231,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_flush_table_strips_quoted_identifiers() {
+        let stmt =
+            FlushTableStatement::parse(r#"STORAGE FLUSH TABLE "test_kalam_60"."users""#).unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("test_kalam_60"));
+        assert_eq!(stmt.table_name, TableName::from("users"));
+    }
+
+    #[test]
     fn test_parse_flush_table_unqualified_error() {
         let result = FlushTableStatement::parse("STORAGE FLUSH TABLE events");
         assert!(result.is_err());

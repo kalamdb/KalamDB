@@ -1027,7 +1027,9 @@ pub async fn create_session(
             }
         } else {
             // Token is still valid
-            let stored_username = creds.display_label().map(str::to_string);
+            let stored_username = creds.user.as_ref().map(|user| {
+                preferred_user_label(user, creds.name.as_deref(), creds.email.as_deref())
+            });
             if cli.verbose {
                 if let Some(ref user) = stored_username {
                     eprintln!(

@@ -1,7 +1,7 @@
 import { executeQuery } from "@/lib/kalam-client";
 import { getDb } from "@/lib/db";
-import type { SystemNamespaceRow, SystemSchemaRow } from "@/lib/models";
-import { system_namespaces, system_schemas } from "@/lib/schema";
+import type { SystemNamespaceRow, SystemSchemaRow, SystemTablePolicyRow } from "@/lib/models";
+import { system_namespaces, system_schemas, system_table_policies } from "@/lib/schema";
 import type { SchemaField } from "@kalamdb/client";
 import type {
   QueryLogEntry,
@@ -221,7 +221,6 @@ function ensureTable(
       tableType,
       columns: [],
       storageId: null,
-      accessLevel: null,
       useUserStorage: null,
       version: null,
       options: null,
@@ -385,7 +384,6 @@ function applyTableMetadata(
     Pick<
       SystemSchemaRow,
       | "storage_id"
-      | "access_level"
       | "use_user_storage"
       | "schema_version"
       | "options"
@@ -396,7 +394,6 @@ function applyTableMetadata(
   >,
 ): void {
   table.storageId = normalizeTextValue(row.storage_id);
-  table.accessLevel = normalizeTextValue(row.access_level);
   table.useUserStorage = normalizeBooleanValue(row.use_user_storage);
   table.version = normalizeNumericValue(row.schema_version);
   table.options = normalizeTableOptions(row.options);
@@ -482,12 +479,23 @@ function inferExplorerTableType(
   return "user";
 }
 
+async function fetchTablePolicies(
+  db: ReturnType<typeof getDb>,
+): Promise<SystemTablePolicyRow[]> {
+  try {
+    return await db.select().from(system_table_policies);
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
   const databaseName = "database";
   const db = getDb();
-  const [namespaceRows, schemaRows] = await Promise.all([
+  const [namespaceRows, schemaRows, policyRows] = await Promise.all([
     db.select().from(system_namespaces),
     db.select().from(system_schemas).where(eq(system_schemas.is_latest, true)),
+    fetchTablePolicies(db),
   ]);
 
   const namespaces = new Map<string, StudioNamespace>();
@@ -521,7 +529,27 @@ export async function fetchSqlStudioSchemaTree(): Promise<StudioNamespace[]> {
 
     applyTableMetadata(table, row);
     table.columns = normalizeSchemaColumns(row.columns);
+    table.policies = [];
   });
+
+  for (const row of policyRows) {
+    const tableKey = normalizeTextValue(row.table_id);
+    if (!tableKey) continue;
+    const table = tableMap.get(tableKey);
+    if (!table) continue;
+    const policyName = normalizeTextValue(row.policy_name);
+    if (!policyName) continue;
+    table.policies = [
+      ...(table.policies ?? []),
+      {
+        name: policyName,
+        command: row.command,
+        targets: row.targets,
+        usingSql: normalizeTextValue(row.using_sql),
+        withCheckSql: normalizeTextValue(row.with_check_sql),
+      },
+    ];
+  }
 
   const sortedNamespaces = Array.from(namespaces.values())
     .map((namespace) => ({

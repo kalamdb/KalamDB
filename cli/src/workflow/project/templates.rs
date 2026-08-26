@@ -374,6 +374,9 @@ mod tests {
         assert!(rendered.contains("logs_path = \"kalam/server/logs\""));
         assert!(rendered.contains("[rate_limit]"));
         assert!(rendered.contains("max_queries_per_sec = 100000"));
+        assert!(rendered.contains("[postgres_wire]"));
+        assert!(rendered.contains("enabled = false"));
+        assert!(!rendered.contains("pg_catalog_enabled"));
         assert!(!rendered.contains("&quot;"));
     }
 

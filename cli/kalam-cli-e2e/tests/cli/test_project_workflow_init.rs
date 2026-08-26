@@ -157,6 +157,9 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
         .expect("read generated server.toml");
     assert!(server_toml.contains("[rate_limit]"));
     assert!(server_toml.contains("max_queries_per_sec = 100000"));
+    assert!(server_toml.contains("[postgres_wire]"));
+    assert!(server_toml.contains("enabled = false"));
+    assert!(!server_toml.contains("pg_catalog_enabled"));
     assert!(server_toml.contains("port = 2900"));
     assert!(server_toml.contains("root_password = \"kalamdb123\""));
 

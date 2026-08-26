@@ -28,7 +28,7 @@ pub use col_description::ColDescriptionFunction;
 pub use current_database::CurrentDatabaseFunction;
 pub use current_role::CurrentRoleFunction;
 pub use current_schema::CurrentSchemaFunction;
-pub use current_setting::CurrentSettingFunction;
+pub use current_setting::{classify_postgres_show, CurrentSettingFunction, PostgresShowVariable};
 pub use current_user::CurrentUserFunction;
 pub use format_type::FormatTypeFunction;
 pub use kalamdb_vector::CosineDistanceFunction;

@@ -1,8 +1,10 @@
 name: kalam_sync
-description: Local-first Flutter sync, durable actions, and Drift integration for KalamDB.
+description: Local-first Flutter sync for KalamDB — Drift cache, live SQL, and offline actions.
 version: 0.6.0-rc.0
-homepage: https://github.com/kalamdb/KalamDB
+homepage: https://kalamdb.org
 repository: https://github.com/kalamdb/KalamDB
+issue_tracker: https://github.com/kalamdb/KalamDB/issues
+documentation: https://kalamdb.org/docs/dart-sdk/sync
 
 environment:
   sdk: ">=3.10.0 <4.0.0"

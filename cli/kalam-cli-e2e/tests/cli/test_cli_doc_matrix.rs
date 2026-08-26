@@ -435,6 +435,7 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             item: "\\describe",
             tests: &[
                 "test_parse_describe",
+                "smoke_cli_backslash_describe_qualified_table",
                 "test_cli_meta_commands_doc_smoke_non_interactive",
             ],
         },
@@ -494,6 +495,8 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
         Coverage {
             item: "\\flush",
             tests: &[
+                "smoke_cli_backslash_flush_qualified_table",
+                "smoke_cli_backslash_flush_uses_session_namespace",
                 "smoke_cli_flush_command",
                 "test_cli_meta_commands_doc_smoke_non_interactive",
             ],

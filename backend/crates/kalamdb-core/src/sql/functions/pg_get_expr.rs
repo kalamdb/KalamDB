@@ -32,6 +32,10 @@ impl ScalarUDFImpl for PgGetExprFunction {
                 vec![
                     TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Int64]),
                     TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Int32]),
+                    TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Null]),
+                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Int64]),
+                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Int32]),
+                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Null]),
                 ],
                 Volatility::Stable,
             )

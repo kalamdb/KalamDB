@@ -18,6 +18,7 @@ use crate::{
     history::CommandHistory,
     history_menu::{HistoryMenu, HistoryMenuResult},
     parser::Command,
+    workflow::project::prompt_host_identity,
     CLI_VERSION,
 };
 
@@ -37,18 +38,30 @@ const SYSTEM_TABLES: &[&str] = &[
 ];
 
 impl CLISession {
-    fn primary_prompt(&self) -> String {
-        #[cfg(target_os = "windows")]
-        let use_colors_in_prompt = false;
-        #[cfg(not(target_os = "windows"))]
-        let use_colors_in_prompt = self.color;
+    fn primary_prompt_pair(&self) -> (String, String) {
+        let use_unicode = cfg!(not(target_os = "windows"));
+        let raw = self.render_primary_prompt(false, use_unicode);
+        let styled = if self.color {
+            self.render_primary_prompt(true, use_unicode)
+        } else {
+            raw.clone()
+        };
+        (raw, styled)
+    }
 
-        #[cfg(target_os = "windows")]
-        let use_unicode = false;
-        #[cfg(not(target_os = "windows"))]
-        let use_unicode = true;
+    fn continuation_prompt_pair(&self) -> (String, String) {
+        let use_unicode = cfg!(not(target_os = "windows"));
+        let raw = render_continuation_prompt(false, use_unicode);
+        let styled = if self.color {
+            render_continuation_prompt(true, use_unicode)
+        } else {
+            raw.clone()
+        };
+        (raw, styled)
+    }
 
-        let status = if use_colors_in_prompt {
+    fn render_primary_prompt(&self, use_colors: bool, use_unicode: bool) -> String {
+        let status = if use_colors {
             if self.connected {
                 if use_unicode {
                     "●".green().bold().to_string()
@@ -66,7 +79,7 @@ impl CLISession {
             "o".to_string()
         };
 
-        let brand = if use_colors_in_prompt {
+        let brand = if use_colors {
             "KalamDB".bright_blue().bold().to_string()
         } else {
             "KalamDB".to_string()
@@ -75,27 +88,32 @@ impl CLISession {
         let display_name =
             self.cluster_name.as_deref().or(self.instance.as_deref()).unwrap_or("local");
 
-        let brand_with_profile = if use_colors_in_prompt {
+        let brand_with_profile = if use_colors {
             format!("{}{}", brand, format!("[{}]", display_name).dimmed())
         } else {
             format!("{}[{}]", brand, display_name)
         };
 
-        let identity = if use_colors_in_prompt {
-            format!("{}{}", self.username.cyan(), format!("@{}", self.server_host).dimmed())
+        let identity_text = prompt_host_identity(&self.username, &self.server_host);
+        let identity = if use_colors {
+            if self.username.contains('@') {
+                format!("{} {}", self.username.cyan(), self.server_host.dimmed())
+            } else {
+                format!("{}{}", self.username.cyan(), format!("@{}", self.server_host).dimmed())
+            }
         } else {
-            format!("{}@{}", self.username, self.server_host)
+            identity_text
         };
 
-        let namespace = if use_colors_in_prompt {
+        let namespace = if use_colors {
             self.current_namespace_label().magenta().to_string()
         } else {
             self.current_namespace_label()
         };
 
-        let update = update_prompt_label(self.update_available.as_ref(), use_colors_in_prompt);
+        let update = update_prompt_label(self.update_available.as_ref(), use_colors);
 
-        let arrow = if use_colors_in_prompt {
+        let arrow = if use_colors {
             if use_unicode {
                 "❯".bright_blue().bold().to_string()
             } else {
@@ -111,28 +129,6 @@ impl CLISession {
         }
         let body = parts.join(" ");
         format!("{} {} ", body, arrow)
-    }
-
-    fn continuation_prompt(&self) -> String {
-        #[cfg(target_os = "windows")]
-        let use_colors_in_prompt = false;
-        #[cfg(not(target_os = "windows"))]
-        let use_colors_in_prompt = self.color;
-
-        #[cfg(target_os = "windows")]
-        let use_unicode = false;
-        #[cfg(not(target_os = "windows"))]
-        let use_unicode = true;
-
-        if use_colors_in_prompt {
-            if use_unicode {
-                format!("  {} {} ", "↳".dimmed(), "❯".bright_blue().bold())
-            } else {
-                format!("  {} {} ", "->".dimmed(), ">".bright_blue().bold())
-            }
-        } else {
-            "  -> ".to_string()
-        }
     }
 
     /// Run interactive readline loop with autocomplete.
@@ -165,6 +161,8 @@ impl CLISession {
         if let Some(cluster_info) = self.fetch_cluster_info().await {
             self.adopt_cluster_metadata(&cluster_info);
         }
+
+        self.apply_prompt_user_label().await;
 
         self.update_available = crate::update_check::check_for_update(Duration::from_secs(2))
             .await
@@ -214,11 +212,12 @@ impl CLISession {
         let mut prefill_next = String::new();
 
         loop {
-            let prompt = if accumulated_command.is_empty() {
-                self.primary_prompt()
+            let (raw_prompt, styled_prompt) = if accumulated_command.is_empty() {
+                self.primary_prompt_pair()
             } else {
-                self.continuation_prompt()
+                self.continuation_prompt_pair()
             };
+            let prompt = (raw_prompt, styled_prompt);
 
             let readline_result = if !prefill_next.is_empty() {
                 let prefill = prefill_next.clone();
@@ -587,6 +586,18 @@ impl CLISession {
             }
         }
         Ok(())
+    }
+}
+
+fn render_continuation_prompt(use_colors: bool, use_unicode: bool) -> String {
+    if use_colors {
+        if use_unicode {
+            format!("  {} {} ", "↳".dimmed(), "❯".bright_blue().bold())
+        } else {
+            format!("  {} {} ", "->".dimmed(), ">".bright_blue().bold())
+        }
+    } else {
+        "  -> ".to_string()
     }
 }
 

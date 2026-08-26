@@ -5,8 +5,8 @@ use std::{
 };
 
 use arrow::{
-    array::RecordBatch,
-    datatypes::{Field, Schema, SchemaRef},
+    array::{RecordBatch, StringArray},
+    datatypes::{DataType, Field, Schema, SchemaRef},
 };
 use datafusion::{
     common::tree_node::{Transformed, TransformedResult, TreeNode},
@@ -2479,6 +2479,9 @@ impl SqlExecutor {
                 message: "SET".to_string(),
             });
         }
+        if let Some(result) = Self::postgres_show_result(sql) {
+            return Ok(result);
+        }
 
         let execution_sql = match Self::rewrite_describe_shorthand(sql, exec_ctx) {
             Some(rewritten) => rewritten,
@@ -2546,6 +2549,26 @@ impl SqlExecutor {
         }
         let rest = trimmed[3..].trim_start();
         !rest.to_ascii_lowercase().starts_with("datafusion.")
+    }
+
+    /// PostgreSQL `SHOW` GUC result for JDBC (`SHOW TRANSACTION ISOLATION LEVEL`).
+    fn postgres_show_result(sql: &str) -> Option<ExecutionResult> {
+        let shown = crate::sql::functions::classify_postgres_show(sql)?;
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            shown.name.as_str(),
+            DataType::Utf8,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(StringArray::from(vec![shown.value]))],
+        )
+        .ok()?;
+        Some(ExecutionResult::Rows {
+            batches: vec![batch],
+            row_count: 1,
+            schema: Some(schema),
+        })
     }
 
     /// Log SQL errors with appropriate level (warn for user errors, error for system errors)
@@ -2704,6 +2727,28 @@ mod tests {
     use super::*;
     use datafusion::common::DFSchema;
     use datafusion::logical_expr::{lit, EmptyRelation, Limit, Sort, SortExpr};
+
+    #[test]
+    fn postgres_show_transaction_isolation_returns_read_committed() {
+        let result = SqlExecutor::postgres_show_result("SHOW TRANSACTION ISOLATION LEVEL")
+            .expect("JDBC SHOW TRANSACTION ISOLATION LEVEL");
+        let ExecutionResult::Rows {
+            batches,
+            row_count,
+            schema,
+        } = result
+        else {
+            panic!("expected Rows, got {result:?}");
+        };
+        assert_eq!(row_count, 1);
+        assert_eq!(schema.unwrap().field(0).name(), "transaction_isolation");
+        let values = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "read committed");
+    }
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},

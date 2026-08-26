@@ -664,7 +664,7 @@ impl AppContext {
                         .collect()
                 });
                 sessions_view.set_snapshot_callback(Arc::clone(&sessions_snapshot_callback));
-                if app_ctx.config().postgres_wire.pg_catalog_enabled {
+                if app_ctx.config().postgres_wire.enabled {
                     let pg_catalog_schema = Arc::new(PgCatalogSchemaProvider::new(
                         app_ctx.system_tables(),
                         sessions_snapshot_callback));

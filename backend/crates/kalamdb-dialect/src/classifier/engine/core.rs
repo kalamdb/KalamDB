@@ -709,6 +709,11 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
+            // PostgreSQL SHOW <guc> / SHOW TRANSACTION ISOLATION LEVEL (JDBC, HikariCP).
+            // Specific SHOW TABLES/NAMESPACES/ALL/COLUMNS arms above take precedence.
+            ["SHOW", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+            },
             // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
             // Note: DESCRIBE TABLE is handled above as KalamDB custom command.
             // execute_meta_command rewrites these to information_schema with Kalam types.
@@ -906,8 +911,8 @@ impl SqlStatement {
                     .to_string())
             },
 
-            // DataFusion meta commands are already admin-checked in classify_from_tokens
-            // This branch should only be reached by admin users (DBA/System)
+            // SET / SHOW ALL / SHOW COLUMNS are admin-checked at classify time.
+            // PostgreSQL SHOW <guc> (JDBC) is allowed for all roles.
             SqlStatementKind::DataFusionMetaCommand => Ok(()),
 
             SqlStatementKind::Unknown => {

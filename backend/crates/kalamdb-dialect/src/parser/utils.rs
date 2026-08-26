@@ -4,6 +4,7 @@
 //! custom parsers (CREATE STORAGE, STORAGE FLUSH, KILL JOB, etc.).
 
 use core::ops::ControlFlow;
+use std::hash::{Hash, Hasher};
 
 use kalamdb_commons::TableId;
 use once_cell::sync::Lazy;
@@ -76,6 +77,37 @@ static DBEAVER_FORMAT_REGCLASS_OID_RE: Lazy<Regex> = Lazy::new(|| {
     )
     .expect("valid regex")
 });
+/// JDBC `getSchemas`: `(current_schemas(true))[1]` is PostgreSQL 1-based array access.
+static CURRENT_SCHEMAS_FIRST_ELEM_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\(?\s*(?:pg_catalog\.)?current_schemas\s*\(\s*(?:true|false)\s*\)\s*\)?\s*\[\s*1\s*\]",
+    )
+    .expect("valid regex")
+});
+/// JDBC TypeInfoCache: `nspname = ANY(current_schemas(true))`.
+static CURRENT_SCHEMAS_ANY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)=\s*ANY\s*\(\s*(?:pg_catalog\.)?current_schemas\s*\(\s*(?:true|false)\s*\)\s*\)",
+    )
+    .expect("valid regex")
+});
+static CURRENT_SCHEMAS_REPLACE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)replace\s*\(\s*KDB_CURRENT_SCHEMA\s*\(\s*\)\s*,\s*'pg_temp_'\s*,\s*'pg_toast_temp_'\s*\)",
+    )
+    .expect("valid regex")
+});
+/// JDBC `getColumns` reads `rs.getBytes("current_database")` from an unlabeled
+/// `SELECT current_database(), ...` projection.
+static JDBC_CURRENT_DATABASE_SELECT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(SELECT\s+)KDB_CURRENT_DATABASE\s*\(\s*\)\s*,").expect("valid regex")
+});
+static JDBC_PK_SCHEMA_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)n\.nspname\s*=\s*'((?:[^']|'')*)'").expect("valid regex")
+});
+static JDBC_PK_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)ct\.relname\s*=\s*'((?:[^']|'')*)'").expect("valid regex")
+});
 
 /// Default sqlparser options used across KalamDB
 pub fn parser_options() -> ParserOptions {
@@ -136,11 +168,53 @@ fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
     let s2 = PG_CATALOG_FORMAT_TYPE_RE.replace_all(&s1, "format_type(");
     let s3 = PG_CATALOG_PG_GET_EXPR_RE.replace_all(&s2, "pg_get_expr(");
     let s4 = DBEAVER_FORMAT_REGCLASS_OID_RE.replace_all(&s3, "0");
-    if s1 == sql && s2 == s1 && s3 == s2 && s4 == s3 {
+    let s5 = CURRENT_SCHEMAS_FIRST_ELEM_RE.replace_all(&s4, "KDB_CURRENT_SCHEMA()");
+    let s6 = CURRENT_SCHEMAS_ANY_RE.replace_all(&s5, "IS NOT NULL");
+    let s7 = CURRENT_SCHEMAS_REPLACE_RE.replace_all(&s6, "KDB_CURRENT_SCHEMA()");
+    let s8 = JDBC_CURRENT_DATABASE_SELECT_RE.replace_all(&s7, "${1}KDB_CURRENT_DATABASE() AS current_database,");
+    if s8.as_ref() == sql {
         std::borrow::Cow::Borrowed(sql)
     } else {
-        std::borrow::Cow::Owned(s4.into_owned())
+        std::borrow::Cow::Owned(s8.into_owned())
     }
+}
+
+/// PostgreSQL JDBC `getPrimaryKeys` uses `information_schema._pg_expandarray`, which
+/// DataFusion cannot plan. Project primary-key columns from `information_schema`.
+fn rewrite_jdbc_get_primary_keys(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !sql.contains("_pg_expandarray") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    if !sql.to_ascii_lowercase().contains("indisprimary") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+
+    let schema = JDBC_PK_SCHEMA_RE
+        .captures(sql)
+        .and_then(|caps| caps.get(1).map(|value| value.as_str()));
+    let table = JDBC_PK_TABLE_RE
+        .captures(sql)
+        .and_then(|caps| caps.get(1).map(|value| value.as_str()));
+
+    let mut rewritten = String::from(
+        "SELECT KDB_CURRENT_DATABASE() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", \
+         table_name AS \"TABLE_NAME\", column_name AS \"COLUMN_NAME\", \
+         COALESCE(kdb_primary_key_pos, ordinal_position) AS \"KEY_SEQ\", \
+         concat(table_name, '_pkey') AS \"PK_NAME\" FROM information_schema.columns \
+         WHERE kdb_primary_key",
+    );
+    if let Some(schema) = schema {
+        rewritten.push_str(" AND table_schema = '");
+        rewritten.push_str(schema);
+        rewritten.push('\'');
+    }
+    if let Some(table) = table {
+        rewritten.push_str(" AND table_name = '");
+        rewritten.push_str(table);
+        rewritten.push('\'');
+    }
+    rewritten.push_str(" ORDER BY table_name, \"PK_NAME\", \"KEY_SEQ\"");
+    std::borrow::Cow::Owned(rewritten)
 }
 
 /// Rewrite public context function spellings to KalamDB's internal DataFusion UDFs.
@@ -163,7 +237,10 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     // The chain of replacements is cheap (no allocation when nothing matches),
     // but we materialise to String once any regex matches to avoid lifetime
     // issues with the intermediate Cow chain.
-    let s1 = CURRENT_USER_ID_CALL_RE.replace_all(sql, "KDB_CURRENT_USER()");
+    let rewritten_pk = rewrite_jdbc_get_primary_keys(sql);
+    let source = rewritten_pk.as_ref();
+
+    let s1 = CURRENT_USER_ID_CALL_RE.replace_all(source, "KDB_CURRENT_USER()");
     let s2 = CURRENT_USER_CALL_RE.replace_all(&s1, "KDB_CURRENT_USER()");
     let s3 = CURRENT_ROLE_CALL_RE.replace_all(&s2, "KDB_CURRENT_ROLE()");
     let s4 = CURRENT_SCHEMA_CALL_RE.replace_all(&s3, "KDB_CURRENT_SCHEMA()");
@@ -189,7 +266,7 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     // AST round-trip (e.g. for `!~` → regexp_like) can reformat aliases as `AS c`, which the
     // pre-AST regex pass does not see. Run typrelid simplification again as the final pass.
     let final_sql = rewrite_dbeaver_typrelid_filter(&after_ast);
-    if final_sql == sql {
+    if final_sql.as_ref() == sql {
         Cow::Borrowed(sql)
     } else {
         Cow::Owned(final_sql.into_owned())
@@ -218,6 +295,9 @@ fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
 
     let mut text_cast_visitor = RedundantPgTextCastRewriter;
     let _ = statements.visit(&mut text_cast_visitor);
+
+    let mut oid_cast_visitor = PgOidCastRewriter;
+    let _ = statements.visit(&mut oid_cast_visitor);
 
     let mut typrelid_visitor = DbeaverTyprelidRewriter;
     let _ = statements.visit(&mut typrelid_visitor);
@@ -343,6 +423,93 @@ impl VisitorMut for PgWireCompatRewriter {
         }
         ControlFlow::Continue(())
     }
+}
+
+/// Rewrite PostgreSQL OID-family casts (`::regclass`, `::oid`, `::regproc`, …)
+/// that DataFusion cannot plan (`Unsupported SQL type REGCLASS`).
+struct PgOidCastRewriter;
+
+impl VisitorMut for PgOidCastRewriter {
+    type Break = ();
+
+    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(rewritten) = rewrite_pg_oid_cast_expr(expr) {
+            *expr = rewritten;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::Cast { kind, expr: inner, data_type, array: false, format: None } = expr else {
+        return None;
+    };
+    if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) {
+        return None;
+    }
+    if !is_pg_oid_family_type(data_type) {
+        return None;
+    }
+
+    match inner.as_ref() {
+        Expr::Value(value) => match &value.value {
+            Value::Number(number, _) => Some(Expr::value(Value::Number(number.clone(), false))),
+            Value::SingleQuotedString(name) | Value::DoubleQuotedString(name) => {
+                Some(Expr::value(Value::Number(regclass_oid_literal(name), false)))
+            },
+            _ => Some(cast_expr_to_bigint(inner.as_ref().clone())),
+        },
+        other => Some(cast_expr_to_bigint(other.clone())),
+    }
+}
+
+fn cast_expr_to_bigint(expr: Expr) -> Expr {
+    Expr::Cast {
+        kind:      CastKind::Cast,
+        expr:      Box::new(expr),
+        data_type: DataType::BigInt(None),
+        array:     false,
+        format:    None,
+    }
+}
+
+fn is_pg_oid_family_type(data_type: &DataType) -> bool {
+    if matches!(data_type, DataType::Regclass) {
+        return true;
+    }
+    matches!(
+        pg_custom_type_name(data_type).as_deref(),
+        Some(
+            "oid"
+                | "regclass"
+                | "regtype"
+                | "regproc"
+                | "regprocedure"
+                | "regoper"
+                | "regoperator"
+                | "regconfig"
+                | "regdictionary"
+                | "regnamespace"
+                | "regrole"
+        )
+    )
+}
+
+fn pg_custom_type_name(data_type: &DataType) -> Option<String> {
+    let DataType::Custom(name, _) = data_type else {
+        return None;
+    };
+    match name.0.last()? {
+        ObjectNamePart::Identifier(ident) => Some(ident.value.to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
+fn regclass_oid_literal(name: &str) -> String {
+    let ident = name.rsplit('.').next().unwrap_or(name);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ident.hash(&mut hasher);
+    (hasher.finish() & 0x7fff_ffff).to_string()
 }
 
 fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
@@ -1320,7 +1487,88 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
     fn test_rewrite_pg_catalog_col_description_for_datafusion() {
         let sql = "SELECT pg_catalog.col_description(123::oid, 1) AS comment";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
-        assert_eq!(rewritten, "SELECT col_description(123::oid, 1) AS comment");
+        assert!(
+            rewritten.contains("col_description(123"),
+            "expected oid cast stripped for DataFusion: {rewritten}"
+        );
+        assert!(
+            !rewritten.to_ascii_lowercase().contains("::oid"),
+            "expected ::oid rewrite: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_regclass_cast_for_datafusion() {
+        let sql = "SELECT d.description FROM pg_catalog.pg_class c \
+                   LEFT JOIN pg_catalog.pg_description d \
+                   ON (c.oid = d.objoid AND d.objsubid = 0 AND d.classoid = 'pg_class'::regclass)";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            !rewritten.to_ascii_lowercase().contains("regclass"),
+            "expected ::regclass rewrite for JDBC getTables: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_current_schemas_subscript_for_datafusion() {
+        let sql = "SELECT nspname FROM pg_catalog.pg_namespace \
+                   WHERE nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_' \
+                   OR nspname = (pg_catalog.current_schemas(true))[1])";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            rewritten.contains("KDB_CURRENT_SCHEMA()"),
+            "expected current_schemas()[1] rewrite for JDBC getSchemas: {rewritten}"
+        );
+        assert!(
+            !rewritten.to_ascii_lowercase().contains("current_schemas"),
+            "expected current_schemas call rewritten: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_get_columns_current_database_alias() {
+        let sql = "SELECT * FROM (SELECT current_database(), n.nspname, c.relname \
+                   FROM pg_catalog.pg_namespace n JOIN pg_catalog.pg_class c \
+                   ON c.relnamespace = n.oid) c WHERE true";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            rewritten.contains("KDB_CURRENT_DATABASE() AS current_database"),
+            "expected JDBC getColumns current_database alias: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_get_primary_keys_expandarray_for_datafusion() {
+        let sql = "SELECT current_database() AS TABLE_CAT, n.nspname AS TABLE_SCHEM, \
+                   ct.relname AS TABLE_NAME, a.attname AS COLUMN_NAME, \
+                   (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, \
+                   ci.relname AS PK_NAME, \
+                   information_schema._pg_expandarray(i.indkey) AS KEYS, \
+                   a.attnum AS A_ATTNUM, i.indnkeyatts as KEY_COUNT \
+                   FROM pg_catalog.pg_class ct \
+                   JOIN pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) \
+                   JOIN pg_catalog.pg_namespace n ON (ct.relnamespace = n.oid) \
+                   JOIN pg_catalog.pg_index i ON ( a.attrelid = i.indrelid) \
+                   JOIN pg_catalog.pg_class ci ON (ci.oid = i.indexrelid) \
+                   WHERE true AND n.nspname = 'jdbc_e2e' AND ct.relname = 'items' \
+                   AND i.indisprimary";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        assert!(
+            rewritten.contains("kdb_primary_key"),
+            "expected JDBC getPrimaryKeys rewrite to information_schema: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("_pg_expandarray"),
+            "expected _pg_expandarray to be rewritten: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("jdbc_e2e"),
+            "expected schema filter preserved: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("items"),
+            "expected table filter preserved: {rewritten}"
+        );
     }
 
     #[test]

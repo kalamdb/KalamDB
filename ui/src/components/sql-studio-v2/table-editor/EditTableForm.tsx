@@ -30,7 +30,6 @@ import {
 import { ColumnRow } from "./ColumnRow";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
-  ACCESS_LEVEL_OPTIONS,
   COMPRESSION_OPTIONS,
   EVICTION_STRATEGY_OPTIONS,
   FLUSH_POLICY_KINDS,
@@ -62,6 +61,7 @@ import { StudioIconButton } from "../shared/StudioChrome";
 import equal from "fast-deep-equal";
 import { executeSqlStudioQuery } from "@/services/sqlStudioService";
 import { TableDataTransferActions } from "./TableDataTransferActions";
+import { TablePoliciesEditor } from "./TablePoliciesEditor";
 
 function MetaRow({
   label,
@@ -232,21 +232,6 @@ function TableOptionsEditor({
                 data-testid="table-option-use-user-storage"
               />
             </div>
-          )}
-
-          {draft.tableType === "shared" && (
-            <SelectField
-              label="Access level"
-              value={options.accessLevel}
-              options={ACCESS_LEVEL_OPTIONS}
-              disabled={disabled}
-              onChange={(value) =>
-                update({
-                  accessLevel: value as DraftTableOptions["accessLevel"],
-                })
-              }
-              testId="table-option-access-level"
-            />
           )}
 
           {(draft.tableType === "user" || draft.tableType === "shared") && (
@@ -574,6 +559,7 @@ export function EditTableForm({
           storageId: draft.options.storageId || defaults.storageId,
           compression: draft.options.compression,
         },
+        policies: tableType === "shared" ? draft.policies : [],
       }),
     );
   };
@@ -766,6 +752,15 @@ export function EditTableForm({
               />
             )}
           </section>
+
+          {draft.tableType === "shared" ? (
+            <TablePoliciesEditor
+              policies={draft.policies}
+              disabled={isReadOnly}
+              errors={showErrors ? validation?.policies : undefined}
+              onChange={(policies) => dispatch(setDraft({ ...draft, policies }))}
+            />
+          ) : null}
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kalam_cli::{terminal_ui, CLIError, FileCredentialStore, Result};
+use kalam_cli::{terminal_ui, workflow::project::preferred_user_label, CLIError, FileCredentialStore, Result};
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
     KalamLinkClient,
@@ -21,7 +21,14 @@ pub fn handle_credentials(cli: &Cli, credential_store: &mut FileCredentialStore)
             for instance in instances {
                 // Show additional info if available
                 if let Ok(Some(creds)) = credential_store.get_credentials(&instance) {
-                    let user_info = creds.display_label().unwrap_or("unknown");
+                    let user_info = creds
+                        .user
+                        .as_ref()
+                        .map(|user| {
+                            preferred_user_label(user, creds.name.as_deref(), creds.email.as_deref())
+                        })
+                        .or_else(|| creds.display_label().map(str::to_string))
+                        .unwrap_or_else(|| "unknown".to_string());
                     let expired = if creds.is_expired() { " (expired)" } else { "" };
                     println!("  • {} (user: {}){}", instance, user_info, expired);
                 } else {

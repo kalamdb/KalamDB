@@ -1,33 +1,76 @@
 # kalam_sync_generator
 
-Optional code generation for `kalam_sync` durable actions.
+Code generation for [`kalam_sync`](https://pub.dev/packages/kalam_sync) durable actions.
 
-Add the generator and `build_runner` as development dependencies, annotate an
-immutable payload with `@KalamActionPayload()`, and annotate executor methods
-inside a `@KalamActionModule`. Running `dart run build_runner build` generates:
+Annotate an immutable payload and executor module. `dart run build_runner build` writes:
 
-- a durable JSON codec for each supported payload;
-- stable namespaced `KalamActionDefinition` values;
-- a typed queue class with offline enqueue methods.
+- a JSON codec for each payload
+- namespaced `KalamActionDefinition` values
+- a typed queue with offline enqueue methods
 
-Drift remains responsible for table row and companion types. This generator
-does not create duplicate create/update/delete models for every table; direct
-KalamDB DML uses the runtime's single generic action envelope.
+Drift still owns table row types. Direct create/update/delete uses the runtime's generic DML envelope — this generator does not emit extra CRUD models per table.
 
-See the [`kalam_sync` chat example](../sync/example) for a complete offline-first
-messaging app, REST engine, and live-server e2e suite. The canonical generated
-action module lives in [`example/`](example).
+## Install
+
+```yaml
+dev_dependencies:
+  build_runner: ^2.15.1
+  kalam_sync_generator: ^0.6.0-rc.0
+```
+
+## Get started
+
+```dart
+@KalamActionPayload()
+class SendMessageArgs {
+  const SendMessageArgs({required this.messageId, required this.text});
+  final String messageId;
+  final String text;
+}
+
+@KalamActionModule(namespace: 'chat')
+class ChatActions {
+  ChatActions(this.api);
+  final ChatActionApi api;
+
+  @KalamAction(name: 'sendMessage')
+  Future<void> sendMessage(
+    KalamActionContext context,
+    SendMessageArgs args,
+  ) {
+    return context.step<bool>(
+      'persist',
+      run: (key) async {
+        await api.persistMessage(args, idempotencyKey: key);
+        return true;
+      },
+      encode: (value) => value,
+      decode: (value) => value == true,
+    );
+  }
+}
+```
 
 ```bash
-cd example
-flutter pub get
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-The test suite generates multiple action modules in one library and then runs
-the checked-in generated queue through a real in-memory SQLite outbox:
+Then open Kalam with the generated definitions and enqueue through the typed queue:
 
-```bash
-dart test
-flutter test flutter_test/generated_action_runtime_e2e_test.dart
+```dart
+final kalam = await Kalam.open(
+  url: serverUrl,
+  subject: userId,
+  actionDefinitions: chatActionsDefinitions(ChatActions(api)),
+);
+
+await ChatActionsQueue(kalam.actions).sendMessage(
+  SendMessageArgs(messageId: Kalam.id(), text: 'hello'),
+  orderingKey: conversationId,
+  optimistic: messages.optimisticInsert(message),
+);
 ```
+
+Full walkthrough: [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions).
+
+The canonical generated module lives in [`example/`](example). The complete chat app is in [`../sync/example`](../sync/example).

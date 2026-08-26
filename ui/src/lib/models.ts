@@ -12,6 +12,7 @@ import {
   system_slow_queries,
   system_stats,
   system_storages,
+  system_table_policies,
   system_topic_offsets,
   system_topics,
   system_users,
@@ -25,6 +26,7 @@ export type SystemJobRow = typeof system_jobs.$inferSelect;
 export type SystemLiveQueryRow = typeof system_live.$inferSelect;
 export type SystemNamespaceRow = typeof system_namespaces.$inferSelect;
 export type SystemSchemaRow = typeof system_schemas.$inferSelect;
+export type SystemTablePolicyRow = typeof system_table_policies.$inferSelect;
 export type SystemServerLogRow = typeof system_server_logs.$inferSelect;
 export type SystemSettingRow = typeof system_settings.$inferSelect;
 export type SystemSlowQueryRow = typeof system_slow_queries.$inferSelect;

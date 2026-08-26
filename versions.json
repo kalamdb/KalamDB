@@ -102,6 +102,14 @@
             {
               "source_group": "dart",
               "package_name": "kalam_link"
+            },
+            {
+              "source_group": "dart",
+              "package_name": "kalam_sync"
+            },
+            {
+              "source_group": "dart",
+              "package_name": "kalam_sync_generator"
             }
           ]
         },

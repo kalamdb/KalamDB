@@ -17,7 +17,7 @@ pub mod ts;
 pub use config::KalamProjectConfig;
 pub use identifiers::{
     normalize_namespace_name, parse_namespace_id, parse_table_id, parse_table_name,
-    parse_table_ref, parse_user_id, preferred_user_label,
+    parse_table_ref, parse_user_id, preferred_user_label, prompt_host_identity,
 };
 pub use link::{link_environment, LinkOptions};
 pub use status::{collect_status, show_status};

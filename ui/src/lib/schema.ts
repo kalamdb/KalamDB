@@ -100,6 +100,16 @@ export const system_schemas = kTable('system.schemas', {
   use_user_storage: boolean('use_user_storage'),
 });
 
+export const system_table_policies = kTable('system.table_policies', {
+  policy_id: text('policy_id').notNull(),
+  table_id: text('table_id').notNull(),
+  policy_name: text('policy_name').notNull(),
+  command: jsonb('command').notNull(),
+  targets: jsonb('targets').notNull(),
+  using_sql: text('using_sql'),
+  with_check_sql: text('with_check_sql'),
+});
+
 export const system_storages = kTable('system.storages', {
   storage_id: text('storage_id').notNull(),
   storage_name: text('storage_name').notNull(),

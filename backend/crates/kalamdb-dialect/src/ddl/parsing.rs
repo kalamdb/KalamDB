@@ -94,10 +94,10 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
             let ns = parts_orig
                 .next()
                 .ok_or_else(|| "Namespace name required after IN NAMESPACE".to_string())?;
-            Ok(Some(ns.to_string()))
+            Ok(Some(unquote_sql_identifier(ns)))
         } else {
             // Classic form: IN <namespace>
-            Ok(Some(first_token_orig.to_string()))
+            Ok(Some(unquote_sql_identifier(first_token_orig)))
         }
     } else if sql_upper.ends_with(" IN") {
         Err("Namespace name required after IN".to_string())
@@ -264,24 +264,36 @@ pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, Stri
     let third = parts.next();
     match (first, second, third) {
         (Some(table), None, None) => {
+            let table = unquote_sql_identifier(table);
             if table.is_empty() {
                 return Err("Table name cannot be empty".to_string());
             }
-            Ok((None, table.to_string()))
+            Ok((None, table))
         },
         (Some(namespace), Some(table), None) => {
+            let namespace = unquote_sql_identifier(namespace);
+            let table = unquote_sql_identifier(table);
             if namespace.is_empty() {
                 return Err("Namespace name cannot be empty".to_string());
             }
             if table.is_empty() {
                 return Err("Table name cannot be empty".to_string());
             }
-            Ok((Some(namespace.to_string()), table.to_string()))
+            Ok((Some(namespace), table))
         },
         _ => Err(format!(
             "Invalid table reference '{}'. Expected 'table' or 'namespace.table'",
             table_ref
         )),
+    }
+}
+
+fn unquote_sql_identifier(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -438,7 +450,11 @@ mod tests {
         // Quoted identifiers
         let (ns, table) = parse_table_reference("\"my-table\"").unwrap();
         assert_eq!(ns, None);
-        assert_eq!(table, "\"my-table\"");
+        assert_eq!(table, "my-table");
+
+        let (ns, table) = parse_table_reference("\"test_kalam_60\".\"users\"").unwrap();
+        assert_eq!(ns, Some("test_kalam_60".to_string()));
+        assert_eq!(table, "users");
     }
 
     #[test]
