@@ -61,15 +61,12 @@ static CURRENT_USER_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
 static CURRENT_ROLE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_ROLE)([^A-Za-z0-9_(]|$)").expect("valid regex")
 });
-static PG_CATALOG_COL_DESCRIPTION_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bpg_catalog\.col_description\s*\(").expect("valid regex")
-});
-static PG_CATALOG_FORMAT_TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bpg_catalog\.format_type\s*\(").expect("valid regex")
-});
-static PG_CATALOG_PG_GET_EXPR_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bpg_catalog\.pg_get_expr\s*\(").expect("valid regex")
-});
+static PG_CATALOG_COL_DESCRIPTION_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bpg_catalog\.col_description\s*\(").expect("valid regex"));
+static PG_CATALOG_FORMAT_TYPE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bpg_catalog\.format_type\s*\(").expect("valid regex"));
+static PG_CATALOG_PG_GET_EXPR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bpg_catalog\.pg_get_expr\s*\(").expect("valid regex"));
 /// DBeaver column metadata: `format('%I.%I', ...)::regclass::oid` is not supported.
 static DBEAVER_FORMAT_REGCLASS_OID_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -102,12 +99,34 @@ static CURRENT_SCHEMAS_REPLACE_RE: Lazy<Regex> = Lazy::new(|| {
 static JDBC_CURRENT_DATABASE_SELECT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(SELECT\s+)KDB_CURRENT_DATABASE\s*\(\s*\)\s*,").expect("valid regex")
 });
-static JDBC_PK_SCHEMA_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)n\.nspname\s*=\s*'((?:[^']|'')*)'").expect("valid regex")
+/// JDBC TypeInfoCache: search_path unnest via `generate_series` + `array_upper(current_schemas)`.
+static JDBC_TYPEINFO_SEARCH_PATH_JOIN_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?is)\s*LEFT\s+JOIN\s+\(\s*select\s+ns\.oid\s+as\s+nspoid,.*?array_upper\s*\(\s*(?:pg_catalog\.)?current_schemas\s*\(\s*(?:true|false)\s*\)\s*,\s*1\s*\).*?\)\s*(?:as\s+)?sp\s+ON\s+sp\.nspoid\s*=\s*typnamespace",
+    )
+    .expect("valid regex")
 });
-static JDBC_PK_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)ct\.relname\s*=\s*'((?:[^']|'')*)'").expect("valid regex")
+static JDBC_TYPEINFO_ORDER_BY_SEARCH_PATH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)ORDER\s+BY\s+sp\.r\s*,\s*(?:pg_catalog\.)?pg_type\.oid\s+DESC")
+        .expect("valid regex")
 });
+static JDBC_TYPINPUT_ARRAY_IN_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)typinput\s*=\s*'(?:pg_catalog\.)?array_in'\s*::\s*regproc")
+        .expect("valid regex")
+});
+static PG_GET_KEYWORDS_CALL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(?:pg_catalog\.)?pg_get_keywords\s*\(\s*\)").expect("valid regex")
+});
+static PG_NOT_ALL_TEXT_ARRAY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)(\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*)\s*<>\s*ALL\s*\(\s*'\{([^}]*)\}'\s*::\s*text\s*\[\s*\]\s*\)",
+    )
+    .expect("valid regex")
+});
+static JDBC_PK_SCHEMA_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)n\.nspname\s*=\s*'((?:[^']|'')*)'").expect("valid regex"));
+static JDBC_PK_TABLE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)ct\.relname\s*=\s*'((?:[^']|'')*)'").expect("valid regex"));
 
 /// Default sqlparser options used across KalamDB
 pub fn parser_options() -> ParserOptions {
@@ -171,12 +190,63 @@ fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
     let s5 = CURRENT_SCHEMAS_FIRST_ELEM_RE.replace_all(&s4, "KDB_CURRENT_SCHEMA()");
     let s6 = CURRENT_SCHEMAS_ANY_RE.replace_all(&s5, "IS NOT NULL");
     let s7 = CURRENT_SCHEMAS_REPLACE_RE.replace_all(&s6, "KDB_CURRENT_SCHEMA()");
-    let s8 = JDBC_CURRENT_DATABASE_SELECT_RE.replace_all(&s7, "${1}KDB_CURRENT_DATABASE() AS current_database,");
-    if s8.as_ref() == sql {
+    let s8 = JDBC_CURRENT_DATABASE_SELECT_RE
+        .replace_all(&s7, "${1}KDB_CURRENT_DATABASE() AS current_database,");
+    let s9 = rewrite_jdbc_typeinfo_search_path(s8.as_ref());
+    let s10 = JDBC_TYPINPUT_ARRAY_IN_RE.replace_all(s9.as_ref(), "FALSE");
+    let s11 = PG_GET_KEYWORDS_CALL_RE.replace_all(&s10, "pg_catalog.pg_get_keywords");
+    let s12 = rewrite_not_all_text_array(s11.as_ref());
+    if s12.as_ref() == sql {
         std::borrow::Cow::Borrowed(sql)
     } else {
-        std::borrow::Cow::Owned(s8.into_owned())
+        std::borrow::Cow::Owned(s12.into_owned())
     }
+}
+
+/// JDBC TypeInfoCache unnests `current_schemas()` with `generate_series`/`array_upper`.
+/// Search-path order is not required for KalamDB's type shim, so drop the join.
+fn rewrite_jdbc_typeinfo_search_path(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !sql.to_ascii_lowercase().contains("array_upper") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let without_join = JDBC_TYPEINFO_SEARCH_PATH_JOIN_RE.replace_all(sql, "");
+    let rewritten = JDBC_TYPEINFO_ORDER_BY_SEARCH_PATH_RE
+        .replace_all(&without_join, "ORDER BY pg_type.oid DESC");
+    if rewritten.as_ref() == sql {
+        std::borrow::Cow::Borrowed(sql)
+    } else {
+        std::borrow::Cow::Owned(rewritten.into_owned())
+    }
+}
+
+fn rewrite_not_all_text_array(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !sql.to_ascii_lowercase().contains("<> all") {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+    let rewritten = PG_NOT_ALL_TEXT_ARRAY_RE.replace_all(sql, |caps: &regex::Captures<'_>| {
+        let column = &caps[1];
+        let list = pg_text_array_literal_to_sql_list(&caps[2]);
+        format!("{column} NOT IN ({list})")
+    });
+    if rewritten.as_ref() == sql {
+        std::borrow::Cow::Borrowed(sql)
+    } else {
+        rewritten
+    }
+}
+
+fn pg_text_array_literal_to_sql_list(body: &str) -> String {
+    body.split(',')
+        .map(|part| {
+            let trimmed = part.trim();
+            let unquoted = trimmed
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(trimmed);
+            format!("'{}'", unquoted.replace('\'', "''"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// PostgreSQL JDBC `getPrimaryKeys` uses `information_schema._pg_expandarray`, which
@@ -199,9 +269,8 @@ fn rewrite_jdbc_get_primary_keys(sql: &str) -> std::borrow::Cow<'_, str> {
     let mut rewritten = String::from(
         "SELECT KDB_CURRENT_DATABASE() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", \
          table_name AS \"TABLE_NAME\", column_name AS \"COLUMN_NAME\", \
-         COALESCE(kdb_primary_key_pos, ordinal_position) AS \"KEY_SEQ\", \
-         concat(table_name, '_pkey') AS \"PK_NAME\" FROM information_schema.columns \
-         WHERE kdb_primary_key",
+         COALESCE(kdb_primary_key_pos, ordinal_position) AS \"KEY_SEQ\", concat(table_name, \
+         '_pkey') AS \"PK_NAME\" FROM information_schema.columns WHERE kdb_primary_key",
     );
     if let Some(schema) = schema {
         rewritten.push_str(" AND table_schema = '");
@@ -347,21 +416,21 @@ fn is_json_path_operand(expr: &Expr) -> bool {
 
 fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
     Expr::Function(Function {
-        name: ObjectName::from(vec![Ident::new(name)]),
+        name:             ObjectName::from(vec![Ident::new(name)]),
         uses_odbc_syntax: false,
-        parameters: FunctionArguments::None,
-        args: FunctionArguments::List(FunctionArgumentList {
+        parameters:       FunctionArguments::None,
+        args:             FunctionArguments::List(FunctionArgumentList {
             duplicate_treatment: None,
-            args: args
+            args:                args
                 .into_iter()
                 .map(|arg| FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)))
                 .collect(),
-            clauses: vec![],
+            clauses:             vec![],
         }),
-        filter: None,
-        null_treatment: None,
-        over: None,
-        within_group: vec![],
+        filter:           None,
+        null_treatment:   None,
+        over:             None,
+        within_group:     vec![],
     })
 }
 
@@ -389,7 +458,15 @@ impl VisitorMut for RedundantPgTextCastRewriter {
 }
 
 fn unwrap_redundant_pg_text_cast(expr: &Expr) -> Option<Expr> {
-    let Expr::Cast { kind, expr: inner, data_type, array: false, format: None, .. } = expr else {
+    let Expr::Cast {
+        kind,
+        expr: inner,
+        data_type,
+        array: false,
+        format: None,
+        ..
+    } = expr
+    else {
         return None;
     };
     if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) {
@@ -441,7 +518,14 @@ impl VisitorMut for PgOidCastRewriter {
 }
 
 fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
-    let Expr::Cast { kind, expr: inner, data_type, array: false, format: None } = expr else {
+    let Expr::Cast {
+        kind,
+        expr: inner,
+        data_type,
+        array: false,
+        format: None,
+    } = expr
+    else {
         return None;
     };
     if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) {
@@ -519,18 +603,17 @@ fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
 
     match op {
         BinaryOperator::PGRegexNotMatch => Some(Expr::UnaryOp {
-            op: UnaryOperator::Not,
+            op:   UnaryOperator::Not,
             expr: Box::new(make_function_call(
                 "regexp_like",
                 vec![(**left).clone(), (**right).clone()],
             )),
         }),
-        BinaryOperator::PGRegexMatch => Some(make_function_call(
-            "regexp_like",
-            vec![(**left).clone(), (**right).clone()],
-        )),
+        BinaryOperator::PGRegexMatch => {
+            Some(make_function_call("regexp_like", vec![(**left).clone(), (**right).clone()]))
+        },
         BinaryOperator::PGRegexNotIMatch => Some(Expr::UnaryOp {
-            op: UnaryOperator::Not,
+            op:   UnaryOperator::Not,
             expr: Box::new(make_function_call(
                 "regexp_like",
                 vec![
@@ -560,7 +643,12 @@ impl VisitorMut for DbeaverTyprelidRewriter {
 }
 
 fn simplify_dbeaver_typrelid_filter(expr: &Expr) -> Option<Expr> {
-    let Expr::BinaryOp { left, op: BinaryOperator::Or, right } = unwrap_nested_expr(expr) else {
+    let Expr::BinaryOp {
+        left,
+        op: BinaryOperator::Or,
+        right,
+    } = unwrap_nested_expr(expr)
+    else {
         return None;
     };
 
@@ -591,7 +679,12 @@ fn unwrap_nested_expr(expr: &Expr) -> &Expr {
 }
 
 fn typrelid_zero_alias(expr: &Expr) -> Option<String> {
-    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+    let Expr::BinaryOp {
+        left,
+        op: BinaryOperator::Eq,
+        right,
+    } = unwrap_nested_expr(expr)
+    else {
         return None;
     };
     let alias = compound_field_alias(left, "typrelid")?;
@@ -600,8 +693,8 @@ fn typrelid_zero_alias(expr: &Expr) -> Option<String> {
 
 fn make_typrelid_zero_expr(alias: &str) -> Expr {
     Expr::BinaryOp {
-        left: Box::new(compound_field_expr(alias, "typrelid")),
-        op: BinaryOperator::Eq,
+        left:  Box::new(compound_field_expr(alias, "typrelid")),
+        op:    BinaryOperator::Eq,
         right: Box::new(Expr::value(Value::Number("0".to_string(), false))),
     }
 }
@@ -662,7 +755,12 @@ fn is_pg_class_relkind_subquery(expr: &Expr, typrelid_alias: &str) -> bool {
 }
 
 fn is_relkind_eq_c(expr: &Expr) -> bool {
-    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+    let Expr::BinaryOp {
+        left,
+        op: BinaryOperator::Eq,
+        right,
+    } = unwrap_nested_expr(expr)
+    else {
         return false;
     };
     let Expr::Value(value) = unwrap_nested_expr(right) else {
@@ -673,7 +771,12 @@ fn is_relkind_eq_c(expr: &Expr) -> bool {
 }
 
 fn is_oid_eq_typrelid(expr: &Expr, typrelid_alias: &str) -> bool {
-    let Expr::BinaryOp { left, op: BinaryOperator::Eq, right } = unwrap_nested_expr(expr) else {
+    let Expr::BinaryOp {
+        left,
+        op: BinaryOperator::Eq,
+        right,
+    } = unwrap_nested_expr(expr)
+    else {
         return false;
     };
     compound_field_alias(left, "oid").is_some()
@@ -1346,19 +1449,18 @@ mod tests {
         );
         assert_eq!(
             rewritten,
-            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false ORDER BY datname"
+            "SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false ORDER BY \
+             datname"
         );
     }
 
     #[test]
     fn test_rewrite_dbeaver_pg_type_metadata_query_for_datafusion() {
         let sql = "SELECT n.nspname as schema, t.typname as typename, t.oid::integer as typeid \
-                   FROM pg_type t \
-                   LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
+                   FROM pg_type t LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
                    WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c \
-                   WHERE c.oid = t.typrelid)) \
-                     AND n.nspname NOT IN ('pg_catalog', 'information_schema') \
-                     AND t.typname !~ '^_';";
+                   WHERE c.oid = t.typrelid)) AND n.nspname NOT IN ('pg_catalog', \
+                   'information_schema') AND t.typname !~ '^_';";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             rewritten.contains("pg_catalog.pg_type"),
@@ -1380,7 +1482,8 @@ mod tests {
 SELECT n.nspname AS schema, t.typname AS typename, t.oid::integer AS typeid
 FROM pg_type t
 LEFT JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = t.typrelid))
+WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHERE c.oid = \
+                   t.typrelid))
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND t.typname !~ '^_';";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
@@ -1397,9 +1500,8 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHER
     #[test]
     fn test_rewrite_dbeaver_typrelid_filter_after_ast_as_alias() {
         let sql = "\
-SELECT t.typname FROM pg_catalog.pg_type t \
-WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c WHERE c.oid = t.typrelid)) \
-  AND t.typname !~ '^_';";
+SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM \
+                   pg_catalog.pg_class AS c WHERE c.oid = t.typrelid)) AND t.typname !~ '^_';";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             !rewritten.contains("relkind"),
@@ -1499,9 +1601,9 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
 
     #[test]
     fn test_rewrite_jdbc_regclass_cast_for_datafusion() {
-        let sql = "SELECT d.description FROM pg_catalog.pg_class c \
-                   LEFT JOIN pg_catalog.pg_description d \
-                   ON (c.oid = d.objoid AND d.objsubid = 0 AND d.classoid = 'pg_class'::regclass)";
+        let sql = "SELECT d.description FROM pg_catalog.pg_class c LEFT JOIN \
+                   pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0 AND \
+                   d.classoid = 'pg_class'::regclass)";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             !rewritten.to_ascii_lowercase().contains("regclass"),
@@ -1511,9 +1613,8 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
 
     #[test]
     fn test_rewrite_jdbc_current_schemas_subscript_for_datafusion() {
-        let sql = "SELECT nspname FROM pg_catalog.pg_namespace \
-                   WHERE nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_' \
-                   OR nspname = (pg_catalog.current_schemas(true))[1])";
+        let sql = "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname <> 'pg_toast' AND \
+                   (nspname !~ '^pg_temp_' OR nspname = (pg_catalog.current_schemas(true))[1])";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             rewritten.contains("KDB_CURRENT_SCHEMA()"),
@@ -1527,9 +1628,9 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
 
     #[test]
     fn test_rewrite_jdbc_get_columns_current_database_alias() {
-        let sql = "SELECT * FROM (SELECT current_database(), n.nspname, c.relname \
-                   FROM pg_catalog.pg_namespace n JOIN pg_catalog.pg_class c \
-                   ON c.relnamespace = n.oid) c WHERE true";
+        let sql = "SELECT * FROM (SELECT current_database(), n.nspname, c.relname FROM \
+                   pg_catalog.pg_namespace n JOIN pg_catalog.pg_class c ON c.relnamespace = \
+                   n.oid) c WHERE true";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             rewritten.contains("KDB_CURRENT_DATABASE() AS current_database"),
@@ -1539,19 +1640,16 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
 
     #[test]
     fn test_rewrite_jdbc_get_primary_keys_expandarray_for_datafusion() {
-        let sql = "SELECT current_database() AS TABLE_CAT, n.nspname AS TABLE_SCHEM, \
-                   ct.relname AS TABLE_NAME, a.attname AS COLUMN_NAME, \
-                   (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, \
-                   ci.relname AS PK_NAME, \
-                   information_schema._pg_expandarray(i.indkey) AS KEYS, \
-                   a.attnum AS A_ATTNUM, i.indnkeyatts as KEY_COUNT \
-                   FROM pg_catalog.pg_class ct \
-                   JOIN pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) \
-                   JOIN pg_catalog.pg_namespace n ON (ct.relnamespace = n.oid) \
-                   JOIN pg_catalog.pg_index i ON ( a.attrelid = i.indrelid) \
-                   JOIN pg_catalog.pg_class ci ON (ci.oid = i.indexrelid) \
-                   WHERE true AND n.nspname = 'jdbc_e2e' AND ct.relname = 'items' \
-                   AND i.indisprimary";
+        let sql = "SELECT current_database() AS TABLE_CAT, n.nspname AS TABLE_SCHEM, ct.relname \
+                   AS TABLE_NAME, a.attname AS COLUMN_NAME, \
+                   (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, ci.relname AS \
+                   PK_NAME, information_schema._pg_expandarray(i.indkey) AS KEYS, a.attnum AS \
+                   A_ATTNUM, i.indnkeyatts as KEY_COUNT FROM pg_catalog.pg_class ct JOIN \
+                   pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) JOIN \
+                   pg_catalog.pg_namespace n ON (ct.relnamespace = n.oid) JOIN \
+                   pg_catalog.pg_index i ON ( a.attrelid = i.indrelid) JOIN pg_catalog.pg_class \
+                   ci ON (ci.oid = i.indexrelid) WHERE true AND n.nspname = 'jdbc_e2e' AND \
+                   ct.relname = 'items' AND i.indisprimary";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             rewritten.contains("kdb_primary_key"),
@@ -1561,22 +1659,15 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class AS c W
             !rewritten.contains("_pg_expandarray"),
             "expected _pg_expandarray to be rewritten: {rewritten}"
         );
-        assert!(
-            rewritten.contains("jdbc_e2e"),
-            "expected schema filter preserved: {rewritten}"
-        );
-        assert!(
-            rewritten.contains("items"),
-            "expected table filter preserved: {rewritten}"
-        );
+        assert!(rewritten.contains("jdbc_e2e"), "expected schema filter preserved: {rewritten}");
+        assert!(rewritten.contains("items"), "expected table filter preserved: {rewritten}");
     }
 
     #[test]
     fn test_rewrite_dbeaver_column_metadata_query_for_datafusion() {
         let sql = "\
 SELECT pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, \
-ordinal_position) AS column_comment \
-FROM information_schema.columns";
+                   ordinal_position) AS column_comment FROM information_schema.columns";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
             rewritten.contains("col_description(0, ordinal_position)"),
@@ -1593,5 +1684,102 @@ FROM information_schema.columns";
         let sql = "SELECT array_transform([1, 2, 3], x -> x * 10) AS scaled";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert_eq!(rewritten, sql);
+    }
+
+    fn jdbc_typeinfo_cache_sql(typinput: &str, oid_filter: bool) -> String {
+        let where_oid = if oid_filter {
+            " WHERE pg_type.oid = 2950 "
+        } else {
+            " "
+        };
+        format!(
+            "SELECT typinput='{typinput}'::regproc as is_array, typtype, typname, pg_type.oid \
+             FROM pg_catalog.pg_type LEFT JOIN (select ns.oid as nspoid, ns.nspname, r.r from \
+             pg_namespace as ns join ( select s.r, (current_schemas(false))[s.r] as nspname from \
+             generate_series(1, array_upper(current_schemas(false), 1)) as s(r) ) as r using ( \
+             nspname ) ) as sp ON sp.nspoid = typnamespace{where_oid}ORDER BY sp.r, pg_type.oid \
+             DESC"
+        )
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_typeinfo_cache_search_path_join() {
+        for typinput in ["array_in", "pg_catalog.array_in"] {
+            let sql = jdbc_typeinfo_cache_sql(typinput, false);
+            let rewritten = rewrite_context_functions_for_datafusion(&sql);
+            let lower = rewritten.to_ascii_lowercase();
+            assert!(
+                !lower.contains("array_upper"),
+                "expected array_upper TypeInfoCache join rewritten: {rewritten}"
+            );
+            assert!(
+                !lower.contains("generate_series"),
+                "expected generate_series TypeInfoCache join rewritten: {rewritten}"
+            );
+            assert!(
+                !lower.contains("current_schemas"),
+                "expected current_schemas TypeInfoCache join rewritten: {rewritten}"
+            );
+            assert!(!lower.contains("sp.r"), "expected ORDER BY sp.r rewritten: {rewritten}");
+            assert!(
+                lower.contains("false") && lower.contains("typtype"),
+                "expected is_array/typtype projection kept: {rewritten}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_typeinfo_cache_oid_lookup() {
+        let sql = jdbc_typeinfo_cache_sql("array_in", true);
+        let rewritten = rewrite_context_functions_for_datafusion(&sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            !lower.contains("array_upper"),
+            "expected oid TypeInfoCache lookup rewritten: {rewritten}"
+        );
+        assert!(lower.contains("2950"), "expected oid filter preserved: {rewritten}");
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_get_oid_by_typname_search_path_join() {
+        let sql = "SELECT pg_type.oid, typname FROM pg_catalog.pg_type LEFT JOIN (select ns.oid \
+                   as nspoid, ns.nspname, r.r from pg_namespace as ns join ( select s.r, \
+                   (current_schemas(false))[s.r] as nspname from generate_series(1, \
+                   array_upper(current_schemas(false), 1)) as s(r) ) as r using ( nspname ) ) as \
+                   sp ON sp.nspoid = typnamespace WHERE typname = 'uuid' ORDER BY sp.r, \
+                   pg_type.oid DESC LIMIT 1";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            !lower.contains("array_upper"),
+            "expected typname TypeInfoCache lookup rewritten: {rewritten}"
+        );
+        assert!(lower.contains("uuid"), "expected typname filter preserved: {rewritten}");
+        assert!(lower.contains("limit 1"), "expected LIMIT 1 preserved: {rewritten}");
+    }
+
+    #[test]
+    fn test_rewrite_jdbc_pg_get_keywords_table_function() {
+        let sql = "select string_agg(word, ',') from pg_catalog.pg_get_keywords() where word <> \
+                   ALL ('{a,abs,\"null\",limit}'::text[])";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            !lower.contains("pg_get_keywords()"),
+            "expected pg_get_keywords() parentheses stripped: {rewritten}"
+        );
+        assert!(
+            lower.contains("pg_catalog.pg_get_keywords"),
+            "expected keywords relation: {rewritten}"
+        );
+        assert!(
+            !lower.contains("::text[]") && !lower.contains("<> all"),
+            "expected <> ALL(text[]) rewritten to NOT IN: {rewritten}"
+        );
+        assert!(lower.contains("not in"), "expected NOT IN rewrite: {rewritten}");
+        assert!(
+            rewritten.contains("'null'"),
+            "expected quoted array element unquoted into NOT IN: {rewritten}"
+        );
     }
 }

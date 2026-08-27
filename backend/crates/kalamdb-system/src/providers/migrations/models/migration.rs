@@ -26,7 +26,7 @@ pub struct Migration {
         default = "None",
         comment = "Migration identifier"
     )]
-    pub migration_id: String,
+    pub migration_id:  String,
     #[column(
         id = 3,
         ordinal = 3,
@@ -36,7 +36,7 @@ pub struct Migration {
         default = "None",
         comment = "Target namespace"
     )]
-    pub namespace: String,
+    pub namespace:     String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -46,7 +46,7 @@ pub struct Migration {
         default = "None",
         comment = "Human-readable migration name"
     )]
-    pub name: String,
+    pub name:          String,
     #[column(
         id = 5,
         ordinal = 5,
@@ -56,7 +56,7 @@ pub struct Migration {
         default = "None",
         comment = "SHA-256 checksum of the applied UP SQL"
     )]
-    pub checksum: String,
+    pub checksum:      String,
     #[column(
         id = 6,
         ordinal = 6,
@@ -66,7 +66,7 @@ pub struct Migration {
         default = "None",
         comment = "Migration lifecycle status"
     )]
-    pub status: String,
+    pub status:        String,
     #[column(
         id = 7,
         ordinal = 7,
@@ -76,7 +76,7 @@ pub struct Migration {
         default = "None",
         comment = "Unix timestamp in milliseconds when migration started"
     )]
-    pub started_at: Option<i64>,
+    pub started_at:    Option<i64>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -86,7 +86,7 @@ pub struct Migration {
         default = "None",
         comment = "Unix timestamp in milliseconds when migration finished"
     )]
-    pub finished_at: Option<i64>,
+    pub finished_at:   Option<i64>,
     #[column(
         id = 9,
         ordinal = 9,
@@ -106,7 +106,7 @@ pub struct Migration {
         default = "None",
         comment = "Source migration file"
     )]
-    pub source: Option<String>,
+    pub source:        Option<String>,
     #[column(
         id = 11,
         ordinal = 11,

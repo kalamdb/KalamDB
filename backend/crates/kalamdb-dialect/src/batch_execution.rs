@@ -40,16 +40,16 @@ impl std::error::Error for BatchParseError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedExecutionStatement {
-    pub sql: String,
+    pub sql:                 String,
     pub execute_as_username: Option<String>,
-    pub parsed_statement: Option<Statement>,
+    pub parsed_statement:    Option<Statement>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PreparedExecutionBatchStatement<T> {
     pub execute_as_username: Option<String>,
-    pub parsed_statement: Option<Statement>,
-    pub prepared_statement: T,
+    pub parsed_statement:    Option<Statement>,
+    pub prepared_statement:  T,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,7 @@ pub enum ExecutionBatchParseError {
     Batch(BatchParseError),
     Statement {
         statement_index: usize,
-        message: String,
+        message:         String,
     },
 }
 
@@ -78,7 +78,10 @@ impl std::error::Error for ExecutionBatchParseError {}
 #[derive(Debug)]
 pub enum ExecutionBatchPrepareError<E> {
     Parse(ExecutionBatchParseError),
-    Prepare { statement_index: usize, error: E },
+    Prepare {
+        statement_index: usize,
+        error:           E,
+    },
 }
 
 impl<E: std::fmt::Display> std::fmt::Display for ExecutionBatchPrepareError<E> {
@@ -107,14 +110,14 @@ pub fn parse_execution_statement(statement: &str) -> Result<ParsedExecutionState
 
     match parse_execute_as(statement)? {
         Some(envelope) => Ok(ParsedExecutionStatement {
-            sql: envelope.inner_sql.clone(),
+            sql:                 envelope.inner_sql.clone(),
             execute_as_username: Some(envelope.username),
-            parsed_statement: parse_single_statement(&envelope.inner_sql).ok().flatten(),
+            parsed_statement:    parse_single_statement(&envelope.inner_sql).ok().flatten(),
         }),
         None => Ok(ParsedExecutionStatement {
-            sql: trimmed.to_string(),
+            sql:                 trimmed.to_string(),
             execute_as_username: None,
-            parsed_statement: parse_single_statement(trimmed).ok().flatten(),
+            parsed_statement:    parse_single_statement(trimmed).ok().flatten(),
         }),
     }
 }
@@ -285,9 +288,9 @@ fn parse_batch_with_sqlparser(sql: &str) -> Result<Vec<ParsedExecutionStatement>
                 ));
             }
             parsed.push(ParsedExecutionStatement {
-                sql: slice.to_string(),
+                sql:                 slice.to_string(),
                 execute_as_username: None,
-                parsed_statement: reparsed.into_iter().next(),
+                parsed_statement:    reparsed.into_iter().next(),
             });
         }
     }
@@ -567,7 +570,7 @@ mod tests {
             err,
             ExecutionBatchParseError::Statement {
                 statement_index: 2,
-                message: "EXECUTE AS username cannot be empty".to_string(),
+                message:         "EXECUTE AS username cannot be empty".to_string(),
             }
         );
     }

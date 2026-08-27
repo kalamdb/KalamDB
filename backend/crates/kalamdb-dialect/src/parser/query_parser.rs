@@ -63,9 +63,9 @@ pub struct QueryParser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriptionQueryAnalysis {
-    pub table_name: String,
+    pub table_name:   String,
     pub where_clause: Option<String>,
-    pub projections: Option<Vec<String>>,
+    pub projections:  Option<Vec<String>>,
 }
 
 impl QueryParser {
@@ -328,9 +328,9 @@ impl QueryParser {
         Self::validate_subscription_query_ast(query)?;
 
         Ok(SubscriptionQueryAnalysis {
-            table_name: Self::extract_table_from_query(query)?,
+            table_name:   Self::extract_table_from_query(query)?,
             where_clause: Self::extract_where_from_query(query)?,
-            projections: Self::extract_projections_from_query(query)?,
+            projections:  Self::extract_projections_from_query(query)?,
         })
     }
 
@@ -768,7 +768,8 @@ mod tests {
     fn test_security_filter_rejects_nested_subquery_chain() {
         // Doubly nested subquery: each level individually breaches the guard.
         let err = QueryParser::validate_row_filter_expr(
-            "id IN (SELECT id FROM app.sessions WHERE token = (SELECT token FROM system.users LIMIT 1))",
+            "id IN (SELECT id FROM app.sessions WHERE token = (SELECT token FROM system.users \
+             LIMIT 1))",
         )
         .unwrap_err();
         assert!(

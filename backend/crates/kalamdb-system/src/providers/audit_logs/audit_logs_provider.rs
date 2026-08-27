@@ -314,14 +314,14 @@ mod tests {
 
         // Create entry without optional fields
         let entry = AuditLogEntry {
-            audit_id: AuditLogId::new("audit_001"),
-            timestamp: 1730000000000,
+            audit_id:        AuditLogId::new("audit_001"),
+            timestamp:       1730000000000,
             subject_user_id: None,
-            actor_user_id: UserId::new("admin"),
-            action: "test.action".to_string(),
-            target: "test.target".to_string(),
-            details: None,    // Optional
-            ip_address: None, // Optional
+            actor_user_id:   UserId::new("admin"),
+            action:          "test.action".to_string(),
+            target:          "test.target".to_string(),
+            details:         None, // Optional
+            ip_address:      None, // Optional
         };
 
         provider.append(entry).unwrap();

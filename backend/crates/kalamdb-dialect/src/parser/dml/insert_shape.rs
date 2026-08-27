@@ -15,38 +15,38 @@ pub struct ValuesInsertShapeOptions {
     /// Accept `INSERT ... ON CONFLICT`.
     pub allow_on_conflict: bool,
     /// Accept `INSERT ... RETURNING` (when false, RETURNING rejects the shape).
-    pub allow_returning: bool,
+    pub allow_returning:   bool,
     /// Accept `INSERT OVERWRITE`.
-    pub allow_overwrite: bool,
+    pub allow_overwrite:   bool,
 }
 
 impl ValuesInsertShapeOptions {
     /// Plain literal INSERT (RETURNING allowed, no ON CONFLICT).
     pub const PLAIN: Self = Self {
         allow_on_conflict: false,
-        allow_returning: true,
-        allow_overwrite: false,
+        allow_returning:   true,
+        allow_overwrite:   false,
     };
 
     /// VALUES extraction for `INSERT ... ON CONFLICT` (RETURNING handled by caller).
     pub const ON_CONFLICT_ROWS: Self = Self {
         allow_on_conflict: true,
-        allow_returning: true,
-        allow_overwrite: false,
+        allow_returning:   true,
+        allow_overwrite:   false,
     };
 
     /// Batch INSERT inside an active transaction.
     pub const BATCH: Self = Self {
         allow_on_conflict: false,
-        allow_returning: false,
-        allow_overwrite: false,
+        allow_returning:   false,
+        allow_overwrite:   false,
     };
 }
 
 /// A VALUES-only INSERT view with its parsed row list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValuesInsertView<'a> {
-    pub insert: &'a Insert,
+    pub insert:     &'a Insert,
     pub value_rows: &'a [Parens<Vec<Expr>>],
 }
 
@@ -198,8 +198,8 @@ mod tests {
     #[test]
     fn on_conflict_values_insert_accepts_conflict_with_returning() {
         let statement = parse_statement(
-            "INSERT INTO t (id, name) VALUES (1, 'a') \
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name RETURNING id, name",
+            "INSERT INTO t (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET name = \
+             EXCLUDED.name RETURNING id, name",
         );
         let (view, _on_conflict) =
             on_conflict_values_insert(&statement).expect("on conflict insert");

@@ -136,7 +136,7 @@ actix-files = "0.7.0"
 actix-multipart = "0.8.1"
 
 # UUID generation
-uuid = { version = "1.25.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.26.0", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.5.0"
@@ -221,7 +221,7 @@ async-trait = "0.1.92"
 once_cell = "1.21.4"
 regex = "1.13.1"
 dashmap = "6.2.1"
-pgwire = { version = "0.40.7", default-features = false, features = ["server-api-aws-lc-rs"] }
+pgwire = { version = "0.40.7", default-features = false, features = ["server-api-aws-lc-rs", "pg-type-chrono"] }
 bytes = "1.12.1"
 http-body = "1.1.0"
 http-body-util = "0.1.5"

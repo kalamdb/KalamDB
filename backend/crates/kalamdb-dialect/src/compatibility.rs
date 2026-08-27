@@ -45,10 +45,9 @@ fn custom_type_identifier(name: &ObjectName) -> String {
 
 fn parse_embedding_dimension(modifiers: &[String]) -> Result<i32, String> {
     if modifiers.len() != 1 {
-        return Err(
-            "EMBEDDING type requires exactly one dimension parameter, e.g., EMBEDDING(384)"
-                .to_string(),
-        );
+        return Err("EMBEDDING type requires exactly one dimension parameter, e.g., \
+                    EMBEDDING(384)"
+            .to_string());
     }
 
     let dim_str = &modifiers[0];

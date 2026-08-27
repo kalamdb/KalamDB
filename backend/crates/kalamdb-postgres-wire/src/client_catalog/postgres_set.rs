@@ -145,9 +145,6 @@ mod tests {
             classify_postgres_set("SET client_encoding TO 'UTF8'"),
             Some(PostgresSetAction::NoOp)
         );
-        assert_eq!(
-            classify_postgres_set("SET datafusion.catalog.default_schema = 'system'"),
-            None
-        );
+        assert_eq!(classify_postgres_set("SET datafusion.catalog.default_schema = 'system'"), None);
     }
 }

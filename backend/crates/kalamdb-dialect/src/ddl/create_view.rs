@@ -15,19 +15,19 @@ use crate::{ddl::DdlResult, parser::utils::parse_sql_statements};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateViewStatement {
     /// Resolved namespace/schema for the view
-    pub namespace_id: NamespaceId,
+    pub namespace_id:  NamespaceId,
     /// Unqualified view name
-    pub view_name: TableName,
+    pub view_name:     TableName,
     /// Whether `OR REPLACE` was specified
-    pub or_replace: bool,
+    pub or_replace:    bool,
     /// Whether `IF NOT EXISTS` was specified
     pub if_not_exists: bool,
     /// Optional column projection list (`CREATE VIEW v(col1, col2) ...`)
-    pub columns: Vec<String>,
+    pub columns:       Vec<String>,
     /// Raw SELECT statement backing the view
-    pub query_sql: String,
+    pub query_sql:     String,
     /// Fully trimmed original SQL text
-    pub original_sql: String,
+    pub original_sql:  String,
 }
 
 impl CreateViewStatement {

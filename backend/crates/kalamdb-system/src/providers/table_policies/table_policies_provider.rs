@@ -12,8 +12,7 @@ use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBacken
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use super::TablePolicyRecord;
-use super::CompiledTablePolicies;
+use super::{CompiledTablePolicies, TablePolicyRecord};
 use crate::{
     error::{SystemError, SystemResultExt},
     providers::base::{system_rows_to_batch, IndexedProviderDefinition},
@@ -32,13 +31,13 @@ impl KSerializable for PolicyGenerationRecord {}
 
 #[derive(Clone)]
 pub struct TablePoliciesTableProvider {
-    store: TablePoliciesStore,
-    generations: PolicyGenerationsStore,
+    store:                TablePoliciesStore,
+    generations:          PolicyGenerationsStore,
     /// In-memory generation mirror so hot-path `compiled_for_table` avoids RocksDB.
-    generation_cache: Arc<DashMap<TableId, u64>>,
+    generation_cache:     Arc<DashMap<TableId, u64>>,
     reverse_dependencies: Arc<DashMap<TableId, HashSet<PolicyId>>>,
-    compiled_cache: Arc<DashMap<TableId, Arc<CompiledTablePolicies>>>,
-    mutation_lock: Arc<Mutex<()>>,
+    compiled_cache:       Arc<DashMap<TableId, Arc<CompiledTablePolicies>>>,
+    mutation_lock:        Arc<Mutex<()>>,
 }
 
 impl TablePoliciesTableProvider {
@@ -48,11 +47,10 @@ impl TablePoliciesTableProvider {
             SystemTable::TablePolicies
                 .column_family_name()
                 .expect("TablePolicies is a table, not a view"),
-            Vec::new());
-        let generations = IndexedEntityStore::new(
-            backend,
-            "system_table_policy_generations",
-            Vec::new());
+            Vec::new(),
+        );
+        let generations =
+            IndexedEntityStore::new(backend, "system_table_policy_generations", Vec::new());
         let provider = Self {
             store,
             generations,
@@ -89,7 +87,10 @@ impl TablePoliciesTableProvider {
         Ok(policy)
     }
 
-    pub async fn replace_policy(&self, mut policy: TablePolicy) -> Result<TablePolicy, SystemError> {
+    pub async fn replace_policy(
+        &self,
+        mut policy: TablePolicy,
+    ) -> Result<TablePolicy, SystemError> {
         let _guard = self.mutation_lock.lock().await;
         let previous = self
             .get_policy_sync(&policy.policy_id)?
@@ -105,7 +106,8 @@ impl TablePoliciesTableProvider {
     pub async fn rename_policy(
         &self,
         policy_id: &PolicyId,
-        new_name: &str) -> Result<TablePolicy, SystemError> {
+        new_name: &str,
+    ) -> Result<TablePolicy, SystemError> {
         let _guard = self.mutation_lock.lock().await;
         let previous = self
             .get_policy_sync(policy_id)?
@@ -130,7 +132,10 @@ impl TablePoliciesTableProvider {
         Ok(renamed)
     }
 
-    pub async fn get_policy(&self, policy_id: &PolicyId) -> Result<Option<TablePolicy>, SystemError> {
+    pub async fn get_policy(
+        &self,
+        policy_id: &PolicyId,
+    ) -> Result<Option<TablePolicy>, SystemError> {
         self.get_policy_sync(policy_id)
     }
 
@@ -147,7 +152,8 @@ impl TablePoliciesTableProvider {
     pub fn compiled_for_table(
         &self,
         table_id: &TableId,
-        schema_generation: u64) -> Result<Arc<CompiledTablePolicies>, SystemError> {
+        schema_generation: u64,
+    ) -> Result<Arc<CompiledTablePolicies>, SystemError> {
         let policy_generation = self.policy_generation(table_id)?;
         if let Some(compiled) = self.compiled_cache.get(table_id) {
             if compiled.policy_generation == policy_generation
@@ -171,7 +177,8 @@ impl TablePoliciesTableProvider {
     pub async fn delete_policy(
         &self,
         policy_id: &PolicyId,
-        if_exists: bool) -> Result<(), SystemError> {
+        if_exists: bool,
+    ) -> Result<(), SystemError> {
         let _guard = self.mutation_lock.lock().await;
         let Some(policy) = self.get_policy_sync(policy_id)? else {
             return if if_exists {
@@ -182,9 +189,7 @@ impl TablePoliciesTableProvider {
         };
         self.bump_generation(&policy.table_id)?;
         self.unregister_dependencies(&policy);
-        self.store
-            .delete(policy_id)
-            .into_system_error("delete table policy")
+        self.store.delete(policy_id).into_system_error("delete table policy")
     }
 
     pub async fn delete_for_table(&self, table_id: &TableId) -> Result<usize, SystemError> {
@@ -198,9 +203,7 @@ impl TablePoliciesTableProvider {
             self.unregister_dependencies(policy);
         }
         let keys = policies.iter().map(|policy| policy.policy_id.clone()).collect::<Vec<_>>();
-        self.store
-            .delete_batch(&keys)
-            .into_system_error("delete table policies")?;
+        self.store.delete_batch(&keys).into_system_error("delete table policies")?;
         Ok(keys.len())
     }
 
@@ -217,7 +220,10 @@ impl TablePoliciesTableProvider {
         Ok(generation)
     }
 
-    pub fn dependent_policies(&self, relation_table: &TableId) -> Result<Vec<PolicyId>, SystemError> {
+    pub fn dependent_policies(
+        &self,
+        relation_table: &TableId,
+    ) -> Result<Vec<PolicyId>, SystemError> {
         let mut policies = self
             .reverse_dependencies
             .get(relation_table)
@@ -325,14 +331,16 @@ impl TablePoliciesTableProvider {
                 policies
                     .iter()
                     .filter(|policy| policy.table_id == table_id)
-                    .flat_map(policy_dependencies));
+                    .flat_map(policy_dependencies),
+            );
         }
         Ok(())
     }
 
     fn build_batch_from_pairs(
         &self,
-        pairs: Vec<(PolicyId, SystemTableRow)>) -> Result<RecordBatch, SystemError> {
+        pairs: Vec<(PolicyId, SystemTableRow)>,
+    ) -> Result<RecordBatch, SystemError> {
         system_rows_to_batch(&Self::schema(), pairs.into_iter().map(|(_, row)| row).collect())
     }
 }

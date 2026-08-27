@@ -25,7 +25,8 @@ fn row_local_policy(table_id: TableId, name: &str, dependency_generation: u64) -
         }),
         None,
         dependency_generation,
-        1)
+        1,
+    )
 }
 
 #[tokio::test]
@@ -100,23 +101,26 @@ async fn drop_table_cleanup_removes_policies_and_reverse_dependencies() {
     let messages = TableId::from_strings("chat", "messages");
     let members = TableId::from_strings("chat", "members");
     let mut policy = row_local_policy(messages.clone(), "member_read", 0);
-    policy.using_program = Some(PolicyProgram::AuthorizationRelation(
-        kalamdb_commons::AuthorizationRelation {
-            protected_table: messages.clone(),
-            protected_keys: vec![2],
-            relation_table: members.clone(),
-            relation_keys: vec![2],
-            principal_column: 1,
-            principal: PrincipalExpr::CurrentUser,
+    policy.using_program =
+        Some(PolicyProgram::AuthorizationRelation(kalamdb_commons::AuthorizationRelation {
+            protected_table:   messages.clone(),
+            protected_keys:    vec![2],
+            relation_table:    members.clone(),
+            relation_keys:     vec![2],
+            principal_column:  1,
+            principal:         PrincipalExpr::CurrentUser,
             static_predicates: Vec::new(),
-            dependencies: vec![members.clone()],
-            invalidation: kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
+            dependencies:      vec![members.clone()],
+            invalidation:      kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
         }));
     let policy = provider.create_policy(policy).await.expect("create policy");
 
     assert_eq!(provider.dependent_policies(&members).unwrap(), vec![policy.policy_id.clone()]);
 
-    provider.delete_for_table(&messages).await.expect("drop protected table policies");
+    provider
+        .delete_for_table(&messages)
+        .await
+        .expect("drop protected table policies");
     assert!(provider.dependent_policies(&members).unwrap().is_empty());
 }
 
@@ -175,14 +179,14 @@ async fn ensure_policy_is_idempotent() {
 
 fn membership_program(protected: &TableId, relation: &TableId) -> PolicyProgram {
     PolicyProgram::AuthorizationRelation(kalamdb_commons::AuthorizationRelation {
-        protected_table: protected.clone(),
-        protected_keys: vec![2],
-        relation_table: relation.clone(),
-        relation_keys: vec![2],
-        principal_column: 1,
-        principal: PrincipalExpr::CurrentUser,
+        protected_table:   protected.clone(),
+        protected_keys:    vec![2],
+        relation_table:    relation.clone(),
+        relation_keys:     vec![2],
+        principal_column:  1,
+        principal:         PrincipalExpr::CurrentUser,
         static_predicates: Vec::new(),
-        dependencies: vec![relation.clone()],
-        invalidation: kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
+        dependencies:      vec![relation.clone()],
+        invalidation:      kalamdb_commons::InvalidationStrategy::TargetedPrincipal,
     })
 }

@@ -31,9 +31,9 @@ use crate::{
 pub enum ColumnOperation {
     /// Add a new column
     Add {
-        column_name: String,
-        data_type: KalamDataType,
-        nullable: bool,
+        column_name:   String,
+        data_type:     KalamDataType,
+        nullable:      bool,
         default_value: Option<ColumnDefault>,
         if_not_exists: bool,
     },
@@ -41,15 +41,18 @@ pub enum ColumnOperation {
     Drop { column_name: String },
     /// Modify an existing column's data type
     Modify {
-        column_name: String,
+        column_name:   String,
         new_data_type: KalamDataType,
-        nullable: Option<bool>,
+        nullable:      Option<bool>,
     },
     /// Set or drop nullable state on an existing column.
-    SetNullable { column_name: String, nullable: bool },
+    SetNullable {
+        column_name: String,
+        nullable:    bool,
+    },
     /// Set a column default expression.
     SetDefault {
-        column_name: String,
+        column_name:   String,
         default_value: ColumnDefault,
     },
     /// Drop a column default expression.
@@ -64,7 +67,7 @@ pub enum ColumnOperation {
     /// Create or enable a vector index for an embedding column.
     CreateVectorIndex {
         column_name: String,
-        metric: VectorMetric,
+        metric:      VectorMetric,
     },
     /// Disable a vector index for an embedding column.
     DropVectorIndex { column_name: String },
@@ -72,12 +75,12 @@ pub enum ColumnOperation {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TablePropertyUpdates {
-    pub storage_id: Option<StorageId>,
-    pub use_user_storage: Option<bool>,
-    pub flush_policy: Option<Option<FlushPolicy>>,
-    pub ttl_seconds: Option<u64>,
-    pub compression: Option<TableCompression>,
-    pub eviction_strategy: Option<String>,
+    pub storage_id:            Option<StorageId>,
+    pub use_user_storage:      Option<bool>,
+    pub flush_policy:          Option<Option<FlushPolicy>>,
+    pub ttl_seconds:           Option<u64>,
+    pub compression:           Option<TableCompression>,
+    pub eviction_strategy:     Option<String>,
     pub max_stream_size_bytes: Option<u64>,
 }
 
@@ -370,14 +373,14 @@ fn build_alter_column_operation(
     match operation {
         AlterColumnOperation::SetNotNull => Ok(ColumnOperation::SetNullable {
             column_name: column_name.value.clone(),
-            nullable: false,
+            nullable:    false,
         }),
         AlterColumnOperation::DropNotNull => Ok(ColumnOperation::SetNullable {
             column_name: column_name.value.clone(),
-            nullable: true,
+            nullable:    true,
         }),
         AlterColumnOperation::SetDefault { value } => Ok(ColumnOperation::SetDefault {
-            column_name: column_name.value.clone(),
+            column_name:   column_name.value.clone(),
             default_value: expr_to_column_default(value),
         }),
         AlterColumnOperation::DropDefault => Ok(ColumnOperation::DropDefault {
@@ -418,7 +421,8 @@ fn extract_table_property_updates(
                 let storage_id = expr_to_literal(value);
                 if !RE_STORAGE_ID.is_match(&storage_id) {
                     return Err(format!(
-                        "Invalid STORAGE_ID '{}'. Only alphanumeric, underscore, and hyphen allowed.",
+                        "Invalid STORAGE_ID '{}'. Only alphanumeric, underscore, and hyphen \
+                         allowed.",
                         storage_id
                     ));
                 }
@@ -611,7 +615,8 @@ fn parse_flush_policy_literal(value: &str) -> DdlResult<FlushPolicy> {
         let entry = pieces.next().unwrap_or_default().trim();
         if key.is_empty() || entry.is_empty() {
             return Err(format!(
-                "Invalid FLUSH_POLICY format '{}'. Expected rows:N, interval:N, or rows:N,interval:N",
+                "Invalid FLUSH_POLICY format '{}'. Expected rows:N, interval:N, or \
+                 rows:N,interval:N",
                 value
             ));
         }
@@ -948,7 +953,8 @@ mod tests {
     #[test]
     fn test_parse_set_tblproperties_user_options() {
         let stmt = AlterTableStatement::parse(
-            "ALTER TABLE profiles SET TBLPROPERTIES (STORAGE_ID='local-ssd', USE_USER_STORAGE=true, FLUSH_POLICY='rows:500', COMPRESSION='zstd')",
+            "ALTER TABLE profiles SET TBLPROPERTIES (STORAGE_ID='local-ssd', \
+             USE_USER_STORAGE=true, FLUSH_POLICY='rows:500', COMPRESSION='zstd')",
             &test_namespace(),
         )
         .unwrap();
@@ -967,7 +973,8 @@ mod tests {
     #[test]
     fn test_parse_set_tblproperties_stream_options() {
         let stmt = AlterTableStatement::parse(
-            "ALTER TABLE events SET TBLPROPERTIES (TTL_SECONDS=7200, EVICTION_STRATEGY='hybrid', MAX_STREAM_SIZE_BYTES=1048576)",
+            "ALTER TABLE events SET TBLPROPERTIES (TTL_SECONDS=7200, EVICTION_STRATEGY='hybrid', \
+             MAX_STREAM_SIZE_BYTES=1048576)",
             &test_namespace(),
         )
         .unwrap();

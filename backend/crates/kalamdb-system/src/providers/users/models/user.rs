@@ -89,7 +89,7 @@ pub struct User {
         default = "None",
         comment = "Account creation timestamp"
     )]
-    pub created_at: i64,
+    pub created_at:            i64,
     #[column(
         id = 11,
         ordinal = 13,
@@ -99,7 +99,7 @@ pub struct User {
         default = "None",
         comment = "Last account update timestamp"
     )]
-    pub updated_at: i64,
+    pub updated_at:            i64,
     /// Unix timestamp in milliseconds when account lockout expires (None = not locked)
     #[column(
         id = 15,
@@ -110,7 +110,7 @@ pub struct User {
         default = "None",
         comment = "Account lockout expiry timestamp"
     )]
-    pub locked_until: Option<i64>,
+    pub locked_until:          Option<i64>,
     /// Unix timestamp in milliseconds of last successful login
     #[column(
         id = 16,
@@ -121,7 +121,7 @@ pub struct User {
         default = "None",
         comment = "Last successful login timestamp"
     )]
-    pub last_login_at: Option<i64>,
+    pub last_login_at:         Option<i64>,
     #[column(
         id = 12,
         ordinal = 14,
@@ -131,7 +131,7 @@ pub struct User {
         default = "None",
         comment = "Last authentication timestamp"
     )]
-    pub last_seen: Option<i64>,
+    pub last_seen:             Option<i64>,
     #[column(
         id = 13,
         ordinal = 15,
@@ -141,7 +141,7 @@ pub struct User {
         default = "None",
         comment = "Soft delete timestamp"
     )]
-    pub deleted_at: Option<i64>,
+    pub deleted_at:            Option<i64>,
     #[column(
         id = 17,
         ordinal = 16,
@@ -151,7 +151,7 @@ pub struct User {
         default = "None",
         comment = "Pending OIDC invite expiry timestamp"
     )]
-    pub invite_expires_at: Option<i64>,
+    pub invite_expires_at:     Option<i64>,
     #[column(
         id = 1,
         ordinal = 1,
@@ -161,7 +161,7 @@ pub struct User {
         default = "None",
         comment = "User identifier (UUID)"
     )]
-    pub user_id: UserId,
+    pub user_id:               UserId,
     #[column(
         id = 3,
         ordinal = 2,
@@ -171,7 +171,7 @@ pub struct User {
         default = "None",
         comment = "bcrypt password hash"
     )]
-    pub password_hash: String,
+    pub password_hash:         String,
     #[column(
         id = 5,
         ordinal = 4,
@@ -181,7 +181,7 @@ pub struct User {
         default = "None",
         comment = "User email address"
     )]
-    pub email: Option<String>,
+    pub email:                 Option<String>,
     #[column(
         id = 19,
         ordinal = 18,
@@ -191,7 +191,7 @@ pub struct User {
         default = "None",
         comment = "User display name"
     )]
-    pub name: Option<String>,
+    pub name:                  Option<String>,
     #[column(
         id = 7,
         ordinal = 6,
@@ -201,7 +201,7 @@ pub struct User {
         default = "None",
         comment = "Authentication data (JSON for OIDC issuer/subject)"
     )]
-    pub auth_data: Option<AuthData>,
+    pub auth_data:             Option<AuthData>,
     #[column(
         id = 9,
         ordinal = 8,
@@ -211,7 +211,7 @@ pub struct User {
         default = "None",
         comment = "Optional preferred storage configuration ID"
     )]
-    pub storage_id: Option<StorageId>,
+    pub storage_id:            Option<StorageId>,
     #[column(
         id = 18,
         ordinal = 17,
@@ -221,7 +221,7 @@ pub struct User {
         default = "None",
         comment = "Admin user that created a pending OIDC invite"
     )]
-    pub invited_by: Option<UserId>,
+    pub invited_by:            Option<UserId>,
     // 4-byte aligned fields (enums, i32)
     /// Number of consecutive failed login attempts (reset on successful login)
     #[column(
@@ -243,7 +243,7 @@ pub struct User {
         default = "None",
         comment = "User role: user, service, dba, system"
     )]
-    pub role: Role,
+    pub role:                  Role,
     #[column(
         id = 6,
         ordinal = 5,
@@ -253,7 +253,7 @@ pub struct User {
         default = "None",
         comment = "Authentication type: password or oidc"
     )]
-    pub auth_type: AuthType,
+    pub auth_type:             AuthType,
     #[column(
         id = 8,
         ordinal = 7,
@@ -263,7 +263,7 @@ pub struct User {
         default = "None",
         comment = "Preferred storage partitioning mode"
     )]
-    pub storage_mode: StorageMode,
+    pub storage_mode:          StorageMode,
 }
 
 impl User {
@@ -318,24 +318,24 @@ mod tests {
 
     fn create_test_user() -> User {
         User {
-            user_id: UserId::new("u_123"),
-            password_hash: "$2b$12$hash".to_string(),
-            role: Role::User,
-            name: None,
-            email: Some("test@example.com".to_string()),
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::new("storage_1")),
+            user_id:               UserId::new("u_123"),
+            password_hash:         "$2b$12$hash".to_string(),
+            role:                  Role::User,
+            name:                  None,
+            email:                 Some("test@example.com".to_string()),
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          StorageMode::Table,
+            storage_id:            Some(StorageId::new("storage_1")),
             failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: 1730000000000,
-            updated_at: 1730000000000,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          None,
+            last_login_at:         None,
+            created_at:            1730000000000,
+            updated_at:            1730000000000,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         }
     }
 

@@ -217,10 +217,10 @@ macro_rules! impl_system_table_provider_metadata {
         impl $provider {
             fn provider_definition() -> IndexedProviderDefinition<$key> {
                 IndexedProviderDefinition {
-                    table_name: $table_name,
+                    table_name:         $table_name,
                     primary_key_column: $primary_key_column,
-                    schema: Self::schema,
-                    parse_key: $parse_key,
+                    schema:             Self::schema,
+                    parse_key:          $parse_key,
                 }
             }
 
@@ -247,7 +247,7 @@ macro_rules! impl_system_table_provider_metadata {
             fn provider_definition() -> SimpleProviderDefinition {
                 SimpleProviderDefinition {
                     table_name: $table_name,
-                    schema: Self::schema,
+                    schema:     Self::schema,
                 }
             }
 

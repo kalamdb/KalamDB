@@ -439,25 +439,25 @@ pub enum VectorIndexState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorIndexMetadata {
     /// Column name this metadata belongs to.
-    pub column_name: String,
+    pub column_name:      String,
     /// Whether indexing is enabled for this column.
-    pub enabled: bool,
+    pub enabled:          bool,
     /// Similarity metric used for ANN search.
-    pub metric: VectorMetric,
+    pub metric:           VectorMetric,
     /// Index engine implementation.
-    pub engine: VectorEngine,
+    pub engine:           VectorEngine,
     /// Embedding dimensions for this column.
-    pub dimensions: u32,
+    pub dimensions:       u32,
     /// Relative snapshot path under table storage root.
-    pub snapshot_path: Option<String>,
+    pub snapshot_path:    Option<String>,
     /// Monotonic snapshot version.
     pub snapshot_version: u64,
     /// Last staged sequence applied into snapshot.
     pub last_applied_seq: SeqId,
     /// Last update timestamp.
-    pub updated_at: i64,
+    pub updated_at:       i64,
     /// Current index sync state.
-    pub state: VectorIndexState,
+    pub state:            VectorIndexState,
 }
 
 impl VectorIndexMetadata {
@@ -648,16 +648,16 @@ mod tests {
         column_stats.insert(
             1u64,
             ColumnStats {
-                min: Some(StoredScalarValue::Int64(Some("42".to_string()))),
-                max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
+                min:        Some(StoredScalarValue::Int64(Some("42".to_string()))),
+                max:        Some(StoredScalarValue::Int64(Some("100".to_string()))),
                 null_count: Some(0),
             },
         );
         column_stats.insert(
             2u64,
             ColumnStats {
-                min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
-                max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+                min:        Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+                max:        Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
                 null_count: Some(5),
             },
         );
@@ -698,8 +698,8 @@ mod tests {
     #[test]
     fn test_column_stats_helper_methods() {
         let stats = ColumnStats {
-            min: Some(StoredScalarValue::Int64(Some("42".to_string()))),
-            max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
+            min:        Some(StoredScalarValue::Int64(Some("42".to_string()))),
+            max:        Some(StoredScalarValue::Int64(Some("100".to_string()))),
             null_count: Some(0),
         };
 
@@ -709,8 +709,8 @@ mod tests {
 
         // Test string values
         let string_stats = ColumnStats {
-            min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
-            max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+            min:        Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+            max:        Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
             null_count: Some(5),
         };
 

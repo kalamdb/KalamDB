@@ -202,10 +202,10 @@ mod tests {
     fn create_test_namespace(namespace_id: &NamespaceId, name: &str) -> Namespace {
         Namespace {
             namespace_id: namespace_id.clone(),
-            name: name.to_string(),
-            created_at: 1000,
-            options: Some(serde_json::json!({})),
-            table_count: 0,
+            name:         name.to_string(),
+            created_at:   1000,
+            options:      Some(serde_json::json!({})),
+            table_count:  0,
         }
     }
 

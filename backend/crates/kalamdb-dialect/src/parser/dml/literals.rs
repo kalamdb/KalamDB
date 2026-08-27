@@ -279,7 +279,7 @@ mod tests {
         assert!(matches!(stripped, Expr::Value(_)));
 
         let unary = Expr::UnaryOp {
-            op: UnaryOperator::Minus,
+            op:   UnaryOperator::Minus,
             expr: Box::new(parse_select_expr("5")),
         };
         assert!(matches!(strip_nested_expr(&unary), Expr::UnaryOp { .. }));

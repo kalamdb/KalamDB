@@ -190,5 +190,7 @@ async fn jdbc_hikari_pool_connects_and_queries() {
     require_marker(&stdout, "get_tables_ok");
     require_marker(&stdout, "get_columns_ok");
     require_marker(&stdout, "get_primary_keys_ok");
+    require_marker(&stdout, "get_sql_keywords_ok");
+    require_marker(&stdout, "get_uuid_columns_ok");
     require_marker(&stdout, "jdbc_pgwire_smoke_ok");
 }

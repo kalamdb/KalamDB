@@ -245,6 +245,38 @@ public final class JdbcPgwireSmoke {
                 throw new IllegalStateException("getPrimaryKeys did not find id for " + qualified);
             }
             System.out.println("get_primary_keys_ok");
+
+            String keywords = meta.getSQLKeywords();
+            if (keywords == null) {
+                throw new IllegalStateException("getSQLKeywords returned null");
+            }
+            System.out.println("get_sql_keywords_ok");
+
+            String uuidTable = table + "_uuid";
+            String uuidQualified = namespace + "." + uuidTable;
+            try (Statement st = conn.createStatement()) {
+                st.execute(
+                        "CREATE TABLE IF NOT EXISTS "
+                                + uuidQualified
+                                + " (id UUID PRIMARY KEY, name TEXT)");
+            }
+            boolean foundUuidId = false;
+            boolean foundUuidName = false;
+            try (ResultSet rs = meta.getColumns(null, namespace, uuidTable, null)) {
+                while (rs.next()) {
+                    String column = rs.getString("COLUMN_NAME");
+                    if ("id".equals(column)) {
+                        foundUuidId = true;
+                    } else if ("name".equals(column)) {
+                        foundUuidName = true;
+                    }
+                }
+            }
+            if (!foundUuidId || !foundUuidName) {
+                throw new IllegalStateException(
+                        "getColumns missing id/name for " + uuidQualified);
+            }
+            System.out.println("get_uuid_columns_ok");
         }
     }
 

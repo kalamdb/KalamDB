@@ -7,13 +7,13 @@ use crate::ddl::DdlResult;
 /// Validated, PostgreSQL-shaped `CREATE POLICY` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePolicyStatement {
-    pub policy_name: String,
-    pub table_id: TableId,
-    pub command: PolicyCommand,
-    pub targets: Vec<PolicyTarget>,
-    pub using_sql: Option<String>,
+    pub policy_name:    String,
+    pub table_id:       TableId,
+    pub command:        PolicyCommand,
+    pub targets:        Vec<PolicyTarget>,
+    pub using_sql:      Option<String>,
     pub with_check_sql: Option<String>,
-    pub original_sql: String,
+    pub original_sql:   String,
 }
 
 impl CreatePolicyStatement {

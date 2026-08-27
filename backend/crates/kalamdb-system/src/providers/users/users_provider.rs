@@ -45,7 +45,7 @@ const PRIVILEGED_ROLE_CACHE_INITIAL_CAPACITY: usize = 32;
 /// using RocksDB's atomic WriteBatch - no manual index management needed.
 #[derive(Clone)]
 pub struct UsersTableProvider {
-    store: UsersStore,
+    store:            UsersStore,
     privileged_roles: Arc<RwLock<HashMap<UserId, Role>>>,
 }
 
@@ -375,7 +375,7 @@ crate::impl_indexed_system_table_provider!(
 #[cfg(test)]
 mod tests {
     use datafusion::datasource::TableProvider;
-    use kalamdb_commons::{AuthType, Role, StorageId};
+    use kalamdb_commons::{conversions::record_batch_to_json_arrays, AuthType, Role, StorageId};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     use super::*;
@@ -387,24 +387,24 @@ mod tests {
 
     fn create_test_user(id: &str) -> User {
         User {
-            user_id: UserId::new(id),
-            password_hash: "hashed_password".to_string(),
-            role: Role::User,
-            name: None,
-            email: Some(format!("{}@example.com", id)),
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: crate::providers::storages::models::StorageMode::Table,
-            storage_id: Some(StorageId::local()),
+            user_id:               UserId::new(id),
+            password_hash:         "hashed_password".to_string(),
+            role:                  Role::User,
+            name:                  None,
+            email:                 Some(format!("{}@example.com", id)),
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          crate::providers::storages::models::StorageMode::Table,
+            storage_id:            Some(StorageId::local()),
             failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: 1000,
-            updated_at: 1000,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          None,
+            last_login_at:         None,
+            created_at:            1000,
+            updated_at:            1000,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         }
     }
 
@@ -421,6 +421,23 @@ mod tests {
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.email, Some("user1@example.com".to_string()));
+    }
+
+    #[test]
+    fn scan_serializes_user_timestamps_as_json_numbers() {
+        let provider = create_test_provider();
+        provider.create_user(create_test_user("user1")).unwrap();
+
+        let batch = provider.scan_all_users().unwrap();
+        let created_at_index = batch.schema().index_of("created_at").expect("created_at column");
+        let rows = record_batch_to_json_arrays(&batch).expect("serialize users batch");
+        let created_at = rows[0][created_at_index].inner();
+
+        assert!(
+            !created_at.is_null(),
+            "system.users created_at should not serialize as JSON null"
+        );
+        assert_eq!(created_at.as_i64(), Some(1_000_000));
     }
 
     #[test]

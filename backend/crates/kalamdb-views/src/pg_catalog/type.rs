@@ -72,15 +72,15 @@ impl PgTypeView {
 }
 
 struct TypeRowBuilders {
-    oids:           Int64Builder,
-    typnames:       StringBuilder,
-    typnamespaces:  Int64Builder,
-    typrelids:      Int64Builder,
-    typtypes:       StringBuilder,
-    typnotnulls:    BooleanBuilder,
-    typtypmods:     Int64Builder,
-    typbasetypes:   Int64Builder,
-    typlens:        Int64Builder,
+    oids:          Int64Builder,
+    typnames:      StringBuilder,
+    typnamespaces: Int64Builder,
+    typrelids:     Int64Builder,
+    typtypes:      StringBuilder,
+    typnotnulls:   BooleanBuilder,
+    typtypmods:    Int64Builder,
+    typbasetypes:  Int64Builder,
+    typlens:       Int64Builder,
 }
 
 impl TypeRowBuilders {

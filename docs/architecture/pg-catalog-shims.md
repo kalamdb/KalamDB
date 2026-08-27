@@ -46,6 +46,7 @@ Registered in `kalamdb-views/src/pg_catalog/mod.rs` when pg_catalog is enabled:
 | `pg_class` | `information_schema.tables` | Relations visible to session role |
 | `pg_attribute` | `information_schema.columns` | Column metadata |
 | `pg_type` | Type mapping registry | Canonical PostgreSQL type OIDs in `pg_catalog` (including `name`/`typlen` for JDBC); per-namespace listing rows use distinct OIDs so `atttypid` joins do not duplicate columns. Extra columns: `typtype`, `typnotnull`, `typtypmod`, `typbasetype`, `typlen`. Always `typrelid = 0` |
+| `pg_get_keywords` | Static PostgreSQL extra keywords | JDBC `getSQLKeywords()`; function-call form `pg_get_keywords()` is rewritten to this view |
 | `pg_database` | Static `"kalam"` database row | Single-database deployment |
 | `pg_stat_activity` | Backend session registry | Admin-only; projects wire/gRPC sessions |
 
@@ -69,6 +70,8 @@ The PostgreSQL JDBC driver issues catalog SQL that DataFusion cannot plan as-is.
 | `getSchemas` | `(current_schemas(true))[1]` | `KDB_CURRENT_SCHEMA()` |
 | `getCatalogs` | `pg_database WHERE datallowconn` | Existing `pg_database` shim |
 | `getColumns` | `pg_type.typtype` / unlabeled `current_database()` | Extra `pg_type` columns; alias `KDB_CURRENT_DATABASE() AS current_database` |
+| `getColumns` (non-core types, e.g. UUID) | TypeInfoCache `array_upper(current_schemas())` + `generate_series` | Drop search-path join; `typinput='array_in'::regproc` → `FALSE` |
+| `getSQLKeywords` | `pg_catalog.pg_get_keywords()` + `<> ALL ('{…}'::text[])` | `pg_get_keywords` view + `NOT IN` |
 | `getPrimaryKeys` | `information_schema._pg_expandarray(indkey)` | `information_schema.columns` where `kdb_primary_key` |
 | `getMaxColumnNameLength` | `pg_type.typname = 'name'` in `pg_catalog` | Seeded `name` type with `typlen = 64` |
 

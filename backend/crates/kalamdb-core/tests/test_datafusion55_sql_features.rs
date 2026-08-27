@@ -258,3 +258,24 @@ async fn test_array_any_match_lambda() {
         .value(0);
     assert!(value);
 }
+
+#[tokio::test]
+async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
+    use kalamdb_sql::rewrite_explain_for_datafusion;
+
+    let session = exec_ctx().create_session_with_user();
+    let original = "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) SELECT 1";
+    let rewritten = rewrite_explain_for_datafusion(original)
+        .expect("postgres EXPLAIN should parse")
+        .expect("parenthesized EXPLAIN");
+    assert_eq!(rewritten.sql, "EXPLAIN ANALYZE FORMAT pgjson SELECT 1");
+
+    let result = session.sql(&rewritten.sql).await;
+    assert!(
+        result.is_ok(),
+        "rewritten EXPLAIN should plan under DuckDB dialect: {:?}",
+        result.err()
+    );
+    let batches = result.unwrap().collect().await.expect("EXPLAIN ANALYZE should run");
+    assert!(!batches.is_empty(), "EXPLAIN ANALYZE should return a plan");
+}

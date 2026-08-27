@@ -13,6 +13,4 @@ pub mod empty_tables;
 pub mod postgres_set;
 
 pub use empty_tables::{empty_pg_catalog_table_names, EMPTY_PG_CATALOG_TABLE_COUNT};
-pub use postgres_set::{
-    classify_postgres_set, normalize_search_path_schema, PostgresSetAction,
-};
+pub use postgres_set::{classify_postgres_set, normalize_search_path_schema, PostgresSetAction};

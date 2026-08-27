@@ -46,4 +46,16 @@ describe("CellDisplay", () => {
 
     expect(screen.getByText("9223372036854775807")).toBeTruthy();
   });
+
+  it("renders SQL timestamp numbers instead of null", () => {
+    render(
+      <CellDisplay
+        value={1_735_689_600_000_000}
+        dataType="Timestamp"
+      />,
+    );
+
+    expect(screen.queryByText("null")).toBeNull();
+    expect(screen.getByText("2025-01-01T00:00:00Z")).toBeTruthy();
+  });
 });

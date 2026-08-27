@@ -1,279 +1,129 @@
 <p align="center">
-  <img src="docs/images/kalamdb_logo.png" alt="KalamDB logo" width="260" />
+  <img src="docs/images/kalamdb_logo.png" alt="KalamDB" width="260" />
 </p>
 
-
-Give AI agents one SQL tool to your app data.
-
-KalamDB is a SQL-first realtime backend for agent-native apps.
-Agents and frontends use the same backend directly: SQL over HTTP for reads and writes, live query rows over WebSocket for subscriptions. USER tables, auth, and `EXECUTE AS USER` keep access policy-scoped instead of exposing broad backend access.
-
+<h3 align="center">The fast, realtime SQL backend for apps and AI agents.</h3>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.92%2B-orange.svg" alt="Rust" /></a>
-  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/tests.json" alt="Overall Tests" /></a>
-  <a href="https://kalamdb.github.io/KalamDB/coverage/"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/coverage-backend.json" alt="Backend Coverage" /></a>
-  <a href="https://github.com/kalamdb/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag" alt="Release" /></a>
-  <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
-  <a href="https://hub.docker.com/r/jamals86/pg-kalam"><img src="https://img.shields.io/docker/pulls/jamals86/pg-kalam?label=pg-kalam%20docker" alt="pg-kalam Docker Pulls" /></a>
+  One database for user-owned data, shared data with RLS, live queries, durable agent queues, and multi-node clusters.
 </p>
 
-<p align="center"><strong>Official SDKs</strong></p>
+<p align="center">
+  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/kalamdb/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag" alt="Release" /></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+  <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
+</p>
 
-<table align="center">
-  <thead>
-    <tr>
-      <th>SDK</th>
-      <th>Package</th>
-      <th>Release</th>
-      <th>Tests</th>
-      <th>Downloads</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><strong>TypeScript / JavaScript</strong></a></td>
-      <td><code>@kalamdb/client</code></td>
-      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/v/%40kalamdb%2Fclient?label=npm" alt="TypeScript SDK version" /></a></td>
-      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/typescript-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-typescript-tests.json" alt="TypeScript SDK tests" /></a></td>
-      <td><a href="https://www.npmjs.com/package/@kalamdb/client"><img src="https://img.shields.io/npm/dm/%40kalamdb%2Fclient?label=downloads" alt="TypeScript SDK monthly downloads" /></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://pub.dev/packages/kalam_link"><strong>Dart / Flutter</strong></a></td>
-      <td><code>kalam_link</code></td>
-      <td><a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/v/kalam_link?label=pub.dev" alt="Dart SDK version" /></a></td>
-      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/dart-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-dart-tests.json" alt="Dart SDK tests" /></a></td>
-      <td><a href="https://pub.dev/packages/kalam_link"><img src="https://img.shields.io/pub/dm/kalam_link?label=downloads" alt="Dart SDK monthly downloads" /></a></td>
-    </tr>
-    <tr>
-      <td><a href="https://crates.io/crates/kalam-client"><strong>Rust</strong></a></td>
-      <td><code>kalam-client</code></td>
-      <td><a href="https://crates.io/crates/kalam-client"><img src="https://img.shields.io/crates/v/kalam-client?label=crates.io" alt="Rust SDK version" /></a></td>
-      <td><a href="https://github.com/kalamdb/KalamDB/actions/workflows/rust-sdk.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kalamdb/KalamDB/main/.github/badges/sdk-rust-tests.json" alt="Rust SDK tests" /></a></td>
-      <td><a href="https://crates.io/crates/kalam-client"><img src="https://img.shields.io/crates/d/kalam-client?label=downloads" alt="Rust SDK downloads" /></a></td>
-    </tr>
-  </tbody>
-</table>
+Client-side web and mobile apps, backends, and AI agents all use the same SQL data plane. They can query and write directly over HTTP, receive live results over WebSocket, and feed table changes into durable topics and consumer groups—without a custom CRUD API or separate realtime and queue stack.
 
-PostgreSQL extension Docker image: [jamals86/pg-kalam](https://hub.docker.com/r/jamals86/pg-kalam) with `pg_kalam` preinstalled.
-
-> Frontend clients can execute SQL directly against KalamDB. You keep one SQL API plus live subscriptions instead of maintaining a custom REST or GraphQL CRUD layer for every agent workflow.
-
-## One SQL Tool, Live Rows
-
-KalamDB is designed for both frontend and backend SQL execution.
-
-- Agents and workers use one SQL tool plus the current schema instead of dozens of narrow CRUD tools.
-- Frontends run the same backend directly for user-scoped reads, writes, and live row updates.
-- Queries and writes go through the HTTP SQL API; realtime subscriptions reuse the shared WebSocket connection.
-- Ordinary USER-table reads stay subject-scoped; privileged service, DBA, and system accounts may use explicit `EXECUTE AS USER` only through the role hierarchy.
-
-This is what lets chat UIs, support agents, approval flows, and other product workflows share one data plane without separate polling, sync, or fanout infrastructure.
-
-## Why KalamDB
-
-- One SQL tool for agents, so app workflows can read and write allowed data without a custom CRUD surface for every action.
-- Live UI by default, with frontend-direct SQL and realtime subscriptions keeping web and mobile apps in sync without a separate sync layer.
-- Per-user isolation by default, with the same SQL returning user-scoped data safely across frontend and backend clients.
-- Built-in authentication and authorization with Basic auth, JWT, OAuth 2.0 (Google Workspace, GitHub, Azure AD), and RBAC.
-- Unified application primitives: SQL tables, live queries, pub/sub topics, consumer groups, and file attachments in one runtime.
-- Hybrid storage engine tuned for product workloads: RocksDB for fast active writes, Parquet for compressed historical storage and analytics.
-- Portable object storage support across filesystem, S3, GCS, and Azure backends.
-- Vector embeddings and vector search workflows for semantic retrieval, agent memory, and AI-powered product features.
-- Distributed clustering with Multi-Raft replication and failover for resilient production deployments.
-- First-party tooling for operators and app teams: Admin UI, `kalam` CLI, and official TypeScript and Dart SDKs.
-
-## Agent-Native Workflow
-
-- Read current app state with `SELECT` from the same backend your product already uses.
-- Write drafts, tasks, approvals, or replies into normal app tables with SQL.
-- Subscribe the frontend to pending rows live over WebSocket.
-- Commit final writes through the same backend path, including authorized `EXECUTE AS USER` when a trusted service acts for a user.
-- Let the UI update from row changes instead of a second sync system.
-
-See [examples/chat-with-ai](examples/chat-with-ai/README.md) for the base live agent loop already in the repo.
-
-## Feature & Status
-
-| Feature                     | Status       | Feature                 | Status       |
-| :-------------------------- | :----------- | :---------------------- | :----------- |
-| **User Tables**             | ✅ Available | **Shared Tables**       | ✅ Available |
-| **Streams**                 | ✅ Available | **Pub/Sub Topics**      | ✅ Available |
-| **Live Queries**            | ✅ Available | **Consumer Groups**     | ✅ Available |
-| **Cluster Replication**     | ✅ Available | **Vector Embeddings**   | ✅ Available |
-| **PostgreSQL Extension**    | ✅ Available | **Admin UI**            | ✅ Available |
-| **Kalam CLI**               | ✅ Available | **TypeScript SDK**      | ✅ Available |
-| **Dart/Flutter SDK**        | ✅ Available | **Object Storage**      | ✅ Available |
-
-## 60-Second Quick Start (Docker)
-
-### Single node
-
-```bash
-KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
-curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml | docker-compose -f - up -d
-```
-
-### 3-node cluster
-
-```bash
-KALAMDB_JWT_SECRET="$(openssl rand -base64 32)" \
-curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml | docker-compose -f - up -d
-```
-
-### Local run
-
-```bash
-git clone https://github.com/kalamdb/KalamDB.git
-cd KalamDB/backend
-cargo run --bin kalamdb-server
-```
-
-### CLI
+## Start a project
 
 ```bash
 npm install -g @kalamdb/cli
 
-# or
-curl -fsSL https://kalamdb.org/install.sh | sh
-
-kalam doctor
-kalam login --instance local --url http://localhost:2900
+mkdir my-app && cd my-app
+kalam init
+kalam dev
 ```
 
-## Browser/Frontend Client Example
+`kalam init` scaffolds your app, `schema.sql`, migrations, configuration, and generated types. `kalam dev` starts or reuses a local KalamDB, applies schema changes, regenerates types, watches your project, and runs your app—all in one command.
 
-```ts
-import { createClient, Auth } from '@kalamdb/client';
+## Built for the whole app lifecycle
 
-const client = createClient({
-  url: 'http://localhost:2900',
-  authProvider: async () => Auth.jwt('<user-token>'),
-});
+| | Capability | What it gives you |
+|---|---|---|
+| ⚡ | **`kalam dev`** | Database, migrations, generated types, schema watch, and app process together. |
+| 📱 | **Direct client SQL** | Web and mobile apps query and write directly under authenticated user scope and RLS. |
+| 👤 | **USER tables** | Rows are automatically isolated by the authenticated user. |
+| 👥 | **SHARED tables + RLS** | Collaborative data protected by SQL policies; default-deny without one. |
+| 🔥❄️ | **Tiered storage** | RocksDB hot path with compressed Parquet cold storage on local or object storage. |
+| 🔴 | **Realtime** | Subscribe to live SQL results over one shared WebSocket connection. |
+| 🤖 | **Pub/Sub for agents** | Route table changes into topics with durable consumer groups and retries. |
+| 🌐 | **Cluster** | Multi-Raft replication, sharded user data, follower forwarding, and failover. |
 
-const threadSql = `
-  SELECT id, role, content, created_at
-  FROM chat.messages
-  WHERE thread_id = 'thread_42'
-`;
+## Data stays close to its user
 
-await client.query(`
-  INSERT INTO chat.messages (thread_id, role, content)
-  VALUES ('thread_42', 'user', 'hello from frontend');
-`);
-
-const unsubscribe = await client.live(
-  threadSql,
-  (rows) => {
-    // If `chat.messages` is a USER table, each signed-in user only sees
-    // their own rows even though the SQL text is identical for everyone.
-    console.log('live rows', rows);
-  },
-  {
-    subscriptionOptions: { last_rows: 20 },
-  },
-);
-
-// Later
-await unsubscribe();
-await client.disconnect();
+```mermaid
+flowchart LR
+    Client[App or AI agent] --> SQL[SQL]
+    SQL --> User[USER table]
+    SQL --> Shared[SHARED table]
+    User --> Alice[Alice's rows]
+    User --> Bob[Bob's rows]
+    Shared --> RLS[RLS + CURRENT_USER]
+    RLS --> Allowed[Permitted shared rows]
+    Alice & Bob & Allowed --> Hot[RocksDB<br/>fast hot path]
+    Hot --> Cold[Parquet<br/>compressed history]
+    SQL -. live results .-> Live[WebSocket]
+    Hot -. table changes .-> Topics[Topics + consumer groups]
 ```
 
-## AI Agent Example (Topic Subscription)
+USER-table keys and cold segments are scoped per user, so the same query naturally returns Alice's rows to Alice and Bob's rows to Bob. SHARED tables keep one collaborative dataset and enforce row-level policies on reads, writes, live events, and file access.
 
-Subscribe a worker to a KalamDB topic and process each change with managed retries, backpressure, and at-least-once delivery via `runConsumer`.
+KalamDB keeps recent writes in indexed RocksDB, flushes history to compressed Parquet on local or object storage, and queries both through DataFusion and Arrow. That means a fast operational hot path without giving up efficient history and analytics.
 
-```ts
-import { createClient, Auth } from '@kalamdb/client';
-import { runConsumer } from '@kalamdb/consumer';
-
-const client = createClient({
-  url: 'http://localhost:2900',
-  authProvider: async () => Auth.basic('root', 'kalamdb123'),
-});
-
-const abort = new AbortController();
-process.on('SIGINT', () => abort.abort());
-
-await runConsumer<{ title: string; body: string }>({
-  client,
-  name: 'summarizer-agent',
-  topic: 'blog.posts',       // KalamDB topic to consume
-  groupId: 'summarizer-v1',  // consumer group — tracks per-agent offset
-  start: 'earliest',
-  batchSize: 20,
-  timeoutSeconds: 30,
-  stopSignal: abort.signal,
-
-  // Called for every inserted, updated, or deleted topic change
-  onChange: async (ctx, change) => {
-    const row = change.data;
-    const summary = await myLlm.summarize(row.body);
-    console.log(`[${change.op ?? 'change'}:${row.title}] →`, summary);
-  },
-
-  onFailed: async (ctx, change) => {
-    const row = change.data;
-    console.error('failed row', row, ctx.error);
-  },
-
-  retry: {
-    maxAttempts: 3,
-    initialBackoffMs: 250,
-    maxBackoffMs: 1500,
-    multiplier: 2,
-  },
-  ackOnFailed: true,    // commit offset even on permanent failure
-});
-
-await client.disconnect();
-```
-
-See [`examples/summarizer-agent/`](examples/summarizer-agent/) for a full working example with Gemini integration.
-
-## SQL Example
+## One schema, three superpowers
 
 ```sql
-CREATE NAMESPACE IF NOT EXISTS chat;
+CREATE NAMESPACE app;
 
-CREATE TABLE chat.messages (
-  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-  thread_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  attachment FILE,
+-- Private by default: KalamDB owns the user boundary.
+CREATE USER TABLE app.notes (
+  id TEXT PRIMARY KEY DEFAULT ULID(),
+  body TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
-) WITH (TYPE = 'USER');
+);
+
+-- Shared data: access is explicit and policy-driven.
+CREATE SHARED TABLE app.tasks (
+  id TEXT PRIMARY KEY DEFAULT ULID(),
+  owner_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  done BOOLEAN DEFAULT false
+);
+
+CREATE POLICY task_owner ON app.tasks
+  FOR ALL TO user
+  USING (owner_id = CURRENT_USER)
+  WITH CHECK (owner_id = CURRENT_USER);
+
+-- Every task change can wake a durable group of AI workers.
+CREATE TOPIC app.task_events PARTITIONS 4;
+ALTER TOPIC app.task_events
+  ADD SOURCE app.tasks ON INSERT WITH (payload = 'full');
 ```
 
-## Architecture Snapshot
+Watch tasks update live:
 
-- SQL parsing/classification: `kalamdb-dialect`; query execution: `kalamdb-core` + DataFusion/Arrow.
-- Hot path: `kalamdb-store` (RocksDB).
-- Cold path: `kalamdb-filestore` (Parquet/object storage).
-- Orchestration: `kalamdb-core` (DDL/DML, jobs, schema registry).
-- API surface: HTTP SQL API + WebSocket realtime + Admin UI + CLI.
+```bash
+kalam --subscribe "SELECT * FROM app.tasks ORDER BY id"
+```
 
-## Best-Fit Workloads
+Consume work across an agent group:
 
-- AI chat history and agent memory/state.
-- Tool-call logs and human-in-the-loop workflows.
-- Live dashboards, notifications, and collaborative feeds.
-- Multi-tenant SaaS that needs strong user-level isolation.
+```sql
+CONSUME FROM app.task_events
+  GROUP 'planner-agents' FROM EARLIEST LIMIT 20;
+```
 
-## Docs and Links
+## From laptop to a 3-node cluster
 
-- Docs: <https://kalamdb.org/docs>
-- Quick start: `docs/getting-started/quick-start.md`
-- TypeScript SDK: `link/sdks/typescript/client/`
-- Docker deployment: `docker/run/`
-- PostgreSQL extension Docker image: `jamals86/pg-kalam`
-- Website: <https://kalamdb.org>
+Local development stays one command. This local cluster demo starts three replicated nodes; clients can connect to any node and KalamDB routes writes to the correct Multi-Raft leader.
 
-KalamDB is under active development and evolving quickly.
+```bash
+git clone https://github.com/kalamdb/KalamDB.git
+cd KalamDB
+docker compose -f docker/run/cluster/docker-compose.yml up -d
+```
 
-## License
+## Explore
 
-Licensed under the Apache License, Version 2.0 (`Apache-2.0`). See [LICENSE.txt](LICENSE.txt) and [NOTICE](NOTICE).
+- [Documentation](https://kalamdb.org/docs)
+- [CLI and project workflow](docs/getting-started/cli.md)
+- [SQL reference](docs/reference/sql.md)
+- [Chat with AI example](examples/chat-with-ai/README.md)
+- [Summarizer agent example](examples/summarizer-agent/README.md)
+- SDKs: [TypeScript](link/sdks/typescript/client/) · [Dart / Flutter](link/sdks/dart/link/) · [Rust](link/sdks/rust/)
+
+Apache-2.0 licensed. See [LICENSE.txt](LICENSE.txt).

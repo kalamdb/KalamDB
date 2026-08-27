@@ -23,7 +23,7 @@ pub struct Storage {
         default = "None",
         comment = "Storage identifier"
     )]
-    pub storage_id: StorageId, // PK
+    pub storage_id:             StorageId, // PK
     #[column(
         id = 2,
         ordinal = 2,
@@ -33,7 +33,7 @@ pub struct Storage {
         default = "None",
         comment = "Human-readable storage name"
     )]
-    pub storage_name: String,
+    pub storage_name:           String,
     #[column(
         id = 3,
         ordinal = 3,
@@ -43,7 +43,7 @@ pub struct Storage {
         default = "None",
         comment = "Storage description"
     )]
-    pub description: Option<String>,
+    pub description:            Option<String>,
     #[column(
         id = 4,
         ordinal = 4,
@@ -53,7 +53,7 @@ pub struct Storage {
         default = "None",
         comment = "Storage type: Local, S3, Azure, GCS"
     )]
-    pub storage_type: StorageType, // Enum: Filesystem, S3, Gcs, Azure
+    pub storage_type:           StorageType, // Enum: Filesystem, S3, Gcs, Azure
     #[column(
         id = 5,
         ordinal = 5,
@@ -63,7 +63,7 @@ pub struct Storage {
         default = "None",
         comment = "Base directory path for storage"
     )]
-    pub base_directory: String,
+    pub base_directory:         String,
     #[serde(default)]
     #[column(
         id = 6,
@@ -75,7 +75,7 @@ pub struct Storage {
         comment = "Storage credentials JSON (WARNING: stored as plaintext - use environment \
                    variables for sensitive credentials)"
     )]
-    pub credentials: Option<Value>,
+    pub credentials:            Option<Value>,
     /// Storage backend parameters encoded as JSON.
     ///
     /// This is the canonical place for backend-specific configuration (S3/GCS/Azure/local).
@@ -92,7 +92,7 @@ pub struct Storage {
         default = "None",
         comment = "Backend-specific storage configuration JSON"
     )]
-    pub config_json: Option<Value>,
+    pub config_json:            Option<Value>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -112,7 +112,7 @@ pub struct Storage {
         default = "None",
         comment = "Path template for user tables"
     )]
-    pub user_tables_template: String,
+    pub user_tables_template:   String,
     #[column(
         id = 10,
         ordinal = 10,
@@ -122,7 +122,7 @@ pub struct Storage {
         default = "None",
         comment = "Storage creation timestamp"
     )]
-    pub created_at: i64,
+    pub created_at:             i64,
     #[column(
         id = 11,
         ordinal = 11,
@@ -132,7 +132,7 @@ pub struct Storage {
         default = "None",
         comment = "Last update timestamp"
     )]
-    pub updated_at: i64,
+    pub updated_at:             i64,
 }
 
 impl Storage {

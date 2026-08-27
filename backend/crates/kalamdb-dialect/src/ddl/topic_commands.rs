@@ -29,11 +29,11 @@ use crate::{
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTopicStatement {
-    pub topic_name: String,
-    pub if_not_exists: bool,
-    pub partitions: Option<u32>,
+    pub topic_name:          String,
+    pub if_not_exists:       bool,
+    pub partitions:          Option<u32>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
-    pub retention_seconds: Option<Option<i64>>,
+    pub retention_seconds:   Option<Option<i64>>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
     pub retention_max_bytes: Option<Option<i64>>,
 }
@@ -72,12 +72,12 @@ pub struct ClearTopicStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddTopicSourceStatement {
-    pub topic_name: String,
-    pub table_id: TableId,
+    pub topic_name:           String,
+    pub table_id:             TableId,
     pub table_name_qualified: bool,
-    pub operation: TopicOp,
-    pub filter_expr: Option<String>,
-    pub payload_mode: PayloadMode,
+    pub operation:            TopicOp,
+    pub filter_expr:          Option<String>,
+    pub payload_mode:         PayloadMode,
 }
 
 /// ALTER TOPIC SET RETENTION statement
@@ -89,9 +89,9 @@ pub struct AddTopicSourceStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterTopicRetentionStatement {
-    pub topic_name: String,
+    pub topic_name:          String,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
-    pub retention_seconds: Option<Option<i64>>,
+    pub retention_seconds:   Option<Option<i64>>,
     /// Outer `None` means omitted; inner `None` means explicit SQL NULL.
     pub retention_max_bytes: Option<Option<i64>>,
 }
@@ -119,9 +119,9 @@ pub struct ClearTopicRetentionStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsumeStatement {
     pub topic_name: String,
-    pub group_id: Option<String>,
-    pub position: ConsumePosition,
-    pub limit: Option<u64>,
+    pub group_id:   Option<String>,
+    pub position:   ConsumePosition,
+    pub limit:      Option<u64>,
 }
 
 /// Position to start consuming from
@@ -146,10 +146,10 @@ pub enum ConsumePosition {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AckStatement {
-    pub topic_name: String,
-    pub group_id: String,
+    pub topic_name:   String,
+    pub group_id:     String,
     pub partition_id: u32,
-    pub upto_offset: u64,
+    pub upto_offset:  u64,
 }
 
 /// RESET CONSUMER GROUP statement for moving a group cursor.
@@ -163,10 +163,10 @@ pub struct AckStatement {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResetConsumerGroupStatement {
-    pub topic_name: String,
-    pub group_id: String,
+    pub topic_name:   String,
+    pub group_id:     String,
     pub partition_id: u32,
-    pub next_offset: u64,
+    pub next_offset:  u64,
 }
 
 // Implement DdlAst trait for all topic statement types
@@ -808,8 +808,8 @@ mod tests {
     #[test]
     fn test_parse_create_topic_with_retention() {
         let stmt = parse_create_topic(
-            "CREATE TOPIC app.events PARTITIONS 4 WITH \
-             (retention_seconds = 3600, retention_max_bytes = NULL)",
+            "CREATE TOPIC app.events PARTITIONS 4 WITH (retention_seconds = 3600, \
+             retention_max_bytes = NULL)",
         )
         .unwrap();
 
@@ -822,8 +822,8 @@ mod tests {
     #[test]
     fn test_parse_alter_topic_set_retention() {
         let stmt = parse_alter_topic_set_retention(
-            "ALTER TOPIC app.events SET RETENTION WITH \
-             (retention_seconds = NULL, retention_max_bytes = 1048576)",
+            "ALTER TOPIC app.events SET RETENTION WITH (retention_seconds = NULL, \
+             retention_max_bytes = 1048576)",
         )
         .unwrap();
 

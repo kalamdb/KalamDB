@@ -46,10 +46,11 @@ pub use parser::{
     on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
     parse_on_conflict_action_with_params, parse_single_statement,
     query_parser::{QueryParseError, QueryParser, SubscriptionQueryAnalysis},
-    rewrite_context_functions_for_datafusion, single_values_insert_row, sql_value_to_scalar,
-    strip_nested_expr, validate_primary_key_conflict_target, values_insert_view,
-    values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
-    OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction, SqlParser,
+    rewrite_context_functions_for_datafusion, rewrite_explain_for_datafusion,
+    single_values_insert_row, sql_value_to_scalar, strip_nested_expr,
+    validate_primary_key_conflict_target, values_insert_view, values_insert_view_from_statement,
+    values_rows_from_insert, values_to_rows, OnConflictUpdateAssignment, OnConflictUpdateValue,
+    ParsedOnConflictAction, PostgresExplainFormat, RewrittenPostgresExplain, SqlParser,
     ValuesInsertShapeOptions, ValuesInsertView,
 };
 pub use query_features::{

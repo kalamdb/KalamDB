@@ -112,16 +112,9 @@ impl QueryParser for KalamQueryParser {
             .iter()
             .enumerate()
             .map(|(index, column)| {
-                let format = column_format
-                    .map(|fmt| fmt.format_for(index))
-                    .unwrap_or(FieldFormat::Text);
-                FieldInfo::new(
-                    column.name.clone(),
-                    None,
-                    None,
-                    column.datatype.clone(),
-                    format,
-                )
+                let format =
+                    column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
+                FieldInfo::new(column.name.clone(), None, None, column.datatype.clone(), format)
             })
             .collect())
     }

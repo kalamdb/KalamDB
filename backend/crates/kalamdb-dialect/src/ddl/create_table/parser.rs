@@ -206,7 +206,7 @@ impl CreateTableStatement {
 
                                 let policy = if rows > 0 && interval > 0 {
                                     FlushPolicy::Combined {
-                                        row_limit: rows,
+                                        row_limit:        rows,
                                         interval_seconds: interval,
                                     }
                                 } else if rows > 0 {
@@ -657,7 +657,8 @@ CREATE TABLE sales.events (
         assert_eq!(stmt.max_stream_size_bytes, Some(1_048_576));
         assert_eq!(stmt.compression, None);
 
-        let none_sql = "CREATE TABLE sales.raw (id BIGINT PRIMARY KEY) WITH (TYPE='SHARED', COMPRESSION='none')";
+        let none_sql = "CREATE TABLE sales.raw (id BIGINT PRIMARY KEY) WITH (TYPE='SHARED', \
+                        COMPRESSION='none')";
         let stmt = CreateTableStatement::parse(none_sql, DEFAULT_NS).unwrap();
         assert_eq!(stmt.table_type, TableType::Shared);
         assert_eq!(stmt.compression, Some(TableCompression::None));
@@ -665,14 +666,16 @@ CREATE TABLE sales.events (
 
     #[test]
     fn create_table_rejects_unsupported_compression() {
-        let sql = "CREATE TABLE sales.bad_compression (id BIGINT PRIMARY KEY) WITH (TYPE='USER', COMPRESSION='lz4')";
+        let sql = "CREATE TABLE sales.bad_compression (id BIGINT PRIMARY KEY) WITH (TYPE='USER', \
+                   COMPRESSION='lz4')";
         let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
         assert!(err.contains("Supported: none, snappy, zstd"));
     }
 
     #[test]
     fn create_table_rejects_stream_compression() {
-        let sql = "CREATE TABLE sales.bad_stream (id BIGINT PRIMARY KEY) WITH (TYPE='STREAM', TTL_SECONDS=60, COMPRESSION='snappy')";
+        let sql = "CREATE TABLE sales.bad_stream (id BIGINT PRIMARY KEY) WITH (TYPE='STREAM', \
+                   TTL_SECONDS=60, COMPRESSION='snappy')";
         let err = CreateTableStatement::parse(sql, DEFAULT_NS).unwrap_err();
         assert!(err.contains("COMPRESSION is only supported for USER and SHARED tables"));
     }
@@ -680,7 +683,8 @@ CREATE TABLE sales.events (
     #[test]
     fn create_table_rejects_unsupported_type_options() {
         let err = CreateTableStatement::parse(
-            "CREATE TABLE sales.bad_user (id BIGINT PRIMARY KEY) WITH (TYPE='USER', TTL_SECONDS=60)",
+            "CREATE TABLE sales.bad_user (id BIGINT PRIMARY KEY) WITH (TYPE='USER', \
+             TTL_SECONDS=60)",
             DEFAULT_NS,
         )
         .unwrap_err();

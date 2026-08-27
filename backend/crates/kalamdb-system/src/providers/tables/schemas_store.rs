@@ -30,8 +30,8 @@ use crate::SystemTable;
 /// version entries in the same partition.
 #[derive(Clone)]
 pub struct SchemasStore {
-    backend: Arc<dyn StorageBackend>,
-    partition: Partition,
+    backend:            Arc<dyn StorageBackend>,
+    partition:          Partition,
     metadata_partition: Partition,
 }
 
