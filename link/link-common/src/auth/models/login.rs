@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     /// Canonical user identifier for authentication
-    pub user: UserId,
+    pub user:     UserId,
     /// Password for authentication
     pub password: String,
 }
@@ -14,13 +14,13 @@ pub struct LoginRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginUserInfo {
     /// Canonical user identifier
-    pub id: UserId,
+    pub id:         UserId,
     /// User role (user, service, dba, system)
-    pub role: Role,
+    pub role:       Role,
     /// Preferred human-friendly display name
-    pub name: Option<String>,
+    pub name:       Option<String>,
     /// User email (optional)
-    pub email: Option<String>,
+    pub email:      Option<String>,
     /// Account creation time in RFC3339 format
     pub created_at: String,
     /// Account update time in RFC3339 format
@@ -31,16 +31,16 @@ pub struct LoginUserInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginResponse {
     /// Authenticated user information
-    pub user: LoginUserInfo,
+    pub user:               LoginUserInfo,
     /// Whether this account can access the Admin UI
-    pub admin_ui_access: bool,
+    pub admin_ui_access:    bool,
     /// Token expiration time in RFC3339 format
-    pub expires_at: String,
+    pub expires_at:         String,
     /// JWT access token for subsequent API calls
-    pub access_token: String,
+    pub access_token:       String,
     /// Refresh token for obtaining new access tokens (longer-lived)
     #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub refresh_token:      Option<String>,
     /// Refresh token expiration time in RFC3339 format
     #[serde(default)]
     pub refresh_expires_at: Option<String>,

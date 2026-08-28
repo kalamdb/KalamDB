@@ -1,4 +1,5 @@
 # KalamDB generated local state
 /cli/logs/
+/cli/dev.session.json
 /server/
 /.schema-baseline.sql

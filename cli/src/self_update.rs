@@ -1,7 +1,6 @@
-use std::{fs, path::Path};
-
 #[cfg(windows)]
 use std::process::{Command, Stdio};
+use std::{fs, path::Path};
 
 use crate::{release_download::copy_file_with_executable_bit, CLIError, Result};
 
@@ -148,9 +147,10 @@ fn escape_powershell_single_quoted(value: &Path) -> String {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::{build_powershell_helper_script, escape_powershell_single_quoted};
-    #[cfg(windows)]
     use std::path::Path;
+
+    #[cfg(windows)]
+    use super::{build_powershell_helper_script, escape_powershell_single_quoted};
 
     #[cfg(windows)]
     #[test]

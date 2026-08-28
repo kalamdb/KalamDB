@@ -120,7 +120,8 @@ pub trait StorageBackend: Send + Sync {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>) -> Result<KvIterator<'_>>;
+        limit: Option<usize>,
+    ) -> Result<KvIterator<'_>>;
 
     /// Scans keys in reverse order, optionally filtered by prefix and limit.
     ///
@@ -133,7 +134,8 @@ pub trait StorageBackend: Send + Sync {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>) -> Result<KvIterator<'_>> {
+        limit: Option<usize>,
+    ) -> Result<KvIterator<'_>> {
         if matches!(limit, Some(0)) {
             return Ok(Box::new(std::iter::empty()));
         }
@@ -204,7 +206,8 @@ pub trait StorageBackend: Send + Sync {
     /// Returns `Err` for backends that do not support native backup.
     fn backup_to(&self, _backup_dir: &Path) -> Result<()> {
         Err(StorageError::Other(
-            "backup_to is not supported by this storage backend".to_string()))
+            "backup_to is not supported by this storage backend".to_string(),
+        ))
     }
 
     /// Restores the storage engine from a backup directory created by
@@ -212,13 +215,15 @@ pub trait StorageBackend: Send + Sync {
     ///
     /// For RocksDB this calls `BackupEngine::restore_from_latest_backup` into a
     /// per-operation staging directory derived from `restore_token`. **The server
-    /// must be restarted after this call** to reload the restored data into memory.
+    /// must be restarted after this call**; the next open promotes that staging
+    /// directory onto the live RocksDB path and deletes leftover staging copies.
     ///
     /// Returns `Err` for backends that do not support native restore.
     fn restore_from(&self, backup_dir: &Path, restore_token: &str) -> Result<()> {
         let _ = (backup_dir, restore_token);
         Err(StorageError::Other(
-            "restore_from is not supported by this storage backend".to_string()))
+            "restore_from is not supported by this storage backend".to_string(),
+        ))
     }
 
     /// Returns low-cost backend stats exposed through `system.stats`.
@@ -268,7 +273,8 @@ pub trait StorageBackendAsync: Send + Sync {
         partition: &Partition,
         prefix: Option<Vec<u8>>,
         start_key: Option<Vec<u8>>,
-        limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
 
     /// Async version of `compact_partition()` - compacts a partition to clean up tombstones.
     async fn compact_partition_async(&self, partition: &Partition) -> Result<()>;
@@ -317,7 +323,8 @@ impl StorageBackendAsync for std::sync::Arc<dyn StorageBackend> {
         partition: &Partition,
         prefix: Option<Vec<u8>>,
         start_key: Option<Vec<u8>>,
-        limit: Option<usize>) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        limit: Option<usize>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let backend = self.clone();
         let partition = partition.clone();
         tokio::task::spawn_blocking(move || {

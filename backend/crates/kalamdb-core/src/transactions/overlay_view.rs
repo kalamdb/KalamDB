@@ -14,7 +14,7 @@ use super::{StagedMutation, TransactionCoordinator};
 /// Lightweight query-time overlay handle backed by the live transaction coordinator.
 #[derive(Debug)]
 pub struct CoordinatorOverlayView {
-    coordinator: Arc<TransactionCoordinator>,
+    coordinator:    Arc<TransactionCoordinator>,
     transaction_id: TransactionId,
 }
 

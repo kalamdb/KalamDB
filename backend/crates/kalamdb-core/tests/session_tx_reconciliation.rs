@@ -6,7 +6,6 @@ use kalamdb_commons::{
     Role,
 };
 use kalamdb_core::transactions::ExecutionOwnerKey;
-
 use support::create_cluster_app_context;
 
 #[tokio::test]

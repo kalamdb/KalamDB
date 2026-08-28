@@ -40,13 +40,13 @@ impl ApplyResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateMachineSnapshot {
     /// The group this snapshot belongs to
-    pub group_id: GroupId,
+    pub group_id:           GroupId,
     /// Last applied log index
     pub last_applied_index: u64,
     /// Last applied log term
-    pub last_applied_term: u64,
+    pub last_applied_term:  u64,
     /// Serialized state data
-    pub data: Vec<u8>,
+    pub data:               Vec<u8>,
 }
 
 impl StateMachineSnapshot {

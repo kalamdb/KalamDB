@@ -21,7 +21,7 @@ const ROW_RESULT_PREFIX_TAIL: &str = ",\"rows\":[";
 /// Cached API schema projection for a given Arrow schema shape.
 #[derive(Clone)]
 pub struct CachedSqlSchema {
-    pub fields: Arc<Vec<SchemaField>>,
+    pub fields:            Arc<Vec<SchemaField>>,
     /// Prebuilt streaming/inline JSON prefix through `"rows":[`.
     pub row_result_prefix: Bytes,
 }
@@ -67,7 +67,7 @@ pub fn cached_sql_schema(schema: &SchemaRef) -> Arc<CachedSqlSchema> {
     let fields = schema_fields_from_arrow_schema(schema);
     let schema_json = serde_json::to_string(&fields).unwrap_or_else(|_| "[]".to_string());
     let entry = Arc::new(CachedSqlSchema {
-        fields: Arc::new(fields),
+        fields:            Arc::new(fields),
         row_result_prefix: row_result_prefix_bytes(&schema_json),
     });
     SCHEMA_RESPONSE_CACHE.insert(key, Arc::clone(&entry));

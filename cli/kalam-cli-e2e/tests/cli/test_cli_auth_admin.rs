@@ -13,8 +13,7 @@
 //! ```
 // TODO: Remove this since we have most of the tests covered by the integration tests
 #![allow(unused_imports)]
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 use assert_cmd::Command;
 use tokio::sync::Mutex as TokioMutex;

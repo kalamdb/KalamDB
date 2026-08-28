@@ -30,9 +30,9 @@ pub enum ProgressTaskStatus {
 
 #[derive(Debug, Clone)]
 pub struct ProgressTask {
-    pub id: String,
+    pub id:      String,
     pub message: String,
-    pub status: ProgressTaskStatus,
+    pub status:  ProgressTaskStatus,
     pub details: Vec<String>,
 }
 
@@ -49,22 +49,22 @@ impl fmt::Debug for ProgressTasks {
 
 struct ProgressTasksState {
     tasks: Vec<ProgressTask>,
-    bars: Vec<ProgressTaskBars>,
+    bars:  Vec<ProgressTaskBars>,
     multi: MultiProgress,
     color: bool,
 }
 
 struct ProgressTaskBars {
-    id: String,
-    bar: ProgressBar,
+    id:      String,
+    bar:     ProgressBar,
     details: VecDeque<ProgressBar>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SelectOption<'a> {
-    pub label: &'a str,
+    pub label:       &'a str,
     pub description: Option<&'a str>,
-    pub disabled: bool,
+    pub disabled:    bool,
 }
 
 impl<'a> SelectOption<'a> {
@@ -750,9 +750,9 @@ mod tests {
     #[test]
     fn render_progress_task_includes_indented_details() {
         let task = ProgressTask {
-            id: "server".into(),
+            id:      "server".into(),
             message: "Starting local KalamDB server...".into(),
-            status: ProgressTaskStatus::Running,
+            status:  ProgressTaskStatus::Running,
             details: vec!["listening on 127.0.0.1:2900".into()],
         };
 

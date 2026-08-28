@@ -1,11 +1,14 @@
-use datafusion::arrow::array::BooleanArray;
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::Result as DataFusionResult;
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{array::BooleanArray, datatypes::DataType},
+    common::Result as DataFusionResult,
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::Peek;
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath},
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonGetBool,
@@ -17,14 +20,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGetBool {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGetBool {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get_bool".to_string()],
+            aliases:   ["json_get_bool".to_string()],
         }
     }
 }
@@ -76,7 +79,7 @@ fn jiter_json_get_bool(json_data: Option<&str>, path: &[JsonPath]) -> Result<boo
             Peek::String => {
                 let s = jiter.known_str()?;
                 s.parse::<bool>().map_err(|_| GetError)
-            }
+            },
             _ => get_err!(),
         }
     } else {

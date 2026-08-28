@@ -26,12 +26,12 @@ static DEVICE_BROKER_STATE: Lazy<RwLock<DeviceBrokerState>> =
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OidcDeviceStartResult {
-    pub device_session_id: String,
-    pub verification_uri: String,
+    pub device_session_id:         String,
+    pub verification_uri:          String,
     pub verification_uri_complete: Option<String>,
-    pub user_code: String,
-    pub expires_in_seconds: u64,
-    pub interval_seconds: u64,
+    pub user_code:                 String,
+    pub expires_in_seconds:        u64,
+    pub interval_seconds:          u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,12 +75,12 @@ pub async fn start_oidc_device_flow(
     let expires_in = details.expires_in();
     let interval = details.interval();
     let session = DeviceBrokerSession {
-        session_id: session_id.clone(),
-        expires_at: Instant::now() + expires_in,
+        session_id:    session_id.clone(),
+        expires_at:    Instant::now() + expires_in,
         poll_interval: interval,
-        status: DeviceBrokerStatus::Pending,
-        token_result: None,
-        message: None,
+        status:        DeviceBrokerStatus::Pending,
+        token_result:  None,
+        message:       None,
     };
 
     {
@@ -95,14 +95,14 @@ pub async fn start_oidc_device_flow(
     tokio::spawn(poll_provider_device_flow(session_id.clone(), handle, details.clone()));
 
     Ok(OidcDeviceStartResult {
-        device_session_id: session_id,
-        verification_uri: details.verification_uri().url().as_str().to_string(),
+        device_session_id:         session_id,
+        verification_uri:          details.verification_uri().url().as_str().to_string(),
         verification_uri_complete: details
             .verification_uri_complete()
             .map(|url| url.secret().to_string()),
-        user_code: details.user_code().secret().to_string(),
-        expires_in_seconds: expires_in.as_secs(),
-        interval_seconds: interval.as_secs(),
+        user_code:                 details.user_code().secret().to_string(),
+        expires_in_seconds:        expires_in.as_secs(),
+        interval_seconds:          interval.as_secs(),
     })
 }
 

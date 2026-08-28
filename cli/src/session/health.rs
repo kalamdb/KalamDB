@@ -127,8 +127,8 @@ impl CLISession {
         let result = self
             .client
             .execute_query(
-                "SELECT cluster_id, node_id, role, status, api_addr, is_self, is_leader, \
-                 version FROM system.cluster ORDER BY is_leader DESC, node_id ASC",
+                "SELECT cluster_id, node_id, role, status, api_addr, is_self, is_leader, version \
+                 FROM system.cluster ORDER BY is_leader DESC, node_id ASC",
                 None,
                 None,
                 None,
@@ -252,7 +252,8 @@ impl CLISession {
                     println!("  {}", "No authenticated SQL fallback was used.".dimmed());
                     println!(
                         "  {}",
-                        "Run SELECT * FROM system.cluster manually if you want authenticated cluster state."
+                        "Run SELECT * FROM system.cluster manually if you want authenticated \
+                         cluster state."
                             .dimmed()
                     );
                     return Ok(());

@@ -7,6 +7,4 @@ pub use init::{
     is_enabled, maybe_bootstrap_flutter_project, resolve_starter, DEFAULT_DEV_COMMAND,
     SCHEMA_TARGET_OUTPUT,
 };
-pub use templates::{
-    resolve as resolve_dart_template, DEFAULT_TEMPLATE as DEFAULT_DART_TEMPLATE,
-};
+pub use templates::{resolve as resolve_dart_template, DEFAULT_TEMPLATE as DEFAULT_DART_TEMPLATE};

@@ -30,18 +30,18 @@ pub enum ResolutionSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedEnvironment {
-    pub name: String,
-    pub url: String,
-    pub namespace: NamespaceId,
-    pub env_source: ResolutionSource,
-    pub url_source: ResolutionSource,
+    pub name:             String,
+    pub url:              String,
+    pub namespace:        NamespaceId,
+    pub env_source:       ResolutionSource,
+    pub url_source:       ResolutionSource,
     pub namespace_source: ResolutionSource,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct EnvironmentOverrides<'a> {
-    pub env: Option<&'a str>,
-    pub url: Option<&'a str>,
+    pub env:       Option<&'a str>,
+    pub url:       Option<&'a str>,
     pub namespace: Option<&'a str>,
 }
 
@@ -220,14 +220,14 @@ fn parse_dotenv(contents: &str) -> HashMap<String, String> {
 mod tests {
     use std::fs;
 
-    use super::*;
     use kalamdb_commons::NamespaceId;
     use tempfile::TempDir;
 
+    use super::*;
     use crate::workflow::test_support::multi_env_resolve_test_config;
 
     struct EnvVarGuard {
-        key: &'static str,
+        key:      &'static str,
         previous: Option<String>,
     }
 
@@ -254,8 +254,8 @@ mod tests {
         let resolved = resolve_environment(
             &config,
             &EnvironmentOverrides {
-                env: Some("prod"),
-                url: Some("https://override.example.com"),
+                env:       Some("prod"),
+                url:       Some("https://override.example.com"),
                 namespace: Some("other"),
             },
         )
@@ -338,12 +338,14 @@ output = "src/generated/kalam.ts"
         let temp = TempDir::new().unwrap();
         fs::write(
             temp.path().join(".env"),
-            "# comment\n\
-             export KALAM_PASSWORD=kalamdb123\n\
-             KALAM_PASSWORD=ignored-second\n\
-             KALAM_USER=root\n\
-             EMPTY=\n\
-             QUOTED=\"quoted-value\"\n",
+            concat!(
+                "# comment\n",
+                "export KALAM_PASSWORD=kalamdb123\n",
+                "KALAM_PASSWORD=ignored-second\n",
+                "KALAM_USER=root\n",
+                "EMPTY=\n",
+                "QUOTED=\"quoted-value\"\n",
+            ),
         )
         .unwrap();
 

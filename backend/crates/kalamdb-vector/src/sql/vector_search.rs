@@ -43,21 +43,21 @@ const CANDIDATE_MULTIPLIER: usize = 4;
 
 #[derive(Debug, Clone)]
 struct VectorSearchArgs {
-    table_id: TableId,
-    column_name: String,
+    table_id:     TableId,
+    column_name:  String,
     query_vector: Vec<f32>,
-    top_k: usize,
+    top_k:        usize,
 }
 
 #[derive(Clone)]
 pub struct VectorSearchScope {
-    pub table_type: TableType,
-    pub manifest_user: Option<UserId>,
-    pub metric: VectorMetric,
+    pub table_type:       TableType,
+    pub manifest_user:    Option<UserId>,
+    pub metric:           VectorMetric,
     pub last_applied_seq: SeqId,
-    pub snapshot_path: Option<String>,
-    pub storage_cached: Arc<StorageCached>,
-    pub backend: Arc<dyn StorageBackend>,
+    pub snapshot_path:    Option<String>,
+    pub storage_cached:   Arc<StorageCached>,
+    pub backend:          Arc<dyn StorageBackend>,
 }
 
 pub trait VectorSearchRuntime: Send + Sync + Debug {
@@ -115,20 +115,20 @@ impl TableFunctionImpl for VectorSearchTableFunction {
 
 #[derive(Debug, Clone)]
 struct VectorSearchTableProvider {
-    runtime: Arc<dyn VectorSearchRuntime>,
-    args: VectorSearchArgs,
+    runtime:       Arc<dyn VectorSearchRuntime>,
+    args:          VectorSearchArgs,
     output_schema: SchemaRef,
 }
 
 struct VectorSearchScanSource {
-    runtime: Arc<dyn VectorSearchRuntime>,
-    args: VectorSearchArgs,
-    session_user: UserId,
+    runtime:         Arc<dyn VectorSearchRuntime>,
+    args:            VectorSearchArgs,
+    session_user:    UserId,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    projection: Option<Vec<usize>>,
-    limit: Option<usize>,
-    base_schema: SchemaRef,
-    output_schema: SchemaRef,
+    projection:      Option<Vec<usize>>,
+    limit:           Option<usize>,
+    base_schema:     SchemaRef,
+    output_schema:   SchemaRef,
 }
 
 impl std::fmt::Debug for VectorSearchScanSource {

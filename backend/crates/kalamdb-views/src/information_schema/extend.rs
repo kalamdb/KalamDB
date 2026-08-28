@@ -18,7 +18,8 @@ use futures_util::StreamExt;
 
 pub(crate) fn load_inner_table(
     catalog_list: Arc<dyn CatalogProviderList>,
-    table_name: &str) -> Arc<dyn TableProvider> {
+    table_name: &str,
+) -> Arc<dyn TableProvider> {
     let table_name = table_name.to_string();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -43,7 +44,8 @@ pub(crate) async fn collect_inner_batch(
     inner: &Arc<dyn TableProvider>,
     state: &SessionState,
     filters: &[Expr],
-    limit: Option<usize>) -> DataFusionResult<RecordBatch> {
+    limit: Option<usize>,
+) -> DataFusionResult<RecordBatch> {
     let plan = inner.scan(state, None, filters, limit).await?;
     let task_ctx = state.task_ctx();
     let mut stream = plan.execute(0, task_ctx)?;
@@ -66,7 +68,8 @@ pub(crate) async fn collect_inner_batch(
 pub(crate) fn append_nullable_uint64_column(
     batch: &RecordBatch,
     output_schema: &SchemaRef,
-    _field_name: &str) -> DataFusionResult<RecordBatch> {
+    _field_name: &str,
+) -> DataFusionResult<RecordBatch> {
     let row_count = batch.num_rows();
     let nulls = UInt64Array::new_null(row_count);
     let mut columns = batch.columns().to_vec();

@@ -142,9 +142,9 @@ impl TypedStatementHandler<ShowExportStatement> for ShowExportHandler {
         if visible_jobs.is_empty() {
             let batch = RecordBatch::new_empty(schema.clone());
             return Ok(ExecutionResult::Rows {
-                batches: vec![batch],
+                batches:   vec![batch],
                 row_count: 0,
-                schema: Some(schema),
+                schema:    Some(schema),
             });
         }
 
@@ -275,29 +275,29 @@ mod tests {
             .system_tables()
             .jobs()
             .create_job(Job {
-                job_id: JobId::new("UE-test-show-export"),
-                job_type: JobType::UserExport,
-                status: JobStatus::Completed,
-                leader_status: None,
-                parameters: Some(json!({
+                job_id:          JobId::new("UE-test-show-export"),
+                job_type:        JobType::UserExport,
+                status:          JobStatus::Completed,
+                leader_status:   None,
+                parameters:      Some(json!({
                     "user_id": "alice",
                     "export_id": "export-alice-1"
                 })),
-                message: Some("done".to_string()),
+                message:         Some("done".to_string()),
                 exception_trace: None,
                 idempotency_key: None,
-                retry_count: 0,
-                max_retries: 3,
-                memory_used: None,
-                cpu_used: None,
-                created_at: now_ms,
-                updated_at: now_ms,
-                started_at: Some(now_ms),
-                finished_at: Some(now_ms),
-                node_id: NodeId::from(1u64),
-                leader_node_id: None,
-                queue: None,
-                priority: None,
+                retry_count:     0,
+                max_retries:     3,
+                memory_used:     None,
+                cpu_used:        None,
+                created_at:      now_ms,
+                updated_at:      now_ms,
+                started_at:      Some(now_ms),
+                finished_at:     Some(now_ms),
+                node_id:         NodeId::from(1u64),
+                leader_node_id:  None,
+                queue:           None,
+                priority:        None,
             })
             .expect("insert export job");
 
@@ -350,28 +350,28 @@ mod tests {
             .system_tables()
             .jobs()
             .create_job(Job {
-                job_id: JobId::new("UE-test-show-export-stringified"),
-                job_type: JobType::UserExport,
-                status: JobStatus::Completed,
-                leader_status: None,
-                parameters: Some(serde_json::Value::String(
+                job_id:          JobId::new("UE-test-show-export-stringified"),
+                job_type:        JobType::UserExport,
+                status:          JobStatus::Completed,
+                leader_status:   None,
+                parameters:      Some(serde_json::Value::String(
                     r#"{"user_id":"alice","export_id":"export-alice-2"}"#.to_string(),
                 )),
-                message: Some("done".to_string()),
+                message:         Some("done".to_string()),
                 exception_trace: None,
                 idempotency_key: None,
-                retry_count: 0,
-                max_retries: 3,
-                memory_used: None,
-                cpu_used: None,
-                created_at: now_ms,
-                updated_at: now_ms,
-                started_at: Some(now_ms),
-                finished_at: Some(now_ms),
-                node_id: NodeId::from(1u64),
-                leader_node_id: None,
-                queue: None,
-                priority: None,
+                retry_count:     0,
+                max_retries:     3,
+                memory_used:     None,
+                cpu_used:        None,
+                created_at:      now_ms,
+                updated_at:      now_ms,
+                started_at:      Some(now_ms),
+                finished_at:     Some(now_ms),
+                node_id:         NodeId::from(1u64),
+                leader_node_id:  None,
+                queue:           None,
+                priority:        None,
             })
             .expect("insert export job");
 

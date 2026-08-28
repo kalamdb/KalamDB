@@ -10,7 +10,7 @@ use crate::query_context::TransactionOverlayView;
 /// Scope + PK identity for overlay and write-set maps without `format!` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedPkKey {
-    pub user_id: Option<UserId>,
+    pub user_id:     Option<UserId>,
     pub primary_key: String,
 }
 
@@ -18,7 +18,7 @@ impl ScopedPkKey {
     #[inline]
     pub fn new(user_id: Option<&UserId>, primary_key: impl Into<String>) -> Self {
         Self {
-            user_id: user_id.cloned(),
+            user_id:     user_id.cloned(),
             primary_key: primary_key.into(),
         }
     }
@@ -29,13 +29,13 @@ impl ScopedPkKey {
 pub struct TransactionOverlayEntry {
     pub transaction_id: TransactionId,
     pub mutation_order: u64,
-    pub table_id: TableId,
-    pub table_type: TableType,
-    pub user_id: Option<UserId>,
+    pub table_id:       TableId,
+    pub table_type:     TableType,
+    pub user_id:        Option<UserId>,
     pub operation_kind: OperationKind,
-    pub primary_key: String,
-    pub payload: Row,
-    pub tombstone: bool,
+    pub primary_key:    String,
+    pub payload:        Row,
+    pub tombstone:      bool,
 }
 
 impl TransactionOverlayEntry {
@@ -48,11 +48,11 @@ impl TransactionOverlayEntry {
 /// Query-time overlay for transaction-local read visibility.
 #[derive(Debug, Clone)]
 pub struct TransactionOverlay {
-    pub transaction_id: TransactionId,
+    pub transaction_id:   TransactionId,
     pub entries_by_table: HashMap<TableId, HashMap<ScopedPkKey, TransactionOverlayEntry>>,
-    pub inserted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub deleted_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
-    pub updated_keys: HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub inserted_keys:    HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub deleted_keys:     HashMap<TableId, HashSet<ScopedPkKey>>,
+    pub updated_keys:     HashMap<TableId, HashSet<ScopedPkKey>>,
 }
 
 impl TransactionOverlay {
@@ -174,10 +174,8 @@ impl TransactionOverlay {
             return next;
         }
 
-        let Some(current) = self
-            .entries_by_table
-            .get(table_id)
-            .and_then(|entries| entries.get(entry_key))
+        let Some(current) =
+            self.entries_by_table.get(table_id).and_then(|entries| entries.get(entry_key))
         else {
             return next;
         };
@@ -237,17 +235,17 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id: table_id.clone(),
-            table_type: TableType::Shared,
-            user_id: None,
+            table_id:       table_id.clone(),
+            table_type:     TableType::Shared,
+            user_id:        None,
             operation_kind: OperationKind::Insert,
-            primary_key: "1".to_string(),
-            payload: row(&[
+            primary_key:    "1".to_string(),
+            payload:        row(&[
                 ("id", ScalarValue::Int64(Some(1))),
                 ("name", ScalarValue::Utf8(Some("before".to_string()))),
                 ("color", ScalarValue::Utf8(Some("red".to_string()))),
             ]),
-            tombstone: false,
+            tombstone:      false,
         });
 
         overlay.apply_entry(TransactionOverlayEntry {
@@ -286,13 +284,13 @@ mod tests {
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
             mutation_order: 0,
-            table_id: table_id.clone(),
-            table_type: TableType::User,
-            user_id: Some(first_user.clone()),
+            table_id:       table_id.clone(),
+            table_type:     TableType::User,
+            user_id:        Some(first_user.clone()),
             operation_kind: OperationKind::Insert,
-            primary_key: "1".to_string(),
-            payload: row(&[("name", ScalarValue::Utf8(Some("alice".to_string())))]),
-            tombstone: false,
+            primary_key:    "1".to_string(),
+            payload:        row(&[("name", ScalarValue::Utf8(Some("alice".to_string())))]),
+            tombstone:      false,
         });
 
         overlay.apply_entry(TransactionOverlayEntry {

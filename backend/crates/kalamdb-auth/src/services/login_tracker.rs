@@ -17,19 +17,19 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct LoginTrackingConfig {
     /// Maximum failed attempts before lockout
-    pub max_failed_attempts: i32,
+    pub max_failed_attempts:      i32,
     /// Lockout duration in minutes
     pub lockout_duration_minutes: i64,
     /// Whether to enable login tracking
-    pub enabled: bool,
+    pub enabled:                  bool,
 }
 
 impl Default for LoginTrackingConfig {
     fn default() -> Self {
         Self {
-            max_failed_attempts: DEFAULT_MAX_FAILED_ATTEMPTS,
+            max_failed_attempts:      DEFAULT_MAX_FAILED_ATTEMPTS,
             lockout_duration_minutes: DEFAULT_LOCKOUT_DURATION_MINUTES,
-            enabled: true,
+            enabled:                  true,
         }
     }
 }
@@ -153,24 +153,24 @@ mod tests {
 
         let tracker = LoginTracker::new();
         let user = User {
-            user_id: UserId::new("u_123"),
-            password_hash: "$2b$12$hash".to_string(),
-            role: Role::User,
-            name: None,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
+            user_id:               UserId::new("u_123"),
+            password_hash:         "$2b$12$hash".to_string(),
+            role:                  Role::User,
+            name:                  None,
+            email:                 None,
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id:            None,
             failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: 0,
-            updated_at: 0,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          None,
+            last_login_at:         None,
+            created_at:            0,
+            updated_at:            0,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         };
 
         assert!(tracker.check_lockout(&user).is_ok());
@@ -182,24 +182,24 @@ mod tests {
 
         let tracker = LoginTracker::new();
         let user = User {
-            user_id: UserId::new("u_123"),
-            password_hash: "$2b$12$hash".to_string(),
-            role: Role::User,
-            name: None,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
+            user_id:               UserId::new("u_123"),
+            password_hash:         "$2b$12$hash".to_string(),
+            role:                  Role::User,
+            name:                  None,
+            email:                 None,
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id:            None,
             failed_login_attempts: 5,
-            locked_until: Some(chrono::Utc::now().timestamp_millis() + 900_000),
-            last_login_at: None,
-            created_at: 0,
-            updated_at: 0,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          Some(chrono::Utc::now().timestamp_millis() + 900_000),
+            last_login_at:         None,
+            created_at:            0,
+            updated_at:            0,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         };
 
         let result = tracker.check_lockout(&user);
@@ -218,24 +218,24 @@ mod tests {
         let tracker = LoginTracker::with_config(config);
 
         let user = User {
-            user_id: UserId::new("u_123"),
-            password_hash: "$2b$12$hash".to_string(),
-            role: Role::User,
-            name: None,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
+            user_id:               UserId::new("u_123"),
+            password_hash:         "$2b$12$hash".to_string(),
+            role:                  Role::User,
+            name:                  None,
+            email:                 None,
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id:            None,
             failed_login_attempts: 5,
-            locked_until: Some(chrono::Utc::now().timestamp_millis() + 900_000),
-            last_login_at: None,
-            created_at: 0,
-            updated_at: 0,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          Some(chrono::Utc::now().timestamp_millis() + 900_000),
+            last_login_at:         None,
+            created_at:            0,
+            updated_at:            0,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         };
 
         // Should pass even though user is "locked" because tracking is disabled

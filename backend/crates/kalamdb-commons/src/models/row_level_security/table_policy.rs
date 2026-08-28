@@ -1,23 +1,22 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::TableId;
-
 use super::{PolicyCommand, PolicyId, PolicyProgram, PolicyTarget};
+use crate::TableId;
 
 /// Persisted table-policy definition and compiled authorization metadata.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TablePolicy {
-    pub policy_id: PolicyId,
-    pub table_id: TableId,
-    pub policy_name: String,
-    pub command: PolicyCommand,
-    pub targets: Vec<PolicyTarget>,
-    pub using_sql: Option<String>,
-    pub with_check_sql: Option<String>,
-    pub using_program: Option<PolicyProgram>,
-    pub check_program: Option<PolicyProgram>,
+    pub policy_id:         PolicyId,
+    pub table_id:          TableId,
+    pub policy_name:       String,
+    pub command:           PolicyCommand,
+    pub targets:           Vec<PolicyTarget>,
+    pub using_sql:         Option<String>,
+    pub with_check_sql:    Option<String>,
+    pub using_program:     Option<PolicyProgram>,
+    pub check_program:     Option<PolicyProgram>,
     pub policy_generation: u64,
     pub schema_generation: u64,
 }
@@ -54,7 +53,10 @@ impl TablePolicy {
 
     pub fn using_program_for(&self, command: PolicyCommand) -> Option<&PolicyProgram> {
         if self.command.applies_to(command)
-            && matches!(command, PolicyCommand::Select | PolicyCommand::Update | PolicyCommand::Delete)
+            && matches!(
+                command,
+                PolicyCommand::Select | PolicyCommand::Update | PolicyCommand::Delete
+            )
         {
             self.using_program.as_ref()
         } else {

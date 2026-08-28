@@ -6,10 +6,9 @@
 
 use std::ops::Deref;
 
+pub use kalamdb_commons::FileRef;
 use kalamdb_commons::TableId;
 use serde::{Deserialize, Serialize};
-
-pub use kalamdb_commons::FileRef;
 
 /// Table context needed to locate a FILE column value for downloads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,7 +36,7 @@ impl FileRefContext {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundFileRef {
     file_ref: FileRef,
-    context: FileRefContext,
+    context:  FileRefContext,
 }
 
 impl BoundFileRef {
@@ -132,13 +131,13 @@ mod tests {
     #[test]
     fn download_url_generation() {
         let fr = FileRef {
-            id: "123".into(),
-            sub: "f0001".into(),
-            name: "t.png".into(),
-            size: 0,
-            mime: "image/png".into(),
+            id:     "123".into(),
+            sub:    "f0001".into(),
+            name:   "t.png".into(),
+            size:   0,
+            mime:   "image/png".into(),
             sha256: String::new(),
-            shard: None,
+            shard:  None,
         };
         assert_eq!(
             fr.download_url("http://localhost:2900", "default", "users"),
@@ -150,13 +149,13 @@ mod tests {
     #[test]
     fn bound_file_ref_uses_table_context_for_urls() {
         let fr = FileRef {
-            id: "123".into(),
-            sub: "f0001".into(),
-            name: "t.png".into(),
-            size: 0,
-            mime: "image/png".into(),
+            id:     "123".into(),
+            sub:    "f0001".into(),
+            name:   "t.png".into(),
+            size:   0,
+            mime:   "image/png".into(),
             sha256: String::new(),
-            shard: None,
+            shard:  None,
         };
         let ctx = FileRefContext::from_strings("default", "users");
         let bound = BoundFileRef::new(fr, ctx);
@@ -191,13 +190,13 @@ mod tests {
     #[test]
     fn stored_name_and_path() {
         let fr = FileRef {
-            id: "42".into(),
-            sub: "f0001".into(),
-            name: "My Document.pdf".into(),
-            size: 100,
-            mime: "application/pdf".into(),
+            id:     "42".into(),
+            sub:    "f0001".into(),
+            name:   "My Document.pdf".into(),
+            size:   100,
+            mime:   "application/pdf".into(),
             sha256: String::new(),
-            shard: None,
+            shard:  None,
         };
         assert_eq!(fr.stored_name(), "42-my-document.pdf");
         assert_eq!(fr.relative_path(), "f0001/42-my-document.pdf");
@@ -206,13 +205,13 @@ mod tests {
     #[test]
     fn stored_name_with_shard() {
         let fr = FileRef {
-            id: "42".into(),
-            sub: "f0001".into(),
-            name: "test.png".into(),
-            size: 100,
-            mime: "image/png".into(),
+            id:     "42".into(),
+            sub:    "f0001".into(),
+            name:   "test.png".into(),
+            size:   100,
+            mime:   "image/png".into(),
             sha256: String::new(),
-            shard: Some(3),
+            shard:  Some(3),
         };
         assert_eq!(fr.relative_path(), "shard-3/f0001/42-test.png");
     }

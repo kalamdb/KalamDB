@@ -63,25 +63,25 @@ pub struct FileCredentialStore {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct StoredCredential {
     /// JWT access token
-    jwt_token: String,
+    jwt_token:          String,
     /// User associated with this token (for display)
     #[serde(skip_serializing_if = "Option::is_none")]
-    user: Option<UserId>,
+    user:               Option<UserId>,
     /// Preferred human-friendly account name
     #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
+    name:               Option<String>,
     /// Email associated with this token (for display)
     #[serde(skip_serializing_if = "Option::is_none")]
-    email: Option<String>,
+    email:              Option<String>,
     /// Token expiration time in RFC3339 format
     #[serde(skip_serializing_if = "Option::is_none")]
-    expires_at: Option<String>,
+    expires_at:         Option<String>,
     /// Server URL
     #[serde(skip_serializing_if = "Option::is_none")]
-    server_url: Option<String>,
+    server_url:         Option<String>,
     /// Refresh token for obtaining new access tokens
     #[serde(skip_serializing_if = "Option::is_none")]
-    refresh_token: Option<String>,
+    refresh_token:      Option<String>,
     /// Refresh token expiration time in RFC3339 format
     #[serde(skip_serializing_if = "Option::is_none")]
     refresh_expires_at: Option<String>,
@@ -215,8 +215,8 @@ fn map_credentials_read_error(
 ) -> impl FnOnce(io::Error) -> kalam_client::KalamLinkError + '_ {
     move |error| {
         let msg = format!(
-            "\n╭─ Cannot Read Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: \
-             {}\n│\n╰─ How to Fix:\n\nOption 1: Check file permissions\nOption 2: Delete and \
+            "\n╭─ Cannot Read Credentials File\n│\n│  📁 Location: {}\n│  ⚠️  Problem: {}\n│\n╰─ \
+             How to Fix:\n\nOption 1: Check file permissions\nOption 2: Delete and \
              re-authenticate\n───────────────────────────────────\ndel \"{}\"\nkalam login\n",
             path.display(),
             error,
@@ -236,14 +236,14 @@ impl CredentialStore for FileCredentialStore {
     fn get_credentials(&self, instance: &str) -> Result<Option<Credentials>> {
         if let Some(stored) = self.cache.get(instance) {
             Ok(Some(Credentials {
-                instance: instance.to_string(),
-                jwt_token: stored.jwt_token.clone(),
-                user: stored.user.clone(),
-                name: stored.name.clone(),
-                email: stored.email.clone(),
-                expires_at: stored.expires_at.clone(),
-                server_url: stored.server_url.clone(),
-                refresh_token: stored.refresh_token.clone(),
+                instance:           instance.to_string(),
+                jwt_token:          stored.jwt_token.clone(),
+                user:               stored.user.clone(),
+                name:               stored.name.clone(),
+                email:              stored.email.clone(),
+                expires_at:         stored.expires_at.clone(),
+                server_url:         stored.server_url.clone(),
+                refresh_token:      stored.refresh_token.clone(),
                 refresh_expires_at: stored.refresh_expires_at.clone(),
             }))
         } else {
@@ -253,13 +253,13 @@ impl CredentialStore for FileCredentialStore {
 
     fn set_credentials(&mut self, credentials: &Credentials) -> Result<()> {
         let stored = StoredCredential {
-            jwt_token: credentials.jwt_token.clone(),
-            user: credentials.user.clone(),
-            name: credentials.name.clone(),
-            email: credentials.email.clone(),
-            expires_at: credentials.expires_at.clone(),
-            server_url: credentials.server_url.clone(),
-            refresh_token: credentials.refresh_token.clone(),
+            jwt_token:          credentials.jwt_token.clone(),
+            user:               credentials.user.clone(),
+            name:               credentials.name.clone(),
+            email:              credentials.email.clone(),
+            expires_at:         credentials.expires_at.clone(),
+            server_url:         credentials.server_url.clone(),
+            refresh_token:      credentials.refresh_token.clone(),
             refresh_expires_at: credentials.refresh_expires_at.clone(),
         };
 

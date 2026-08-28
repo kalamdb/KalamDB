@@ -1,7 +1,8 @@
 use std::fs;
 
-use crate::common::*;
 use tempfile::TempDir;
+
+use crate::common::*;
 
 fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
     let project_dir = temp.path().join("status-app");

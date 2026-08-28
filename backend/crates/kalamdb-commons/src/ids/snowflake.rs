@@ -62,9 +62,9 @@ impl SnowflakeGenerator {
             worker_bits: (worker_id as u64) << Self::SEQUENCE_BITS,
             epoch,
             state: Mutex::new(GeneratorState {
-                last_timestamp: 0,
+                last_timestamp:          0,
                 last_observed_timestamp: 0,
-                sequence: 0,
+                sequence:                0,
             }),
         }
     }

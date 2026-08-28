@@ -41,7 +41,7 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
     }
     session
         .close(Some(CloseReason {
-            code: CloseCode::Policy,
+            code:        CloseCode::Policy,
             description: Some("Authentication failed".into()),
         }))
         .await

@@ -13,44 +13,44 @@ use crate::{
 
 /// Domain-typed scan request.
 pub struct ScanRequest {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     pub session_id: Option<String>,
-    pub columns: Vec<String>,
-    pub limit: Option<usize>,
-    pub user_id: Option<UserId>,
+    pub columns:    Vec<String>,
+    pub limit:      Option<usize>,
+    pub user_id:    Option<UserId>,
     /// Equality filters pushed down from the FDW WHERE clause.
     /// Each pair is `(column_name, string_value)`. The server converts
     /// string values to the correct Arrow type using the table schema.
-    pub filters: Vec<(String, String)>,
+    pub filters:    Vec<(String, String)>,
 }
 
 /// Domain-typed insert request.
 pub struct InsertRequest {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     pub session_id: Option<String>,
-    pub user_id: Option<UserId>,
-    pub rows: Vec<Row>,
+    pub user_id:    Option<UserId>,
+    pub rows:       Vec<Row>,
 }
 
 /// Domain-typed update request.
 pub struct UpdateRequest {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     pub session_id: Option<String>,
-    pub user_id: Option<UserId>,
-    pub updates: Vec<Row>,
-    pub pk_value: String,
+    pub user_id:    Option<UserId>,
+    pub updates:    Vec<Row>,
+    pub pk_value:   String,
 }
 
 /// Domain-typed delete request.
 pub struct DeleteRequest {
-    pub table_id: TableId,
+    pub table_id:   TableId,
     pub table_type: TableType,
     pub session_id: Option<String>,
-    pub user_id: Option<UserId>,
-    pub pk_value: String,
+    pub user_id:    Option<UserId>,
+    pub pk_value:   String,
 }
 
 /// Domain-typed scan result.

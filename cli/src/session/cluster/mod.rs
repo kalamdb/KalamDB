@@ -50,45 +50,45 @@ ORDER BY group_id ASC
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterListNode {
-    cluster_id: String,
-    node_id: u64,
-    role: String,
-    status: String,
-    rpc_addr: String,
-    api_addr: String,
-    is_self: bool,
-    is_leader: bool,
-    groups_leading: u64,
-    total_groups: u64,
-    current_term: Option<i64>,
-    last_applied_log: Option<i64>,
+    cluster_id:            String,
+    node_id:               u64,
+    role:                  String,
+    status:                String,
+    rpc_addr:              String,
+    api_addr:              String,
+    is_self:               bool,
+    is_leader:             bool,
+    groups_leading:        u64,
+    total_groups:          u64,
+    current_term:          Option<i64>,
+    last_applied_log:      Option<i64>,
     leader_last_log_index: Option<i64>,
-    snapshot_index: Option<i64>,
-    catchup_progress_pct: Option<i64>,
-    replication_lag: Option<i64>,
-    hostname: Option<String>,
-    memory_usage_mb: Option<u64>,
-    cpu_usage_percent: Option<f32>,
-    uptime_human: Option<String>,
+    snapshot_index:        Option<i64>,
+    catchup_progress_pct:  Option<i64>,
+    replication_lag:       Option<i64>,
+    hostname:              Option<String>,
+    memory_usage_mb:       Option<u64>,
+    cpu_usage_percent:     Option<f32>,
+    uptime_human:          Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterGroupDisplay {
-    group_id: i64,
-    group_type: String,
-    current_term: Option<i64>,
-    last_applied: Option<i64>,
-    snapshot: Option<i64>,
-    state: Option<String>,
+    group_id:       i64,
+    group_type:     String,
+    current_term:   Option<i64>,
+    last_applied:   Option<i64>,
+    snapshot:       Option<i64>,
+    state:          Option<String>,
     current_leader: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterRenderData {
-    cluster_id: String,
+    cluster_id:      String,
     is_cluster_mode: bool,
-    nodes: Vec<ClusterListNode>,
-    groups: Vec<ClusterGroupDisplay>,
+    nodes:           Vec<ClusterListNode>,
+    groups:          Vec<ClusterGroupDisplay>,
 }
 
 impl CLISession {
@@ -129,26 +129,28 @@ fn parse_cluster_nodes(response: &kalam_client::QueryResponse) -> Result<Vec<Clu
 
     for row in rows {
         nodes.push(ClusterListNode {
-            cluster_id: cell_text(&row, "cluster_id").unwrap_or_else(|| "standalone".to_string()),
-            node_id: cell_u64(&row, "node_id").unwrap_or(0),
-            role: cell_text(&row, "role").unwrap_or_else(|| "unknown".to_string()),
-            status: cell_text(&row, "status").unwrap_or_else(|| "unknown".to_string()),
-            rpc_addr: cell_text(&row, "rpc_addr").unwrap_or_else(|| "-".to_string()),
-            api_addr: cell_text(&row, "api_addr").unwrap_or_else(|| "-".to_string()),
-            is_self: cell_bool(&row, "is_self").unwrap_or(false),
-            is_leader: cell_bool(&row, "is_leader").unwrap_or(false),
-            groups_leading: cell_u64(&row, "groups_leading").unwrap_or(0),
-            total_groups: cell_u64(&row, "total_groups").unwrap_or(0),
-            current_term: cell_i64(&row, "current_term"),
-            last_applied_log: cell_i64(&row, "last_applied_log"),
+            cluster_id:            cell_text(&row, "cluster_id")
+                .unwrap_or_else(|| "standalone".to_string()),
+            node_id:               cell_u64(&row, "node_id").unwrap_or(0),
+            role:                  cell_text(&row, "role").unwrap_or_else(|| "unknown".to_string()),
+            status:                cell_text(&row, "status")
+                .unwrap_or_else(|| "unknown".to_string()),
+            rpc_addr:              cell_text(&row, "rpc_addr").unwrap_or_else(|| "-".to_string()),
+            api_addr:              cell_text(&row, "api_addr").unwrap_or_else(|| "-".to_string()),
+            is_self:               cell_bool(&row, "is_self").unwrap_or(false),
+            is_leader:             cell_bool(&row, "is_leader").unwrap_or(false),
+            groups_leading:        cell_u64(&row, "groups_leading").unwrap_or(0),
+            total_groups:          cell_u64(&row, "total_groups").unwrap_or(0),
+            current_term:          cell_i64(&row, "current_term"),
+            last_applied_log:      cell_i64(&row, "last_applied_log"),
             leader_last_log_index: cell_i64(&row, "leader_last_log_index"),
-            snapshot_index: cell_i64(&row, "snapshot_index"),
-            catchup_progress_pct: cell_i64(&row, "catchup_progress_pct"),
-            replication_lag: cell_i64(&row, "replication_lag"),
-            hostname: cell_text(&row, "hostname"),
-            memory_usage_mb: cell_u64(&row, "memory_usage_mb"),
-            cpu_usage_percent: cell_f32(&row, "cpu_usage_percent"),
-            uptime_human: cell_text(&row, "uptime_human"),
+            snapshot_index:        cell_i64(&row, "snapshot_index"),
+            catchup_progress_pct:  cell_i64(&row, "catchup_progress_pct"),
+            replication_lag:       cell_i64(&row, "replication_lag"),
+            hostname:              cell_text(&row, "hostname"),
+            memory_usage_mb:       cell_u64(&row, "memory_usage_mb"),
+            cpu_usage_percent:     cell_f32(&row, "cpu_usage_percent"),
+            uptime_human:          cell_text(&row, "uptime_human"),
         });
     }
 

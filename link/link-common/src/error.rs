@@ -45,7 +45,7 @@ pub enum KalamLinkError {
         /// HTTP status code
         status_code: u16,
         /// Error message from server
-        message: String,
+        message:     String,
     },
 
     /// Invalid configuration (missing URL, invalid settings)
@@ -97,7 +97,7 @@ impl From<reqwest::Error> for KalamLinkError {
             if let Some(status) = err.status() {
                 Self::ServerError {
                     status_code: status.as_u16(),
-                    message: err.to_string(),
+                    message:     err.to_string(),
                 }
             } else {
                 Self::NetworkError(err.to_string())
@@ -132,7 +132,7 @@ mod tests {
 
         let err = KalamLinkError::ServerError {
             status_code: 500,
-            message: "Internal server error".to_string(),
+            message:     "Internal server error".to_string(),
         };
         assert_eq!(err.to_string(), "Server error (500): Internal server error");
 

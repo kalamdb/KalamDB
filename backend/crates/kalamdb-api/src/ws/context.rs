@@ -8,8 +8,8 @@ use kalamdb_live::{ConnectionsManager, LiveQueryManager};
 use crate::limiter::RateLimiter;
 
 pub(super) struct UpgradeAuth {
-    pub(super) auth_request: AuthRequest,
-    pub(super) protocol: ProtocolOptions,
+    pub(super) auth_request:     AuthRequest,
+    pub(super) protocol:         ProtocolOptions,
     pub(super) echo_subprotocol: Option<String>,
 }
 
@@ -19,18 +19,18 @@ pub(super) enum PendingAuthError {
 }
 
 pub(super) struct PendingUpgradeAuth {
-    pub(super) protocol: ProtocolOptions,
+    pub(super) protocol:  ProtocolOptions,
     pub(super) auth_task: tokio::task::JoinHandle<Result<AuthenticationResult, PendingAuthError>>,
 }
 
 #[derive(Clone)]
 pub(super) struct WsHandlerContext {
-    pub(super) app_context: Arc<AppContext>,
-    pub(super) rate_limiter: Arc<RateLimiter>,
-    pub(super) live_query_manager: Arc<LiveQueryManager>,
-    pub(super) user_repo: Arc<dyn UserRepository>,
+    pub(super) app_context:         Arc<AppContext>,
+    pub(super) rate_limiter:        Arc<RateLimiter>,
+    pub(super) live_query_manager:  Arc<LiveQueryManager>,
+    pub(super) user_repo:           Arc<dyn UserRepository>,
     pub(super) connection_registry: Arc<ConnectionsManager>,
-    pub(super) max_message_size: usize,
+    pub(super) max_message_size:    usize,
     pub(super) compression_enabled: bool,
 }
 

@@ -11,7 +11,7 @@ use crate::security::password::{validate_password_characters, MAX_PASSWORD_LENGT
 pub struct LoginRequest {
     /// Canonical user identifier for authentication.
     #[serde(alias = "username", deserialize_with = "validate_user_length")]
-    pub user: String,
+    pub user:     String,
     /// Password for authentication.
     #[serde(deserialize_with = "validate_password_length")]
     pub password: String,

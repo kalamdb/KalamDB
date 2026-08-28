@@ -43,7 +43,7 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         let export_id = generate_user_export_id(&user_id);
 
         let params = UserExportParams {
-            user_id: user_id.clone(),
+            user_id:   user_id.clone(),
             export_id: export_id.clone(),
         };
 
@@ -64,16 +64,15 @@ impl TypedStatementHandler<ExportUserDataStatement> for ExportUserDataHandler {
         match job_id {
             Some(job_id) => Ok(ExecutionResult::Success {
                 message: format!(
-                    "User data export started. Job ID: {}. Use SHOW EXPORT to check status and get \
-                     the download link.",
+                    "User data export started. Job ID: {}. Use SHOW EXPORT to check status and \
+                     get the download link.",
                     job_id.as_str()
                 ),
             }),
             None => Ok(ExecutionResult::Success {
-                message:
-                    "User data export already in progress. Use SHOW EXPORT to check status and \
-                     get the download link."
-                        .to_string(),
+                message: "User data export already in progress. Use SHOW EXPORT to check status \
+                          and get the download link."
+                    .to_string(),
             }),
         }
     }

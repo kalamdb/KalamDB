@@ -2,13 +2,12 @@ use std::{future::Future, sync::Arc};
 
 use kalamdb_commons::models::{TransactionId, TransactionOrigin};
 use kalamdb_transactions::{ExecutionOwnerKey, RequestTransactionCoordinator};
-
-use crate::{app_context::AppContext, error::KalamDbError};
-
 pub use kalamdb_transactions::{
     RequestTransactionBatchGuard, RequestTransactionError, RequestTransactionState,
     OPEN_REQUEST_TRANSACTION_ROLLED_BACK_MESSAGE,
 };
+
+use crate::{app_context::AppContext, error::KalamDbError};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AppContextRequestTransactionCoordinator<'a> {

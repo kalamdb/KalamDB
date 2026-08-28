@@ -37,7 +37,7 @@ use super::SharedTableRow;
 #[derive(Clone)]
 pub struct SharedTablePkIndex {
     /// Partition for the index
-    partition: Partition,
+    partition:     Partition,
     /// Name of the primary key field (e.g., "id", "product_id", etc.)
     pk_field_name: String,
 }
@@ -51,7 +51,7 @@ impl SharedTablePkIndex {
     pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
         let partition = format!("shared_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
-            partition: Partition::new(partition),
+            partition:     Partition::new(partition),
             pk_field_name: pk_field_name.to_string(),
         }
     }
@@ -147,10 +147,10 @@ mod tests {
 
         let key = SeqId::new(seq);
         let row = SharedTableRow {
-            _seq: SeqId::new(seq),
+            _seq:        SeqId::new(seq),
             _commit_seq: 0,
-            _deleted: false,
-            fields: Row::new(values),
+            _deleted:    false,
+            fields:      Row::new(values),
         };
         (key, row)
     }

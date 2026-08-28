@@ -21,7 +21,7 @@ const MAX_RECORDED_COLD_FILES: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowGroupSelection {
     /// Relative file path (e.g., "batch-0.parquet")
-    pub file_path: String,
+    pub file_path:  String,
     /// Row-group indexes to read from that file
     pub row_groups: Vec<usize>,
 }
@@ -38,7 +38,7 @@ impl RowGroupSelection {
 /// Runtime stats for a cold Parquet scan.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParquetScanStats {
-    pub total_files: usize,
+    pub total_files:   usize,
     pub skipped_files: usize,
     pub scanned_files: usize,
     pub visited_files: Vec<String>,
@@ -187,7 +187,7 @@ impl ManifestAccessPlanner {
             return Ok((
                 RecordBatch::new_empty(effective_schema),
                 ParquetScanStats {
-                    total_files: total_batches,
+                    total_files:   total_batches,
                     skipped_files: skipped,
                     scanned_files: scanned,
                     visited_files: Vec::new(),
@@ -247,7 +247,8 @@ impl ManifestAccessPlanner {
                 Err(err) => {
                     if is_missing_parquet_file_error(&err) {
                         log::warn!(
-                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table {}: {}",
+                            "[PARQUET_SCAN_ASYNC] skipping missing parquet file '{}' for table \
+                             {}: {}",
                             parquet_file,
                             table_id,
                             err
@@ -520,9 +521,9 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestSchemaRegistry {
-        table_id: TableId,
-        table_def: Arc<TableDefinition>,
-        schema: SchemaRef,
+        table_id:   TableId,
+        table_def:  Arc<TableDefinition>,
+        schema:     SchemaRef,
         storage_id: StorageId,
     }
 
@@ -572,17 +573,17 @@ mod tests {
 
         storages_provider
             .create_storage(Storage {
-                storage_id: StorageId::local(),
-                storage_name: "Local Storage".to_string(),
-                description: Some("planner pruning test storage".to_string()),
-                storage_type: StorageType::Filesystem,
-                base_directory: base_directory.clone(),
-                credentials: None,
-                config_json: None,
+                storage_id:             StorageId::local(),
+                storage_name:           "Local Storage".to_string(),
+                description:            Some("planner pruning test storage".to_string()),
+                storage_type:           StorageType::Filesystem,
+                base_directory:         base_directory.clone(),
+                credentials:            None,
+                config_json:            None,
                 shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
-                user_tables_template: "user/{namespace}/{tableName}/{userId}".to_string(),
-                created_at: 1_000,
-                updated_at: 1_000,
+                user_tables_template:   "user/{namespace}/{tableName}/{userId}".to_string(),
+                created_at:             1_000,
+                updated_at:             1_000,
             })
             .expect("seed local storage");
 
@@ -596,11 +597,11 @@ mod tests {
 
     fn create_scan_test_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id: NamespaceId::new("test"),
-            table_name: TableName::new("events"),
-            table_type: TableType::Shared,
-            table_options: kalamdb_commons::schemas::TableOptions::Shared(Default::default()),
-            columns: vec![
+            namespace_id:   NamespaceId::new("test"),
+            table_name:     TableName::new("events"),
+            table_type:     TableType::Shared,
+            table_options:  kalamdb_commons::schemas::TableOptions::Shared(Default::default()),
+            columns:        vec![
                 ColumnDefinition::new(
                     1,
                     "id".to_string(),
@@ -626,9 +627,9 @@ mod tests {
             ],
             next_column_id: 3,
             schema_version: 1,
-            table_comment: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            table_comment:  None,
+            created_at:     chrono::Utc::now(),
+            updated_at:     chrono::Utc::now(),
         }
     }
 

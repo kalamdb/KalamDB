@@ -17,8 +17,8 @@ const MIN_COLUMN_WIDTH: usize = 6;
 
 /// Formats query results for display
 pub struct OutputFormatter {
-    format: OutputFormat,
-    color: bool,
+    format:              OutputFormat,
+    color:               bool,
     timestamp_formatter: TimestampFormatter,
 }
 
@@ -131,11 +131,15 @@ impl OutputFormatter {
         for row in rows {
             let plan_type = row
                 .first()
-                .map(|v| self.format_json_value_with_type(v, result.schema.first().map(|f| &f.data_type)))
+                .map(|v| {
+                    self.format_json_value_with_type(v, result.schema.first().map(|f| &f.data_type))
+                })
                 .unwrap_or_else(|| "NULL".to_string());
             let plan = row
                 .get(1)
-                .map(|v| self.format_json_value_with_type(v, result.schema.get(1).map(|f| &f.data_type)))
+                .map(|v| {
+                    self.format_json_value_with_type(v, result.schema.get(1).map(|f| &f.data_type))
+                })
                 .unwrap_or_else(|| "NULL".to_string());
             string_rows.push([plan_type, plan]);
         }
@@ -795,35 +799,36 @@ mod tests {
             TimestampFormatter::new(TimestampFormat::Iso8601),
         );
 
-        let long_plan = "GlobalLimitExec: skip=0, fetch=3\n  FilterExec: user_id = test\n  DeferredBatchExec: hot_rows_scanned=12";
+        let long_plan = "GlobalLimitExec: skip=0, fetch=3\n  FilterExec: user_id = test\n  \
+                         DeferredBatchExec: hot_rows_scanned=12";
         let response = QueryResponse {
-            status: ResponseStatus::Success,
+            status:  ResponseStatus::Success,
             results: vec![QueryResult {
-                schema: vec![
+                schema:     vec![
                     SchemaField {
-                        name: "plan_type".to_string(),
+                        name:      "plan_type".to_string(),
                         data_type: KalamDataType::Text,
-                        index: 0,
-                        flags: None,
+                        index:     0,
+                        flags:     None,
                     },
                     SchemaField {
-                        name: "plan".to_string(),
+                        name:      "plan".to_string(),
                         data_type: KalamDataType::Text,
-                        index: 1,
-                        flags: None,
+                        index:     1,
+                        flags:     None,
                     },
                 ],
-                rows: Some(vec![vec![
+                rows:       Some(vec![vec![
                     json!("Plan with Metrics").into(),
                     json!(long_plan).into(),
                 ]]),
                 named_rows: None,
-                row_count: 1,
-                message: None,
-                as_user: None,
+                row_count:  1,
+                message:    None,
+                as_user:    None,
             }],
-            took: Some(1.0),
-            error: None,
+            took:    Some(1.0),
+            error:   None,
         };
 
         let output = formatter.format_response(&response).unwrap();
@@ -842,22 +847,22 @@ mod tests {
         );
 
         let response = QueryResponse {
-            status: ResponseStatus::Success,
+            status:  ResponseStatus::Success,
             results: vec![QueryResult {
-                schema: vec![SchemaField {
-                    name: "name".to_string(),
+                schema:     vec![SchemaField {
+                    name:      "name".to_string(),
                     data_type: KalamDataType::Text,
-                    index: 0,
-                    flags: None,
+                    index:     0,
+                    flags:     None,
                 }],
-                rows: Some(vec![vec![json!("Alice").into()]]),
+                rows:       Some(vec![vec![json!("Alice").into()]]),
                 named_rows: None,
-                row_count: 1,
-                message: None,
-                as_user: Some("alice".to_string()),
+                row_count:  1,
+                message:    None,
+                as_user:    Some("alice".to_string()),
             }],
-            took: Some(2.146),
-            error: None,
+            took:    Some(2.146),
+            error:   None,
         };
 
         let output = formatter.format_response(&response).unwrap();

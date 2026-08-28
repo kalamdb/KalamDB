@@ -43,7 +43,8 @@ impl AlterTableHandler {
     fn resolve_vector_column(
         &self,
         table_def: &TableDefinition,
-        column_name: &str) -> Result<(String, u32), KalamDbError> {
+        column_name: &str,
+    ) -> Result<(String, u32), KalamDbError> {
         let column = table_def
             .columns
             .iter()
@@ -69,7 +70,8 @@ impl AlterTableHandler {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        actor_user: &UserId) -> Result<Vec<Option<UserId>>, KalamDbError> {
+        actor_user: &UserId,
+    ) -> Result<Vec<Option<UserId>>, KalamDbError> {
         let manifest_service = self.app_context.manifest_service();
         match table_type {
             TableType::Shared => Ok(vec![None]),
@@ -90,7 +92,8 @@ impl AlterTableHandler {
                 Ok(user_ids.into_iter().map(Some).collect())
             },
             TableType::System | TableType::Stream => Err(KalamDbError::InvalidOperation(
-                "Vector indexing is only supported for USER/SHARED tables".to_string())),
+                "Vector indexing is only supported for USER/SHARED tables".to_string(),
+            )),
         }
     }
 
@@ -98,19 +101,23 @@ impl AlterTableHandler {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        column_name: &str) -> Result<(), KalamDbError> {
+        column_name: &str,
+    ) -> Result<(), KalamDbError> {
         let backend = self.app_context.storage_backend();
 
         let (ops_partition, pk_partition) = match table_type {
             TableType::User => (
                 user_vector_ops_partition_name(table_id, column_name),
-                user_vector_pk_index_partition_name(table_id, column_name)),
+                user_vector_pk_index_partition_name(table_id, column_name),
+            ),
             TableType::Shared => (
                 shared_vector_ops_partition_name(table_id, column_name),
-                shared_vector_pk_index_partition_name(table_id, column_name)),
+                shared_vector_pk_index_partition_name(table_id, column_name),
+            ),
             TableType::System | TableType::Stream => {
                 return Err(KalamDbError::InvalidOperation(
-                    "Vector indexing is only supported for USER/SHARED tables".to_string()))
+                    "Vector indexing is only supported for USER/SHARED tables".to_string(),
+                ))
             },
         };
 
@@ -134,15 +141,18 @@ impl AlterTableHandler {
         &self,
         table_id: &TableId,
         table_type: TableType,
-        column_name: &str) {
+        column_name: &str,
+    ) {
         let backend = self.app_context.storage_backend();
         let (ops_partition, pk_partition) = match table_type {
             TableType::User => (
                 user_vector_ops_partition_name(table_id, column_name),
-                user_vector_pk_index_partition_name(table_id, column_name)),
+                user_vector_pk_index_partition_name(table_id, column_name),
+            ),
             TableType::Shared => (
                 shared_vector_ops_partition_name(table_id, column_name),
-                shared_vector_pk_index_partition_name(table_id, column_name)),
+                shared_vector_pk_index_partition_name(table_id, column_name),
+            ),
             TableType::System | TableType::Stream => return,
         };
 
@@ -163,7 +173,8 @@ impl AlterTableHandler {
         table_id: &TableId,
         table_type: TableType,
         manifest_user: Option<&UserId>,
-        column_name: &str) -> Result<(), KalamDbError> {
+        column_name: &str,
+    ) -> Result<(), KalamDbError> {
         let registry = self.app_context.schema_registry();
         let cached_table = registry.get(table_id).ok_or_else(|| {
             KalamDbError::NotFound(format!("Table '{}' not found", table_id.full_name()))
@@ -211,7 +222,8 @@ impl AlterTableHandler {
     async fn execute_vector_index_operation(
         &self,
         statement: &AlterTableStatement,
-        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
         use crate::helpers::audit;
 
         let table_id =
@@ -250,7 +262,8 @@ impl AlterTableHandler {
                         &resolved_column_name,
                         dimensions,
                         *metric,
-                        VectorEngine::USearch);
+                        VectorEngine::USearch,
+                    );
                     entry.enabled = true;
                     entry.state = VectorIndexState::Active;
                     entry.updated_at = chrono::Utc::now().timestamp_millis();
@@ -272,7 +285,8 @@ impl AlterTableHandler {
                     "TABLE",
                     &table_id.full_name(),
                     Some(format!("CREATE INDEX {} USING {:?}", resolved_column_name, metric)),
-                    None);
+                    None,
+                );
                 audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
                 Ok(ExecutionResult::Success {
@@ -292,7 +306,8 @@ impl AlterTableHandler {
                         &table_id,
                         table_type,
                         scope.as_ref(),
-                        &resolved_column_name)?;
+                        &resolved_column_name,
+                    )?;
 
                     let mut manifest = manifest_service
                         .ensure_manifest_initialized(&table_id, scope.as_ref())
@@ -316,7 +331,8 @@ impl AlterTableHandler {
                         &resolved_column_name,
                         dimensions,
                         existing_metric,
-                        existing_engine);
+                        existing_engine,
+                    );
                     entry.enabled = false;
                     entry.state = VectorIndexState::Active;
                     entry.snapshot_path = None;
@@ -339,7 +355,8 @@ impl AlterTableHandler {
                     "TABLE",
                     &table_id.full_name(),
                     Some(format!("DROP INDEX {}", resolved_column_name)),
-                    None);
+                    None,
+                );
                 audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
                 Ok(ExecutionResult::Success {
@@ -359,7 +376,8 @@ impl AlterTableHandler {
     fn build_altered_table_definition(
         &self,
         statement: &AlterTableStatement,
-        context: &ExecutionContext) -> Result<(TableDefinition, String, bool), KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<(TableDefinition, String, bool), KalamDbError> {
         let namespace_id: NamespaceId = statement.namespace_id.clone();
         let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
 
@@ -377,7 +395,8 @@ impl AlterTableHandler {
             &namespace_id,
             "ALTER",
             "TABLE",
-            Some(statement.table_name.as_str()))?;
+            Some(statement.table_name.as_str()),
+        )?;
 
         let registry = self.app_context.schema_registry();
         let table_def_arc = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
@@ -412,7 +431,8 @@ impl AlterTableHandler {
                 statement.table_name.as_str()
             );
             return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to alter table".to_string()));
+                "Insufficient privileges to alter table".to_string(),
+            ));
         }
 
         // Apply operation and get change description + whether anything actually changed
@@ -420,7 +440,8 @@ impl AlterTableHandler {
             &self.app_context,
             &mut table_def,
             &statement.operation,
-            &table_id)?;
+            &table_id,
+        )?;
 
         // Only increment version if actual changes were made
         if changed {
@@ -446,7 +467,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         &self,
         statement: AlterTableStatement,
         _params: Vec<ScalarValue>,
-        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
         if matches!(
             statement.operation,
             ColumnOperation::CreateVectorIndex { .. } | ColumnOperation::DropVectorIndex { .. }
@@ -482,7 +504,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                     "Operation: {}, New Version: {}",
                     change_desc, table_def.schema_version
                 )),
-                None);
+                None,
+            );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
             log::info!(
@@ -528,7 +551,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
     async fn check_authorization(
         &self,
         statement: &AlterTableStatement,
-        context: &ExecutionContext) -> Result<(), KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
         use crate::helpers::guards::block_anonymous_write;
 
         // Block anonymous users from DDL operations
@@ -543,7 +567,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
 
             if !kalamdb_session::can_alter_table(context.user_role(), def.table_type, is_owner) {
                 return Err(KalamDbError::Unauthorized(
-                    "Insufficient privileges to alter table".to_string()));
+                    "Insufficient privileges to alter table".to_string(),
+                ));
             }
         }
         Ok(())
@@ -561,7 +586,8 @@ fn apply_alter_operation(
     app_context: &Arc<AppContext>,
     table_def: &mut TableDefinition,
     operation: &ColumnOperation,
-    table_id: &TableId) -> Result<(String, bool), KalamDbError> {
+    table_id: &TableId,
+) -> Result<(String, bool), KalamDbError> {
     match operation {
         ColumnOperation::Add {
             column_name,
@@ -592,7 +618,8 @@ fn apply_alter_operation(
                     );
                     return Ok((
                         format!("ADD COLUMN {} {}", column_name, data_type.sql_name()),
-                        false));
+                        false,
+                    ));
                 }
                 log::error!(
                     "❌ ALTER TABLE failed: Column '{}' already exists in {}",
@@ -617,7 +644,8 @@ fn apply_alter_operation(
                 false,
                 false,
                 default,
-                None));
+                None,
+            ));
             table_def.next_column_id += 1;
             log::debug!(
                 "✓ Added column {} (type: {}, nullable: {})",
@@ -757,7 +785,8 @@ fn apply_alter_operation(
                         "SET NOT NULL"
                     }
                 ),
-                changed))
+                changed,
+            ))
         },
         ColumnOperation::SetDefault {
             column_name,
@@ -786,7 +815,8 @@ fn apply_alter_operation(
             col.default_value = default_value.clone();
             Ok((
                 format!("ALTER COLUMN {} SET DEFAULT {}", column_name, default_value.to_sql()),
-                changed))
+                changed,
+            ))
         },
         ColumnOperation::DropDefault { column_name } => {
             if is_system_column(column_name) {
@@ -884,7 +914,8 @@ fn apply_alter_operation(
 fn apply_table_property_updates(
     app_context: &Arc<AppContext>,
     table_def: &mut TableDefinition,
-    updates: &TablePropertyUpdates) -> Result<(String, bool), KalamDbError> {
+    updates: &TablePropertyUpdates,
+) -> Result<(String, bool), KalamDbError> {
     if let Some(storage_id) = &updates.storage_id {
         let storages_provider = app_context.system_tables().storages();
         if storages_provider.get_storage_by_id(storage_id)?.is_none() {
@@ -987,13 +1018,15 @@ fn apply_table_property_updates(
             Ok((format_table_property_change(changes), changed))
         },
         TableOptions::System(_) => Err(KalamDbError::InvalidOperation(
-            "SYSTEM table options cannot be altered".to_string())),
+            "SYSTEM table options cannot be altered".to_string(),
+        )),
     }
 }
 
 fn ensure_no_stream_only_properties(
     updates: &TablePropertyUpdates,
-    table_type: &str) -> Result<(), KalamDbError> {
+    table_type: &str,
+) -> Result<(), KalamDbError> {
     if updates.ttl_seconds.is_some() {
         return Err(unsupported_table_property("TTL_SECONDS", table_type));
     }

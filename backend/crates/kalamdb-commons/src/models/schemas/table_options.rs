@@ -353,10 +353,10 @@ fn default_eviction_strategy() -> String {
 impl Default for UserTableOptions {
     fn default() -> Self {
         Self {
-            storage_id: StorageId::default(),
+            storage_id:       StorageId::default(),
             use_user_storage: false,
-            flush_policy: None,
-            compression: default_compression(),
+            flush_policy:     None,
+            compression:      default_compression(),
         }
     }
 }
@@ -364,10 +364,10 @@ impl Default for UserTableOptions {
 impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
-            storage_id: StorageId::default(),
+            storage_id:   StorageId::default(),
             access_level: None,
             flush_policy: None,
-            compression: default_compression(),
+            compression:  default_compression(),
         }
     }
 }
@@ -375,8 +375,8 @@ impl Default for SharedTableOptions {
 impl Default for StreamTableOptions {
     fn default() -> Self {
         Self {
-            ttl_seconds: 86400, // 24 hours default
-            eviction_strategy: default_eviction_strategy(),
+            ttl_seconds:           86400, // 24 hours default
+            eviction_strategy:     default_eviction_strategy(),
             max_stream_size_bytes: 0,
         }
     }
@@ -385,10 +385,10 @@ impl Default for StreamTableOptions {
 impl Default for SystemTableOptions {
     fn default() -> Self {
         Self {
-            read_only: true,
-            enable_cache: true,
+            read_only:         true,
+            enable_cache:      true,
             cache_ttl_seconds: default_system_cache_ttl(),
-            localhost_only: false,
+            localhost_only:    false,
         }
     }
 }
@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn test_custom_options() {
         let custom_stream = TableOptions::Stream(StreamTableOptions {
-            ttl_seconds: 1800,
-            eviction_strategy: "size_based".to_string(),
+            ttl_seconds:           1800,
+            eviction_strategy:     "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
         });
 

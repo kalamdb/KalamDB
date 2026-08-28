@@ -1,8 +1,13 @@
 use std::{io::IsTerminal, time::Duration};
 
 use kalam_cli::{
-    terminal_ui, workflow::project::identifiers::preferred_user_label, CLIConfiguration, CLIError,
-    FileCredentialStore, Result,
+    session::{
+        auth_options::{fetch_login_options, ExternalLoginSession},
+        oidc_browser, oidc_device,
+    },
+    terminal_ui,
+    workflow::project::identifiers::preferred_user_label,
+    CLIConfiguration, CLIError, FileCredentialStore, Result,
 };
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
@@ -17,21 +22,17 @@ use crate::{
     connect::{build_timeouts, resolve_server_url},
     terminal_input::{prompt_line, prompt_password},
 };
-use kalam_cli::session::{
-    auth_options::{fetch_login_options, ExternalLoginSession},
-    oidc_browser, oidc_device,
-};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthContext {
-    pub server_url: String,
+    pub server_url:   String,
     pub access_token: String,
-    pub source: AuthSource,
+    pub source:       AuthSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LoginShellContinuation {
-    pub server_url: String,
+    pub server_url:   String,
     pub access_token: Option<String>,
 }
 
@@ -53,16 +54,16 @@ pub(crate) enum AuthSource {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct CurrentUserResponse {
-    pub user: CurrentUser,
+    pub user:            CurrentUser,
     pub admin_ui_access: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct CurrentUser {
-    pub id: String,
-    pub role: String,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id:         String,
+    pub role:       String,
+    pub name:       Option<String>,
+    pub email:      Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -189,9 +190,9 @@ pub(crate) async fn resolve_auth_context(
             })?;
 
             return Ok(Some(AuthContext {
-                server_url: refresh_server_url,
+                server_url:   refresh_server_url,
                 access_token: login_response.access_token,
-                source: AuthSource::RefreshedCredentials,
+                source:       AuthSource::RefreshedCredentials,
             }));
         }
 
@@ -825,14 +826,14 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct MockState {
-        paths: Vec<String>,
-        bodies: Vec<String>,
+        paths:                 Vec<String>,
+        bodies:                Vec<String>,
         authorization_headers: Vec<String>,
     }
 
     struct MockServer {
         base_url: String,
-        state: Arc<Mutex<MockState>>,
+        state:    Arc<Mutex<MockState>>,
     }
 
     impl MockServer {
@@ -928,8 +929,10 @@ mod tests {
         };
 
         let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            response_body.len(), response_body
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: \
+             {}\r\nconnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
         );
         stream.write_all(response.as_bytes()).await?;
         stream.shutdown().await

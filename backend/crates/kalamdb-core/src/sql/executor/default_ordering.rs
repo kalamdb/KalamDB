@@ -37,7 +37,7 @@ pub fn has_order_by(plan: &LogicalPlan) -> bool {
 
 fn wrap_with_sort(plan: LogicalPlan, sort_exprs: Vec<SortExpr>) -> LogicalPlan {
     LogicalPlan::Sort(Sort {
-        expr: sort_exprs,
+        expr:  sort_exprs,
         input: Arc::new(plan),
         fetch: None,
     })
@@ -276,30 +276,31 @@ pub async fn apply_default_order_by(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use datafusion::{
         common::DFSchema,
         logical_expr::{lit, EmptyRelation, Limit},
     };
 
+    use super::*;
+
     fn empty_plan() -> LogicalPlan {
         LogicalPlan::EmptyRelation(EmptyRelation {
             produce_one_row: false,
-            schema: Arc::new(DFSchema::empty()),
+            schema:          Arc::new(DFSchema::empty()),
         })
     }
 
     #[test]
     fn has_order_by_detects_sort_under_limit() {
         let unordered = LogicalPlan::Limit(Limit {
-            skip: None,
+            skip:  None,
             fetch: Some(Box::new(lit(10_i64))),
             input: Arc::new(empty_plan()),
         });
         assert!(!has_order_by(&unordered));
 
         let ordered = LogicalPlan::Limit(Limit {
-            skip: None,
+            skip:  None,
             fetch: Some(Box::new(lit(10_i64))),
             input: Arc::new(wrap_with_sort(
                 empty_plan(),

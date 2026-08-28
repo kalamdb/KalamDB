@@ -119,18 +119,18 @@ impl OpenSessionAuth {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteSessionHandle {
-    pub session_id: String,
-    pub current_schema: Option<String>,
+    pub session_id:          String,
+    pub current_schema:      Option<String>,
     /// Lease expiry (epoch ms). Client should re-authenticate before this time.
     pub lease_expires_at_ms: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct RemoteKalamClient {
-    channel: Channel,
-    config: RemoteServerConfig,
+    channel:           Channel,
+    config:            RemoteServerConfig,
     /// "host:port" used in error messages.
-    server_addr: String,
+    server_addr:       String,
     /// Auth metadata to send on `open_session` only.
     open_session_auth: OpenSessionAuth,
 }
@@ -483,7 +483,7 @@ impl RemoteKalamClient {
         let response = self
             .call_authenticated(
                 OpenSessionRequest {
-                    session_id: session_id
+                    session_id:     session_id
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                         .unwrap_or("")
@@ -498,8 +498,8 @@ impl RemoteKalamClient {
             .await?;
 
         Ok(RemoteSessionHandle {
-            session_id: response.session_id,
-            current_schema: response.current_schema,
+            session_id:          response.session_id,
+            current_schema:      response.current_schema,
             lease_expires_at_ms: response.lease_expires_at_ms,
         })
     }
@@ -685,12 +685,12 @@ impl RemoteKalamClient {
         updates_json: &str,
     ) -> Result<MutationResponse, KalamPgError> {
         let request = UpdateRpcRequest {
-            namespace: namespace.to_string(),
-            table_name: table_name.to_string(),
-            table_type: table_type.to_string(),
-            session_id: session_id.to_string(),
-            user_id: user_id.map(str::to_string),
-            pk_value: pk_value.to_string(),
+            namespace:    namespace.to_string(),
+            table_name:   table_name.to_string(),
+            table_type:   table_type.to_string(),
+            session_id:   session_id.to_string(),
+            user_id:      user_id.map(str::to_string),
+            pk_value:     pk_value.to_string(),
             updates_json: updates_json.to_string(),
         };
         let response = match self.update_attempt(request.clone()).await {
@@ -722,12 +722,12 @@ impl RemoteKalamClient {
         pk_value: &str,
     ) -> Result<MutationResponse, KalamPgError> {
         let request = DeleteRpcRequest {
-            namespace: namespace.to_string(),
+            namespace:  namespace.to_string(),
             table_name: table_name.to_string(),
             table_type: table_type.to_string(),
             session_id: session_id.to_string(),
-            user_id: user_id.map(str::to_string),
-            pk_value: pk_value.to_string(),
+            user_id:    user_id.map(str::to_string),
+            pk_value:   pk_value.to_string(),
         };
         let response = match self.delete_attempt(request.clone()).await {
             Ok(response) => response,
@@ -806,7 +806,7 @@ impl RemoteKalamClient {
         let response = self
             .call_plain_status(
                 CommitTransactionRequest {
-                    session_id: session_id.to_string(),
+                    session_id:     session_id.to_string(),
                     transaction_id: transaction_id.to_string(),
                 },
                 |mut client, request| async move { client.commit_transaction(request).await },
@@ -852,7 +852,7 @@ impl RemoteKalamClient {
         let response = self
             .call_plain_status(
                 RollbackTransactionRequest {
-                    session_id: session_id.to_string(),
+                    session_id:     session_id.to_string(),
                     transaction_id: transaction_id.to_string(),
                 },
                 |mut client, request| async move { client.rollback_transaction(request).await },
@@ -864,7 +864,7 @@ impl RemoteKalamClient {
     /// Execute a DDL SQL statement on the KalamDB backend.
     pub async fn execute_sql(&self, sql: &str, session_id: &str) -> Result<String, KalamPgError> {
         let request = ExecuteSqlRpcRequest {
-            sql: sql.to_string(),
+            sql:        sql.to_string(),
             session_id: session_id.to_string(),
         };
         let response = match self.execute_sql_attempt(request.clone()).await {
@@ -890,7 +890,7 @@ impl RemoteKalamClient {
         session_id: &str,
     ) -> Result<(String, Vec<String>), KalamPgError> {
         let request = ExecuteQueryRpcRequest {
-            sql: sql.to_string(),
+            sql:        sql.to_string(),
             session_id: session_id.to_string(),
         };
         let response = match self.execute_query_attempt(request.clone()).await {

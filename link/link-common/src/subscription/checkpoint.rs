@@ -9,15 +9,15 @@ use crate::{models::ChangeEvent, seq_tracking, SeqId};
 #[cfg(any(feature = "tokio-runtime", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EventProgress {
-    pub(crate) seq_id: SeqId,
+    pub(crate) seq_id:         SeqId,
     pub(crate) advance_resume: bool,
 }
 
 #[cfg(any(feature = "tokio-runtime", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BatchEnvelope {
-    pub(crate) status: BatchStatus,
-    pub(crate) has_more: bool,
+    pub(crate) status:      BatchStatus,
+    pub(crate) has_more:    bool,
     pub(crate) last_seq_id: Option<SeqId>,
 }
 
@@ -26,8 +26,8 @@ pub(crate) fn batch_envelope(event: &ChangeEvent) -> Option<BatchEnvelope> {
     match event {
         ChangeEvent::Ack { batch_control, .. }
         | ChangeEvent::InitialDataBatch { batch_control, .. } => Some(BatchEnvelope {
-            status: batch_control.status,
-            has_more: batch_control.has_more,
+            status:      batch_control.status,
+            has_more:    batch_control.has_more,
             last_seq_id: batch_control.last_seq_id,
         }),
         _ => None,
@@ -243,7 +243,7 @@ mod tests {
     fn filters_resumed_delete_with_empty_result() {
         let event = ChangeEvent::Delete {
             subscription_id: "sub-1".to_string(),
-            old_rows: vec![row("1", 10)],
+            old_rows:        vec![row("1", 10)],
         };
 
         assert!(filter_replayed_event(event, Some(SeqId::from_i64(10))).is_none());
@@ -253,14 +253,14 @@ mod tests {
     fn progress_marks_ready_initial_batch_without_advancing_resume() {
         let event = ChangeEvent::InitialDataBatch {
             subscription_id: "sub-1".to_string(),
-            rows: vec![row("1", 11)],
-            batch_control: batch_control(BatchStatus::Ready),
+            rows:            vec![row("1", 11)],
+            batch_control:   batch_control(BatchStatus::Ready),
         };
 
         assert_eq!(
             event_progress(&event),
             Some(EventProgress {
-                seq_id: SeqId::from_i64(11),
+                seq_id:         SeqId::from_i64(11),
                 advance_resume: false,
             })
         );
@@ -272,14 +272,14 @@ mod tests {
         control.last_seq_id = Some(SeqId::from_i64(21));
         let event = ChangeEvent::InitialDataBatch {
             subscription_id: "sub-1".to_string(),
-            rows: Vec::new(),
-            batch_control: control,
+            rows:            Vec::new(),
+            batch_control:   control,
         };
 
         assert_eq!(
             event_progress(&event),
             Some(EventProgress {
-                seq_id: SeqId::from_i64(21),
+                seq_id:         SeqId::from_i64(21),
                 advance_resume: false,
             })
         );
@@ -298,7 +298,7 @@ mod tests {
             None,
             ChangeEvent::Insert {
                 subscription_id: "sub-1".to_string(),
-                rows: vec![row("live", 12)],
+                rows:            vec![row("live", 12)],
             },
         );
         assert!(event_queue.is_empty());
@@ -311,8 +311,8 @@ mod tests {
             None,
             ChangeEvent::InitialDataBatch {
                 subscription_id: "sub-1".to_string(),
-                rows: vec![row("snap", 11)],
-                batch_control: batch_control(BatchStatus::Ready),
+                rows:            vec![row("snap", 11)],
+                batch_control:   batch_control(BatchStatus::Ready),
             },
         );
 

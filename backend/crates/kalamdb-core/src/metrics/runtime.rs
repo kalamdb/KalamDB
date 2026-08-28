@@ -31,11 +31,11 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
             datafusion_max_partitions: config.datafusion.max_partitions,
             datafusion_memory_limit_bytes: config.datafusion.memory_limit,
             cluster: config.cluster.as_ref().map(|cluster| ClusterMetrics {
-                cluster_id: cluster.cluster_id.clone(),
+                cluster_id:       cluster.cluster_id.clone(),
                 cluster_rpc_addr: cluster.rpc_addr.clone(),
                 cluster_api_addr: cluster.api_addr.clone(),
-                user_shards: cluster.user_shards,
-                shared_shards: cluster.shared_shards,
+                user_shards:      cluster.user_shards,
+                shared_shards:    cluster.shared_shards,
             }),
         }
     }
@@ -98,14 +98,14 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
         let registry = self.ctx.connection_registry();
 
         LiveQueryMetrics {
-            total_live_queries: registry.subscription_count(),
-            active_connections: registry.connection_count(),
-            active_connections_peak: registry.peak_connection_count(),
+            total_live_queries:         registry.subscription_count(),
+            active_connections:         registry.connection_count(),
+            active_connections_peak:    registry.peak_connection_count(),
             max_connections_configured: registry.max_connection_limit(),
-            active_subscriptions: registry.subscription_count(),
-            active_subscriptions_peak: registry.peak_subscription_count(),
-            websocket_sessions: kalamdb_observability::get_websocket_session_count(),
-            websocket_sessions_peak: kalamdb_observability::get_websocket_session_peak_count(),
+            active_subscriptions:       registry.subscription_count(),
+            active_subscriptions_peak:  registry.peak_subscription_count(),
+            websocket_sessions:         kalamdb_observability::get_websocket_session_count(),
+            websocket_sessions_peak:    kalamdb_observability::get_websocket_session_peak_count(),
         }
     }
 
@@ -113,14 +113,17 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
         let topic_cache_stats = self.ctx.topic_publisher().cache_stats();
 
         CacheMetrics {
-            schema_cache_size: self.ctx.schema_registry().len(),
-            schema_registry_size: self.ctx.schema_registry().stats(),
-            schema_cache_total_entries: self.ctx.schema_registry().total_len(),
-            plan_cache_size: self.ctx.try_sql_executor().map(|executor| executor.plan_cache_len()),
-            topic_cache_topic_count: topic_cache_stats.topic_count,
-            topic_cache_table_route_count: topic_cache_stats.table_route_count,
-            topic_cache_total_routes: topic_cache_stats.total_routes,
-            topic_consumer_group_count: topic_cache_stats.consumer_group_count,
+            schema_cache_size:              self.ctx.schema_registry().len(),
+            schema_registry_size:           self.ctx.schema_registry().stats(),
+            schema_cache_total_entries:     self.ctx.schema_registry().total_len(),
+            plan_cache_size:                self
+                .ctx
+                .try_sql_executor()
+                .map(|executor| executor.plan_cache_len()),
+            topic_cache_topic_count:        topic_cache_stats.topic_count,
+            topic_cache_table_route_count:  topic_cache_stats.table_route_count,
+            topic_cache_total_routes:       topic_cache_stats.total_routes,
+            topic_consumer_group_count:     topic_cache_stats.consumer_group_count,
             topic_consumer_partition_count: topic_cache_stats.consumer_partition_count,
             string_interner_unique_strings: kalamdb_commons::helpers::string_interner::stats()
                 .unique_strings,

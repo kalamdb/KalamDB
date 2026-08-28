@@ -629,7 +629,7 @@ mod tests {
     fn update_prompt_label_includes_latest_version() {
         let available = UpdateAvailability {
             current_version: "0.5.1-beta.2".to_string(),
-            latest_version: "0.5.1-beta.3".to_string(),
+            latest_version:  "0.5.1-beta.3".to_string(),
         };
 
         assert_eq!(
@@ -642,8 +642,8 @@ mod tests {
 type CharIter<'a> = std::iter::Peekable<std::str::Chars<'a>>;
 
 struct SqlHighlighter {
-    keywords: HashSet<String>,
-    types: HashSet<String>,
+    keywords:      HashSet<String>,
+    types:         HashSet<String>,
     color_enabled: bool,
 }
 
@@ -838,7 +838,7 @@ impl SqlHighlighter {
 }
 
 struct CLIHelper {
-    completer: AutoCompleter,
+    completer:   AutoCompleter,
     highlighter: SqlHighlighter,
 }
 

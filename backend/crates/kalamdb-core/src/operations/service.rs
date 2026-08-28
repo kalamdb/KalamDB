@@ -13,9 +13,9 @@ use kalamdb_commons::{
     },
     NamespaceId, PolicyCommand, TableId, TableType,
 };
-use kalamdb_tables::SharedTableProvider;
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::SessionUserContext;
+use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
     build_insert_staged_mutations, TransactionQueryContext, TransactionQueryExtension,
 };
@@ -86,8 +86,8 @@ impl OperationService {
     ///
     /// Preference order:
     /// 1. Explicit `user_id` on the request (`kalam.user_id` / RPC field) → table-type role
-    /// 2. Authenticated backend session (account_login bridge) → keep System/DBA role so
-    ///    FORCE RLS bypasses for DBA connections that omit `kalam.user_id`
+    /// 2. Authenticated backend session (account_login bridge) → keep System/DBA role so FORCE RLS
+    ///    bypasses for DBA connections that omit `kalam.user_id`
     /// 3. Shared tables without either → unauthenticated
     fn resolve_typed_principal(
         &self,
@@ -103,14 +103,12 @@ impl OperationService {
             if let Some(manager) = self.app_context.try_backend_session_manager() {
                 if let Some(snapshot) = manager.get_snapshot(session_id) {
                     if let Some(user_id) = snapshot.authenticated_user_id {
-                        let role = if matches!(
-                            snapshot.authenticated_role,
-                            Role::System | Role::Dba
-                        ) {
-                            snapshot.authenticated_role
-                        } else {
-                            Self::role_for_table_type(table_type)
-                        };
+                        let role =
+                            if matches!(snapshot.authenticated_role, Role::System | Role::Dba) {
+                                snapshot.authenticated_role
+                            } else {
+                                Self::role_for_table_type(table_type)
+                            };
                         return Ok((Some(user_id), role));
                     }
                 }
@@ -139,9 +137,11 @@ impl OperationService {
         check: bool,
         rows: &[Row],
     ) -> Result<(), Status> {
-        let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
-            Status::not_found(format!("shared table {table_id} not found"))
-        })?;
+        let provider = self
+            .app_context
+            .schema_registry()
+            .get_provider(table_id)
+            .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
         let shared = (provider.as_ref() as &dyn std::any::Any)
             .downcast_ref::<SharedTableProvider>()
             .ok_or_else(|| {
@@ -160,15 +160,8 @@ impl OperationService {
         role: Role,
         rows: &[Row],
     ) -> Result<(), Status> {
-        self.authorize_typed_shared_rows(
-            table_id,
-            user_id,
-            role,
-            PolicyCommand::Insert,
-            true,
-            rows,
-        )
-        .await
+        self.authorize_typed_shared_rows(table_id, user_id, role, PolicyCommand::Insert, true, rows)
+            .await
     }
 
     async fn current_shared_row(
@@ -176,9 +169,11 @@ impl OperationService {
         table_id: &TableId,
         pk_value: &str,
     ) -> Result<Option<Row>, Status> {
-        let provider = self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
-            Status::not_found(format!("shared table {table_id} not found"))
-        })?;
+        let provider = self
+            .app_context
+            .schema_registry()
+            .get_provider(table_id)
+            .ok_or_else(|| Status::not_found(format!("shared table {table_id} not found")))?;
         let shared = (provider.as_ref() as &dyn std::any::Any)
             .downcast_ref::<SharedTableProvider>()
             .ok_or_else(|| {
@@ -462,11 +457,8 @@ impl OperationExecutor for OperationService {
         // transaction query extension is attached only when a live transaction exists.
         let transaction_query_context =
             self.transaction_query_context_for_session(request.session_id.as_deref())?;
-        let session = self.session_with_query_context(
-            user_id.as_ref(),
-            role,
-            transaction_query_context,
-        );
+        let session =
+            self.session_with_query_context(user_id.as_ref(), role, transaction_query_context);
         let batches = scan::execute_scan(
             &self.app_context.schema_registry(),
             &session,
@@ -1208,7 +1200,10 @@ mod tests {
             .system_columns_service()
             .add_system_columns(&mut table_def)
             .expect("system columns");
-        app_ctx.schema_registry().register_table(table_def).expect("register shared table");
+        app_ctx
+            .schema_registry()
+            .register_table(table_def)
+            .expect("register shared table");
 
         app_ctx
             .system_tables()
@@ -1261,8 +1256,8 @@ mod tests {
             table_id,
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(UserId::new("policy-writer")),
-            rows:       vec![Row::new(values)],
+            user_id: Some(UserId::new("policy-writer")),
+            rows: vec![Row::new(values)],
         })
         .await
         .expect("WITH CHECK true must allow typed shared insert");
@@ -1335,9 +1330,9 @@ mod tests {
             table_id,
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(UserId::new("policy-writer")),
-            updates:    vec![Row::new(updates)],
-            pk_value:   "1".to_string(),
+            user_id: Some(UserId::new("policy-writer")),
+            updates: vec![Row::new(updates)],
+            pk_value: "1".to_string(),
         })
         .await
         .expect("USING/WITH CHECK true must allow typed shared update");
@@ -1360,8 +1355,8 @@ mod tests {
             table_id,
             table_type: TableType::Shared,
             session_id: Some(session_id.to_string()),
-            user_id:    Some(UserId::new("policy-writer")),
-            pk_value:   "1".to_string(),
+            user_id: Some(UserId::new("policy-writer")),
+            pk_value: "1".to_string(),
         })
         .await
         .expect("USING true must allow typed shared delete");

@@ -27,8 +27,8 @@ pub const TOPIC_RETENTION_INDEX_PARTITION_NAME: &str = "topic_retention_index";
 /// Messages are immutable once written.
 #[derive(Clone)]
 pub struct TopicMessageStore {
-    backend: Arc<dyn StorageBackend>,
-    partition: Partition,
+    backend:             Arc<dyn StorageBackend>,
+    partition:           Partition,
     retention_partition: Partition,
 }
 
@@ -107,13 +107,13 @@ impl TopicMessageStore {
         self.backend().batch(vec![
             Operation::Put {
                 partition: self.partition(),
-                key: key_encoded,
-                value: value_encoded,
+                key:       key_encoded,
+                value:     value_encoded,
             },
             Operation::Put {
                 partition: self.retention_partition(),
-                key: retention_key,
-                value: retention_value,
+                key:       retention_key,
+                value:     retention_value,
             },
         ])?;
 
@@ -222,8 +222,8 @@ impl TopicMessageStore {
             });
             operations.push(Operation::Put {
                 partition: retention_partition.clone(),
-                key: retention_entry.retention_key().storage_key(),
-                value: retention_entry.encode()?,
+                key:       retention_entry.retention_key().storage_key(),
+                value:     retention_entry.encode()?,
             });
         }
 
@@ -274,11 +274,11 @@ impl TopicMessageStore {
             bytes_freed += entry.message_bytes;
             operations.push(Operation::Delete {
                 partition: partition.clone(),
-                key: entry.primary_message_id().storage_key(),
+                key:       entry.primary_message_id().storage_key(),
             });
             operations.push(Operation::Delete {
                 partition: retention_partition.clone(),
-                key: retention_key.storage_key(),
+                key:       retention_key.storage_key(),
             });
         }
 

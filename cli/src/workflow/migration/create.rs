@@ -229,7 +229,8 @@ fn format_migration_file(
     down: &str,
 ) -> String {
     format!(
-        "-- Migration: {name}\n-- {timestamp_label}: {timestamp}\n\n-- UP\n{up}\n\n-- DOWN\n{down}\n",
+        "-- Migration: {name}\n-- {timestamp_label}: {timestamp}\n\n-- UP\n{up}\n\n-- \
+         DOWN\n{down}\n",
         up = up.trim_end(),
         down = down.trim_end(),
     )
@@ -242,7 +243,6 @@ fn has_executable_sql(sql: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::{
         config::WorkflowLoggingPolicy, workflow::test_support::minimal_sql_project_config,
     };

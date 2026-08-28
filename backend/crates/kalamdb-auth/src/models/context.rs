@@ -12,19 +12,19 @@ use kalamdb_commons::{
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     /// User's unique identifier
-    pub user_id: UserId,
+    pub user_id:         UserId,
     /// User's role (User, Service, Dba, System)
-    pub role: Role,
+    pub role:            Role,
     /// Authentication source used for the session.
-    pub auth_type: AuthType,
+    pub auth_type:       AuthType,
     /// Email address (if available)
-    pub email: Option<String>,
+    pub email:           Option<String>,
     /// Preferred human-friendly display name (if available)
-    pub name: Option<String>,
+    pub name:            Option<String>,
     /// Account creation timestamp in milliseconds since epoch
-    pub created_at: i64,
+    pub created_at:      i64,
     /// Last update timestamp in milliseconds since epoch
-    pub updated_at: i64,
+    pub updated_at:      i64,
     /// Connection information (IP address, localhost check)
     pub connection_info: ConnectionInfo,
 }

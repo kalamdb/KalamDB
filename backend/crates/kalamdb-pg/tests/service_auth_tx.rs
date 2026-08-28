@@ -1,9 +1,10 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
-
-use std::collections::HashMap;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -143,16 +144,16 @@ struct LocalRegistryExecutor {
 
 #[derive(Default)]
 struct RecordingExecutor {
-    begin_calls: AtomicUsize,
-    commit_calls: AtomicUsize,
+    begin_calls:    AtomicUsize,
+    commit_calls:   AtomicUsize,
     rollback_calls: AtomicUsize,
-    active_tx: Mutex<Option<TransactionId>>,
+    active_tx:      Mutex<Option<TransactionId>>,
 }
 
 #[derive(Default)]
 struct BeginRollbackNotFoundExecutor {
     begin_calls: AtomicUsize,
-    active_tx: Mutex<Option<TransactionId>>,
+    active_tx:   Mutex<Option<TransactionId>>,
 }
 
 #[derive(Default)]
@@ -782,7 +783,7 @@ async fn open_session_ignores_client_session_id() {
     // Server generates its own session ID regardless of what the client sends.
     let resp = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "".to_string(),
+            session_id:     "".to_string(),
             current_schema: None,
         }))
         .await;
@@ -796,7 +797,7 @@ async fn open_session_returns_session_and_schema() {
     let service = service();
     let resp = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-1".to_string(),
+            session_id:     "pg-1".to_string(),
             current_schema: Some("tenant_x".to_string()),
         }))
         .await;
@@ -811,7 +812,7 @@ async fn open_session_generates_distinct_session_ids() {
     let service = service();
     let resp1 = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: Some("ns_a".to_string()),
         }))
         .await
@@ -820,7 +821,7 @@ async fn open_session_generates_distinct_session_ids() {
 
     let resp2 = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: Some("ns_b".to_string()),
         }))
         .await
@@ -841,7 +842,7 @@ async fn begin_transaction_succeeds() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-1".to_string(),
+            session_id:     "pg-tx-1".to_string(),
             current_schema: None,
         }))
         .await
@@ -874,7 +875,7 @@ async fn commit_transaction_succeeds() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-2".to_string(),
+            session_id:     "pg-tx-2".to_string(),
             current_schema: None,
         }))
         .await
@@ -891,7 +892,7 @@ async fn commit_transaction_succeeds() {
 
     let resp = service
         .commit_transaction(plain_request(CommitTransactionRequest {
-            session_id: "pg-tx-2".to_string(),
+            session_id:     "pg-tx-2".to_string(),
             transaction_id: tx_id.clone(),
         }))
         .await;
@@ -904,7 +905,7 @@ async fn rollback_transaction_succeeds() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-3".to_string(),
+            session_id:     "pg-tx-3".to_string(),
             current_schema: None,
         }))
         .await
@@ -921,7 +922,7 @@ async fn rollback_transaction_succeeds() {
 
     let resp = service
         .rollback_transaction(plain_request(RollbackTransactionRequest {
-            session_id: "pg-tx-3".to_string(),
+            session_id:     "pg-tx-3".to_string(),
             transaction_id: tx_id.clone(),
         }))
         .await;
@@ -934,7 +935,7 @@ async fn double_begin_auto_rollbacks_stale_and_starts_new() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-4".to_string(),
+            session_id:     "pg-tx-4".to_string(),
             current_schema: None,
         }))
         .await
@@ -967,7 +968,7 @@ async fn commit_with_wrong_tx_id_fails() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-5".to_string(),
+            session_id:     "pg-tx-5".to_string(),
             current_schema: None,
         }))
         .await
@@ -982,7 +983,7 @@ async fn commit_with_wrong_tx_id_fails() {
 
     let resp = service
         .commit_transaction(plain_request(CommitTransactionRequest {
-            session_id: "pg-tx-5".to_string(),
+            session_id:     "pg-tx-5".to_string(),
             transaction_id: TX_ID_WRONG.to_string(),
         }))
         .await;
@@ -995,7 +996,7 @@ async fn begin_after_commit_succeeds() {
     let service = service();
     service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: "pg-tx-6".to_string(),
+            session_id:     "pg-tx-6".to_string(),
             current_schema: None,
         }))
         .await
@@ -1012,7 +1013,7 @@ async fn begin_after_commit_succeeds() {
 
     service
         .commit_transaction(plain_request(CommitTransactionRequest {
-            session_id: "pg-tx-6".to_string(),
+            session_id:     "pg-tx-6".to_string(),
             transaction_id: tx_id,
         }))
         .await
@@ -1034,7 +1035,7 @@ async fn execute_sql_closes_ephemeral_idle_session() {
     service
         .execute_sql(plain_request(ExecuteSqlRpcRequest {
             session_id: "pg-ephemeral-sql".to_string(),
-            sql: "CREATE NAMESPACE IF NOT EXISTS test_ns".to_string(),
+            sql:        "CREATE NAMESPACE IF NOT EXISTS test_ns".to_string(),
         }))
         .await
         .unwrap();
@@ -1049,7 +1050,7 @@ async fn execute_query_closes_ephemeral_idle_session() {
     service
         .execute_query(plain_request(ExecuteQueryRpcRequest {
             session_id: "pg-ephemeral-query".to_string(),
-            sql: "SELECT 1".to_string(),
+            sql:        "SELECT 1".to_string(),
         }))
         .await
         .unwrap();
@@ -1063,7 +1064,7 @@ async fn execute_sql_keeps_preexisting_session_open() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1074,7 +1075,7 @@ async fn execute_sql_keeps_preexisting_session_open() {
     service
         .execute_sql(plain_request(ExecuteSqlRpcRequest {
             session_id: session_id.clone(),
-            sql: "CREATE TABLE ignored".to_string(),
+            sql:        "CREATE TABLE ignored".to_string(),
         }))
         .await
         .unwrap();
@@ -1088,7 +1089,7 @@ async fn execute_query_keeps_preexisting_session_open() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1099,7 +1100,7 @@ async fn execute_query_keeps_preexisting_session_open() {
     service
         .execute_query(plain_request(ExecuteQueryRpcRequest {
             session_id: session_id.clone(),
-            sql: "SELECT 1".to_string(),
+            sql:        "SELECT 1".to_string(),
         }))
         .await
         .unwrap();
@@ -1117,7 +1118,7 @@ async fn execute_query_passes_json_operator_sql_through_without_rewrite() {
     service
         .execute_query(plain_request(ExecuteQueryRpcRequest {
             session_id: "pg-json-query".to_string(),
-            sql: "SELECT doc->>'name' AS name FROM docs".to_string(),
+            sql:        "SELECT doc->>'name' AS name FROM docs".to_string(),
         }))
         .await
         .unwrap();
@@ -1140,7 +1141,7 @@ async fn transaction_rpcs_delegate_to_configured_operation_executor() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1162,7 +1163,7 @@ async fn transaction_rpcs_delegate_to_configured_operation_executor() {
 
     service
         .commit_transaction(plain_request(CommitTransactionRequest {
-            session_id: session_id.clone(),
+            session_id:     session_id.clone(),
             transaction_id: tx_id.clone(),
         }))
         .await
@@ -1178,7 +1179,7 @@ async fn transaction_rpcs_delegate_to_configured_operation_executor() {
 
     service
         .rollback_transaction(plain_request(RollbackTransactionRequest {
-            session_id: session_id.clone(),
+            session_id:     session_id.clone(),
             transaction_id: tx_id,
         }))
         .await
@@ -1193,7 +1194,7 @@ async fn close_session_rolls_back_via_configured_operation_executor() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1228,7 +1229,7 @@ async fn begin_transaction_reclaims_stale_remote_transaction_via_executor() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1263,7 +1264,7 @@ async fn begin_transaction_reconciles_local_state_when_stale_remote_tx_is_missin
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1301,7 +1302,7 @@ async fn commit_transaction_clears_local_state_when_remote_tx_is_already_gone() 
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1320,7 +1321,7 @@ async fn commit_transaction_clears_local_state_when_remote_tx_is_already_gone() 
 
     let err = service
         .commit_transaction(plain_request(CommitTransactionRequest {
-            session_id: session_id.clone(),
+            session_id:     session_id.clone(),
             transaction_id: tx_id.clone(),
         }))
         .await
@@ -1336,7 +1337,7 @@ async fn close_session_succeeds_when_remote_tx_is_already_committed() {
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
-            session_id: String::new(),
+            session_id:     String::new(),
             current_schema: None,
         }))
         .await
@@ -1410,7 +1411,7 @@ async fn open_session_accepts_valid_dba_basic_auth() {
     let response = service
         .open_session(auth_request(
             OpenSessionRequest {
-                session_id: String::new(),
+                session_id:     String::new(),
                 current_schema: Some("tenant_x".to_string()),
             },
             VALID_DBA_BASIC_AUTH,

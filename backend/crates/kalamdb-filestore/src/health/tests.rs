@@ -13,17 +13,17 @@ use super::{
 fn create_test_storage(base_directory: &str) -> Storage {
     let now = chrono::Utc::now().timestamp();
     Storage {
-        storage_id: StorageId::from("test_health"),
-        storage_name: "Test Health Storage".to_string(),
-        description: None,
-        storage_type: StorageType::Filesystem,
-        base_directory: base_directory.to_string(),
-        credentials: None,
-        config_json: None,
+        storage_id:             StorageId::from("test_health"),
+        storage_name:           "Test Health Storage".to_string(),
+        description:            None,
+        storage_type:           StorageType::Filesystem,
+        base_directory:         base_directory.to_string(),
+        credentials:            None,
+        config_json:            None,
         shared_tables_template: "{namespace}/{tableName}".to_string(),
-        user_tables_template: "{namespace}/{userId}/{tableName}".to_string(),
-        created_at: now,
-        updated_at: now,
+        user_tables_template:   "{namespace}/{userId}/{tableName}".to_string(),
+        created_at:             now,
+        updated_at:             now,
     }
 }
 

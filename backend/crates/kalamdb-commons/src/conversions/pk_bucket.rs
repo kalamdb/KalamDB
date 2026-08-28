@@ -13,10 +13,8 @@ use arrow::array::{
 use arrow_schema::DataType;
 use datafusion_common::ScalarValue;
 
-use crate::ids::SeqId;
-use crate::models::rows::Row;
-
 use super::scalar_string::parse_string_as_scalar;
+use crate::{ids::SeqId, models::rows::Row};
 
 /// Hash-map key for PK-keyed winner selection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -23,11 +23,11 @@ use crate::{
 /// issuers, and an openidconnect-backed client/verifier cache for external
 /// ID-token verification.
 pub struct JwtConfig {
-    pub secret: String,
-    pub trusted_issuers: Vec<String>,
-    pub issuer_audiences: HashMap<String, String>,
+    pub secret:              String,
+    pub trusted_issuers:     Vec<String>,
+    pub issuer_audiences:    HashMap<String, String>,
     pub oidc_auto_provision: bool,
-    pub oidc_default_role: Role,
+    pub oidc_default_role:   Role,
 
     /// Per-issuer OIDC provider client configuration.
     oidc_configs: HashMap<String, kalamdb_configs::AuthOidcSettings>,
@@ -80,15 +80,15 @@ pub fn get_jwt_config() -> Arc<JwtConfig> {
 
 fn default_jwt_config() -> JwtConfig {
     JwtConfig {
-        secret: kalamdb_configs::defaults::default_auth_jwt_secret(),
-        trusted_issuers: parse_trusted_issuers(
+        secret:              kalamdb_configs::defaults::default_auth_jwt_secret(),
+        trusted_issuers:     parse_trusted_issuers(
             &kalamdb_configs::defaults::default_auth_jwt_trusted_issuers(),
         ),
-        issuer_audiences: HashMap::new(),
+        issuer_audiences:    HashMap::new(),
         oidc_auto_provision: false,
-        oidc_default_role: Role::User,
-        oidc_configs: HashMap::new(),
-        oidc_clients: oidc_client_cache(16),
+        oidc_default_role:   Role::User,
+        oidc_configs:        HashMap::new(),
+        oidc_clients:        oidc_client_cache(16),
     }
 }
 

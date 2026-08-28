@@ -18,19 +18,19 @@ fn default_limit() -> u64 {
 pub struct ConsumeRequest {
     /// Topic identifier (type-safe)
     #[serde(deserialize_with = "deserialize_topic_id")]
-    pub topic_id: TopicId,
+    pub topic_id:        TopicId,
     /// Consumer group identifier (type-safe). Omit for stateless inspection reads.
     #[serde(default, deserialize_with = "deserialize_optional_consumer_group_id")]
-    pub group_id: Option<ConsumerGroupId>,
+    pub group_id:        Option<ConsumerGroupId>,
     /// Starting position: "Latest", "Earliest", or {"Offset": 12345}
     #[serde(default = "default_start_position")]
-    pub start: StartPosition,
+    pub start:           StartPosition,
     /// Maximum messages to return (default 100)
     #[serde(default = "default_limit")]
-    pub limit: u64,
+    pub limit:           u64,
     /// Partition to consume from (default 0)
     #[serde(default)]
-    pub partition_id: u32,
+    pub partition_id:    u32,
     /// Long polling timeout in seconds (default from server config)
     #[serde(default)]
     pub timeout_seconds: Option<u64>,

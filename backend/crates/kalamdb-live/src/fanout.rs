@@ -43,13 +43,13 @@ impl FanoutOwnerScope {
 /// Per-table, per-owner dispatch plan for a single commit.
 #[derive(Debug, Clone)]
 pub struct FanoutDispatchPlan {
-    pub table_id: TableId,
-    pub owner_scope: FanoutOwnerScope,
-    pub change_count: usize,
-    pub projection_groups: usize,
+    pub table_id:             TableId,
+    pub owner_scope:          FanoutOwnerScope,
+    pub change_count:         usize,
+    pub projection_groups:    usize,
     pub serialization_groups: usize,
-    pub seq_upper_bound: Option<SeqId>,
-    pub notifications: Vec<ChangeNotification>,
+    pub seq_upper_bound:      Option<SeqId>,
+    pub notifications:        Vec<ChangeNotification>,
 }
 
 impl FanoutDispatchPlan {
@@ -98,15 +98,15 @@ impl FanoutDispatchPlan {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TransactionSideEffects {
     pub notifications_sent: usize,
-    pub manifest_updates: usize,
-    pub publisher_events: usize,
+    pub manifest_updates:   usize,
+    pub publisher_events:   usize,
 }
 
 /// Deferred work released after durable commit succeeds.
 #[derive(Debug, Clone)]
 pub struct CommitSideEffectPlan {
-    pub transaction_id: TransactionId,
-    pub notifications: Vec<FanoutDispatchPlan>,
+    pub transaction_id:   TransactionId,
+    pub notifications:    Vec<FanoutDispatchPlan>,
     pub publisher_events: usize,
     pub manifest_updates: usize,
 }
@@ -172,8 +172,8 @@ impl CommitSideEffectPlan {
     pub fn side_effects(&self) -> TransactionSideEffects {
         TransactionSideEffects {
             notifications_sent: self.notifications.iter().map(|plan| plan.change_count).sum(),
-            manifest_updates: self.manifest_updates,
-            publisher_events: self.publisher_events,
+            manifest_updates:   self.manifest_updates,
+            publisher_events:   self.publisher_events,
         }
     }
 

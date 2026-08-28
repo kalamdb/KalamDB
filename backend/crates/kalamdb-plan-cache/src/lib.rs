@@ -10,10 +10,10 @@ const DEFAULT_INSERT_METADATA_MAX_ENTRIES: u64 = 2048;
 
 #[derive(Debug, Clone)]
 pub struct SqlCacheRegistryConfig {
-    pub plan_max_entries: u64,
-    pub plan_idle_ttl: Duration,
+    pub plan_max_entries:            u64,
+    pub plan_idle_ttl:               Duration,
     pub insert_metadata_max_entries: u64,
-    pub insert_metadata_idle_ttl: Duration,
+    pub insert_metadata_idle_ttl:    Duration,
 }
 
 impl SqlCacheRegistryConfig {
@@ -30,10 +30,10 @@ impl SqlCacheRegistryConfig {
 impl Default for SqlCacheRegistryConfig {
     fn default() -> Self {
         Self {
-            plan_max_entries: DEFAULT_PLAN_MAX_ENTRIES,
-            plan_idle_ttl: Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
+            plan_max_entries:            DEFAULT_PLAN_MAX_ENTRIES,
+            plan_idle_ttl:               Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
             insert_metadata_max_entries: DEFAULT_INSERT_METADATA_MAX_ENTRIES,
-            insert_metadata_idle_ttl: Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
+            insert_metadata_idle_ttl:    Duration::from_secs(DEFAULT_IDLE_TTL_SECS),
         }
     }
 }
@@ -41,8 +41,8 @@ impl Default for SqlCacheRegistryConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlanCacheKey {
     pub namespace: NamespaceId,
-    pub role: Role,
-    pub sql: String,
+    pub role:      Role,
+    pub sql:       String,
 }
 
 impl PlanCacheKey {
@@ -101,7 +101,7 @@ impl Default for PlanCache {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InsertMetadataCacheKey {
-    pub table_id: TableId,
+    pub table_id:          TableId,
     pub requested_columns: Vec<String>,
 }
 
@@ -116,16 +116,16 @@ impl InsertMetadataCacheKey {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FastInsertMetadata {
-    pub table_type: TableType,
-    pub column_names: Vec<String>,
-    pub missing_defaults: Vec<FastInsertDefaultEntry>,
+    pub table_type:         TableType,
+    pub column_names:       Vec<String>,
+    pub missing_defaults:   Vec<FastInsertDefaultEntry>,
     pub primary_key_column: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FastInsertDefaultEntry {
     pub column_name: String,
-    pub template: FastInsertDefaultTemplate,
+    pub template:    FastInsertDefaultTemplate,
 }
 
 impl FastInsertDefaultEntry {
@@ -172,14 +172,17 @@ impl InsertMetadataCache {
 }
 
 pub struct SqlCacheRegistry {
-    plan_cache: PlanCache,
+    plan_cache:            PlanCache,
     insert_metadata_cache: InsertMetadataCache,
 }
 
 impl SqlCacheRegistry {
     pub fn new(config: SqlCacheRegistryConfig) -> Self {
         Self {
-            plan_cache: PlanCache::with_config(config.plan_max_entries, config.plan_idle_ttl),
+            plan_cache:            PlanCache::with_config(
+                config.plan_max_entries,
+                config.plan_idle_ttl,
+            ),
             insert_metadata_cache: InsertMetadataCache::with_config(
                 config.insert_metadata_max_entries,
                 config.insert_metadata_idle_ttl,
@@ -225,15 +228,15 @@ mod tests {
             PlanCacheKey::new(NamespaceId::new("default"), Role::User, "SELECT 1"),
             LogicalPlan::EmptyRelation(EmptyRelation {
                 produce_one_row: true,
-                schema: Arc::new(DFSchema::empty()),
+                schema:          Arc::new(DFSchema::empty()),
             }),
         );
         registry.insert_metadata_cache().insert_arc(
             insert_key.clone(),
             Arc::new(FastInsertMetadata {
-                table_type: TableType::User,
-                column_names: vec!["id".to_string()],
-                missing_defaults: vec![],
+                table_type:         TableType::User,
+                column_names:       vec!["id".to_string()],
+                missing_defaults:   vec![],
                 primary_key_column: Some("id".to_string()),
             }),
         );

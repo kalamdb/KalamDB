@@ -1,21 +1,12 @@
-<p align="center">
-  <img src="docs/images/kalamdb_logo.png" alt="KalamDB" width="260" />
-</p>
+![KalamDB](docs/images/kalamdb_logo.png)
 
-<h3 align="center">The fast, realtime SQL backend for apps and AI agents.</h3>
+### The fast, realtime SQL backend for apps and AI agents.
 
-<p align="center">
-  One database for user-owned data, shared data with RLS, live queries, durable agent queues, and multi-node clusters.
-</p>
+One database for user-owned data, shared data with RLS, live queries, durable agent queues, and multi-node clusters.
 
-<p align="center">
-  <a href="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml"><img src="https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/kalamdb/KalamDB/releases"><img src="https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag" alt="Release" /></a>
-  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
-  <a href="https://hub.docker.com/r/jamals86/kalamdb"><img src="https://img.shields.io/docker/pulls/jamals86/kalamdb" alt="Docker Pulls" /></a>
-</p>
+![CI](https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg)![Release](https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag)![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)
 
-Client-side web and mobile apps, backends, and AI agents all use the same SQL data plane. They can query and write directly over HTTP, receive live results over WebSocket, and feed table changes into durable topics and consumer groups—without a custom CRUD API or separate realtime and queue stack.
+KalamDB gives your frontend, backend, and agents the same SQL data plane. Reads and writes use SQL over HTTP; live results arrive over WebSocket; table changes can feed durable topics and consumer groups. No custom CRUD API or separate realtime and queue stack required.
 
 ## Start a project
 
@@ -31,16 +22,19 @@ kalam dev
 
 ## Built for the whole app lifecycle
 
-| | Capability | What it gives you |
-|---|---|---|
-| ⚡ | **`kalam dev`** | Database, migrations, generated types, schema watch, and app process together. |
-| 📱 | **Direct client SQL** | Web and mobile apps query and write directly under authenticated user scope and RLS. |
-| 👤 | **USER tables** | Rows are automatically isolated by the authenticated user. |
-| 👥 | **SHARED tables + RLS** | Collaborative data protected by SQL policies; default-deny without one. |
-| 🔥❄️ | **Tiered storage** | RocksDB hot path with compressed Parquet cold storage on local or object storage. |
-| 🔴 | **Realtime** | Subscribe to live SQL results over one shared WebSocket connection. |
-| 🤖 | **Pub/Sub for agents** | Route table changes into topics with durable consumer groups and retries. |
-| 🌐 | **Cluster** | Multi-Raft replication, sharded user data, follower forwarding, and failover. |
+
+|      | Capability              | What it gives you                                                                 |
+| ---- | ----------------------- | --------------------------------------------------------------------------------- |
+| ⚡    | `kalam dev`             | Database, migrations, generated types, schema watch, and app process together.    |
+| 👤   | **USER tables**         | Rows are automatically isolated by the authenticated user.                        |
+| 👥   | **SHARED tables + RLS** | Collaborative data protected by SQL policies; default-deny without one.           |
+| 🔥❄️ | **Tiered storage**      | RocksDB hot path with compressed Parquet cold storage on local or object storage. |
+| 🔴   | **Realtime**            | Subscribe to live SQL results over one shared WebSocket connection.               |
+| 🤖   | **Pub/Sub for agents**  | Route table changes into topics with durable consumer groups and retries.         |
+| 🌐   | **Cluster**             | Multi-Raft replication, sharded user data, follower forwarding, and failover.     |
+
+
+
 
 ## Data stays close to its user
 
@@ -58,6 +52,8 @@ flowchart LR
     SQL -. live results .-> Live[WebSocket]
     Hot -. table changes .-> Topics[Topics + consumer groups]
 ```
+
+
 
 USER-table keys and cold segments are scoped per user, so the same query naturally returns Alice's rows to Alice and Bob's rows to Bob. SHARED tables keep one collaborative dataset and enforce row-level policies on reads, writes, live events, and file access.
 
@@ -97,7 +93,7 @@ ALTER TOPIC app.task_events
 Watch tasks update live:
 
 ```bash
-kalam --subscribe "SELECT * FROM app.tasks ORDER BY id"
+kalam --subscribe "SELECT * FROM app.tasks"
 ```
 
 Consume work across an agent group:
@@ -106,6 +102,8 @@ Consume work across an agent group:
 CONSUME FROM app.task_events
   GROUP 'planner-agents' FROM EARLIEST LIMIT 20;
 ```
+
+
 
 ## From laptop to a 3-node cluster
 
@@ -116,6 +114,8 @@ git clone https://github.com/kalamdb/KalamDB.git
 cd KalamDB
 docker compose -f docker/run/cluster/docker-compose.yml up -d
 ```
+
+
 
 ## Explore
 

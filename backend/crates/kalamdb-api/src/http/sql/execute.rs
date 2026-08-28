@@ -46,8 +46,8 @@ use super::{
     models::{ErrorCode, QueryRequest, SqlResponse},
     request::{parse_incoming_payload, took_ms, validate_sql_length},
     statements::{
-        authorized_username, split_and_prepare_statements,
-        split_and_prepare_statements_light, PreparedApiExecutionStatement,
+        authorized_username, split_and_prepare_statements, split_and_prepare_statements_light,
+        PreparedApiExecutionStatement,
     },
 };
 use crate::limiter::RateLimiter;
@@ -167,8 +167,7 @@ pub async fn execute_sql_v1(
     // 5. Split, parse, and classify SQL statements once. FILE() uploads use light prepare
     // (classify + table extract only) because execute_file_upload_path fully prepares
     // the substituted SQL before execution.
-    let file_upload_request =
-        files_present || sql_may_contain_file_placeholder(&sql);
+    let file_upload_request = files_present || sql_may_contain_file_placeholder(&sql);
     let prepared_statements = if file_upload_request {
         match split_and_prepare_statements_light(
             &sql,

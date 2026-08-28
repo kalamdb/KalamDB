@@ -41,14 +41,16 @@ impl SchemaRegistryTrait for TablesSchemaRegistryAdapter {
 
     fn get_table_if_exists(
         &self,
-        table_id: &TableId) -> Result<Option<Arc<CommonsTableDefinition>>, Self::Error> {
+        table_id: &TableId,
+    ) -> Result<Option<Arc<CommonsTableDefinition>>, Self::Error> {
         self.inner.get_table_if_exists(table_id).map_err(Self::map_error)
     }
 
     fn get_arrow_schema_for_version(
         &self,
         table_id: &TableId,
-        schema_version: u32) -> Result<SchemaRef, Self::Error> {
+        schema_version: u32,
+    ) -> Result<SchemaRef, Self::Error> {
         self.inner
             .get_arrow_schema_for_version(table_id, schema_version)
             .map_err(Self::map_error)
@@ -60,7 +62,8 @@ impl SchemaRegistryTrait for TablesSchemaRegistryAdapter {
 
     fn get_table_provider(
         &self,
-        table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        table_id: &TableId,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.inner.get_provider(table_id)
     }
 }

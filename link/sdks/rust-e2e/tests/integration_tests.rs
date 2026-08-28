@@ -374,9 +374,9 @@ async fn test_subscription_with_custom_config() {
 
 fn sample_batch_control() -> BatchControl {
     BatchControl {
-        batch_num: 0,
-        has_more: false,
-        status: BatchStatus::Ready,
+        batch_num:   0,
+        has_more:    false,
+        status:      BatchStatus::Ready,
         last_seq_id: None,
     }
 }
@@ -385,14 +385,14 @@ fn sample_batch_control() -> BatchControl {
 fn test_change_event_is_error() {
     let error_event = ChangeEvent::Error {
         subscription_id: "sub-1".to_string(),
-        code: "ERR".to_string(),
-        message: "test error".to_string(),
+        code:            "ERR".to_string(),
+        message:         "test error".to_string(),
     };
     assert!(error_event.is_error());
 
     let insert_event = ChangeEvent::Insert {
         subscription_id: "sub-1".to_string(),
-        rows: vec![],
+        rows:            vec![],
     };
     assert!(!insert_event.is_error());
 }
@@ -401,19 +401,19 @@ fn test_change_event_is_error() {
 fn test_change_event_subscription_id() {
     let insert = ChangeEvent::Insert {
         subscription_id: "sub-123".to_string(),
-        rows: vec![],
+        rows:            vec![],
     };
     assert_eq!(insert.subscription_id(), Some("sub-123"));
 
     let ack = ChangeEvent::Ack {
         subscription_id: "sub-ack".to_string(),
-        total_rows: 0,
-        batch_control: sample_batch_control(),
-        schema: vec![SchemaField {
-            name: "id".to_string(),
+        total_rows:      0,
+        batch_control:   sample_batch_control(),
+        schema:          vec![SchemaField {
+            name:      "id".to_string(),
             data_type: KalamDataType::BigInt,
-            index: 0,
-            flags: None,
+            index:     0,
+            flags:     None,
         }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-ack"));
@@ -438,7 +438,7 @@ fn test_error_display() {
 
     let server_err = KalamLinkError::ServerError {
         status_code: 500,
-        message: "Internal server error".to_string(),
+        message:     "Internal server error".to_string(),
     };
     assert!(server_err.to_string().contains("Server error"));
 }

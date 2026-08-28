@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSetupRequest {
     /// Canonical user identifier for the new DBA account
-    pub user: UserId,
+    pub user:          UserId,
     /// Password for the new DBA user  
-    pub password: String,
+    pub password:      String,
     /// Password for the root user
     pub root_password: String,
     /// Email for the new DBA user (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
+    pub email:         Option<String>,
 }
 
 impl ServerSetupRequest {
@@ -40,7 +40,7 @@ impl ServerSetupRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSetupResponse {
     /// The created DBA user info
-    pub user: SetupUserInfo,
+    pub user:    SetupUserInfo,
     /// Setup completion message
     pub message: String,
 }
@@ -48,9 +48,9 @@ pub struct ServerSetupResponse {
 /// User info returned in setup response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupUserInfo {
-    pub id: UserId,
-    pub role: Role,
-    pub email: Option<String>,
+    pub id:         UserId,
+    pub role:       Role,
+    pub email:      Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -61,5 +61,5 @@ pub struct SetupStatusResponse {
     /// Whether the server needs initial setup
     pub needs_setup: bool,
     /// Status message
-    pub message: String,
+    pub message:     String,
 }

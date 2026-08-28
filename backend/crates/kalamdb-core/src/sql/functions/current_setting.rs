@@ -212,9 +212,6 @@ mod tests {
     fn datafusion_show_all_is_not_a_postgres_guc_show() {
         assert_eq!(classify_postgres_show("SHOW ALL"), None);
         assert_eq!(classify_postgres_show("SHOW COLUMNS FROM t"), None);
-        assert_eq!(
-            classify_postgres_show("SHOW datafusion.execution.batch_size"),
-            None
-        );
+        assert_eq!(classify_postgres_show("SHOW datafusion.execution.batch_size"), None);
     }
 }

@@ -1,8 +1,9 @@
 use std::fs;
 
-use crate::common::*;
 use kalam_cli::workflow::project::config::KalamProjectConfig;
 use tempfile::TempDir;
+
+use crate::common::*;
 
 fn assert_kalam_toml_scaffolds_dev_process(kalam_toml: &str, config_path: &std::path::Path) {
     assert!(kalam_toml.contains("[dev.processes]"));
@@ -78,8 +79,8 @@ fn test_project_workflow_init_scaffolds_project() {
     assert!(project_dir.join("lib/generated").is_dir(), "dart output dir missing");
     assert!(project_dir.join("pubspec.yaml").is_file(), "dart pubspec missing");
     assert!(project_dir.join("lib/main.dart").is_file(), "flutter main missing");
-    let generated_dart =
-        fs::read_to_string(project_dir.join("lib/generated/kalam.dart")).expect("read generated dart");
+    let generated_dart = fs::read_to_string(project_dir.join("lib/generated/kalam.dart"))
+        .expect("read generated dart");
     assert!(generated_dart.contains("KalamTableSpec<Users>"));
     assert!(!generated_dart.to_lowercase().contains("placeholder"));
     assert!(project_dir.join(".env.example").is_file(), ".env.example missing");
@@ -104,6 +105,7 @@ fn test_project_workflow_init_scaffolds_project() {
     let kalam_gitignore =
         fs::read_to_string(project_dir.join("kalam/.gitignore")).expect("read kalam .gitignore");
     assert!(kalam_gitignore.contains("/cli/logs/"));
+    assert!(kalam_gitignore.contains("/cli/dev.session.json"));
     assert!(kalam_gitignore.contains("/server/"));
     assert!(!kalam_gitignore.contains(".kalam-state.json"));
 }
@@ -148,6 +150,7 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
     let gitignore =
         fs::read_to_string(project_dir.join(".gitignore")).expect("read generated .gitignore");
     assert!(gitignore.contains("kalam/cli/logs/"));
+    assert!(gitignore.contains("kalam/cli/dev.session.json"));
     assert!(gitignore.contains("kalam/server/"));
     assert!(gitignore.contains("kalam/.schema-baseline.sql"));
     assert!(gitignore.contains("node_modules/"));
@@ -213,7 +216,10 @@ fn test_project_workflow_init_scaffolds_dart_flutter_project() {
     assert!(kalam_toml.contains("[schema.targets.dart]"));
     assert!(kalam_toml.contains("app = \"flutter run\""));
     assert!(!kalam_toml.contains("package_manager"));
-    assert!(!project_dir.join("package.json").exists(), "dart-only init should not write package.json");
+    assert!(
+        !project_dir.join("package.json").exists(),
+        "dart-only init should not write package.json"
+    );
     assert!(project_dir.join("pubspec.yaml").is_file(), "pubspec.yaml missing");
     assert!(project_dir.join("lib/main.dart").is_file(), "lib/main.dart missing");
     assert!(project_dir.join("schema.sql").is_file(), "schema.sql missing");

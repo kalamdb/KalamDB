@@ -22,8 +22,8 @@ use crate::{
 };
 
 pub struct DevPrecheckReport {
-    pub environment: ResolvedEnvironment,
-    pub watch_enabled: bool,
+    pub environment:         ResolvedEnvironment,
+    pub watch_enabled:       bool,
     pub local_server_reused: bool,
 }
 
@@ -57,26 +57,34 @@ pub async fn run_dev_prechecks(
     }
 
     let local_server_reused = if ctx.config.dev.auto_start_db {
-        let server_running = server_already_ready(&environment.url).await;
-        let binary = ensure_local_server_binary(ctx.use_color, output, server_source).await?;
-        if server_running {
+        if server_already_ready(&environment.url).await {
             output.warn(format!(
-                "precheck: local server already running at {} — kalam will reuse it instead of starting this project's local server",
+                "precheck: local server already running at {} — kalam will reuse it instead of \
+                 starting this project's local server",
                 environment.url
             ));
+            output.agent_event("KALAM_SERVER_REUSED", &[("url", &environment.url)]);
             true
         } else {
+            let binary =
+                ensure_local_server_binary(ctx.use_color, ctx.agent, output, server_source).await?;
             output.status(format!("precheck: local server binary ready at {}", binary.display()));
             false
         }
     } else {
         if !server_already_ready(&environment.url).await {
+            if ctx.agent {
+                return Err(
+                    crate::agent_error::AgentError::server_unavailable(&environment.url).into()
+                );
+            }
             return Err(CLIError::ConfigurationError(format!(
                 "precheck failed: could not reach KalamDB server at {}",
                 environment.url
             )));
         }
         output.status(format!("precheck: remote server reachable at {}", environment.url));
+        output.agent_event("KALAM_SERVER_REUSED", &[("url", &environment.url)]);
         false
     };
 

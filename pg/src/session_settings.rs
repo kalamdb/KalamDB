@@ -5,7 +5,7 @@ use kalamdb_commons::models::UserId;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionSettings {
     session_user_id: Option<UserId>,
-    current_schema: Option<String>,
+    current_schema:  Option<String>,
 }
 
 impl SessionSettings {

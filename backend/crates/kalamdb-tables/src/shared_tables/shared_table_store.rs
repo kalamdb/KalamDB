@@ -44,16 +44,16 @@ use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name}
 pub struct SharedTableRow {
     /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
     /// Maps to SQL column `_seq`
-    pub _seq: SeqId,
+    pub _seq:        SeqId,
     /// Commit-order visibility marker assigned by the durable apply path.
     /// Maps to SQL column `_commit_seq`
     #[serde(default)]
     pub _commit_seq: u64,
     /// Soft delete tombstone marker
     /// Maps to SQL column `_deleted`
-    pub _deleted: bool,
+    pub _deleted:    bool,
     /// All user-defined columns including PK (serialized as JSON map)
-    pub fields: Row,
+    pub fields:      Row,
 }
 
 impl KSerializable for SharedTableRow {
@@ -87,7 +87,7 @@ impl KSerializable for SharedTableRow {
 /// direct EntityStore implementation without admin-only access control.
 #[derive(Clone)]
 pub struct SharedTableStore {
-    backend: Arc<dyn StorageBackend>,
+    backend:   Arc<dyn StorageBackend>,
     partition: Partition,
 }
 
@@ -193,10 +193,10 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(seq)));
         SharedTableRow {
-            _seq: SeqId::new(seq),
+            _seq:        SeqId::new(seq),
             _commit_seq: 0,
-            fields: Row::new(values),
-            _deleted: false,
+            fields:      Row::new(values),
+            _deleted:    false,
         }
     }
 

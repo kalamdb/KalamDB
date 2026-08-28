@@ -25,15 +25,15 @@ const SESSION_CACHE_IDLE_TTL: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(super) struct CachedBearerIdentity {
-    user_id: UserId,
-    role: Role,
-    auth_type: AuthType,
-    email: Option<String>,
-    name: Option<String>,
+    user_id:    UserId,
+    role:       Role,
+    auth_type:  AuthType,
+    email:      Option<String>,
+    name:       Option<String>,
     created_at: i64,
     updated_at: i64,
-    exp: usize,
-    epoch: u64,
+    exp:        usize,
+    epoch:      u64,
 }
 
 impl CachedBearerIdentity {

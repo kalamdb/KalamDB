@@ -268,7 +268,7 @@ mod tests {
     fn test_forward_sql_response_payload_roundtrip() {
         let resp = ForwardSqlResponsePayload {
             status_code: 200,
-            body: b"ok".to_vec(),
+            body:        b"ok".to_vec(),
         };
         assert_eq!(resp.status_code, 200);
         assert_eq!(resp.body, b"ok".to_vec());

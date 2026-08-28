@@ -20,10 +20,10 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateTopic(CreateTopicStatement {
-            topic_name: "_placeholder".to_string(),
-            if_not_exists: false,
-            partitions: None,
-            retention_seconds: None,
+            topic_name:          "_placeholder".to_string(),
+            if_not_exists:       false,
+            partitions:          None,
+            retention_seconds:   None,
             retention_max_bytes: None,
         }),
         topics::CreateTopicHandler::new(app_context.clone()),
@@ -51,12 +51,12 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
     register_typed_handler!(
         registry,
         SqlStatementKind::AddTopicSource(AddTopicSourceStatement {
-            topic_name: "_placeholder".to_string(),
-            table_id: TableId::from_strings("_placeholder", "_placeholder"),
+            topic_name:           "_placeholder".to_string(),
+            table_id:             TableId::from_strings("_placeholder", "_placeholder"),
             table_name_qualified: true,
-            operation: kalamdb_commons::models::TopicOp::Insert,
-            filter_expr: None,
-            payload_mode: PayloadMode::Full,
+            operation:            kalamdb_commons::models::TopicOp::Insert,
+            filter_expr:          None,
+            payload_mode:         PayloadMode::Full,
         }),
         topics::AddTopicSourceHandler::new(app_context.clone()),
         SqlStatementKind::AddTopicSource,
@@ -65,8 +65,8 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
     register_typed_handler!(
         registry,
         SqlStatementKind::AlterTopicRetention(AlterTopicRetentionStatement {
-            topic_name: "_placeholder".to_string(),
-            retention_seconds: None,
+            topic_name:          "_placeholder".to_string(),
+            retention_seconds:   None,
             retention_max_bytes: None,
         }),
         topics::AlterTopicRetentionHandler::new(app_context.clone()),
@@ -86,9 +86,9 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         registry,
         SqlStatementKind::ConsumeTopic(ConsumeStatement {
             topic_name: "_placeholder".to_string(),
-            group_id: None,
-            position: ConsumePosition::Latest,
-            limit: None,
+            group_id:   None,
+            position:   ConsumePosition::Latest,
+            limit:      None,
         }),
         topics::ConsumeHandler::new(app_context.clone()),
         SqlStatementKind::ConsumeTopic,
@@ -97,10 +97,10 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
     register_typed_handler!(
         registry,
         SqlStatementKind::AckTopic(AckStatement {
-            topic_name: "_placeholder".to_string(),
-            group_id: "_placeholder".to_string(),
+            topic_name:   "_placeholder".to_string(),
+            group_id:     "_placeholder".to_string(),
             partition_id: 0,
-            upto_offset: 0,
+            upto_offset:  0,
         }),
         topics::AckHandler::new(app_context.clone()),
         SqlStatementKind::AckTopic,
@@ -109,10 +109,10 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
     register_typed_handler!(
         registry,
         SqlStatementKind::ResetConsumerGroup(ResetConsumerGroupStatement {
-            topic_name: "_placeholder".to_string(),
-            group_id: "_placeholder".to_string(),
+            topic_name:   "_placeholder".to_string(),
+            group_id:     "_placeholder".to_string(),
             partition_id: 0,
-            next_offset: 0,
+            next_offset:  0,
         }),
         topics::ResetConsumerGroupHandler::new(app_context),
         SqlStatementKind::ResetConsumerGroup,

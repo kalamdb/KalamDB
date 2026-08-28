@@ -253,7 +253,8 @@ fn validate_subscription_options(
         let last_rows = last_rows as usize;
         if last_rows > batch_size {
             return Err(format!(
-                "last_rows ({last_rows}) cannot exceed batch_size ({batch_size}); paginated last_rows replay is not supported"
+                "last_rows ({last_rows}) cannot exceed batch_size ({batch_size}); paginated \
+                 last_rows replay is not supported"
             ));
         }
     }
@@ -270,9 +271,9 @@ mod tests {
     #[test]
     fn validate_subscription_options_allows_last_rows_within_batch_size() {
         let options = SubscriptionOptions {
-            batch_size: Some(50),
-            last_rows: Some(50),
-            from: None,
+            batch_size:         Some(50),
+            last_rows:          Some(50),
+            from:               None,
             auto_fetch_batches: None,
         };
 
@@ -285,9 +286,9 @@ mod tests {
     #[test]
     fn validate_subscription_options_rejects_last_rows_above_batch_size() {
         let options = SubscriptionOptions {
-            batch_size: Some(50),
-            last_rows: Some(51),
-            from: None,
+            batch_size:         Some(50),
+            last_rows:          Some(51),
+            from:               None,
             auto_fetch_batches: None,
         };
 
@@ -301,9 +302,9 @@ mod tests {
     #[test]
     fn validate_subscription_options_uses_default_batch_size_when_unspecified() {
         let options = SubscriptionOptions {
-            batch_size: None,
-            last_rows: Some(MAX_ROWS_PER_BATCH as u32 + 1),
-            from: None,
+            batch_size:         None,
+            last_rows:          Some(MAX_ROWS_PER_BATCH as u32 + 1),
+            from:               None,
             auto_fetch_batches: None,
         };
 

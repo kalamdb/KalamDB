@@ -8,7 +8,7 @@ use serde::Deserialize;
 pub struct TopicPartitionSelector {
     /// Topic identifier (type-safe)
     #[serde(deserialize_with = "deserialize_topic_id")]
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     /// Partition ID (default 0)
     #[serde(default)]
     pub partition_id: u32,

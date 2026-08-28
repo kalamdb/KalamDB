@@ -22,33 +22,33 @@ pub enum RemoteAuthMode {
 /// All authentication flows use gRPC only — no separate HTTP API endpoint is needed.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct RemoteServerConfig {
-    pub host: String,
-    pub port: u16,
+    pub host:           String,
+    pub port:           u16,
     /// Connection/request timeout in milliseconds (0 = no timeout).
     #[serde(default)]
-    pub timeout_ms: u64,
+    pub timeout_ms:     u64,
     /// Authentication mode for the remote PG RPC connection.
     #[serde(default)]
-    pub auth_mode: RemoteAuthMode,
+    pub auth_mode:      RemoteAuthMode,
     /// Value to send as the gRPC `authorization` metadata header, e.g. `Bearer <jwt>`.
     /// Set via `CREATE SERVER … OPTIONS (auth_header '…')` or `ALTER SERVER … OPTIONS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_header: Option<String>,
+    pub auth_header:    Option<String>,
     /// Login user for `account_login` (sent as Basic auth on `open_session`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub login_user: Option<String>,
+    pub login_user:     Option<String>,
     /// Login password for `account_login` (sent as Basic auth on `open_session`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_password: Option<String>,
     /// CA certificate for validating the server (inline PEM or file path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ca_cert: Option<String>,
+    pub ca_cert:        Option<String>,
     /// Client certificate for mTLS (inline PEM or file path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_cert: Option<String>,
+    pub client_cert:    Option<String>,
     /// Client private key for mTLS (inline PEM or file path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_key: Option<String>,
+    pub client_key:     Option<String>,
 }
 
 impl std::fmt::Debug for RemoteServerConfig {
@@ -153,16 +153,16 @@ impl RemoteServerConfig {
 impl Default for RemoteServerConfig {
     fn default() -> Self {
         Self {
-            host: "127.0.0.1".to_string(),
-            port: 2910,
-            timeout_ms: 0,
-            auth_mode: RemoteAuthMode::None,
-            auth_header: None,
-            login_user: None,
+            host:           "127.0.0.1".to_string(),
+            port:           2910,
+            timeout_ms:     0,
+            auth_mode:      RemoteAuthMode::None,
+            auth_header:    None,
+            login_user:     None,
             login_password: None,
-            ca_cert: None,
-            client_cert: None,
-            client_key: None,
+            ca_cert:        None,
+            client_cert:    None,
+            client_key:     None,
         }
     }
 }

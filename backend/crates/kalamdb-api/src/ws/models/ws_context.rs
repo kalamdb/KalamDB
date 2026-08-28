@@ -13,12 +13,12 @@ use crate::limiter::RateLimiter;
 /// This struct bundles all the shared dependencies needed by WebSocket
 /// event handlers, reducing the number of parameters passed around.
 pub struct WsContext {
-    pub app_context: Arc<AppContext>,
-    pub rate_limiter: Arc<RateLimiter>,
-    pub live_query_manager: Arc<LiveQueryManager>,
-    pub user_repo: Arc<dyn UserRepository>,
+    pub app_context:         Arc<AppContext>,
+    pub rate_limiter:        Arc<RateLimiter>,
+    pub live_query_manager:  Arc<LiveQueryManager>,
+    pub user_repo:           Arc<dyn UserRepository>,
     pub connections_manager: Arc<ConnectionsManager>,
-    pub max_message_size: usize,
+    pub max_message_size:    usize,
 }
 
 impl WsContext {

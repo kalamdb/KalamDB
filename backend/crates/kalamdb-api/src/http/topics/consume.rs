@@ -190,14 +190,14 @@ pub async fn consume_handler(
         .map(|msg| {
             use base64::Engine;
             TopicMessage {
-                topic_id: batch_topic_id.clone(),
+                topic_id:     batch_topic_id.clone(),
                 partition_id: msg.partition_id,
-                offset: msg.offset,
-                payload: b64_engine.encode(&msg.payload),
-                key: msg.key.clone(),
+                offset:       msg.offset,
+                payload:      b64_engine.encode(&msg.payload),
+                key:          msg.key.clone(),
                 timestamp_ms: msg.timestamp_ms,
-                user: msg.user_id.clone(),
-                op: msg.op,
+                user:         msg.user_id.clone(),
+                op:           msg.op,
             }
         })
         .collect();

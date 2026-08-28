@@ -6,11 +6,11 @@ pub struct FileUpload {
     /// Placeholder name used in SQL, without quotes (e.g. `"upload"` → `upload`).
     pub placeholder: String,
     /// Original filename sent to the server.
-    pub filename: String,
+    pub filename:    String,
     /// Raw file content.
-    pub data: Vec<u8>,
+    pub data:        Vec<u8>,
     /// Optional MIME type override.
-    pub mime: Option<String>,
+    pub mime:        Option<String>,
 }
 
 impl FileUpload {

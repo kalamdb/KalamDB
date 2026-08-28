@@ -25,7 +25,8 @@ async fn wait_for_pg_count(
 
         if std::time::Instant::now() >= deadline {
             panic!(
-                "row count for {qualified_table} did not become {expected_count}; last count={count}"
+                "row count for {qualified_table} did not become {expected_count}; last \
+                 count={count}"
             );
         }
 

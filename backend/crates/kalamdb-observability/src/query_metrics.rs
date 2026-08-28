@@ -107,18 +107,18 @@ pub enum QueryMetricKind {
 /// Point-in-time query counter snapshot for `system.stats`.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct QueryMetricsSnapshot {
-    pub queries_total: u64,
-    pub queries_per_second: f64,
-    pub select_queries_total: u64,
+    pub queries_total:             u64,
+    pub queries_per_second:        f64,
+    pub select_queries_total:      u64,
     pub select_queries_per_second: f64,
-    pub insert_queries_total: u64,
+    pub insert_queries_total:      u64,
     pub insert_queries_per_second: f64,
-    pub update_queries_total: u64,
+    pub update_queries_total:      u64,
     pub update_queries_per_second: f64,
-    pub delete_queries_total: u64,
+    pub delete_queries_total:      u64,
     pub delete_queries_per_second: f64,
-    pub failed_queries_total: u64,
-    pub avg_query_latency_ms: f64,
+    pub failed_queries_total:      u64,
+    pub avg_query_latency_ms:      f64,
 }
 
 impl QueryMetricsSnapshot {

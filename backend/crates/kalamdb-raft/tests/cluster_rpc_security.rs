@@ -72,9 +72,9 @@ const PORT_UNAUTHENTICATED_GET_NODE_INFO: u16 = 19722;
 struct SecurityStubHandler {
     /// Counts how many times `handle_forward_sql` was called with a valid
     /// (non-rejected) token.  Should remain 0 in all negative-path tests.
-    allowed_sql_calls: Arc<AtomicUsize>,
+    allowed_sql_calls:             Arc<AtomicUsize>,
     /// Counts calls that were rejected at the auth gate.
-    rejected_sql_calls: Arc<AtomicUsize>,
+    rejected_sql_calls:            Arc<AtomicUsize>,
     /// Counts unauthenticated calls to non-SQL endpoints (notify/ping/info).
     unauthenticated_cluster_calls: Arc<AtomicUsize>,
 }
@@ -85,8 +85,8 @@ impl SecurityStubHandler {
         let rejected = Arc::new(AtomicUsize::new(0));
         let unauthenticated = Arc::new(AtomicUsize::new(0));
         let handler = Arc::new(Self {
-            allowed_sql_calls: Arc::clone(&allowed),
-            rejected_sql_calls: Arc::clone(&rejected),
+            allowed_sql_calls:             Arc::clone(&allowed),
+            rejected_sql_calls:            Arc::clone(&rejected),
             unauthenticated_cluster_calls: Arc::clone(&unauthenticated),
         });
         (handler, allowed, rejected, unauthenticated)
@@ -178,23 +178,23 @@ impl ClusterMessageHandler for SecurityStubHandler {
     ) -> Result<GetNodeInfoResponse, String> {
         self.unauthenticated_cluster_calls.fetch_add(1, Ordering::SeqCst);
         Ok(GetNodeInfoResponse {
-            success: true,
-            error: String::new(),
-            node_id: 1,
-            groups_leading: 0,
-            current_term: Some(1),
-            last_applied_log: Some(0),
-            snapshot_index: Some(0),
-            status: "leader".to_string(),
-            hostname: Some("test-node".to_string()),
-            version: Some("test".to_string()),
-            memory_mb: Some(512),
-            memory_usage_mb: Some(64),
+            success:           true,
+            error:             String::new(),
+            node_id:           1,
+            groups_leading:    0,
+            current_term:      Some(1),
+            last_applied_log:  Some(0),
+            snapshot_index:    Some(0),
+            status:            "leader".to_string(),
+            hostname:          Some("test-node".to_string()),
+            version:           Some("test".to_string()),
+            memory_mb:         Some(512),
+            memory_usage_mb:   Some(64),
             cpu_usage_percent: Some(2.0),
-            uptime_seconds: Some(120),
-            uptime_human: Some("2m".to_string()),
-            os: Some("linux".to_string()),
-            arch: Some("x86_64".to_string()),
+            uptime_seconds:    Some(120),
+            uptime_human:      Some("2m".to_string()),
+            os:                Some("linux".to_string()),
+            arch:              Some("x86_64".to_string()),
         })
     }
 }
@@ -250,11 +250,11 @@ async fn test_forward_sql_no_auth_header_returns_401() {
     let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_NO_AUTH).await;
 
     let request = ForwardSqlRequest {
-        sql: "INSERT INTO users (name) VALUES ('eve')".to_string(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  "INSERT INTO users (name) VALUES ('eve')".to_string(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: None, // ← no auth
-        request_id: None,
+        request_id:           None,
     };
 
     let response = client
@@ -282,11 +282,11 @@ async fn test_forward_sql_empty_auth_header_returns_401() {
     let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_EMPTY_CREDS).await;
 
     let request = ForwardSqlRequest {
-        sql: "SELECT * FROM system.users".to_string(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  "SELECT * FROM system.users".to_string(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: Some("   ".to_string()), // ← whitespace-only
-        request_id: None,
+        request_id:           None,
     };
 
     let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
@@ -312,11 +312,11 @@ async fn test_forward_sql_basic_auth_is_rejected() {
     let basic = "Basic YWRtaW46a2FsYW1kYjEyMw==";
 
     let request = ForwardSqlRequest {
-        sql: "DROP TABLE users".to_string(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  "DROP TABLE users".to_string(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: Some(basic.to_string()),
-        request_id: None,
+        request_id:           None,
     };
 
     let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
@@ -347,11 +347,11 @@ async fn test_forward_sql_forged_bearer_token_is_rejected() {
                       FAKESIGNATURE_this_is_not_valid";
 
     let request = ForwardSqlRequest {
-        sql: "CREATE TABLE secret_exfil (data TEXT)".to_string(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  "CREATE TABLE secret_exfil (data TEXT)".to_string(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: Some(forged_jwt.to_string()),
-        request_id: None,
+        request_id:           None,
     };
 
     let response = client.forward_sql(tonic::Request::new(request)).await.unwrap();
@@ -395,11 +395,11 @@ async fn test_forward_sql_rejects_all_malformed_auth_variants() {
 
     for (desc, auth) in attack_vectors {
         let req = ForwardSqlRequest {
-            sql: "SELECT 1".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "SELECT 1".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some((*auth).to_string()),
-            request_id: None,
+            request_id:           None,
         };
 
         let response = client
@@ -444,11 +444,11 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
 
     // First: no auth → 401
     let req_no_auth = ForwardSqlRequest {
-        sql: String::new(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  String::new(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: None,
-        request_id: None,
+        request_id:           None,
     };
     let resp = client.forward_sql(tonic::Request::new(req_no_auth)).await.unwrap().into_inner();
     assert_eq!(resp.status_code, 401);
@@ -460,11 +460,11 @@ async fn test_forward_sql_valid_token_empty_sql_is_not_executed() {
     // and the allowed counter is incremented (auth succeeded), while no actual
     // DB mutation occurred.
     let req_empty_sql = ForwardSqlRequest {
-        sql: String::new(),
-        namespace_id: None,
-        params: vec![],
+        sql:                  String::new(),
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: Some("Bearer valid-test-token".to_string()),
-        request_id: None,
+        request_id:           None,
     };
     let resp2 = client
         .forward_sql(tonic::Request::new(req_empty_sql))
@@ -488,11 +488,11 @@ async fn test_forward_sql_oversized_payload_rejected_before_parsing() {
     let mut client = start_grpc_server_with_handler(handler, PORT_FORWARD_SQL_OVERSIZED).await;
 
     let request = ForwardSqlRequest {
-        sql: "A".repeat(8 * 1024 * 1024), // 8 MiB SQL
-        namespace_id: None,
-        params: vec![],
+        sql:                  "A".repeat(8 * 1024 * 1024), // 8 MiB SQL
+        namespace_id:         None,
+        params:               vec![],
         authorization_header: None, // ← no auth
-        request_id: None,
+        request_id:           None,
     };
 
     let response = client.forward_sql(tonic::Request::new(request)).await;
@@ -543,11 +543,12 @@ async fn test_forward_sql_token_replay_is_rejected() {
 
     for attempt in 1..=5 {
         let req = ForwardSqlRequest {
-            sql: "UPDATE users SET role='system' WHERE name='attacker'".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "UPDATE users SET role='system' WHERE name='attacker'"
+                .to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some(stolen_token.to_string()),
-            request_id: Some(format!("replay-attempt-{}", attempt)),
+            request_id:           Some(format!("replay-attempt-{}", attempt)),
         };
 
         let resp = client.forward_sql(tonic::Request::new(req)).await.unwrap().into_inner();
@@ -634,11 +635,11 @@ async fn test_handler_rejects_none_auth() {
 
     let result = handler
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-            sql: "INSERT INTO audit (msg) VALUES ('test')".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "INSERT INTO audit (msg) VALUES ('test')".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: None,
-            request_id: None,
+            request_id:           None,
         })
         .await
         .expect("handler must return Ok even on auth failure");
@@ -654,11 +655,11 @@ async fn test_handler_rejects_basic_auth() {
 
     let result = handler
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-            sql: "DELETE FROM users WHERE 1=1".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "DELETE FROM users WHERE 1=1".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some("Basic cm9vdDpyb290".to_string()),
-            request_id: None,
+            request_id:           None,
         })
         .await
         .expect("handler must return Ok");
@@ -678,11 +679,11 @@ async fn test_handler_rejects_forged_bearer() {
 
     let result = handler
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-            sql: "SELECT secret FROM system.config".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "SELECT secret FROM system.config".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some(forged.to_string()),
-            request_id: None,
+            request_id:           None,
         })
         .await
         .expect("handler must return Ok");
@@ -698,11 +699,11 @@ async fn test_handler_allows_valid_bearer() {
 
     let result = handler
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-            sql: "INSERT INTO logs (msg) VALUES ('hello')".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "INSERT INTO logs (msg) VALUES ('hello')".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some("Bearer valid-test-token".to_string()),
-            request_id: None,
+            request_id:           None,
         })
         .await
         .expect("handler must return Ok");
@@ -731,11 +732,11 @@ async fn test_handler_sql_injection_bypasses_auth_but_reaches_sql_layer() {
     for payload in &sqli_payloads {
         let result = handler
             .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-                sql: (*payload).to_string(),
-                namespace_id: None,
-                params: vec![],
+                sql:                  (*payload).to_string(),
+                namespace_id:         None,
+                params:               vec![],
                 authorization_header: Some("Bearer valid-test-token".to_string()),
-                request_id: None,
+                request_id:           None,
             })
             .await
             .expect("handler must return Ok");
@@ -764,11 +765,11 @@ async fn test_noop_handler_forward_sql_returns_error() {
     let handler = NoOpClusterHandler;
     let result = handler
         .handle_forward_sql(kalamdb_raft::ForwardSqlRequest {
-            sql: "DROP TABLE everything".to_string(),
-            namespace_id: None,
-            params: vec![],
+            sql:                  "DROP TABLE everything".to_string(),
+            namespace_id:         None,
+            params:               vec![],
             authorization_header: Some("Bearer valid-test-token".to_string()),
-            request_id: None,
+            request_id:           None,
         })
         .await;
 

@@ -83,15 +83,15 @@ pub struct StreamTableProvider {
 }
 
 struct StreamScanSource {
-    core: Arc<TableProviderCore>,
-    store: Arc<StreamTableStore>,
-    ttl_seconds: Option<u64>,
-    user_id: UserId,
-    descriptor: ScanDescriptor,
-    filter: Option<Expr>,
-    physical_filter: Option<Arc<dyn PhysicalExpr>>,
+    core:              Arc<TableProviderCore>,
+    store:             Arc<StreamTableStore>,
+    ttl_seconds:       Option<u64>,
+    user_id:           UserId,
+    descriptor:        ScanDescriptor,
+    filter:            Option<Expr>,
+    physical_filter:   Option<Arc<dyn PhysicalExpr>>,
     output_projection: Option<Vec<usize>>,
-    output_schema: SchemaRef,
+    output_schema:     SchemaRef,
 }
 
 impl std::fmt::Debug for StreamScanSource {
@@ -109,7 +109,8 @@ impl std::fmt::Debug for StreamScanSource {
 impl StreamScanSource {
     async fn produce_output(
         &self,
-        include_diagnostics: bool) -> DataFusionResult<DeferredBatchOutput> {
+        include_diagnostics: bool,
+    ) -> DataFusionResult<DeferredBatchOutput> {
         let since_seq = self
             .filter
             .as_ref()
@@ -133,11 +134,13 @@ impl StreamScanSource {
                 start_seq,
                 scan_limit.unwrap_or(100_000),
                 ttl_ms,
-                now_ms)
+                now_ms,
+            )
             .await
             .map_err(|error| {
                 DataFusionError::Execution(format!(
-                    "failed to scan stream table hot storage: {error}"))
+                    "failed to scan stream table hot storage: {error}"
+                ))
             })?;
         let hot_rows_scanned = results.len();
 
@@ -149,9 +152,11 @@ impl StreamScanSource {
                 if self.core.schema_ref().field_with_name("user_id").is_ok() {
                     row_values.values.insert(
                         "user_id".to_string(),
-                        ScalarValue::Utf8(Some(row.user_id.as_str().to_string())));
+                        ScalarValue::Utf8(Some(row.user_id.as_str().to_string())),
+                    );
                 }
-            })
+            },
+        )
         .map_err(|error| DataFusionError::Execution(error.to_string()))?;
 
         let batch = finalize_deferred_batch(
@@ -159,17 +164,18 @@ impl StreamScanSource {
             self.physical_filter.as_ref(),
             self.output_projection.as_deref(),
             None,
-            self.source_name())?;
+            self.source_name(),
+        )?;
 
         let mut output = DeferredBatchOutput::new(batch);
         if include_diagnostics {
             output = output.with_diagnostics(DeferredScanDiagnostics {
-                hot_rows_scanned: Some(hot_rows_scanned),
-                cold_rows_scanned: Some(0),
-                cold_files_total: Some(0),
+                hot_rows_scanned:   Some(hot_rows_scanned),
+                cold_rows_scanned:  Some(0),
+                cold_files_total:   Some(0),
                 cold_files_skipped: Some(0),
                 cold_files_scanned: Some(0),
-                cold_files: Vec::new(),
+                cold_files:         Vec::new(),
             });
         }
         Ok(output)
@@ -209,7 +215,8 @@ impl StreamTableProvider {
     pub fn new(
         core: Arc<TableProviderCore>,
         store: Arc<StreamTableStore>,
-        ttl_seconds: Option<u64>) -> Self {
+        ttl_seconds: Option<u64>,
+    ) -> Self {
         Self {
             core,
             store,
@@ -247,7 +254,8 @@ impl SourceProvider for StreamTableProvider {
         &self,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> ScanDescriptor {
+        limit: Option<usize>,
+    ) -> ScanDescriptor {
         merged_projection_scan_descriptor(self.schema_ref(), projection, filters, limit)
     }
 }
@@ -261,12 +269,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     fn construct_row_from_parquet_data(
         &self,
         user_id: &UserId,
-        row_data: &crate::utils::version_resolution::ParquetRowData) -> Result<Option<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
+        row_data: &crate::utils::version_resolution::ParquetRowData,
+    ) -> Result<Option<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let row_key = StreamTableRowId::new(user_id.clone(), row_data.seq_id);
         let row = StreamTableRow {
             user_id: user_id.clone(),
-            _seq: row_data.seq_id,
-            fields: row_data.fields.clone(),
+            _seq:    row_data.seq_id,
+            fields:  row_data.fields.clone(),
         };
         Ok(Some((row_key, row)))
     }
@@ -276,7 +285,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     async fn find_row_key_by_id_field(
         &self,
         _user_id: &UserId,
-        _id_value: &str) -> Result<Option<StreamTableRowId>, KalamDbError> {
+        _id_value: &str,
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
         // Stream tables do not maintain a mutable PK lookup path for UPDATE.
         Ok(None)
     }
@@ -284,7 +294,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     async fn insert(
         &self,
         user_id: &UserId,
-        row_data: Row) -> Result<StreamTableRowId, KalamDbError> {
+        row_data: Row,
+    ) -> Result<StreamTableRowId, KalamDbError> {
         let _table_id = self.core.table_id();
 
         // Call SystemColumnsService to generate SeqId
@@ -297,8 +308,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         let user_id = user_id.clone();
         let entity = StreamTableRow {
             user_id: user_id.clone(),
-            _seq: seq_id,
-            fields: row_data,
+            _seq:    seq_id,
+            fields:  row_data,
         };
 
         // Create composite key
@@ -334,7 +345,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                         &table_id,
                         kalamdb_commons::models::TopicOp::Insert,
                         &row,
-                        Some(&user_id))
+                        Some(&user_id),
+                    )
                     .await;
             }
 
@@ -357,18 +369,22 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         &self,
         _user_id: &UserId,
         _key: &StreamTableRowId,
-        _updates: Row) -> Result<Option<StreamTableRowId>, KalamDbError> {
+        _updates: Row,
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
         Err(KalamDbError::InvalidOperation(
-            "UPDATE is not supported for STREAM tables".to_string()))
+            "UPDATE is not supported for STREAM tables".to_string(),
+        ))
     }
 
     async fn update_by_pk_value(
         &self,
         _user_id: &UserId,
         _pk_value: &str,
-        _updates: Row) -> Result<Option<StreamTableRowId>, KalamDbError> {
+        _updates: Row,
+    ) -> Result<Option<StreamTableRowId>, KalamDbError> {
         Err(KalamDbError::InvalidOperation(
-            "UPDATE is not supported for STREAM tables".to_string()))
+            "UPDATE is not supported for STREAM tables".to_string(),
+        ))
     }
 
     async fn delete(&self, user_id: &UserId, key: &StreamTableRowId) -> Result<(), KalamDbError> {
@@ -394,7 +410,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
     async fn delete_by_pk_value(
         &self,
         user_id: &UserId,
-        pk_value: &str) -> Result<bool, KalamDbError> {
+        pk_value: &str,
+    ) -> Result<bool, KalamDbError> {
         // STREAM tables support DELETE by PK value for hard delete
         // PK column is typically an auto-generated ID (e.g., ULID(), event_id, etc.)
 
@@ -440,7 +457,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                         notification_service.notify_table_change(
                             Some(user_id.clone()),
                             table_id,
-                            notification);
+                            notification,
+                        );
                     }
                 }
             }
@@ -454,7 +472,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filter: Option<&Expr>,
-        limit: Option<usize>) -> Result<RecordBatch, KalamDbError> {
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, KalamDbError> {
         // Extract user_id from SessionState for RLS
         let (user_id, _role) = extract_user_context(state)?;
 
@@ -475,7 +494,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 limit,
                 keep_deleted,
                 None,
-                None)
+                None,
+            )
             .await?;
         // let table_id = self.core.table_id();
         // log::debug!(
@@ -491,7 +511,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
             if self.core.schema_ref().field_with_name("user_id").is_ok() {
                 row_values.values.insert(
                     "user_id".to_string(),
-                    ScalarValue::Utf8(Some(row.user_id.as_str().to_string())));
+                    ScalarValue::Utf8(Some(row.user_id.as_str().to_string())),
+                );
             }
         })
     }
@@ -504,7 +525,8 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         limit: Option<usize>,
         _keep_deleted: bool,
         _cold_columns: Option<&[String]>,
-        _snapshot_commit_seq: Option<u64>) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
+        _snapshot_commit_seq: Option<u64>,
+    ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
         let _table_id = self.core.table_id();
 
         // since_seq is exclusive, so start at seq + 1
@@ -586,7 +608,8 @@ impl TableProvider for StreamTableProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         self.validate_transaction_table_access(state)?;
         self.ensure_leader_read(state)
             .await
@@ -649,7 +672,8 @@ impl TableProvider for StreamTableProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(pushdown_results_for_filters(filters, |filter| self.filter_capability(filter)))
     }
 
@@ -657,7 +681,8 @@ impl TableProvider for StreamTableProvider {
         &self,
         state: &dyn Session,
         input: Arc<dyn ExecutionPlan>,
-        insert_op: InsertOp) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_user_table_write_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
 
@@ -683,7 +708,8 @@ impl TableProvider for StreamTableProvider {
     async fn delete_from(
         &self,
         state: &dyn Session,
-        filters: Vec<Expr>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_user_table_write_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
         crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
@@ -697,12 +723,14 @@ impl TableProvider for StreamTableProvider {
             &schema,
             &filters,
             &[],
-            &[&pk_column])?;
+            &[&pk_column],
+        )?;
         let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
             self,
             state,
             &filters,
-            projection.as_ref())
+            projection.as_ref(),
+        )
         .await?;
         if rows.is_empty() {
             return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
@@ -733,7 +761,8 @@ impl TableProvider for StreamTableProvider {
         &self,
         _state: &dyn Session,
         _assignments: Vec<(String, Expr)>,
-        _filters: Vec<Expr>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        _filters: Vec<Expr>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         Err(DataFusionError::Plan("UPDATE not supported for STREAM tables".to_string()))
     }
 }
@@ -749,7 +778,8 @@ impl crate::utils::dml_provider::KalamTableProvider for StreamTableProvider {
     async fn insert_rows_returning(
         &self,
         user_id: &UserId,
-        rows: Vec<Row>) -> Result<Vec<ScalarValue>, KalamDbError> {
+        rows: Vec<Row>,
+    ) -> Result<Vec<ScalarValue>, KalamDbError> {
         let keys = self.insert_batch(user_id, rows).await?;
         Ok(keys.into_iter().map(|k| ScalarValue::Int64(Some(k.seq.as_i64()))).collect())
     }

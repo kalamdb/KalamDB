@@ -387,16 +387,16 @@ mod tests {
         let sqli_username = "'; DROP TABLE users; --";
         let now = chrono::Utc::now().timestamp() as usize;
         let claims = JwtClaims {
-            sub: sqli_username.to_string(),
-            iss: "kalamdb-test".to_string(),
-            exp: now + 3600,
-            iat: now,
-            name: None,
-            email: None,
+            sub:            sqli_username.to_string(),
+            iss:            "kalamdb-test".to_string(),
+            exp:            now + 3600,
+            iat:            now,
+            name:           None,
+            email:          None,
             email_verified: None,
-            role: None,
-            auth_type: None,
-            token_type: Some(TokenType::Access),
+            role:           None,
+            auth_type:      None,
+            token_type:     Some(TokenType::Access),
         };
 
         let token = generate_jwt_token(&claims, secret).unwrap();

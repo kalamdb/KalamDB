@@ -88,17 +88,17 @@ mod tests {
     fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         let now = chrono::Utc::now().timestamp_millis();
         Storage {
-            storage_id: StorageId::from("test_manifest"),
-            storage_name: "test_manifest".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: temp_dir.to_string_lossy().to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from("test_manifest"),
+            storage_name:           "test_manifest".to_string(),
+            description:            None,
+            storage_type:           StorageType::Filesystem,
+            base_directory:         temp_dir.to_string_lossy().to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
-            created_at: now,
-            updated_at: now,
+            user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
+            created_at:             now,
+            updated_at:             now,
         }
     }
 

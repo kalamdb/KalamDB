@@ -18,34 +18,34 @@ const DEFAULT_EXAMPLES_REF: &str = "main";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepositoryExample {
-    pub id: &'static str,
+    pub id:          &'static str,
     pub description: &'static str,
     pub source_path: &'static str,
 }
 
 pub const REPOSITORY_EXAMPLES: &[RepositoryExample] = &[
     RepositoryExample {
-        id: "live-okf-context-sync",
+        id:          "live-okf-context-sync",
         description: "OKF folder sync with live FILE columns",
         source_path: "live-okf-context-sync",
     },
     RepositoryExample {
-        id: "realtime-ops-feed",
+        id:          "realtime-ops-feed",
         description: "Small browser app with live SQL subscriptions",
         source_path: "simple-typescript",
     },
     RepositoryExample {
-        id: "chat-with-ai",
+        id:          "chat-with-ai",
         description: "Topic-driven React chat with an agent worker",
         source_path: "chat-with-ai",
     },
     RepositoryExample {
-        id: "react-ai-chat",
+        id:          "react-ai-chat",
         description: "Full React chat with approvals and attachments",
         source_path: "react-ai-chat",
     },
     RepositoryExample {
-        id: "summarizer-agent",
+        id:          "summarizer-agent",
         description: "Worker-only topic consumer that enriches rows",
         source_path: "summarizer-agent",
     },
@@ -199,9 +199,10 @@ fn component_as_str(component: Component<'_>) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
     use zip::{write::FileOptions, ZipWriter};
+
+    use super::*;
 
     #[test]
     fn repository_examples_include_chat_with_ai() {

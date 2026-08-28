@@ -14,9 +14,9 @@ pub const CLI_ARTIFACT_PREFIX: &str = "kalamcli";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseTarget {
     artifact_prefix: String,
-    version: ReleaseVersion,
-    platform: String,
-    archive_kind: ArchiveKind,
+    version:         ReleaseVersion,
+    platform:        String,
+    archive_kind:    ArchiveKind,
 }
 
 impl ReleaseTarget {

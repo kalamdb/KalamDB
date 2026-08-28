@@ -28,10 +28,10 @@ static AUTO_TEST_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static ACCESS_TOKENS: OnceLock<TokioMutex<HashMap<String, String>>> = OnceLock::new();
 
 struct AutoTestServer {
-    base_url: String,
+    base_url:  String,
     _temp_dir: TempDir,
-    data_dir: PathBuf,
-    _running: RunningTestHttpServer,
+    data_dir:  PathBuf,
+    _running:  RunningTestHttpServer,
 }
 
 // Full-suite CI can delay isolated bootstrap and login well past 20s even when
@@ -131,10 +131,10 @@ async fn start_local_test_server() -> Result<AutoTestServer, Box<dyn std::error:
     ensure_server_setup(&running.base_url, "test_password").await?;
 
     Ok(AutoTestServer {
-        base_url: running.base_url.clone(),
+        base_url:  running.base_url.clone(),
         _temp_dir: temp_dir,
-        data_dir: data_path,
-        _running: running,
+        data_dir:  data_path,
+        _running:  running,
     })
 }
 

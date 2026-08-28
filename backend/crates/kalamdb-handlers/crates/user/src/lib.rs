@@ -22,15 +22,15 @@ pub fn register_user_handlers(
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateUser(CreateUserStatement {
-            mode: CreateUserMode::User,
-            username: "_placeholder".to_string(),
-            auth_type: AuthType::Password,
-            role: kalamdb_commons::Role::User,
-            email: None,
-            password: None,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
-            invite_email: None,
+            mode:              CreateUserMode::User,
+            username:          "_placeholder".to_string(),
+            auth_type:         AuthType::Password,
+            role:              kalamdb_commons::Role::User,
+            email:             None,
+            password:          None,
+            storage_mode:      kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id:        None,
+            invite_email:      None,
             invite_expires_at: None,
         }),
         user::CreateUserHandler::new(app_context.clone(), enforce_password_complexity),
@@ -40,7 +40,7 @@ pub fn register_user_handlers(
     register_typed_handler!(
         registry,
         SqlStatementKind::AlterUser(AlterUserStatement {
-            username: "_placeholder".to_string(),
+            username:     "_placeholder".to_string(),
             modification: UserModification::SetEmail("_placeholder".to_string()),
         }),
         user::AlterUserHandler::new(app_context.clone(), enforce_password_complexity),
@@ -50,7 +50,7 @@ pub fn register_user_handlers(
     register_typed_handler!(
         registry,
         SqlStatementKind::DropUser(DropUserStatement {
-            username: "_placeholder".to_string(),
+            username:  "_placeholder".to_string(),
             if_exists: false,
         }),
         user::DropUserHandler::new(app_context),

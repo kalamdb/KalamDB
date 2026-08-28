@@ -8,15 +8,15 @@ use serde::Deserialize;
 pub struct AckRequest {
     /// Topic identifier (type-safe)
     #[serde(deserialize_with = "deserialize_topic_id")]
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     /// Consumer group identifier (type-safe)
     #[serde(deserialize_with = "deserialize_consumer_group_id")]
-    pub group_id: ConsumerGroupId,
+    pub group_id:     ConsumerGroupId,
     /// Partition ID (default 0)
     #[serde(default)]
     pub partition_id: u32,
     /// Offset to acknowledge up to (inclusive)
-    pub upto_offset: u64,
+    pub upto_offset:  u64,
 }
 
 fn deserialize_topic_id<'de, D>(deserializer: D) -> Result<TopicId, D::Error>

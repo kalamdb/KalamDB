@@ -103,7 +103,8 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log entry timestamp (ISO 8601 format)".to_string())),
+                Some("Log entry timestamp (ISO 8601 format)".to_string()),
+            ),
             ColumnDefinition::new(
                 2,
                 "level",
@@ -113,7 +114,8 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string())),
+                Some("Log level (DEBUG, INFO, WARN, ERROR)".to_string()),
+            ),
             ColumnDefinition::new(
                 3,
                 "thread",
@@ -123,7 +125,8 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Thread name that generated the log".to_string())),
+                Some("Thread name that generated the log".to_string()),
+            ),
             ColumnDefinition::new(
                 4,
                 "target",
@@ -133,7 +136,8 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Module or target that generated the log".to_string())),
+                Some("Module or target that generated the log".to_string()),
+            ),
             ColumnDefinition::new(
                 5,
                 "line",
@@ -143,7 +147,8 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Source code line number".to_string())),
+                Some("Source code line number".to_string()),
+            ),
             ColumnDefinition::new(
                 6,
                 "message",
@@ -153,13 +158,15 @@ impl ServerLogsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Log message content".to_string())),
+                Some("Log message content".to_string()),
+            ),
         ];
 
         system_view_definition(
             SystemTable::ServerLogs,
             columns,
-            "Server log entries from JSON log files (read-only view)")
+            "Server log entries from JSON log files (read-only view)",
+        )
     }
 
     /// Create a new server logs view
@@ -271,7 +278,8 @@ impl VirtualView for ServerLogsView {
                 Arc::new(targets.finish()) as ArrayRef,
                 Arc::new(lines.finish()) as ArrayRef,
                 Arc::new(messages.finish()) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|e| RegistryError::Other(format!("Failed to build server_logs batch: {}", e)))
     }
 }

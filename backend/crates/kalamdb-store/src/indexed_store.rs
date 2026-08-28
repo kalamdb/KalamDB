@@ -252,7 +252,8 @@ where
     pub fn new(
         backend: Arc<dyn StorageBackend>,
         partition: impl Into<String>,
-        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>) -> Self {
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+    ) -> Self {
         let partition_str = partition.into();
 
         // Ensure main partition exists
@@ -490,7 +491,8 @@ where
     pub fn insert_batch_preencoded(
         &self,
         entries: &[(K, V)],
-        encoded_values: Vec<Vec<u8>>) -> Result<()> {
+        encoded_values: Vec<Vec<u8>>,
+    ) -> Result<()> {
         let _span = kalamdb_observability::kdb_debug_span_entered!(
             "store.insert_batch_preencoded",
             count = entries.len()
@@ -714,7 +716,8 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>) -> Result<Vec<(K, V)>> {
+        limit: Option<usize>,
+    ) -> Result<Vec<(K, V)>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -744,7 +747,8 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>) -> Result<EntityIterator<'_, K, V>> {
+        limit: Option<usize>,
+    ) -> Result<EntityIterator<'_, K, V>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -787,7 +791,8 @@ where
     pub fn get_latest_by_index_prefix(
         &self,
         index_idx: usize,
-        prefix: &[u8]) -> Result<Option<(K, V)>> {
+        prefix: &[u8],
+    ) -> Result<Option<(K, V)>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -844,7 +849,8 @@ where
         index_idx: usize,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>) -> Result<IndexRawTypedIterator<'_, K>> {
+        limit: Option<usize>,
+    ) -> Result<IndexRawTypedIterator<'_, K>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -868,7 +874,8 @@ where
         &self,
         index_idx: usize,
         prefix: Option<&[u8]>,
-        limit: Option<usize>) -> Result<IndexKeyIterator<'_, K>> {
+        limit: Option<usize>,
+    ) -> Result<IndexKeyIterator<'_, K>> {
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -963,7 +970,8 @@ where
         &self,
         index_idx: usize,
         prefix: Option<Vec<u8>>,
-        limit: Option<usize>) -> Result<Vec<(K, V)>> {
+        limit: Option<usize>,
+    ) -> Result<Vec<(K, V)>> {
         let store = self.clone();
         run_blocking_result(move || store.scan_by_index(index_idx, prefix.as_deref(), limit)).await
     }
@@ -978,7 +986,8 @@ where
     pub async fn get_latest_by_index_prefix_async(
         &self,
         index_idx: usize,
-        prefix: Vec<u8>) -> Result<Option<(K, V)>> {
+        prefix: Vec<u8>,
+    ) -> Result<Option<(K, V)>> {
         self.get_latest_by_index_prefix(index_idx, &prefix)
     }
 
@@ -997,7 +1006,8 @@ where
         &self,
         limit: Option<usize>,
         prefix: Option<K>,
-        start_key: Option<K>) -> Result<Vec<(Vec<u8>, V)>> {
+        start_key: Option<K>,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
         let store = self.clone();
         run_blocking_result(move || {
             let typed_results = store.scan_all_typed(limit, prefix.as_ref(), start_key.as_ref())?;

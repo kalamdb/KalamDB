@@ -3,10 +3,10 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use kalam_link_wasm::*;
 use std::{cell::RefCell, rc::Rc};
-use wasm_bindgen::JsValue;
-use wasm_bindgen::{closure::Closure, JsCast};
+
+use kalam_link_wasm::*;
+use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);

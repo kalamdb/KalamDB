@@ -89,7 +89,8 @@ pub struct ExtendedInformationSchemaColumnsProvider {
 impl ExtendedInformationSchemaColumnsProvider {
     pub fn new(
         catalog_list: Arc<dyn datafusion::catalog::CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>) -> Self {
+        system_tables: Arc<SystemTablesRegistry>,
+    ) -> Self {
         let inner = {
             let catalog_list = Arc::clone(&catalog_list);
             std::thread::spawn(move || {
@@ -120,7 +121,8 @@ impl ExtendedInformationSchemaColumnsProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<RecordBatch> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<RecordBatch> {
         let plan = self.inner.scan(state, None, filters, limit).await?;
         let task_ctx = state.task_ctx();
         let mut stream = plan.execute(0, task_ctx)?;
@@ -146,7 +148,8 @@ impl ExtendedInformationSchemaColumnsProvider {
 fn normalize_columns_batch(
     batch: &RecordBatch,
     output_schema: &SchemaRef,
-    system_tables: &SystemTablesRegistry) -> DataFusionResult<RecordBatch> {
+    system_tables: &SystemTablesRegistry,
+) -> DataFusionResult<RecordBatch> {
     let table_schema_idx = batch.schema().index_of("table_schema").map_err(plan_err)?;
     let table_name_idx = batch.schema().index_of("table_name").map_err(plan_err)?;
     let column_name_idx = batch.schema().index_of("column_name").map_err(plan_err)?;
@@ -237,7 +240,8 @@ fn normalize_columns_batch(
                     batch,
                     row,
                     numeric_precision_idx,
-                    numeric_precisions.as_mut().unwrap());
+                    numeric_precisions.as_mut().unwrap(),
+                );
             }
             if numeric_scales.is_some() {
                 copy_optional_u64(batch, row, numeric_scale_idx, numeric_scales.as_mut().unwrap());
@@ -247,7 +251,8 @@ fn normalize_columns_batch(
                     batch,
                     row,
                     datetime_precision_idx,
-                    datetime_precisions.as_mut().unwrap());
+                    datetime_precisions.as_mut().unwrap(),
+                );
             }
         }
     }
@@ -301,7 +306,8 @@ fn normalize_columns_batch(
 fn string_column<'a>(
     batch: &'a RecordBatch,
     index: usize,
-    name: &str) -> DataFusionResult<&'a StringArray> {
+    name: &str,
+) -> DataFusionResult<&'a StringArray> {
     batch
         .column(index)
         .as_any()
@@ -321,7 +327,8 @@ fn copy_optional_u64(
     batch: &RecordBatch,
     row: usize,
     index: Option<usize>,
-    builder: &mut UInt64Builder) {
+    builder: &mut UInt64Builder,
+) {
     let Some(index) = index else {
         builder.append_null();
         return;
@@ -377,7 +384,8 @@ impl DeferredBatchSource for ExtendedColumnsScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name())
+            self.source_name(),
+        )
     }
 }
 
@@ -396,7 +404,8 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -436,7 +445,8 @@ impl TableProvider for ExtendedInformationSchemaColumnsProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
     }
 }

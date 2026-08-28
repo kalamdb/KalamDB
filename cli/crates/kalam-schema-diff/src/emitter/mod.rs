@@ -1,12 +1,37 @@
+mod add_column;
+mod add_topic_source;
+mod alter_policy;
+mod clear_topic_retention;
+mod create_namespace;
+mod create_policy;
+mod create_table;
+mod create_topic;
+mod drop_column;
+mod drop_policy;
+mod drop_table;
+mod drop_topic;
+mod flush_policy;
+mod modify_column;
+mod set_tblproperties;
+mod set_topic_retention;
 mod table;
 mod topic;
 
 use crate::{
     emitter::{
-        table::{diff_existing_table, emit_create_table},
-        topic::{diff_existing_topic, emit_add_topic_source, emit_create_topic},
+        add_topic_source::emit_add_topic_source,
+        alter_policy::emit_alter_policy,
+        create_namespace::emit_create_namespace,
+        create_policy::{emit_create_policy, emit_starter_shared_table_policy, policies_for_table},
+        create_table::emit_create_table,
+        create_topic::emit_create_topic,
+        drop_policy::emit_drop_policy,
+        drop_table::emit_drop_table,
+        drop_topic::emit_drop_topic,
+        table::diff_existing_table,
+        topic::diff_existing_topic,
     },
-    model::Schema,
+    model::{Policy, Schema},
 };
 
 pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -> Vec<String> {
@@ -17,7 +42,7 @@ pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -
     ];
 
     for namespace in target.namespaces.difference(&current.namespaces) {
-        out.push(format!("CREATE NAMESPACE IF NOT EXISTS {namespace};"));
+        out.push(emit_create_namespace(namespace));
     }
 
     if !target.namespaces.is_empty() && out.last().map(String::as_str) != Some("") {
@@ -28,12 +53,36 @@ pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -
         match current.tables.get(table_key) {
             Some(current_table) => {
                 diff_existing_table(current_table, target_table, allow_drop, &mut out);
+                diff_existing_table_policies(current, target, table_key, allow_drop, &mut out);
             },
             None => {
                 out.push(emit_create_table(target_table));
+
+                let table_policies = policies_for_table(&target.policies, table_key);
+                if table_policies.is_empty() && target_table.is_shared() {
+                    emit_starter_shared_table_policy(target_table, &mut out);
+                } else {
+                    for policy in table_policies {
+                        out.push(emit_create_policy(policy));
+                    }
+                }
+
                 out.push(String::new());
             },
         }
+    }
+
+    for (policy_key, current_policy) in &current.policies {
+        if target.policies.contains_key(policy_key) {
+            continue;
+        }
+
+        if !target.tables.contains_key(&current_policy.table_key) {
+            continue;
+        }
+
+        emit_drop_policy(current_policy, allow_drop, &mut out);
+        out.push(String::new());
     }
 
     for (topic_key, target_topic) in &target.topics {
@@ -55,38 +104,13 @@ pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -
 
     for (topic_key, current_topic) in &current.topics {
         if !target.topics.contains_key(topic_key) {
-            if allow_drop {
-                out.push(format!("DROP TOPIC {};", current_topic.name_sql));
-            } else {
-                out.push(format!(
-                    "-- destructive change skipped: topic {} exists in current schema but not in target schema",
-                    current_topic.name_sql
-                ));
-                out.push(format!(
-                    "-- rerun with destructive changes enabled to emit: DROP TOPIC {};",
-                    current_topic.name_sql
-                ));
-            }
-
-            out.push(String::new());
+            emit_drop_topic(current_topic, allow_drop, &mut out);
         }
     }
 
     for (table_key, current_table) in &current.tables {
         if !target.tables.contains_key(table_key) {
-            if allow_drop {
-                out.push(format!("DROP TABLE {};", current_table.name_sql));
-            } else {
-                out.push(format!(
-                    "-- destructive change skipped: table {} exists in current schema but not in target schema",
-                    current_table.name_sql
-                ));
-                out.push(format!(
-                    "-- rerun with destructive changes enabled to emit: DROP TABLE {};",
-                    current_table.name_sql
-                ));
-            }
-            out.push(String::new());
+            emit_drop_table(current_table, allow_drop, &mut out);
         }
     }
 
@@ -95,4 +119,57 @@ pub(crate) fn diff_schema(current: &Schema, target: &Schema, allow_drop: bool) -
     }
 
     out
+}
+
+fn diff_existing_table_policies(
+    current: &Schema,
+    target: &Schema,
+    table_key: &str,
+    allow_drop: bool,
+    out: &mut Vec<String>,
+) {
+    let start_len = out.len();
+    let current_policies = policies_for_table(&current.policies, table_key);
+    let target_policies = policies_for_table(&target.policies, table_key);
+    let current_by_key = current_policies
+        .iter()
+        .map(|policy| (policy.key.as_str(), *policy))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for policy in target_policies {
+        match current_by_key.get(policy.key.as_str()) {
+            Some(current_policy) => {
+                emit_changed_policy(current_policy, policy, allow_drop, out);
+            },
+            None => {
+                out.push(emit_create_policy(policy));
+            },
+        }
+    }
+
+    if out.len() > start_len && out.last().map(String::as_str) != Some("") {
+        out.push(String::new());
+    }
+}
+
+fn emit_changed_policy(current: &Policy, target: &Policy, allow_drop: bool, out: &mut Vec<String>) {
+    if current.same_authorization(target) {
+        return;
+    }
+
+    match emit_alter_policy(current, target) {
+        Some(statement) if !statement.is_empty() => out.push(statement),
+        Some(_) => {},
+        None => {
+            emit_drop_policy(current, allow_drop, out);
+            if allow_drop {
+                out.push(emit_create_policy(target));
+            } else {
+                out.push(format!(
+                    "-- recommended replacement: {}",
+                    emit_create_policy(target).trim_end_matches(';')
+                ));
+            }
+        },
+    }
 }

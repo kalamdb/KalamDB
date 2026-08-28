@@ -3,18 +3,17 @@ pub mod create;
 pub mod markers;
 pub mod status;
 
-pub use apply::apply_pending_migrations;
-pub use create::{create_migration, seal_draft_migration, CreateMigrationOptions};
-pub use status::migration_status;
-
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
+pub use apply::apply_pending_migrations;
+pub use create::{create_migration, seal_draft_migration, CreateMigrationOptions};
 use kalamdb_commons::NamespaceId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+pub use status::migration_status;
 
 use crate::error::{CLIError, Result};
 
@@ -43,19 +42,19 @@ impl std::fmt::Display for MigrationStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationRecord {
-    pub migration_id: String,
-    pub namespace: NamespaceId,
+    pub migration_id:  String,
+    pub namespace:     NamespaceId,
     /// Server-side primary key (`namespace:migration_id`) when loaded from `system.migrations`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration_key: Option<String>,
-    pub name: String,
-    pub checksum: String,
-    pub status: MigrationStatus,
-    pub started_at: Option<String>,
-    pub finished_at: Option<String>,
+    pub name:          String,
+    pub checksum:      String,
+    pub status:        MigrationStatus,
+    pub started_at:    Option<String>,
+    pub finished_at:   Option<String>,
     pub error_message: Option<String>,
-    pub sql: Option<String>,
-    pub source: Option<String>,
+    pub sql:           Option<String>,
+    pub source:        Option<String>,
     pub kalam_version: Option<String>,
 }
 
@@ -179,7 +178,9 @@ impl MigrationState {
             && record.checksum != current_checksum
         {
             return Err(CLIError::ConfigurationError(format!(
-                "migration file was modified after being applied\nMigration: {migration_id}\nExpected checksum: {}\nFound checksum: {current_checksum}\nCreate a new migration instead of editing an applied one.",
+                "migration file was modified after being applied\nMigration: \
+                 {migration_id}\nExpected checksum: {}\nFound checksum: \
+                 {current_checksum}\nCreate a new migration instead of editing an applied one.",
                 record.checksum
             )));
         }
@@ -246,8 +247,9 @@ fn now_timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn list_migration_files_ignores_draft() {
@@ -322,31 +324,31 @@ mod tests {
         let mut state = MigrationState {
             records: vec![
                 MigrationRecord {
-                    migration_id: "0001_auto.sql".into(),
-                    namespace: namespace.clone(),
+                    migration_id:  "0001_auto.sql".into(),
+                    namespace:     namespace.clone(),
                     migration_key: Some("legacy:0001_auto.sql".into()),
-                    name: "auto".into(),
-                    checksum: "abc".into(),
-                    status: MigrationStatus::Failed,
-                    started_at: None,
-                    finished_at: None,
+                    name:          "auto".into(),
+                    checksum:      "abc".into(),
+                    status:        MigrationStatus::Failed,
+                    started_at:    None,
+                    finished_at:   None,
                     error_message: Some("table already exists".into()),
-                    sql: None,
-                    source: Some("0001_auto.sql".into()),
+                    sql:           None,
+                    source:        Some("0001_auto.sql".into()),
                     kalam_version: None,
                 },
                 MigrationRecord {
-                    migration_id: "0001_auto.sql".into(),
-                    namespace: namespace.clone(),
+                    migration_id:  "0001_auto.sql".into(),
+                    namespace:     namespace.clone(),
                     migration_key: Some("okf_sync:0001_auto.sql".into()),
-                    name: "auto".into(),
-                    checksum: "abc".into(),
-                    status: MigrationStatus::Failed,
-                    started_at: None,
-                    finished_at: None,
+                    name:          "auto".into(),
+                    checksum:      "abc".into(),
+                    status:        MigrationStatus::Failed,
+                    started_at:    None,
+                    finished_at:   None,
                     error_message: Some("table already exists".into()),
-                    sql: None,
-                    source: Some("0001_auto.sql".into()),
+                    sql:           None,
+                    source:        Some("0001_auto.sql".into()),
                     kalam_version: None,
                 },
             ],

@@ -169,8 +169,8 @@ async fn install_managed_server_after_cli_update(
 enum SameVersionUpdate {
     UpToDate,
     NeedsInstall {
-        archive_bytes: Vec<u8>,
-        checksums: String,
+        archive_bytes:     Vec<u8>,
+        checksums:         String,
         remote_build_date: Option<String>,
     },
 }

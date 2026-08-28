@@ -65,8 +65,8 @@ impl LimitRequest {
 #[derive(Clone)]
 pub struct PruningRequest {
     pub projection: ProjectionRequest,
-    pub filters: FilterRequest,
-    pub limit: LimitRequest,
+    pub filters:    FilterRequest,
+    pub limit:      LimitRequest,
 }
 
 impl PruningRequest {
@@ -84,7 +84,7 @@ impl PruningRequest {
 /// subset that can reduce hot/cold source work before version resolution.
 #[derive(Clone)]
 pub struct MvccFilterEvaluation {
-    pub exact: FilterRequest,
+    pub exact:   FilterRequest,
     pub inexact: FilterRequest,
 }
 

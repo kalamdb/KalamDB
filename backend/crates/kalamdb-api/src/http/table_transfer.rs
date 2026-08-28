@@ -29,21 +29,21 @@ const MAX_TEXT_FIELD_BYTES: usize = 4096;
 #[derive(Debug, Deserialize)]
 pub struct TableExportRequest {
     pub namespace_id: String,
-    pub table_name: String,
+    pub table_name:   String,
     #[serde(default)]
-    pub user_id: Option<String>,
+    pub user_id:      Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct TableTransferJobResponse {
-    pub job_id: String,
+    pub job_id:       String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub export_id: Option<String>,
+    pub export_id:    Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub import_id: Option<String>,
-    pub status: String,
+    pub import_id:    Option<String>,
+    pub status:       String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub message:      Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_url: Option<String>,
 }
@@ -51,9 +51,9 @@ pub struct TableTransferJobResponse {
 #[derive(Default)]
 struct ParsedImportMultipart {
     namespace_id: Option<String>,
-    table_name: Option<String>,
-    user_id: Option<String>,
-    file: Option<Bytes>,
+    table_name:   Option<String>,
+    user_id:      Option<String>,
+    file:         Option<Bytes>,
 }
 
 /// POST /v1/api/table-exports - Start a single-table data export job.
@@ -85,11 +85,11 @@ pub async fn start_table_export(
     let job_manager = app_context.job_manager();
     match job_manager.create_job_typed(JobType::TableExport, params, None, None).await {
         Ok(job_id) => HttpResponse::Ok().json(TableTransferJobResponse {
-            job_id: job_id.as_str().to_string(),
-            export_id: Some(export_id.clone()),
-            import_id: None,
-            status: JobStatus::Queued.as_str().to_string(),
-            message: Some(format!("Table export queued for {}", table_id.full_name())),
+            job_id:       job_id.as_str().to_string(),
+            export_id:    Some(export_id.clone()),
+            import_id:    None,
+            status:       JobStatus::Queued.as_str().to_string(),
+            message:      Some(format!("Table export queued for {}", table_id.full_name())),
             download_url: Some(build_table_export_download_url(&export_id)),
         }),
         Err(error) => internal_error(format!("Failed to start table export: {}", error)),
@@ -125,8 +125,8 @@ pub async fn start_table_import(
 
     let request = TableExportRequest {
         namespace_id: parsed.namespace_id.unwrap_or_default(),
-        table_name: parsed.table_name.unwrap_or_default(),
-        user_id: parsed.user_id,
+        table_name:   parsed.table_name.unwrap_or_default(),
+        user_id:      parsed.user_id,
     };
     let (table_id, table_type, user_id) =
         match parse_transfer_request(&request, app_context.as_ref()) {
@@ -165,11 +165,11 @@ pub async fn start_table_import(
     let job_manager = app_context.job_manager();
     match job_manager.create_job_typed(JobType::TableImport, params, None, None).await {
         Ok(job_id) => HttpResponse::Ok().json(TableTransferJobResponse {
-            job_id: job_id.as_str().to_string(),
-            export_id: None,
-            import_id: Some(import_id),
-            status: JobStatus::Queued.as_str().to_string(),
-            message: Some(format!("Table import queued for {}", table_id.full_name())),
+            job_id:       job_id.as_str().to_string(),
+            export_id:    None,
+            import_id:    Some(import_id),
+            status:       JobStatus::Queued.as_str().to_string(),
+            message:      Some(format!("Table import queued for {}", table_id.full_name())),
             download_url: None,
         }),
         Err(error) => {

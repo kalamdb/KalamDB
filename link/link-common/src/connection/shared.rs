@@ -36,10 +36,10 @@ use registry::{ConnCmd, SubscriptionReady};
 const DISCONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) struct SharedConnection {
-    cmd_tx: mpsc::Sender<ConnCmd>,
-    connected: Arc<AtomicBool>,
+    cmd_tx:              mpsc::Sender<ConnCmd>,
+    connected:           Arc<AtomicBool>,
     _reconnect_attempts: Arc<AtomicU32>,
-    _task: JoinHandle<()>,
+    _task:               JoinHandle<()>,
 }
 
 #[derive(Clone)]
@@ -183,7 +183,7 @@ impl SharedConnection {
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
         self.cmd_tx
             .send(ConnCmd::Unsubscribe {
-                id: id.to_string(),
+                id:         id.to_string(),
                 generation: None,
             })
             .await
@@ -203,10 +203,7 @@ impl SharedConnection {
             .await
             .is_ok()
         {
-            if !matches!(
-                tokio::time::timeout(DISCONNECT_TIMEOUT, completed_rx).await,
-                Ok(Ok(()))
-            ) {
+            if !matches!(tokio::time::timeout(DISCONNECT_TIMEOUT, completed_rx).await, Ok(Ok(()))) {
                 self._task.abort();
                 self.connected.store(false, Ordering::Release);
             }

@@ -2,7 +2,6 @@ mod support;
 
 use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::models::{SessionOrigin, TransactionState};
-
 use support::{auth, FakeTransactionEngine};
 
 #[tokio::test]

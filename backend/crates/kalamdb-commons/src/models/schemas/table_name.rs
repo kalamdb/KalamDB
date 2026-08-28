@@ -10,7 +10,7 @@ use crate::helpers::naming::{validate_sql_identifier, SqlIdentifierError};
 /// Error returned when a table name fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableNameValidationError {
-    pub name: String,
+    pub name:   String,
     pub reason: String,
 }
 
@@ -25,7 +25,7 @@ impl std::error::Error for TableNameValidationError {}
 impl From<SqlIdentifierError> for TableNameValidationError {
     fn from(error: SqlIdentifierError) -> Self {
         Self {
-            name: String::new(),
+            name:   String::new(),
             reason: error.to_string(),
         }
     }
@@ -50,28 +50,28 @@ impl TableName {
     fn validate(name: &str) -> Result<(), TableNameValidationError> {
         if name.is_empty() {
             return Err(TableNameValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Table name cannot be empty".to_string(),
             });
         }
 
         if name.contains("..") {
             return Err(TableNameValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Table name cannot contain '..' (path traversal)".to_string(),
             });
         }
 
         if name.contains('/') || name.contains('\\') {
             return Err(TableNameValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Table name cannot contain path separators".to_string(),
             });
         }
 
         if name.contains('\0') {
             return Err(TableNameValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Table name cannot contain null bytes".to_string(),
             });
         }
@@ -88,7 +88,7 @@ impl TableName {
         let name = name.into();
         Self::validate(&name)?;
         validate_sql_identifier(&name).map_err(|error| TableNameValidationError {
-            name: name.clone(),
+            name:   name.clone(),
             reason: error.to_string(),
         })?;
         Ok(Self(Arc::<str>::from(name.to_lowercase())))

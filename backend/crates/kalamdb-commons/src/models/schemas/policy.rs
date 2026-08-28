@@ -32,7 +32,7 @@ pub enum FlushPolicy {
     /// Flush when EITHER row limit OR time interval is reached
     Combined {
         /// Number of rows before flushing (must be > 0 and < 1,000,000)
-        row_limit: u32,
+        row_limit:        u32,
         /// Interval in seconds (must be > 0 and < 86400 = 24 hours)
         interval_seconds: u32,
     },
@@ -48,7 +48,7 @@ enum FlushPolicyHuman {
         interval_seconds: u32,
     },
     Combined {
-        row_limit: u32,
+        row_limit:        u32,
         interval_seconds: u32,
     },
 }
@@ -62,7 +62,7 @@ enum FlushPolicyBinary {
         interval_seconds: u32,
     },
     Combined {
-        row_limit: u32,
+        row_limit:        u32,
         interval_seconds: u32,
     },
 }
@@ -80,7 +80,7 @@ impl From<&FlushPolicy> for FlushPolicyHuman {
                 row_limit,
                 interval_seconds,
             } => FlushPolicyHuman::Combined {
-                row_limit: *row_limit,
+                row_limit:        *row_limit,
                 interval_seconds: *interval_seconds,
             },
         }
@@ -118,7 +118,7 @@ impl From<&FlushPolicy> for FlushPolicyBinary {
                 row_limit,
                 interval_seconds,
             } => FlushPolicyBinary::Combined {
-                row_limit: *row_limit,
+                row_limit:        *row_limit,
                 interval_seconds: *interval_seconds,
             },
         }
@@ -235,7 +235,7 @@ impl FlushPolicy {
     /// Create a combined flush policy with validation
     pub fn combined(limit: u32, seconds: u32) -> Result<Self, String> {
         let policy = FlushPolicy::Combined {
-            row_limit: limit,
+            row_limit:        limit,
             interval_seconds: seconds,
         };
         policy.validate()?;

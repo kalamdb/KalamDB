@@ -1,11 +1,14 @@
-use datafusion::arrow::array::StringArray;
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::Result as DataFusionResult;
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{array::StringArray, datatypes::DataType},
+    common::Result as DataFusionResult,
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::Peek;
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath},
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonGetStr,
@@ -17,14 +20,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGetStr {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGetStr {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get_str".to_string()],
+            aliases:   ["json_get_str".to_string()],
         }
     }
 }

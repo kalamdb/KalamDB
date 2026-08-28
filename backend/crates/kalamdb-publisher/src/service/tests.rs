@@ -1,18 +1,22 @@
-use std::collections::HashSet;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Condvar, Mutex as StdMutex,
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Condvar, Mutex as StdMutex,
+    },
+    thread,
+    time::Duration as StdDuration,
 };
-use std::time::Duration as StdDuration;
-use std::{sync::mpsc, thread};
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{NamespaceId, PayloadMode, TableName},
     KSerializable, StorageKey,
 };
-use kalamdb_store::storage_trait::{KvIterator, Operation, Partition, StorageBackend};
-use kalamdb_store::test_utils::InMemoryBackend;
+use kalamdb_store::{
+    storage_trait::{KvIterator, Operation, Partition, StorageBackend},
+    test_utils::InMemoryBackend,
+};
 use kalamdb_system::providers::topics::TopicRoute;
 
 use super::*;
@@ -177,19 +181,19 @@ fn put_primary_only_message(
 }
 
 struct PausingScanBackend {
-    inner: InMemoryBackend,
+    inner:           InMemoryBackend,
     pause_next_scan: AtomicBool,
-    scan_started: (StdMutex<bool>, Condvar),
-    release_scan: (StdMutex<bool>, Condvar),
+    scan_started:    (StdMutex<bool>, Condvar),
+    release_scan:    (StdMutex<bool>, Condvar),
 }
 
 impl PausingScanBackend {
     fn new() -> Self {
         Self {
-            inner: InMemoryBackend::new(),
+            inner:           InMemoryBackend::new(),
             pause_next_scan: AtomicBool::new(false),
-            scan_started: (StdMutex::new(false), Condvar::new()),
-            release_scan: (StdMutex::new(false), Condvar::new()),
+            scan_started:    (StdMutex::new(false), Condvar::new()),
+            release_scan:    (StdMutex::new(false), Condvar::new()),
         }
     }
 
@@ -528,12 +532,13 @@ fn test_publish_message_respects_complex_route_filter_on_insert() {
     let topic_id = TopicId::new("complex_event_insert_topic");
 
     let topic = create_test_topic_with_filter(
-            topic_id.clone(),
-            table_id.clone(),
-            TopicOp::Insert,
-            1,
-            "((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL",
-        );
+        topic_id.clone(),
+        table_id.clone(),
+        TopicOp::Insert,
+        1,
+        "((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE \
+         'deploy_%') AND archived IS NULL",
+    );
     service.add_topic(topic);
     assert_eq!(service.cache_stats().total_routes, 1);
 

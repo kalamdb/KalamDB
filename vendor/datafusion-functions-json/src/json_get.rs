@@ -1,17 +1,23 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::ArrayRef;
-use datafusion::arrow::array::UnionArray;
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::Result as DataFusionResult;
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
-use datafusion::scalar::ScalarValue;
+use datafusion::{
+    arrow::{
+        array::{ArrayRef, UnionArray},
+        datatypes::DataType,
+    },
+    common::Result as DataFusionResult,
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+    scalar::ScalarValue,
+};
 use jiter::{Jiter, NumberAny, NumberInt, Peek};
 
-use crate::common::InvokeResult;
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath};
-use crate::common_macros::make_udf_function;
-use crate::common_union::{JsonUnion, JsonUnionField};
+use crate::{
+    common::{
+        get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath,
+    },
+    common_macros::make_udf_function,
+    common_union::{JsonUnion, JsonUnionField},
+};
 
 make_udf_function!(
     JsonGet,
@@ -25,14 +31,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGet {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGet {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get".to_string()],
+            aliases:   ["json_get".to_string()],
         }
     }
 }
@@ -106,7 +112,10 @@ impl InvokeResult for JsonUnion {
     }
 }
 
-fn jiter_json_get_union(opt_json: Option<&str>, path: &[JsonPath]) -> Result<JsonUnionField, GetError> {
+fn jiter_json_get_union(
+    opt_json: Option<&str>,
+    path: &[JsonPath],
+) -> Result<JsonUnionField, GetError> {
     if let Some((mut jiter, peek)) = jiter_json_find(opt_json, path) {
         build_union(&mut jiter, peek)
     } else {
@@ -119,29 +128,29 @@ fn build_union(jiter: &mut Jiter, peek: Peek) -> Result<JsonUnionField, GetError
         Peek::Null => {
             jiter.known_null()?;
             Ok(JsonUnionField::JsonNull)
-        }
+        },
         Peek::True | Peek::False => {
             let value = jiter.known_bool(peek)?;
             Ok(JsonUnionField::Bool(value))
-        }
+        },
         Peek::String => {
             let value = jiter.known_str()?;
             Ok(JsonUnionField::Str(value.to_owned()))
-        }
+        },
         Peek::Array => {
             let start = jiter.current_index();
             jiter.known_skip(peek)?;
             let array_slice = jiter.slice_to_current(start);
             let array_string = std::str::from_utf8(array_slice)?;
             Ok(JsonUnionField::Array(array_string.to_owned()))
-        }
+        },
         Peek::Object => {
             let start = jiter.current_index();
             jiter.known_skip(peek)?;
             let object_slice = jiter.slice_to_current(start);
             let object_string = std::str::from_utf8(object_slice)?;
             Ok(JsonUnionField::Object(object_string.to_owned()))
-        }
+        },
         _ => match jiter.known_number(peek)? {
             NumberAny::Int(NumberInt::Int(value)) => Ok(JsonUnionField::Int(value)),
             NumberAny::Int(NumberInt::BigInt(_)) => todo!("BigInt not supported yet"),

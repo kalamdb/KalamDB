@@ -4,7 +4,11 @@
 //! a `RemoteKalamClient`, and exercises a full round-trip:
 //!     client → gRPC → KalamPgService → OperationExecutor → response → client
 
-use std::{collections::HashMap, sync::Arc, sync::Mutex, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use arrow::{
     array::{Array, Int64Array, StringArray},
@@ -14,12 +18,12 @@ use arrow::{
 use async_trait::async_trait;
 use kalam_pg_client::RemoteKalamClient;
 use kalam_pg_common::RemoteServerConfig;
+use kalamdb_backend::session::LiveSessionTransaction;
 use kalamdb_commons::models::TransactionId;
 use kalamdb_pg::{
     DeleteRequest, InsertRequest, KalamPgService, MutationResult, OperationExecutor,
     PgServiceServer, ScanRequest, ScanResult, TransactionState, UpdateRequest,
 };
-use kalamdb_backend::session::LiveSessionTransaction;
 use tokio::net::TcpListener;
 use tonic::{Code, Status};
 use uuid::Uuid;
@@ -103,10 +107,7 @@ impl OperationExecutor for MockExecutor {
             }))
     }
 
-    async fn begin_transaction(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<TransactionId>, Status> {
+    async fn begin_transaction(&self, session_id: &str) -> Result<Option<TransactionId>, Status> {
         let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
         self.active
             .lock()
@@ -120,10 +121,7 @@ impl OperationExecutor for MockExecutor {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<Option<TransactionId>, Status> {
-        let mut active = self
-            .active
-            .lock()
-            .expect("mock executor commit active tx");
+        let mut active = self.active.lock().expect("mock executor commit active tx");
         let Some(current) = active.get(session_id) else {
             return Err(Status::failed_precondition("no active transaction"));
         };
@@ -141,10 +139,7 @@ impl OperationExecutor for MockExecutor {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<Option<TransactionId>, Status> {
-        let mut active = self
-            .active
-            .lock()
-            .expect("mock executor rollback active tx");
+        let mut active = self.active.lock().expect("mock executor rollback active tx");
         let Some(current) = active.get(session_id) else {
             return Ok(Some(transaction_id.clone()));
         };
@@ -160,7 +155,7 @@ impl OperationExecutor for MockExecutor {
 
 struct NotLeaderExecutor {
     leader_api_addr: String,
-    code: Code,
+    code:            Code,
 }
 
 impl NotLeaderExecutor {
@@ -271,9 +266,11 @@ async fn start_leader_redirect_servers(host: &str, code: Code) -> (u16, u16) {
 }
 
 async fn start_mock_server_and_client() -> RemoteKalamClient {
-    let port =
-        start_server_with_executor_on_ephemeral_port("127.0.0.1", Arc::new(MockExecutor::default()))
-            .await;
+    let port = start_server_with_executor_on_ephemeral_port(
+        "127.0.0.1",
+        Arc::new(MockExecutor::default()),
+    )
+    .await;
     connect_to("127.0.0.1", port).await
 }
 

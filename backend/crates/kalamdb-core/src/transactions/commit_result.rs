@@ -42,12 +42,12 @@ pub fn commit_side_effect_plan_from_write_set(
 /// Result of sealing or aborting an explicit transaction.
 #[derive(Debug, Clone)]
 pub struct TransactionCommitResult {
-    pub transaction_id: TransactionId,
-    pub outcome: TransactionCommitOutcome,
-    pub affected_rows: usize,
-    pub committed_at: Option<DateTime<Utc>>,
+    pub transaction_id:       TransactionId,
+    pub outcome:              TransactionCommitOutcome,
+    pub affected_rows:        usize,
+    pub committed_at:         Option<DateTime<Utc>>,
     pub committed_commit_seq: Option<u64>,
-    pub failure_reason: Option<String>,
+    pub failure_reason:       Option<String>,
     pub emitted_side_effects: TransactionSideEffects,
 }
 

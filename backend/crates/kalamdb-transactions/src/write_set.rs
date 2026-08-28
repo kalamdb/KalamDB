@@ -11,13 +11,13 @@ fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> ScopedPkKey 
 /// Cold staged-write state allocated lazily on the first transaction write.
 #[derive(Debug, Clone)]
 pub struct TransactionWriteSet {
-    pub transaction_id: TransactionId,
+    pub transaction_id:      TransactionId,
     pub next_mutation_order: u64,
-    pub ordered_mutations: Vec<StagedMutation>,
+    pub ordered_mutations:   Vec<StagedMutation>,
     pub latest_by_table_key: HashMap<TableId, HashMap<ScopedPkKey, usize>>,
-    pub overlay_cache: HashMap<TableId, TransactionOverlay>,
-    pub buffer_bytes: usize,
-    pub savepoint_marks: Vec<u64>,
+    pub overlay_cache:       HashMap<TableId, TransactionOverlay>,
+    pub buffer_bytes:        usize,
+    pub savepoint_marks:     Vec<u64>,
 }
 
 impl TransactionWriteSet {

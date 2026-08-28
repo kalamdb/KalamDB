@@ -30,7 +30,10 @@ fn test_cli_connection_and_prompt() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Interactive SQL terminal"))
+        .stdout(predicate::str::contains("KalamDB CLI for projects"))
+        .stdout(predicate::str::contains("init"))
+        .stdout(predicate::str::contains("dev"))
+        .stdout(predicate::str::contains("status"))
         .stdout(predicate::str::contains("--url"));
 }
 
@@ -42,7 +45,9 @@ fn test_cli_help_command() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Interactive SQL terminal"))
+        .stdout(predicate::str::contains("KalamDB CLI for projects"))
+        .stdout(predicate::str::contains("init"))
+        .stdout(predicate::str::contains("dev"))
         .stdout(predicate::str::contains("--url"))
         .stdout(predicate::str::contains("--watch-schema"))
         .stdout(predicate::str::contains("--json"))

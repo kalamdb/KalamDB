@@ -7,11 +7,14 @@ use crate::{
     auth::{AuthProvider, ResolvedAuth},
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
-    models::file_upload::uploads_to_owned,
-    models::{FileUpload, LoginResponse, QueryResponse, SubscriptionConfig, SubscriptionInfo},
-    query::models::query_param::params_to_json,
-    query::models::QueryParam,
-    query::UploadProgressCallback,
+    models::{
+        file_upload::uploads_to_owned, FileUpload, LoginResponse, QueryResponse,
+        SubscriptionConfig, SubscriptionInfo,
+    },
+    query::{
+        models::{query_param::params_to_json, QueryParam},
+        UploadProgressCallback,
+    },
     subscription::{LiveRowsConfig, LiveRowsSubscription, SubscriptionManager},
     timeouts::KalamLinkTimeouts,
 };

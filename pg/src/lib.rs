@@ -21,12 +21,12 @@ pub(crate) mod test_alloc {
 
     #[derive(Clone, Copy, Debug, Default, Serialize)]
     pub struct AllocationSnapshot {
-        pub allocations: usize,
-        pub deallocations: usize,
-        pub allocated_bytes: usize,
+        pub allocations:       usize,
+        pub deallocations:     usize,
+        pub allocated_bytes:   usize,
         pub deallocated_bytes: usize,
-        pub live_bytes: usize,
-        pub peak_live_bytes: usize,
+        pub live_bytes:        usize,
+        pub peak_live_bytes:   usize,
     }
 
     static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -106,12 +106,12 @@ pub(crate) mod test_alloc {
 
     pub fn snapshot() -> AllocationSnapshot {
         AllocationSnapshot {
-            allocations: ALLOCATIONS.load(Ordering::SeqCst),
-            deallocations: DEALLOCATIONS.load(Ordering::SeqCst),
-            allocated_bytes: ALLOCATED_BYTES.load(Ordering::SeqCst),
+            allocations:       ALLOCATIONS.load(Ordering::SeqCst),
+            deallocations:     DEALLOCATIONS.load(Ordering::SeqCst),
+            allocated_bytes:   ALLOCATED_BYTES.load(Ordering::SeqCst),
             deallocated_bytes: DEALLOCATED_BYTES.load(Ordering::SeqCst),
-            live_bytes: LIVE_BYTES.load(Ordering::SeqCst),
-            peak_live_bytes: PEAK_LIVE_BYTES.load(Ordering::SeqCst),
+            live_bytes:        LIVE_BYTES.load(Ordering::SeqCst),
+            peak_live_bytes:   PEAK_LIVE_BYTES.load(Ordering::SeqCst),
         }
     }
 }
@@ -124,16 +124,16 @@ pub(crate) mod conversion_test_stats {
 
     #[derive(Clone, Copy, Debug, Default, Serialize)]
     pub struct ConversionTestStats {
-        pub text_to_pg_fast_path_calls: usize,
-        pub text_to_pg_fast_path_bytes: usize,
-        pub json_to_pg_input_calls: usize,
-        pub json_to_pg_input_bytes: usize,
-        pub jsonb_to_pg_input_calls: usize,
-        pub jsonb_to_pg_input_bytes: usize,
-        pub text_from_pg_fast_path_calls: usize,
-        pub text_from_pg_fast_path_bytes: usize,
-        pub json_from_pg_fast_path_calls: usize,
-        pub json_from_pg_fast_path_bytes: usize,
+        pub text_to_pg_fast_path_calls:    usize,
+        pub text_to_pg_fast_path_bytes:    usize,
+        pub json_to_pg_input_calls:        usize,
+        pub json_to_pg_input_bytes:        usize,
+        pub jsonb_to_pg_input_calls:       usize,
+        pub jsonb_to_pg_input_bytes:       usize,
+        pub text_from_pg_fast_path_calls:  usize,
+        pub text_from_pg_fast_path_bytes:  usize,
+        pub json_from_pg_fast_path_calls:  usize,
+        pub json_from_pg_fast_path_bytes:  usize,
         pub jsonb_from_pg_fast_path_calls: usize,
         pub jsonb_from_pg_fast_path_bytes: usize,
     }
@@ -198,16 +198,16 @@ pub(crate) mod conversion_test_stats {
 
     pub fn snapshot() -> ConversionTestStats {
         ConversionTestStats {
-            text_to_pg_fast_path_calls: TEXT_TO_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
-            text_to_pg_fast_path_bytes: TEXT_TO_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
-            json_to_pg_input_calls: JSON_TO_PG_INPUT_CALLS.load(Ordering::SeqCst),
-            json_to_pg_input_bytes: JSON_TO_PG_INPUT_BYTES.load(Ordering::SeqCst),
-            jsonb_to_pg_input_calls: JSONB_TO_PG_INPUT_CALLS.load(Ordering::SeqCst),
-            jsonb_to_pg_input_bytes: JSONB_TO_PG_INPUT_BYTES.load(Ordering::SeqCst),
-            text_from_pg_fast_path_calls: TEXT_FROM_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
-            text_from_pg_fast_path_bytes: TEXT_FROM_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
-            json_from_pg_fast_path_calls: JSON_FROM_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
-            json_from_pg_fast_path_bytes: JSON_FROM_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
+            text_to_pg_fast_path_calls:    TEXT_TO_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
+            text_to_pg_fast_path_bytes:    TEXT_TO_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
+            json_to_pg_input_calls:        JSON_TO_PG_INPUT_CALLS.load(Ordering::SeqCst),
+            json_to_pg_input_bytes:        JSON_TO_PG_INPUT_BYTES.load(Ordering::SeqCst),
+            jsonb_to_pg_input_calls:       JSONB_TO_PG_INPUT_CALLS.load(Ordering::SeqCst),
+            jsonb_to_pg_input_bytes:       JSONB_TO_PG_INPUT_BYTES.load(Ordering::SeqCst),
+            text_from_pg_fast_path_calls:  TEXT_FROM_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
+            text_from_pg_fast_path_bytes:  TEXT_FROM_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
+            json_from_pg_fast_path_calls:  JSON_FROM_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
+            json_from_pg_fast_path_bytes:  JSON_FROM_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
             jsonb_from_pg_fast_path_calls: JSONB_FROM_PG_FAST_PATH_CALLS.load(Ordering::SeqCst),
             jsonb_from_pg_fast_path_bytes: JSONB_FROM_PG_FAST_PATH_BYTES.load(Ordering::SeqCst),
         }

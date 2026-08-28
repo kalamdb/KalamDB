@@ -7,8 +7,8 @@ use kalamdb_commons::models::{ReadContext, Role, UserId};
 /// Session-level user context passed via DataFusion's extension system
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UserContext {
-    pub user_id: UserId,
-    pub role: Role,
+    pub user_id:      UserId,
+    pub role:         Role,
     /// Read routing context (default: Client = requires leader)
     pub read_context: ReadContext,
 }
@@ -16,8 +16,8 @@ pub struct UserContext {
 impl Default for UserContext {
     fn default() -> Self {
         UserContext {
-            user_id: UserId::anonymous(),
-            role: Role::Anonymous,
+            user_id:      UserId::anonymous(),
+            role:         Role::Anonymous,
             read_context: ReadContext::Client,
         }
     }

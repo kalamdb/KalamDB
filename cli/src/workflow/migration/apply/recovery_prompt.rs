@@ -1,4 +1,5 @@
 use crate::{
+    agent_error::AgentError,
     error::{CLIError, Result},
     output::WorkflowOutput,
     terminal_ui::SelectOption,
@@ -106,6 +107,20 @@ impl WorkflowModalPrompt for FailedMigrationPrompt {
             _ => Ok(FailedMigrationDecision::Abort),
         })
     }
+
+    fn read_agent_decision(&self) -> Result<Self::Decision> {
+        let migration = self
+            .context_lines
+            .iter()
+            .find_map(|line| line.strip_prefix("Migration: "))
+            .unwrap_or("unknown");
+        let reason = self
+            .context_lines
+            .iter()
+            .find_map(|line| line.strip_prefix("Reason: "))
+            .unwrap_or("migration failed previously");
+        Err(AgentError::migration_failed(migration, reason).into())
+    }
 }
 
 struct StuckApplyingPrompt {
@@ -169,6 +184,21 @@ impl WorkflowModalPrompt for StuckApplyingPrompt {
             _ => Ok(StuckApplyingDecision::Abort),
         })
     }
+
+    fn read_agent_decision(&self) -> Result<Self::Decision> {
+        let migration = self
+            .context_lines
+            .first()
+            .and_then(|line| {
+                line.strip_prefix("Migration ").and_then(|rest| rest.split_whitespace().next())
+            })
+            .unwrap_or("unknown");
+        Err(AgentError::migration_failed(
+            migration,
+            "migration was interrupted before it finished applying",
+        )
+        .into())
+    }
 }
 
 pub fn migration_recovery_abort_error(migration_id: &str) -> CLIError {
@@ -186,17 +216,17 @@ mod tests {
 
     fn sample_failed_record() -> MigrationRecord {
         MigrationRecord {
-            migration_id: "0001_auto.sql".into(),
-            namespace: NamespaceId::new("dev"),
+            migration_id:  "0001_auto.sql".into(),
+            namespace:     NamespaceId::new("dev"),
             migration_key: Some("dev:0001_auto.sql".into()),
-            name: "auto".into(),
-            checksum: "abc".into(),
-            status: MigrationStatus::Failed,
-            started_at: None,
-            finished_at: None,
+            name:          "auto".into(),
+            checksum:      "abc".into(),
+            status:        MigrationStatus::Failed,
+            started_at:    None,
+            finished_at:   None,
             error_message: Some("table already exists".into()),
-            sql: None,
-            source: Some("0001_auto.sql".into()),
+            sql:           None,
+            source:        Some("0001_auto.sql".into()),
             kalam_version: None,
         }
     }

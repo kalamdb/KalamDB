@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use super::result_rows::cluster_join_rows;
 use kalamdb_commons::models::NodeId;
 use kalamdb_core::{
     app_context::AppContext,
@@ -14,6 +13,8 @@ use kalamdb_core::{
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
+
+use super::result_rows::cluster_join_rows;
 
 pub struct ClusterJoinHandler {
     app_context: Arc<AppContext>,

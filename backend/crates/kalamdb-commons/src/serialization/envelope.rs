@@ -21,9 +21,9 @@ pub enum CodecKind {
 /// rewrite of all persisted models at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityEnvelope {
-    pub codec_kind: CodecKind,
+    pub codec_kind:     CodecKind,
     pub schema_version: u16,
-    pub payload: Vec<u8>,
+    pub payload:        Vec<u8>,
 }
 
 impl EntityEnvelope {
@@ -40,9 +40,9 @@ impl EntityEnvelope {
         let payload = builder.create_vector(&self.payload);
 
         let args = fb::EntityEnvelopeArgs {
-            codec_kind: to_fb_codec_kind(self.codec_kind),
+            codec_kind:     to_fb_codec_kind(self.codec_kind),
             schema_version: self.schema_version,
-            payload: Some(payload),
+            payload:        Some(payload),
         };
 
         let envelope = fb::EntityEnvelope::create(&mut builder, &args);
@@ -69,9 +69,9 @@ impl EntityEnvelope {
         })?;
 
         Ok(Self {
-            codec_kind: from_fb_codec_kind(envelope.codec_kind())?,
+            codec_kind:     from_fb_codec_kind(envelope.codec_kind())?,
             schema_version: envelope.schema_version(),
-            payload: payload.bytes().to_vec(),
+            payload:        payload.bytes().to_vec(),
         })
     }
 

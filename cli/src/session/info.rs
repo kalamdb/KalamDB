@@ -19,8 +19,8 @@ struct SessionUserInfoResponse {
 
 #[derive(Debug, Deserialize)]
 struct SessionUserInfo {
-    id: String,
-    name: Option<String>,
+    id:    String,
+    name:  Option<String>,
     email: Option<String>,
 }
 

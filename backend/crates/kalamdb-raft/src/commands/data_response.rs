@@ -21,11 +21,11 @@ pub fn commit_seq_from_log_position(group_id: GroupId, log_index: u64) -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TransactionApplyResult {
-    pub rows_affected: usize,
-    pub commit_seq: u64,
+    pub rows_affected:      usize,
+    pub commit_seq:         u64,
     pub notifications_sent: usize,
-    pub manifest_updates: usize,
-    pub publisher_events: usize,
+    pub manifest_updates:   usize,
+    pub publisher_events:   usize,
 }
 
 /// Response for data operations
@@ -95,11 +95,11 @@ mod tests {
         assert!(DataResponse::Ok.is_ok());
         assert!(DataResponse::RowsAffected(5).is_ok());
         assert!(DataResponse::TransactionCommitted(TransactionApplyResult {
-            rows_affected: 2,
-            commit_seq: 9,
+            rows_affected:      2,
+            commit_seq:         9,
             notifications_sent: 1,
-            manifest_updates: 1,
-            publisher_events: 1,
+            manifest_updates:   1,
+            publisher_events:   1,
         })
         .is_ok());
         assert!(DataResponse::Subscribed {
@@ -118,11 +118,11 @@ mod tests {
         assert_eq!(DataResponse::RowsAffected(10).rows_affected(), 10);
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected: 4,
-                commit_seq: 11,
+                rows_affected:      4,
+                commit_seq:         11,
                 notifications_sent: 2,
-                manifest_updates: 2,
-                publisher_events: 2,
+                manifest_updates:   2,
+                publisher_events:   2,
             })
             .rows_affected(),
             4
@@ -140,11 +140,11 @@ mod tests {
     fn test_data_response_committed_commit_seq() {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected: 3,
-                commit_seq: 42,
+                rows_affected:      3,
+                commit_seq:         42,
                 notifications_sent: 1,
-                manifest_updates: 1,
-                publisher_events: 1,
+                manifest_updates:   1,
+                publisher_events:   1,
             })
             .committed_commit_seq(),
             Some(42)
@@ -156,11 +156,11 @@ mod tests {
     fn test_data_response_committed_side_effect_counts() {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
-                rows_affected: 3,
-                commit_seq: 42,
+                rows_affected:      3,
+                commit_seq:         42,
                 notifications_sent: 5,
-                manifest_updates: 3,
-                publisher_events: 2,
+                manifest_updates:   3,
+                publisher_events:   2,
             })
             .committed_side_effect_counts(),
             Some((5, 3, 2))

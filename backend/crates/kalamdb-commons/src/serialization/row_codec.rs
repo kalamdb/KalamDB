@@ -34,7 +34,7 @@ pub fn encode_row(row: &Row) -> Result<Vec<u8>> {
         let col = fb_row::ColumnValue::create(
             &mut builder,
             &fb_row::ColumnValueArgs {
-                name: Some(name_offset),
+                name:  Some(name_offset),
                 value: Some(scalar),
             },
         );
@@ -78,11 +78,11 @@ pub fn encode_user_table_row(row: &UserTableRow) -> Result<Vec<u8>> {
     let payload = fb_row::UserTableRowPayload::create(
         &mut builder,
         &fb_row::UserTableRowPayloadArgs {
-            user_id: Some(user_id),
-            seq: row._seq.as_i64(),
+            user_id:    Some(user_id),
+            seq:        row._seq.as_i64(),
             commit_seq: row._commit_seq,
-            deleted: row._deleted,
-            fields: Some(fields),
+            deleted:    row._deleted,
+            fields:     Some(fields),
         },
     );
     builder.finish(payload, None);
@@ -107,11 +107,11 @@ pub fn decode_user_table_row(bytes: &[u8]) -> Result<UserTableRow> {
     })?;
 
     Ok(UserTableRow {
-        user_id: UserId::from(user_id),
-        _seq: SeqId::new(payload.seq()),
+        user_id:     UserId::from(user_id),
+        _seq:        SeqId::new(payload.seq()),
         _commit_seq: payload.commit_seq(),
-        _deleted: payload.deleted(),
-        fields: decode_row_payload(fields)?,
+        _deleted:    payload.deleted(),
+        fields:      decode_row_payload(fields)?,
     })
 }
 
@@ -165,10 +165,10 @@ pub fn decode_shared_table_row(bytes: &[u8]) -> Result<(SeqId, u64, bool, Row)> 
 /// Saves ~600-800 bytes per row by skipping the full `Row` HashMap allocation.
 #[derive(Debug, Clone)]
 pub struct RowMetadata {
-    pub seq: SeqId,
+    pub seq:        SeqId,
     pub commit_seq: u64,
-    pub deleted: bool,
-    pub pk_bucket: PkBucketKey,
+    pub deleted:    bool,
+    pub pk_bucket:  PkBucketKey,
 }
 
 /// Decode only metadata (seq, deleted, pk_value) from a shared table row's serialized bytes.
@@ -258,7 +258,7 @@ fn encode_row_payload_table<'a>(
         let col = fb_row::ColumnValue::create(
             builder,
             &fb_row::ColumnValueArgs {
-                name: Some(name_offset),
+                name:  Some(name_offset),
                 value: Some(scalar),
             },
         );
@@ -722,11 +722,11 @@ where
         let payload = fb_row::UserTableRowPayload::create(
             &mut inner_builder,
             &fb_row::UserTableRowPayloadArgs {
-                user_id: Some(user_id),
-                seq: row._seq.as_i64(),
+                user_id:    Some(user_id),
+                seq:        row._seq.as_i64(),
                 commit_seq: row._commit_seq,
-                deleted: row._deleted,
-                fields: Some(fields),
+                deleted:    row._deleted,
+                fields:     Some(fields),
             },
         );
         inner_builder.finish(payload, None);
@@ -758,10 +758,10 @@ pub fn batch_encode_shared_table_rows(rows: &[(SeqId, u64, bool, &Row)]) -> Resu
         let payload = fb_row::SharedTableRowPayload::create(
             &mut inner_builder,
             &fb_row::SharedTableRowPayloadArgs {
-                seq: seq.as_i64(),
+                seq:        seq.as_i64(),
                 commit_seq: *commit_seq,
-                deleted: *deleted,
-                fields: Some(fields_offset),
+                deleted:    *deleted,
+                fields:     Some(fields_offset),
             },
         );
         inner_builder.finish(payload, None);

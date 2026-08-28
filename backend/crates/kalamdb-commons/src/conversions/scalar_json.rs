@@ -362,7 +362,7 @@ mod tests {
         let value = json!("200.75");
         let dtype = KalamDataType::Decimal {
             precision: 10,
-            scale: 2,
+            scale:     2,
         };
 
         let scalar = json_value_to_scalar_for_column(&value, &dtype).expect("decimal to scalar");

@@ -19,15 +19,15 @@ use crate::{
 
 #[derive(Clone)]
 pub struct ConsumerPoller {
-    consume_url: String,
-    ack_url: String,
-    login_url: String,
-    http_client: reqwest::Client,
-    auth: Arc<Mutex<AuthProvider>>,
-    password_auth: Option<(String, String)>,
+    consume_url:     String,
+    ack_url:         String,
+    login_url:       String,
+    http_client:     reqwest::Client,
+    auth:            Arc<Mutex<AuthProvider>>,
+    password_auth:   Option<(String, String)>,
     request_timeout: Duration,
-    retry_backoff: Duration,
-    max_retries: u32,
+    retry_backoff:   Duration,
+    max_retries:     u32,
 }
 
 impl ConsumerPoller {
@@ -73,7 +73,7 @@ impl ConsumerPoller {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             return Err(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message: error_text,
+                message:     error_text,
             });
         }
 
@@ -122,9 +122,9 @@ impl ConsumerPoller {
                         let bytes = response.bytes().await?;
                         if bytes.is_empty() {
                             return Ok(ConsumeResponse {
-                                messages: Vec::new(),
+                                messages:    Vec::new(),
                                 next_offset: 0,
-                                has_more: false,
+                                has_more:    false,
                             });
                         }
                         match serde_json::from_slice::<ConsumeResponse>(&bytes) {
@@ -133,7 +133,7 @@ impl ConsumerPoller {
                                 let body = String::from_utf8_lossy(&bytes);
                                 return Err(KalamLinkError::ServerError {
                                     status_code: status.as_u16(),
-                                    message: body.to_string(),
+                                    message:     body.to_string(),
                                 });
                             },
                         }
@@ -153,7 +153,7 @@ impl ConsumerPoller {
 
                         return Err(KalamLinkError::ServerError {
                             status_code: status.as_u16(),
-                            message: error_text,
+                            message:     error_text,
                         });
                     }
 
@@ -177,7 +177,7 @@ impl ConsumerPoller {
 
                     return Err(KalamLinkError::ServerError {
                         status_code: status.as_u16(),
-                        message: error_text,
+                        message:     error_text,
                     });
                 },
                 Err(err) if is_retriable_error(&err) && attempt < max_retries => {
@@ -213,8 +213,8 @@ impl ConsumerPoller {
             let ack_response = response.json::<AckResponse>().await?;
             return Ok(CommitResult {
                 acknowledged_offset: ack_response.acknowledged_offset,
-                group_id: request.group_id,
-                partition_id: request.partition_id,
+                group_id:            request.group_id,
+                partition_id:        request.partition_id,
             });
         }
 
@@ -232,8 +232,8 @@ impl ConsumerPoller {
                 let ack_response = retry_response.json::<AckResponse>().await?;
                 return Ok(CommitResult {
                     acknowledged_offset: ack_response.acknowledged_offset,
-                    group_id: request.group_id,
-                    partition_id: request.partition_id,
+                    group_id:            request.group_id,
+                    partition_id:        request.partition_id,
                 });
             }
 
@@ -241,30 +241,30 @@ impl ConsumerPoller {
                 retry_response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             return Err(KalamLinkError::ServerError {
                 status_code: retry_status.as_u16(),
-                message: retry_error_text,
+                message:     retry_error_text,
             });
         }
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),
-            message: error_text,
+            message:     error_text,
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConsumeRequest {
-    pub topic_id: String,
-    pub group_id: String,
-    pub start: AutoOffsetReset,
-    pub limit: u32,
-    pub partition_id: u32,
+    pub topic_id:        String,
+    pub group_id:        String,
+    pub start:           AutoOffsetReset,
+    pub limit:           u32,
+    pub partition_id:    u32,
     pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ConsumeResponse {
-    pub messages: Vec<ConsumerRecordWire>,
+    pub messages:    Vec<ConsumerRecordWire>,
     pub next_offset: u64,
     #[allow(dead_code)] // deserialized from JSON; reserved for pagination
     pub has_more: bool,
@@ -272,10 +272,10 @@ pub(crate) struct ConsumeResponse {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AckRequest {
-    pub topic_id: String,
-    pub group_id: String,
+    pub topic_id:     String,
+    pub group_id:     String,
     pub partition_id: u32,
-    pub upto_offset: u64,
+    pub upto_offset:  u64,
 }
 
 fn is_retriable_error(err: &reqwest::Error) -> bool {

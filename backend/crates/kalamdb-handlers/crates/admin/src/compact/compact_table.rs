@@ -58,8 +58,8 @@ impl TypedStatementHandler<CompactTableStatement> for CompactTableHandler {
         }
 
         let params = CompactParams {
-            table_id: table_id.clone(),
-            table_type: table_def.table_type,
+            table_id:            table_id.clone(),
+            table_type:          table_def.table_type,
             target_file_size_mb: 128,
         };
 

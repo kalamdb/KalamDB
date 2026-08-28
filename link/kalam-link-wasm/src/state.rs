@@ -49,20 +49,20 @@ pub(crate) struct SubscriptionState {
 pub(crate) enum WasmLiveRowsEvent {
     Rows {
         subscription_id: String,
-        rows: Vec<link_common::models::RowData>,
-        last_seq_id: Option<SeqId>,
+        rows:            Vec<link_common::models::RowData>,
+        last_seq_id:     Option<SeqId>,
     },
     Error {
         subscription_id: String,
-        code: String,
-        message: String,
+        code:            String,
+        message:         String,
     },
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub(crate) struct WasmLiveRowsOptions {
-    pub(crate) limit: Option<usize>,
-    pub(crate) key_columns: Option<Vec<String>>,
+    pub(crate) limit:                Option<usize>,
+    pub(crate) key_columns:          Option<Vec<String>>,
     pub(crate) subscription_options: Option<SubscriptionOptions>,
 }
 

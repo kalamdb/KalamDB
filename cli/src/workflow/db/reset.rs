@@ -81,7 +81,8 @@ pub fn reset_local_dev_server_data(
         output.status("no local server data to reset");
     } else {
         output.status(format!(
-            "cleared local dev server data ({removed_paths} path{}); run `kalam dev` to start fresh",
+            "cleared local dev server data ({removed_paths} path{}); run `kalam dev` to start \
+             fresh",
             if removed_paths == 1 { "" } else { "s" }
         ));
     }
@@ -128,8 +129,13 @@ pub async fn reset_remote_namespace_if_ready(
     }
 
     let client = build_workflow_client(ctx, &environment)?;
-    output.status(format!("dropping namespace {} on {}", environment.namespace, environment.url));
-    drop_namespace_if_exists(&client, &environment.namespace).await?;
+    {
+        let _spinner = output.status_spinner(format!(
+            "dropping namespace {} on {}",
+            environment.namespace, environment.url
+        ));
+        drop_namespace_if_exists(&client, &environment.namespace).await?;
+    }
     output.status(format!("reset namespace {}", environment.namespace));
     Ok(())
 }
@@ -159,7 +165,8 @@ fn confirm_external_namespace_reset(
         "a remote KalamDB server"
     };
     let prompt = format!(
-        "Drop namespace {} on {} ({server_kind})? This permanently deletes schema and migration history",
+        "Drop namespace {} on {} ({server_kind})? This permanently deletes schema and migration \
+         history",
         environment.namespace, environment.url
     );
     let confirmed =
@@ -186,14 +193,17 @@ mod tests {
 
     fn test_context(root: &std::path::Path) -> WorkflowContext {
         WorkflowContext {
-            project_root: root.to_path_buf(),
-            config: parse_minimal_project_config(),
-            cli_config: crate::config::CLIConfiguration::default(),
-            use_color: false,
-            project_dir: None,
-            env_override: None,
+            project_root:       root.to_path_buf(),
+            config:             parse_minimal_project_config(),
+            cli_config:         crate::config::CLIConfiguration::default(),
+            use_color:          false,
+            animations:         true,
+            agent:              false,
+            json:               false,
+            project_dir:        None,
+            env_override:       None,
             namespace_override: None,
-            url_override: None,
+            url_override:       None,
         }
     }
 

@@ -17,11 +17,11 @@ pub enum ChangeEvent {
         /// Subscription ID
         subscription_id: String,
         /// Total rows available for initial load
-        total_rows: u32,
+        total_rows:      u32,
         /// Batch control information
-        batch_control: BatchControl,
+        batch_control:   BatchControl,
         /// Schema describing the columns in the subscription result
-        schema: Vec<SchemaField>,
+        schema:          Vec<SchemaField>,
     },
 
     /// Initial data batch (paginated loading)
@@ -29,9 +29,9 @@ pub enum ChangeEvent {
         /// Subscription ID the batch belongs to
         subscription_id: String,
         /// Rows in this batch (named columns)
-        rows: Vec<HashMap<String, KalamCellValue>>,
+        rows:            Vec<HashMap<String, KalamCellValue>>,
         /// Batch control information
-        batch_control: BatchControl,
+        batch_control:   BatchControl,
     },
 
     /// Insert notification
@@ -39,7 +39,7 @@ pub enum ChangeEvent {
         /// Subscription ID the change belongs to
         subscription_id: String,
         /// Inserted rows (named columns)
-        rows: Vec<HashMap<String, KalamCellValue>>,
+        rows:            Vec<HashMap<String, KalamCellValue>>,
     },
 
     /// Update notification
@@ -49,9 +49,9 @@ pub enum ChangeEvent {
         /// Updated rows (only changed columns + PK/_seq).
         /// The changed user columns are exactly the non-system keys in each row:
         /// `row.keys().filter(|k| !k.starts_with('_'))`
-        rows: Vec<HashMap<String, KalamCellValue>>,
+        rows:            Vec<HashMap<String, KalamCellValue>>,
         /// Previous row values (only changed columns + PK/_seq)
-        old_rows: Vec<HashMap<String, KalamCellValue>>,
+        old_rows:        Vec<HashMap<String, KalamCellValue>>,
     },
 
     /// Delete notification
@@ -59,7 +59,7 @@ pub enum ChangeEvent {
         /// Subscription ID the change belongs to
         subscription_id: String,
         /// Deleted rows (named columns)
-        old_rows: Vec<HashMap<String, KalamCellValue>>,
+        old_rows:        Vec<HashMap<String, KalamCellValue>>,
     },
 
     /// Error notification from the server
@@ -67,9 +67,9 @@ pub enum ChangeEvent {
         /// Subscription ID related to the error
         subscription_id: String,
         /// Error code
-        code: String,
+        code:            String,
         /// Human-readable error message
-        message: String,
+        message:         String,
     },
 
     /// Unknown payload (kept for logging/diagnostics)
@@ -179,9 +179,9 @@ impl ChangeEvent {
                 schema,
             } => ServerMessage::SubscriptionAck {
                 subscription_id: subscription_id.clone(),
-                total_rows: *total_rows,
-                batch_control: batch_control.clone(),
-                schema: schema.clone(),
+                total_rows:      *total_rows,
+                batch_control:   batch_control.clone(),
+                schema:          schema.clone(),
             },
             Self::InitialDataBatch {
                 subscription_id,
@@ -189,17 +189,17 @@ impl ChangeEvent {
                 batch_control,
             } => ServerMessage::InitialDataBatch {
                 subscription_id: subscription_id.clone(),
-                rows: rows.clone(),
-                batch_control: batch_control.clone(),
+                rows:            rows.clone(),
+                batch_control:   batch_control.clone(),
             },
             Self::Insert {
                 subscription_id,
                 rows,
             } => ServerMessage::Change {
                 subscription_id: subscription_id.clone(),
-                change_type: ChangeTypeRaw::Insert,
-                rows: Some(rows.clone()),
-                old_values: None,
+                change_type:     ChangeTypeRaw::Insert,
+                rows:            Some(rows.clone()),
+                old_values:      None,
             },
             Self::Update {
                 subscription_id,
@@ -207,18 +207,18 @@ impl ChangeEvent {
                 old_rows,
             } => ServerMessage::Change {
                 subscription_id: subscription_id.clone(),
-                change_type: ChangeTypeRaw::Update,
-                rows: Some(rows.clone()),
-                old_values: Some(old_rows.clone()),
+                change_type:     ChangeTypeRaw::Update,
+                rows:            Some(rows.clone()),
+                old_values:      Some(old_rows.clone()),
             },
             Self::Delete {
                 subscription_id,
                 old_rows,
             } => ServerMessage::Change {
                 subscription_id: subscription_id.clone(),
-                change_type: ChangeTypeRaw::Delete,
-                rows: None,
-                old_values: Some(old_rows.clone()),
+                change_type:     ChangeTypeRaw::Delete,
+                rows:            None,
+                old_values:      Some(old_rows.clone()),
             },
             Self::Error {
                 subscription_id,
@@ -226,13 +226,13 @@ impl ChangeEvent {
                 message,
             } => ServerMessage::Error {
                 subscription_id: subscription_id.clone(),
-                code: code.clone(),
-                message: message.clone(),
+                code:            code.clone(),
+                message:         message.clone(),
             },
             Self::Unknown { .. } => ServerMessage::Error {
                 subscription_id: String::new(),
-                code: "unknown".to_string(),
-                message: "Unknown subscription event".to_string(),
+                code:            "unknown".to_string(),
+                message:         "Unknown subscription event".to_string(),
             },
         }
     }

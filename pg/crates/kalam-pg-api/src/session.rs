@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Remote session state shared between the PostgreSQL backend connection and KalamDB.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteSessionContext {
-    session_id: String,
+    session_id:     String,
     current_schema: Option<String>,
     transaction_id: Option<String>,
 }
@@ -98,7 +98,7 @@ impl RemoteSessionContext {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TenantContext {
     explicit_user_id: Option<UserId>,
-    session_user_id: Option<UserId>,
+    session_user_id:  Option<UserId>,
 }
 
 impl TenantContext {
@@ -111,7 +111,7 @@ impl TenantContext {
     pub fn with_user_id(user_id: UserId) -> Self {
         Self {
             explicit_user_id: Some(user_id.clone()),
-            session_user_id: Some(user_id),
+            session_user_id:  Some(user_id),
         }
     }
 

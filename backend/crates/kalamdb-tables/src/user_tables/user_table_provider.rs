@@ -33,9 +33,11 @@ use kalamdb_commons::{
     websocket::ChangeNotification,
     StorageKey, TableType,
 };
-use kalamdb_datafusion_sources::exec::DeferredScanDiagnostics;
 use kalamdb_datafusion_sources::{
-    exec::{pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, PkBucketKey, VersionedRow},
+    exec::{
+        pk_bucket_key_from_row, resolve_latest_kvs_from_cold_batch, DeferredScanDiagnostics,
+        PkBucketKey, VersionedRow,
+    },
     provider::{
         merged_projection_scan_descriptor, mvcc_filter_capability, FilterCapability,
         ScanDescriptor, SourceProvider,
@@ -417,11 +419,11 @@ impl UserTableProvider {
             entries.push((
                 row_key,
                 UserTableRow {
-                    user_id: user_id.clone(),
-                    _seq: seq_id,
+                    user_id:     user_id.clone(),
+                    _seq:        seq_id,
                     _commit_seq: commit_seq,
-                    _deleted: false,
-                    fields: row_data,
+                    _deleted:    false,
+                    fields:      row_data,
                 },
             ));
         }
@@ -715,12 +717,12 @@ impl UserTableProvider {
         let mut result = Vec::new();
         let mut diagnostics = if include_diagnostics {
             DeferredScanDiagnostics {
-                hot_rows_scanned: Some(hot_rows_scanned),
-                cold_rows_scanned: Some(0),
-                cold_files_total: Some(0),
+                hot_rows_scanned:   Some(hot_rows_scanned),
+                cold_rows_scanned:  Some(0),
+                cold_files_total:   Some(0),
                 cold_files_skipped: Some(0),
                 cold_files_scanned: Some(0),
-                cold_files: Vec::new(),
+                cold_files:         Vec::new(),
             }
         } else {
             DeferredScanDiagnostics::default()
@@ -781,8 +783,8 @@ impl UserTableProvider {
 
 #[derive(Clone)]
 pub struct UserScanContext {
-    user_id: UserId,
-    allow_all_users: bool,
+    user_id:             UserId,
+    allow_all_users:     bool,
     snapshot_commit_seq: Option<u64>,
 }
 
@@ -797,8 +799,8 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
     fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError> {
         let (user_id, role) = extract_user_context(state)?;
         Ok(UserScanContext {
-            user_id: user_id.clone(),
-            allow_all_users: can_read_all_users(role),
+            user_id:             user_id.clone(),
+            allow_all_users:     can_read_all_users(role),
             snapshot_commit_seq: extract_transaction_query_context(state)
                 .map(|context| context.snapshot_commit_seq),
         })
@@ -942,11 +944,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let row_key = UserTableRowId::new(user_id.clone(), row_data.seq_id);
         let row = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: row_data.seq_id,
+            user_id:     user_id.clone(),
+            _seq:        row_data.seq_id,
             _commit_seq: row_data.commit_seq,
-            _deleted: row_data.deleted,
-            fields: row_data.fields.clone(),
+            _deleted:    row_data.deleted,
+            fields:      row_data.fields.clone(),
         };
         Ok(Some((row_key, row)))
     }
@@ -1040,11 +1042,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
             // Create UserTableRow directly
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: row_data,
+                _deleted:    false,
+                fields:      row_data,
             };
 
             // Create composite key
@@ -1163,11 +1165,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 Some(user_id),
                 key.seq,
                 |row_data| UserTableRow {
-                    user_id: user_id.clone(),
-                    _seq: row_data.seq_id,
+                    user_id:     user_id.clone(),
+                    _seq:        row_data.seq_id,
                     _commit_seq: row_data.commit_seq,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
+                    _deleted:    row_data.deleted,
+                    fields:      row_data.fields,
                 },
             )
             .await?
@@ -1289,11 +1291,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
             })?;
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: new_fields,
+                _deleted:    false,
+                fields:      new_fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
             self.append_hot_row(&row_key, &entity, "Failed to update user table row")
@@ -1374,11 +1376,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 Some(user_id),
                 key.seq,
                 |row_data| UserTableRow {
-                    user_id: user_id.clone(),
-                    _seq: row_data.seq_id,
+                    user_id:     user_id.clone(),
+                    _seq:        row_data.seq_id,
                     _commit_seq: row_data.commit_seq,
-                    _deleted: row_data.deleted,
-                    fields: row_data.fields,
+                    _deleted:    row_data.deleted,
+                    fields:      row_data.fields,
                 },
             )
             .await?
@@ -1453,11 +1455,11 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             let values = latest_row.fields.values.clone();
 
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: true,
-                fields: Row::new(values),
+                _deleted:    true,
+                fields:      Row::new(values),
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
 
@@ -1668,12 +1670,12 @@ impl UserTableProvider {
 
         let diagnostics = if include_diagnostics {
             DeferredScanDiagnostics {
-                hot_rows_scanned: Some(resolved.hot_rows_scanned),
-                cold_rows_scanned: Some(resolved.cold_rows_scanned),
-                cold_files_total: Some(resolved.cold_files_total),
+                hot_rows_scanned:   Some(resolved.hot_rows_scanned),
+                cold_rows_scanned:  Some(resolved.cold_rows_scanned),
+                cold_files_total:   Some(resolved.cold_files_total),
                 cold_files_skipped: Some(resolved.cold_files_skipped),
                 cold_files_scanned: Some(resolved.cold_files_scanned),
-                cold_files: resolved.cold_files,
+                cold_files:         resolved.cold_files,
             }
         } else {
             DeferredScanDiagnostics::default()
@@ -1714,10 +1716,10 @@ impl UserTableProvider {
             let hot_metadata = hot_rows
                 .into_iter()
                 .map(|(_row_id, row)| RowMetadata {
-                    seq: row._seq,
+                    seq:        row._seq,
                     commit_seq: row._commit_seq,
-                    deleted: row._deleted,
-                    pk_bucket: pk_bucket_key_from_row(&row.fields, &pk_name_clone, row._seq),
+                    deleted:    row._deleted,
+                    pk_bucket:  pk_bucket_key_from_row(&row.fields, &pk_name_clone, row._seq),
                 })
                 .collect();
 
@@ -1775,11 +1777,11 @@ impl UserTableProvider {
             })?;
 
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: false,
-                fields: row_data,
+                _deleted:    false,
+                fields:      row_data,
             };
 
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
@@ -2022,11 +2024,11 @@ impl UserTableProvider {
                 KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
             })?;
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: commit_seq,
-                _deleted: false,
-                fields: new_fields,
+                _deleted:    false,
+                fields:      new_fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
             self.append_hot_row(&row_key, &entity, "Failed to update user table row")
@@ -2121,11 +2123,11 @@ impl UserTableProvider {
 
             let values = latest_row.fields.values.clone();
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: commit_seq,
-                _deleted: true,
-                fields: Row::new(values),
+                _deleted:    true,
+                fields:      Row::new(values),
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
             self.append_hot_row(&row_key, &entity, "Failed to delete user table row")

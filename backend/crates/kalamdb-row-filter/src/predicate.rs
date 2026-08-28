@@ -14,7 +14,7 @@ const MAX_IN_LIST_VALUES: usize = 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledPredicate {
-    predicate: Predicate,
+    predicate:  Predicate,
     complexity: usize,
 }
 
@@ -39,31 +39,31 @@ enum Predicate {
     And(Box<CompiledPredicate>, Box<CompiledPredicate>),
     Or(Box<CompiledPredicate>, Box<CompiledPredicate>),
     Comparison {
-        left: ValueExpr,
+        left:     ValueExpr,
         operator: ComparisonOp,
-        right: ValueExpr,
+        right:    ValueExpr,
     },
     Between {
-        value: ValueExpr,
-        low: ValueExpr,
-        high: ValueExpr,
+        value:   ValueExpr,
+        low:     ValueExpr,
+        high:    ValueExpr,
         negated: bool,
     },
     InList {
-        value: ValueExpr,
-        list: Box<[ValueExpr]>,
+        value:   ValueExpr,
+        list:    Box<[ValueExpr]>,
         negated: bool,
     },
     IsNull {
-        value: ValueExpr,
+        value:   ValueExpr,
         negated: bool,
     },
     IsTrue {
-        value: ValueExpr,
+        value:   ValueExpr,
         negated: bool,
     },
     IsFalse {
-        value: ValueExpr,
+        value:   ValueExpr,
         negated: bool,
     },
     Like(LikePredicate),
@@ -87,7 +87,7 @@ impl Predicate {
                 let inner = Self::compile(expr, depth + 1)?;
                 CompiledPredicate {
                     complexity: inner.complexity + 1,
-                    predicate: Predicate::Not(Box::new(inner)),
+                    predicate:  Predicate::Not(Box::new(inner)),
                 }
             },
             Expr::UnaryOp { op, .. } => {
@@ -99,7 +99,7 @@ impl Predicate {
                     let right = Self::compile(right, depth + 1)?;
                     CompiledPredicate {
                         complexity: left.complexity + right.complexity + 1,
-                        predicate: Predicate::And(Box::new(left), Box::new(right)),
+                        predicate:  Predicate::And(Box::new(left), Box::new(right)),
                     }
                 },
                 BinaryOperator::Or => {
@@ -107,15 +107,15 @@ impl Predicate {
                     let right = Self::compile(right, depth + 1)?;
                     CompiledPredicate {
                         complexity: left.complexity + right.complexity + 1,
-                        predicate: Predicate::Or(Box::new(left), Box::new(right)),
+                        predicate:  Predicate::Or(Box::new(left), Box::new(right)),
                     }
                 },
                 operator => CompiledPredicate {
                     complexity: 1,
-                    predicate: Predicate::Comparison {
-                        left: ValueExpr::compile(left)?,
+                    predicate:  Predicate::Comparison {
+                        left:     ValueExpr::compile(left)?,
                         operator: ComparisonOp::from_binary_operator(operator)?,
-                        right: ValueExpr::compile(right)?,
+                        right:    ValueExpr::compile(right)?,
                     },
                 },
             },
@@ -126,10 +126,10 @@ impl Predicate {
                 high,
             } => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::Between {
-                    value: ValueExpr::compile(expr)?,
-                    low: ValueExpr::compile(low)?,
-                    high: ValueExpr::compile(high)?,
+                predicate:  Predicate::Between {
+                    value:   ValueExpr::compile(expr)?,
+                    low:     ValueExpr::compile(low)?,
+                    high:    ValueExpr::compile(high)?,
                     negated: *negated,
                 },
             },
@@ -147,9 +147,9 @@ impl Predicate {
                 }
                 CompiledPredicate {
                     complexity: list.len() + 1,
-                    predicate: Predicate::InList {
-                        value: ValueExpr::compile(expr)?,
-                        list: list
+                    predicate:  Predicate::InList {
+                        value:   ValueExpr::compile(expr)?,
+                        list:    list
                             .iter()
                             .map(ValueExpr::compile)
                             .collect::<RowFilterResult<Vec<_>>>()?
@@ -160,43 +160,43 @@ impl Predicate {
             },
             Expr::IsNull(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsNull {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsNull {
+                    value:   ValueExpr::compile(expr)?,
                     negated: false,
                 },
             },
             Expr::IsNotNull(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsNull {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsNull {
+                    value:   ValueExpr::compile(expr)?,
                     negated: true,
                 },
             },
             Expr::IsTrue(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsTrue {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsTrue {
+                    value:   ValueExpr::compile(expr)?,
                     negated: false,
                 },
             },
             Expr::IsNotTrue(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsTrue {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsTrue {
+                    value:   ValueExpr::compile(expr)?,
                     negated: true,
                 },
             },
             Expr::IsFalse(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsFalse {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsFalse {
+                    value:   ValueExpr::compile(expr)?,
                     negated: false,
                 },
             },
             Expr::IsNotFalse(expr) => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::IsFalse {
-                    value: ValueExpr::compile(expr)?,
+                predicate:  Predicate::IsFalse {
+                    value:   ValueExpr::compile(expr)?,
                     negated: true,
                 },
             },
@@ -208,7 +208,7 @@ impl Predicate {
                 escape_char,
             } => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::Like(LikePredicate::compile(
+                predicate:  Predicate::Like(LikePredicate::compile(
                     expr,
                     pattern,
                     *negated,
@@ -225,7 +225,7 @@ impl Predicate {
                 escape_char,
             } => CompiledPredicate {
                 complexity: 1,
-                predicate: Predicate::Like(LikePredicate::compile(
+                predicate:  Predicate::Like(LikePredicate::compile(
                     expr,
                     pattern,
                     *negated,
@@ -237,7 +237,7 @@ impl Predicate {
             Expr::Identifier(_) | Expr::CompoundIdentifier(_) | Expr::Value(_) => {
                 CompiledPredicate {
                     complexity: 1,
-                    predicate: Predicate::Bool(ValueExpr::compile(expr)?),
+                    predicate:  Predicate::Bool(ValueExpr::compile(expr)?),
                 }
             },
             Expr::InSubquery { .. }

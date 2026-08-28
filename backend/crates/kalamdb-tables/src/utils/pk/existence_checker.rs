@@ -56,7 +56,7 @@ impl PkCheckResult {
 ///
 /// The hot-storage PK index is checked by the caller before this checker runs.
 pub struct PkExistenceChecker {
-    schema_registry: Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
+    schema_registry:  Arc<dyn SchemaRegistryTrait<Error = KalamDbError>>,
     storage_registry: Arc<StorageRegistry>,
     manifest_service: Arc<dyn ManifestServiceTrait>,
 }
@@ -355,9 +355,9 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestSchemaRegistry {
-        table_id: TableId,
-        table_def: Arc<TableDefinition>,
-        schema: SchemaRef,
+        table_id:   TableId,
+        table_def:  Arc<TableDefinition>,
+        schema:     SchemaRef,
         storage_id: StorageId,
     }
 
@@ -480,17 +480,17 @@ mod tests {
 
         storages_provider
             .create_storage(Storage {
-                storage_id: StorageId::local(),
-                storage_name: "Local Storage".to_string(),
-                description: Some("PK pruning test storage".to_string()),
-                storage_type: StorageType::Filesystem,
-                base_directory: base_directory.clone(),
-                credentials: None,
-                config_json: None,
+                storage_id:             StorageId::local(),
+                storage_name:           "Local Storage".to_string(),
+                description:            Some("PK pruning test storage".to_string()),
+                storage_type:           StorageType::Filesystem,
+                base_directory:         base_directory.clone(),
+                credentials:            None,
+                config_json:            None,
                 shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
-                user_tables_template: "user/{namespace}/{tableName}/{userId}".to_string(),
-                created_at: 1_000,
-                updated_at: 1_000,
+                user_tables_template:   "user/{namespace}/{tableName}/{userId}".to_string(),
+                created_at:             1_000,
+                updated_at:             1_000,
             })
             .expect("seed local storage");
 
@@ -513,11 +513,11 @@ mod tests {
     #[allow(dead_code)]
     fn create_test_table_def(pk_default: ColumnDefault) -> TableDefinition {
         TableDefinition {
-            namespace_id: NamespaceId::new("test"),
-            table_name: TableName::new("users"),
-            table_type: TableType::User,
-            table_options: kalamdb_commons::schemas::TableOptions::User(Default::default()),
-            columns: vec![
+            namespace_id:   NamespaceId::new("test"),
+            table_name:     TableName::new("users"),
+            table_type:     TableType::User,
+            table_options:  kalamdb_commons::schemas::TableOptions::User(Default::default()),
+            columns:        vec![
                 ColumnDefinition::new(
                     1,
                     "id",
@@ -543,9 +543,9 @@ mod tests {
             ],
             next_column_id: 3,
             schema_version: 1,
-            table_comment: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            table_comment:  None,
+            created_at:     chrono::Utc::now(),
+            updated_at:     chrono::Utc::now(),
         }
     }
 

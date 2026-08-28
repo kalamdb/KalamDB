@@ -224,21 +224,21 @@ impl CLISession {
 
     fn build_describe_query(target: &str) -> Result<String> {
         let (namespace, table_name) = Self::parse_describe_target(target)?;
-        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS data_type, \
-                       is_nullable, column_default, ordinal_position AS position";
+        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS \
+                       data_type, is_nullable, column_default, ordinal_position AS position";
         let escaped_table = Self::escape_sql_literal(&table_name);
 
         if let Some(namespace) = namespace {
             Ok(format!(
-                "SELECT {columns} FROM information_schema.columns WHERE table_schema = '{namespace}' \
-                 AND table_name = '{table_name}' ORDER BY ordinal_position",
+                "SELECT {columns} FROM information_schema.columns WHERE table_schema = \
+                 '{namespace}' AND table_name = '{table_name}' ORDER BY ordinal_position",
                 namespace = Self::escape_sql_literal(&namespace),
                 table_name = escaped_table,
             ))
         } else {
             Ok(format!(
-                "SELECT {columns} FROM information_schema.columns WHERE table_name = '{table_name}' \
-                 ORDER BY table_schema, ordinal_position",
+                "SELECT {columns} FROM information_schema.columns WHERE table_name = \
+                 '{table_name}' ORDER BY table_schema, ordinal_position",
                 table_name = escaped_table,
             ))
         }
@@ -315,7 +315,7 @@ impl CLISession {
         }
 
         let qualified_relation = TableTarget {
-            namespace: None,
+            namespace:  None,
             table_name: parts[0].clone(),
         }
         .qualify(default_namespace)

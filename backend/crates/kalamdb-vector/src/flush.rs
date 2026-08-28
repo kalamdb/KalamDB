@@ -189,7 +189,7 @@ fn build_snapshot_bytes(
             .map_err(|e| VectorFlushError::new(format!("Failed to add vector to index: {}", e)))?;
         entries.push(VixSnapshotEntry {
             key: *key,
-            pk: pk.clone(),
+            pk:  pk.clone(),
         });
     }
 

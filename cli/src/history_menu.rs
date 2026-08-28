@@ -33,15 +33,15 @@ pub enum HistoryMenuResult {
 /// Interactive history menu
 pub struct HistoryMenu {
     /// All history entries (newest first)
-    entries: Vec<String>,
+    entries:       Vec<String>,
     /// Filtered entries based on search query
-    filtered: Vec<usize>,
+    filtered:      Vec<usize>,
     /// Current selection index within filtered entries
-    selected: usize,
+    selected:      usize,
     /// Scroll offset for viewing
     scroll_offset: usize,
     /// Current search/filter query
-    query: String,
+    query:         String,
     /// Whether colors are enabled
     color_enabled: bool,
 }

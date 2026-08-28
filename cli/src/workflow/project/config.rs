@@ -30,7 +30,8 @@ pub fn missing_kalam_toml_message(location: &str) -> String {
 
 fn invalid_kalam_toml_message(path: &Path, err: &toml::de::Error) -> String {
     format!(
-        "failed to parse kalam.toml at '{}': {}\nRun `kalam init` to create a valid project configuration, or fix the existing kalam.toml.",
+        "failed to parse kalam.toml at '{}': {}\nRun `kalam init` to create a valid project \
+         configuration, or fix the existing kalam.toml.",
         path.display(),
         err
     )
@@ -38,23 +39,23 @@ fn invalid_kalam_toml_message(path: &Path, err: &toml::de::Error) -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KalamProjectConfig {
-    pub project: ProjectSection,
+    pub project:    ProjectSection,
     #[serde(default)]
     pub connection: HashMap<String, ConnectionEnv>,
-    pub schema: SchemaSection,
+    pub schema:     SchemaSection,
     #[serde(default)]
     pub migrations: MigrationsSection,
     #[serde(default)]
-    pub dev: DevSection,
+    pub dev:        DevSection,
     #[serde(default)]
-    pub logging: LoggingSection,
+    pub logging:    LoggingSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectSection {
-    pub name: String,
+    pub name:            String,
     #[serde(default = "default_env_name")]
-    pub default_env: String,
+    pub default_env:     String,
     /// JavaScript package manager for TypeScript tooling (`npm`, `pnpm`, `yarn`, `bun`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_manager: Option<String>,
@@ -62,27 +63,27 @@ pub struct ProjectSection {
         default = "default_kalam_dir",
         skip_serializing_if = "is_default_kalam_dir"
     )]
-    pub kalam_dir: String,
+    pub kalam_dir:       String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionEnv {
-    pub url: String,
+    pub url:       String,
     #[serde(with = "serde_namespace")]
     pub namespace: NamespaceId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaSection {
-    pub mode: SchemaMode,
+    pub mode:      SchemaMode,
     #[serde(default)]
-    pub path: Option<String>,
+    pub path:      Option<String>,
     #[serde(default = "default_true")]
-    pub watch: bool,
+    pub watch:     bool,
     #[serde(default = "default_languages")]
     pub languages: Vec<String>,
     #[serde(default)]
-    pub targets: HashMap<String, SchemaTarget>,
+    pub targets:   HashMap<String, SchemaTarget>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,7 +101,7 @@ pub struct SchemaTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationsSection {
     #[serde(default = "default_migrations_dir", skip_serializing)]
-    pub dir: String,
+    pub dir:         String,
     #[serde(default = "default_true")]
     pub auto_create: bool,
 }
@@ -108,23 +109,23 @@ pub struct MigrationsSection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DevSection {
     #[serde(default = "default_true")]
-    pub auto_start_db: bool,
+    pub auto_start_db:  bool,
     #[serde(default = "default_true")]
-    pub apply_schema: bool,
+    pub apply_schema:   bool,
     #[serde(default = "default_true")]
     pub generate_types: bool,
     #[serde(default = "default_true")]
-    pub watch: bool,
+    pub watch:          bool,
     #[serde(default)]
-    pub processes: HashMap<String, String>,
+    pub processes:      HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoggingSection {
     #[serde(default = "default_true")]
-    pub file: bool,
+    pub file:                   bool,
     #[serde(default = "default_log_path", skip_serializing)]
-    pub path: String,
+    pub path:                   String,
     #[serde(default = "default_true")]
     pub capture_process_output: bool,
 }
@@ -200,7 +201,8 @@ impl KalamProjectConfig {
     pub fn parse(contents: &str) -> Result<Self> {
         let config: Self = toml::from_str(contents).map_err(|err| {
             CLIError::ConfigurationError(format!(
-                "failed to parse kalam.toml: {}\nRun `kalam init` to create a valid project configuration, or fix the existing kalam.toml.",
+                "failed to parse kalam.toml: {}\nRun `kalam init` to create a valid project \
+                 configuration, or fix the existing kalam.toml.",
                 err
             ))
         })?;
@@ -279,6 +281,10 @@ impl KalamProjectConfig {
 
     pub fn workflow_log_path(&self, project_root: &Path) -> PathBuf {
         self.cli_dir(project_root).join("logs").join("kalam.log")
+    }
+
+    pub fn dev_session_path(&self, project_root: &Path) -> PathBuf {
+        self.cli_dir(project_root).join("dev.session.json")
     }
 
     pub fn ensure_cli_log_dir(&self, project_root: &Path) -> Result<PathBuf> {
@@ -405,9 +411,10 @@ pub use super::identifiers::{
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::NamespaceId;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn parse_config_with_package_manager_field() {
@@ -550,6 +557,7 @@ output = "src/generated/kalam.ts"
         assert_eq!(config.kalam_dir(root), root.join("db"));
         assert_eq!(config.migrations_dir(root), root.join("db/migrations"));
         assert_eq!(config.workflow_log_path(root), root.join("db/cli/logs/kalam.log"));
+        assert_eq!(config.dev_session_path(root), root.join("db/cli/dev.session.json"));
         assert_eq!(config.schema_baseline_path(root), root.join("db/.schema-baseline.sql"));
         assert_eq!(config.local_server_config_path(root), root.join("db/server/server.toml"));
     }
@@ -621,25 +629,25 @@ output = "src/generated/kalam.ts"
         let nested = root.join("src").join("app");
         fs::create_dir_all(&nested).unwrap();
         KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
+            project:    ProjectSection {
+                name:            "demo".into(),
+                default_env:     "dev".into(),
                 package_manager: None,
-                kalam_dir: "kalam".into(),
+                kalam_dir:       "kalam".into(),
             },
             connection: HashMap::from([(
                 "dev".into(),
                 ConnectionEnv {
-                    url: "http://localhost:2900".into(),
+                    url:       "http://localhost:2900".into(),
                     namespace: NamespaceId::new("app"),
                 },
             )]),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
+            schema:     SchemaSection {
+                mode:      SchemaMode::Sql,
+                path:      Some("schema.sql".into()),
+                watch:     true,
                 languages: vec!["typescript".into()],
-                targets: HashMap::from([(
+                targets:   HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
                         output: "src/generated/kalam.ts".into(),
@@ -647,8 +655,8 @@ output = "src/generated/kalam.ts"
                 )]),
             },
             migrations: MigrationsSection::default(),
-            dev: DevSection::default(),
-            logging: LoggingSection::default(),
+            dev:        DevSection::default(),
+            logging:    LoggingSection::default(),
         }
         .save_to_path(&root.join(KALAM_TOML))
         .unwrap();
@@ -662,7 +670,7 @@ output = "src/generated/kalam.ts"
 impl Default for MigrationsSection {
     fn default() -> Self {
         Self {
-            dir: default_migrations_dir(),
+            dir:         default_migrations_dir(),
             auto_create: true,
         }
     }
@@ -671,11 +679,11 @@ impl Default for MigrationsSection {
 impl Default for DevSection {
     fn default() -> Self {
         Self {
-            auto_start_db: true,
-            apply_schema: true,
+            auto_start_db:  true,
+            apply_schema:   true,
             generate_types: true,
-            watch: true,
-            processes: HashMap::new(),
+            watch:          true,
+            processes:      HashMap::new(),
         }
     }
 }
@@ -683,8 +691,8 @@ impl Default for DevSection {
 impl Default for LoggingSection {
     fn default() -> Self {
         Self {
-            file: true,
-            path: default_log_path(),
+            file:                   true,
+            path:                   default_log_path(),
             capture_process_output: true,
         }
     }

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaSnapshot {
-    pub origin: SchemaOrigin,
-    pub tables: BTreeMap<String, TableDefinition>,
+    pub origin:      SchemaOrigin,
+    pub tables:      BTreeMap<String, TableDefinition>,
     pub captured_at: DateTime<Utc>,
 }
 
@@ -31,17 +31,17 @@ pub enum TableKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableDefinition {
-    pub name: String,
+    pub name:    String,
     #[serde(default)]
-    pub kind: TableKind,
+    pub kind:    TableKind,
     pub columns: Vec<ColumnDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnDefinition {
-    pub name: String,
-    pub sql_type: String,
-    pub nullable: bool,
+    pub name:        String,
+    pub sql_type:    String,
+    pub nullable:    bool,
     pub primary_key: bool,
 }
 

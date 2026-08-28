@@ -34,13 +34,14 @@
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc};
 
+use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
+
 use crate::{
     errors::error::AuthError,
     helpers::ip_extractor::extract_client_ip_secure,
     repository::user_repo::UserRepository,
     services::unified::{authenticate, try_cached_bearer_session, AuthRequest},
 };
-use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, ResponseError};
 
 /// Error type for authentication extraction.
 ///
@@ -48,7 +49,7 @@ use actix_web::{dev::Payload, http::StatusCode, FromRequest, HttpRequest, Respon
 /// HTTP error responses.
 #[derive(Debug)]
 pub struct AuthExtractError {
-    inner: AuthError,
+    inner:   AuthError,
     /// Time taken to process the request (for response payload)
     took_ms: f64,
 }
@@ -175,7 +176,7 @@ impl ResponseError for AuthExtractError {
 impl From<AuthError> for AuthExtractError {
     fn from(error: AuthError) -> Self {
         Self {
-            inner: error,
+            inner:   error,
             took_ms: 0.0,
         }
     }

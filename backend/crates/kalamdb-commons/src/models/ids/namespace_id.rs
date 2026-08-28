@@ -20,7 +20,7 @@ use crate::{
 /// Error returned when a namespace ID fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceIdValidationError {
-    pub name: String,
+    pub name:   String,
     pub reason: String,
 }
 
@@ -35,7 +35,7 @@ impl std::error::Error for NamespaceIdValidationError {}
 impl From<SqlIdentifierError> for NamespaceIdValidationError {
     fn from(error: SqlIdentifierError) -> Self {
         Self {
-            name: String::new(),
+            name:   String::new(),
             reason: error.to_string(),
         }
     }
@@ -77,28 +77,28 @@ impl NamespaceId {
     fn validate(name: &str) -> Result<(), NamespaceIdValidationError> {
         if name.is_empty() {
             return Err(NamespaceIdValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Namespace ID cannot be empty".to_string(),
             });
         }
 
         if name.contains("..") {
             return Err(NamespaceIdValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Namespace ID cannot contain '..' (path traversal)".to_string(),
             });
         }
 
         if name.contains('/') || name.contains('\\') {
             return Err(NamespaceIdValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Namespace ID cannot contain path separators".to_string(),
             });
         }
 
         if name.contains('\0') {
             return Err(NamespaceIdValidationError {
-                name: name.to_string(),
+                name:   name.to_string(),
                 reason: "Namespace ID cannot contain null bytes".to_string(),
             });
         }
@@ -115,7 +115,7 @@ impl NamespaceId {
         let id = id.into();
         Self::validate(&id)?;
         validate_user_namespace_name(&id).map_err(|error| NamespaceIdValidationError {
-            name: id.clone(),
+            name:   id.clone(),
             reason: error.to_string(),
         })?;
         Ok(Self(Arc::<str>::from(id.to_lowercase())))
@@ -129,7 +129,7 @@ impl NamespaceId {
         let id = id.into();
         Self::validate(&id)?;
         validate_namespace_reference(&id).map_err(|error| NamespaceIdValidationError {
-            name: id.clone(),
+            name:   id.clone(),
             reason: error.to_string(),
         })?;
         Ok(Self(Arc::<str>::from(id.to_lowercase())))

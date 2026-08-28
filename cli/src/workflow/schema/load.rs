@@ -3,7 +3,6 @@
 use std::{collections::BTreeMap, path::Path};
 
 use chrono::Utc;
-
 use kalamdb_commons::NamespaceId;
 
 use crate::{
@@ -14,7 +13,9 @@ use crate::{
             config::{KalamProjectConfig, SchemaMode},
             identifiers::{parse_table_name, parse_table_ref},
         },
-        schema::model::{ColumnDefinition, SchemaOrigin, SchemaSnapshot, TableDefinition, TableKind},
+        schema::model::{
+            ColumnDefinition, SchemaOrigin, SchemaSnapshot, TableDefinition, TableKind,
+        },
     },
 };
 
@@ -76,8 +77,8 @@ pub fn pull_remote_schema(
     _namespace: &NamespaceId,
 ) -> Result<SchemaSnapshot> {
     Err(CLIError::ConfigurationError(
-        "schema pull requires a connected KalamDB server; start the server and authenticate, \
-         then retry `kalam schema pull`"
+        "schema pull requires a connected KalamDB server; start the server and authenticate, then \
+         retry `kalam schema pull`"
             .into(),
     ))
 }
@@ -143,7 +144,11 @@ fn parse_create_table(
     }
     let columns = parse_columns(&body)?;
 
-    Ok(Some(TableDefinition { name, kind, columns }))
+    Ok(Some(TableDefinition {
+        name,
+        kind,
+        columns,
+    }))
 }
 
 fn uses_kalamdb(statement: &str) -> bool {
@@ -188,9 +193,8 @@ fn parse_table_name_and_body(rest: &str) -> Result<(String, String, String)> {
     let name = name_part.trim_matches('"').trim_matches('`').trim_matches('\'').to_string();
     validate_parsed_table_name(&name)?;
 
-    let close_paren = matching_paren_close(rest, open_paren).ok_or_else(|| {
-        CLIError::ParseError("expected ')' closing column list".into())
-    })?;
+    let close_paren = matching_paren_close(rest, open_paren)
+        .ok_or_else(|| CLIError::ParseError("expected ')' closing column list".into()))?;
     let body = rest[open_paren + 1..close_paren].to_string();
     let suffix = rest[close_paren + 1..].trim().to_string();
     Ok((name, body, suffix))
@@ -207,7 +211,7 @@ fn matching_paren_close(value: &str, open_paren: usize) -> Option<usize> {
                     return Some(open_paren + offset);
                 }
             },
-            _ => {}
+            _ => {},
         }
     }
     None

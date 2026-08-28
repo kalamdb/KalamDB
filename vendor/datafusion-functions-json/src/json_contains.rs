@@ -1,13 +1,18 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::BooleanBuilder;
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::arrow::array::{ArrayRef, BooleanArray};
-use datafusion::common::{plan_err, Result, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{array::BooleanBuilder, datatypes::DataType},
+    common::{
+        arrow::array::{ArrayRef, BooleanArray},
+        plan_err, Result, ScalarValue,
+    },
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 
-use crate::common::{invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath},
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonContains,
@@ -19,14 +24,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonContains {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonContains {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_contains".to_string()],
+            aliases:   ["json_contains".to_string()],
         }
     }
 }

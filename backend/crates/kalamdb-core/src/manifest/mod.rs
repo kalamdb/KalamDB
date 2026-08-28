@@ -9,21 +9,20 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{schemas::TableType, TableId, UserId};
 use kalamdb_filestore::StorageCached;
-pub use kalamdb_flush::compaction::{
-    select_trailing_small_segments, SmallSegmentCompactionContext, SmallSegmentCompactionResult,
-    SmallSegmentCompactionSelection,
-};
-pub use kalamdb_flush::flush;
 pub use kalamdb_flush::{
-    FlushDedupStats, FlushJobResult, FlushManifestHelper, FlushMetadata, FlushScopeHint,
+    compaction::{
+        select_trailing_small_segments, SmallSegmentCompactionContext,
+        SmallSegmentCompactionResult, SmallSegmentCompactionSelection,
+    },
+    flush, FlushDedupStats, FlushJobResult, FlushManifestHelper, FlushMetadata, FlushScopeHint,
     FlushScopeHook, FlushTableMetadata, ManifestService, NoopFlushScopeHook, SharedTableFlushJob,
     SharedTableFlushMetadata, TableFlush, UserTableFlushJob, UserTableFlushMetadata,
 };
 use kalamdb_flush::{FlushError, Result as FlushResult};
 pub use kalamdb_tables::manifest::{
-    ensure_manifest_ready, load_row_from_parquet_by_seq, ManifestAccessPlanner, RowGroupSelection,
+    ensure_manifest_ready, load_row_from_parquet_by_seq, manifest_helpers, planner,
+    ManifestAccessPlanner, RowGroupSelection,
 };
-pub use kalamdb_tables::manifest::{manifest_helpers, planner};
 
 use crate::{
     app_context::AppContext,

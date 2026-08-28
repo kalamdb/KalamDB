@@ -29,21 +29,21 @@ use super::token_bucket::TokenBucket;
 /// Uses Moka cache with TTL for automatic cleanup of inactive entries.
 pub struct RateLimiter {
     /// Max queries per second per user
-    max_queries_per_sec: u32,
+    max_queries_per_sec:              u32,
     /// Max subscriptions per user
-    max_subscriptions_per_user: u32,
+    max_subscriptions_per_user:       u32,
     /// Max messages per second per connection
-    max_messages_per_sec: u32,
+    max_messages_per_sec:             u32,
     /// Max auth requests per second per IP
     max_auth_requests_per_ip_per_sec: u32,
     /// User query rate buckets - keyed by user_id string
-    user_query_buckets: Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
+    user_query_buckets:               Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
     /// User subscription counts - keyed by user_id string
-    user_subscription_counts: Cache<Arc<str>, Arc<AtomicU32>>,
+    user_subscription_counts:         Cache<Arc<str>, Arc<AtomicU32>>,
     /// Auth rate buckets - keyed by client IP
-    auth_ip_buckets: Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
+    auth_ip_buckets:                  Cache<Arc<str>, Arc<Mutex<TokenBucket>>>,
     /// Connection message rate buckets - keyed by connection_id
-    connection_message_buckets: Cache<ConnectionId, Arc<Mutex<TokenBucket>>>,
+    connection_message_buckets:       Cache<ConnectionId, Arc<Mutex<TokenBucket>>>,
 }
 
 impl RateLimiter {

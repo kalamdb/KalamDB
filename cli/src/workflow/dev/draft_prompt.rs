@@ -104,6 +104,10 @@ impl WorkflowModalPrompt for DraftMigrationPrompt {
             _ => Ok(DraftPromptDecision::Cancel),
         })
     }
+
+    fn read_agent_decision(&self) -> Result<Self::Decision> {
+        Ok(DraftPromptDecision::Apply)
+    }
 }
 
 fn draft_summary_lines(path: &Path) -> Vec<String> {
@@ -173,7 +177,9 @@ mod tests {
 
     #[test]
     fn summarize_limits_to_max_lines() {
-        let sql = "-- UP\nALTER TABLE users ADD COLUMN a TEXT;\nALTER TABLE users ADD COLUMN b TEXT;\nALTER TABLE users ADD COLUMN c TEXT;\nALTER TABLE users ADD COLUMN d TEXT;\n-- DOWN\n";
+        let sql = "-- UP\nALTER TABLE users ADD COLUMN a TEXT;\nALTER TABLE users ADD COLUMN b \
+                   TEXT;\nALTER TABLE users ADD COLUMN c TEXT;\nALTER TABLE users ADD COLUMN d \
+                   TEXT;\n-- DOWN\n";
         let result = summarize_draft_sql(sql, 3);
         assert_eq!(result.len(), 4);
         assert_eq!(result[3], "...");
@@ -181,7 +187,9 @@ mod tests {
 
     #[test]
     fn summarize_create_table_shows_first_and_last_columns() {
-        let sql = "-- UP\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  last_name TEXT,\n  created_at TIMESTAMP\n);\n-- DOWN\n";
+        let sql = "-- UP\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT \
+                   NULL,\n  first_name TEXT,\n  last_name TEXT,\n  created_at TIMESTAMP\n);\n-- \
+                   DOWN\n";
         let result = summarize_draft_sql(sql, 3);
         assert_eq!(result[0], "CREATE TABLE users (");
         assert!(result.iter().any(|l| l.contains("...")));

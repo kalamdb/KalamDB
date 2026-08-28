@@ -87,8 +87,8 @@ async fn test_information_schema_columns_includes_udt_name() {
     let (app_ctx, _test_db) = create_test_app_context().await;
     let session = app_ctx.base_session_context();
 
-    let sql = "SELECT column_name, data_type, udt_name FROM information_schema.columns \
-               WHERE table_schema = 'system' AND table_name = 'jobs' ORDER BY ordinal_position";
+    let sql = "SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE \
+               table_schema = 'system' AND table_name = 'jobs' ORDER BY ordinal_position";
 
     let batches = session
         .sql(sql)
@@ -121,9 +121,9 @@ async fn test_information_schema_columns_uses_sql_types_not_arrow() {
     let (app_ctx, _test_db) = create_test_app_context().await;
     let session = app_ctx.base_session_context();
 
-    let sql = "SELECT column_name, data_type, udt_name, kdb_data_type \
-               FROM information_schema.columns \
-               WHERE table_schema = 'system' AND table_name = 'jobs' AND column_name = 'node_id'";
+    let sql = "SELECT column_name, data_type, udt_name, kdb_data_type FROM \
+               information_schema.columns WHERE table_schema = 'system' AND table_name = 'jobs' \
+               AND column_name = 'node_id'";
 
     let batches = session
         .sql(sql)
@@ -163,10 +163,9 @@ async fn test_information_schema_columns_includes_kdb_metadata() {
     let (app_ctx, _test_db) = create_test_app_context().await;
     let session = app_ctx.base_session_context();
 
-    let sql = "SELECT column_name, kdb_namespace_id, kdb_version, kdb_column_id, \
-               kdb_primary_key, kdb_primary_key_pos \
-               FROM information_schema.columns \
-               WHERE table_schema = 'system' AND table_name = 'jobs' AND column_name = 'node_id'";
+    let sql = "SELECT column_name, kdb_namespace_id, kdb_version, kdb_column_id, kdb_primary_key, \
+               kdb_primary_key_pos FROM information_schema.columns WHERE table_schema = 'system' \
+               AND table_name = 'jobs' AND column_name = 'node_id'";
 
     let batches = session
         .sql(sql)
@@ -211,9 +210,8 @@ async fn test_information_schema_tables_includes_kdb_metadata() {
     let (app_ctx, _test_db) = create_test_app_context().await;
     let session = app_ctx.base_session_context();
 
-    let sql = "SELECT table_name, kdb_namespace_id, kdb_table_type, kdb_version \
-               FROM information_schema.tables \
-               WHERE table_schema = 'system' AND table_name = 'jobs'";
+    let sql = "SELECT table_name, kdb_namespace_id, kdb_table_type, kdb_version FROM \
+               information_schema.tables WHERE table_schema = 'system' AND table_name = 'jobs'";
 
     let batches = session
         .sql(sql)
@@ -345,9 +343,8 @@ async fn test_information_schema_columns_fallback_kalam_types_for_arrow_names() 
     let (app_ctx, _test_db) = create_test_app_context().await;
     let session = app_ctx.base_session_context();
 
-    let sql = "SELECT column_name, data_type, kdb_data_type \
-               FROM information_schema.columns \
-               WHERE table_schema = 'system' AND table_name = 'jobs' AND column_name = 'status'";
+    let sql = "SELECT column_name, data_type, kdb_data_type FROM information_schema.columns WHERE \
+               table_schema = 'system' AND table_name = 'jobs' AND column_name = 'status'";
 
     let batches = session
         .sql(sql)

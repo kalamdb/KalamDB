@@ -27,7 +27,7 @@ pub fn validate_params(params: &[ScalarValue]) -> Result<(), KalamDbError> {
     // Check parameter count
     if params.len() > MAX_PARAMS {
         return Err(KalamDbError::ParamCountExceeded {
-            max: MAX_PARAMS,
+            max:    MAX_PARAMS,
             actual: params.len(),
         });
     }
@@ -37,8 +37,8 @@ pub fn validate_params(params: &[ScalarValue]) -> Result<(), KalamDbError> {
         let size = estimate_scalar_value_size(param);
         if size > MAX_PARAM_SIZE_BYTES {
             return Err(KalamDbError::ParamSizeExceeded {
-                index: idx,
-                max_bytes: MAX_PARAM_SIZE_BYTES,
+                index:        idx,
+                max_bytes:    MAX_PARAM_SIZE_BYTES,
                 actual_bytes: size,
             });
         }

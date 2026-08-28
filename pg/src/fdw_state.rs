@@ -9,13 +9,13 @@ use kalam_pg_fdw::TableOptions;
 /// State stored in `ForeignScanState::fdw_state` during scan lifecycle.
 pub struct KalamScanState {
     /// Arrow record batches returned by the backend executor.
-    pub batches: Vec<RecordBatch>,
+    pub batches:           Vec<RecordBatch>,
     /// Index of the current batch being iterated.
-    pub batch_index: usize,
+    pub batch_index:       usize,
     /// Row index within the current batch.
-    pub row_index: usize,
+    pub row_index:         usize,
     /// Maps PG attribute index → Arrow column index (None for virtual/missing columns).
-    pub column_mapping: Vec<Option<usize>>,
+    pub column_mapping:    Vec<Option<usize>>,
     /// Effective user_id for virtual `_userid` column injection.
     pub effective_user_id: Option<String>,
 }
@@ -23,17 +23,17 @@ pub struct KalamScanState {
 /// State stored in `ResultRelInfo::ri_FdwState` during modify lifecycle.
 pub struct KalamModifyState {
     /// Remote session id used to scope buffered writes and transactions.
-    pub session_id: String,
+    pub session_id:         String,
     /// Parsed foreign table options.
-    pub table_options: TableOptions,
+    pub table_options:      TableOptions,
     /// Backend executor for running mutations.
-    pub executor: Arc<dyn KalamBackendExecutor>,
+    pub executor:           Arc<dyn KalamBackendExecutor>,
     /// Tokio runtime for blocking on async in remote mode.
-    pub runtime: Arc<tokio::runtime::Runtime>,
+    pub runtime:            Arc<tokio::runtime::Runtime>,
     /// Column names from the PG relation, in attribute order.
-    pub column_names: Vec<String>,
+    pub column_names:       Vec<String>,
     /// Name of the primary key column (for UPDATE/DELETE row identification).
-    pub pk_column: String,
+    pub pk_column:          String,
     /// Whether pending writes for this table have already been flushed in this
     /// modify lifecycle. Avoids redundant per-row flush_table calls in UPDATE/DELETE.
     pub flushed_for_modify: bool,

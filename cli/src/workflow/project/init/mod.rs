@@ -16,10 +16,13 @@ use crate::{
             ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
             ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
         },
+        dart::{
+            self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND,
+            SCHEMA_TARGET_OUTPUT as DART_SCHEMA_TARGET_OUTPUT,
+        },
         guidance::{
             init_config_validation_failed, init_project_already_exists, init_stage_context,
         },
-        dart::{self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND, SCHEMA_TARGET_OUTPUT as DART_SCHEMA_TARGET_OUTPUT},
         identifiers::{normalize_namespace_name, parse_namespace_id},
         prompts::print_workflow_banner,
         repository_examples,
@@ -38,15 +41,15 @@ pub enum ServerMode {
 
 #[derive(Debug, Clone)]
 pub struct InitOptions {
-    pub name: Option<String>,
-    pub schema_mode: Option<SchemaMode>,
-    pub languages: Option<Vec<String>>,
-    pub template: Option<String>,
+    pub name:            Option<String>,
+    pub schema_mode:     Option<SchemaMode>,
+    pub languages:       Option<Vec<String>>,
+    pub template:        Option<String>,
     pub package_manager: Option<PackageManager>,
-    pub server_mode: Option<ServerMode>,
-    pub server_url: Option<String>,
-    pub yes: bool,
-    pub cwd: PathBuf,
+    pub server_mode:     Option<ServerMode>,
+    pub server_url:      Option<String>,
+    pub yes:             bool,
+    pub cwd:             PathBuf,
 }
 
 pub async fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
@@ -93,13 +96,15 @@ where
     let package_manager =
         resolve_package_manager(&languages, options.package_manager, options.yes, output)?;
     if let Some(ProjectStarter::Repository(example)) = starter {
-        output.status(format!("downloading KalamDB example '{}'", example.id));
-        repository_examples::download_repository_example(&options.cwd, example, output.use_color)
-            .await
-            .map_err(|error| map_init_stage_error("downloading repository example", error))?;
+        let download = {
+            let _spinner =
+                output.status_spinner(format!("downloading KalamDB example '{}'", example.id));
+            repository_examples::download_repository_example(&options.cwd, example, false).await
+        };
+        download.map_err(|error| map_init_stage_error("downloading repository example", error))?;
         install_dependencies(&options.cwd, package_manager, output, &mut installer)
             .map_err(|error| map_init_stage_error("installing JavaScript dependencies", error))?;
-        output.status(format!("initialized KalamDB example '{}'", example.id));
+        finish_init(output, example.id, &options.cwd, options.yes)?;
         return Ok(());
     }
 
@@ -145,8 +150,44 @@ where
         dart::maybe_bootstrap_flutter_project(&options.cwd, &package_name, output)
             .map_err(|error| map_init_stage_error("bootstrapping Flutter project", error))?;
     }
-    output.status(format!("initialized KalamDB project '{name}'"));
+    finish_init(output, &name, &options.cwd, options.yes)?;
     Ok(())
+}
+
+fn finish_init(output: &WorkflowOutput, name: &str, root: &Path, yes: bool) -> Result<()> {
+    output.status(format!("initialized KalamDB project '{name}'"));
+    if output.json {
+        output.emit_json(&serde_json::json!({
+            "ok": true,
+            "project": name,
+            "created": created_init_files(root),
+            "next": "kalam dev --agent",
+        }));
+        return Ok(());
+    }
+    if yes {
+        output.status("next: kalam dev --agent");
+    }
+    Ok(())
+}
+
+fn created_init_files(root: &Path) -> Vec<String> {
+    const CANDIDATES: &[&str] = &[
+        "kalam.toml",
+        "schema.sql",
+        ".env",
+        ".env.example",
+        "src/index.ts",
+        "package.json",
+        "lib/main.dart",
+        "pubspec.yaml",
+    ];
+    CANDIDATES
+        .iter()
+        .copied()
+        .filter(|path| root.join(path).is_file())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn map_init_stage_error(stage: &str, error: CLIError) -> CLIError {
@@ -195,20 +236,20 @@ fn build_config(
     }
 
     Ok(KalamProjectConfig {
-        project: ProjectSection {
-            name: name.to_string(),
-            default_env: "dev".into(),
+        project:    ProjectSection {
+            name:            name.to_string(),
+            default_env:     "dev".into(),
             package_manager: package_manager.map(PackageManager::as_str).map(str::to_string),
-            kalam_dir: "kalam".into(),
+            kalam_dir:       "kalam".into(),
         },
         connection: HashMap::from([(
             "dev".into(),
             ConnectionEnv {
-                url: server_url.to_string(),
+                url:       server_url.to_string(),
                 namespace: parse_namespace_id(&normalize_namespace_name(name))?,
             },
         )]),
-        schema: SchemaSection {
+        schema:     SchemaSection {
             mode: schema_mode,
             path: Some("schema.sql".into()),
             watch: true,
@@ -216,10 +257,10 @@ fn build_config(
             targets,
         },
         migrations: MigrationsSection {
-            dir: "kalam/migrations".into(),
+            dir:         "kalam/migrations".into(),
             auto_create: true,
         },
-        dev: DevSection {
+        dev:        DevSection {
             auto_start_db: matches!(server_mode, ServerMode::Local),
             processes: if let Some(manager) = package_manager {
                 HashMap::from([("app".into(), manager.dev_run_command().into())])
@@ -230,19 +271,21 @@ fn build_config(
             },
             ..DevSection::default()
         },
-        logging: LoggingSection::default(),
+        logging:    LoggingSection::default(),
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
     use super::*;
     use crate::{
         config::WorkflowLoggingPolicy,
         workflow::{project::ts::SKIP_PACKAGE_INSTALL_ENV, test_support::with_test_env_var},
     };
-    use std::fs;
-    use tempfile::TempDir;
 
     fn block_on_init<T>(future: impl std::future::Future<Output = T>) -> T {
         tokio::runtime::Runtime::new().expect("tokio runtime").block_on(future)
@@ -255,15 +298,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name: Some("demo-app".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: Some("simple-live".into()),
+                    name:            Some("demo-app".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        Some("simple-live".into()),
                     package_manager: None,
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -289,15 +332,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name: Some("demo-app".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: None,
+                    name:            Some("demo-app".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        None,
                     package_manager: None,
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -322,15 +365,15 @@ mod tests {
 
             block_on_init(run_init(
                 InitOptions {
-                    name: Some("demo-dart".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["dart".into()]),
-                    template: None,
+                    name:            Some("demo-dart".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["dart".into()]),
+                    template:        None,
                     package_manager: None,
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -348,7 +391,8 @@ mod tests {
             assert!(temp.path().join("pubspec.yaml").is_file());
             assert!(temp.path().join("lib/main.dart").is_file());
             assert!(temp.path().join("schema.sql").is_file());
-            let generated = fs::read_to_string(temp.path().join("lib/generated/kalam.dart")).unwrap();
+            let generated =
+                fs::read_to_string(temp.path().join("lib/generated/kalam.dart")).unwrap();
             assert!(generated.contains("KalamTableSpec<Users>"));
             assert!(generated.contains("tableId: 'users'"));
             assert!(!generated.to_lowercase().contains("placeholder"));
@@ -363,15 +407,15 @@ mod tests {
 
         block_on_init(run_init_with_installer(
             InitOptions {
-                name: Some("demo-dart".into()),
-                schema_mode: Some(SchemaMode::Sql),
-                languages: Some(vec!["dart".into()]),
-                template: None,
+                name:            Some("demo-dart".into()),
+                schema_mode:     Some(SchemaMode::Sql),
+                languages:       Some(vec!["dart".into()]),
+                template:        None,
                 package_manager: None,
-                server_mode: Some(ServerMode::Local),
-                server_url: None,
-                yes: true,
-                cwd: temp.path().to_path_buf(),
+                server_mode:     Some(ServerMode::Local),
+                server_url:      None,
+                yes:             true,
+                cwd:             temp.path().to_path_buf(),
             },
             &output,
             |_root, _command| {
@@ -391,15 +435,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name: Some("dev-test1".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: None,
+                    name:            Some("dev-test1".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        None,
                     package_manager: None,
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
             ))
@@ -424,15 +468,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init(
                 InitOptions {
-                    name: Some("remote-app".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: None,
+                    name:            Some("remote-app".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        None,
                     package_manager: None,
-                    server_mode: Some(ServerMode::Remote),
-                    server_url: Some("http://localhost:2900".into()),
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Remote),
+                    server_url:      Some("http://localhost:2900".into()),
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
             ))

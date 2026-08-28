@@ -39,7 +39,7 @@ pub trait RequestTransactionCoordinator {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestTransactionError<E> {
     AlreadyActive {
-        owner_id: String,
+        owner_id:       String,
         transaction_id: TransactionId,
     },
     NoActiveTransaction {
@@ -83,8 +83,8 @@ where
 
 #[derive(Debug, Clone)]
 pub struct RequestTransactionState<'a> {
-    owner_key: ExecutionOwnerKey,
-    request_id: &'a str,
+    owner_key:             ExecutionOwnerKey,
+    request_id:            &'a str,
     active_transaction_id: Option<TransactionId>,
 }
 

@@ -97,9 +97,10 @@ fn looks_like_uuid(value: &str) -> bool {
         && bytes[13] == b'-'
         && bytes[18] == b'-'
         && bytes[23] == b'-'
-        && bytes.iter().enumerate().all(|(index, byte)| {
-            matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit()
-        })
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
 }
 
 fn shorten_user_id(id: &str) -> String {
@@ -213,10 +214,7 @@ mod tests {
     #[test]
     fn preferred_user_label_uses_compact_username_over_placeholder_email() {
         let user = UserId::try_new("root").expect("root is a valid user id");
-        assert_eq!(
-            preferred_user_label(&user, None, Some("root@localhost")),
-            "root"
-        );
+        assert_eq!(preferred_user_label(&user, None, Some("root@localhost")), "root");
     }
 
     #[test]

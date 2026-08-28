@@ -13,14 +13,14 @@ use once_cell::sync::OnceCell;
 #[derive(Clone)]
 pub struct ExecutionContext {
     /// Authenticated session with user identity and metadata
-    auth_session: AuthSession,
+    auth_session:          AuthSession,
     /// Optional namespace for this query execution
-    namespace_id: Option<NamespaceId>,
+    namespace_id:          Option<NamespaceId>,
     /// Optional existing transaction supplied by a connection-scoped caller.
-    transaction_id: Option<TransactionId>,
+    transaction_id:        Option<TransactionId>,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
-    base_session_context: Arc<SessionContext>,
+    base_session_context:  Arc<SessionContext>,
     /// Cached per-request SessionState with user context injected
     ///
     /// This avoids repeated allocations when a single request needs multiple

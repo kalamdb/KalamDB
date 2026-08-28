@@ -50,8 +50,10 @@ pub fn resolve_starter(
         .iter()
         .map(|template| SelectOption::described(template.id, template.description))
         .collect();
-    let default_index =
-        available.iter().position(|template| template.id == DEFAULT_TEMPLATE).unwrap_or(0);
+    let default_index = available
+        .iter()
+        .position(|template| template.id == DEFAULT_TEMPLATE)
+        .unwrap_or(0);
     let selected = prompt_select("Dart/Flutter project template", &options, default_index, color)?;
     let template = available[selected];
     eprintln!(
@@ -88,22 +90,35 @@ pub fn maybe_bootstrap_flutter_project(
         return Ok(());
     }
 
-    output.status("creating Flutter platform files");
-    let create = Command::new("flutter")
-        .current_dir(root)
-        .args(["create", ".", "--project-name", package_name, "--platforms", "macos,web"])
-        .output()
-        .map_err(|error| {
-            CLIError::ConfigurationError(format!("failed to run flutter create: {error}"))
-        })?;
+    let create = {
+        let _spinner = output.status_spinner("creating Flutter platform files");
+        Command::new("flutter")
+            .current_dir(root)
+            .args([
+                "create",
+                ".",
+                "--project-name",
+                package_name,
+                "--platforms",
+                "macos,web",
+            ])
+            .output()
+            .map_err(|error| {
+                CLIError::ConfigurationError(format!("failed to run flutter create: {error}"))
+            })?
+    };
     if !create.status.success() {
         output.warn(
-            "flutter create failed, but project files are on disk — add platforms with `flutter create .`",
+            "flutter create failed, but project files are on disk — add platforms with `flutter \
+             create .`",
         );
         return Ok(());
     }
 
-    let pub_get = Command::new("flutter").current_dir(root).args(["pub", "get"]).output();
+    let pub_get = {
+        let _spinner = output.status_spinner("installing Flutter packages");
+        Command::new("flutter").current_dir(root).args(["pub", "get"]).output()
+    };
     match pub_get {
         Ok(output_status) if output_status.status.success() => {
             output.status("installed Flutter packages");

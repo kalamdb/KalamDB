@@ -165,8 +165,8 @@ async fn insert_on_conflict_do_update_set_updates_existing_primary_key() {
     execute_ok(&executor, &exec_ctx, &insert).await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -190,8 +190,8 @@ async fn insert_on_conflict_do_update_set_inserts_missing_primary_key() {
     );
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -220,8 +220,8 @@ async fn insert_on_conflict_do_update_set_uses_existing_transaction() {
     execute_ok(&executor, &exec_ctx, &insert).await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -258,9 +258,8 @@ async fn insert_on_conflict_do_update_set_returning_returns_updated_row() {
     execute_ok(&executor, &exec_ctx, &insert).await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-         RETURNING id, name AS returned_name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name RETURNING id, name AS returned_name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -290,9 +289,8 @@ async fn insert_on_conflict_do_update_set_returning_returns_inserted_row() {
     );
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-         RETURNING id, name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name RETURNING id, name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -324,9 +322,8 @@ async fn insert_on_conflict_do_update_set_returning_uses_existing_transaction() 
     execute_ok(&executor, &exec_ctx, &insert).await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-         RETURNING id, name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'beta') ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name RETURNING id, name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -412,9 +409,8 @@ async fn parameterized_insert_on_conflict_do_update_set_returning_returns_update
     .await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES ($1, $2) \
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
-         RETURNING id, name",
+        "INSERT INTO {}.{} (id, name) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET name = \
+         EXCLUDED.name RETURNING id, name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -471,9 +467,8 @@ async fn parameterized_insert_on_conflict_do_nothing_returning_returns_zero_rows
     .await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES ($1, $2) \
-         ON CONFLICT (id) DO NOTHING \
-         RETURNING id, name",
+        "INSERT INTO {}.{} (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING id, \
+         name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -510,9 +505,8 @@ async fn insert_on_conflict_do_nothing_returning_skips_duplicate_key_from_same_s
     );
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha'), (1, 'ignored') \
-         ON CONFLICT (id) DO NOTHING \
-         RETURNING id, name",
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'alpha'), (1, 'ignored') ON CONFLICT (id) DO \
+         NOTHING RETURNING id, name",
         table_id.namespace_id(),
         table_id.table_name()
     );
@@ -546,10 +540,9 @@ async fn parameterized_file_insert_on_conflict_supports_explicit_default_and_set
 
     let upsert_sql = |file_ref: &str| {
         format!(
-            "INSERT INTO {}.{} (path, file_ref, created_at, updated_at) \
-             VALUES ($1, {}, DEFAULT, $2) \
-             ON CONFLICT (path) DO UPDATE SET file_ref = {}, updated_at = $3 \
-             RETURNING path, file_ref",
+            "INSERT INTO {}.{} (path, file_ref, created_at, updated_at) VALUES ($1, {}, DEFAULT, \
+             $2) ON CONFLICT (path) DO UPDATE SET file_ref = {}, updated_at = $3 RETURNING path, \
+             file_ref",
             table_id.namespace_id(),
             table_id.table_name(),
             sql_string(file_ref),

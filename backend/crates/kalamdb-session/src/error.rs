@@ -13,9 +13,9 @@ pub enum SessionError {
     /// Access denied to a table
     AccessDenied {
         namespace_id: NamespaceId,
-        table_name: TableName,
-        role: Role,
-        reason: String,
+        table_name:   TableName,
+        role:         Role,
+        reason:       String,
     },
     /// Session context not found in DataFusion session
     SessionContextNotFound,

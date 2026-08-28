@@ -19,8 +19,6 @@ pub use operation_executor::{
     DeleteRequest, InsertRequest, MutationResult, OperationExecutor, ScanRequest, ScanResult,
     UpdateRequest,
 };
-#[cfg(feature = "server")]
-pub use service::{KalamPgService, PgService, PgServiceServer};
 pub use service::{
     BeginTransactionRequest, BeginTransactionResponse, CloseSessionRequest, CloseSessionResponse,
     CommitTransactionRequest, CommitTransactionResponse, DeleteRpcRequest, DeleteRpcResponse,
@@ -29,3 +27,5 @@ pub use service::{
     PingRequest, PingResponse, RollbackTransactionRequest, RollbackTransactionResponse,
     ScanFilterExpression, ScanRpcRequest, ScanRpcResponse, UpdateRpcRequest, UpdateRpcResponse,
 };
+#[cfg(feature = "server")]
+pub use service::{KalamPgService, PgService, PgServiceServer};

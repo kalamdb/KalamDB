@@ -9,7 +9,7 @@ use crate::{create_archive_staging_dir, create_tar_gz_archive, is_tar_gz_path};
 
 pub struct DatabaseBackupPlan {
     pub backup_root: PathBuf,
-    archive_output: bool,
+    archive_output:  bool,
 }
 
 impl DatabaseBackupPlan {

@@ -20,12 +20,12 @@ use kalamdb_system::providers::topics::TopicRoute;
 /// per-message `HashMap::clone()` and re-serialization.
 pub(crate) struct PreparedRow {
     /// Pre-serialized payload bytes for Key mode.
-    key_payload: Vec<u8>,
+    key_payload:    Vec<u8>,
     /// Cached JSON map for primary-key extraction without reserializing the row.
-    json_map: std::collections::HashMap<String, KalamCellValue>,
+    json_map:       std::collections::HashMap<String, KalamCellValue>,
     /// Pre-serialized payload bytes for Full/Diff mode (with `_table` already injected).
     /// Only `Some` when `from_row_with_table` is used.
-    full_payload: Option<Vec<u8>>,
+    full_payload:   Option<Vec<u8>>,
     /// Pre-computed hash for partition selection.
     partition_hash: u64,
 }

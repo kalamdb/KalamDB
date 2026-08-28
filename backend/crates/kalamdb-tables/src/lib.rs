@@ -52,10 +52,10 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};
-pub use kalamdb_rls::BoundLiveAuthorization;
 // Re-export table stores
 pub use kalamdb_commons::models::StreamTableRow;
 pub use kalamdb_commons::models::UserTableRow;
+pub use kalamdb_rls::BoundLiveAuthorization;
 pub use kalamdb_vector::{
     new_indexed_shared_vector_hot_store, new_indexed_user_vector_hot_store,
     normalize_vector_column_name, SharedVectorHotOpId, SharedVectorHotStore, UserVectorHotOpId,

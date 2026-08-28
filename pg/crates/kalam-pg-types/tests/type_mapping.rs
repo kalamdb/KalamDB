@@ -11,7 +11,7 @@ fn maps_embedding_to_pgvector_type_name() {
 fn maps_decimal_to_numeric_type_name() {
     let type_name = pg_type_name_for(&KalamDataType::Decimal {
         precision: 10,
-        scale: 2,
+        scale:     2,
     })
     .expect("map decimal");
     assert_eq!(type_name, "NUMERIC(10, 2)");

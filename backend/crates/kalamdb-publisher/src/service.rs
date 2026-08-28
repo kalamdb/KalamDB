@@ -62,18 +62,18 @@ const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug)]
 struct ClaimState {
     /// Next offset to hand out.
-    cursor: u64,
+    cursor:  u64,
     /// Pending (unacked) claims with their expiry information.
     pending: Vec<PendingClaim>,
 }
 
 #[derive(Debug)]
 struct PendingClaim {
-    start: u64,
+    start:         u64,
     /// Exclusive upper bound of the claimed range.
     end_exclusive: u64,
     /// When the claim was issued.
-    claimed_at: Instant,
+    claimed_at:    Instant,
 }
 
 impl ClaimState {
@@ -172,28 +172,28 @@ impl ClaimState {
 /// Thread-safe. Wrap in `Arc` for shared ownership.
 pub struct TopicPublisherService {
     /// Persistent storage for topic messages.
-    message_store: Arc<TopicMessageStore>,
+    message_store:         Arc<TopicMessageStore>,
     /// System table provider for consumer group offsets.
-    offset_store: Arc<TopicOffsetsTableProvider>,
+    offset_store:          Arc<TopicOffsetsTableProvider>,
     /// In-memory route cache: TableId → routes.
-    route_cache: RouteCache,
+    route_cache:           RouteCache,
     /// Schema-backed lookup for deriving stable topic keys from table primary keys.
-    primary_key_lookup: Option<Arc<dyn TopicPrimaryKeyLookup>>,
+    primary_key_lookup:    Option<Arc<dyn TopicPrimaryKeyLookup>>,
     /// Atomic per-topic-partition offset counters.
-    offset_allocator: OffsetAllocator,
+    offset_allocator:      OffsetAllocator,
     /// In-memory per-(topic, group, partition) claim state used to avoid
     /// duplicate delivery and to expire stale claims from crashed consumers.
-    group_claim_state: DashMap<GroupPartitionKey, ClaimState>,
+    group_claim_state:     DashMap<GroupPartitionKey, ClaimState>,
     /// Known consumer groups observed from consume/ack activity or restored offsets.
-    consumer_groups: DashMap<ConsumerGroupKey, ()>,
+    consumer_groups:       DashMap<ConsumerGroupKey, ()>,
     /// Per-(topic, partition) write locks that serialize offset allocation +
     /// RocksDB write to guarantee messages are stored in offset order.
     partition_write_locks: DashMap<TopicPartitionKey, Arc<Mutex<()>>>,
     /// Approximate retained message bytes per topic partition, populated on
     /// demand and updated by publish/retention paths.
-    retained_bytes: DashMap<TopicPartitionKey, u64>,
+    retained_bytes:        DashMap<TopicPartitionKey, u64>,
     /// How long a consumer claim stays valid before re-delivery.
-    visibility_timeout: Duration,
+    visibility_timeout:    Duration,
 }
 
 impl TopicPublisherService {
@@ -300,10 +300,10 @@ impl TopicPublisherService {
 
     pub fn cache_stats(&self) -> TopicCacheStats {
         TopicCacheStats {
-            topic_count: self.route_cache.topic_count(),
-            table_route_count: self.route_cache.table_route_count(),
-            total_routes: self.route_cache.total_routes(),
-            consumer_group_count: self.consumer_groups.len(),
+            topic_count:              self.route_cache.topic_count(),
+            table_route_count:        self.route_cache.table_route_count(),
+            total_routes:             self.route_cache.total_routes(),
+            consumer_group_count:     self.consumer_groups.len(),
             consumer_partition_count: self.group_claim_state.len(),
         }
     }

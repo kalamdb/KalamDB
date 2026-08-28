@@ -57,8 +57,8 @@ mod tests {
     #[test]
     fn test_query_request_serialization() {
         let request = QueryRequest {
-            sql: "SELECT * FROM users".to_string(),
-            params: None,
+            sql:          "SELECT * FROM users".to_string(),
+            params:       None,
             namespace_id: None,
         };
 
@@ -73,8 +73,8 @@ mod tests {
     #[test]
     fn test_query_request_with_multiple_statements() {
         let request = QueryRequest {
-            sql: "INSERT INTO users VALUES (1, 'Alice'); SELECT * FROM users;".to_string(),
-            params: None,
+            sql:          "INSERT INTO users VALUES (1, 'Alice'); SELECT * FROM users;".to_string(),
+            params:       None,
             namespace_id: None,
         };
 
@@ -87,8 +87,8 @@ mod tests {
     #[test]
     fn test_query_request_with_parameters() {
         let request = QueryRequest {
-            sql: "SELECT * FROM users WHERE id = $1 AND status = $2".to_string(),
-            params: Some(vec![serde_json::json!(42), serde_json::json!("active")]),
+            sql:          "SELECT * FROM users WHERE id = $1 AND status = $2".to_string(),
+            params:       Some(vec![serde_json::json!(42), serde_json::json!("active")]),
             namespace_id: None,
         };
 

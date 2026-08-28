@@ -1,8 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
+use link_common::models::{ClientMessage, ProtocolOptions, WsAuthCredentials};
 use wasm_bindgen::prelude::JsValue;
 use wasm_bindgen_futures::JsFuture;
-
-use link_common::models::{ClientMessage, ProtocolOptions, WsAuthCredentials};
 
 /// Authentication provider for WASM clients
 ///

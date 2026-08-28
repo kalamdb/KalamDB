@@ -121,10 +121,10 @@ pub struct FlushJobResult {
 /// Cached table metadata needed by the flush writer.
 #[derive(Debug, Clone)]
 pub struct FlushTableMetadata {
-    pub schema_version: u32,
+    pub schema_version:       u32,
     pub bloom_filter_columns: Vec<String>,
-    pub indexed_columns: Vec<(u64, String)>,
-    pub compression: TableCompression,
+    pub indexed_columns:      Vec<(u64, String)>,
+    pub compression:          TableCompression,
 }
 
 impl FlushTableMetadata {
@@ -175,11 +175,11 @@ impl FlushScopeHook for NoopFlushScopeHook {
 #[derive(Debug, Clone, Default)]
 pub struct FlushDedupStats {
     /// Total rows scanned from hot storage (before dedup)
-    pub rows_before_dedup: usize,
+    pub rows_before_dedup:   usize,
     /// Unique rows after version resolution
-    pub rows_after_dedup: usize,
+    pub rows_after_dedup:    usize,
     /// Number of soft-deleted (tombstone) rows encountered
-    pub deleted_count: usize,
+    pub deleted_count:       usize,
     /// Number of tombstones filtered out in final output
     pub tombstones_filtered: usize,
 }
@@ -278,9 +278,8 @@ pub mod helpers {
     };
     use kalamdb_tables::{SharedTableRow, UserTableRow};
 
-    use crate::{error::FlushResultExt, Result};
-
     use super::{FlushDedupStats, FlushTableMetadata};
+    use crate::{error::FlushResultExt, Result};
 
     pub type LatestVersions<R> = HashMap<PkBucketKey, (Vec<u8>, R, i64)>;
 
@@ -439,9 +438,9 @@ pub mod helpers {
 
     /// Split latest hot versions into flushable rows and tombstones that must stay hot.
     ///
-    /// Tombstones are intentionally not written to Parquet, but the latest tombstone key must remain
-    /// in hot storage so it can continue masking older flushed segments until compaction reconciles
-    /// cold storage.
+    /// Tombstones are intentionally not written to Parquet, but the latest tombstone key must
+    /// remain in hot storage so it can continue masking older flushed segments until compaction
+    /// reconciles cold storage.
     pub fn rows_and_tombstones_from_versions<R: FlushVersionRow>(
         latest_versions: LatestVersions<R>,
         stats: &mut FlushDedupStats,
@@ -484,13 +483,12 @@ pub mod helpers {
 
 #[cfg(test)]
 mod tests {
-    use crate::FlushError;
-
     use super::*;
+    use crate::FlushError;
 
     struct MockFlushJob {
         should_fail: bool,
-        rows_count: usize,
+        rows_count:  usize,
     }
 
     impl TableFlush for MockFlushJob {
@@ -500,10 +498,10 @@ mod tests {
             }
 
             Ok(FlushJobResult {
-                rows_flushed: self.rows_count,
+                rows_flushed:  self.rows_count,
                 parquet_files: vec!["batch-123.parquet".to_string()],
-                scope_hints: vec![FlushScopeHint::Shared],
-                metadata: FlushMetadata::shared_table(),
+                scope_hints:   vec![FlushScopeHint::Shared],
+                metadata:      FlushMetadata::shared_table(),
             })
         }
 
@@ -516,7 +514,7 @@ mod tests {
     fn test_flush_execution_success() {
         let job = MockFlushJob {
             should_fail: false,
-            rows_count: 100,
+            rows_count:  100,
         };
 
         let result = job.execute();
@@ -531,7 +529,7 @@ mod tests {
     fn test_flush_execution_failure() {
         let job = MockFlushJob {
             should_fail: true,
-            rows_count: 0,
+            rows_count:  0,
         };
 
         let result = job.execute();

@@ -29,11 +29,11 @@ const MAX_SCAN_LIMIT: usize = 100000;
 /// Configuration for StreamTableStore.
 #[derive(Debug, Clone)]
 pub struct StreamTableStoreConfig {
-    pub base_dir: PathBuf,
+    pub base_dir:          PathBuf,
     pub max_rows_per_user: usize,
-    pub shard_router: ShardRouter,
-    pub ttl_seconds: Option<u64>,
-    pub storage_mode: StreamTableStorageMode,
+    pub shard_router:      ShardRouter,
+    pub ttl_seconds:       Option<u64>,
+    pub storage_mode:      StreamTableStorageMode,
 }
 
 impl StreamTableStoreConfig {
@@ -160,7 +160,7 @@ fn map_stream_error(error: kalamdb_streams::StreamLogError) -> StorageError {
 /// Store for stream tables.
 #[derive(Clone)]
 pub struct StreamTableStore {
-    table_id: TableId,
+    table_id:  TableId,
     partition: Partition,
     log_store: StreamLogStoreBackend,
 }
@@ -181,10 +181,10 @@ impl StreamTableStore {
             )),
             StreamTableStorageMode::File => {
                 StreamLogStoreBackend::File(Arc::new(FileStreamLogStore::new(StreamLogConfig {
-                    base_dir: config.base_dir.clone(),
+                    base_dir:     config.base_dir.clone(),
                     shard_router: config.shard_router.clone(),
-                    bucket: config.bucket(),
-                    table_id: table_id.clone(),
+                    bucket:       config.bucket(),
+                    table_id:     table_id.clone(),
                 })))
             },
         };
@@ -442,11 +442,11 @@ mod tests {
     fn create_test_store(_base_dir: &std::path::Path) -> StreamTableStore {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
-            base_dir: _base_dir.join("streams").join("test_ns").join("test_stream"),
+            base_dir:          _base_dir.join("streams").join("test_ns").join("test_stream"),
             max_rows_per_user: MemoryStreamLogStore::DEFAULT_MAX_ROWS_PER_USER,
-            shard_router: ShardRouter::default_config(),
-            ttl_seconds: Some(3600),
-            storage_mode: StreamTableStorageMode::File,
+            shard_router:      ShardRouter::default_config(),
+            ttl_seconds:       Some(3600),
+            storage_mode:      StreamTableStorageMode::File,
         };
         new_stream_table_store(&table_id, config)
     }
@@ -457,8 +457,8 @@ mod tests {
         values.insert("data".to_string(), ScalarValue::Int64(Some(123)));
         StreamTableRow {
             user_id: user_id.clone(),
-            _seq: SeqId::new(seq),
-            fields: Row::new(values),
+            _seq:    SeqId::new(seq),
+            fields:  Row::new(values),
         }
     }
 
@@ -541,11 +541,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
-            base_dir: temp_dir.path().join("streams").join("test_ns").join("test_stream"),
+            base_dir:          temp_dir.path().join("streams").join("test_ns").join("test_stream"),
             max_rows_per_user: MemoryStreamLogStore::DEFAULT_MAX_ROWS_PER_USER,
-            shard_router: ShardRouter::default_config(),
-            ttl_seconds: Some(3600),
-            storage_mode: StreamTableStorageMode::File,
+            shard_router:      ShardRouter::default_config(),
+            ttl_seconds:       Some(3600),
+            storage_mode:      StreamTableStorageMode::File,
         };
 
         let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));

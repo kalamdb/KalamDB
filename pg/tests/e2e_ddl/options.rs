@@ -45,7 +45,7 @@ async fn wait_for_backend_session_cleanup(env: &DdlTestEnv, backend_pid: i32, co
 }
 
 struct OwnedPgClient {
-    client: tokio_postgres::Client,
+    client:          tokio_postgres::Client,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -250,7 +250,8 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
         &format!(
             "CREATE SHARED TABLE {ns}.{table} (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name \
              TEXT)"
-        ))
+        ),
+    )
     .await;
     assert!(
         contains_status(&create_table, &["created", "ok"]),
@@ -373,7 +374,8 @@ async fn e2e_ddl_local_postgres_jsonb_operator_query() {
                 "SELECT doc->>'name' AS name, doc ? 'profile' AS has_profile FROM {ns}.{table} \
                  WHERE id = 1"
             ),
-            &[])
+            &[],
+        )
         .await
         .expect("query local Postgres jsonb operators over foreign table");
 
@@ -415,7 +417,8 @@ async fn e2e_ddl_create_table_using_kalamdb_disconnect_cleans_session_row() {
     wait_for_backend_session_cleanup(
         env,
         backend_pid,
-        "disconnect after CREATE TABLE USING kalamdb")
+        "disconnect after CREATE TABLE USING kalamdb",
+    )
     .await;
 
     let cleanup = env.pg_connect().await;

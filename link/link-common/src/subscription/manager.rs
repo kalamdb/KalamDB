@@ -39,26 +39,26 @@ use crate::{
 /// # }
 /// ```
 pub struct SubscriptionManager {
-    subscription_id: String,
+    subscription_id:  String,
     /// Receives parsed events from the shared connection task.
-    event_rx: mpsc::Receiver<Result<ChangeEvent>>,
+    event_rx:         mpsc::Receiver<Result<ChangeEvent>>,
     /// Sends unsubscribe and checkpoint progress back to the shared connection.
-    shared_control: Option<SharedSubscriptionControl>,
+    shared_control:   Option<SharedSubscriptionControl>,
     /// Generation tag assigned by the shared `connection_task`.
-    generation: u64,
+    generation:       u64,
     /// Local event buffer for yielding batched events from a single WS message.
-    event_queue: VecDeque<ChangeEvent>,
+    event_queue:      VecDeque<ChangeEvent>,
     /// Changes received while initial data is still loading.
     buffered_changes: Vec<ChangeEvent>,
     /// Whether initial data is still loading.
-    is_loading: bool,
+    is_loading:       bool,
     /// Original `from` cursor used to open this subscription, if any.
-    resume_from: Option<SeqId>,
+    resume_from:      Option<SeqId>,
     /// Highest progress delivered to the consumer, acknowledged or not.
     delivered_seq_id: Option<SeqId>,
-    ack_mode: SubscriptionAckMode,
-    timeouts: KalamLinkTimeouts,
-    closed: bool,
+    ack_mode:         SubscriptionAckMode,
+    timeouts:         KalamLinkTimeouts,
+    closed:           bool,
 }
 
 impl SubscriptionManager {
@@ -301,16 +301,16 @@ mod tests {
         let mut sub = make_test_sub();
         let event = ChangeEvent::InitialDataBatch {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
                 row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
                 row
             }],
-            batch_control: crate::models::BatchControl {
-                batch_num: 0,
-                has_more: true,
-                status: crate::models::BatchStatus::Loading,
+            batch_control:   crate::models::BatchControl {
+                batch_num:   0,
+                has_more:    true,
+                status:      crate::models::BatchStatus::Loading,
                 last_seq_id: Some(SeqId::from_i64(10)),
             },
         };
@@ -318,7 +318,7 @@ mod tests {
         sub.report_shared_progress(&event).await;
         sub.apply_buffering(ChangeEvent::Insert {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
                 row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
@@ -336,7 +336,7 @@ mod tests {
         sub.ack_mode = SubscriptionAckMode::Explicit;
         sub.event_queue.push_back(ChangeEvent::Insert {
             subscription_id: "unit-test-id".to_string(),
-            rows: vec![{
+            rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("one"));
                 row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));

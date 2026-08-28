@@ -193,7 +193,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateNamespaceStatement {
-            name: NamespaceId::new("test_typed_ns"),
+            name:          NamespaceId::new("test_typed_ns"),
             if_not_exists: false,
         };
 
@@ -217,7 +217,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateNamespaceStatement {
-            name: NamespaceId::new("test_typed_ns_ine"),
+            name:          NamespaceId::new("test_typed_ns_ine"),
             if_not_exists: true,
         };
 
@@ -246,7 +246,7 @@ mod tests {
         );
 
         let stmt = CreateNamespaceStatement {
-            name: NamespaceId::new("unauthorized_ns"),
+            name:          NamespaceId::new("unauthorized_ns"),
             if_not_exists: false,
         };
 
@@ -272,7 +272,7 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateNamespaceStatement {
-            name: NamespaceId::new("existing_ns"),
+            name:          NamespaceId::new("existing_ns"),
             if_not_exists: false,
         };
 
@@ -292,7 +292,7 @@ mod tests {
         let handler = CreateNamespaceHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateNamespaceStatement {
-            name: NamespaceId::new("existing_ns_if"),
+            name:          NamespaceId::new("existing_ns_if"),
             if_not_exists: true,
         };
 

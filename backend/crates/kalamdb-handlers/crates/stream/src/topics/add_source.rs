@@ -73,10 +73,10 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
         };
 
         let route = TopicRoute {
-            table_id: resolved_table_id.clone(),
-            op: statement.operation,
-            payload_mode: statement.payload_mode,
-            filter_expr: statement.filter_expr.clone(),
+            table_id:           resolved_table_id.clone(),
+            op:                 statement.operation,
+            payload_mode:       statement.payload_mode,
+            filter_expr:        statement.filter_expr.clone(),
             partition_key_expr: None,
         };
 
@@ -137,17 +137,17 @@ mod tests {
     #[test]
     fn route_matches_statement_unqualified_ignores_namespace() {
         let existing = TopicRoute {
-            table_id: TableId::from_strings("default", "messages"),
-            op: TopicOp::Insert,
-            payload_mode: PayloadMode::Full,
-            filter_expr: None,
+            table_id:           TableId::from_strings("default", "messages"),
+            op:                 TopicOp::Insert,
+            payload_mode:       PayloadMode::Full,
+            filter_expr:        None,
             partition_key_expr: None,
         };
         let desired = TopicRoute {
-            table_id: TableId::from_strings("sql_file_case_01", "messages"),
-            op: TopicOp::Insert,
-            payload_mode: PayloadMode::Full,
-            filter_expr: None,
+            table_id:           TableId::from_strings("sql_file_case_01", "messages"),
+            op:                 TopicOp::Insert,
+            payload_mode:       PayloadMode::Full,
+            filter_expr:        None,
             partition_key_expr: None,
         };
 

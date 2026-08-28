@@ -169,11 +169,14 @@ mod tests {
         let config = RpcTlsConfig {
             enabled:             true,
             ca_cert:             Some(
-                "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----".to_string()),
+                "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----".to_string(),
+            ),
             server_cert:         Some(
-                "-----BEGIN CERTIFICATE-----\nSRV\n-----END CERTIFICATE-----".to_string()),
+                "-----BEGIN CERTIFICATE-----\nSRV\n-----END CERTIFICATE-----".to_string(),
+            ),
             server_key:          Some(
-                "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----".to_string()),
+                "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----".to_string(),
+            ),
             require_client_cert: true,
         };
         assert!(config.validate().is_ok());

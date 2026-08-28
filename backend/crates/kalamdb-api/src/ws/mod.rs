@@ -59,34 +59,34 @@ mod tests {
     use crate::limiter::RateLimiter;
 
     struct WsTestContext {
-        server: actix_web::dev::ServerHandle,
+        server:   actix_web::dev::ServerHandle,
         base_url: String,
         registry: Arc<ConnectionsManager>,
-        user_id: UserId,
-        token: String,
+        user_id:  UserId,
+        token:    String,
     }
 
     fn test_user() -> User {
         let now = chrono::Utc::now().timestamp_millis();
         User {
-            user_id: UserId::new("ws-test-user"),
-            password_hash: "$2b$12$hash".to_string(),
-            role: Role::Dba,
-            name: None,
-            email: Some("ws-test@example.com".to_string()),
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: StorageMode::Table,
-            storage_id: Some(kalamdb_commons::StorageId::new("local")),
+            user_id:               UserId::new("ws-test-user"),
+            password_hash:         "$2b$12$hash".to_string(),
+            role:                  Role::Dba,
+            name:                  None,
+            email:                 Some("ws-test@example.com".to_string()),
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          StorageMode::Table,
+            storage_id:            Some(kalamdb_commons::StorageId::new("local")),
             failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: now,
-            updated_at: now,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          None,
+            last_login_at:         None,
+            created_at:            now,
+            updated_at:            now,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         }
     }
 
@@ -147,7 +147,11 @@ mod tests {
 
         WireNotification {
             subscription_id: Arc::from(subscription_id),
-            payload: Arc::new(SharedChangePayload::new(ChangeType::Insert, Some(vec![row]), None)),
+            payload:         Arc::new(SharedChangePayload::new(
+                ChangeType::Insert,
+                Some(vec![row]),
+                None,
+            )),
         }
     }
 

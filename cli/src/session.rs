@@ -13,10 +13,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    config::CLIConfiguration, error::Result, formatter::OutputFormatter, parser::CommandParser,
-    terminal_ui, update_check::UpdateAvailability,
-};
 use clap::ValueEnum;
 use colored::*;
 use indicatif::ProgressBar;
@@ -24,6 +20,11 @@ use kalam_client::{
     credentials::{CredentialStore, Credentials},
     AuthProvider, AuthRefreshCallback, ConnectionOptions, KalamLinkClient, KalamLinkError,
     KalamLinkTimeouts, TimestampFormatter,
+};
+
+use crate::{
+    config::CLIConfiguration, error::Result, formatter::OutputFormatter, parser::CommandParser,
+    terminal_ui, update_check::UpdateAvailability,
 };
 
 pub mod auth_options;
@@ -52,22 +53,22 @@ pub enum OutputFormat {
 /// Cluster node information for CLI display
 #[derive(Debug, Clone)]
 struct ClusterNodeDisplay {
-    node_id: u64,
-    role: String,
-    status: String,
-    api_addr: String,
-    is_self: bool,
+    node_id:   u64,
+    role:      String,
+    status:    String,
+    api_addr:  String,
+    is_self:   bool,
     is_leader: bool,
-    version: Option<String>,
+    version:   Option<String>,
 }
 
 /// Cluster information for CLI display
 #[derive(Debug, Clone)]
 struct ClusterInfoDisplay {
     is_cluster_mode: bool,
-    cluster_name: String,
-    current_node: Option<ClusterNodeDisplay>,
-    nodes: Vec<ClusterNodeDisplay>,
+    cluster_name:    String,
+    current_node:    Option<ClusterNodeDisplay>,
+    nodes:           Vec<ClusterNodeDisplay>,
 }
 
 /// CLI session state
@@ -441,8 +442,8 @@ impl CLISession {
     /// Return the value for an `Authorization` header suitable for direct HTTP calls.
     ///
     /// For `JwtToken` auth this returns `Bearer <token>`.
-    /// For `BasicAuth` it returns `Basic <base64>` (the server accepts Basic on all REST endpoints).
-    /// For `None` auth it returns an empty string (no header added).
+    /// For `BasicAuth` it returns `Basic <base64>` (the server accepts Basic on all REST
+    /// endpoints). For `None` auth it returns an empty string (no header added).
     pub(super) fn authorization_header_value(&self) -> Option<String> {
         match &self.auth {
             AuthProvider::JwtToken(token) => Some(format!("Bearer {}", token)),
@@ -526,8 +527,8 @@ mod tests {
 
     struct TestServer {
         base_url: String,
-        state: Arc<AsyncMutex<TestServerState>>,
-        task: tokio::task::JoinHandle<()>,
+        state:    Arc<AsyncMutex<TestServerState>>,
+        task:     tokio::task::JoinHandle<()>,
     }
 
     impl TestServer {
@@ -735,9 +736,9 @@ mod tests {
     }
 
     struct TestHttpRequest {
-        path: String,
+        path:    String,
         headers: HashMap<String, String>,
-        body: String,
+        body:    String,
     }
 
     async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<TestHttpRequest> {
@@ -948,7 +949,9 @@ mod tests {
     #[test]
     fn test_split_batch_statements_preserves_execute_as_and_strings() {
         let statements = CLISession::split_batch_statements(
-            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY, msg TEXT);\nEXECUTE AS USER 'alice' (INSERT INTO demo.t (id, msg) VALUES (1, 'hello;still string'));\nSELECT * FROM demo.t;",
+            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY, msg TEXT);\nEXECUTE AS USER 'alice' \
+             (INSERT INTO demo.t (id, msg) VALUES (1, 'hello;still string'));\nSELECT * FROM \
+             demo.t;",
         );
 
         assert_eq!(statements.len(), 3);

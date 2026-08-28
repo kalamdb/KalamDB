@@ -35,34 +35,34 @@ use tokio_netem::{
 /// proxy.shutdown().await;
 /// ```
 pub struct TcpDisconnectProxy {
-    base_url: String,
-    paused: Arc<AtomicBool>,
-    impairments: Arc<ProxyImpairments>,
+    base_url:           String,
+    paused:             Arc<AtomicBool>,
+    impairments:        Arc<ProxyImpairments>,
     active_connections: Arc<TokioMutex<HashMap<u64, JoinHandle<()>>>>,
-    accept_task: JoinHandle<()>,
+    accept_task:        JoinHandle<()>,
 }
 
 struct ProxyImpairments {
-    blackholed: AtomicBool,
-    latency_ms: AtomicU64,
-    stall_every_n_chunks: AtomicU64,
-    stall_duration_ms: AtomicU64,
-    netem_write_delay: Arc<DynamicDuration>,
-    netem_write_rate: Arc<DynamicRate>,
-    netem_write_slice_size: Arc<DynamicSize>,
+    blackholed:                    AtomicBool,
+    latency_ms:                    AtomicU64,
+    stall_every_n_chunks:          AtomicU64,
+    stall_duration_ms:             AtomicU64,
+    netem_write_delay:             Arc<DynamicDuration>,
+    netem_write_rate:              Arc<DynamicRate>,
+    netem_write_slice_size:        Arc<DynamicSize>,
     netem_termination_probability: Arc<DynamicProbability>,
 }
 
 impl ProxyImpairments {
     fn new() -> Self {
         Self {
-            blackholed: AtomicBool::new(false),
-            latency_ms: AtomicU64::new(0),
-            stall_every_n_chunks: AtomicU64::new(0),
-            stall_duration_ms: AtomicU64::new(0),
-            netem_write_delay: DynamicDuration::new(Duration::ZERO),
-            netem_write_rate: DynamicRate::new(0),
-            netem_write_slice_size: DynamicSize::new(0),
+            blackholed:                    AtomicBool::new(false),
+            latency_ms:                    AtomicU64::new(0),
+            stall_every_n_chunks:          AtomicU64::new(0),
+            stall_duration_ms:             AtomicU64::new(0),
+            netem_write_delay:             DynamicDuration::new(Duration::ZERO),
+            netem_write_rate:              DynamicRate::new(0),
+            netem_write_slice_size:        DynamicSize::new(0),
             netem_termination_probability: DynamicProbability::new(0.0)
                 .expect("zero termination probability should be valid"),
         }

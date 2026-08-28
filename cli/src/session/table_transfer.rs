@@ -83,7 +83,7 @@ impl CLISession {
         if !status.is_success() {
             return Err(CLIError::LinkError(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message: format!("Export failed: {}", json),
+                message:     format!("Export failed: {}", json),
             }));
         }
 
@@ -195,7 +195,7 @@ impl CLISession {
         if !status.is_success() {
             return Err(CLIError::LinkError(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message: format!("Import failed: {}", json),
+                message:     format!("Import failed: {}", json),
             }));
         }
 
@@ -288,7 +288,7 @@ impl CLISession {
                         .to_string();
                     return Err(CLIError::LinkError(KalamLinkError::ServerError {
                         status_code: 500,
-                        message: format!("{} job {} failed: {}", kind, job_id, msg),
+                        message:     format!("{} job {} failed: {}", kind, job_id, msg),
                     }));
                 },
                 s => {
@@ -326,7 +326,7 @@ impl CLISession {
         if !resp.status().is_success() {
             return Err(CLIError::LinkError(KalamLinkError::ServerError {
                 status_code: resp.status().as_u16(),
-                message: format!("Download failed with status: {}", resp.status()),
+                message:     format!("Download failed with status: {}", resp.status()),
             }));
         }
 

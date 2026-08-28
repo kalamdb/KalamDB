@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, Float64Array, Float64Builder};
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::{Result as DataFusionResult, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{
+        array::{ArrayRef, Float64Array, Float64Builder},
+        datatypes::DataType,
+    },
+    common::{Result as DataFusionResult, ScalarValue},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::{NumberAny, Peek};
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{
+        get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath,
+    },
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonGetFloat,
@@ -19,14 +27,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGetFloat {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGetFloat {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get_float".to_string()],
+            aliases:   ["json_get_float".to_string()],
         }
     }
 }
@@ -102,7 +110,7 @@ fn jiter_json_get_float(json_data: Option<&str>, path: &[JsonPath]) -> Result<f6
             Peek::String => {
                 let s = jiter.known_str()?;
                 s.parse::<f64>().map_err(|_| GetError)
-            }
+            },
             // numbers are represented by everything else in peek, hence doing it this way
             Peek::Null
             | Peek::True

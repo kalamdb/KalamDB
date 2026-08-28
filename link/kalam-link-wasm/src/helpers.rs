@@ -3,16 +3,16 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use link_common::{
+    compression,
+    models::{jwt_websocket_subprotocol, CompressionType, ProtocolOptions, SerializationType},
+};
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, MessageEvent, Request, RequestInit, RequestMode, Response, WebSocket};
 
 use super::wasm_debug_log;
-use link_common::{
-    compression,
-    models::{jwt_websocket_subprotocol, CompressionType, ProtocolOptions, SerializationType},
-};
 
 #[inline]
 pub(crate) fn ws_url_from_http_opts(
@@ -290,7 +290,7 @@ mod tests {
             false,
             ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: CompressionType::None,
+                compression:   CompressionType::None,
             },
         )
         .expect("url");
@@ -304,7 +304,7 @@ mod tests {
             true,
             ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: CompressionType::Gzip,
+                compression:   CompressionType::Gzip,
             },
         )
         .expect("url");

@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 /// Uses order-preserving composite key encoding for efficient range scans.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TopicMessageId {
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     pub partition_id: u32,
-    pub offset: u64,
+    pub offset:       u64,
 }
 
 impl TopicMessageId {
@@ -64,10 +64,10 @@ impl StorageKey for TopicMessageId {
 /// key gives retention jobs a time-ordered view without rewriting offsets.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TopicRetentionIndexKey {
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     pub partition_id: u32,
     pub timestamp_ms: i64,
-    pub offset: u64,
+    pub offset:       u64,
 }
 
 impl TopicRetentionIndexKey {
@@ -109,10 +109,10 @@ impl StorageKey for TopicRetentionIndexKey {
 /// Retention index entry stored at [`TopicRetentionIndexKey`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TopicRetentionIndexEntry {
-    pub topic_id: TopicId,
-    pub partition_id: u32,
-    pub timestamp_ms: i64,
-    pub offset: u64,
+    pub topic_id:      TopicId,
+    pub partition_id:  u32,
+    pub timestamp_ms:  i64,
+    pub offset:        u64,
     pub message_bytes: u64,
 }
 
@@ -162,7 +162,7 @@ impl KSerializable for TopicRetentionIndexEntry {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TopicRetentionDeletionStats {
     pub messages_deleted: usize,
-    pub bytes_freed: u64,
+    pub bytes_freed:      u64,
 }
 
 /// Topic message envelope with metadata and payload
@@ -189,7 +189,7 @@ pub struct TopicMessage {
         default = "None",
         comment = "Topic identifier"
     )]
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     /// Partition ID (0-based)
     #[column(
         id = 2,
@@ -211,7 +211,7 @@ pub struct TopicMessage {
         default = "None",
         comment = "Sequential offset within the partition"
     )]
-    pub offset: u64,
+    pub offset:       u64,
     /// Message payload (serialized JSON, Avro, or raw bytes)
     #[column(
         id = 4,
@@ -222,7 +222,7 @@ pub struct TopicMessage {
         default = "None",
         comment = "Message payload bytes"
     )]
-    pub payload: Vec<u8>,
+    pub payload:      Vec<u8>,
     /// Optional message key for ordering/deduplication
     #[column(
         id = 5,
@@ -233,7 +233,7 @@ pub struct TopicMessage {
         default = "None",
         comment = "Optional message key for ordering or deduplication"
     )]
-    pub key: Option<String>,
+    pub key:          Option<String>,
     /// Timestamp when message was published (milliseconds since epoch)
     #[column(
         id = 6,
@@ -256,7 +256,7 @@ pub struct TopicMessage {
         comment = "User identifier that triggered the published event"
     )]
     #[serde(default)]
-    pub user_id: Option<UserId>,
+    pub user_id:      Option<UserId>,
     /// Operation type that produced this message (INSERT, UPDATE, DELETE)
     #[column(
         id = 8,
@@ -268,7 +268,7 @@ pub struct TopicMessage {
         comment = "Operation that produced this message"
     )]
     #[serde(default)]
-    pub op: TopicOp,
+    pub op:           TopicOp,
 }
 
 impl TopicMessage {

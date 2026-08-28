@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use super::result_rows::cluster_group_action_rows;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -12,6 +11,8 @@ use kalamdb_core::{
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
+
+use super::result_rows::cluster_group_action_rows;
 
 pub struct ClusterSnapshotHandler {
     app_context: Arc<AppContext>,

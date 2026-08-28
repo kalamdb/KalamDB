@@ -24,7 +24,7 @@ pub enum ShardKind {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Shard {
     kind: ShardKind,
-    id: u32,
+    id:   u32,
 }
 
 impl Shard {
@@ -49,7 +49,7 @@ impl Shard {
 /// Routes operations to the correct shard based on user_id or table_id.
 #[derive(Debug, Clone)]
 pub struct ShardRouter {
-    num_user_shards: u32,
+    num_user_shards:   u32,
     num_shared_shards: u32,
 }
 

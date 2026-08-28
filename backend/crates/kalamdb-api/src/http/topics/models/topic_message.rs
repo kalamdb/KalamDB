@@ -7,20 +7,20 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct TopicMessage {
     /// Topic identifier (type-safe)
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     /// Partition ID
     pub partition_id: u32,
     /// Message offset
-    pub offset: u64,
+    pub offset:       u64,
     /// Base64-encoded payload bytes
-    pub payload: String,
+    pub payload:      String,
     /// Optional message key
-    pub key: Option<String>,
+    pub key:          Option<String>,
     /// Timestamp in milliseconds since epoch
     pub timestamp_ms: i64,
     /// Canonical user identifier of the user who produced this message
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<UserId>,
+    pub user:         Option<UserId>,
     /// Operation type that triggered this message (Insert, Update, Delete)
-    pub op: TopicOp,
+    pub op:           TopicOp,
 }

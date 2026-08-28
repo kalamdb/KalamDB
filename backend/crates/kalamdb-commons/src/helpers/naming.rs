@@ -31,7 +31,8 @@ impl std::fmt::Display for SqlIdentifierError {
             },
             SqlIdentifierError::InvalidCharacters(name) => write!(
                 f,
-                "name '{name}' contains invalid characters (only alphanumeric and underscore allowed)"
+                "name '{name}' contains invalid characters (only alphanumeric and underscore \
+                 allowed)"
             ),
             SqlIdentifierError::ReservedNamespace(name) => {
                 write!(f, "namespace '{name}' is reserved and cannot be used")

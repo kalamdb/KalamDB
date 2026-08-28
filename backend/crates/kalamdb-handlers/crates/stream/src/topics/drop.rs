@@ -10,8 +10,10 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::DropTopicStatement;
 
-use super::cleanup::clear_topic_data;
-use super::name_resolution::{resolve_topic_id, resolve_topic_name};
+use super::{
+    cleanup::clear_topic_data,
+    name_resolution::{resolve_topic_id, resolve_topic_name},
+};
 
 pub struct DropTopicHandler {
     app_context: Arc<AppContext>,

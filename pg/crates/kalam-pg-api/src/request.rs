@@ -27,13 +27,13 @@ fn validate_write_scope(
 /// Scan request built from PostgreSQL planner state.
 #[derive(Debug, Clone)]
 pub struct ScanRequest {
-    pub table_id: TableId,
-    pub table_type: TableType,
+    pub table_id:       TableId,
+    pub table_type:     TableType,
     pub tenant_context: TenantContext,
     pub remote_session: Option<RemoteSessionContext>,
-    pub projection: Option<Vec<String>>,
-    pub filters: Vec<ScanFilter>,
-    pub limit: Option<usize>,
+    pub projection:     Option<Vec<String>>,
+    pub filters:        Vec<ScanFilter>,
+    pub limit:          Option<usize>,
 }
 
 impl ScanRequest {
@@ -71,11 +71,11 @@ impl ScanRequest {
 /// Insert request built from PostgreSQL modify callbacks.
 #[derive(Debug, Clone)]
 pub struct InsertRequest {
-    pub table_id: TableId,
-    pub table_type: TableType,
+    pub table_id:       TableId,
+    pub table_type:     TableType,
     pub tenant_context: TenantContext,
     pub remote_session: Option<RemoteSessionContext>,
-    pub rows: Vec<Row>,
+    pub rows:           Vec<Row>,
 }
 
 impl InsertRequest {
@@ -114,12 +114,12 @@ impl InsertRequest {
 /// Update request built from PostgreSQL modify callbacks.
 #[derive(Debug, Clone)]
 pub struct UpdateRequest {
-    pub table_id: TableId,
-    pub table_type: TableType,
+    pub table_id:       TableId,
+    pub table_type:     TableType,
     pub tenant_context: TenantContext,
     pub remote_session: Option<RemoteSessionContext>,
-    pub pk_value: String,
-    pub updates: Row,
+    pub pk_value:       String,
+    pub updates:        Row,
 }
 
 impl UpdateRequest {
@@ -165,11 +165,11 @@ impl UpdateRequest {
 /// Delete request built from PostgreSQL modify callbacks.
 #[derive(Debug, Clone)]
 pub struct DeleteRequest {
-    pub table_id: TableId,
-    pub table_type: TableType,
+    pub table_id:       TableId,
+    pub table_type:     TableType,
     pub tenant_context: TenantContext,
     pub remote_session: Option<RemoteSessionContext>,
-    pub pk_value: String,
+    pub pk_value:       String,
 }
 
 impl DeleteRequest {

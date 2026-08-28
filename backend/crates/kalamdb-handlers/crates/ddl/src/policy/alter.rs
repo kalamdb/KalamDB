@@ -11,9 +11,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::{AlterPolicyOperation, AlterPolicyStatement, CreatePolicyStatement};
 
-use crate::helpers::{audit, guards::block_anonymous_write};
-
 use super::CreatePolicyHandler;
+use crate::helpers::{audit, guards::block_anonymous_write};
 
 /// Handles validated `ALTER POLICY` statements.
 pub struct AlterPolicyHandler {
@@ -31,19 +30,17 @@ impl TypedStatementHandler<AlterPolicyStatement> for AlterPolicyHandler {
         &self,
         statement: AlterPolicyStatement,
         _params: Vec<ScalarValue>,
-        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
         let policies = self.app_context.system_tables().table_policies();
         let policy_id = PolicyId::new(statement.table_id.clone(), &statement.policy_name)
             .map_err(KalamDbError::InvalidOperation)?;
 
         let message = match statement.operation {
             AlterPolicyOperation::Rename { new_name } => {
-                policies
-                    .rename_policy(&policy_id, &new_name)
-                    .await
-                    .map_err(|error| {
-                        KalamDbError::ExecutionError(format!("ALTER POLICY failed: {error}"))
-                    })?;
+                policies.rename_policy(&policy_id, &new_name).await.map_err(|error| {
+                    KalamDbError::ExecutionError(format!("ALTER POLICY failed: {error}"))
+                })?;
                 format!(
                     "Policy '{}' on {} renamed to '{}'",
                     statement.policy_name, statement.table_id, new_name
@@ -67,13 +64,13 @@ impl TypedStatementHandler<AlterPolicyStatement> for AlterPolicyHandler {
                         ))
                     })?;
                 let replacement = CreatePolicyStatement {
-                    policy_name: previous.policy_name,
-                    table_id: previous.table_id,
-                    command: previous.command,
-                    targets: targets.unwrap_or(previous.targets),
-                    using_sql: using_sql.or(previous.using_sql),
+                    policy_name:    previous.policy_name,
+                    table_id:       previous.table_id,
+                    command:        previous.command,
+                    targets:        targets.unwrap_or(previous.targets),
+                    using_sql:      using_sql.or(previous.using_sql),
                     with_check_sql: with_check_sql.or(previous.with_check_sql),
-                    original_sql: String::new(),
+                    original_sql:   String::new(),
                 };
                 let replacement = CreatePolicyHandler::new(self.app_context.clone())
                     .compile_policy(&replacement)
@@ -91,7 +88,8 @@ impl TypedStatementHandler<AlterPolicyStatement> for AlterPolicyHandler {
             "POLICY",
             &format!("{} ON {}", statement.policy_name, statement.table_id),
             None,
-            None);
+            None,
+        );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
         Ok(ExecutionResult::Success { message })
     }
@@ -99,13 +97,15 @@ impl TypedStatementHandler<AlterPolicyStatement> for AlterPolicyHandler {
     async fn check_authorization(
         &self,
         _statement: &AlterPolicyStatement,
-        context: &ExecutionContext) -> Result<(), KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
         block_anonymous_write(context, "ALTER POLICY")?;
         if matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
             Ok(())
         } else {
             Err(KalamDbError::Unauthorized(
-                "ALTER POLICY requires System, DBA, or Service role".to_string()))
+                "ALTER POLICY requires System, DBA, or Service role".to_string(),
+            ))
         }
     }
 }

@@ -30,7 +30,7 @@ pub enum Command {
     /// Execute a single SQL statement as another user
     ExecuteAs {
         user: String,
-        sql: String,
+        sql:  String,
     },
 
     /// Meta-commands (backslash commands)
@@ -50,7 +50,7 @@ pub enum Command {
     ClusterList,
     ClusterListGroups,
     ClusterJoin {
-        node_id: u64,
+        node_id:  u64,
         rpc_addr: String,
         api_addr: String,
     },
@@ -75,47 +75,47 @@ pub enum Command {
     History,
     /// Consume messages from a topic
     Consume {
-        topic: String,
-        group: Option<String>,
-        from: Option<String>,
-        limit: Option<usize>,
+        topic:   String,
+        group:   Option<String>,
+        from:    Option<String>,
+        limit:   Option<usize>,
         timeout: Option<u64>,
     },
     Unknown(String),
 
     /// Export a table to a ZIP archive
     ExportTable {
-        table: String,
+        table:   String,
         user_id: Option<String>,
-        output: Option<String>,
+        output:  Option<String>,
     },
     /// Import a table from a ZIP archive
     ImportTable {
-        table: String,
-        file: String,
+        table:   String,
+        file:    String,
         user_id: Option<String>,
     },
 }
 
 #[derive(Debug)]
 struct MetaCommandCatalog {
-    meta_completions: Vec<String>,
-    known_commands: HashSet<String>,
+    meta_completions:  Vec<String>,
+    known_commands:    HashSet<String>,
     external_commands: HashSet<String>,
-    descriptions: HashMap<String, String>,
+    descriptions:      HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct HelpEntry {
     command_key: &'static str,
-    syntax: &'static str,
+    syntax:      &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct HelpSection {
-    title: &'static str,
-    entries: &'static [HelpEntry],
-    notes: &'static [&'static str],
+    title:    &'static str,
+    entries:  &'static [HelpEntry],
+    notes:    &'static [&'static str],
     examples: &'static [&'static str],
 }
 
@@ -126,187 +126,187 @@ const HELP_EMPTY_LINES: &[&str] = &[];
 const HELP_META_COMMANDS: &[HelpEntry] = &[
     HelpEntry {
         command_key: "help",
-        syntax: "\\help, \\?",
+        syntax:      "\\help, \\?",
     },
     HelpEntry {
         command_key: "quit",
-        syntax: "\\quit, \\q",
+        syntax:      "\\quit, \\q",
     },
     HelpEntry {
         command_key: "info",
-        syntax: "\\info, \\session",
+        syntax:      "\\info, \\session",
     },
     HelpEntry {
         command_key: "history",
-        syntax: "\\history, \\h",
+        syntax:      "\\history, \\h",
     },
     HelpEntry {
         command_key: "health",
-        syntax: "\\health",
+        syntax:      "\\health",
     },
     HelpEntry {
         command_key: "tables",
-        syntax: "\\dt, \\tables",
+        syntax:      "\\dt, \\tables",
     },
     HelpEntry {
         command_key: "describe",
-        syntax: "\\d, \\describe <table>",
+        syntax:      "\\d, \\describe <table>",
     },
     HelpEntry {
         command_key: "as",
-        syntax: "\\as <user_id> <SQL>",
+        syntax:      "\\as <user_id> <SQL>",
     },
     HelpEntry {
         command_key: "format",
-        syntax: "\\format <table|json|csv>",
+        syntax:      "\\format <table|json|csv>",
     },
     HelpEntry {
         command_key: "refresh-tables",
-        syntax: "\\refresh-tables, \\refresh",
+        syntax:      "\\refresh-tables, \\refresh",
     },
     HelpEntry {
         command_key: "stats",
-        syntax: "\\stats, \\metrics",
+        syntax:      "\\stats, \\metrics",
     },
     HelpEntry {
         command_key: "sessions",
-        syntax: "\\sessions",
+        syntax:      "\\sessions",
     },
     HelpEntry {
         command_key: "flush",
-        syntax: "\\flush [all|table <table>]",
+        syntax:      "\\flush [all|table <table>]",
     },
     HelpEntry {
         command_key: "cluster",
-        syntax: "\\cluster <subcommand>",
+        syntax:      "\\cluster <subcommand>",
     },
     HelpEntry {
         command_key: "consume",
-        syntax: "\\consume <topic>",
+        syntax:      "\\consume <topic>",
     },
     HelpEntry {
         command_key: "export",
-        syntax: "\\export <namespace.table> [--user-id <id>] [--output <file.zip>]",
+        syntax:      "\\export <namespace.table> [--user-id <id>] [--output <file.zip>]",
     },
     HelpEntry {
         command_key: "import",
-        syntax: "\\import <namespace.table> <file.zip> [--user-id <id>]",
+        syntax:      "\\import <namespace.table> <file.zip> [--user-id <id>]",
     },
 ];
 
 const HELP_LIVE_QUERIES: &[HelpEntry] = &[
     HelpEntry {
         command_key: "subscribe",
-        syntax: "\\live <SELECT ...>",
+        syntax:      "\\live <SELECT ...>",
     },
     HelpEntry {
         command_key: "subscribe",
-        syntax: "\\subscribe <SELECT ...>",
+        syntax:      "\\subscribe <SELECT ...>",
     },
 ];
 
 const HELP_CLUSTER_COMMANDS: &[HelpEntry] = &[
     HelpEntry {
         command_key: "cluster list",
-        syntax: "\\cluster list",
+        syntax:      "\\cluster list",
     },
     HelpEntry {
         command_key: "cluster list groups",
-        syntax: "\\cluster list groups",
+        syntax:      "\\cluster list groups",
     },
     HelpEntry {
         command_key: "cluster snapshot",
-        syntax: "\\cluster snapshot",
+        syntax:      "\\cluster snapshot",
     },
     HelpEntry {
         command_key: "cluster purge",
-        syntax: "\\cluster purge --upto <index>",
+        syntax:      "\\cluster purge --upto <index>",
     },
     HelpEntry {
         command_key: "cluster trigger-election",
-        syntax: "\\cluster trigger-election",
+        syntax:      "\\cluster trigger-election",
     },
     HelpEntry {
         command_key: "cluster transfer-leader",
-        syntax: "\\cluster transfer-leader <node_id>",
+        syntax:      "\\cluster transfer-leader <node_id>",
     },
     HelpEntry {
         command_key: "cluster rebalance",
-        syntax: "\\cluster rebalance",
+        syntax:      "\\cluster rebalance",
     },
     HelpEntry {
         command_key: "cluster stepdown",
-        syntax: "\\cluster stepdown",
+        syntax:      "\\cluster stepdown",
     },
     HelpEntry {
         command_key: "cluster clear",
-        syntax: "\\cluster clear",
+        syntax:      "\\cluster clear",
     },
     HelpEntry {
         command_key: "cluster join",
-        syntax: "\\cluster join <id> <rpc> <api>",
+        syntax:      "\\cluster join <id> <rpc> <api>",
     },
 ];
 
 const HELP_CREDENTIALS: &[HelpEntry] = &[
     HelpEntry {
         command_key: "show-credentials",
-        syntax: "\\show-credentials, \\credentials",
+        syntax:      "\\show-credentials, \\credentials",
     },
     HelpEntry {
         command_key: "update-credentials",
-        syntax: "\\update-credentials <user> <password>",
+        syntax:      "\\update-credentials <user> <password>",
     },
     HelpEntry {
         command_key: "delete-credentials",
-        syntax: "\\delete-credentials",
+        syntax:      "\\delete-credentials",
     },
 ];
 
 const HELP_TOPIC_CONSUMPTION: &[HelpEntry] = &[
     HelpEntry {
         command_key: "consume",
-        syntax: "\\consume app.events",
+        syntax:      "\\consume app.events",
     },
     HelpEntry {
         command_key: "consume",
-        syntax: "\\consume app.events --group my-group",
+        syntax:      "\\consume app.events --group my-group",
     },
     HelpEntry {
         command_key: "consume",
-        syntax: "\\consume app.events --from earliest --limit 10",
+        syntax:      "\\consume app.events --from earliest --limit 10",
     },
 ];
 
 const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
-        title: "Meta Commands",
-        entries: HELP_META_COMMANDS,
-        notes: HELP_EMPTY_LINES,
+        title:    "Meta Commands",
+        entries:  HELP_META_COMMANDS,
+        notes:    HELP_EMPTY_LINES,
         examples: HELP_EMPTY_LINES,
     },
     HelpSection {
-        title: "Live Queries",
-        entries: HELP_LIVE_QUERIES,
-        notes: &["system.* tables are not subscribable."],
+        title:    "Live Queries",
+        entries:  HELP_LIVE_QUERIES,
+        notes:    &["system.* tables are not subscribable."],
         examples: &["\\live SELECT * FROM chat.messages;"],
     },
     HelpSection {
-        title: "Cluster Commands",
-        entries: HELP_CLUSTER_COMMANDS,
-        notes: HELP_EMPTY_LINES,
+        title:    "Cluster Commands",
+        entries:  HELP_CLUSTER_COMMANDS,
+        notes:    HELP_EMPTY_LINES,
         examples: HELP_EMPTY_LINES,
     },
     HelpSection {
-        title: "Credentials",
-        entries: HELP_CREDENTIALS,
-        notes: HELP_EMPTY_LINES,
+        title:    "Credentials",
+        entries:  HELP_CREDENTIALS,
+        notes:    HELP_EMPTY_LINES,
         examples: HELP_EMPTY_LINES,
     },
     HelpSection {
-        title: "Topic Consumption",
-        entries: HELP_TOPIC_CONSUMPTION,
-        notes: &["CLI args: kalam --consume --topic app.events --group my-group"],
+        title:    "Topic Consumption",
+        entries:  HELP_TOPIC_CONSUMPTION,
+        notes:    &["CLI args: kalam --consume --topic app.events --group my-group"],
         examples: HELP_EMPTY_LINES,
     },
 ];
@@ -477,7 +477,7 @@ enum ClusterListTarget {
 
 #[derive(Debug, Args)]
 struct ClusterJoinArgs {
-    node_id: u64,
+    node_id:  u64,
     rpc_addr: String,
     api_addr: String,
 }
@@ -531,19 +531,19 @@ struct ConsumeArgs {
 #[derive(Debug, Args)]
 struct ExportTableArgs {
     #[arg(value_name = "TABLE")]
-    table: String,
+    table:   String,
     #[arg(long = "user-id")]
     user_id: Option<String>,
     #[arg(long = "output", short = 'o')]
-    output: Option<String>,
+    output:  Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct ImportTableArgs {
     #[arg(value_name = "TABLE")]
-    table: String,
+    table:   String,
     #[arg(value_name = "FILE")]
-    file: String,
+    file:    String,
     #[arg(long = "user-id")]
     user_id: Option<String>,
 }
@@ -584,20 +584,20 @@ impl MetaCommand {
             Self::Info => Ok(Command::Info),
             Self::History => Ok(Command::History),
             Self::Consume(args) => Ok(Command::Consume {
-                topic: args.topic,
-                group: args.group,
-                from: args.from,
-                limit: args.limit,
+                topic:   args.topic,
+                group:   args.group,
+                from:    args.from,
+                limit:   args.limit,
                 timeout: args.timeout,
             }),
             Self::Export(args) => Ok(Command::ExportTable {
-                table: args.table,
+                table:   args.table,
                 user_id: args.user_id,
-                output: args.output,
+                output:  args.output,
             }),
             Self::Import(args) => Ok(Command::ImportTable {
-                table: args.table,
-                file: args.file,
+                table:   args.table,
+                file:    args.file,
                 user_id: args.user_id,
             }),
         }
@@ -631,7 +631,7 @@ impl ClusterArgs {
             ClusterCommand::Clear => Ok(Command::ClusterClear),
             ClusterCommand::List(args) => args.into_command(),
             ClusterCommand::Join(args) => Ok(Command::ClusterJoin {
-                node_id: args.node_id,
+                node_id:  args.node_id,
                 rpc_addr: args.rpc_addr,
                 api_addr: args.api_addr,
             }),
@@ -990,7 +990,7 @@ impl CommandParser {
 
         Ok(Command::ExecuteAs {
             user: user.to_string(),
-            sql: sql.to_string(),
+            sql:  sql.to_string(),
         })
     }
 
@@ -1100,7 +1100,7 @@ mod tests {
             cmd.unwrap(),
             Command::ExecuteAs {
                 user: "alice".to_string(),
-                sql: "SELECT * FROM chat.messages WHERE body = 'hi  there'".to_string(),
+                sql:  "SELECT * FROM chat.messages WHERE body = 'hi  there'".to_string(),
             }
         );
     }
@@ -1146,7 +1146,7 @@ mod tests {
         assert_eq!(
             cmd,
             Command::ClusterJoin {
-                node_id: 2,
+                node_id:  2,
                 rpc_addr: "10.0.0.2:2910".to_string(),
                 api_addr: "http://10.0.0.2:2900".to_string(),
             }
@@ -1208,10 +1208,10 @@ mod tests {
                 )
                 .unwrap(),
             Command::Consume {
-                topic: "app.events".to_string(),
-                group: Some("workers".to_string()),
-                from: Some("earliest".to_string()),
-                limit: Some(5),
+                topic:   "app.events".to_string(),
+                group:   Some("workers".to_string()),
+                from:    Some("earliest".to_string()),
+                limit:   Some(5),
                 timeout: Some(12),
             }
         );
@@ -1226,10 +1226,10 @@ mod tests {
                 .parse("\\consume app.events --timeout 12 --limit 5 --from latest --group workers",)
                 .unwrap(),
             Command::Consume {
-                topic: "app.events".to_string(),
-                group: Some("workers".to_string()),
-                from: Some("latest".to_string()),
-                limit: Some(5),
+                topic:   "app.events".to_string(),
+                group:   Some("workers".to_string()),
+                from:    Some("latest".to_string()),
+                limit:   Some(5),
                 timeout: Some(12),
             }
         );
@@ -1330,10 +1330,10 @@ mod tests {
                 .parse_external_command("consume app.events --group workers --limit 2")
                 .unwrap(),
             Command::Consume {
-                topic: "app.events".to_string(),
-                group: Some("workers".to_string()),
-                from: None,
-                limit: Some(2),
+                topic:   "app.events".to_string(),
+                group:   Some("workers".to_string()),
+                from:    None,
+                limit:   Some(2),
                 timeout: None,
             }
         );
@@ -1382,7 +1382,7 @@ mod tests {
                 .unwrap(),
             Command::ExecuteAs {
                 user: "alice".to_string(),
-                sql: "SELECT * FROM chat.messages WHERE body = 'hi  there'".to_string(),
+                sql:  "SELECT * FROM chat.messages WHERE body = 'hi  there'".to_string(),
             }
         );
     }

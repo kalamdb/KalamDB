@@ -31,7 +31,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::FlushTable(FlushTableStatement {
-            namespace: NamespaceId::new("_placeholder"),
+            namespace:  NamespaceId::new("_placeholder"),
             table_name: TableName::new("_placeholder"),
         }),
         flush::FlushTableHandler::new(app_context.clone()),
@@ -50,7 +50,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::CompactTable(kalamdb_sql::ddl::CompactTableStatement {
-            namespace: NamespaceId::new("_placeholder"),
+            namespace:  NamespaceId::new("_placeholder"),
             table_name: TableName::new("_placeholder"),
         }),
         compact::CompactTableHandler::new(app_context.clone()),
@@ -89,7 +89,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_dynamic_handler!(
         registry,
         SqlStatementKind::ClusterJoin {
-            node_id: 0,
+            node_id:  0,
             rpc_addr: String::new(),
             api_addr: String::new(),
         },

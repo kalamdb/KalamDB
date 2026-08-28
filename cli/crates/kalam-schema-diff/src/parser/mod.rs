@@ -1,3 +1,4 @@
+mod create_policy;
 mod table;
 mod topic;
 
@@ -7,6 +8,7 @@ use crate::{
     diff::SchemaDiffError,
     model::Schema,
     parser::{
+        create_policy::{attach_policies, is_create_policy, parse_create_policy},
         table::{
             extract_kalam_table_kind, parse_create_namespace, remove_kalam_table_kind,
             table_from_create,
@@ -26,6 +28,7 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
     let dialect = PostgreSqlDialect {};
     let mut schema = Schema::default();
     let mut pending_topic_sources = Vec::new();
+    let mut pending_policies = Vec::new();
 
     for raw_stmt in split_sql_statements(sql) {
         let raw_stmt = raw_stmt.trim();
@@ -60,6 +63,11 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
 
         if is_alter_topic_add_source(custom_stmt) {
             pending_topic_sources.push(parse_alter_topic_add_source(path, custom_stmt)?);
+            continue;
+        }
+
+        if is_create_policy(custom_stmt) {
+            pending_policies.push(parse_create_policy(path, custom_stmt)?);
             continue;
         }
 
@@ -107,6 +115,7 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
     }
 
     attach_topic_sources(path, &mut schema, pending_topic_sources)?;
+    attach_policies(path, &mut schema, pending_policies)?;
 
     Ok(schema)
 }

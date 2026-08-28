@@ -61,8 +61,8 @@ impl TypedStatementHandler<CompactAllTablesStatement> for CompactAllTablesHandle
         for (table_name, table_type) in &target_tables {
             let table_id = TableId::new(ns.clone(), table_name.clone());
             let params = CompactParams {
-                table_id: table_id.clone(),
-                table_type: *table_type,
+                table_id:            table_id.clone(),
+                table_type:          *table_type,
                 target_file_size_mb: 128,
             };
             let idempotency_key = format!("compact-{}-{}", ns.as_str(), table_name.as_str());

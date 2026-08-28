@@ -4,6 +4,10 @@ use std::{
     rc::Rc,
 };
 
+use link_common::models::{
+    ClientMessage, ConnectionOptions, ProtocolOptions, SerializationType, ServerMessage,
+    SubscriptionRequest,
+};
 use wasm_bindgen::{
     prelude::{Closure, JsValue},
     JsCast,
@@ -19,10 +23,6 @@ use super::{
     state::SubscriptionState,
     wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
-};
-use link_common::models::{
-    ClientMessage, ConnectionOptions, ProtocolOptions, SerializationType, ServerMessage,
-    SubscriptionRequest,
 };
 
 /// Internal reconnection logic with auth provider support.
@@ -202,8 +202,8 @@ pub(crate) async fn resubscribe_all(
 
         let subscribe_msg = ClientMessage::Subscribe {
             subscription: SubscriptionRequest {
-                id: subscription_id.clone(),
-                sql: state.sql.clone(),
+                id:      subscription_id.clone(),
+                sql:     state.sql.clone(),
                 options: Some(options),
             },
         };

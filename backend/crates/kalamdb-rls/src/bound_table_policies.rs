@@ -95,10 +95,7 @@ impl BoundTablePolicies {
                             .as_deref()
                             .map(|sql| format_policy_qual("WITH CHECK", sql))
                     } else {
-                        policy
-                            .using_sql
-                            .as_deref()
-                            .map(|sql| format_policy_qual("USING", sql))
+                        policy.using_sql.as_deref().map(|sql| format_policy_qual("USING", sql))
                     },
                 })
             })
@@ -526,10 +523,7 @@ mod tests {
         );
 
         let explain = bound.explain_policies().expect("user policies appear in EXPLAIN");
-        assert_eq!(
-            explain,
-            "policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]"
-        );
+        assert_eq!(explain, "policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]");
         assert!(!explain.contains("alice"));
     }
 
@@ -569,12 +563,8 @@ mod tests {
 
     #[test]
     fn explain_policies_omits_admin_bypass_and_lists_empty_default_deny() {
-        let deny = BoundTablePolicies::bind(
-            &[],
-            UserId::new("alice"),
-            Role::User,
-            PolicyCommand::Select,
-        );
+        let deny =
+            BoundTablePolicies::bind(&[], UserId::new("alice"), Role::User, PolicyCommand::Select);
         assert_eq!(deny.explain_policies().as_deref(), Some("policies=[]"));
 
         let admin = BoundTablePolicies::admin_bypass(UserId::new("root"));

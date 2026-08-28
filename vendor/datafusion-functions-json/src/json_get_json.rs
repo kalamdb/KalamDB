@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::StringArray;
-use datafusion::arrow::datatypes::{DataType, Field, FieldRef};
-use datafusion::common::Result as DataFusionResult;
-use datafusion::logical_expr::{
-    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+use datafusion::{
+    arrow::{
+        array::StringArray,
+        datatypes::{DataType, Field, FieldRef},
+    },
+    common::Result as DataFusionResult,
+    logical_expr::{
+        ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+    },
 };
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath};
-use crate::common_macros::make_udf_function;
-use crate::common_union::json_field_metadata;
+use crate::{
+    common::{get_err, invoke, jiter_json_find, return_type_check, GetError, JsonPath},
+    common_macros::make_udf_function,
+    common_union::json_field_metadata,
+};
 
 make_udf_function!(
     JsonGetJson,
@@ -21,14 +27,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGetJson {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGetJson {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get_json".to_string()],
+            aliases:   ["json_get_json".to_string()],
         }
     }
 }
@@ -47,7 +53,8 @@ impl ScalarUDFImpl for JsonGetJson {
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> DataFusionResult<FieldRef> {
-        let arg_types: Vec<DataType> = args.arg_fields.iter().map(|f| f.data_type().clone()).collect();
+        let arg_types: Vec<DataType> =
+            args.arg_fields.iter().map(|f| f.data_type().clone()).collect();
         let return_type = self.return_type(&arg_types)?;
         Ok(Arc::new(
             Field::new(self.name(), return_type, true).with_metadata(json_field_metadata()),

@@ -15,10 +15,9 @@ mod predicate;
 mod tests;
 mod value;
 
-use kalamdb_commons::models::rows::Row;
-
 pub use error::{RowFilterError, RowFilterResult};
 pub use filter::RowFilter;
+use kalamdb_commons::models::rows::Row;
 pub use parser::{parse_where_clause, parse_where_expr};
 pub use sqlparser::ast::Expr;
 

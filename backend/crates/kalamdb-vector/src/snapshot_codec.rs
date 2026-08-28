@@ -6,20 +6,20 @@ const VIX_CODEC_VERSION: u8 = 2;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct VixSnapshotEntry {
     pub key: u64,
-    pub pk: String,
+    pub pk:  String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct VixSnapshotFile {
-    pub table_id: String,
-    pub column_name: String,
-    pub dimensions: u32,
-    pub metric: VectorMetric,
-    pub generated_at: i64,
+    pub table_id:         String,
+    pub column_name:      String,
+    pub dimensions:       u32,
+    pub metric:           VectorMetric,
+    pub generated_at:     i64,
     pub last_applied_seq: i64,
-    pub next_key: u64,
-    pub entries: Vec<VixSnapshotEntry>,
-    pub index_blob: Vec<u8>,
+    pub next_key:         u64,
+    pub entries:          Vec<VixSnapshotEntry>,
+    pub index_blob:       Vec<u8>,
 }
 
 pub(crate) fn encode_snapshot(snapshot: &VixSnapshotFile) -> Result<Vec<u8>, String> {
@@ -200,24 +200,24 @@ mod tests {
     #[test]
     fn test_snapshot_codec_roundtrip() {
         let snapshot = VixSnapshotFile {
-            table_id: "app.docs".to_string(),
-            column_name: "embedding".to_string(),
-            dimensions: 3,
-            metric: VectorMetric::Cosine,
-            generated_at: 12345,
+            table_id:         "app.docs".to_string(),
+            column_name:      "embedding".to_string(),
+            dimensions:       3,
+            metric:           VectorMetric::Cosine,
+            generated_at:     12345,
             last_applied_seq: 99,
-            next_key: 1000,
-            entries: vec![
+            next_key:         1000,
+            entries:          vec![
                 VixSnapshotEntry {
                     key: 1,
-                    pk: "a".to_string(),
+                    pk:  "a".to_string(),
                 },
                 VixSnapshotEntry {
                     key: 2,
-                    pk: "b".to_string(),
+                    pk:  "b".to_string(),
                 },
             ],
-            index_blob: vec![10, 20, 30, 40],
+            index_blob:       vec![10, 20, 30, 40],
         };
 
         let encoded = encode_snapshot(&snapshot).expect("encode");

@@ -13,12 +13,12 @@ pub const GITHUB_REPO: &str = release_download::GITHUB_REPO;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateAvailability {
     pub current_version: String,
-    pub latest_version: String,
+    pub latest_version:  String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
-    tag_name: String,
+    tag_name:   String,
     #[serde(default)]
     prerelease: bool,
 }
@@ -231,7 +231,7 @@ pub fn update_needed_for_release(latest_version: &str, remote_build_date: Option
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedVersion {
-    core: Vec<u64>,
+    core:       Vec<u64>,
     prerelease: Option<Vec<PrereleasePart>>,
 }
 

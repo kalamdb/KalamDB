@@ -108,7 +108,7 @@ pub(crate) const SQL_TYPES: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct StyledPair {
     /// Display text (with styling)
-    display: String,
+    display:     String,
     /// Replacement text (plain)
     replacement: String,
 }
@@ -447,7 +447,7 @@ impl Completer for AutoCompleter {
         let pairs: Vec<Pair> = styled_completions
             .into_iter()
             .map(|s| Pair {
-                display: s.display,
+                display:     s.display,
                 replacement: s.replacement,
             })
             .collect();

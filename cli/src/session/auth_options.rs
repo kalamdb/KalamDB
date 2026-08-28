@@ -6,7 +6,7 @@ use crate::error::{CLIError, Result};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthLoginOptions {
     pub local: LocalLoginOptions,
-    pub oidc: Option<OidcLoginOptions>,
+    pub oidc:  Option<OidcLoginOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -29,25 +29,25 @@ pub struct OidcLoginOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OidcDeviceFlowOptions {
-    pub direct_supported: bool,
-    pub broker_supported: bool,
+    pub direct_supported:              bool,
+    pub broker_supported:              bool,
     pub device_authorization_endpoint: Option<String>,
-    pub broker_start_endpoint: Option<String>,
-    pub broker_poll_endpoint: Option<String>,
+    pub broker_start_endpoint:         Option<String>,
+    pub broker_poll_endpoint:          Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OidcDeviceStartResponse {
     #[serde(alias = "session_id")]
-    pub device_session_id: String,
-    pub verification_uri: String,
+    pub device_session_id:         String,
+    pub verification_uri:          String,
     pub verification_uri_complete: Option<String>,
     #[serde(default)]
-    pub user_code: String,
+    pub user_code:                 String,
     #[serde(alias = "expires_in")]
-    pub expires_in_seconds: u64,
+    pub expires_in_seconds:        u64,
     #[serde(alias = "interval")]
-    pub interval_seconds: u64,
+    pub interval_seconds:          u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,21 +59,21 @@ pub struct OidcDevicePollRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrokerEndpointModel {
     pub start_endpoint: String,
-    pub poll_endpoint: String,
+    pub poll_endpoint:  String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct OidcDevicePollResponse {
-    pub status: OidcDevicePollStatus,
-    pub interval_seconds: Option<u64>,
-    pub token_type: Option<String>,
-    pub access_token: Option<String>,
-    pub expires_at: Option<String>,
-    pub refresh_token: Option<String>,
+    pub status:             OidcDevicePollStatus,
+    pub interval_seconds:   Option<u64>,
+    pub token_type:         Option<String>,
+    pub access_token:       Option<String>,
+    pub expires_at:         Option<String>,
+    pub refresh_token:      Option<String>,
     pub refresh_expires_at: Option<String>,
-    pub user: Option<CurrentUser>,
-    pub admin_ui_access: Option<bool>,
-    pub message: Option<String>,
+    pub user:               Option<CurrentUser>,
+    pub admin_ui_access:    Option<bool>,
+    pub message:            Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -89,35 +89,35 @@ pub enum OidcDevicePollStatus {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CurrentUserResponse {
-    pub user: CurrentUser,
+    pub user:            CurrentUser,
     pub admin_ui_access: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CurrentUser {
-    pub id: UserId,
-    pub role: String,
-    pub name: Option<String>,
-    pub email: Option<String>,
+    pub id:         UserId,
+    pub role:       String,
+    pub name:       Option<String>,
+    pub email:      Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalLoginSession {
-    pub access_token: String,
-    pub user_id: UserId,
-    pub user_name: Option<String>,
-    pub user_email: Option<String>,
-    pub expires_at: String,
-    pub refresh_token: Option<String>,
+    pub access_token:       String,
+    pub user_id:            UserId,
+    pub user_name:          Option<String>,
+    pub user_email:         Option<String>,
+    pub expires_at:         String,
+    pub refresh_token:      Option<String>,
     pub refresh_expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OidcCodeExchangeRequest {
-    pub code: String,
-    pub redirect_uri: String,
+    pub code:          String,
+    pub redirect_uri:  String,
     pub code_verifier: String,
 }
 
@@ -128,10 +128,10 @@ pub struct OidcTokenExchangeRequest {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct LoginResponseView {
-    user: CurrentUser,
-    expires_at: String,
-    access_token: String,
-    refresh_token: String,
+    user:               CurrentUser,
+    expires_at:         String,
+    access_token:       String,
+    refresh_token:      String,
     refresh_expires_at: String,
 }
 
@@ -179,12 +179,12 @@ pub async fn authenticate_external_token(
     })?;
 
     Ok(ExternalLoginSession {
-        expires_at: external_token_expires_at(&token),
-        access_token: token,
-        user_id: current_user.user.id,
-        user_name: current_user.user.name,
-        user_email: current_user.user.email,
-        refresh_token: None,
+        expires_at:         external_token_expires_at(&token),
+        access_token:       token,
+        user_id:            current_user.user.id,
+        user_name:          current_user.user.name,
+        user_email:         current_user.user.email,
+        refresh_token:      None,
         refresh_expires_at: None,
     })
 }
@@ -248,12 +248,12 @@ async fn login_session_from_response(
     })?;
 
     Ok(ExternalLoginSession {
-        access_token: login.access_token,
-        user_id: login.user.id,
-        user_name: login.user.name,
-        user_email: login.user.email,
-        expires_at: login.expires_at,
-        refresh_token: Some(login.refresh_token),
+        access_token:       login.access_token,
+        user_id:            login.user.id,
+        user_name:          login.user.name,
+        user_email:         login.user.email,
+        expires_at:         login.expires_at,
+        refresh_token:      Some(login.refresh_token),
         refresh_expires_at: Some(login.refresh_expires_at),
     })
 }

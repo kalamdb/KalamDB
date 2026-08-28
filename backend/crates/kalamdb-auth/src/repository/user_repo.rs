@@ -4,8 +4,7 @@ use kalamdb_commons::UserId;
 use kalamdb_system::{User, UsersTableProvider};
 use moka::sync::Cache;
 
-use crate::errors::error::AuthResult;
-use crate::services::unified::invalidate_bearer_sessions;
+use crate::{errors::error::AuthResult, services::unified::invalidate_bearer_sessions};
 
 /// Abstraction over user persistence for authentication flows.
 ///

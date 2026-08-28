@@ -102,10 +102,10 @@ fn test_calculate_dedup_ratio_zero_before() {
 #[test]
 fn test_flush_job_result_shared_table() {
     let result = FlushJobResult {
-        rows_flushed: 100,
+        rows_flushed:  100,
         parquet_files: vec!["batch-0.parquet".to_string()],
-        scope_hints: vec![FlushScopeHint::Shared],
-        metadata: FlushMetadata::shared_table(),
+        scope_hints:   vec![FlushScopeHint::Shared],
+        metadata:      FlushMetadata::shared_table(),
     };
 
     assert_eq!(result.rows_flushed, 100);
@@ -115,16 +115,16 @@ fn test_flush_job_result_shared_table() {
 #[test]
 fn test_flush_job_result_user_table() {
     let result = FlushJobResult {
-        rows_flushed: 250,
+        rows_flushed:  250,
         parquet_files: vec![
             "user_123/batch-0.parquet".to_string(),
             "user_456/batch-0.parquet".to_string(),
         ],
-        scope_hints: vec![
+        scope_hints:   vec![
             FlushScopeHint::User(UserId::from("user_123")),
             FlushScopeHint::User(UserId::from("user_456")),
         ],
-        metadata: FlushMetadata::user_table(2, vec![]),
+        metadata:      FlushMetadata::user_table(2, vec![]),
     };
 
     assert_eq!(result.rows_flushed, 250);
@@ -134,10 +134,10 @@ fn test_flush_job_result_user_table() {
 #[test]
 fn test_flush_job_result_empty() {
     let result = FlushJobResult {
-        rows_flushed: 0,
+        rows_flushed:  0,
         parquet_files: vec![],
-        scope_hints: vec![],
-        metadata: FlushMetadata::shared_table(),
+        scope_hints:   vec![],
+        metadata:      FlushMetadata::shared_table(),
     };
 
     assert_eq!(result.rows_flushed, 0);
@@ -152,10 +152,10 @@ struct SuccessfulFlushJob {
 impl TableFlush for SuccessfulFlushJob {
     fn execute(&self) -> Result<FlushJobResult, FlushError> {
         Ok(FlushJobResult {
-            rows_flushed: self.rows,
+            rows_flushed:  self.rows,
             parquet_files: vec!["batch-0.parquet".to_string()],
-            scope_hints: vec![FlushScopeHint::Shared],
-            metadata: FlushMetadata::shared_table(),
+            scope_hints:   vec![FlushScopeHint::Shared],
+            metadata:      FlushMetadata::shared_table(),
         })
     }
 

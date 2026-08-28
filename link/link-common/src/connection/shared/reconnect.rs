@@ -52,7 +52,8 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
         || normalized.contains("base url")
         || normalized.contains("url parse")
     {
-        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the client can reach.";
+        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL \
+                that the client can reach.";
     }
     if normalized.contains("401")
         || normalized.contains("403")
@@ -62,13 +63,15 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
         || normalized.contains("invalid credentials")
     {
         return if auth_user.is_some() {
-            "Verify the configured auth user and password or JWT token. Basic auth must login successfully before opening realtime connections."
+            "Verify the configured auth user and password or JWT token. Basic auth must login \
+             successfully before opening realtime connections."
         } else {
             "Verify the configured JWT token or auth provider before retrying the connection."
         };
     }
     if recoverable {
-        return "Verify KalamDB is running and reachable at the configured URL from this client, then retry.";
+        return "Verify KalamDB is running and reachable at the configured URL from this client, \
+                then retry.";
     }
     "Review the connection configuration and authentication settings for this client."
 }

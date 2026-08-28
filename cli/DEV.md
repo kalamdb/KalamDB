@@ -465,6 +465,35 @@ Runs the local development orchestration loop.
 - `--env <ENV>`
 - `--namespace <NAMESPACE>`
 - `--force`: retry a paused schema pipeline once on startup
+- `--agent`: run in deterministic, non-interactive mode optimized for AI coding agents and automation
+
+```bash
+kalam init --yes
+kalam dev --agent
+kalam -c "<SQL>" --json
+```
+
+`--agent` never waits for stdin, auto-downloads a missing compatible server, reuses a healthy server before resolving a local binary, auto-applies ordinary development schema changes, and emits compact `KALAM_*` events with stable `KALAM_ERROR` codes. Destructive schema changes return `DESTRUCTIVE_SCHEMA_CHANGE` unless `--force` is also passed. Human `kalam dev` remains interactive.
+
+#### Background session
+
+`kalam dev` still runs in the foreground by default. These commands manage a detached copy of the same foreground loop (always spawned as `kalam dev --agent`, so the background session never waits for stdin):
+
+```bash
+kalam dev start --agent
+kalam dev status
+kalam dev logs
+kalam dev logs --follow
+kalam dev stop
+```
+
+- `start` is idempotent: a live session for the same project is reused (`KALAM_DEV_REUSED`)
+- `status` reports `running` or `stopped` and exits 0 in both cases
+- `stop` is idempotent
+- session metadata is stored at `kalam/cli/dev.session.json`
+- logs are the existing workflow log at `kalam/cli/logs/kalam.log`
+
+This is a PID file plus a detached child of the same `kalam` binary, not a machine-wide daemon.
 
 #### Behavior
 

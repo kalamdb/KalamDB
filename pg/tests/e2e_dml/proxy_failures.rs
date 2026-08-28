@@ -18,7 +18,7 @@ const PG_PORT: u16 = 28816;
 const TEST_DB: &str = "kalamdb_test";
 
 struct OwnedPgClient {
-    client: tokio_postgres::Client,
+    client:          tokio_postgres::Client,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -75,7 +75,7 @@ enum TerminalAction {
 }
 
 struct ProvisionedProxy {
-    proxy: TcpDisconnectProxy,
+    proxy:           TcpDisconnectProxy,
     leader_base_url: String,
 }
 
@@ -276,7 +276,7 @@ async fn fetch_session_rows(env: &TestEnv, base_url: &str, session_id: &str) -> 
             base_url,
             &format!(
                 "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
-             WHERE session_id = '{session_id}' ORDER BY last_seen_at DESC"
+                 WHERE session_id = '{session_id}' ORDER BY last_seen_at DESC"
             ),
         )
         .await,
@@ -292,9 +292,9 @@ async fn fetch_transaction_rows(
         &env.kalamdb_sql_at(
             base_url,
             &format!(
-            "SELECT transaction_id, owner_id, origin, state, write_count FROM system.transactions \
-             WHERE transaction_id = '{transaction_id}'"
-        ),
+                "SELECT transaction_id, owner_id, origin, state, write_count FROM \
+                 system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
         )
         .await,
     )

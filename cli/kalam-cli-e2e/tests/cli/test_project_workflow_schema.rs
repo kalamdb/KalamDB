@@ -5,12 +5,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::common::*;
 use tempfile::TempDir;
+
+use crate::common::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordedSqlRequest {
-    sql: String,
+    sql:          String,
     namespace_id: Option<String>,
 }
 
@@ -81,7 +82,7 @@ fn start_recording_sql_server(
                     .unwrap_or_default()
                     .to_string();
                 requests_handle.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql: sql.clone(),
+                    sql:          sql.clone(),
                     namespace_id: payload
                         .get("namespace_id")
                         .and_then(|value| value.as_str())
@@ -95,7 +96,8 @@ fn start_recording_sql_server(
                     r#"{"status":"success","results":[]}"#
                 };
                 format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \
+                     {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
                     body
                 )
@@ -144,7 +146,9 @@ fn test_project_workflow_schema_command_help_surface() {
     }
 }
 
-fn scaffold_sql_project(temp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+fn scaffold_sql_project(
+    temp: &TempDir,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let project_dir = temp.path().join("schema-app");
     let isolated_home = temp.path().join("home");
     fs::create_dir_all(&project_dir).expect("create project dir");
@@ -270,7 +274,10 @@ fn test_project_workflow_schema_gen_from_sql() {
     assert!(dart.contains("import 'package:kalam_sync/kalam_sync.dart';"));
     assert!(dart.contains("KalamTableSpec<Users>"), "expected Users table spec");
     assert!(dart.contains("tableId: 'users'"));
-    assert!(!dart.to_lowercase().contains("placeholder"), "dart output should not be a placeholder");
+    assert!(
+        !dart.to_lowercase().contains("placeholder"),
+        "dart output should not be a placeholder"
+    );
 }
 
 #[test]
@@ -454,7 +461,8 @@ fn test_project_workflow_db_migrate_executes_pending_sql_against_server() {
 
     fs::write(
         project_dir.join("kalam/migrations/20250101120000_add_users.sql"),
-        "-- UP\nCREATE TABLE users_from_migration (id INTEGER PRIMARY KEY);\n\n-- DOWN\nDROP TABLE users_from_migration;\n",
+        "-- UP\nCREATE TABLE users_from_migration (id INTEGER PRIMARY KEY);\n\n-- DOWN\nDROP \
+         TABLE users_from_migration;\n",
     )
     .expect("write migration");
 

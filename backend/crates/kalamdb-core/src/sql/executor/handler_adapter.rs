@@ -46,9 +46,9 @@ where
     T: DdlAst,
     F: Fn(SqlStatement) -> Option<T> + Send + Sync,
 {
-    handler: H,
+    handler:   H,
     extractor: F,
-    _phantom: PhantomData<T>,
+    _phantom:  PhantomData<T>,
 }
 
 impl<H, T, F> TypedHandlerAdapter<H, T, F>

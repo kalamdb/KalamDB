@@ -248,9 +248,7 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
         "EXPLAIN must show the row-local RLS strategy, got {explain_text}"
     );
     assert!(
-        explain_text.contains(
-            "policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]"
-        ),
+        explain_text.contains("policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]"),
         "EXPLAIN must list the bound policy and USING qual like PostgreSQL security quals, got \
          {explain_text}"
     );
@@ -369,8 +367,7 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
         "EXPLAIN must name the bound policy, got {explain_text}"
     );
     assert!(
-        explain_text.contains("USING (group_id IN")
-            && explain_text.contains("CURRENT_USER"),
+        explain_text.contains("USING (group_id IN") && explain_text.contains("CURRENT_USER"),
         "EXPLAIN must include the USING qual like PostgreSQL security quals, got {explain_text}"
     );
     assert!(

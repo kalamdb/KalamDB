@@ -77,8 +77,8 @@ impl TypedStatementHandler<FlushAllTablesStatement> for FlushAllTablesHandler {
                 };
 
                 let params = FlushParams {
-                    table_id: table_id.clone(),
-                    table_type: table_def.table_type,
+                    table_id:        table_id.clone(),
+                    table_type:      table_def.table_type,
                     flush_threshold: None,
                 };
 

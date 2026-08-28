@@ -41,7 +41,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Raft group numeric ID".to_string())),
+                Some("Raft group numeric ID".to_string()),
+            ),
             ColumnDefinition::new(
                 2,
                 "cluster_id",
@@ -51,7 +52,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Cluster identifier".to_string())),
+                Some("Cluster identifier".to_string()),
+            ),
             ColumnDefinition::new(
                 3,
                 "node_id",
@@ -61,7 +63,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Raft node ID (this node's ID for the group)".to_string())),
+                Some("Raft node ID (this node's ID for the group)".to_string()),
+            ),
             ColumnDefinition::new(
                 4,
                 "group_type",
@@ -71,7 +74,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Group type: meta, user_data, shared_data".to_string())),
+                Some("Group type: meta, user_data, shared_data".to_string()),
+            ),
             ColumnDefinition::new(
                 5,
                 "current_term",
@@ -81,7 +85,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current Raft term".to_string())),
+                Some("Current Raft term".to_string()),
+            ),
             ColumnDefinition::new(
                 6,
                 "vote",
@@ -91,7 +96,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last accepted vote (JSON format)".to_string())),
+                Some("Last accepted vote (JSON format)".to_string()),
+            ),
             ColumnDefinition::new(
                 7,
                 "last_log_index",
@@ -101,7 +107,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last log index appended to this node's log".to_string())),
+                Some("Last log index appended to this node's log".to_string()),
+            ),
             ColumnDefinition::new(
                 8,
                 "last_applied",
@@ -111,7 +118,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last log index applied to state machine".to_string())),
+                Some("Last log index applied to state machine".to_string()),
+            ),
             ColumnDefinition::new(
                 9,
                 "snapshot",
@@ -121,7 +129,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last log index included in snapshot".to_string())),
+                Some("Last log index included in snapshot".to_string()),
+            ),
             ColumnDefinition::new(
                 10,
                 "purged",
@@ -131,7 +140,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last log index purged from storage (inclusive)".to_string())),
+                Some("Last log index purged from storage (inclusive)".to_string()),
+            ),
             ColumnDefinition::new(
                 11,
                 "committed",
@@ -141,7 +151,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last log index committed by the cluster".to_string())),
+                Some("Last log index committed by the cluster".to_string()),
+            ),
             ColumnDefinition::new(
                 12,
                 "state",
@@ -151,7 +162,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Server state: Leader, Follower, Candidate, Learner, Shutdown".to_string())),
+                Some("Server state: Leader, Follower, Candidate, Learner, Shutdown".to_string()),
+            ),
             ColumnDefinition::new(
                 13,
                 "current_leader",
@@ -161,7 +173,8 @@ impl ClusterGroupsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current cluster leader node ID".to_string())),
+                Some("Current cluster leader node ID".to_string()),
+            ),
             ColumnDefinition::new(
                 14,
                 "millis_since_quorum_ack",
@@ -173,13 +186,16 @@ impl ClusterGroupsView {
                 ColumnDefault::None,
                 Some(
                     "Milliseconds since most recent quorum acknowledgment (leader only)"
-                        .to_string())),
+                        .to_string(),
+                ),
+            ),
         ];
 
         system_view_definition(
             SystemTable::ClusterGroups,
             columns,
-            "Per-Raft-group membership and replication status (read-only view)")
+            "Per-Raft-group membership and replication status (read-only view)",
+        )
     }
 
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
@@ -309,7 +325,8 @@ impl VirtualView for ClusterGroupsView {
                 },
                 Arc::new(Int64Array::from(current_leaders)) as ArrayRef,
                 Arc::new(Int64Array::from(millis_since_quorum_acks)) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|e| RegistryError::Other(format!("Failed to build cluster_groups batch: {}", e)))
     }
 }
@@ -317,7 +334,8 @@ impl VirtualView for ClusterGroupsView {
 pub type ClusterGroupsTableProvider = SystemViewProvider<ClusterGroupsView>;
 
 pub fn create_cluster_groups_provider(
-    executor: Arc<dyn CommandExecutor>) -> ClusterGroupsTableProvider {
+    executor: Arc<dyn CommandExecutor>,
+) -> ClusterGroupsTableProvider {
     view_provider_with(executor, ClusterGroupsView::new)
 }
 

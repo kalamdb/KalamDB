@@ -49,12 +49,12 @@ const DEFAULT_SETUP_USER: &str = "admin";
 const TEST_DB: &str = "kalamdb_test";
 
 struct KalamDbAuthConfig {
-    base_url: String,
-    login_user: String,
+    base_url:       String,
+    login_user:     String,
     login_password: String,
-    setup_user: String,
+    setup_user:     String,
     setup_password: String,
-    root_password: String,
+    root_password:  String,
 }
 
 impl fmt::Display for KalamDbAuthConfig {
@@ -190,19 +190,19 @@ async fn drop_server_option_if_present(
 
 pub struct DdlTestEnv {
     pub bearer_token: String,
-    http_client: TestHttpClient,
-    pg_user: String,
+    http_client:      TestHttpClient,
+    pg_user:          String,
 }
 
 pub struct OwnedPgClient {
-    client: Option<tokio_postgres::Client>,
+    client:          Option<tokio_postgres::Client>,
     connection_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl OwnedPgClient {
     fn new(client: tokio_postgres::Client, connection_task: tokio::task::JoinHandle<()>) -> Self {
         Self {
-            client: Some(client),
+            client:          Some(client),
             connection_task: Some(connection_task),
         }
     }

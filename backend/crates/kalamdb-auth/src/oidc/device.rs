@@ -19,12 +19,12 @@ pub(crate) struct DeviceBrokerTokenResult {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DeviceBrokerSession {
-    pub session_id: String,
-    pub expires_at: Instant,
+    pub session_id:    String,
+    pub expires_at:    Instant,
     pub poll_interval: Duration,
-    pub status: DeviceBrokerStatus,
-    pub token_result: Option<DeviceBrokerTokenResult>,
-    pub message: Option<String>,
+    pub status:        DeviceBrokerStatus,
+    pub token_result:  Option<DeviceBrokerTokenResult>,
+    pub message:       Option<String>,
 }
 
 impl DeviceBrokerSession {
@@ -46,7 +46,7 @@ impl DeviceBrokerSession {
 
 #[derive(Debug)]
 pub(crate) struct DeviceBrokerState {
-    sessions: HashMap<String, DeviceBrokerSession>,
+    sessions:     HashMap<String, DeviceBrokerSession>,
     max_sessions: usize,
 }
 
@@ -106,12 +106,12 @@ mod tests {
 
     fn test_session(session_id: &str, ttl: Duration) -> DeviceBrokerSession {
         DeviceBrokerSession {
-            session_id: session_id.to_string(),
-            expires_at: Instant::now() + ttl,
+            session_id:    session_id.to_string(),
+            expires_at:    Instant::now() + ttl,
             poll_interval: Duration::from_secs(5),
-            status: DeviceBrokerStatus::Pending,
-            token_result: None,
-            message: None,
+            status:        DeviceBrokerStatus::Pending,
+            token_result:  None,
+            message:       None,
         }
     }
 }

@@ -9,7 +9,7 @@ pub trait CommitSequenceSource: std::fmt::Debug + Send + Sync {
 
 /// Shared in-process tracker for the latest committed snapshot boundary.
 pub struct CommitSequenceTracker {
-    current_committed: AtomicU64,
+    current_committed:      AtomicU64,
     durable_high_watermark: u64,
 }
 

@@ -5,13 +5,15 @@
 //!
 //! **Performance Optimizations**:
 //! - Uses manifest-based pruning for cold storage via `pk_exists_in_cold`
-//! - Uses Parquet PK bloom filters to avoid decoding row groups that cannot contain
-//!   the requested primary key values
+//! - Uses Parquet PK bloom filters to avoid decoding row groups that cannot contain the requested
+//!   primary key values
 
 use std::collections::{HashMap, HashSet};
 
-use datafusion::arrow::array::{Array, BooleanArray, Int64Array, UInt64Array};
-use datafusion::scalar::ScalarValue;
+use datafusion::{
+    arrow::array::{Array, BooleanArray, Int64Array, UInt64Array},
+    scalar::ScalarValue,
+};
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
     constants::SystemColumnNames, models::TableId, schemas::TableType,

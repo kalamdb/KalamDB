@@ -325,7 +325,8 @@ fn resolve_topic_source_table(
             return Err(topic_parse_error(
                 path,
                 &format!(
-                    "topic source table {} is not defined in schema.sql; found {}. Use the qualified table name in ALTER TOPIC ADD SOURCE.",
+                    "topic source table {} is not defined in schema.sql; found {}. Use the \
+                     qualified table name in ALTER TOPIC ADD SOURCE.",
                     source.table_sql,
                     qualified_matches.join(", ")
                 ),

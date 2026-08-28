@@ -14,8 +14,8 @@ use crate::{
 /// Storage key format (storekey tuple encoding): (node_id, job_id)
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub struct JobNodeId {
-    node_id: NodeId,
-    job_id: JobId,
+    node_id:       NodeId,
+    job_id:        JobId,
     #[serde(skip)]
     cached_string: String,
 }
@@ -29,7 +29,7 @@ impl<'de> Deserialize<'de> for JobNodeId {
         #[derive(Deserialize)]
         struct JobNodeIdHelper {
             node_id: NodeId,
-            job_id: JobId,
+            job_id:  JobId,
         }
 
         let helper = JobNodeIdHelper::deserialize(deserializer)?;

@@ -12,7 +12,9 @@ use kalamdb_commons::{
 };
 use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
-use support::{create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace};
+use support::{
+    create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace,
+};
 
 async fn scan_names(
     service: &OperationService,
@@ -49,13 +51,12 @@ async fn scan_names(
 async fn snapshot_isolation_hides_later_commits_from_open_transaction() {
     let (app_ctx, _test_db) = create_cluster_app_context().await;
     let service = OperationService::new(Arc::clone(&app_ctx));
-    let table_id =
-        create_shared_table_with_public_policy(
-            &app_ctx,
-            &unique_namespace("snapshot_isolation_core"),
-            "items",
-        )
-        .await;
+    let table_id = create_shared_table_with_public_policy(
+        &app_ctx,
+        &unique_namespace("snapshot_isolation_core"),
+        "items",
+    )
+    .await;
     let user_id = UserId::new("snapshot-user");
 
     let session_b = "pg-5101-1a2b";

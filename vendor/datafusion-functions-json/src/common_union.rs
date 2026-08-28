@@ -1,13 +1,20 @@
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, OnceLock};
-
-use datafusion::arrow::array::{
-    Array, ArrayRef, AsArray, BooleanArray, Float64Array, Int64Array, NullArray, StringArray, UnionArray,
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, OnceLock},
 };
-use datafusion::arrow::buffer::{Buffer, ScalarBuffer};
-use datafusion::arrow::datatypes::{DataType, Field, UnionFields, UnionMode};
-use datafusion::arrow::error::ArrowError;
-use datafusion::common::ScalarValue;
+
+use datafusion::{
+    arrow::{
+        array::{
+            Array, ArrayRef, AsArray, BooleanArray, Float64Array, Int64Array, NullArray,
+            StringArray, UnionArray,
+        },
+        buffer::{Buffer, ScalarBuffer},
+        datatypes::{DataType, Field, UnionFields, UnionMode},
+        error::ArrowError,
+    },
+    common::ScalarValue,
+};
 
 /// Field metadata used to mark a `Utf8` field as containing raw JSON.
 ///
@@ -44,15 +51,19 @@ pub fn is_json_union(data_type: &DataType) -> bool {
 ///
 /// # Arguments
 /// * `array` - The `UnionArray` to extract the nested JSON from
-/// * `object_lookup` - If `true`, extract from the "object" member of the union,
-///   otherwise extract from the "array" member
+/// * `object_lookup` - If `true`, extract from the "object" member of the union, otherwise extract
+///   from the "array" member
 pub(crate) fn nested_json_array(array: &ArrayRef, object_lookup: bool) -> Option<&StringArray> {
     nested_json_array_ref(array, object_lookup).map(AsArray::as_string)
 }
 
 pub(crate) fn nested_json_array_ref(array: &ArrayRef, object_lookup: bool) -> Option<&ArrayRef> {
     let union_array: &UnionArray = array.as_any().downcast_ref::<UnionArray>()?;
-    let type_id = if object_lookup { TYPE_ID_OBJECT } else { TYPE_ID_ARRAY };
+    let type_id = if object_lookup {
+        TYPE_ID_OBJECT
+    } else {
+        TYPE_ID_ARRAY
+    };
     Some(union_array.child(type_id))
 }
 
@@ -62,9 +73,12 @@ pub(crate) fn json_from_union_scalar<'a>(
     fields: &UnionFields,
 ) -> Option<&'a str> {
     if let Some((type_id, value)) = type_id_value {
-        // we only want to take the ScalarValue string if the type_id indicates the value represents nested JSON
+        // we only want to take the ScalarValue string if the type_id indicates the value represents
+        // nested JSON
         if fields == &union_fields() && (*type_id == TYPE_ID_ARRAY || *type_id == TYPE_ID_OBJECT) {
-            if let ScalarValue::Utf8(s) | ScalarValue::Utf8View(s) | ScalarValue::LargeUtf8(s) = value.as_ref() {
+            if let ScalarValue::Utf8(s) | ScalarValue::Utf8View(s) | ScalarValue::LargeUtf8(s) =
+                value.as_ref()
+            {
                 return s.as_deref();
             }
         }
@@ -76,15 +90,15 @@ pub static JSON_UNION_DATA_TYPE: LazyLock<DataType> = LazyLock::new(JsonUnion::d
 
 #[derive(Debug)]
 pub(crate) struct JsonUnion {
-    bools: Vec<Option<bool>>,
-    ints: Vec<Option<i64>>,
-    floats: Vec<Option<f64>>,
-    strings: Vec<Option<String>>,
-    arrays: Vec<Option<String>>,
-    objects: Vec<Option<String>>,
+    bools:    Vec<Option<bool>>,
+    ints:     Vec<Option<i64>>,
+    floats:   Vec<Option<f64>>,
+    strings:  Vec<Option<String>>,
+    arrays:   Vec<Option<String>>,
+    objects:  Vec<Option<String>>,
     type_ids: Vec<i8>,
-    index: usize,
-    length: usize,
+    index:    usize,
+    length:   usize,
 }
 
 impl JsonUnion {
@@ -193,11 +207,17 @@ fn union_fields() -> UnionFields {
                 (TYPE_ID_STR, Arc::new(Field::new("str", DataType::Utf8, false))),
                 (
                     TYPE_ID_ARRAY,
-                    Arc::new(Field::new("array", DataType::Utf8, false).with_metadata(json_field_metadata())),
+                    Arc::new(
+                        Field::new("array", DataType::Utf8, false)
+                            .with_metadata(json_field_metadata()),
+                    ),
                 ),
                 (
                     TYPE_ID_OBJECT,
-                    Arc::new(Field::new("object", DataType::Utf8, false).with_metadata(json_field_metadata())),
+                    Arc::new(
+                        Field::new("object", DataType::Utf8, false)
+                            .with_metadata(json_field_metadata()),
+                    ),
                 ),
             ])
         })
@@ -233,18 +253,20 @@ impl From<JsonUnionField> for ScalarValue {
             JsonUnionField::Bool(b) => Self::Boolean(Some(b)),
             JsonUnionField::Int(i) => Self::Int64(Some(i)),
             JsonUnionField::Float(f) => Self::Float64(Some(f)),
-            JsonUnionField::Str(s) | JsonUnionField::Array(s) | JsonUnionField::Object(s) => Self::Utf8(Some(s)),
+            JsonUnionField::Str(s) | JsonUnionField::Array(s) | JsonUnionField::Object(s) => {
+                Self::Utf8(Some(s))
+            },
         }
     }
 }
 
 pub struct JsonUnionEncoder {
-    boolean: BooleanArray,
-    int: Int64Array,
-    float: Float64Array,
-    string: StringArray,
-    array: StringArray,
-    object: StringArray,
+    boolean:  BooleanArray,
+    int:      Int64Array,
+    float:    Float64Array,
+    string:   StringArray,
+    array:    StringArray,
+    object:   StringArray,
     type_ids: ScalarBuffer<i8>,
 }
 

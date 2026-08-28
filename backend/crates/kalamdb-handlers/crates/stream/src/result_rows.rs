@@ -62,9 +62,9 @@ pub fn ack_result(
     })?;
 
     Ok(ExecutionResult::Rows {
-        batches: vec![batch],
+        batches:   vec![batch],
         row_count: 1,
-        schema: Some(schema),
+        schema:    Some(schema),
     })
 }
 
@@ -95,8 +95,8 @@ pub fn reset_consumer_group_result(
     })?;
 
     Ok(ExecutionResult::Rows {
-        batches: vec![batch],
+        batches:   vec![batch],
         row_count: 1,
-        schema: Some(schema),
+        schema:    Some(schema),
     })
 }

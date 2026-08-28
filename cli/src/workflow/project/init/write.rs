@@ -2,6 +2,7 @@ use std::{fs, path::Path};
 
 use serde_json::json;
 
+use super::{prompts::schema_mode_label, ServerMode};
 use crate::{
     error::Result,
     output::WorkflowOutput,
@@ -20,8 +21,6 @@ use crate::{
         },
     },
 };
-
-use super::{prompts::schema_mode_label, ServerMode};
 
 pub(super) fn write_project_scaffold(
     root: &Path,
@@ -67,7 +66,9 @@ pub(super) fn write_project_scaffold(
             output,
         )?;
     }
-    if typescript_template.is_none() && dart_template.is_none() && matches!(schema_mode, SchemaMode::Sql)
+    if typescript_template.is_none()
+        && dart_template.is_none()
+        && matches!(schema_mode, SchemaMode::Sql)
     {
         let schema_path = root.join("schema.sql");
         if !schema_path.exists() {
@@ -129,15 +130,10 @@ pub(super) fn write_project_scaffold(
                 Ok(snapshot) => {
                     let dart_path = root.join(&target.output);
                     crate::workflow::schema::dart::write_dart_schema(&dart_path, &snapshot)?;
-                    output.detail(format!(
-                        "generated {}",
-                        display_project_path(root, &dart_path)
-                    ));
+                    output.detail(format!("generated {}", display_project_path(root, &dart_path)));
                 },
                 Err(error) => {
-                    output.detail(format!(
-                        "skipped Dart schema generation during init: {error}"
-                    ));
+                    output.detail(format!("skipped Dart schema generation during init: {error}"));
                 },
             }
         }

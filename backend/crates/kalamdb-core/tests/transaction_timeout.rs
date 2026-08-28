@@ -10,8 +10,8 @@ use kalamdb_configs::ServerConfig;
 use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
 use support::{
-    create_cluster_app_context_with_config, create_executor, create_shared_table_with_public_policy,
-    observer_exec_ctx, row, select_names, unique_namespace,
+    create_cluster_app_context_with_config, create_executor,
+    create_shared_table_with_public_policy, observer_exec_ctx, row, select_names, unique_namespace,
 };
 
 #[tokio::test]
@@ -21,12 +21,9 @@ async fn transaction_timeout_aborts_staged_writes_and_blocks_follow_up_operation
     config.transaction_timeout_secs = 1;
 
     let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
-    let table_id = create_shared_table_with_public_policy(
-        &app_ctx,
-        &unique_namespace("tx_timeout"),
-        "items",
-    )
-    .await;
+    let table_id =
+        create_shared_table_with_public_policy(&app_ctx, &unique_namespace("tx_timeout"), "items")
+            .await;
     let service = OperationService::new(Arc::clone(&app_ctx));
     let executor = create_executor(Arc::clone(&app_ctx));
     let observer_ctx = observer_exec_ctx(&app_ctx);

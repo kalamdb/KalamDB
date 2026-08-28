@@ -152,9 +152,9 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 "TABLE",
                 &table_id.full_name(),
                 Some(format!(
-                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {} (completed before response)",
-                    table_type,
-                    cleanup_job_id
+                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {} (completed before \
+                     response)",
+                    table_type, cleanup_job_id
                 )),
                 None,
             );
@@ -271,9 +271,9 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: kalamdb_commons::models::NamespaceId::new("test_namespace"),
+            name:      kalamdb_commons::models::NamespaceId::new("test_namespace"),
             if_exists: false,
-            cascade: false,
+            cascade:   false,
         };
         let ctx = create_test_context();
 
@@ -290,9 +290,9 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: kalamdb_commons::models::NamespaceId::new("test"),
+            name:      kalamdb_commons::models::NamespaceId::new("test"),
             if_exists: false,
-            cascade: false,
+            cascade:   false,
         };
 
         // Test with non-admin user
@@ -309,9 +309,9 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: kalamdb_commons::models::NamespaceId::new("nonexistent"),
+            name:      kalamdb_commons::models::NamespaceId::new("nonexistent"),
             if_exists: true,
-            cascade: false,
+            cascade:   false,
         };
         let ctx = create_test_context();
 
@@ -337,10 +337,10 @@ mod tests {
                 .namespaces()
                 .create_namespace(Namespace {
                     namespace_id: ns_id.clone(),
-                    name: ns_id.as_str().to_string(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    options: Some(serde_json::json!({})),
-                    table_count: 0,
+                    name:         ns_id.as_str().to_string(),
+                    created_at:   chrono::Utc::now().timestamp_millis(),
+                    options:      Some(serde_json::json!({})),
+                    table_count:  0,
                 })
                 .expect("create namespace");
         }
@@ -352,15 +352,15 @@ mod tests {
             .migrations()
             .upsert_migration_async(Migration {
                 migration_key: kalamdb_commons::models::MigrationId::new(target_key.clone()),
-                migration_id: "0001_init.sql".to_string(),
-                namespace: namespace_id.as_str().to_string(),
-                name: "init".to_string(),
-                checksum: "abc".to_string(),
-                status: "applied".to_string(),
-                started_at: Some(1_700_000_000_000),
-                finished_at: Some(1_700_000_000_100),
+                migration_id:  "0001_init.sql".to_string(),
+                namespace:     namespace_id.as_str().to_string(),
+                name:          "init".to_string(),
+                checksum:      "abc".to_string(),
+                status:        "applied".to_string(),
+                started_at:    Some(1_700_000_000_000),
+                finished_at:   Some(1_700_000_000_100),
                 error_message: None,
-                source: Some("0001_init.sql".to_string()),
+                source:        Some("0001_init.sql".to_string()),
                 kalam_version: Some("test".to_string()),
             })
             .await
@@ -370,15 +370,15 @@ mod tests {
             .migrations()
             .upsert_migration_async(Migration {
                 migration_key: kalamdb_commons::models::MigrationId::new(other_key.clone()),
-                migration_id: "0001_init.sql".to_string(),
-                namespace: other_namespace_id.as_str().to_string(),
-                name: "init".to_string(),
-                checksum: "abc".to_string(),
-                status: "applied".to_string(),
-                started_at: Some(1_700_000_000_000),
-                finished_at: Some(1_700_000_000_100),
+                migration_id:  "0001_init.sql".to_string(),
+                namespace:     other_namespace_id.as_str().to_string(),
+                name:          "init".to_string(),
+                checksum:      "abc".to_string(),
+                status:        "applied".to_string(),
+                started_at:    Some(1_700_000_000_000),
+                finished_at:   Some(1_700_000_000_100),
                 error_message: None,
-                source: Some("0001_init.sql".to_string()),
+                source:        Some("0001_init.sql".to_string()),
                 kalam_version: Some("test".to_string()),
             })
             .await
@@ -419,10 +419,10 @@ mod tests {
             .namespaces()
             .create_namespace(Namespace {
                 namespace_id: namespace_id.clone(),
-                name: namespace_id.as_str().to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                options: Some(serde_json::json!({})),
-                table_count: 0,
+                name:         namespace_id.as_str().to_string(),
+                created_at:   chrono::Utc::now().timestamp_millis(),
+                options:      Some(serde_json::json!({})),
+                table_count:  0,
             })
             .expect("create namespace");
 

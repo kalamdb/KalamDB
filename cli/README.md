@@ -1,6 +1,6 @@
 # Kalam CLI
 
-Interactive command-line client for KalamDB - a real-time database with WebSocket subscriptions.
+KalamDB CLI for projects, SQL, development, and deployment.
 
 ## Features
 
@@ -587,6 +587,16 @@ cargo build --release
 Project-oriented workflow commands such as `kalam init`, `kalam dev`, `kalam link`,
 `kalam schema gen`, `kalam migration create`, `kalam status`, and `kalam deploy` are
 documented in [`DEV.md`](./DEV.md).
+
+For AI coding agents and automation:
+
+```bash
+kalam init --yes
+kalam dev --agent
+kalam -c "<SQL>" --json
+```
+
+`kalam dev --agent` runs the local KalamDB development environment in deterministic, non-interactive mode optimized for AI coding agents and automation. Use `kalam dev start|status|logs|stop` when a foreground process is inconvenient; `start` detaches the same `--agent` loop and records a project session file.
 
 When `kalam dev` starts a local server, the generated `kalam/server/server.toml` uses
 `root` / `kalamdb123` by default. Scaffolded `.env` files include the same password for

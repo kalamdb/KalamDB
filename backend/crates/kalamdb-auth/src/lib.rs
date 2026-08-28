@@ -38,8 +38,10 @@ pub use helpers::ip_extractor::{
 pub use helpers::request_tokens::{
     extract_bearer_or_cookie_token, extract_refresh_or_bearer_token,
 };
-pub use models::impersonation::{ImpersonationContext, ImpersonationOrigin};
-pub use models::login_request::LoginRequest;
+pub use models::{
+    impersonation::{ImpersonationContext, ImpersonationOrigin},
+    login_request::LoginRequest,
+};
 pub use providers::jwt_auth::{
     create_and_sign_refresh_token, create_and_sign_refresh_token_with_auth_type,
     create_and_sign_token, create_and_sign_token_with_auth_type, generate_jwt_token,

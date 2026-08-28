@@ -66,31 +66,31 @@ pub struct TableDefinition {
 
 #[derive(Serialize, Deserialize)]
 struct TableDefinitionRepr {
-    namespace_id: NamespaceId,
-    table_name: TableName,
-    table_type: TableType,
-    columns: Vec<ColumnDefinition>,
+    namespace_id:   NamespaceId,
+    table_name:     TableName,
+    table_type:     TableType,
+    columns:        Vec<ColumnDefinition>,
     schema_version: u32,
     next_column_id: u64,
-    table_options: TableOptions,
-    table_comment: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    table_options:  TableOptions,
+    table_comment:  Option<String>,
+    created_at:     DateTime<Utc>,
+    updated_at:     DateTime<Utc>,
 }
 
 impl From<&TableDefinition> for TableDefinitionRepr {
     fn from(table: &TableDefinition) -> Self {
         Self {
-            namespace_id: table.namespace_id.clone(),
-            table_name: table.table_name.clone(),
-            table_type: table.table_type,
-            columns: table.columns.clone(),
+            namespace_id:   table.namespace_id.clone(),
+            table_name:     table.table_name.clone(),
+            table_type:     table.table_type,
+            columns:        table.columns.clone(),
             schema_version: table.schema_version,
             next_column_id: table.next_column_id,
-            table_options: table.table_options.clone(),
-            table_comment: table.table_comment.clone(),
-            created_at: table.created_at,
-            updated_at: table.updated_at,
+            table_options:  table.table_options.clone(),
+            table_comment:  table.table_comment.clone(),
+            created_at:     table.created_at,
+            updated_at:     table.updated_at,
         }
     }
 }
@@ -98,16 +98,16 @@ impl From<&TableDefinition> for TableDefinitionRepr {
 impl From<TableDefinitionRepr> for TableDefinition {
     fn from(value: TableDefinitionRepr) -> Self {
         Self {
-            namespace_id: value.namespace_id,
-            table_name: value.table_name,
-            table_type: value.table_type,
-            columns: value.columns,
+            namespace_id:   value.namespace_id,
+            table_name:     value.table_name,
+            table_type:     value.table_type,
+            columns:        value.columns,
             schema_version: value.schema_version,
             next_column_id: value.next_column_id,
-            table_options: value.table_options,
-            table_comment: value.table_comment,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
+            table_options:  value.table_options,
+            table_comment:  value.table_comment,
+            created_at:     value.created_at,
+            updated_at:     value.updated_at,
         }
     }
 }
@@ -130,7 +130,8 @@ impl Serialize for TableDefinition {
                 &self.table_options,
                 &self.table_comment,
                 &self.created_at,
-                &self.updated_at)
+                &self.updated_at,
+            )
                 .serialize(serializer)
         }
     }
@@ -155,7 +156,8 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 TableOptions,
                 Option<String>,
                 DateTime<Utc>,
-                DateTime<Utc>);
+                DateTime<Utc>,
+            );
 
             let (
                 namespace_id,
@@ -167,7 +169,8 @@ impl<'de> Deserialize<'de> for TableDefinition {
                 table_options,
                 table_comment,
                 created_at,
-                updated_at): BinaryTuple = BinaryTuple::deserialize(deserializer)?;
+                updated_at,
+            ): BinaryTuple = BinaryTuple::deserialize(deserializer)?;
 
             Ok(Self {
                 namespace_id,
@@ -219,7 +222,8 @@ impl TableDefinition {
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_options: TableOptions,
-        table_comment: Option<String>) -> Result<Self, String> {
+        table_comment: Option<String>,
+    ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
 
@@ -251,7 +255,8 @@ impl TableDefinition {
         table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
-        table_comment: Option<String>) -> Result<Self, String> {
+        table_comment: Option<String>,
+    ) -> Result<Self, String> {
         let table_options = match table_type {
             TableType::User => TableOptions::user(),
             TableType::Shared => TableOptions::shared(),
@@ -264,7 +269,8 @@ impl TableDefinition {
 
     /// Validate and sort columns by ordinal_position
     fn validate_and_sort_columns(
-        mut columns: Vec<ColumnDefinition>) -> Result<Vec<ColumnDefinition>, String> {
+        mut columns: Vec<ColumnDefinition>,
+    ) -> Result<Vec<ColumnDefinition>, String> {
         // Check for duplicate ordinal positions
         let mut positions = std::collections::HashSet::new();
         for col in &columns {
@@ -436,7 +442,8 @@ mod tests {
             TableName::new("users"),
             TableType::User,
             sample_columns(),
-            Some("User table".to_string()))
+            Some("User table".to_string()),
+        )
         .unwrap();
 
         assert_eq!(table.namespace_id, NamespaceId::default());
@@ -454,7 +461,8 @@ mod tests {
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
-            None)
+            None,
+        )
         .unwrap();
 
         assert_eq!(table.table_type, TableType::Stream);
@@ -481,7 +489,8 @@ mod tests {
             TableType::User,
             columns,
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         // Verify columns are sorted by ordinal_position
@@ -503,7 +512,8 @@ mod tests {
             TableType::User,
             columns,
             TableOptions::user(),
-            None);
+            None,
+        );
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Duplicate ordinal_position"));
@@ -522,7 +532,8 @@ mod tests {
             TableType::User,
             columns,
             TableOptions::user(),
-            None);
+            None,
+        );
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Non-sequential"));
@@ -536,7 +547,8 @@ mod tests {
             TableType::User,
             sample_columns(),
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         let arrow_schema = table.to_arrow_schema().unwrap();
@@ -554,7 +566,8 @@ mod tests {
             TableType::User,
             sample_columns(),
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         assert_eq!(table.schema_version, 1);
@@ -572,7 +585,8 @@ mod tests {
             TableType::User,
             sample_columns(),
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         let new_col = ColumnDefinition::simple(4, "email", 4, KalamDataType::Text);
@@ -590,7 +604,8 @@ mod tests {
             TableType::User,
             sample_columns(),
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         let dropped = table.drop_column("name").unwrap();
@@ -611,7 +626,8 @@ mod tests {
             TableType::User,
             sample_columns(),
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         assert!(matches!(user_table.options(), TableOptions::User(_)));
@@ -623,7 +639,8 @@ mod tests {
             TableType::Stream,
             sample_columns(),
             TableOptions::stream(3600),
-            None)
+            None,
+        )
         .unwrap();
 
         if let TableOptions::Stream(opts) = stream_table.options() {
@@ -639,7 +656,8 @@ mod tests {
             TableType::Shared,
             sample_columns(),
             TableOptions::shared(),
-            None)
+            None,
+        )
         .unwrap();
     }
 
@@ -651,13 +669,14 @@ mod tests {
             TableType::Stream,
             sample_columns(),
             TableOptions::stream(3600),
-            None)
+            None,
+        )
         .unwrap();
 
         // Update to custom stream options
         let custom_opts = TableOptions::Stream(crate::models::schemas::StreamTableOptions {
-            ttl_seconds: 1800,
-            eviction_strategy: "size_based".to_string(),
+            ttl_seconds:           1800,
+            eviction_strategy:     "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
         });
 
@@ -685,7 +704,8 @@ mod tests {
             TableType::Shared,
             columns,
             TableOptions::shared(),
-            Some("Test table".to_string()))
+            Some("Test table".to_string()),
+        )
         .unwrap();
         let bytes = flexbuffers::to_vec(&table).expect("encode table definition");
         let decoded: TableDefinition =
@@ -712,7 +732,8 @@ mod tests {
             TableType::User,
             columns,
             TableOptions::user(),
-            None)
+            None,
+        )
         .unwrap();
 
         let pk_columns = table.get_primary_key_columns();
@@ -734,7 +755,8 @@ mod tests {
             TableType::Shared,
             columns,
             TableOptions::shared(),
-            None)
+            None,
+        )
         .unwrap();
 
         let pk_columns = table.get_primary_key_columns();

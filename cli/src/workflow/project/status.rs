@@ -15,14 +15,14 @@ use crate::{
 };
 
 pub struct ProjectStatus {
-    pub project_name: String,
-    pub environment: ResolvedEnvironment,
-    pub schema_mode: SchemaMode,
-    pub schema_source: Option<String>,
-    pub languages: Vec<String>,
+    pub project_name:       String,
+    pub environment:        ResolvedEnvironment,
+    pub schema_mode:        SchemaMode,
+    pub schema_source:      Option<String>,
+    pub languages:          Vec<String>,
     pub pending_migrations: usize,
     pub applied_migrations: usize,
-    pub total_migrations: usize,
+    pub total_migrations:   usize,
 }
 
 pub async fn collect_status(ctx: &WorkflowContext) -> Result<ProjectStatus> {
@@ -86,6 +86,24 @@ pub async fn show_status(ctx: &WorkflowContext, output: &WorkflowOutput) -> Resu
 
     if status.pending_migrations > 0 {
         output.warn("pending migrations detected; run `kalam db migrate` before deploy");
+    }
+
+    if output.json {
+        let schema = if status.pending_migrations == 0 {
+            "synced"
+        } else {
+            "pending"
+        };
+        output.emit_json(&serde_json::json!({
+            "ok": true,
+            "project": status.project_name,
+            "server": "ready",
+            "schema": schema,
+            "types": if status.languages.is_empty() { "none" } else { "current" },
+            "url": redact_url_secrets(&status.environment.url),
+            "namespace": status.environment.namespace.as_str(),
+            "pending_migrations": status.pending_migrations,
+        }));
     }
 
     Ok(())

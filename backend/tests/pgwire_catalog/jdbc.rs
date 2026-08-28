@@ -13,24 +13,24 @@ use std::{
 };
 
 const POSTGRESQL_JAR: MavenJar = MavenJar {
-    group:   "org/postgresql",
+    group:    "org/postgresql",
     artifact: "postgresql",
-    version: "42.7.5",
+    version:  "42.7.5",
 };
 const HIKARI_JAR: MavenJar = MavenJar {
-    group:   "com/zaxxer",
+    group:    "com/zaxxer",
     artifact: "HikariCP",
-    version: "5.1.0",
+    version:  "5.1.0",
 };
 const SLF4J_API_JAR: MavenJar = MavenJar {
-    group:   "org/slf4j",
+    group:    "org/slf4j",
     artifact: "slf4j-api",
-    version: "1.7.36",
+    version:  "1.7.36",
 };
 const SLF4J_NOP_JAR: MavenJar = MavenJar {
-    group:   "org/slf4j",
+    group:    "org/slf4j",
     artifact: "slf4j-nop",
-    version: "1.7.36",
+    version:  "1.7.36",
 };
 
 struct MavenJar {
@@ -80,8 +80,7 @@ fn jar_cache_dir() -> PathBuf {
 }
 
 fn smoke_source() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/pgwire_catalog/jdbc/JdbcPgwireSmoke.java")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/pgwire_catalog/jdbc/JdbcPgwireSmoke.java")
 }
 
 async fn ensure_jar(jar: &MavenJar, cache: &Path) -> Result<PathBuf, String> {
@@ -106,17 +105,11 @@ async fn ensure_jar(jar: &MavenJar, cache: &Path) -> Result<PathBuf, String> {
 
 fn classpath(jars: &[PathBuf]) -> String {
     let sep = if cfg!(windows) { ";" } else { ":" };
-    jars.iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(sep)
+    jars.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(sep)
 }
 
 fn require_marker(stdout: &str, marker: &str) {
-    assert!(
-        stdout.contains(marker),
-        "JDBC smoke stdout missing `{marker}`:\n{stdout}"
-    );
+    assert!(stdout.contains(marker), "JDBC smoke stdout missing `{marker}`:\n{stdout}");
 }
 
 /// HikariCP pool init + JDBC query/DML against KalamDB pgwire (the original JDBC failure).
@@ -132,7 +125,10 @@ async fn jdbc_hikari_pool_connects_and_queries() {
         if env::var("KALAMDB_PGWIRE_REQUIRE_JDBC").is_ok() {
             panic!("java is required when KALAMDB_PGWIRE_REQUIRE_JDBC is set");
         }
-        eprintln!("skipping JDBC e2e; install a JDK (`java` on PATH) or set KALAMDB_PGWIRE_REQUIRE_JDBC=1");
+        eprintln!(
+            "skipping JDBC e2e; install a JDK (`java` on PATH) or set \
+             KALAMDB_PGWIRE_REQUIRE_JDBC=1"
+        );
         return;
     };
 

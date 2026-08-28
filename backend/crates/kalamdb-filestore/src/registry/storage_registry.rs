@@ -25,18 +25,18 @@ use crate::{
 /// - Invalidate cache entries on storage updates
 /// - Get ObjectStore instances (cached per storage, not per table)
 pub struct StorageRegistry {
-    storages_provider: Arc<StoragesTableProvider>,
+    storages_provider:     Arc<StoragesTableProvider>,
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
     _default_storage_path: String,
     /// Remote storage timeout configuration
-    timeouts: RemoteStorageTimeouts,
+    timeouts:              RemoteStorageTimeouts,
     /// Server-wide Parquet write settings applied to all cold segment writes.
-    parquet_write: ParquetWriteSettings,
+    parquet_write:         ParquetWriteSettings,
     /// In-memory cache for StorageCached objects keyed by StorageId
     /// Avoids repeated RocksDB lookups and ensures one ObjectStore per storage
     /// (not one per table - 100 tables using same storage = 1 ObjectStore)
-    cache: DashMap<StorageId, Arc<StorageCached>>,
+    cache:                 DashMap<StorageId, Arc<StorageCached>>,
 }
 
 impl StorageRegistry {

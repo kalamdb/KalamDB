@@ -18,9 +18,9 @@ use crate::{
 #[derive(Debug, Clone)]
 struct FileUploadPart {
     placeholder: String,
-    filename: String,
-    data: Vec<u8>,
-    mime: Option<String>,
+    filename:    String,
+    data:        Vec<u8>,
+    mime:        Option<String>,
 }
 
 impl CLISession {

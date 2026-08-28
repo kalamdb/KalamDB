@@ -53,8 +53,7 @@ pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, Messa
 pub use kalamdb_commons::ids::SeqId;
 #[cfg(feature = "client-core")]
 pub use kalamdb_commons::Role;
-pub use kalamdb_commons::TableId;
-pub use kalamdb_commons::UserId;
+pub use kalamdb_commons::{TableId, UserId};
 pub use models::{
     parse_i64, BoundFileRef, FieldFlag, FieldFlags, FileDownload, FileRef, FileRefContext,
     FileUpload, KalamCellValue, KalamDataType, RowData, SchemaField,
@@ -67,8 +66,7 @@ pub use models::{
     HealthCheckResponse, HttpVersion, LoginRequest, LoginResponse, LoginUserInfo, QueryRequest,
     QueryResponse, QueryResult, ServerSetupRequest, ServerSetupResponse, SetupStatusResponse,
     SetupUserInfo, SqlSubscriptionDescriptor, SqlSubscriptionRow, SqlSubscriptionStatus,
-    SubscriptionAckMode, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions,
-    UploadProgress,
+    SubscriptionAckMode, SubscriptionConfig, SubscriptionInfo, SubscriptionOptions, UploadProgress,
 };
 #[cfg(feature = "client-core")]
 pub use query::models::QueryParam;

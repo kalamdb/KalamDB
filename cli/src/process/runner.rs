@@ -127,8 +127,9 @@ pub fn spawn_detached(program: &str, args: &[impl AsRef<str>]) -> std::io::Resul
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio::io::AsyncReadExt;
+
+    use super::*;
 
     fn echo_env_script(var: &str) -> String {
         if cfg!(windows) {

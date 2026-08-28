@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub enum TransactionOwnerParseError {
     InvalidPgSessionId {
         session_id: String,
-        reason: &'static str,
+        reason:     &'static str,
     },
 }
 

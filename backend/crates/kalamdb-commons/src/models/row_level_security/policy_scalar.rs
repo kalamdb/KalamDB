@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 
 /// Serializable scalar accepted in a compiled policy.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "snake_case")
+)]
 pub enum PolicyScalar {
     Null,
     Boolean(bool),

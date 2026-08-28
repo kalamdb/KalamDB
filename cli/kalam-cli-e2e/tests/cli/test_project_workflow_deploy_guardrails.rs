@@ -1,7 +1,8 @@
 use std::fs;
 
-use crate::common::*;
 use tempfile::TempDir;
+
+use crate::common::*;
 
 #[test]
 fn test_project_workflow_deploy_is_not_supported_on_prod() {

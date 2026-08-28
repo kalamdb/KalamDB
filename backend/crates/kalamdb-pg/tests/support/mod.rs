@@ -189,7 +189,8 @@ pub async fn new_service_with_policy_shared_tables(
     let namespace = unique_namespace(namespace_prefix);
     let mut table_ids = Vec::with_capacity(table_names.len());
     for table_name in table_names {
-        table_ids.push(create_shared_table_with_public_policy(&app_ctx, &namespace, table_name).await);
+        table_ids
+            .push(create_shared_table_with_public_policy(&app_ctx, &namespace, table_name).await);
     }
     let service = build_service(Arc::clone(&app_ctx));
     (app_ctx, service, namespace, table_ids)

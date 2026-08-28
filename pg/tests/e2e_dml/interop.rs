@@ -6,7 +6,7 @@ use super::common::{
 
 struct KalamTestUser {
     username: String,
-    user_id: String,
+    user_id:  String,
 }
 
 fn sql_first_cell_string(result: &serde_json::Value) -> Option<String> {

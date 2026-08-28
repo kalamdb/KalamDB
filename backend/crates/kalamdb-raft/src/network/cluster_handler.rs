@@ -105,15 +105,15 @@ impl ClusterService for ClusterServiceImpl {
         match result {
             Ok(payload) => Ok(Response::new(ForwardSqlResponse {
                 status_code: payload.status_code as u32,
-                body: payload.body,
-                error: String::new(),
+                body:        payload.body,
+                error:       String::new(),
             })),
             Err(e) => {
                 log::warn!("ClusterService::forward_sql handler error: {}", e);
                 Ok(Response::new(ForwardSqlResponse {
                     status_code: 500,
-                    body: Vec::new(),
-                    error: e,
+                    body:        Vec::new(),
+                    error:       e,
                 }))
             },
         }
@@ -125,14 +125,14 @@ impl ClusterService for ClusterServiceImpl {
         match self.handler.handle_ping(req).await {
             Ok(()) => Ok(Response::new(PingResponse {
                 success: true,
-                error: String::new(),
+                error:   String::new(),
                 node_id: self.manager.node_id().as_u64(),
             })),
             Err(e) => {
                 log::warn!("ClusterService::ping handler error: {}", e);
                 Ok(Response::new(PingResponse {
                     success: false,
-                    error: e,
+                    error:   e,
                     node_id: self.manager.node_id().as_u64(),
                 }))
             },

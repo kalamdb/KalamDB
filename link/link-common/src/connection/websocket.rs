@@ -28,9 +28,10 @@ use tokio_tungstenite::{
     },
 };
 
-use super::happy_eyeballs::connect_tcp_happy_eyeballs;
-
-use super::{MAX_WS_BINARY_MESSAGE_BYTES, MAX_WS_DECOMPRESSED_MESSAGE_BYTES};
+use super::{
+    happy_eyeballs::connect_tcp_happy_eyeballs, MAX_WS_BINARY_MESSAGE_BYTES,
+    MAX_WS_DECOMPRESSED_MESSAGE_BYTES,
+};
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
@@ -793,11 +794,11 @@ mod tests {
         use crate::models::{ProtocolOptions, SerializationType, ServerMessage};
 
         let msg = ServerMessage::AuthSuccess {
-            user: UserId::from("user-1"),
-            role: Role::Dba,
+            user:     UserId::from("user-1"),
+            role:     Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: crate::models::CompressionType::Gzip,
+                compression:   crate::models::CompressionType::Gzip,
             },
         };
         let bytes = rmp_serde::to_vec_named(&msg).unwrap();
@@ -813,8 +814,8 @@ mod tests {
 
         let msg = ClientMessage::Subscribe {
             subscription: SubscriptionRequest {
-                id: "sub-1".to_string(),
-                sql: "SELECT * FROM test".to_string(),
+                id:      "sub-1".to_string(),
+                sql:     "SELECT * FROM test".to_string(),
                 options: Some(SubscriptionOptions::default()),
             },
         };

@@ -3,7 +3,7 @@ use crate::error::Result;
 
 /// High-level subscription that yields materialized live-query row snapshots.
 pub struct LiveRowsSubscription {
-    inner: SubscriptionManager,
+    inner:        SubscriptionManager,
     materializer: LiveRowsMaterializer,
 }
 

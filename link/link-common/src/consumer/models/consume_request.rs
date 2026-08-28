@@ -64,13 +64,13 @@ fn default_concurrency() -> u32 {
 impl Default for ConsumeRequest {
     fn default() -> Self {
         Self {
-            topic: String::new(),
-            group_id: String::new(),
-            start: default_start(),
-            batch_size: default_batch_size(),
-            partition_id: 0,
-            timeout_seconds: None,
-            auto_ack: false,
+            topic:                     String::new(),
+            group_id:                  String::new(),
+            start:                     default_start(),
+            batch_size:                default_batch_size(),
+            partition_id:              0,
+            timeout_seconds:           None,
+            auto_ack:                  false,
             concurrency_per_partition: default_concurrency(),
         }
     }

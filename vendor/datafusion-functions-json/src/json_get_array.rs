@@ -1,14 +1,22 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, ListBuilder, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field};
-use datafusion::common::{Result as DataFusionResult, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{
+        array::{ArrayRef, ListBuilder, StringBuilder},
+        datatypes::{DataType, Field},
+    },
+    common::{Result as DataFusionResult, ScalarValue},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::Peek;
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
-use crate::common_macros::make_udf_function;
-use crate::common_union::json_field_metadata;
+use crate::{
+    common::{
+        get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath,
+    },
+    common_macros::make_udf_function,
+    common_union::json_field_metadata,
+};
 
 fn list_item_field() -> Field {
     Field::new("item", DataType::Utf8, true).with_metadata(json_field_metadata())
@@ -24,14 +32,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonGetArray {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonGetArray {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_get_array".to_string()],
+            aliases:   ["json_get_array".to_string()],
         }
     }
 }
@@ -116,7 +124,10 @@ impl InvokeResult for BuildArrayList {
     }
 }
 
-fn jiter_json_get_array(opt_json: Option<&str>, path: &[JsonPath]) -> Result<Vec<String>, GetError> {
+fn jiter_json_get_array(
+    opt_json: Option<&str>,
+    path: &[JsonPath],
+) -> Result<Vec<String>, GetError> {
     if let Some((mut jiter, peek)) = jiter_json_find(opt_json, path) {
         match peek {
             Peek::Array => {
@@ -135,7 +146,7 @@ fn jiter_json_get_array(opt_json: Option<&str>, path: &[JsonPath]) -> Result<Vec
                 }
 
                 Ok(array_items)
-            }
+            },
             _ => get_err!(),
         }
     } else {

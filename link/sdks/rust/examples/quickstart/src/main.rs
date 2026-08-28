@@ -20,9 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(Duration::from_secs(30))
         .build()?;
 
-    let response = client
-        .execute_query("SELECT CURRENT_USER()", None, None, None)
-        .await?;
+    let response = client.execute_query("SELECT CURRENT_USER()", None, None, None).await?;
 
     println!("status: {:?}", response.status);
     if let Some(result) = response.results.first() {

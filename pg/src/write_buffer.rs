@@ -44,12 +44,12 @@ pub fn has_any_pending_writes() -> bool {
 /// A pending batch of rows for a specific table + user context.
 struct PendingBatch {
     session_id: String,
-    table_id: TableId,
+    table_id:   TableId,
     table_type: TableType,
-    user_id: Option<UserId>,
-    rows: Vec<Row>,
-    executor: Arc<dyn KalamBackendExecutor>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    user_id:    Option<UserId>,
+    rows:       Vec<Row>,
+    executor:   Arc<dyn KalamBackendExecutor>,
+    runtime:    Arc<tokio::runtime::Runtime>,
 }
 
 impl PendingBatch {

@@ -352,7 +352,7 @@ impl raft_server::Raft for RaftService {
             })),
             Err(e) => Ok(Response::new(RaftRpcResponse {
                 payload: Vec::new(),
-                error: e.to_string(),
+                error:   e.to_string(),
             })),
         }
     }
@@ -379,11 +379,11 @@ impl raft_server::Raft for RaftService {
                 leader
             );
             return Ok(Response::new(ClientProposalResponse {
-                success: false,
-                payload: Vec::new(),
-                error: format!("Not leader for group {}", group_id),
+                success:     false,
+                payload:     Vec::new(),
+                error:       format!("Not leader for group {}", group_id),
                 leader_hint: leader.map(|n| n.as_u64()),
-                log_index: 0,
+                log_index:   0,
             }));
         }
 
@@ -399,11 +399,11 @@ impl raft_server::Raft for RaftService {
                 log_index,
             })),
             Err(e) => Ok(Response::new(ClientProposalResponse {
-                success: false,
-                payload: Vec::new(),
-                error: e.to_string(),
+                success:     false,
+                payload:     Vec::new(),
+                error:       e.to_string(),
                 leader_hint: self.manager.current_leader(group_id).map(|n| n.as_u64()),
-                log_index: 0,
+                log_index:   0,
             })),
         }
     }
@@ -612,7 +612,7 @@ mod tests {
         let req = RaftRpcRequest {
             group_id: "MetaSystem".to_string(),
             rpc_type: RaftRpcKind::Vote.to_string(),
-            payload: vec![1, 2, 3],
+            payload:  vec![1, 2, 3],
         };
 
         assert_eq!(req.group_id, "MetaSystem");

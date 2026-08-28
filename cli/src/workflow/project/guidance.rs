@@ -12,9 +12,8 @@ pub fn bullet_list(items: &[impl AsRef<str>]) -> String {
 
 pub fn init_project_already_exists(project_dir: &Path) -> String {
     format!(
-        "a KalamDB project already exists at '{}'.\n\n\
-         How to fix:\n{}\n\n\
-         If you meant to start fresh, move or delete the existing project directory first.",
+        "a KalamDB project already exists at '{}'.\n\nHow to fix:\n{}\n\nIf you meant to start \
+         fresh, move or delete the existing project directory first.",
         project_dir.display(),
         bullet_list(&[
             "Open the existing project: cd into that directory and run `kalam dev`",
@@ -26,11 +25,9 @@ pub fn init_project_already_exists(project_dir: &Path) -> String {
 
 pub fn init_requires_non_interactive_flags() -> String {
     format!(
-        "interactive setup needs a terminal (TTY), but stdin/stdout is not interactive.\n\n\
-         How to fix:\n{}\n\n\
-         Example:\n\
-         kalam init --yes --name my-app --schema-mode sql --languages typescript \
-         --server-mode local",
+        "interactive setup needs a terminal (TTY), but stdin/stdout is not interactive.\n\nHow to \
+         fix:\n{}\n\nExample:\nkalam init --yes --name my-app --schema-mode sql --languages \
+         typescript --server-mode local",
         bullet_list(&[
             "Rerun in a regular terminal window instead of a piped/CI shell",
             "Or pass --yes plus the flags for every choice you want to make",
@@ -41,8 +38,7 @@ pub fn init_requires_non_interactive_flags() -> String {
 
 pub fn init_empty_project_name() -> String {
     format!(
-        "project name must not be empty.\n\n\
-         How to fix:\n{}",
+        "project name must not be empty.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Rerun `kalam init` and enter a name when prompted",
             "Or pass one explicitly: `kalam init --yes --name my-app`",
@@ -52,8 +48,7 @@ pub fn init_empty_project_name() -> String {
 
 pub fn init_remote_schema_unavailable() -> String {
     format!(
-        "remote schema mode is not available yet.\n\n\
-         How to fix:\n{}",
+        "remote schema mode is not available yet.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Use SQL schema mode: `kalam init --schema-mode sql`",
             "Keep schema.sql in the project and let `kalam dev` apply it locally",
@@ -63,8 +58,7 @@ pub fn init_remote_schema_unavailable() -> String {
 
 pub fn init_repository_templates_unavailable() -> String {
     format!(
-        "loading templates from a repository is not available yet.\n\n\
-         How to fix:\n{}",
+        "loading templates from a repository is not available yet.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Choose a built-in template during interactive init",
             "Or pass one explicitly: `kalam init --template simple-live`",
@@ -89,11 +83,8 @@ pub fn init_invalid_server_url(url: &str, parse_error: &str) -> String {
 
 pub fn init_unsupported_language(language: &str) -> String {
     format!(
-        "unsupported language target '{language}'.\n\n\
-         How to fix:\n{}\n\n\
-         Example:\n\
-         kalam init --yes --languages typescript\n\
-         kalam init --yes --languages typescript,dart",
+        "unsupported language target '{language}'.\n\nHow to fix:\n{}\n\nExample:\nkalam init \
+         --yes --languages typescript\nkalam init --yes --languages typescript,dart",
         bullet_list(&[
             "Use typescript and/or dart (flutter is accepted as an alias for dart)",
             "Aliases: ts is accepted for typescript",
@@ -103,8 +94,7 @@ pub fn init_unsupported_language(language: &str) -> String {
 
 pub fn init_missing_language_targets() -> String {
     format!(
-        "at least one generated language target is required.\n\n\
-         How to fix:\n{}",
+        "at least one generated language target is required.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Pass --languages typescript or --languages typescript,dart",
             "In interactive mode, select at least one language in the prompt",
@@ -119,7 +109,11 @@ pub fn init_scaffold_io_error(operation: &str, path: &Path, error: &std::io::Err
     ];
     if error.kind() == std::io::ErrorKind::PermissionDenied {
         hints.insert(0, "Close programs that may lock files in the target directory".to_string());
-        hints.push("On Windows, try running the terminal as Administrator or choose a user-writable folder".to_string());
+        hints.push(
+            "On Windows, try running the terminal as Administrator or choose a user-writable \
+             folder"
+                .to_string(),
+        );
     }
     if error.kind() == std::io::ErrorKind::NotFound {
         hints.insert(
@@ -137,8 +131,7 @@ pub fn init_scaffold_io_error(operation: &str, path: &Path, error: &std::io::Err
 
 pub fn init_missing_scaffold_template(project_path: &str, bundle: &str) -> String {
     format!(
-        "missing scaffold template file '{project_path}' in '{bundle}'.\n\n\
-         How to fix:\n{}",
+        "missing scaffold template file '{project_path}' in '{bundle}'.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Reinstall or upgrade the Kalam CLI — built-in templates ship with the binary",
             "If you built from source, run `cargo build --release` in the cli workspace",
@@ -153,8 +146,7 @@ pub fn init_stage_context(stage: &str, message: String) -> String {
 
 pub fn init_config_validation_failed(detail: &str) -> String {
     format!(
-        "project configuration is invalid ({detail}).\n\n\
-         How to fix:\n{}",
+        "project configuration is invalid ({detail}).\n\nHow to fix:\n{}",
         bullet_list(&[
             "Open kalam.toml and correct the field mentioned above",
             "Compare with a fresh scaffold: kalam init --yes --project-dir /tmp/kalam-ref",
@@ -165,8 +157,7 @@ pub fn init_config_validation_failed(detail: &str) -> String {
 
 pub fn dev_kalamdb_server_bin_missing(path: &Path) -> String {
     format!(
-        "KALAMDB_SERVER_BIN points to a file that does not exist ('{}').\n\n\
-         How to fix:\n{}",
+        "KALAMDB_SERVER_BIN points to a file that does not exist ('{}').\n\nHow to fix:\n{}",
         path.display(),
         bullet_list(&[
             "Unset the variable if you want the CLI to auto-locate the server",
@@ -178,12 +169,11 @@ pub fn dev_kalamdb_server_bin_missing(path: &Path) -> String {
 
 pub fn dev_kalamdb_server_not_found() -> String {
     format!(
-        "kalamdb-server was not found (checked KALAMDB_SERVER_BIN, ~/.kalam/bin, and PATH).\n\n\
-         How to fix:\n{}\n\n\
-         After the server is available, rerun:\n\
-         kalam dev",
+        "kalamdb-server was not found (checked KALAMDB_SERVER_BIN, ~/.kalam/bin, and \
+         PATH).\n\nHow to fix:\n{}\n\nAfter the server is available, rerun:\nkalam dev",
         bullet_list(&[
-            "Run `kalam dev` in an interactive terminal — the CLI can download the server on first use",
+            "Run `kalam dev` in an interactive terminal — the CLI can download the server on \
+             first use",
             "Or set KALAMDB_SERVER_BIN to the full path of kalamdb-server",
             "Or install kalamdb-server into ~/.kalam/bin (created automatically on download)",
             "On Windows, ensure kalamdb-server.exe is on PATH or use KALAMDB_SERVER_BIN",
@@ -194,8 +184,7 @@ pub fn dev_kalamdb_server_not_found() -> String {
 
 pub fn dev_kalamdb_server_non_interactive_download(detail: &str) -> String {
     format!(
-        "{detail}\n\n\
-         How to fix:\n{}",
+        "{detail}\n\nHow to fix:\n{}",
         bullet_list(&[
             "Rerun `kalam dev` in a regular terminal (TTY) so the CLI can download the server",
             "Or download/install kalamdb-server manually and set KALAMDB_SERVER_BIN",
@@ -215,7 +204,9 @@ fn local_server_start_base_hints(server_program: &Path) -> Vec<String> {
 
 pub fn dev_reusing_existing_local_server(url: &str) -> String {
     format!(
-        "using existing KalamDB server at {url} (already running; this session did not start it). Stop that process if you expected kalam dev to launch a fresh local server for this project"
+        "using existing KalamDB server at {url} (already running; this session did not start it). \
+         Stop that process if you expected kalam dev to launch a fresh local server for this \
+         project"
     )
 }
 
@@ -227,18 +218,22 @@ pub fn dev_local_kalamdb_server_start_failed(server_program: &Path, detail: &str
         let mut hints = hints;
         hints.extend([
             format!(
-                "Install the Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64): {VC_REDIST_X64_URL}"
+                "Install the Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 \
+                 (x64): {VC_REDIST_X64_URL}"
             ),
-            "If you downloaded kalamdb-server from GitHub, extract the full zip so msvcp140.dll, vcruntime140.dll, and vcruntime140_1.dll sit next to the .exe".to_string(),
-            "If you use the managed install under %USERPROFILE%\\.kalam\\bin, delete that folder and rerun `kalam dev` to redownload the full archive".to_string(),
+            "If you downloaded kalamdb-server from GitHub, extract the full zip so msvcp140.dll, \
+             vcruntime140.dll, and vcruntime140_1.dll sit next to the .exe"
+                .to_string(),
+            "If you use the managed install under %USERPROFILE%\\.kalam\\bin, delete that folder \
+             and rerun `kalam dev` to redownload the full archive"
+                .to_string(),
         ]);
         hints
     };
 
     format!(
-        "local KalamDB server could not start ({detail}).\n\n\
-         Server binary:\n  {}\n\n\
-         How to fix:\n{}",
+        "local KalamDB server could not start ({detail}).\n\nServer binary:\n  {}\n\nHow to \
+         fix:\n{}",
         server_program.display(),
         bullet_list(&hints)
     )
@@ -260,21 +255,22 @@ pub fn dev_process_spawn_failed(name: &str, shell: &str, command: &str, error: &
                 .to_string(),
         );
         hints.push(
-            "On Windows, npm/pnpm/yarn are often *.cmd shims — the CLI uses cmd /C for dev processes"
+            "On Windows, npm/pnpm/yarn are often *.cmd shims — the CLI uses cmd /C for dev \
+             processes"
                 .to_string(),
         );
     }
     if lower.contains("permission") || lower.contains("eacces") {
         hints.push(
-            "Permission denied: check execute bits (Unix) or run the terminal as Administrator (Windows)"
+            "Permission denied: check execute bits (Unix) or run the terminal as Administrator \
+             (Windows)"
                 .to_string(),
         );
     }
 
     format!(
-        "failed to start dev process '{name}' via {shell} ({error}).\n\n\
-         Command:\n  {command}\n\n\
-         How to fix:\n{}",
+        "failed to start dev process '{name}' via {shell} ({error}).\n\nCommand:\n  \
+         {command}\n\nHow to fix:\n{}",
         bullet_list(&hints)
     )
 }
@@ -290,15 +286,16 @@ pub fn dev_auth_guidance_message(
     let profile_name = profile.unwrap_or("<profile>");
 
     format!(
-        "authentication failed: {detail}. Edit {} and set `KALAM_PROFILE={profile_name}` to a CLI-saved profile, or run `kalam login --instance {profile_name}` and then update `.env` to use that profile",
+        "authentication failed: {detail}. Edit {} and set `KALAM_PROFILE={profile_name}` to a \
+         CLI-saved profile, or run `kalam login --instance {profile_name}` and then update `.env` \
+         to use that profile",
         display_project_path(project_root, &env_path)
     )
 }
 
 pub fn dev_empty_process_command(name: &str) -> String {
     format!(
-        "dev.processes.{name} is empty in kalam.toml.\n\n\
-         How to fix:\n{}",
+        "dev.processes.{name} is empty in kalam.toml.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Remove the entry if you do not need that process",
             "Or set a shell command, for example: npm run dev",

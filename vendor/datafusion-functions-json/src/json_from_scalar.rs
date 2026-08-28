@@ -1,15 +1,21 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, ArrayRef, AsArray, UnionArray};
-use datafusion::arrow::datatypes::{
-    DataType, Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type, UInt32Type, UInt64Type,
-    UInt8Type,
+use datafusion::{
+    arrow::{
+        array::{Array, ArrayRef, AsArray, UnionArray},
+        datatypes::{
+            DataType, Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type,
+            UInt16Type, UInt32Type, UInt64Type, UInt8Type,
+        },
+    },
+    common::{exec_datafusion_err, exec_err, plan_err, Result as DataFusionResult, ScalarValue},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
 };
-use datafusion::common::{exec_datafusion_err, exec_err, plan_err, Result as DataFusionResult, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 
-use crate::common_macros::make_udf_function;
-use crate::common_union::{JsonUnion, JsonUnionField};
+use crate::{
+    common_macros::make_udf_function,
+    common_union::{JsonUnion, JsonUnionField},
+};
 
 make_udf_function!(
     JsonFromScalar,
@@ -21,14 +27,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonFromScalar {
     signature: Signature,
-    aliases: [String; 2],
+    aliases:   [String; 2],
 }
 
 impl Default for JsonFromScalar {
     fn default() -> Self {
         Self {
             signature: Signature::any(1, Volatility::Immutable),
-            aliases: ["json_from_scalar".to_string(), "scalar_to_json".to_string()],
+            aliases:   ["json_from_scalar".to_string(), "scalar_to_json".to_string()],
         }
     }
 }
@@ -60,10 +66,10 @@ impl ScalarUDFImpl for JsonFromScalar {
             | DataType::Float64
             | DataType::Utf8
             | DataType::LargeUtf8
-            | DataType::Utf8View => {}
+            | DataType::Utf8View => {},
             _ => {
                 return plan_err!("Unsupported type for json_from_scalar: {:?}", arg_types[0]);
-            }
+            },
         }
         Ok(JsonUnion::data_type())
     }
@@ -74,12 +80,12 @@ impl ScalarUDFImpl for JsonFromScalar {
             ColumnarValue::Scalar(scalar) => {
                 let field = scalar_to_json_union_field(scalar)?;
                 Ok(ColumnarValue::Scalar(JsonUnionField::scalar_value(Some(field))))
-            }
+            },
             ColumnarValue::Array(array) => {
                 let union = array_to_json_union(&array)?;
                 let union_array: UnionArray = union.try_into()?;
                 Ok(ColumnarValue::Array(Arc::new(union_array) as ArrayRef))
-            }
+            },
         }
     }
 
@@ -120,14 +126,14 @@ fn scalar_to_json_union_field(scalar: ScalarValue) -> DataFusionResult<JsonUnion
             Ok(JsonUnionField::Int(i64::try_from(v).map_err(|_| {
                 exec_datafusion_err!("UInt64 value {} is out of range for i64", v)
             })?))
-        }
+        },
         // Float types - coerce to f64
         ScalarValue::Float32(Some(v)) => Ok(JsonUnionField::Float(f64::from(v))),
         ScalarValue::Float64(Some(v)) => Ok(JsonUnionField::Float(v)),
         // String types
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) | ScalarValue::Utf8View(Some(s)) => {
-            Ok(JsonUnionField::Str(s))
-        }
+        ScalarValue::Utf8(Some(s))
+        | ScalarValue::LargeUtf8(Some(s))
+        | ScalarValue::Utf8View(Some(s)) => Ok(JsonUnionField::Str(s)),
         _ => exec_err!("Unsupported type for json_from_scalar: {:?}", scalar.data_type()),
     }
 }
@@ -135,7 +141,9 @@ fn scalar_to_json_union_field(scalar: ScalarValue) -> DataFusionResult<JsonUnion
 fn array_to_json_union(array: &ArrayRef) -> DataFusionResult<JsonUnion> {
     Ok(match array.data_type() {
         DataType::Null => (0..array.len()).map(|_| Some(JsonUnionField::JsonNull)).collect(),
-        DataType::Boolean => array.as_boolean().iter().map(|v| v.map(JsonUnionField::Bool)).collect(),
+        DataType::Boolean => {
+            array.as_boolean().iter().map(|v| v.map(JsonUnionField::Bool)).collect()
+        },
         // Integer types - coerce to i64
         DataType::Int8 => array
             .as_primitive::<Int8Type>()
@@ -181,12 +189,15 @@ fn array_to_json_union(array: &ArrayRef) -> DataFusionResult<JsonUnion> {
                     union.push_none();
                 } else {
                     union.push(JsonUnionField::Int(i64::try_from(arr.value(i)).map_err(|_| {
-                        exec_datafusion_err!("UInt64 value {} is out of range for i64", arr.value(i))
+                        exec_datafusion_err!(
+                            "UInt64 value {} is out of range for i64",
+                            arr.value(i)
+                        )
                     })?));
                 }
             }
             return Ok(union);
-        }
+        },
         // Float types - coerce to f64
         DataType::Float32 => array
             .as_primitive::<Float32Type>()
@@ -216,6 +227,6 @@ fn array_to_json_union(array: &ArrayRef) -> DataFusionResult<JsonUnion> {
             .collect(),
         dt => {
             return exec_err!("Unsupported array type for json_from_scalar: {:?}", dt);
-        }
+        },
     })
 }

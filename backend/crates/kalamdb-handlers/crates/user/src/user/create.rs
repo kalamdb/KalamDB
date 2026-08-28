@@ -25,7 +25,7 @@ const DEFAULT_INVITE_TTL_MILLIS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
 /// Handler for CREATE USER
 pub struct CreateUserHandler {
-    app_context: Arc<AppContext>,
+    app_context:        Arc<AppContext>,
     enforce_complexity: bool,
 }
 

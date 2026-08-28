@@ -36,10 +36,10 @@ where
 /// materializing rows. The adapter slices the final batch when the limit is
 /// reached so upstream Arrow buffers stay shared.
 pub struct LimitedRecordBatchStream {
-    inner: SendableRecordBatchStream,
-    schema: SchemaRef,
+    inner:     SendableRecordBatchStream,
+    schema:    SchemaRef,
     remaining: usize,
-    done: bool,
+    done:      bool,
 }
 
 impl LimitedRecordBatchStream {

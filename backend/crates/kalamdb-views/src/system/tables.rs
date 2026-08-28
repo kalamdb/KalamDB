@@ -75,7 +75,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Namespace containing this table".to_string())),
+                Some("Namespace containing this table".to_string()),
+            ),
             ColumnDefinition::new(
                 2,
                 "table_name",
@@ -85,7 +86,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table name within namespace".to_string())),
+                Some("Table name within namespace".to_string()),
+            ),
             ColumnDefinition::new(
                 3,
                 "table_type",
@@ -95,7 +97,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table type: USER, SHARED, STREAM, SYSTEM".to_string())),
+                Some("Table type: USER, SHARED, STREAM, SYSTEM".to_string()),
+            ),
             ColumnDefinition::new(
                 4,
                 "storage_id",
@@ -105,7 +108,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Storage configuration ID (nullable)".to_string())),
+                Some("Storage configuration ID (nullable)".to_string()),
+            ),
             ColumnDefinition::new(
                 5,
                 "version",
@@ -115,7 +119,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current schema version".to_string())),
+                Some("Current schema version".to_string()),
+            ),
             ColumnDefinition::new(
                 6,
                 "options",
@@ -125,7 +130,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table options as JSON".to_string())),
+                Some("Table options as JSON".to_string()),
+            ),
             ColumnDefinition::new(
                 7,
                 "comment",
@@ -135,7 +141,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table comment/description".to_string())),
+                Some("Table comment/description".to_string()),
+            ),
             ColumnDefinition::new(
                 8,
                 "updated_at",
@@ -145,7 +152,8 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Last update timestamp".to_string())),
+                Some("Last update timestamp".to_string()),
+            ),
             ColumnDefinition::new(
                 9,
                 "created_at",
@@ -155,13 +163,15 @@ impl TablesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Table creation timestamp".to_string())),
+                Some("Table creation timestamp".to_string()),
+            ),
         ];
 
         system_view_definition(
             SystemTable::Tables,
             columns,
-            "Table metadata view (computed from system.schemas)")
+            "Table metadata view (computed from system.schemas)",
+        )
     }
 
     /// Create a new tables view
@@ -244,7 +254,8 @@ impl VirtualView for TablesView {
                 Arc::new(comments.finish()) as ArrayRef,
                 Arc::new(updated_ats.finish()) as ArrayRef,
                 Arc::new(created_ats.finish()) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|e| RegistryError::Other(format!("Failed to build tables view batch: {}", e)))
     }
 }

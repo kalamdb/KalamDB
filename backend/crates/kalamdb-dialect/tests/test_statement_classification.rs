@@ -134,10 +134,7 @@ fn test_slow_query_trackable_dml_and_select_only() {
     ];
     for sql in not_trackable {
         let stmt = SqlStatement::classify_and_parse(sql, &ns, role).expect(sql);
-        assert!(
-            !stmt.is_slow_query_trackable(),
-            "expected not trackable: {sql}"
-        );
+        assert!(!stmt.is_slow_query_trackable(), "expected not trackable: {sql}");
     }
 }
 
@@ -145,12 +142,10 @@ fn test_slow_query_trackable_dml_and_select_only() {
 fn test_classify_show_transaction_isolation_level_for_jdbc() {
     let ns = NamespaceId::new("default");
     for role in [Role::User, Role::Service, Role::Dba] {
-        let stmt = SqlStatement::classify_and_parse(
-            "SHOW TRANSACTION ISOLATION LEVEL",
-            &ns,
-            role,
-        )
-        .unwrap_or_else(|err| panic!("JDBC SHOW TRANSACTION ISOLATION LEVEL should classify for {role:?}: {err}"));
+        let stmt = SqlStatement::classify_and_parse("SHOW TRANSACTION ISOLATION LEVEL", &ns, role)
+            .unwrap_or_else(|err| {
+                panic!("JDBC SHOW TRANSACTION ISOLATION LEVEL should classify for {role:?}: {err}")
+            });
         assert!(
             matches!(stmt.kind(), SqlStatementKind::DataFusionMetaCommand),
             "expected DataFusionMetaCommand for {role:?}, got {:?}",

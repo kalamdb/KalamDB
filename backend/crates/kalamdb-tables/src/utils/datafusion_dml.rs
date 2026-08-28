@@ -34,7 +34,7 @@ use kalamdb_transactions::{
 
 pub struct OverlayScanProjection {
     pub effective_projection: Option<Vec<usize>>,
-    pub final_projection: Option<Vec<usize>>,
+    pub final_projection:     Option<Vec<usize>>,
 }
 
 #[derive(Debug)]

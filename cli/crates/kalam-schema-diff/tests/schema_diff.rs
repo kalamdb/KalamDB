@@ -129,7 +129,8 @@ fn detect_drop_table_is_advisory_without_destructive_option() {
 
     assert_contains(
         &diff.up,
-        "-- destructive change skipped: table app.users exists in current schema but not in target schema",
+        "-- destructive change skipped: table app.users exists in current schema but not in \
+         target schema",
     );
     assert_contains(
         &diff.up,
@@ -147,11 +148,13 @@ fn detect_drop_column_is_advisory_without_destructive_option() {
 
     assert_contains(
         &diff.up,
-        "-- destructive change skipped: column app.users.email exists in current schema but not in target schema",
+        "-- destructive change skipped: column app.users.email exists in current schema but not \
+         in target schema",
     );
     assert_contains(
         &diff.up,
-        "-- rerun with destructive changes enabled to emit: ALTER TABLE app.users DROP COLUMN email;",
+        "-- rerun with destructive changes enabled to emit: ALTER TABLE app.users DROP COLUMN \
+         email;",
     );
     assert!(
         !diff.up.lines().any(|line| line == "ALTER TABLE app.users DROP COLUMN email;"),
@@ -235,7 +238,8 @@ fn detect_change_topic_retention() {
 
     assert_contains(
         &diff.up,
-        "ALTER TOPIC app.events SET RETENTION WITH (retention_seconds = 7200, retention_max_bytes = NULL);",
+        "ALTER TOPIC app.events SET RETENTION WITH (retention_seconds = 7200, retention_max_bytes \
+         = NULL);",
     );
 }
 
@@ -305,7 +309,8 @@ fn detect_drop_topic_source_route() {
 
     assert_contains(
         &diff.up,
-        "-- manual review required: topic app.events source message_streams on DELETE was removed from target schema",
+        "-- manual review required: topic app.events source message_streams on DELETE was removed \
+         from target schema",
     );
 }
 
@@ -326,11 +331,13 @@ fn detect_change_topic_source_where_filter() {
 
     assert_contains(
         &diff.up,
-        "ALTER TOPIC app.events ADD SOURCE message_streams ON INSERT WHERE priority >= 10 WITH (payload = 'full');",
+        "ALTER TOPIC app.events ADD SOURCE message_streams ON INSERT WHERE priority >= 10 WITH \
+         (payload = 'full');",
     );
     assert_contains(
         &diff.up,
-        "-- manual review required: topic app.events source message_streams on INSERT was removed from target schema",
+        "-- manual review required: topic app.events source message_streams on INSERT was removed \
+         from target schema",
     );
 }
 
@@ -345,7 +352,8 @@ fn detect_noop_same_schema_with_different_formatting() {
           COMPRESSION = 'zstd'
         );
     "#;
-    let after = "CREATE TABLE app.users(id BIGINT PRIMARY KEY,email TEXT NOT NULL) WITH (COMPRESSION='zstd');";
+    let after = "CREATE TABLE app.users(id BIGINT PRIMARY KEY,email TEXT NOT NULL) WITH \
+                 (COMPRESSION='zstd');";
 
     let diff = diff(before, after);
 
@@ -447,7 +455,8 @@ fn combined_schema_diff_detects_most_cases() {
     );
     assert_contains(
         &diff.up,
-        "ALTER TOPIC app.events ADD SOURCE message_streams ON INSERT WHERE priority >= 10 WITH (payload = 'full');",
+        "ALTER TOPIC app.events ADD SOURCE message_streams ON INSERT WHERE priority >= 10 WITH \
+         (payload = 'full');",
     );
     assert_contains(&diff.up, "CREATE TOPIC app.new_topic PARTITIONS 2;");
     assert_contains(&diff.up, "DROP TOPIC app.old_topic;");
@@ -463,4 +472,248 @@ fn run_multiple_times_diff() {
     for _ in 0..20 {
         assert_eq!(diff(before, after).up, expected);
     }
+}
+
+#[test]
+fn detect_create_policy_after_new_shared_table() {
+    let diff = diff(
+        "",
+        r#"
+            CREATE TABLE app.documents (
+              id BIGINT PRIMARY KEY,
+              owner_id TEXT NOT NULL
+            );
+
+            CREATE POLICY owner_read ON app.documents
+              FOR SELECT TO user
+              USING (owner_id = CURRENT_USER);
+        "#,
+    );
+
+    assert_contains(&diff.up, "CREATE TABLE app.documents");
+    assert_contains(
+        &diff.up,
+        "CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (owner_id = \
+         CURRENT_USER);",
+    );
+    assert!(
+        diff.up.find("CREATE TABLE app.documents").unwrap()
+            < diff.up.find("CREATE POLICY owner_read").unwrap(),
+        "{}",
+        diff.up
+    );
+    assert_not_contains(&diff.up, "CREATE POLICY documents_all");
+}
+
+#[test]
+fn detect_starter_rls_policy_for_new_shared_table_without_policy() {
+    let diff = diff("", "CREATE TABLE app.posts (id BIGINT PRIMARY KEY, title TEXT NOT NULL);");
+
+    assert_contains(&diff.up, "CREATE TABLE app.posts");
+    assert_contains(
+        &diff.up,
+        "-- shared table app.posts is FORCE RLS (default-deny). Copy this policy into schema.sql \
+         to keep editing it there.",
+    );
+    assert_contains(
+        &diff.up,
+        "CREATE POLICY posts_all ON app.posts FOR ALL TO PUBLIC USING (true) WITH CHECK (true);",
+    );
+}
+
+#[test]
+fn detect_user_table_does_not_emit_starter_rls_policy() {
+    let diff = diff("", "CREATE USER TABLE app.inbox (id BIGINT PRIMARY KEY);");
+
+    assert_contains(&diff.up, "CREATE USER TABLE app.inbox");
+    assert_not_contains(&diff.up, "CREATE POLICY");
+}
+
+#[test]
+fn detect_add_policy_to_existing_shared_table() {
+    let diff = diff(
+        "CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);",
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+
+            CREATE POLICY owner_read ON app.documents
+              FOR SELECT TO user
+              USING (owner_id = CURRENT_USER);
+        "#,
+    );
+
+    assert_not_contains(&diff.up, "CREATE TABLE app.documents");
+    assert_contains(
+        &diff.up,
+        "CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (owner_id = \
+         CURRENT_USER);",
+    );
+}
+
+#[test]
+fn detect_alter_policy_using_and_targets() {
+    let diff = diff(
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (owner_id = CURRENT_USER);
+        "#,
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR SELECT TO user, service USING (owner_id = CURRENT_USER AND status = 'active');
+        "#,
+    );
+
+    assert_contains(
+        &diff.up,
+        "ALTER POLICY owner_read ON app.documents TO user, service USING (owner_id = CURRENT_USER \
+         AND status = 'active');",
+    );
+    assert_not_contains(&diff.up, "DROP POLICY");
+    assert_not_contains(&diff.up, "CREATE POLICY");
+}
+
+#[test]
+fn detect_policy_command_change_emits_drop_and_create() {
+    let diff = destructive_diff(
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (owner_id = CURRENT_USER);
+        "#,
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR ALL TO user USING (owner_id = CURRENT_USER) WITH CHECK (owner_id = CURRENT_USER);
+        "#,
+    );
+
+    assert_contains(&diff.up, "DROP POLICY owner_read ON app.documents;");
+    assert_contains(
+        &diff.up,
+        "CREATE POLICY owner_read ON app.documents FOR ALL TO user USING (owner_id = \
+         CURRENT_USER) WITH CHECK (owner_id = CURRENT_USER);",
+    );
+}
+
+#[test]
+fn detect_drop_policy() {
+    let diff = destructive_diff(
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (true);
+        "#,
+        "CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);",
+    );
+
+    assert_contains(&diff.up, "DROP POLICY owner_read ON app.documents;");
+}
+
+#[test]
+fn detect_drop_policy_is_advisory_without_destructive_option() {
+    let diff = diff(
+        r#"
+            CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);
+            CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (true);
+        "#,
+        "CREATE TABLE app.documents (id BIGINT PRIMARY KEY, owner_id TEXT NOT NULL);",
+    );
+
+    assert_contains(
+        &diff.up,
+        "-- destructive change skipped: policy owner_read on app.documents exists in current \
+         schema but not in target schema",
+    );
+    assert!(!diff.up.lines().any(|line| line == "DROP POLICY owner_read ON app.documents;"));
+}
+
+#[test]
+fn detect_create_policy_requires_shared_table() {
+    let err = diff_schema_sql(
+        "",
+        r#"
+            CREATE USER TABLE app.inbox (id BIGINT PRIMARY KEY);
+            CREATE POLICY inbox_read ON app.inbox FOR SELECT TO user USING (true);
+        "#,
+    )
+    .expect_err("policies are only valid on shared tables");
+
+    assert_contains(&err.to_string(), "shared tables");
+}
+
+#[test]
+fn detect_create_policy_requires_table_in_schema() {
+    let err = diff_schema_sql(
+        "",
+        "CREATE POLICY owner_read ON app.documents FOR SELECT TO user USING (true);",
+    )
+    .expect_err("policy table must exist");
+
+    assert_contains(&err.to_string(), "app.documents");
+    assert_contains(&err.to_string(), "schema.sql");
+}
+
+#[test]
+fn detect_add_flush_policy_to_existing_table() {
+    let diff = diff(
+        "CREATE USER TABLE app.messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);",
+        r#"
+            CREATE USER TABLE app.messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL)
+            WITH (FLUSH_POLICY = 'rows:100000,interval:10800');
+        "#,
+    );
+
+    assert_contains(
+        &diff.up,
+        "ALTER TABLE app.messages SET TBLPROPERTIES (FLUSH_POLICY = 'rows:100000,interval:10800');",
+    );
+}
+
+#[test]
+fn detect_create_table_includes_flush_policy() {
+    let diff = diff(
+        "",
+        r#"
+            CREATE USER TABLE app.messages (
+              id BIGINT PRIMARY KEY,
+              body TEXT NOT NULL
+            )
+            WITH (
+              FLUSH_POLICY = 'rows:1000,interval:60'
+            );
+        "#,
+    );
+
+    assert_contains(&diff.up, "CREATE USER TABLE app.messages");
+    assert_contains(&diff.up, "FLUSH_POLICY = 'rows:1000,interval:60'");
+}
+
+#[test]
+fn detect_change_flush_policy() {
+    let diff = diff(
+        r#"
+            CREATE TABLE app.events (id BIGINT PRIMARY KEY)
+            WITH (FLUSH_POLICY = 'rows:1000', COMPRESSION = 'snappy');
+        "#,
+        r#"
+            CREATE TABLE app.events (id BIGINT PRIMARY KEY)
+            WITH (FLUSH_POLICY = 'rows:5000,interval:60', COMPRESSION = 'snappy');
+        "#,
+    );
+
+    assert_contains(
+        &diff.up,
+        "ALTER TABLE app.events SET TBLPROPERTIES (FLUSH_POLICY = 'rows:5000,interval:60');",
+    );
+    assert_not_contains(&diff.up, "COMPRESSION");
+}
+
+#[test]
+fn detect_clear_flush_policy() {
+    let diff = diff(
+        r#"
+            CREATE USER TABLE app.messages (id BIGINT PRIMARY KEY)
+            WITH (FLUSH_POLICY = 'rows:1000');
+        "#,
+        "CREATE USER TABLE app.messages (id BIGINT PRIMARY KEY);",
+    );
+
+    assert_contains(&diff.up, "ALTER TABLE app.messages SET TBLPROPERTIES (FLUSH_POLICY = NULL);");
 }

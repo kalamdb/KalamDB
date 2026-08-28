@@ -37,11 +37,11 @@ impl std::fmt::Display for HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectivityTestResult {
     /// Whether the connection was successful.
-    pub connected: bool,
+    pub connected:  bool,
     /// Latency of the connection test in milliseconds.
     pub latency_ms: u64,
     /// Error message if connection failed.
-    pub error: Option<String>,
+    pub error:      Option<String>,
 }
 
 impl ConnectivityTestResult {
@@ -71,25 +71,25 @@ impl ConnectivityTestResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageHealthResult {
     /// Overall health status.
-    pub status: HealthStatus,
+    pub status:      HealthStatus,
     /// Whether read operations succeed.
-    pub readable: bool,
+    pub readable:    bool,
     /// Whether write operations succeed.
-    pub writable: bool,
+    pub writable:    bool,
     /// Whether list operations succeed.
-    pub listable: bool,
+    pub listable:    bool,
     /// Whether delete operations succeed.
-    pub deletable: bool,
+    pub deletable:   bool,
     /// Total latency for all operations in milliseconds.
-    pub latency_ms: u64,
+    pub latency_ms:  u64,
     /// Total storage capacity in bytes (if available).
     pub total_bytes: Option<u64>,
     /// Used storage space in bytes (if available).
-    pub used_bytes: Option<u64>,
+    pub used_bytes:  Option<u64>,
     /// Error message if any operation failed.
-    pub error: Option<String>,
+    pub error:       Option<String>,
     /// Unix timestamp in microseconds when the health check was performed.
-    pub tested_at: i64,
+    pub tested_at:   i64,
 }
 
 impl StorageHealthResult {

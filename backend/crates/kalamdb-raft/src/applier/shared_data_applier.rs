@@ -187,11 +187,11 @@ mod tests {
             _commit_seq: u64,
         ) -> Result<TransactionApplyResult, RaftError> {
             Ok(TransactionApplyResult {
-                rows_affected: mutations.len(),
-                commit_seq: 1,
+                rows_affected:      mutations.len(),
+                commit_seq:         1,
                 notifications_sent: 0,
-                manifest_updates: 0,
-                publisher_events: 0,
+                manifest_updates:   0,
+                publisher_events:   0,
             })
         }
     }

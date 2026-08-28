@@ -25,8 +25,8 @@ fn create_test_service_with_config(config: ManifestCacheSettings) -> ManifestSer
 fn create_test_service() -> ManifestService {
     create_test_service_with_config(ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries: 1000,
-        eviction_ttl_days: 7,
+        max_entries:               1000,
+        eviction_ttl_days:         7,
     })
 }
 
@@ -419,8 +419,8 @@ fn test_invalidate_table_shared() {
 fn test_user_manifests_do_not_enter_memory_cache() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries: 2,
-        eviction_ttl_days: 7,
+        max_entries:               2,
+        eviction_ttl_days:         7,
     };
     let service = create_test_service_with_config(config);
 
@@ -459,8 +459,8 @@ fn test_user_manifests_do_not_enter_memory_cache() {
 fn test_shared_and_user_manifest_tiers_stay_separate() {
     let config = ManifestCacheSettings {
         eviction_interval_seconds: 300,
-        max_entries: 10,
-        eviction_ttl_days: 7,
+        max_entries:               10,
+        eviction_ttl_days:         7,
     };
     let service = create_test_service_with_config(config);
 

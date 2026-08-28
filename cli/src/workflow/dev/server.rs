@@ -175,6 +175,7 @@ fn server_binary_name() -> &'static str {
 
 pub async fn ensure_local_server_binary(
     use_color: bool,
+    auto_install: bool,
     output: &WorkflowOutput,
     server_source: &ServiceLogSource,
 ) -> Result<PathBuf> {
@@ -184,13 +185,15 @@ pub async fn ensure_local_server_binary(
                 && !managed_server_runtime_is_complete(&managed_server_install_dir())
             {
                 output.status(
-                    "precheck: managed kalamdb-server is missing Windows runtime DLLs; redownloading",
+                    "precheck: managed kalamdb-server is missing Windows runtime DLLs; \
+                     redownloading",
                 );
                 return download_and_install_managed_server(output, server_source).await;
             }
             if let Some(installed_version) = managed_server_version_if_stale(&path)? {
                 return refresh_managed_server_binary(
                     use_color,
+                    auto_install,
                     output,
                     server_source,
                     &installed_version,
@@ -201,6 +204,12 @@ pub async fn ensure_local_server_binary(
         },
         Err(error) => {
             output.status(format!("precheck: {error}"));
+            if auto_install {
+                output.status("precheck: downloading kalamdb-server");
+                return download_and_install_managed_server(output, server_source)
+                    .await
+                    .map_err(|download_error| map_server_download_error(output, download_error));
+            }
             if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
                 return Err(CLIError::ConfigurationError(
                     dev_kalamdb_server_non_interactive_download(&error.to_string()),
@@ -233,6 +242,7 @@ pub async fn ensure_local_server_binary(
 
 async fn refresh_managed_server_binary(
     use_color: bool,
+    auto_install: bool,
     output: &WorkflowOutput,
     server_source: &ServiceLogSource,
     installed_version: &str,
@@ -242,9 +252,11 @@ async fn refresh_managed_server_binary(
         "precheck: managed kalamdb-server is {installed_version}, updating to {target_version}"
     ));
 
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+    if auto_install || !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         output.status("precheck: downloading kalamdb-server");
-        return download_and_install_managed_server(output, server_source).await;
+        return download_and_install_managed_server(output, server_source)
+            .await
+            .map_err(|download_error| map_server_download_error(output, download_error));
     }
 
     let install_dir = managed_server_install_dir();
@@ -262,7 +274,8 @@ async fn refresh_managed_server_binary(
 
     if !confirmed {
         return Err(CLIError::ConfigurationError(format!(
-            "managed kalamdb-server is {installed_version}, but CLI expects {target_version}; update declined"
+            "managed kalamdb-server is {installed_version}, but CLI expects {target_version}; \
+             update declined"
         )));
     }
 
@@ -321,7 +334,7 @@ fn parse_server_version_output(output: &str) -> Option<String> {
 }
 
 pub struct LocalServerLaunch {
-    pub program: PathBuf,
+    pub program:     PathBuf,
     pub config_path: PathBuf,
     pub working_dir: PathBuf,
 }
@@ -338,7 +351,7 @@ pub fn prepare_local_server_launch(
     }
 
     Ok(LocalServerLaunch {
-        program: resolve_kalamdb_server_bin()?,
+        program:     resolve_kalamdb_server_bin()?,
         config_path: shell_working_directory(&config_path),
         working_dir: shell_working_directory(project_root),
     })
@@ -379,9 +392,23 @@ async fn download_and_install_managed_server(
     output: &WorkflowOutput,
     _server_source: &ServiceLogSource,
 ) -> Result<PathBuf> {
-    let path = install_managed_server_version(env!("CARGO_PKG_VERSION"), true).await?;
+    let show_progress = !output.is_agent() && !output.json;
+    let path = install_managed_server_version(env!("CARGO_PKG_VERSION"), show_progress).await?;
     output.status("precheck: downloaded and verified kalamdb-server");
+    output.agent_event("KALAM_SERVER_INSTALLED", &[("version", env!("CARGO_PKG_VERSION"))]);
     Ok(path)
+}
+
+fn map_server_download_error(output: &WorkflowOutput, error: CLIError) -> CLIError {
+    if output.is_agent() || output.json {
+        crate::agent_error::AgentError::server_download_failed(
+            env!("CARGO_PKG_VERSION"),
+            &error.to_string(),
+        )
+        .into()
+    } else {
+        error
+    }
 }
 
 fn install_server_payload(extracted_root: &Path) -> Result<PathBuf> {
@@ -462,12 +489,13 @@ pub async fn wait_for_server_ready(
         .build()
         .map_err(|e| CLIError::ConfigurationError(format!("failed to build http client: {e}")))?;
 
-    output.detail(format!(
+    let spinner = output.status_spinner(format!(
         "waiting for local KalamDB server (timeout {SERVER_READY_TIMEOUT_SECS}s)..."
     ));
 
     for attempt in 1..=SERVER_READY_TIMEOUT_SECS {
         if check_server_health(&client, server_url).await {
+            drop(spinner);
             output.detail(format!("local KalamDB server ready ({attempt}s)"));
             return Ok(());
         }
@@ -481,9 +509,13 @@ pub async fn wait_for_server_ready(
             }
         }
 
-        if attempt > 1 && attempt % SERVER_READY_PROGRESS_INTERVAL_SECS == 0 {
+        if !spinner.is_animating()
+            && attempt > 1
+            && attempt % SERVER_READY_PROGRESS_INTERVAL_SECS == 0
+        {
             output.detail(format!(
-                "still waiting for local KalamDB server ({attempt}/{SERVER_READY_TIMEOUT_SECS}s)..."
+                "still waiting for local KalamDB server \
+                 ({attempt}/{SERVER_READY_TIMEOUT_SECS}s)..."
             ));
         }
 
@@ -525,7 +557,6 @@ async fn check_server_health(client: &reqwest::Client, server_url: &str) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::workflow::test_support::parse_minimal_project_config;
 
     #[test]

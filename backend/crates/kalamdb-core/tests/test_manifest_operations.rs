@@ -207,16 +207,16 @@ fn test_manifest_with_column_stats() {
     column_stats.insert(
         1u64,
         kalamdb_system::ColumnStats {
-            min: Some(StoredScalarValue::Int64(Some("1".to_string()))),
-            max: Some(StoredScalarValue::Int64(Some("100".to_string()))),
+            min:        Some(StoredScalarValue::Int64(Some("1".to_string()))),
+            max:        Some(StoredScalarValue::Int64(Some("100".to_string()))),
             null_count: Some(0),
         },
     );
     column_stats.insert(
         2u64,
         kalamdb_system::ColumnStats {
-            min: Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
-            max: Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
+            min:        Some(StoredScalarValue::Utf8(Some("alice".to_string()))),
+            max:        Some(StoredScalarValue::Utf8(Some("zoe".to_string()))),
             null_count: Some(5),
         },
     );

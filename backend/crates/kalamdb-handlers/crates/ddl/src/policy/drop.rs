@@ -29,7 +29,8 @@ impl TypedStatementHandler<DropPolicyStatement> for DropPolicyHandler {
         &self,
         statement: DropPolicyStatement,
         _params: Vec<ScalarValue>,
-        context: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
         let policy_id = PolicyId::new(statement.table_id.clone(), &statement.policy_name)
             .map_err(KalamDbError::InvalidOperation)?;
         self.app_context
@@ -37,7 +38,9 @@ impl TypedStatementHandler<DropPolicyStatement> for DropPolicyHandler {
             .table_policies()
             .delete_policy(&policy_id, statement.if_exists)
             .await
-            .map_err(|error| KalamDbError::ExecutionError(format!("DROP POLICY failed: {error}")))?;
+            .map_err(|error| {
+                KalamDbError::ExecutionError(format!("DROP POLICY failed: {error}"))
+            })?;
 
         let audit_entry = audit::log_ddl_operation(
             context,
@@ -45,23 +48,29 @@ impl TypedStatementHandler<DropPolicyStatement> for DropPolicyHandler {
             "POLICY",
             &format!("{} ON {}", statement.policy_name, statement.table_id),
             None,
-            None);
+            None,
+        );
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
         Ok(ExecutionResult::Success {
-            message: format!("Policy '{}' dropped from {}", statement.policy_name, statement.table_id),
+            message: format!(
+                "Policy '{}' dropped from {}",
+                statement.policy_name, statement.table_id
+            ),
         })
     }
 
     async fn check_authorization(
         &self,
         _statement: &DropPolicyStatement,
-        context: &ExecutionContext) -> Result<(), KalamDbError> {
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
         block_anonymous_write(context, "DROP POLICY")?;
         if matches!(context.user_role(), Role::Service | Role::Dba | Role::System) {
             Ok(())
         } else {
             Err(KalamDbError::Unauthorized(
-                "DROP POLICY requires System, DBA, or Service role".to_string()))
+                "DROP POLICY requires System, DBA, or Service role".to_string(),
+            ))
         }
     }
 }

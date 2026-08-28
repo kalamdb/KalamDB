@@ -161,12 +161,15 @@ pub enum Operation {
     /// Insert or update a key-value pair
     Put {
         partition: Partition,
-        key: Vec<u8>,
-        value: Vec<u8>,
+        key:       Vec<u8>,
+        value:     Vec<u8>,
     },
 
     /// Delete a key
-    Delete { partition: Partition, key: Vec<u8> },
+    Delete {
+        partition: Partition,
+        key:       Vec<u8>,
+    },
 }
 
 /// Trait for pluggable storage backend implementations.
@@ -262,8 +265,8 @@ mod tests {
     fn test_operation_construction() {
         let op = Operation::Put {
             partition: Partition::new("test"),
-            key: b"key1".to_vec(),
-            value: b"value1".to_vec(),
+            key:       b"key1".to_vec(),
+            value:     b"value1".to_vec(),
         };
 
         match op {

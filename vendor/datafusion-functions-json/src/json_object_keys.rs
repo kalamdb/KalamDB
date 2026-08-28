@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, ListBuilder, StringBuilder};
-use datafusion::arrow::datatypes::{DataType, Field};
-use datafusion::common::{Result as DataFusionResult, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{
+        array::{ArrayRef, ListBuilder, StringBuilder},
+        datatypes::{DataType, Field},
+    },
+    common::{Result as DataFusionResult, ScalarValue},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::Peek;
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{
+        get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath,
+    },
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonObjectKeys,
@@ -19,14 +27,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonObjectKeys {
     signature: Signature,
-    aliases: [String; 2],
+    aliases:   [String; 2],
 }
 
 impl Default for JsonObjectKeys {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_object_keys".to_string(), "json_keys".to_string()],
+            aliases:   ["json_object_keys".to_string(), "json_keys".to_string()],
         }
     }
 }
@@ -119,7 +127,10 @@ fn keys_to_scalar(opt_keys: Option<Vec<String>>) -> ScalarValue {
     ScalarValue::List(Arc::new(array))
 }
 
-fn jiter_json_object_keys(opt_json: Option<&str>, path: &[JsonPath]) -> Result<Vec<String>, GetError> {
+fn jiter_json_object_keys(
+    opt_json: Option<&str>,
+    path: &[JsonPath],
+) -> Result<Vec<String>, GetError> {
     if let Some((mut jiter, peek)) = jiter_json_find(opt_json, path) {
         match peek {
             Peek::Object => {
@@ -132,7 +143,7 @@ fn jiter_json_object_keys(opt_json: Option<&str>, path: &[JsonPath]) -> Result<V
                     opt_key = jiter.next_key()?;
                 }
                 Ok(keys)
-            }
+            },
             _ => get_err!(),
         }
     } else {

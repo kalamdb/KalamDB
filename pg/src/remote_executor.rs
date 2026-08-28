@@ -10,7 +10,7 @@ use kalam_pg_common::KalamPgError;
 
 /// Remote backend executor that delegates to a KalamDB server via gRPC.
 pub struct RemoteBackendExecutor {
-    client: RemoteKalamClient,
+    client:     RemoteKalamClient,
     session_id: String,
 }
 

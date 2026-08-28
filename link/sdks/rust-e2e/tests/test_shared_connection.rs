@@ -390,7 +390,7 @@ async fn test_shared_live_rows_subscription_materializes_snapshots() {
         .live_with_config(
             config,
             LiveRowsConfig {
-                limit: Some(10),
+                limit:       Some(10),
                 key_columns: None,
             },
         )

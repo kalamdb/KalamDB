@@ -24,7 +24,7 @@ enum PreSessionCommand {
 }
 
 pub struct CommandContext<'a> {
-    pub cli: &'a Cli,
+    pub cli:              &'a Cli,
     pub credential_store: &'a mut FileCredentialStore,
 }
 
