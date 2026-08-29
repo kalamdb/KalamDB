@@ -325,7 +325,8 @@ async fn wait_for_ready(
             )))
         })? {
             let log = read_log(log_path);
-            if let Some(error) = agent_error_from_log(&log) {
+            let session_log = current_session_log(&log);
+            if let Some(error) = agent_error_from_log(session_log) {
                 return Err(CLIError::from(error));
             }
             return Err(CLIError::from(AgentError::dev_start_failed(&format!(
@@ -335,10 +336,11 @@ async fn wait_for_ready(
         }
 
         let log = read_log(log_path);
-        if let Some(error) = agent_error_from_log(&log) {
+        let session_log = current_session_log(&log);
+        if let Some(error) = agent_error_from_log(session_log) {
             return Err(CLIError::from(error));
         }
-        if let Some(line) = last_matching_line(&log, "KALAM_READY") {
+        if let Some(line) = last_matching_line(session_log, "KALAM_READY") {
             return Ok(event_field(line, "url"));
         }
         if Instant::now() >= deadline {
@@ -397,8 +399,17 @@ fn log_path_for_read(ctx: &WorkflowContext) -> Result<PathBuf> {
     Ok(ctx.config.workflow_log_path(&ctx.project_root))
 }
 
+const SESSION_START_MARKER: &str = "--- kalam dev start ---";
+
 fn read_log(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
+}
+
+fn current_session_log(log: &str) -> &str {
+    match log.rfind(SESSION_START_MARKER) {
+        Some(idx) => &log[idx..],
+        None => log,
+    }
 }
 
 fn trailing_lines(text: &str, lines: usize) -> String {
@@ -551,6 +562,20 @@ mod tests {
                    `messages`\"\n\nschema.sql requires rebuilding\n";
         let error = agent_error_from_log(log).expect("parse error");
         assert_eq!(error.code, crate::agent_error::AgentErrorCode::DestructiveSchemaChange);
+    }
+
+    #[test]
+    fn agent_error_ignores_stale_error_before_session_marker() {
+        let log = "KALAM_ERROR code=SCHEMA_FAILED object=\"old\"\n--- kalam dev start ---\nstarting\n\
+                   KALAM_READY url=http://127.0.0.1:2900\n";
+        assert!(agent_error_from_log(current_session_log(log)).is_none());
+        assert!(last_matching_line(current_session_log(log), "KALAM_READY").is_some());
+    }
+
+    #[test]
+    fn ready_ignores_stale_ready_before_session_marker() {
+        let log = "KALAM_READY url=http://127.0.0.1:2800\n--- kalam dev start ---\nstarting\n";
+        assert!(last_matching_line(current_session_log(log), "KALAM_READY").is_none());
     }
 
     #[test]

@@ -2,16 +2,14 @@
   "name": "kalamdb-chat-with-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "Compact chat example showing user-table inserts, topic fan-out, and a runConsumer worker",
+  "type": "module",
+  "description": "Realtime multi-user React chat with SHARED rooms, RLS, and a topic agent",
   "scripts": {
-    "kalam:dev": "kalam dev",
-    "generate:schema": "node scripts/generate-schema.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "setup": "node setup.mjs",
     "agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
-    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts && playwright test"
+    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts tests/project.test.ts && playwright test"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",

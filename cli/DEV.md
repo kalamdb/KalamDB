@@ -222,13 +222,25 @@ The project template menu includes two starter sources:
 - `simple-live` (Dart / Flutter) - `kalam_sync` starter with `lib/main.dart` and generated table specs
 - `live-okf-context-sync` - OKF folder sync with live FILE columns
 - `realtime-ops-feed` - small browser app with live SQL subscriptions
-- `chat-with-ai` - topic-driven React chat with an agent worker
-- `react-ai-chat` - full React chat with approvals and attachments
+- `chat-with-ai` - realtime multi-user React chat with SHARED rooms, RLS, and a topic agent
+- `react-ai-chat` - personal AI assistant with USER tables, STREAM tokens, and approvals
 - `summarizer-agent` - worker-only topic consumer that enriches rows
+
+Agents should list templates instead of guessing ids:
+
+```bash
+kalam init --list-templates --json
+kalam init --yes --template chat-with-ai --languages typescript --package-manager npm
+kalam dev start --agent
+```
+
+`--list-templates` does not require an empty directory. `--json` prints `{ ok, cli_version, default_template, next, templates: [{ id, kind, language, description }] }`.
 
 Repository examples are not bundled into the binary. A released `kalam` CLI still shows them in
 `kalam init`; when a user selects one, the CLI downloads the matching `examples/<name>` folder
-from the repository archive and writes it into the target project directory.
+from the repository archive and writes it into the target project directory. `file:` `@kalamdb/*`
+dependencies in that example's `package.json` are rewritten to the CLI version, lockfiles that pin
+those paths are removed, and `.env.example` is copied to `.env` when `.env` is missing.
 
 Server mode is a single-choice menu:
 
@@ -241,6 +253,7 @@ Server mode is a single-choice menu:
 - `--schema-mode <sql|remote>`: active schema source mode
 - `--languages <LIST>`: comma-separated language list (`typescript`, `dart`; `ts` and `flutter` are aliases)
 - `--template <ID>`: embedded template or repository example id
+- `--list-templates`: print embedded templates and repository examples, then exit
 - `--server-mode <local|remote>`: local server management mode for `kalam dev`
 - `--server-url <URL>`: server URL for the scaffolded `dev` environment
 - `--yes`: non-interactive mode; uses defaults for unspecified values
@@ -492,6 +505,7 @@ kalam dev stop
 - `stop` is idempotent
 - session metadata is stored at `kalam/cli/dev.session.json`
 - logs are the existing workflow log at `kalam/cli/logs/kalam.log`
+- each `start` appends `--- kalam dev start ---`; ready/error waits ignore older `KALAM_*` lines above that marker
 
 This is a PID file plus a detached child of the same `kalam` binary, not a machine-wide daemon.
 

@@ -15,6 +15,7 @@ const {
   installedBinaryPath,
   releaseBaseUrlForVersion,
 } = require('./platforms');
+const { replaceFile } = require('./replace-binary');
 
 async function bootstrapBinary(packageRoot, version, userAgent) {
   const platform = detectPlatform();
@@ -44,11 +45,7 @@ async function bootstrapBinary(packageRoot, version, userAgent) {
 
     const distDir = path.join(packageRoot, 'dist');
     fs.mkdirSync(distDir, { recursive: true });
-    const installedPath = installedBinaryPath(packageRoot);
-    fs.copyFileSync(binaryPath, installedPath);
-    if (process.platform !== 'win32') {
-      fs.chmodSync(installedPath, 0o755);
-    }
+    replaceFile(binaryPath, installedBinaryPath(packageRoot));
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

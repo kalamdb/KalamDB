@@ -21,6 +21,10 @@ pub struct InitArgs {
     #[arg(long = "template")]
     pub template: Option<String>,
 
+    /// List embedded templates and repository examples, then exit
+    #[arg(long = "list-templates")]
+    pub list_templates: bool,
+
     /// JavaScript package manager for TypeScript projects (npm, pnpm, yarn, bun)
     #[arg(long = "package-manager", value_enum)]
     pub package_manager: Option<PackageManagerArg>,

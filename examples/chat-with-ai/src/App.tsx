@@ -1,20 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import {
-  Auth,
-  type RowData,
-  createClient,
-  type SubscriptionErrorEvent,
-} from '@kalamdb/client';
+import { type SubscriptionErrorEvent } from '@kalamdb/client';
 import { eq } from 'drizzle-orm';
-import { kalamDriver, liveTable } from '@kalamdb/orm';
-import { drizzle } from 'drizzle-orm/pg-proxy';
+import { liveTable } from '@kalamdb/orm';
 import {
+  chat_demo_agent_events as agentEvents,
   chat_demo_agent_eventsConfig as agentEventsConfig,
   chat_demo_messages as chatMessages,
+  chat_demo_room_members as roomMembers,
+  chat_demo_rooms as rooms,
   type ChatDemoAgentEvents as AgentEventRow,
   type ChatDemoMessages as ChatMessageRow,
-} from './schema.generated';
+} from './generated/kalam';
+import { CHAT_USERNAME, client, db, membershipId, ROOM } from './db';
 import './styles.css';
 
 type LiveDraft = {
@@ -26,28 +24,11 @@ type LiveDraft = {
 const MAX_CHAT_MESSAGES = 80;
 const MAX_AGENT_EVENTS = agentEventsConfig.tableType === 'stream' ? 40 : 20;
 const canSortEventsBySeq = agentEventsConfig.systemColumns.includes('_seq');
-
-const ROOM = import.meta.env.VITE_CHAT_ROOM ?? 'main';
-const CHAT_USERNAME = import.meta.env.VITE_KALAMDB_USER ?? 'root';
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
   second: '2-digit',
 });
-
-function createAuthedClient() {
-  return createClient({
-    url: import.meta.env.VITE_KALAMDB_URL ?? 'http://127.0.0.1:2900',
-    authProvider: async () => Auth.basic(
-      CHAT_USERNAME,
-      import.meta.env.VITE_KALAMDB_PASSWORD ?? 'kalamdb123',
-    ),
-    disableCompression: true,
-  });
-}
-
-const client = createAuthedClient();
-const db = drizzle(kalamDriver(client));
 
 function formatCreatedAt(createdAt: Date): string {
   return Number.isNaN(createdAt.getTime()) ? 'Invalid date' : timeFormatter.format(createdAt);
@@ -66,7 +47,6 @@ function sortEvents(rows: AgentEventRow[]): AgentEventRow[] {
 }
 
 function limitEvents(rows: AgentEventRow[]): AgentEventRow[] {
-  // Change frames are merged locally, so keep a deterministic order after upserts/removals.
   const sorted = sortEvents(rows);
   return sorted.length > MAX_AGENT_EVENTS ? sorted.slice(-MAX_AGENT_EVENTS) : sorted;
 }
@@ -130,22 +110,32 @@ function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
   return null;
 }
 
-function sqlLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
+async function ensureRoomAccess(): Promise<void> {
+  const memberId = membershipId(CHAT_USERNAME, ROOM);
+  const existingMembership = await db
+    .select({ id: roomMembers.id })
+    .from(roomMembers)
+    .where(eq(roomMembers.id, memberId))
+    .limit(1);
 
-function mapAgentEventRow(row: RowData): AgentEventRow {
-  return {
-    _seq: row._seq?.asSeqId()?.toString() ?? row._seq?.asString() ?? null,
-    id: row.id?.asString() ?? '',
-    response_id: row.response_id?.asString() ?? '',
-    room: row.room?.asString() ?? '',
-    sender_username: row.sender_username?.asString() ?? '',
-    stage: row.stage?.asString() ?? '',
-    preview: row.preview?.asString() ?? '',
-    message: row.message?.asString() ?? '',
-    created_at: row.created_at?.asDate() ?? new Date(0),
-  };
+  // Schema seeds root/admin into `main`. Other users still join here.
+  if (existingMembership.length === 0) {
+    await db.insert(roomMembers).values({
+      id: memberId,
+      user_id: CHAT_USERNAME,
+      room_id: ROOM,
+    });
+  }
+
+  const existingRoom = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, ROOM))
+    .limit(1);
+
+  if (existingRoom.length === 0) {
+    await db.insert(rooms).values({ id: ROOM, title: ROOM });
+  }
 }
 
 export function App() {
@@ -164,20 +154,20 @@ export function App() {
 
     const start = async (): Promise<void> => {
       try {
+        // Membership is required before SELECT policies let this tab see the room.
+        await ensureRoomAccess();
+
+        // Durable transcript for this room.
         const messagesUnsubscribe = await liveTable(
           client,
           chatMessages,
           (nextMessages) => {
             if (active) {
-              // Keep the materialized live query in server order.
               setMessages(nextMessages);
             }
           },
           {
             where: eq(chatMessages.room, ROOM),
-            // `lastRows` asks the server for a rewind window at subscribe time.
-            // `limit` keeps the materialized client-side live state bounded
-            // after that rewind and across later live changes.
             limit: MAX_CHAT_MESSAGES,
             lastRows: MAX_CHAT_MESSAGES,
             onError: (event: SubscriptionErrorEvent) => {
@@ -191,8 +181,10 @@ export function App() {
         );
         unsubscribers.push(messagesUnsubscribe);
 
-        const eventsUnsubscribe = await client.live<AgentEventRow>(
-          `SELECT * FROM chat_demo.agent_events WHERE room = ${sqlLiteral(ROOM)}`,
+        // STREAM rows for thinking / typing. TTL on the table keeps this short-lived.
+        const eventsUnsubscribe = await liveTable(
+          client,
+          agentEvents,
           (nextEvents) => {
             if (!active) {
               return;
@@ -203,10 +195,9 @@ export function App() {
             });
           },
           {
+            where: eq(agentEvents.room, ROOM),
             lastRows: MAX_AGENT_EVENTS,
             limit: MAX_AGENT_EVENTS,
-            mapRow: mapAgentEventRow,
-            getKey: 'id',
             onError: (event: SubscriptionErrorEvent) => {
               if (!active) {
                 return;
@@ -223,7 +214,7 @@ export function App() {
         }
       } catch (caughtError) {
         if (!active) {
-            return;
+          return;
         }
         setStatus('error');
         setError(caughtError instanceof Error ? caughtError.message : String(caughtError));
@@ -260,6 +251,7 @@ export function App() {
     try {
       setIsSubmitting(true);
       setError(null);
+      // One insert. The topic + agent turn this into a streamed assistant reply.
       await db.insert(chatMessages).values({
         room: ROOM,
         role: 'user',
@@ -279,10 +271,10 @@ export function App() {
     <main className="chat-shell">
       <section className="chat-hero">
         <div>
-          <p className="eyebrow">USER table + STREAM table + EXECUTE AS USER</p>
+          <p className="eyebrow">SHARED rooms + RLS + STREAM events</p>
           <h1>Chat With AI</h1>
           <p>
-            The browser writes to a USER table, subscribes to a STREAM table, and watches the agent draft replies in real time before the final assistant row is committed.
+            Members of the same room share one message stream. Policies keep other rooms private, a STREAM table shows the agent thinking, and a topic worker writes the assistant reply.
           </p>
         </div>
         <div className={`status status-${status}`} data-testid="chat-status">

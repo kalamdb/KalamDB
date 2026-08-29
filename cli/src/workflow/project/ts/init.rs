@@ -383,9 +383,11 @@ mod tests {
     fn project_sample_options_include_repository_examples() {
         let available = crate::workflow::project::ts::templates::available();
         let options = project_sample_options(&available);
+        let example = crate::workflow::project::repository_examples::find("chat-with-ai")
+            .expect("chat-with-ai example");
         assert!(
-            options.iter().any(|option| option.label == "chat-with-ai"
-                && option.description == Some("Topic-driven React chat with an agent worker")),
+            options.iter().any(|option| option.label == example.id
+                && option.description == Some(example.description)),
             "expected chat-with-ai repository example to be offered during init"
         );
     }

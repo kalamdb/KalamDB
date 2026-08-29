@@ -18,6 +18,7 @@
     "README.md"
   ],
   "scripts": {
+    "preuninstall": "node scripts/unlock-binary.js",
     "postinstall": "node scripts/install.js",
     "test": "node --test tests/*.test.mjs"
   },

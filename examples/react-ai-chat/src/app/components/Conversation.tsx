@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KalamDBClient } from '@kalamdb/client';
 import { Database, MoreVertical, Share2 } from 'lucide-react';
 import type { ChatLiveContext } from '../App';
-import type { approval_actions, conversations, messages } from '../schema.generated';
+import {
+  react_ai_chat_approval_actions as approval_actions,
+  react_ai_chat_conversations as conversations,
+  react_ai_chat_messages as messages,
+} from '../schema.generated';
 import type {
-  Approvals as ApprovalRow,
-  Conversations as ConversationRow,
-  Messages as MessageRow,
-  TypingTokens as TypingTokenRow,
+  ReactAiChatApprovals as ApprovalRow,
+  ReactAiChatConversations as ConversationRow,
+  ReactAiChatMessages as MessageRow,
+  ReactAiChatTypingTokens as TypingTokenRow,
 } from '../schema.generated';
 import { ChatComposer } from './ChatComposer';
 import { Messages } from './Messages';
@@ -345,6 +349,8 @@ function mapApproval(row: Record<string, unknown>): ApprovalRow {
     status: cellString(row.status),
     created_at: cellDate(row.created_at),
     updated_at: cellDate(row.updated_at),
+    _seq: row._seq == null ? null : cellString(row._seq),
+    _deleted: typeof row._deleted === 'boolean' ? row._deleted : null,
   };
 }
 

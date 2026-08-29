@@ -7,7 +7,7 @@ use kalam_cli::{
     },
     release_target::{ReleaseTarget, CLI_ARTIFACT_PREFIX},
     release_version::ReleaseVersion,
-    self_update::{replace_installed_binary, ReplaceMode},
+    self_update::replace_installed_binary,
     update_check,
     workflow::dev::server::{install_managed_server_version, managed_server_install_dir},
     CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
@@ -118,11 +118,8 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         })?
     };
 
-    let replace_mode = replace_installed_binary(&current_exe, &binary_path, &temp_dir)?;
-
-    if replace_mode == ReplaceMode::Completed {
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
+    replace_installed_binary(&current_exe, &binary_path)?;
+    let _ = fs::remove_dir_all(&temp_dir);
 
     if let Some(remote_build_date) = remote_build_date {
         println!(
@@ -133,11 +130,6 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         );
     } else {
         println!("Installed kalam {} to {}", target.version(), current_exe.display());
-    }
-
-    if replace_mode == ReplaceMode::ScheduledExit {
-        eprintln!("Finishing update after exit (Windows file lock)");
-        std::process::exit(0);
     }
 
     Ok(true)

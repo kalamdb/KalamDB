@@ -12,6 +12,8 @@ The package bootstraps the native `kalam` binary on first install, then runs `ka
 
 If `dist/kalam` (or `dist/kalam.exe`) already exists, postinstall skips bootstrap and delegates directly to `kalam update`.
 
+On Windows, `kalam update` and npm install both rename the running `kalam.exe` aside and put the new binary at the original path before returning. That avoids the "file in use / restart required" failure that happens if a process tries to overwrite an executable it is still running. Uninstall also moves `dist/kalam.exe` out of the package directory first so npm can delete the package while another `kalam` process is still open.
+
 Supported binary targets are `linux-x86_64`, `linux-aarch64`, `macos-aarch64`, and `windows-x86_64`.
 
 Useful commands:

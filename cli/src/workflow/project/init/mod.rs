@@ -25,7 +25,7 @@ use crate::{
         },
         identifiers::{normalize_namespace_name, parse_namespace_id},
         prompts::print_workflow_banner,
-        repository_examples,
+        repository_examples, templates,
         ts::{
             execute_package_install, install_dependencies, resolve_package_manager,
             resolve_starter, PackageManager, ProjectStarter, SCHEMA_TARGET_OUTPUT,
@@ -50,6 +50,37 @@ pub struct InitOptions {
     pub server_url:      Option<String>,
     pub yes:             bool,
     pub cwd:             PathBuf,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InitTemplateInfo {
+    pub id:          String,
+    pub kind:        String,
+    pub language:    String,
+    pub description: String,
+}
+
+pub fn list_init_templates() -> Vec<InitTemplateInfo> {
+    let mut templates = Vec::new();
+    for language in ["typescript", "dart"] {
+        for template in templates::templates_for_language(language) {
+            templates.push(InitTemplateInfo {
+                id:          template.id.to_string(),
+                kind:        "embedded".to_string(),
+                language:    language.to_string(),
+                description: template.description.to_string(),
+            });
+        }
+    }
+    for example in repository_examples::available() {
+        templates.push(InitTemplateInfo {
+            id:          example.id.to_string(),
+            kind:        "repository".to_string(),
+            language:    "typescript".to_string(),
+            description: example.description.to_string(),
+        });
+    }
+    templates
 }
 
 pub async fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
@@ -323,6 +354,22 @@ mod tests {
             let config = KalamProjectConfig::load_from_path(&temp.path().join(KALAM_TOML)).unwrap();
             assert!(config.dev.processes.get("app").is_some_and(|command| command.contains("dev")));
         });
+    }
+
+    #[test]
+    fn list_init_templates_includes_embedded_and_repository() {
+        let templates = list_init_templates();
+        assert!(templates.iter().any(|template| {
+            template.id == "simple-live"
+                && template.kind == "embedded"
+                && template.language == "typescript"
+        }));
+        assert!(templates.iter().any(|template| {
+            template.id == "chat-with-ai"
+                && template.kind == "repository"
+                && template.description.contains("SHARED")
+        }));
+        assert!(templates.iter().any(|template| template.id == "react-ai-chat"));
     }
 
     #[test]

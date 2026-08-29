@@ -39,6 +39,35 @@ fn test_project_workflow_init_help_surface() {
     assert!(stdout.contains("--server-mode"));
     assert!(stdout.contains("--server-url"));
     assert!(stdout.contains("--yes"));
+    assert!(stdout.contains("--list-templates"));
+}
+
+#[test]
+fn test_project_workflow_init_lists_templates_json() {
+    let mut cmd = create_cli_command();
+    cmd.args(["init", "--list-templates", "--json"]);
+
+    let output = cmd.output().expect("run init --list-templates");
+    assert!(
+        output.status.success(),
+        "init --list-templates should succeed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payload: serde_json::Value = serde_json::from_str(&stdout).expect("parse list-templates json");
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["default_template"], "simple-live");
+    assert!(payload["next"].as_str().unwrap_or_default().contains("kalam init --yes --template"));
+    let templates = payload["templates"].as_array().expect("templates array");
+    let ids: Vec<&str> = templates
+        .iter()
+        .filter_map(|template| template["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"simple-live"));
+    assert!(ids.contains(&"chat-with-ai"));
+    assert!(ids.contains(&"react-ai-chat"));
 }
 
 #[test]

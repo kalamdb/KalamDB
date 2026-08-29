@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { installedBinaryPath } = require('./platforms');
+const { replaceFile } = require('./replace-binary');
 
 function monorepoRootFromPackageRoot(packageRoot) {
   return path.resolve(packageRoot, '../../../../');
@@ -53,10 +54,7 @@ function tryInstallFromLocalBinary(packageRoot) {
 
   const distDir = path.join(packageRoot, 'dist');
   fs.mkdirSync(distDir, { recursive: true });
-  fs.copyFileSync(source, installedPath);
-  if (process.platform !== 'win32') {
-    fs.chmodSync(installedPath, 0o755);
-  }
+  replaceFile(source, installedPath);
 
   console.log(`Using local KalamDB CLI binary from ${source}`);
   return true;

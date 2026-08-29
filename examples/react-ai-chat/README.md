@@ -1,12 +1,22 @@
 # React AI Chat Example
 
+Personal AI assistant chat: **USER** conversations/messages, **STREAM** typing tokens, and a topic agent. Start from an empty folder with:
+
+```bash
+kalam init --list-templates --json
+kalam init --yes --template react-ai-chat --languages typescript --package-manager npm
+kalam dev start --agent
+```
+
+Use `--template chat-with-ai` instead for a **multi-user room chat** (SHARED tables + `CREATE POLICY`).
+
 This example is a chat-application validation surface for `@kalamdb/react`. It keeps the browser code in [src/app](src/app) and the topic worker in [src/agent](src/agent), then demonstrates conversations, websocket-confirmed sends, streamed typing tokens, final assistant inserts, file attachments, and approval actions with small, readable components.
 
 The example is a `kalam init`-style project. [kalam.toml](kalam.toml) points at [kalam/schema.sql](kalam/schema.sql), stores generated TypeScript schema types in [src/app/schema.generated.ts](src/app/schema.generated.ts), applies the initial migration in [kalam/migrations](kalam/migrations), and starts both the Vite app and topic agent through `kalam dev`.
 
 ## Quick Start
 
-Use Kalam CLI `0.5.3-rc.1` or newer. Older installs (for example `0.5.2-rc.2`) can apply the initial migration on the first `kalam dev`, but fail on the second run when the schema diff parser does not understand `CREATE TOPIC` in [kalam/schema.sql](kalam/schema.sql). Update with `kalam self-update`, or run the workspace build: `../../target/debug/kalam dev`.
+Use a current Kalam CLI. Update with `kalam self-update`, or run the workspace build: `../../target/debug/kalam dev`.
 
 ```bash
 npm install
@@ -15,7 +25,7 @@ kalam dev
 
 Open the Vite URL, usually `http://127.0.0.1:5176`.
 
-The example is package-driven. It expects the KalamDB SDKs to be present in `node_modules`, either via local filesystem dependencies such as `file:../../link/sdks/typescript/...` or from npm versions like `latest`.
+`kalam init` rewrites local `file:` SDK paths to published `@kalamdb/*` packages at the CLI version. From the repo tree you can keep filesystem dependencies.
 
 `kalam dev` starts a local KalamDB server, applies pending migrations, regenerates [src/app/schema.generated.ts](src/app/schema.generated.ts), watches [kalam/schema.sql](kalam/schema.sql), and runs both configured dev processes:
 

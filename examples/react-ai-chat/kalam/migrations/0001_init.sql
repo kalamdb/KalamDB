@@ -10,15 +10,15 @@ DROP TABLE IF EXISTS react_ai_chat.approvals;
 DROP TABLE IF EXISTS react_ai_chat.messages;
 DROP TABLE IF EXISTS react_ai_chat.conversations;
 
-CREATE TABLE IF NOT EXISTS react_ai_chat.conversations (
+CREATE USER TABLE IF NOT EXISTS react_ai_chat.conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'USER');
+);
 
-CREATE TABLE IF NOT EXISTS react_ai_chat.messages (
+CREATE USER TABLE IF NOT EXISTS react_ai_chat.messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     client_id TEXT,
     conversation_id TEXT NOT NULL,
@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS react_ai_chat.messages (
     approval_id TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'USER');
+);
 
-CREATE TABLE IF NOT EXISTS react_ai_chat.approvals (
+CREATE USER TABLE IF NOT EXISTS react_ai_chat.approvals (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
@@ -41,24 +41,24 @@ CREATE TABLE IF NOT EXISTS react_ai_chat.approvals (
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'USER');
+);
 
-CREATE TABLE IF NOT EXISTS react_ai_chat.typing_tokens (
+CREATE STREAM TABLE IF NOT EXISTS react_ai_chat.typing_tokens (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     conversation_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
     status TEXT NOT NULL,
     token TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'STREAM', TTL_SECONDS = 120);
+) WITH (TTL_SECONDS = 120);
 
-CREATE TABLE IF NOT EXISTS react_ai_chat.approval_actions (
+CREATE USER TABLE IF NOT EXISTS react_ai_chat.approval_actions (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     approval_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
     action TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-) WITH (TYPE = 'USER');
+);
 
 CREATE TOPIC IF NOT EXISTS react_ai_chat.agent_messages;
 ALTER TOPIC react_ai_chat.agent_messages ADD SOURCE react_ai_chat.messages ON INSERT;

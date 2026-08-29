@@ -117,7 +117,7 @@ Generator options:
 
 The generator introspects `SHOW TABLES`, uses `DESCRIBE` when column metadata is incomplete, preserves primary keys and non-null columns, and emits imports only for builders used by the generated schema. Generated schemas include `${tableName}Config`, `$inferSelect`, and `$inferInsert` exports next to each table, so browser apps and agents can import `schema.generated.ts` directly without a wrapper file.
 
-When you generate with exactly one `--namespace`, the emitted tables use unqualified names like `users = kTable.shared("users", ...)` and expect your app to configure that namespace once via `configureKalamOrm({ namespace: 'app' })` before importing the generated schema module. Multi-namespace generation keeps fully qualified table names to avoid collisions.
+When you generate schema, table exports are namespaced (`app_users` / `"app.users"`) even if you pass a single `--namespace`. That keeps generated files stable for agents and does not require `configureKalamOrm`. Pass `unqualifiedNames: true` (or keep hand-written short names) only when you want `users = kTable.user("users", ...)` plus `configureKalamOrm({ namespace: 'app' })` before importing the generated module.
 
 ## Watch `schema.ts` in local development
 

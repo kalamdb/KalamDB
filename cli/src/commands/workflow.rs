@@ -5,7 +5,7 @@ use kalam_cli::{
         project::{init::InitOptions, link::LinkOptions},
         WorkflowContext,
     },
-    CLIConfiguration, Result,
+    CLIConfiguration, CLIError, Result, CLI_VERSION,
 };
 
 use crate::args::{
@@ -56,6 +56,10 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
 }
 
 async fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
+    if args.list_templates {
+        return list_init_templates(cli.json);
+    }
+
     let cwd = args
         .project_dir
         .clone()
@@ -78,6 +82,37 @@ async fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
         cli.json,
     )
     .await
+}
+
+fn list_init_templates(json: bool) -> Result<()> {
+    let templates = kalam_cli::workflow::project::init::list_init_templates();
+    let payload = serde_json::json!({
+        "ok": true,
+        "cli_version": CLI_VERSION,
+        "default_template": "simple-live",
+        "next": "kalam init --yes --template <id> --languages typescript --package-manager npm && kalam dev start --agent",
+        "templates": templates,
+    });
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload)
+                .map_err(|error| CLIError::FormatError(error.to_string()))?
+        );
+        return Ok(());
+    }
+
+    println!("id\tkind\tlanguage\tdescription");
+    for template in &templates {
+        println!(
+            "{}\t{}\t{}\t{}",
+            template.id, template.kind, template.language, template.description
+        );
+    }
+    println!();
+    println!("Next: kalam init --yes --template <id> --languages typescript --package-manager npm");
+    println!("Then: kalam dev start --agent");
+    Ok(())
 }
 
 fn workflow_context(

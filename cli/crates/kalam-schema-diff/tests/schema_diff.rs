@@ -74,6 +74,66 @@ fn detect_create_table_kinds_from_prefix_and_type_option() {
 }
 
 #[test]
+fn leading_sql_comments_do_not_break_kalam_table_kinds() {
+    let sql = r#"
+-- Rooms everyone can create. SELECT is limited to rooms the user belongs to.
+CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Live thinking / typing rows. STREAM + TTL so they fade away.
+CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    stage TEXT NOT NULL
+) WITH (TTL_SECONDS = 10);
+"#;
+
+    let diff = diff(sql, sql);
+
+    assert_contains(&diff.up, "No schema changes");
+}
+
+#[test]
+fn chat_with_ai_example_schema_parses_against_itself() {
+    let sql = include_str!("../../../../examples/chat-with-ai/kalam/schema.sql");
+    let diff = diff(sql, sql);
+
+    assert_contains(&diff.up, "No schema changes");
+}
+
+#[test]
+fn chat_with_ai_example_schema_emits_shared_stream_policy_and_topic() {
+    let sql = include_str!("../../../../examples/chat-with-ai/kalam/schema.sql");
+    let diff = diff("", sql);
+
+    assert_contains(&diff.up, "CREATE SHARED TABLE");
+    assert_contains(&diff.up, "CREATE STREAM TABLE");
+    assert_contains(&diff.up, "CREATE POLICY rooms_member_select");
+    assert_contains(&diff.up, "CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox");
+    assert_contains(
+        &diff.up,
+        "ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT",
+    );
+}
+
+#[test]
+fn leading_comment_create_shared_table_is_emitted_from_empty_baseline() {
+    let after = r#"
+-- Rooms everyone can create. SELECT is limited to rooms the user belongs to.
+CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL
+);
+"#;
+
+    let diff = diff("", after);
+
+    assert_contains(&diff.up, "CREATE SHARED TABLE chat_demo.rooms");
+}
+
+#[test]
 fn detect_create_table_constraints_and_options() {
     let diff = diff(
         "",

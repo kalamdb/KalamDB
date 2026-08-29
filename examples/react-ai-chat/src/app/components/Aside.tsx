@@ -1,5 +1,5 @@
 import { HelpCircle, MessageSquarePlus, Settings } from 'lucide-react';
-import type { Conversations as ConversationRow } from '../schema.generated';
+import type { ReactAiChatConversations as ConversationRow } from '../schema.generated';
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 

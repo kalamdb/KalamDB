@@ -58,10 +58,12 @@ pub fn init_remote_schema_unavailable() -> String {
 
 pub fn init_repository_templates_unavailable() -> String {
     format!(
-        "loading templates from a repository is not available yet.\n\nHow to fix:\n{}",
+        "could not load a repository example.\n\nHow to fix:\n{}",
         bullet_list(&[
-            "Choose a built-in template during interactive init",
-            "Or pass one explicitly: `kalam init --template simple-live`",
+            "List templates: `kalam init --list-templates --json`",
+            "Retry with an explicit id: `kalam init --yes --template chat-with-ai --languages \
+             typescript --package-manager npm`",
+            "Or use the embedded starter: `kalam init --yes --template simple-live`",
         ])
     )
 }
