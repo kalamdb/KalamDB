@@ -262,7 +262,7 @@ void main() {
               batchSize: consumer.batchSize,
               apply: (change) async {
                 appliedChanges[table] = (appliedChanges[table] ?? 0) + 1;
-                await consumer.apply(change);
+                await consumer.apply!(change);
               },
             ),
           ),

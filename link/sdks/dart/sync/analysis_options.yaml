@@ -4,6 +4,7 @@ analyzer:
   exclude:
     - build/**
     - lib/**.g.dart
+    - example/backend/**
     - android/**
     - ios/**
     - web/**
