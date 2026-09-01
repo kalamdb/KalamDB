@@ -1,5 +1,7 @@
 # KalamDB Server Functions, Typed Contracts & Topic Triggers
 
+> **Development plan:** See [functions-v1-implementation.md](functions-v1-implementation.md) for the frozen V1 scope, dependency-ordered tasks, verification checkpoints, and corrected CLI deployment sequence.
+
 **Status:** Proposed
 **Version:** 0.1
 **Primary design principle:** SQL is the source of truth for the complete backend contract.
@@ -166,39 +168,123 @@ The implementation code **does not redefine procedure signatures**.
 
 # 4. Table row types
 
-Every KalamDB table automatically creates a logical row type.
+Tables are plural. A single row is not. Do not treat the table name as the
+row type.
 
-Example:
+Rejected:
 
 ```sql
+RETURNS chat.users;          -- one user, plural name
+RETURNS chat.messages;
+```
+
+Also rejected: silently inflecting `users` → `user` in SQL. Type names are
+explicit identifiers, not English stemming.
+
+Declare a singular row type bound to the table:
+
+```sql
+CREATE USER TABLE chat.users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+) ROW TYPE chat.user;
+
 CREATE USER TABLE chat.messages (
     id BIGINT PRIMARY KEY,
     group_id TEXT NOT NULL,
     sender_id TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL
-);
+) ROW TYPE chat.message;
 ```
 
-This automatically creates the logical type:
-
-```text
-chat.messages
-```
-
-A procedure can therefore return one message directly:
+Equivalent standalone form, for an existing table or a separate SQL file:
 
 ```sql
+CREATE TYPE chat.user FROM TABLE chat.users;
+CREATE TYPE chat.message FROM TABLE chat.messages;
+```
+
+A procedure then returns the singular type:
+
+```sql
+CREATE PROCEDURE chat.get_user(user_id TEXT NOT NULL)
+RETURNS chat.user;
+
 CREATE PROCEDURE chat.create_message(
     group_id TEXT,
     body TEXT
 )
-RETURNS chat.messages;
+RETURNS chat.message;
 ```
 
-No response structure needs to be repeated.
+Generated TypeScript uses that type name (`User`, `Message`), the same shape as
+the table's canonical query row, including server-generated query-visible
+fields.
 
-The implementation must return one row matching `chat.messages`.
+Rules:
+
+- `FROM TABLE` / `ROW TYPE` types always track the table's current canonical
+  query schema. They are not an independent field list that can drift.
+- The type and table must live in the same namespace in V1.
+- A table may have at most one row type.
+- `CREATE TYPE name AS (...)` and `CREATE TYPE name FROM TABLE ...` cannot share
+  a name. A row type also cannot collide with another table name in the namespace.
+- The table name is not itself a procedure type. `RETURNS chat.users` is an error.
+- `ALTER TABLE` updates the bound row type. Procedures, topics, and triggers
+  that use it must pass compatibility checks.
+- `DROP TABLE ... RESTRICT` fails while a row type exists; `CASCADE` drops the
+  type. `DROP TYPE ... RESTRICT` fails while routines reference it.
+- `CREATE OR REPLACE TYPE chat.user FROM TABLE chat.users` is a no-op when it
+  already points at that table. Pointing an existing row type at a different
+  table is rejected.
+- Row types are contract-only in V1 and cannot be physical table columns.
+
+`ROW TYPE` on `CREATE TABLE` is the usual form. `CREATE TYPE ... FROM TABLE` is
+the same binding, written separately.
+
+Unqualified names use the same `USE` default as the rest of Kalam SQL. These
+are identical contracts:
+
+```sql
+CREATE TYPE chat.user FROM TABLE chat.users;
+
+CREATE PROCEDURE chat.list_users()
+RETURNS SETOF chat.user;
+```
+
+```sql
+USE chat;
+
+CREATE TYPE user FROM TABLE users;
+
+CREATE PROCEDURE list_users()
+RETURNS SETOF user;
+```
+
+`USE chat`, `USE NAMESPACE chat`, and `SET NAMESPACE chat` all set the default
+namespace for later statements in that file. Qualified names still win:
+
+```sql
+USE chat;
+CREATE TYPE user FROM TABLE users;
+CREATE TYPE billing.invoice FROM TABLE billing.invoices;  -- explicit other ns
+```
+
+Resolution rules:
+
+- `USE` applies sequentially inside one SQL file. It does not leak into other
+  files. Each file starts from the project default namespace.
+- Object names (`TYPE user`, `PROCEDURE list_users`, `TABLE users`, `TOPIC …`,
+  `TRIGGER …`) and type references (`RETURNS SETOF user`, `FROM TABLE users`,
+  `ROW TYPE user`, parameters, composite fields) all use that default when
+  unqualified.
+- The canonical snapshot stores `chat.user` / `chat.list_users`. Hashing,
+  generation, and `functions/src/chat/list_users.ts` use the qualified name,
+  not the spelling in the file.
+- Cross-namespace references must be qualified. V1 row types still require the
+  type and table to be in the same namespace, so
+  `CREATE TYPE user FROM TABLE other.users` is an error even after `USE chat`.
 
 ---
 
@@ -211,7 +297,7 @@ CREATE PROCEDURE chat.get_recent_messages(
     group_id TEXT,
     limit_count INT
 )
-RETURNS SETOF chat.messages;
+RETURNS SETOF chat.message;
 ```
 
 Generated TypeScript:
@@ -263,7 +349,7 @@ And:
 
 ```sql
 CREATE TYPE chat.send_message_result AS (
-    message chat.messages,
+    message chat.message,
     recipients chat.recipient_result[],
     fanout_count INT
 );
@@ -297,6 +383,102 @@ RETURNS chat.send_message_result;
 One type definition.
 
 Three procedures.
+
+The contract type system is language-neutral. TypeScript, Dart, and Rust
+all generate from the same IR. GraphQL is the checklist, not the syntax.
+
+```text
+GraphQL                  Kalam SQL
+Object / InputObject     CREATE TYPE name AS (...)
+Entity object            CREATE TYPE name FROM TABLE t
+                         / ROW TYPE
+Enum                     CREATE TYPE name AS ENUM (...)
+List                     T[] and SETOF T
+Non-null                 NOT NULL          (= GraphQL T!)
+Non-empty                NONEMPTY          (text, bytes, arrays)
+Union                    CREATE TYPE name AS UNION (...)   -- later
+Interface                not used; unions are enough
+Custom scalar            Kalam scalars / JSONB escape hatch
+@constraint              closed NONEMPTY (V1), LENGTH/RANGE later
+```
+
+Kinds V1 supports:
+
+```sql
+CREATE TYPE chat.recipient_result AS (
+    user_id TEXT NOT NULL,
+    delivered BOOLEAN NOT NULL
+);
+
+CREATE TYPE chat.user FROM TABLE chat.users;
+
+CREATE TYPE chat.message_status AS ENUM (
+    'sent',
+    'delivered',
+    'read'
+);
+```
+
+`AS (...)` is a composite. `FROM TABLE` / `ROW TYPE` is a table row alias.
+`AS ENUM` is a closed string set. These three cannot share a name.
+
+Nullability matches GraphQL lists:
+
+```text
+T                 nullable T
+T NOT NULL        T!
+T[]               [T!]       nullable array, non-null elements
+T[] NOT NULL      [T!]!      non-null array, non-null elements
+```
+
+V1 array elements are non-null. Nullable elements (`(TEXT NULL)[]`, GraphQL
+`[T]`) are later. Multidimensional arrays are later.
+
+Non-empty is not core GraphQL; it is a contract constraint enforced by the
+codec for every language:
+
+```sql
+CREATE TYPE chat.create_user_input AS (
+    name TEXT NOT NULL NONEMPTY,
+    tags TEXT[] NOT NULL NONEMPTY
+);
+```
+
+`NONEMPTY` on text/bytes means trimmed length > 0. On arrays it means
+cardinality >= 1. It requires `NOT NULL`. Arbitrary `CHECK`, regex, and
+`LENGTH`/`RANGE` are later. Do not invent GraphQL directives in SQL.
+
+Polymorphism is a tagged union, not an interface:
+
+```sql
+-- later, not V1
+CREATE TYPE chat.feed_item AS UNION (
+    message chat.message,
+    membership chat.membership_event
+);
+```
+
+Wire (when added):
+
+```json
+{ "kind": "message", "value": { } }
+```
+
+TypeScript becomes a discriminated union, Dart a sealed class, Rust an enum.
+V1 rejects `AS UNION` / `AS INTERFACE` with a stable error so the names stay
+reserved. Until then, use an explicit `kind TEXT NOT NULL` field plus JSONB,
+or separate procedures.
+
+The same named type may be used as a parameter, a field, a return, or a topic
+payload. That is looser than GraphQL's input-vs-output split. Table row types
+used as input still use the canonical query schema; clients omit
+server-generated fields and the codec fills them only on output.
+
+`JSONB` remains the escape hatch when there is no stable contract. Prefer a
+named type.
+
+Generators must not invent TypeScript-only types. Dart and Rust consume the
+same snapshot: enums, nullability, arrays, `NONEMPTY`, and later unions.
 
 ---
 
@@ -374,7 +556,7 @@ Promise<boolean>
 ## Table row
 
 ```sql
-RETURNS chat.messages
+RETURNS chat.message
 ```
 
 Generated:
@@ -386,7 +568,7 @@ Promise<Message>
 ## Multiple table rows
 
 ```sql
-RETURNS SETOF chat.messages
+RETURNS SETOF chat.message
 ```
 
 Generated:
@@ -490,7 +672,7 @@ CREATE TYPE users.user_summary AS (
 
 ```sql
 CREATE TYPE chat.message_details AS (
-    message chat.messages,
+    message chat.message,
     sender users.user_summary,
     reactions JSONB,
     participants users.user_summary[]
@@ -676,34 +858,136 @@ One server contract generates all clients.
 
 # 15. User execution context
 
-Every client procedure invocation receives KalamDB's existing authentication context.
+Every procedure implementation receives a trusted runtime context automatically.
+The context is not declared in the SQL procedure signature and is never supplied
+as a `CALL` argument.
 
 Conceptually:
 
 ```text
 ExecutionContext
 
-user_id
-role
-namespace
+execution_id
 request_id
-ip_address
+principal
+actor
+source              -- root cause; never changes across nested calls
+procedure           -- current frame
+parent              -- parent frame, or null at the root
+stack               -- root-first call chain, including the current frame
+depth
+namespace
 transaction
+cancellation
 ```
 
-Inside a function:
+The root invocation source is a discriminated value:
 
 ```ts
-ctx.user.id
-ctx.user.role
-ctx.requestId
+type InvocationSource =
+  | {
+      kind: "call";
+      protocol: "http" | "pgwire" | "internal";
+    }
+  | {
+      kind: "topic";
+      topicName: string;
+      eventId: string;
+      partition: number;
+      offset: bigint;
+      attempt: number;
+    };
+
+interface ProcedureCall {
+  procedure: string;
+  depth: number;
+}
+
+interface ProcedureContext {
+  executionId: string;
+  requestId: string | null;
+  principal: { id: string; role: Role };
+  actor: { id: string } | null;
+  source: InvocationSource;
+  procedure: string;
+  parent: ProcedureCall | null;
+  stack: readonly ProcedureCall[];
+  depth: number;
+  db: ProcedureDatabase;
+  functions: GeneratedProcedures;
+  topics: ProcedureTopics;
+  log: ProcedureLogger;
+}
 ```
 
-or Rust:
+`parent` and `stack` are lightweight call frames, not live nested
+`ProcedureContext` objects. They never include `db`, `functions`, `topics`, or
+`log`. Walking the stack cannot impersonate a parent or re-enter its host APIs.
 
-```rust
-ctx.user_id()
-ctx.role()
+`principal` is the effective identity used for authorization, RLS and
+`CURRENT_USER`. `actor` is immutable audit metadata describing the original
+initiator when known; it never grants permissions.
+
+Direct `CALL` uses the authenticated caller as both principal and actor. A topic
+trigger uses its configured service principal and obtains the original actor
+from the topic message when available.
+
+Nested `ctx.functions` calls reuse the root source, principal, actor, request,
+transaction, cancellation, and pinned revision. The child receives a derived
+frame:
+
+```text
+source, principal, actor, requestId, executionId  -- inherited from the root
+procedure                                         -- the child being invoked
+parent                                            -- the caller's frame
+stack                                             -- root ... parent ... child
+depth                                             -- parent.depth + 1
+```
+
+The context is host-owned and immutable. It is not serialized as part of SQL
+parameters and cannot be constructed or overridden by client input.
+
+For example:
+
+```sql
+CALL app.my_func($1);
+```
+
+binds `$1` only to the SQL-defined business parameter. The runtime invokes the
+implementation as:
+
+```ts
+defineProcedure(async (ctx, input) => {
+  // Root CALL:
+  // ctx.source.kind === "call"
+  // ctx.procedure === "app.my_func"
+  // ctx.parent === null
+  // ctx.stack === [{ procedure: "app.my_func", depth: 0 }]
+  // ctx.depth === 0
+  await ctx.functions.app.child({ id: input.id });
+});
+
+defineProcedure(async (ctx, input) => {
+  // Nested from app.my_func:
+  // ctx.source.kind === "call"          -- original HTTP/PGWire caller
+  // ctx.procedure === "app.child"
+  // ctx.parent?.procedure === "app.my_func"
+  // ctx.stack.map((frame) => frame.procedure)
+  //   === ["app.my_func", "app.child"]
+  // ctx.depth === 1
+});
+```
+
+A topic-triggered root that then calls another procedure keeps the topic source
+on every nested frame:
+
+```ts
+defineProcedure(async (ctx, input) => {
+  // chat.fanout, nested from a trigger on chat.on_message_created:
+  // ctx.source.kind === "topic"
+  // ctx.source.eventId / partition / offset / attempt remain the original event
+  // ctx.parent?.procedure === "chat.on_message_created"
+});
 ```
 
 A client procedure defaults to:
@@ -718,7 +1002,7 @@ Example:
 
 ```sql
 CREATE PROCEDURE chat.create_message(...)
-RETURNS chat.messages
+RETURNS chat.message
 SECURITY INVOKER;
 ```
 
@@ -921,16 +1205,14 @@ if desired.
 
 # 21. Trigger argument expressions
 
-V1 should support reserved values:
+V1 supports one SQL-level trigger binding:
 
 ```text
 PAYLOAD
-EVENT_ID
-ACTOR_USER_ID
-TOPIC_NAME
-PARTITION
-OFFSET
 ```
+
+`PAYLOAD` is business input. Event identity, actor, topic name, partition,
+offset and retry attempt are supplied automatically through `ctx.source`.
 
 Example:
 
@@ -938,8 +1220,7 @@ Example:
 CREATE TRIGGER chat.process_message
 ON TOPIC chat.message_created
 EXECUTE PROCEDURE chat.process_message(
-    PAYLOAD,
-    EVENT_ID
+    PAYLOAD
 );
 ```
 
@@ -947,10 +1228,23 @@ Procedure:
 
 ```sql
 CREATE PROCEDURE chat.process_message(
-    event chat.message_created_event,
-    event_id TEXT
+    event chat.message_created_event
 )
 RETURNS VOID;
+```
+
+The implementation still receives both context and input:
+
+```ts
+defineProcedure(async (ctx, input) => {
+  if (ctx.source.kind === "topic") {
+    ctx.log.info("processing topic event", {
+      eventId: ctx.source.eventId,
+      partition: ctx.source.partition,
+      offset: ctx.source.offset,
+    });
+  }
+});
 ```
 
 Future versions may support expressions such as:
@@ -1049,20 +1343,20 @@ can use an internal system topic.
 
 # 24. Trigger security context
 
-Topic-triggered execution needs two identities.
+Topic-triggered execution receives two identities in its implicit context.
 
 Expose:
 
 ```text
-ctx.actorUser
-ctx.executionPrincipal
+ctx.actor
+ctx.principal
 ```
 
-`actorUser`:
+`actor`:
 
 > the user who originally caused the event, when available.
 
-`executionPrincipal`:
+`principal`:
 
 > the function/module identity under which the background consumer executes.
 
@@ -1085,6 +1379,8 @@ functions/
 ├── src/
 │   ├── chat/
 │   │   ├── create_message.ts
+│   │   ├── fanout_message.ts
+│   │   ├── notify_members.ts
 │   │   ├── delete_message.ts
 │   │   └── process_message.ts
 │   │
@@ -1202,6 +1498,40 @@ Context
 
 Changing the SQL signature causes TypeScript compilation errors until the implementation is updated.
 
+Do not author the SQL signature again in TypeScript. This is rejected:
+
+```ts
+@Function()
+export function ChatCreateMessage(
+  ctx: Context,
+  group_id: string!,
+  body: string!,
+): ChatSendResult {}
+```
+
+Reasons:
+
+- `string!` is GraphQL, not TypeScript. Nullability is `string` vs `string | null`.
+- A user-written parameter list would become a second contract and can drift from SQL.
+- Decorators need emit/reflect metadata that the V8 sandbox and single bundled artifact should not depend on.
+- File path plus `defineProcedure<ChatCreateMessage>` is the registry. `@Function()` would duplicate it.
+- Positional args break when SQL adds or reorders parameters. Named fields on `input` do not.
+
+The closest valid TypeScript is destructuring the generated input:
+
+```ts
+export default defineProcedure<ChatCreateMessage>(
+  async (ctx, { groupId, body }) => {
+    // groupId: string        -- SQL NOT NULL
+    // body: string
+  },
+);
+```
+
+`ctx` is always the host `ProcedureContext`. Implementations never construct it.
+
+V1 keeps one ABI: `(ctx, input) => output`. Dart and Rust generate the same shape. A later sugar that expands SQL parameters into function args is optional and must still be generated from SQL.
+
 ---
 
 # 28. Using generated table types inside procedures
@@ -1221,7 +1551,7 @@ export default defineProcedure<ChatCreateMessage>(
         .insert(messages)
         .values({
           groupId: input.groupId,
-          senderId: ctx.user.id,
+          senderId: ctx.principal.id,
           body: input.body
         })
         .returningOne();
@@ -1236,7 +1566,7 @@ export default defineProcedure<ChatCreateMessage>(
 Therefore returning:
 
 ```sql
-RETURNS chat.messages
+RETURNS chat.message
 ```
 
 requires no extra model class.
@@ -1460,10 +1790,16 @@ Initial server functions receive:
 ctx.db.query()
 ctx.db.execute()
 
+ctx.functions
 ctx.topics.publish()
 
-ctx.user
-ctx.request
+ctx.principal
+ctx.actor
+ctx.source
+ctx.procedure
+ctx.parent
+ctx.stack
+ctx.requestId
 
 ctx.log
 ```
@@ -1522,6 +1858,7 @@ filesystem = false
 
 [schema.targets.typescript]
 output = "src/generated/kalam.ts"
+unqualified_names = false
 
 [schema.targets.dart]
 output = "lib/generated/kalam.dart"
@@ -1572,17 +1909,17 @@ TS      Dart     Rust     Server contracts
 Generated:
 
 ```ts
-export interface SendMessageResult {
-   message: Message;
-   recipients: RecipientResult[];
+export interface ChatSendMessageResult {
+   message: ChatMessage;
+   recipients: ChatRecipientResult[];
    fanoutCount: number;
 }
 
 export interface KalamProcedures {
    chat: {
       createMessage(
-        input: CreateMessageInput
-      ): Promise<SendMessageResult>;
+        input: ChatCreateMessageInput
+      ): Promise<ChatSendMessageResult>;
    };
 }
 ```
@@ -1596,6 +1933,59 @@ const result =
         body
     });
 ```
+
+---
+
+# 38a. Generated TypeScript names
+
+`USE chat` is only SQL spelling. Generated TypeScript always starts from the
+canonical `namespace.name`.
+
+Keep two different names:
+
+```text
+access path     kalam.chat.listUsers()
+                ctx.functions.chat.listUsers()
+                ctx.db.chat.users
+type / const    ChatUser, ChatCreateMessage, chat_users
+server file     functions/src/chat/list_users.ts
+```
+
+Access paths are always nested by namespace. Never flatten to
+`kalam.listUsers()` or `ctx.functions.listUsers()`. `chat.users` and
+`billing.users` must not collide at the call site.
+
+Type and table-constant identifiers default to a namespace prefix, matching
+today's ORM (`chat_users` / `ChatUsers`):
+
+```text
+chat.user              → ChatUser
+chat.create_message    → ChatCreateMessage
+chat.send_message_result → ChatSendMessageResult
+chat.list_users        → method listUsers on kalam.chat
+```
+
+Do not auto-drop the prefix when a project has only one namespace. Adding
+`billing` later would rename `User` → `ChatUser` and break every import.
+
+Users may opt in per generate target:
+
+```toml
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+unqualified_names = true
+```
+
+Then `chat.user` emits `User` and `chat.create_message` emits `CreateMessage`.
+`kalam.chat.listUsers` does not change.
+
+`unqualified_names = true` fails generate on identifier collisions
+(`chat.user` vs `billing.user` → two `User` types). There is no per-object
+rename file. The snapshot stores a deterministic naming map so all targets
+and the server manifest agree.
+
+Snake_case SQL identifiers become camelCase methods and PascalCase types.
+`system` is never unqualified.
 
 ---
 
@@ -1648,8 +2038,62 @@ to watch:
 ```text
 schema.sql
 functions/src/**
-package.json
+functions package.json / lockfile
+frontend generated client output
 ```
+
+There are two generated surfaces. Do not mix them up:
+
+```text
+SQL contract
+    ├── functions/src/<ns>/<name>.ts     implement this (server)
+    └── src/generated/kalam.ts           import and call this (frontend)
+```
+
+The frontend never extends or implements a procedure. After generate it can call:
+
+```ts
+await kalam.chat.createMessage({ groupId, body });
+```
+
+The server file is the implementation. `kalam generate` and `kalam dev` scaffold
+it once if missing, then leave it alone.
+
+Adding a procedure while `kalam dev` is running:
+
+```text
+1. Save CREATE PROCEDURE chat.notify_members(...) in schema SQL
+2. Dev watcher compiles the local contract
+3. If functions/src/chat/notify_members.ts is missing, scaffold it and print:
+
+   New procedure detected:
+     chat.notify_members
+   Created:
+     functions/src/chat/notify_members.ts
+   Frontend client updated:
+     kalam.chat.notifyMembers
+
+4. Regenerate server contracts and the frontend/SDK client from the same snapshot
+5. Rebuild the function module
+6. Hot-activate a new local revision when the module exports every procedure
+```
+
+You know work remains because:
+
+- the CLI prints the new procedure and the created file;
+- the stub compiles but throws `PROCEDURE_NOT_IMPLEMENTED` until you write the body;
+- `kalam dev` / `kalam functions build` warn on unimplemented stubs;
+- the frontend TypeScript client gains `kalam.chat.notifyMembers` immediately, so
+  the app can call it after you implement the server file.
+
+If the implementation file is missing entirely, generate/build fails with a
+stable error naming `chat.notify_members` and the expected path. Existing
+implementation files are never overwritten when SQL changes; only generated
+contracts and the client SDK are rewritten. A SQL signature change then fails
+TypeScript in the existing server file until you update `input` / `return`.
+
+Removing a procedure does not delete the implementation file. Dev reports it as
+an unused entrypoint.
 
 Development loop:
 
@@ -1658,7 +2102,9 @@ schema changes
       ↓
 parse/validate
       ↓
-regenerate types
+scaffold missing server entrypoints
+      ↓
+regenerate types (server + frontend/SDK)
       ↓
 rebuild function project
       ↓
@@ -1847,7 +2293,7 @@ Example:
 SQL says:
 
 ```sql
-RETURNS chat.messages
+RETURNS chat.message
 ```
 
 but implementation returns:
@@ -2095,6 +2541,7 @@ start_time
 duration
 status
 error
+procedure_stack     -- host frames; required on error, optional on slow/sampled traces
 ```
 
 Topic-triggered execution additionally records:
@@ -2159,7 +2606,7 @@ CREATE USER TABLE chat.messages (
     sender_id TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
-);
+) ROW TYPE chat.message;
 
 CREATE TYPE chat.delivery_result AS (
     user_id TEXT,
@@ -2167,7 +2614,7 @@ CREATE TYPE chat.delivery_result AS (
 );
 
 CREATE TYPE chat.send_message_result AS (
-    message chat.messages,
+    message chat.message,
     deliveries chat.delivery_result[],
     fanout_count INT
 );
@@ -2188,6 +2635,24 @@ CREATE PROCEDURE chat.create_message(
 RETURNS chat.send_message_result
 SECURITY INVOKER;
 
+CREATE TYPE chat.fanout_result AS (
+    deliveries chat.delivery_result[] NOT NULL,
+    fanout_count INT NOT NULL
+);
+
+CREATE PROCEDURE chat.fanout_message(
+    message chat.message NOT NULL
+)
+RETURNS chat.fanout_result
+SECURITY INVOKER;
+
+CREATE PROCEDURE chat.notify_members(
+    group_id TEXT NOT NULL,
+    message_id BIGINT NOT NULL
+)
+RETURNS VOID
+SECURITY INVOKER;
+
 CREATE PROCEDURE chat.after_message_created(
     event chat.message_created_event
 )
@@ -2206,69 +2671,112 @@ WITH (
 
 # 53. TypeScript implementation
 
-Generated implementation file:
+Generated implementation files:
 
 ```text
 functions/src/chat/create_message.ts
+functions/src/chat/fanout_message.ts
+functions/src/chat/notify_members.ts
 ```
 
-User writes:
+`create_message` owns the client-facing write. It fans out and notifies by
+calling the other SQL procedures through `ctx.functions`. Those are nested
+frames on the same root, isolate, node, and transaction — not HTTP calls.
 
 ```ts
 import { defineProcedure } from "@kalamdb/server";
-import type {
-  ChatCreateMessage
-} from "../.kalam/generated/contracts";
+import type { ChatCreateMessage } from "../.kalam/generated/contracts";
 
-export default defineProcedure<ChatCreateMessage>(
-  async (ctx, input) => {
+export default defineProcedure<ChatCreateMessage>(async (ctx, input) => {
+  const message = await ctx.db.messages.insert({
+    groupId: input.groupId,
+    senderId: ctx.principal.id,
+    body: input.body,
+  });
 
-    const message =
-      await ctx.db.messages.insert({
-        groupId: input.groupId,
-        senderId: ctx.user.id,
-        body: input.body
-      });
+  const fanout = await ctx.functions.chat.fanoutMessage({
+    message,
+  });
 
-    const members =
-      await ctx.db.groupMembers
-        .where({ groupId: input.groupId });
+  await ctx.functions.chat.notifyMembers({
+    groupId: message.groupId,
+    messageId: message.id,
+  });
 
-    const deliveries = [];
-
-    for (const member of members) {
-
-      await ctx.db.userUpdates.upsert({
-        userId: member.userId,
-        groupId: input.groupId,
-        lastSeq: message._seq
-      });
-
-      deliveries.push({
-        userId: member.userId,
-        delivered: true
-      });
-    }
-
-    await ctx.topics.publish(
-      "chat.message_created",
-      {
-        messageId: message.id,
-        groupId: message.groupId,
-        senderId: message.senderId
-      }
-    );
-
-    return {
-      message,
-      deliveries,
-      fanoutCount: deliveries.length
-    };
-  }
-);
+  return {
+    message,
+    deliveries: fanout.deliveries,
+    fanoutCount: fanout.fanoutCount,
+  };
+});
 ```
 
-All operations participate in one KalamDB transaction.
+```ts
+import { defineProcedure } from "@kalamdb/server";
+import type { ChatFanoutMessage } from "../.kalam/generated/contracts";
+
+export default defineProcedure<ChatFanoutMessage>(async (ctx, input) => {
+  // ctx.source.kind === "call"          -- original CALL chat.create_message
+  // ctx.parent?.procedure === "chat.create_message"
+  // ctx.depth === 1
+  // ctx.stack: chat.create_message → chat.fanout_message
+
+  const members = await ctx.db.groupMembers.where({
+    groupId: input.message.groupId,
+  });
+
+  const deliveries = [];
+
+  for (const member of members) {
+    await ctx.db.userUpdates.upsert({
+      userId: member.userId,
+      groupId: input.message.groupId,
+      lastSeq: input.message._seq,
+    });
+
+    deliveries.push({
+      userId: member.userId,
+      delivered: true,
+    });
+  }
+
+  return {
+    deliveries,
+    fanoutCount: deliveries.length,
+  };
+});
+```
+
+```ts
+import { defineProcedure } from "@kalamdb/server";
+import type { ChatNotifyMembers } from "../.kalam/generated/contracts";
+
+export default defineProcedure<ChatNotifyMembers>(async (ctx, input) => {
+  // ctx.parent?.procedure === "chat.create_message"
+  // ctx.actor is still the end user who called create_message
+
+  await ctx.topics.publish("chat.message_created", {
+    messageId: input.messageId,
+    groupId: input.groupId,
+    senderId: ctx.actor?.id ?? ctx.principal.id,
+  });
+});
+```
+
+If `notify_members` throws, the host stack on the error is:
+
+```text
+chat.create_message
+  → chat.notify_members
+```
+
+and the message insert, fanout upserts, and topic publish all roll back together.
+
+The client still only calls the outer procedure:
+
+```ts
+await kalam.chat.createMessage({ groupId, body: "Hello" });
+```
 
 ---
 
@@ -2555,7 +3063,7 @@ observability
 
 **SQL is the only backend contract source of truth.**
 
-**Tables are automatically reusable row types.**
+**Tables expose an explicit singular row type via `ROW TYPE` / `CREATE TYPE ... FROM TABLE`, not the plural table name.**
 
 **`CREATE TYPE` provides reusable request/response/event objects.**
 
@@ -2821,7 +3329,7 @@ Example:
 
 ```typescript
 return {
-    userId: ctx.user.id
+    userId: ctx.principal.id
 };
 ```
 
@@ -3009,9 +3517,30 @@ chat.create_message
       → notifications.enqueue
 ```
 
-The stack may be exposed for debugging.
+That stack is part of the trusted implementation context:
 
-Procedure names are resolved from catalog metadata only when required.
+```ts
+ctx.procedure === "notifications.enqueue"
+ctx.parent?.procedure === "chat.fanout"
+ctx.stack.map((frame) => frame.procedure)
+// ["chat.create_message", "chat.fanout", "notifications.enqueue"]
+ctx.depth === 2
+ctx.source                         // still the original CALL or topic
+```
+
+The host stores that stack as compact `ProcedureId` values on the root, using
+`SmallVec<[ProcedureId; 4]>` with a hard cap of 16 frames. `parent` is derived
+from the previous slot. Names are resolved from the catalog only when the
+implementation reads `ctx.stack` / `ctx.parent`, when rendering
+`system.function_runs`, or when building an error.
+
+Do not clone a JavaScript array of stack objects on every nested invoke. The JS
+`ctx.stack` getter materializes names for the current frame on demand. Nested
+calls push/pop IDs on the root vector; they do not allocate a new execution,
+isolate, actor, transaction, or copied context.
+
+The exposed stack contains only `procedure` and `depth`; it does not clone host
+capabilities or identity objects.
 
 ---
 
@@ -3038,6 +3567,41 @@ TransactionScope = ABORTED
 The caller cannot later commit the transaction.
 
 This follows a strict transactional model similar to PostgreSQL failed transactions.
+
+Nested `ctx.functions` calls are host-mediated. A JavaScript `Error.stack` from
+the failing isolate shows only that procedure's JS frames, not the parent
+procedures. The host procedure stack is therefore the cross-function stack
+trace.
+
+When a procedure fails, the host captures the root stack once:
+
+```text
+app.create_order
+  → shop.reserve_inventory
+    → inventory.decrement   <-- failed
+```
+
+Every failed CALL, trigger, log, and `system.function_runs` snapshot for that
+root must include:
+
+```text
+execution_id
+failed procedure
+host stack          -- ProcedureId frames, names resolved at report time
+source              -- inherited CALL or topic identity
+revision
+stable error code
+truncated JS exception from the failing frame only
+```
+
+Do not persist JS stacks, isolate heaps, or per-frame start/end rows to RocksDB
+or Raft. Truncate the JS exception (message plus stack) to a small bounded
+buffer. Do not return host Rust backtraces to clients.
+
+HTTP/SQL errors reuse the existing error envelope and put the procedure stack in
+structured details. PGWire maps the same fields onto `SQLSTATE` plus `DETAIL`.
+The thrown object seen by a parent `catch` includes the host stack so catching
+and rethrowing does not lose the chain.
 
 Future versions may support:
 
@@ -3990,15 +4554,29 @@ await ctx.functions.chat.fanout({
 });
 ```
 
-The SDK internally invokes the procedure with the same:
+The SDK internally invokes the procedure with the same root:
 
 ```text
 ExecutionContext
 TransactionScope
 CancellationToken
+InvocationSource
+principal / actor / requestId
+```
+
+and a new child frame:
+
+```text
+procedure = chat.fanout
+parent    = caller's ProcedureCall
+stack     = caller.stack + child frame
+depth     = caller.depth + 1
 ```
 
 rather than routing through HTTP or generating another root execution.
+
+The child can always read both the original caller (`ctx.source`, `ctx.actor`)
+and the nested call chain (`ctx.parent`, `ctx.stack`).
 
 ---
 
@@ -4028,6 +4606,25 @@ uses:
 
 ```text
 existing root ExecutionContext
+new InvocationFrame
+```
+
+Direct `CALL chat.fanout(...)` therefore sees:
+
+```text
+source.kind = call
+parent      = null
+stack       = [chat.fanout]
+depth       = 0
+```
+
+while `ctx.functions.chat.fanout(...)` from `chat.create_message` sees:
+
+```text
+source      = inherited root CALL or topic
+parent      = chat.create_message
+stack       = [chat.create_message, chat.fanout]
+depth       = 1
 ```
 
 This distinction prevents unnecessary actor/task creation and preserves transaction atomicity.
@@ -4148,6 +4745,16 @@ The feature SHALL follow these requirements:
 **Actor crashes must not automatically replay client transactional functions.**
 
 **The root execution owns commit or rollback for all nested business logic.**
+
+**A root execution and every nested frame run on one node. Nested calls never hop the network or another Raft group.**
+
+**Function catalog and active revision are Meta-Raft state. In-flight executions are not.**
+
+**CALL forwarding, if required, forwards the entire root statement. Nested work stays on the node that accepted the root.**
+
+**A root pins one module revision for its lifetime, including nested frames, even if activation occurs concurrently.**
+
+**Trigger ownership follows existing consumer-group leases so failover retries the same event identity.**
 
 ---
 
